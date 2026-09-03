@@ -1,0 +1,62 @@
+# Release Changelog Tracker
+
+Internal preparation file for release summaries. This is not yet published to the changelog page or docs.
+
+## v0.18.41
+
+#### Commit
+`eb687539`
+
+#### Released at
+`2026-09-02T01:52:38Z`
+
+#### Title
+Session status gets honest and cloud providers connect with saved credentials
+
+#### One-line summary
+Makes Working indicators and session reconciliation truthful, connects Den providers from locally saved Desktop credentials, and publishes SOC 2 Type I status.
+
+#### Main changes
+- Working indicators now stop when a run errors or the engine is unreachable, and show minutes past the first hour.
+- Sessions reconcile more cleanly: completions are detected while you are elsewhere, queued composer messages send when a session is out of view, and archiving works from any workspace.
+- Den cloud providers now connect using credentials saved locally on the Desktop, and Google Workspace retrieval is more resilient.
+- The landing page shows OpenWork's SOC 2 Type I badge and status, and web boot failures and Stripe webhook errors now reach Sentry.
+- Remediated static-analysis security findings, isolated provider sync contexts, and improved internal test and release tooling.
+
+#### Lines of code changed since previous release
+25270 lines changed since `v0.18.40` (18863 insertions, 6407 deletions).
+
+#### Release importance
+Minor release: reliability fixes to session status and reconciliation, plus saved-credential provider connections and SOC 2 Type I disclosure.
+
+#### Major improvements
+True
+
+#### Number of major improvements
+3
+
+#### Major improvement details
+- Connected Den cloud providers from locally saved Desktop credentials.
+- Published the SOC 2 Type I badge and status on the landing page.
+- Reported web boot failures and Stripe webhook errors to Sentry.
+
+#### Major bugs resolved
+True
+
+#### Number of major bugs resolved
+4
+
+#### Major bug fix details
+- Stopped Working indicators from ticking after errors or while the engine is unreachable.
+- Reconciled active session completion, queued composer drains, and coalesced workspace session loads.
+- Fixed archiving sessions from non-selected workspaces.
+- Isolated provider sync contexts and hardened Google Workspace retrieval.
+
+#### Deprecated features
+False
+
+#### Number of deprecated features
+0
+
+#### Deprecated details
+None.

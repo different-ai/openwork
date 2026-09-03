@@ -85,6 +85,14 @@ placement environment.
 
 See `run-tests` for environment requirements and the cold-boot verdict check.
 
+### Quarantine
+
+[`specs/quarantine.json`](./specs/quarantine.json) is the explicit list of E2E
+specs that are not trusted green. The E2E project and CI selectors exclude that
+reviewable list; naming one through `evals:e2e` fails with its quarantine reason.
+A spec enters quarantine with control-run evidence and leaves only after a green
+Daytona or local run has published test evidence.
+
 ### Live lane
 
 Surface and substrate are independent axes:
@@ -116,6 +124,92 @@ self-service deletion endpoint) must be documented with exact identities.
 - Bound every wait and declare external requirements in `needs()` so missing
   dependencies skip with a named reason.
 - Assert both positive and negative sides of identity or permission boundaries.
+
+## Writing specs
+
+New app-driving specs use `spec.world()` and four capability-restricted
+channels. Import them only from `@openwork/testkit`.
+
+| Channel | Purpose | Allowed effects |
+| --- | --- | --- |
+| `seed` | Arrange the world | Create Den, desktops, browsers, data, mocks, sessions, and faults; this is the only API/state write channel. |
+| `user` | Act as a person | Trusted CDP mouse, keyboard, navigation, reload, visible assertions, screenshots, and vision checks. It cannot evaluate JS, fetch, or use app controls. |
+| `agent` | Use the product automation rail | Explicit `window.__openworkControl` actions, including agent sends and session actions. |
+| `probe` | Observe without changing state | Read text, composer/storage/hash/API/witness state, and poll with `eventually`. Probe API calls are GET-only. |
+
+A world is an imperative async function. Resources created through `seed` are
+owned by the fixture's `AsyncDisposableStack` and released in reverse order.
+Worlds are per-test by default; `{ scope: "file" }` shares exactly the handles
+the world returns. E2E files automatically need
+`OPENWORK_EVAL_E2E_TESTS=1`, and unmet needs skip before the world starts.
+
+```ts
+export async function emptySession(seed: Seed) {
+  const app = await seed.desktop();
+  await seed.workspace(app, seed.tmpPath("empty-session"));
+  await seed.session(app);
+  return { app };
+}
+```
+
+`app` and `web` are conventional primary surface names. If the returned world
+has one of them (or exactly one surface), channel calls use it by default;
+otherwise bind explicitly with `user.on(surface)`, `agent.on(surface)`, or
+`probe.on(surface)`.
+
+Use `step(name, fn)` for a claim-sized frame. Steps may nest; failures are
+recorded and rethrown, and a later attempted step is marked `not-reached`.
+Every channel call and step automatically contributes a chronological evidence
+trace and the body wrapper records the passed, failed, or skipped outcome.
+
+The body call-order rule prevents accidental setup disguised as user behavior:
+`seed.*` before the first `user.*` or `agent.*` act throws. Put that setup in the
+world. Mid-flow seeding after an act is explicit and allowed; probes do not
+change the ordering state.
+
+`seed.evalIn()` (`[seed:raw]`) and `probe.eval()` (`[probe:raw]`) are migration
+escape hatches. Both accept `{ awaitPromise?: boolean, timeoutMs?: number }`;
+`probe.eval` accepts the options after either `(expression)` or
+`(surface, expression)`. New specs must not use them. The channel ratchet
+records current legacy usage per E2E file and fails on increases or stale
+baseline entries.
+
+Before, composer reload coverage imported hosts, behaviors, CDP evaluation, and
+evidence APIs directly. After, the journey is only:
+
+```ts
+const test = spec.world(emptySession);
+test("a draft survives reloads", async ({ user, probe, step }) => {
+  await user.type("composer", "Keep this draft");
+  const revision = await probe.storage("openwork.session-drafts.v2", pickRevision);
+  await step("draft survives three reloads", async () => {
+    for (let i = 0; i < 3; i += 1) {
+      await user.reload();
+      await user.see("composer", { editable: true, text: "Keep this draft" });
+    }
+  });
+  expect(await probe.storage("openwork.session-drafts.v2", pickRevision)).toBe(revision);
+});
+```
+
+`"composer"` is the documented well-known target for the Lexical
+`[contenteditable="true"][data-lexical-editor="true"]` editor. Other targets use
+accessible name, role, label, placeholder, test ID, and optional `nth`; `text`
+and `label` accept strings or regular expressions. A unique visible element
+whose inner text starts with a string is the fallback for a non-exact text/name
+match.
+
+`user.type(target, text)` appends by default. Pass `{ replace: true }` to focus
+with a real click, select all with the platform key chord, and replace the
+current value. `user.see(target, { text })` compares contenteditable inner text
+and accepts a string or regular expression. Clicks require center-point hit
+testing; `{ hitTest: false }` is a last resort for an intentionally covered
+target and still performs a trusted CDP click at that element's center.
+
+Worlds can arrange a shaped Den connection with `seed.denLink(den, options)`;
+the returned link is fixture-owned. `probe.connectState(app)` reads the
+testkit's normalized desktop Connect state without exposing the raw helper to a
+spec.
 
 ## Layers
 

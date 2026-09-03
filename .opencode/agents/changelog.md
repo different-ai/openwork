@@ -1,7 +1,7 @@
 ---
 mode: primary
 hidden: true
-model: opencode/claude-sonnet-4-5
+model: openai/gpt-5.6-luna
 color: "#7C6FF0"
 tools:
   "*": false

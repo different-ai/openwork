@@ -1,0 +1,3577 @@
+[
+  {
+    "type": "dependency",
+    "from": "specs/active-session-workspace-storm.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/active-session-workspace-storm.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/admin-model-limits.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/admin-model-limits.e2e.test.ts",
+    "to": "@openwork/cdp",
+    "unresolvedTo": "@openwork/cdp",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/admin-model-limits.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/admin-model-limits.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/automation-deployment-gate.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/automation-desktop-lifecycle.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/automation-desktop-recovery-window.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/automation-model-needs-attention.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/automation-model-needs-attention.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/automation-proposal-model-resolution.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/automation-proposal-model-resolution.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/automation-revision-revert.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/automation-runtime-placement.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/automation-runtime-placement.e2e.test.ts",
+    "to": "@openwork/cdp",
+    "unresolvedTo": "@openwork/cdp",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/automation-runtime-placement.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/automation-runtime-placement.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/automations-den-hosted.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/automations-den-hosted.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/azure-byok-live.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/azure-byok-live.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/brand-appearance-preview-removal.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/brand-appearance-preview-removal.e2e.test.ts",
+    "to": "@openwork/cdp",
+    "unresolvedTo": "@openwork/cdp",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/brand-appearance-preview-removal.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/browser-open-url-returns-target.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/browser-open-url-returns-target.e2e.test.ts",
+    "to": "@openwork/cdp",
+    "unresolvedTo": "@openwork/cdp",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/browser-open-url-returns-target.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/capability-search-latency.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/capability-search-latency.e2e.test.ts",
+    "to": "@openwork/cdp",
+    "unresolvedTo": "@openwork/cdp",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/capability-search-latency.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/capability-search-latency.e2e.test.ts",
+    "to": "@openwork/labs",
+    "unresolvedTo": "@openwork/labs",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/capability-search-scale.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/capability-search-scale.e2e.test.ts",
+    "to": "@openwork/cdp",
+    "unresolvedTo": "@openwork/cdp",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/capability-search-scale.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/chat-render-cycle-stability.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/chat-render-cycle-stability.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/chat-survives-flaky-den-link.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/chat-survives-flaky-den-link.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/chat-tool-details-expand.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/chat-tool-details-expand.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/clamp-html-errors.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/clamp-html-errors.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/clamp-html-errors.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/cloud-mcp-provider-capability-submit.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/cloud-mcp-provider-capability-submit.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/cloud-model-infra.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/cloud-provider-auto-import.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/cloud-provider-auto-import.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/cloud-provider-before-workspace.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/cloud-provider-before-workspace.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/cloud-provider-local-credential-fallback.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/cloud-provider-sync-contract.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/cloud-provider-sync-contract.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/composer-focus-continuity.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/composer-focus-continuity.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/composer-queued-drain-while-away.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/composer-queued-drain-while-away.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/composer-queued-drain-while-away.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/config-object-large-skill.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/connect-policy-runtime-restart.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/connect-policy-runtime-restart.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/connection-action-mcp-app.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/connection-action-mcp-app.e2e.test.ts",
+    "to": "@openwork/cdp",
+    "unresolvedTo": "@openwork/cdp",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/connection-action-mcp-app.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/connection-action-mcp-app.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/connectors-quick-add.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/connectors-quick-add.e2e.test.ts",
+    "to": "@openwork/cdp",
+    "unresolvedTo": "@openwork/cdp",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/connectors-quick-add.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/connectors-quick-add.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/cross-workspace-split-view.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/cross-workspace-split-view.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/dashboard-deployment-contract.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/dashboard-deployment-gate.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/den-intermittent-outage-recovery.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/den-intermittent-outage-recovery.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/den-litellm-provider.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/den-litellm-provider.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/den-litellm-provider.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/den-sidebar-footer-pin.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/den-sidebar-footer-pin.e2e.test.ts",
+    "to": "@openwork/cdp",
+    "unresolvedTo": "@openwork/cdp",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/den-sidebar-footer-pin.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/den-sidebar-ia.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/den-sidebar-ia.e2e.test.ts",
+    "to": "@openwork/cdp",
+    "unresolvedTo": "@openwork/cdp",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/den-sidebar-ia.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/den-sidebar-ia.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/den-split-origin-runtime-config.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/den-split-origin-runtime-config.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/desktop-render-cycle-stability.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/desktop-render-cycle-stability.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/desktop-renderer-crash-recovery.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/desktop-renderer-crash-recovery.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/engine-restart-turn-freshness.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/engine-restart-turn-freshness.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/engine-restart-turn-freshness.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/engine-rollover-session-survival.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/engine-rollover-session-survival.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/enterprise-install-guide.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/enterprise-install-guide.e2e.test.ts",
+    "to": "@openwork/cdp",
+    "unresolvedTo": "@openwork/cdp",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/enterprise-install-guide.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/enterprise-install-guide.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/enterprise-invite-install-connect.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/enterprise-invite-install-connect.e2e.test.ts",
+    "to": "@openwork/cdp",
+    "unresolvedTo": "@openwork/cdp",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/enterprise-invite-install-connect.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/enterprise-invite-install-connect.e2e.test.ts",
+    "to": "@openwork/labs",
+    "unresolvedTo": "@openwork/labs",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/enterprise-invite-install-connect.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/generated-artifact-views.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/generated-artifact-views.e2e.test.ts",
+    "to": "@openwork/cdp",
+    "unresolvedTo": "@openwork/cdp",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/generated-artifact-views.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/github-connector-import.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/github-connector-import.e2e.test.ts",
+    "to": "@openwork/labs",
+    "unresolvedTo": "@openwork/labs",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/github-sync-self-healing.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/github-sync-self-healing.e2e.test.ts",
+    "to": "@openwork/labs",
+    "unresolvedTo": "@openwork/labs",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/google-workspace-direct-uploads.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/google-workspace-direct-uploads.e2e.test.ts",
+    "to": "@openwork/labs",
+    "unresolvedTo": "@openwork/labs",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/google-workspace-multi-account.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/google-workspace-multi-account.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/google-workspace-multi-account.e2e.test.ts",
+    "to": "@openwork/labs",
+    "unresolvedTo": "@openwork/labs",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/google-workspace-multi-account.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/image-lightbox-size.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/image-lightbox-size.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/image-lightbox-size.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/initial-admin-bootstrap.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/initial-admin-bootstrap.e2e.test.ts",
+    "to": "@openwork/cdp",
+    "unresolvedTo": "@openwork/cdp",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/initial-admin-bootstrap.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/join-org-success-download.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/join-org-success-download.e2e.test.ts",
+    "to": "@openwork/cdp",
+    "unresolvedTo": "@openwork/cdp",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/join-org-success-download.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/join-org-success-download.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/library-add-connector-discovery.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/library-add-connector-discovery.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/library-add-session-restore.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/library-add-session-restore.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/library-advanced-refresh.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/library-authoring-routes.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/library-authoring-routes.e2e.test.ts",
+    "to": "@openwork/cdp",
+    "unresolvedTo": "@openwork/cdp",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/library-authoring-routes.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/library-config-read-budget.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/library-config-read-budget.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/library-mcp-connect-error.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/library-signed-in-render-stability.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/library-state-tabs.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/library-state-tabs.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/library-state-tabs.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/library-view.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/library-view.e2e.test.ts",
+    "to": "@openwork/cdp",
+    "unresolvedTo": "@openwork/cdp",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/library-view.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/library-view.e2e.test.ts",
+    "to": "@openwork/labs",
+    "unresolvedTo": "@openwork/labs",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/library-view.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/litellm-per-member-credentials.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/litellm-per-member-world.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/live-tool-visible-after-session-switch.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/live-tool-visible-after-session-switch.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/llm-provider-access-parity.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/local-managed-mcp-oauth.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/login-rate-limit-shared-domain.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/mac-sidebar-toggle-clearance.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/mac-sidebar-toggle-clearance.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/marketplace-catalog-legibility.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/marketplace-catalog-legibility.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/marketplace-catalog-legibility.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/mcp-app-inline-host.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/mcp-app-inline-host.e2e.test.ts",
+    "to": "@openwork/cdp",
+    "unresolvedTo": "@openwork/cdp",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/mcp-app-inline-host.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/mcp-app-inline-host.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/member-dashboard-os-download.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/member-dashboard-os-download.e2e.test.ts",
+    "to": "@openwork/cdp",
+    "unresolvedTo": "@openwork/cdp",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/member-dashboard-os-download.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/member-dashboard-os-download.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/model-lands-mid-run.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/model-lands-mid-run.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/models-available.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/models-available.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/models-available.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/opencode-mcp-agent-oauth.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/opencode-unconfigured-notification.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/opencode-unconfigured-notification.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/org-api-key-authenticates.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/org-connection-lifecycle.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/org-connection-lifecycle.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/org-connection-lifecycle.e2e.test.ts",
+    "to": "@openwork/labs",
+    "unresolvedTo": "@openwork/labs",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/org-connection-lifecycle.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/org-connector-two-members.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/org-connector-two-members.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/org-connector-two-members.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/org-managed-dashboard-desktop.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/org-model-analytics-desktop.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/org-model-analytics-desktop.e2e.test.ts",
+    "to": "@openwork/cdp",
+    "unresolvedTo": "@openwork/cdp",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/org-model-analytics-desktop.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/org-model-analytics-desktop.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/org-model-analytics.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/org-team-lifecycle-critical-path.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/org-team-lifecycle-critical-path.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/plugin-access-panel.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/plugin-access-panel.e2e.test.ts",
+    "to": "@openwork/cdp",
+    "unresolvedTo": "@openwork/cdp",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/plugin-access-panel.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/plugin-access-panel.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/remote-mcp-apps.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/remote-mcp-apps.e2e.test.ts",
+    "to": "@openwork/cdp",
+    "unresolvedTo": "@openwork/cdp",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/remote-mcp-apps.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/remote-mcp-apps.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/remote-session-desktop-command.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/remote-session-desktop-runner.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/responsive-session-layout.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/responsive-session-layout.e2e.test.ts",
+    "to": "@openwork/cdp",
+    "unresolvedTo": "@openwork/cdp",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/role-change-session-survival.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/saved-script-automations.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/scim-okta-lifecycle.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/self-host-onboarding.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/self-host-onboarding.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/self-host-onboarding.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/session-admission-no-result-recovery.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/session-admission-no-result-recovery.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/session-admission-no-result-recovery.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/session-archive-button.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/session-archive-button.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/session-archive-button.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/session-header-workspace-name.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/session-header-workspace-name.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/session-header-workspace-name.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/session-loading-idle.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/session-loading-idle.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/session-loading-idle.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/session-model-availability.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/session-model-availability.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/session-model-availability.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/session-switch-settings-runtime.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/session-switch-settings-runtime.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/session-title-failure-warning.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/session-title-failure-warning.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/settings-narrow-window-navigation.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/settings-narrow-window-navigation.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/settings-visit-live-run-continuity.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/settings-visit-live-run-continuity.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/sidebar-primary-actions.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/sidebar-primary-actions.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/sidebar-primary-actions.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/sidebar-workspace-title-fit.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/sidebar-workspace-title-fit.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/sidebar-workspace-title-fit.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/skill-authoring-session-freshness.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/skill-created-mcp-app.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/skill-created-mcp-app.e2e.test.ts",
+    "to": "@openwork/cdp",
+    "unresolvedTo": "@openwork/cdp",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/skill-created-mcp-app.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/skill-created-mcp-app.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/slack-style-mcp-connector.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/sso-domain-verification.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/sso-domain-verification.e2e.test.ts",
+    "to": "@openwork/cdp",
+    "unresolvedTo": "@openwork/cdp",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/sso-domain-verification.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/sso-domain-verification.e2e.test.ts",
+    "to": "@openwork/labs",
+    "unresolvedTo": "@openwork/labs",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/sso-safe-enable.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/sso-safe-enable.e2e.test.ts",
+    "to": "@openwork/labs",
+    "unresolvedTo": "@openwork/labs",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/subagent-run-survives-provider-sync-storm.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/subagent-run-survives-provider-sync-storm.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/team-access-view.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/team-access-view.e2e.test.ts",
+    "to": "@openwork/cdp",
+    "unresolvedTo": "@openwork/cdp",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/team-access-view.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/team-access-view.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/telegram-removed.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/telegram-removed.e2e.test.ts",
+    "to": "@openwork/cdp",
+    "unresolvedTo": "@openwork/cdp",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/telegram-removed.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/telegram-removed.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/testkit-selftest.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/workflows.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/workflows.e2e.test.ts",
+    "to": "@openwork/cdp",
+    "unresolvedTo": "@openwork/cdp",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/workflows.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/workflows.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/workspace-sidebar-order.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/workspace-sidebar-order.e2e.test.ts",
+    "to": "@openwork/hosts",
+    "unresolvedTo": "@openwork/hosts",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/workspace-storm-auth-coherence.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/workspace-storm-auth-coherence.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/workspace-switch-task-survival.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/workspace-switch-task-survival.e2e.test.ts",
+    "to": "@openwork/test-evidence",
+    "unresolvedTo": "@openwork/test-evidence",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/world-kind-den.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "specs/world-sessions.e2e.test.ts",
+    "to": "@openwork/behaviors",
+    "unresolvedTo": "@openwork/behaviors",
+    "dependencyTypes": [
+      "unknown"
+    ],
+    "rule": {
+      "severity": "error",
+      "name": "specs-use-testkit-only"
+    }
+  }
+]

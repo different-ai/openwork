@@ -19,6 +19,7 @@ function connection(id: string): DenExternalMcpConnection {
     name: id,
     url: `https://${id}.example/mcp`,
     credentialMode: "per_member",
+    exposeDirectly: false,
     connected: true,
     connectedForMe: true,
     status: "active",

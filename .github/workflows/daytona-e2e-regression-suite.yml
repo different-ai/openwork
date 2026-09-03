@@ -144,8 +144,10 @@ jobs:
           # Raw desktop() detection remains as a guard for newly added tests
           # that have not been classified yet.
           profile='evals/specs/daytona-e2e-regression-profile.json'
+          quarantined="$(node evals/scripts/quarantine.mjs)"
           profile_excluded_json="$(jq -c '[.excluded[].test]' "$profile")"
           raw_desktop_json="$(printf '%s\n' "$raw_desktop" | jq -Rsc 'split("\n") | map(select(length > 0))')"
+          quarantined_json="$(printf '%s\n' "$quarantined" | jq -Rsc 'split("\n") | map(select(length > 0))')"
           dedicated_workflow_json='["org-team-lifecycle-critical-path.e2e.test.ts"]'
           excluded="$(
             printf '%s\n' "$raw_desktop" "$(echo "$profile_excluded_json" | jq -r '.[]')" \
@@ -158,8 +160,13 @@ jobs:
           all_tests="$(
             printf '%s\n' evals/specs/*.e2e.test.ts \
               | sed 's#^evals/specs/##' \
-              | jq -Rsc 'split("\n") | map(select(length > 0))'
+              | jq -Rsc --argjson quarantined "$quarantined_json" '
+                  split("\n")
+                  | map(select(length > 0))
+                  | map(select(. as $test | $quarantined | index($test) | not))
+                '
           )"
+          lane_excluded_json="$(echo "$all_tests" | jq -c --argjson excluded "$excluded_json" 'map(select(. as $test | $excluded | index($test)))')"
           eligible_tests="$(
             echo "$all_tests" \
               | jq -c --argjson excluded "$excluded_json" '
@@ -205,7 +212,7 @@ jobs:
           {
             echo "### Daytona E2E regression plan"
             echo
-            echo "Inventory: $(echo "$all_tests" | jq 'length') total; $(echo "$excluded_json" | jq 'length') excluded; $(echo "$eligible_tests" | jq 'length') eligible for the shared topology"
+            echo "Inventory: $(($(echo "$all_tests" | jq 'length') + $(echo "$quarantined_json" | jq 'length'))) total; $(echo "$quarantined_json" | jq 'length') quarantined; $(echo "$lane_excluded_json" | jq 'length') topology-excluded; $(echo "$eligible_tests" | jq 'length') eligible for the shared topology"
             echo "- Profile exclusions: $(echo "$profile_excluded_json" | jq 'length')"
             echo "- Raw desktop() exclusions: $(echo "$raw_desktop_json" | jq 'length')"
             echo "- Dedicated-workflow exclusions: $(echo "$dedicated_workflow_json" | jq 'length')"
@@ -216,8 +223,8 @@ jobs:
             fi
             echo "$batches" | jq -r '.[] | "- `\(.name)`: \(.tests | length) E2E tests"'
             echo
-            echo "Excluded (profile-incompatible, raw desktop(), or dedicated workflow): $(echo "$excluded_json" | jq 'length')"
-            echo "$excluded_json" | jq -r --slurpfile profile "$profile" --argjson dedicated "$dedicated_workflow_json" '
+            echo "Excluded (profile-incompatible, raw desktop(), or dedicated workflow): $(echo "$lane_excluded_json" | jq 'length')"
+            echo "$lane_excluded_json" | jq -r --slurpfile profile "$profile" --argjson dedicated "$dedicated_workflow_json" '
               .[] as $test
               | (($profile[0].excluded | map(select(.test == $test)) | first | .reason)
                 // (if $dedicated | index($test) then "owned by the dedicated nightly critical-path workflow" else "raw desktop() topology" end)) as $reason

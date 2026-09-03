@@ -106,7 +106,7 @@ function classifyOpenTarget(value: string, kind: OpenTargetKind): OpenTargetPrev
   if (kind === "url") return "browser";
   const ext = extname(value);
   if ([".md", ".markdown", ".mdx", ".mmd"].includes(ext)) return "markdown";
-  if ([".csv", ".tsv", ".xlsx", ".xls", ".ods"].includes(ext)) return "sheet";
+  if ([".csv", ".tsv", ".xlsx"].includes(ext)) return "sheet";
   if ([".ppt", ".pptx", ".pptm", ".pot", ".potx", ".odp", ".key", ".sxi"].includes(ext)) return "slides";
   if (ext === ".docx") return "document";
   if ([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"].includes(ext)) return "image";

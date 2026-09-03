@@ -150,7 +150,7 @@ test("Daytona E2E regression workflow fails skipped or empty matrices", async ({
   expect(workflow).toContain("profile_excluded_json=\"$(jq -c '[.excluded[].test]' \"$profile\")\"");
   expect(workflow).toContain('raw_desktop="$(node evals/scripts/list-daytona-raw-desktop-tests.mjs)"');
   expect(workflow).toContain('dedicated_workflow_json=\'["org-team-lifecycle-critical-path.e2e.test.ts"]\'');
-  expect(workflow).toContain("Inventory: $(echo \"$all_tests\" | jq 'length') total;");
+  expect(workflow).toContain("Inventory: $(($(echo \"$all_tests\" | jq 'length') + $(echo \"$quarantined_json\" | jq 'length'))) total;");
   expect(workflow).not.toContain("OPENWORK_EVAL_CRITICAL_PATH_E2E_JOURNEY=1");
   expect(workflow).toContain('if [ "$result" != "passed" ]; then');
   expect(workflow).toContain("if: steps.run.outputs.result == 'passed'");

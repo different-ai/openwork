@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
 import { test } from "@openwork/testkit";
 import { listSinglesTests } from "../scripts/list-singles-tests.mjs";
+import { listQuarantined } from "../scripts/quarantine.mjs";
 
 const profilePath = fileURLToPath(
   new URL("./daytona-e2e-regression-profile.json", import.meta.url),
@@ -56,8 +57,9 @@ test("the singles selection is exactly the standalone-runnable excluded categori
   ]);
   const profile: unknown = JSON.parse(profileSource);
   const entries = profileEntries(profile);
+  const quarantined = new Set(listQuarantined());
   const expected = entries
-    .filter(({ category, test: profileTest }) => SINGLES_CATEGORIES.has(category) && profileTest !== DENIED_TEST)
+    .filter(({ category, test: profileTest }) => SINGLES_CATEGORIES.has(category) && profileTest !== DENIED_TEST && !quarantined.has(profileTest))
     .map(({ test: profileTest }) => profileTest);
 
   expect(new Set(selected)).toEqual(new Set(expected));
@@ -68,11 +70,12 @@ test("the singles selection is exactly the standalone-runnable excluded categori
   expect(selectedEntries).toHaveLength(selected.length);
   expect(selectedEntries.every(({ category }) => SINGLES_CATEGORIES.has(category))).toBe(true);
   expect(selectedEntries.some(({ category }) => DISALLOWED_CATEGORIES.has(category))).toBe(false);
+  expect(selected.some((selectedTest) => quarantined.has(selectedTest))).toBe(false);
   expect(selected).not.toContain(DENIED_TEST);
 
   evidence.recordAssertionEvidence(
     "The singles selector contains exactly the standalone-runnable profile exclusions",
-    "Selection equals the fresh-den-url and fault-proxy profile entries after the explicit local-placement denial; every selected spec exists and no incompatible category enters the lane.",
+    "Selection equals the non-quarantined fresh-den-url and fault-proxy profile entries after the explicit local-placement denial; every selected spec exists and no incompatible category enters the lane.",
     true,
   );
 });

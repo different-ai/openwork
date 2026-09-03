@@ -1,3 +1,5 @@
+import { cellInputFromText, openXlsxWorkbook, sheetGridRows, writeXlsxWorkbook } from "@openwork/workbook";
+
 import type { Data } from "./open-target";
 
 export type SpreadsheetRows = string[][];
@@ -83,12 +85,30 @@ function serializeDelimited(rows: SpreadsheetRows, delimiter: string) {
     .join("\n") + "\n";
 }
 
-function normalizeRows(rows: unknown[][]): SpreadsheetRows {
-  const next = rows.map((row) => row.map((cell) => cell == null ? "" : String(cell)));
-
-  return next.length ? next : [[""]];
+function unsupportedWorkbookMessage(ext: string) {
+  if (ext === "xls") return "Legacy .xls workbooks can't be edited here. Save the file as .xlsx and open it again.";
+  if (ext === "ods") return "OpenDocument spreadsheets can't be edited here. Export the file as .xlsx and open it again.";
+  return null;
 }
 
+function workbookBytes(content: Data): Uint8Array {
+  return new Uint8Array(content.kind === "binary" ? content.data : new ArrayBuffer(0));
+}
+
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(bytes.byteLength);
+
+  copy.set(bytes);
+
+  return copy.buffer;
+}
+
+/**
+ * Rows of the first sheet as a dense grid anchored at A1, so cell positions
+ * survive a save. Values are the stored values: numbers as written, booleans
+ * as TRUE/FALSE, date-formatted serials as ISO dates, formulas by their last
+ * calculated result.
+ */
 export async function parseSpreadsheet(input: { name: string; content: Data }): Promise<SpreadsheetRows> {
   const ext = extension(input.name);
 
@@ -96,19 +116,22 @@ export async function parseSpreadsheet(input: { name: string; content: Data }): 
     return parseDelimited(input.content.kind === "text" ? input.content.data : "", delimiterForName(input.name));
   }
 
-  const XLSX = await import("xlsx");
-  const workbook = XLSX.read(input.content.kind === "binary" ? input.content.data : new ArrayBuffer(0), { type: "array" });
-  const firstSheetName = workbook.SheetNames[0];
+  const unsupported = unsupportedWorkbookMessage(ext);
+  if (unsupported) throw new Error(unsupported);
 
-  if (!firstSheetName) { 
-    return [[""]]; 
-  }
+  const workbook = await openXlsxWorkbook(workbookBytes(input.content));
+  const sheet = await workbook.readSheet(workbook.sheets[0]);
 
-  const sheet = workbook.Sheets[firstSheetName];
-
-  return normalizeRows(XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, blankrows: true }) as unknown[][]);
+  return sheetGridRows(sheet);
 }
 
+/**
+ * Writes the edited grid back. Delimited files stay text; workbooks become a
+ * single-sheet .xlsx whose cells keep their value types (canonical numbers,
+ * TRUE and FALSE) instead of turning every value into text. Text is never
+ * turned into a formula: the editor cannot tell typed formulas from imported
+ * text, so nothing saved here is executable.
+ */
 export async function serializeSpreadsheet(name: string, rows: SpreadsheetRows): Promise<Data> {
   const ext = extension(name);
 
@@ -116,22 +139,12 @@ export async function serializeSpreadsheet(name: string, rows: SpreadsheetRows):
     return { kind: "text", data: serializeDelimited(rows, delimiterForName(name)) };
   }
 
-  const XLSX = await import("xlsx");
-  const workbook = XLSX.utils.book_new();
+  const unsupported = unsupportedWorkbookMessage(ext);
+  if (unsupported) throw new Error(unsupported);
 
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), "Sheet1");
+  const { bytes } = await writeXlsxWorkbook([
+    { name: "Sheet1", header: false, rows: rows.map((row) => row.map((value) => cellInputFromText(String(value ?? "")))) },
+  ]);
 
-  const bookType = ext === "xls" ? "xls" : ext === "ods" ? "ods" : "xlsx";
-  const output = XLSX.write(workbook, { type: "array", bookType });
-
-  if (output instanceof ArrayBuffer) {
-    return { kind: "binary", data: output };
-  }
-
-  const view = output as Uint8Array;
-  const copy = new Uint8Array(view.byteLength);
-
-  copy.set(view);
-
-  return { kind: "binary", data: copy.buffer };
+  return { kind: "binary", data: toArrayBuffer(bytes) };
 }

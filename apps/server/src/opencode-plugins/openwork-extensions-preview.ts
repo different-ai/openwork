@@ -125,13 +125,12 @@ Each affordance declares its effects and executor. Use openwork_query only for s
 Reading another session does not require opening it. Prefer session.search then session.read for transcript questions; use session.create for new chats and a UI command only when the user asks to navigate.
 To open settings or navigate the app, use openwork_execute with ids from openwork_context such as settings.panel.open — never browser_* tools for the OpenWork app itself.`;
 
-// The one authoritative statement of the browser rules — the app-surface
-// section already forbids browser_* on the OpenWork app, so this block only
-// adds the external-web mechanics.
+// External-web mechanics only: the app-surface section above owns the rule
+// that browser_* tools never drive the OpenWork app itself.
 const OPENWORK_BROWSER_INSTRUCTION =
   `## Built-in Browser (external websites)
 For web browsing tasks, ALWAYS start with openwork_execute id browser.open_url. It creates/selects a built-in OpenWork browser tab and returns browser_url plus target_id. Use that exact browser_url and target_id for every later browser_snapshot, browser_click, browser_fill, browser_eval, and browser_screenshot call.
-Do not call browser_navigate without a target_id returned by browser.open_url. Never use browser_* tools on the OpenWork app itself (avoid targets with title "OpenWork" or URLs containing ":5173/#/").`;
+Do not call browser_navigate without a target_id returned by browser.open_url; a target titled "OpenWork" or whose URL contains ":5173/#/" is the app itself, not a web page.`;
 
 // ── UI control bridge discovery ──
 
@@ -962,15 +961,17 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
     // One section id per concern — composition drops empties/duplicates so routing,
     // remote skills, session, and browser guidance never overlap by accident.
     // Appended into the engine's existing system entry so the request still
-    // carries a single system message.
+    // carries a single system message. Order: stable mechanics first, then the
+    // live Connect steering and skill-authoring mode, then the catalogs, so
+    // rules are read before the data they govern.
     appendAgentInstructions(
       output.system,
-      createInstructionSection("routing", extensionInstruction),
       createInstructionSection("agent-surface", OPENWORK_AGENT_SURFACE_INSTRUCTION),
+      createInstructionSection("browser", OPENWORK_BROWSER_INSTRUCTION),
+      createInstructionSection("routing", extensionInstruction),
       createInstructionSection("skill-authoring", skillAuthoring.prompt),
       createInstructionSection("connect-skills", skillInstruction),
       createInstructionSection("automations", automationInstruction),
-      createInstructionSection("browser", OPENWORK_BROWSER_INSTRUCTION),
     );
   },
   tool: {

@@ -1,6 +1,7 @@
 import { DEN_WORKER_POLL_INTERVAL_MS } from "./CONSTS";
 import { denApiCredentials, denApiEndpoint } from "./den-api-origin";
 import { ORG_SCOPE_HEADER, getRequestOrgScope, shouldPinOrgScopePath } from "./org-scope";
+import { getRuntimeConfig } from "./runtime-config";
 
 export type AuthMode = "sign-in" | "sign-up";
 export type SocialAuthProvider = "github" | "google";
@@ -1251,7 +1252,10 @@ export async function requestJson(path: string, init: RequestInit = {}, timeoutM
 
   let response: Response;
   try {
-    const endpoint = denApiEndpoint(path);
+    if (typeof window !== "undefined") {
+      await getRuntimeConfig();
+    }
+    const endpoint = path.startsWith("/api/auth/") ? path : denApiEndpoint(path);
     response = await fetch(endpoint, {
       ...init,
       headers,

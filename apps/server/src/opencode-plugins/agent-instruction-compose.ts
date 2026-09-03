@@ -84,15 +84,16 @@ export function composeAgentInstructions(...groups: AgentInstructionSectionGroup
  * message after the first ("System message must be at the beginning."), so
  * OpenWork folds its instructions into the existing entry instead of pushing a
  * second one. The engine alone sends a single system message; this keeps that
- * shape intact.
+ * shape intact. Sections are separated by a blank line so each heading starts
+ * its own paragraph instead of trailing the previous sentence.
  */
 export function appendAgentInstructions(system: string[], ...groups: AgentInstructionSectionGroup[]): void {
-  const body = composeAgentInstructions(...groups).join("\n");
+  const body = composeAgentInstructions(...groups).join("\n\n");
   if (!body) return;
   const last = system.length - 1;
   if (last < 0) {
     system.push(body);
     return;
   }
-  system[last] = system[last] ? `${system[last]}\n${body}` : body;
+  system[last] = system[last] ? `${system[last]}\n\n${body}` : body;
 }

@@ -21,7 +21,7 @@ import {
 } from "../surface/queued-drain-machine";
 import { getSessionModelSelection, useSessionModelStore } from "../surface/session-model-store";
 import { draftToParts } from "./draft-parts";
-import { buildOpenworkEnvSystemContext } from "./env-context";
+import { buildOpenworkSessionSystemContext } from "./env-context";
 import {
   clearQueuedSendContext,
   getQueuedSendContext,
@@ -122,7 +122,7 @@ async function performQueuedDraftSend(
     client: context.client,
     workspaceId: context.workspaceId,
   });
-  const envSystemContext = await buildOpenworkEnvSystemContext(context.client, {
+  const system = await buildOpenworkSessionSystemContext(context.client, {
     cacheKey: sessionId,
     runtimeKey: context.environmentRuntimeKey,
   });
@@ -132,7 +132,7 @@ async function performQueuedDraftSend(
     model: sendModel ?? undefined,
     agent: context.agent ?? undefined,
     ...(sendVariant ? { variant: sendVariant } : {}),
-    ...(envSystemContext ? { system: envSystemContext } : {}),
+    system,
   });
   if (result.error) throw new Error(serializeSDKError(result.error));
   if (sendModel) {

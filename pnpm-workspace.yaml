@@ -1,5 +1,6 @@
 minimumReleaseAge: 4320
 minimumReleaseAgeExclude:
+  - "lru.min@1.1.5"
   - "@opencode-ai/sdk"
   - "acorn"
   - "dompurify"

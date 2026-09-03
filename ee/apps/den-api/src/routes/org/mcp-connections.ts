@@ -59,6 +59,7 @@ import {
   listActiveExternalMcpConnectionBindings,
   listDirectExternalMcpConnectionAccess,
   listExternalMcpConnections,
+  listRetiredPluginOwnedExternalMcpConnectionIds,
   listVisibleExternalMcpConnections,
   markExternalMcpConnectionConnected,
   markExternalMcpOAuthIssuerReviewRequired,
@@ -309,6 +310,8 @@ const createExternalConnectionBodySchema = z.object({
   url: externalMcpUrlSchema,
   authType: z.enum(["oauth", "apikey", "none"]),
   credentialMode: z.enum(["shared", "per_member"]).optional().default("shared"),
+  /** When true, granted members can reach this connection as a standard MCP server with its own tool catalog instead of only through search_capabilities/execute_capability. */
+  exposeDirectly: z.boolean().optional().default(false),
   apiKey: z.string().trim().min(1).max(4096).optional(),
   oauthClient: z.object({
     clientId: z.string().trim().min(1).max(512),
@@ -343,6 +346,8 @@ const updateConnectionBodySchema = z.object({
   url: externalMcpUrlSchema,
   authType: z.enum(["oauth", "apikey", "none"]),
   credentialMode: z.enum(["shared", "per_member"]),
+  /** Omitted keeps the stored value. */
+  exposeDirectly: z.boolean().optional(),
   /** Omitted means preserve only when the connection identity is unchanged. Never returned by any read route. */
   apiKey: z.string().trim().min(1).max(4096).optional(),
   oauthClient: z.object({
@@ -397,6 +402,8 @@ const connectionResponseSchema = z.object({
   url: z.string(),
   authType: z.enum(["oauth", "apikey", "none"]),
   credentialMode: z.enum(["shared", "per_member"]),
+  /** True when granted members may use this connection as a standard MCP server with its own tool catalog. */
+  exposeDirectly: z.boolean(),
   connected: z.boolean(),
   connectedAt: z.string().nullable(),
   /** Safe creator display label for admin/manageable rows. */
@@ -1134,6 +1141,7 @@ async function toConnectionResponse(
     url: row.url,
     authType: row.authType,
     credentialMode: row.credentialMode,
+    exposeDirectly: row.exposeDirectly,
     // Which service a native connector fronts ("google-workspace"), so a
     // member's card can say what they would be signing in to. Null for
     // external MCP rows, whose url already names the service.
@@ -1721,7 +1729,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Capability Sources"],
       summary: "List External MCP Connections",
-      description: "scope=usable (default): connections the calling member has been granted (org-wide, direct, or via a team), with per-member connection status. scope=manageable: every org connection with access summaries — workspace owners and admins only.",
+      description: "scope=usable (default): connections the calling member has been granted (org-wide, direct, or via a team), with per-member connection status. scope=manageable: every org connection with access summaries — workspace owners and admins only. A connection a plugin created for its own MCP server is omitted while every plugin that owns it is archived or deleted; restoring the plugin lists it again.",
       responses: {
         200: jsonResponse("Connections.", connectionListResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
@@ -1741,7 +1749,12 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         if (!verifyOrgRole({ roles: ["admin"], userContext: payload.currentMember })) {
           return c.json({ error: "forbidden", message: "Only workspace owners and admins can list all MCP connections." }, 403)
         }
-        const rows = await listExternalMcpConnections(payload.organization.id)
+        const allRows = await listExternalMcpConnections(payload.organization.id)
+        const retiredIds = await listRetiredPluginOwnedExternalMcpConnectionIds({
+          organizationId: payload.organization.id,
+          connectionIds: allRows.map((row) => row.id),
+        })
+        const rows = allRows.filter((row) => !retiredIds.has(row.id))
         const provenance = await requiredByForConnections({ context, includeAllPluginNames: true, rows })
         const connections = await Promise.all(rows.map((row) =>
           toConnectionResponse(row, {
@@ -2246,6 +2259,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         url: body.url,
         authType: body.authType,
         credentialMode: body.credentialMode,
+        exposeDirectly: body.exposeDirectly,
         apiKey: body.apiKey ?? null,
         oauthConfiguration: body.authType === "oauth" ? {
           version: 1,
@@ -2522,6 +2536,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         url: body.url,
         authType: body.authType,
         credentialMode: body.credentialMode,
+        ...(body.exposeDirectly !== undefined ? { exposeDirectly: body.exposeDirectly } : {}),
         ...(body.apiKey !== undefined ? { apiKey: body.apiKey } : {}),
         ...(body.oauthClient ? {
           oauthClient: {

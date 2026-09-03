@@ -36,6 +36,18 @@ draft = false
 type = "local"
 
 [[skills]]
+name = "spec-provenance-review"
+paths = ["evals/specs/**", "evals/worlds/**"]
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize", "reopened"]
+draft = false
+
+[[skills.triggers]]
+type = "local"
+
+[[skills]]
 name = "desktop-den-sync-review"
 paths = [
   "apps/app/**",

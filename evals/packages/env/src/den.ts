@@ -18,6 +18,7 @@ import {
 import { denFetch, ensureMemberSession, freshSession, signIn } from "@openwork/behaviors";
 import { progress, trackResource } from "@openwork/world";
 import { createConnection } from "mysql2/promise";
+import type { ExecuteValues } from "mysql2";
 import type { ChildProcess } from "node:child_process";
 import type { DenRef, DenSession } from "@openwork/behaviors";
 import type { DbHandle, Place } from "./place.ts";
@@ -449,7 +450,7 @@ export async function inviteMember(den: Den, key: string, person?: PersonShape):
   return member;
 }
 
-export async function queryDenDatabase(databaseUrl: string, statement: string, values: readonly unknown[] = []): Promise<unknown[]> {
+export async function queryDenDatabase(databaseUrl: string, statement: string, values: readonly ExecuteValues[] = []): Promise<unknown[]> {
   const connection = await createConnection(databaseUrl);
   try {
     const [rows] = await connection.execute(statement, [...values]);
@@ -809,8 +810,8 @@ export async function server(options: ServerOptions): Promise<Den> {
       DATABASE_URL: database.url,
       DEN_DB_ENCRYPTION_KEY: DATABASE_ENCRYPTION_KEY,
       BETTER_AUTH_SECRET,
-      BETTER_AUTH_URL: `http://localhost:${webPort}`,
-      DEN_BASE_URL: `http://localhost:${webPort}`,
+      BETTER_AUTH_URL: ref.webUrl,
+      DEN_BASE_URL: ref.webUrl,
       DEN_API_PUBLIC_URL: ref.apiUrl,
       DEN_API_PORT: String(apiPort),
       DEN_WEB_PORT: String(webPort),
@@ -843,8 +844,8 @@ export async function server(options: ServerOptions): Promise<Den> {
           DEN_WEB_HOST: "127.0.0.1",
           ...commonEnv,
           DEN_API_BASE: `http://127.0.0.1:${apiPort}`,
-          DEN_BASE_URL: `http://localhost:${webPort}`,
-          DEN_AUTH_ORIGIN: `http://localhost:${webPort}`,
+          DEN_BASE_URL: ref.webUrl,
+          DEN_AUTH_ORIGIN: ref.webUrl,
           DEN_AUTH_FALLBACK_BASE: `http://127.0.0.1:${apiPort}`,
         }, join(logsDir, "web.log"));
     const webStep = web ? steps.step("den-web", "den-web", { log: web.logPath }) : null;

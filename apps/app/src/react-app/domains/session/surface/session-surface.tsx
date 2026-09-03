@@ -38,6 +38,7 @@ import {
   recordInspectorEvent,
 } from "@/app/lib/app-inspector";
 import { useControlAction, type OpenworkControlAction } from "@/react-app/shell/control/control-provider";
+import { isConnectDirectMcpServerName } from "@/react-app/domains/connections/cloud-mcp-user-state";
 import { attemptSilentMcpReauth } from "@/react-app/domains/connections/mcp-silent-reauth";
 import type {
   CloudMcpSubmissionGateState,
@@ -495,6 +496,57 @@ function createSessionErrorEvalMessages(sessionId: string): UIMessage[] {
       metadata: { opencode: { created: now + 1, completed: now + 900 } },
     },
     createSessionErrorUIMessage(turnId, presentOpencodeSessionError(SESSION_ERROR_EVAL_PAYLOAD), { created: now + 1_000 }),
+  ];
+}
+
+// Long enough (well past the one-line clip and the box's max height) that
+// seeing its last line proves the whole running command is readable.
+const TOOL_DETAILS_EVAL_RUNNING_COMMAND = [
+  "cat <<'EOF' > /tmp/openwork-eval/release-check.sh",
+  "#!/usr/bin/env bash",
+  "set -euo pipefail",
+  "export OPENWORK_EVAL_E2E_TESTS=1",
+  "pnpm world up dev-headless --detach -- --replace --keep-tokens",
+  "for spec in \\",
+  "  chat-loading-shimmer \\",
+  "  chat-tool-details-expand \\",
+  "  chat-thought-chronology \\",
+  "  live-tool-visible-after-session-switch \\",
+  "  session-completion-reconciliation \\",
+  "  active-session-workspace-storm; do",
+  "  pnpm vitest run \"evals/specs/$spec.e2e.test.ts\" --reporter=verbose",
+  "done",
+  "pnpm --filter @openwork/app typecheck",
+  "pnpm --filter @openwork/app test",
+  "pnpm evals:typecheck",
+  "pnpm world down dev-headless",
+  "EOF",
+  "bash /tmp/openwork-eval/release-check.sh --reporter=verbose",
+].join("\n");
+
+function createToolDetailsRunningCommandEvalMessages(sessionId: string): UIMessage[] {
+  const now = Date.now();
+  return [
+    {
+      id: `${sessionId}:eval-tool-details-running-user`,
+      role: "user",
+      parts: [{ type: "text", text: "Write and run the release check." }],
+      metadata: { opencode: { created: now } },
+    },
+    {
+      id: `${sessionId}:eval-tool-details-running-assistant`,
+      role: "assistant",
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolName: "bash",
+          toolCallId: "eval-tool-details-running-bash",
+          state: "input-available",
+          input: { command: TOOL_DETAILS_EVAL_RUNNING_COMMAND, description: "Run the release check" },
+        },
+      ],
+      metadata: { opencode: { created: now + 1 } },
+    },
   ];
 }
 
@@ -1499,6 +1551,23 @@ export function SessionSurface(props: SessionSurfaceProps) {
     };
   }, [props.sessionId]);
   useControlAction(props.isControlTarget ? seedSessionErrorControlAction : null);
+  const seedRunningCommandControlAction = useMemo<OpenworkControlAction | null>(() => {
+    if (!import.meta.env.DEV) return null;
+
+    return {
+      id: "eval.tool_details.seed_running_command",
+      label: "Seed a running long command",
+      description: "Dev-only eval hook that renders one in-flight multi-line command in an active session.",
+      sideEffect: "mutation",
+      disabled: !props.sessionId,
+      execute: () => {
+        setEvalMarkdownMessages(createToolDetailsRunningCommandEvalMessages(props.sessionId));
+        useSessionActivityStore.getState().setRunStatus(props.workspaceId, props.sessionId, { type: "busy" });
+        return { ok: true };
+      },
+    };
+  }, [props.sessionId, props.workspaceId]);
+  useControlAction(props.isControlTarget ? seedRunningCommandControlAction : null);
   const seedSessionLifecycleControlAction = useMemo<OpenworkControlAction | null>(() => {
     if (!import.meta.env.DEV) return null;
 
@@ -2361,12 +2430,16 @@ export function SessionSurface(props: SessionSurfaceProps) {
       })()
       : Promise.resolve({});
     const [response, localStatuses] = await Promise.all([localMcpPromise, localStatusesPromise]);
-    const localServers = (response.items ?? []).map((entry) => ({
-      name: entry.name,
-      config: entry.config as McpServerEntry["config"],
-      source: entry.source,
-      origin: entry.name === "openwork-cloud" ? "openwork-connect" : "local",
-    } satisfies McpServerEntry));
+    // Directly exposed org connections are already listed through their org
+    // connection entry; their projected runtime rows must not appear twice.
+    const localServers = (response.items ?? [])
+      .filter((entry) => !isConnectDirectMcpServerName(entry.name))
+      .map((entry) => ({
+        name: entry.name,
+        config: entry.config as McpServerEntry["config"],
+        source: entry.source,
+        origin: entry.name === "openwork-cloud" ? "openwork-connect" : "local",
+      } satisfies McpServerEntry));
 
     void connectPromise.then((connect) => {
       if (mcpConnectPushRef.current !== pushId) return;

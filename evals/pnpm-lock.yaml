@@ -14,6 +14,9 @@ importers:
       '@openwork/cdp':
         specifier: workspace:*
         version: link:packages/cdp
+      '@openwork/env':
+        specifier: workspace:*
+        version: link:packages/env
       '@openwork/hosts':
         specifier: workspace:*
         version: link:packages/hosts
@@ -42,6 +45,9 @@ importers:
       dependency-cruiser:
         specifier: 18.1.0
         version: 18.1.0
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
       vitest:
         specifier: ^3.2.4
         version: 3.2.7(@types/node@26.1.2)
@@ -128,6 +134,9 @@ importers:
       '@openwork/labs':
         specifier: workspace:*
         version: link:../labs
+      '@openwork/test-artifacts':
+        specifier: workspace:*
+        version: link:../test-artifacts
       '@openwork/test-evidence':
         specifier: workspace:*
         version: link:../test-evidence
@@ -1024,6 +1033,11 @@ packages:
     resolution: {integrity: sha512-NoZ4roiN7LnbKn9QqE1amc9DJfzvZXxF4xDavcOWt1BPkdx+m+0gJuPM+S0vCe7zTJMYUP0R8pO2XMr+Y8oLIg==}
     engines: {node: '>=6'}
 
+  typescript@5.9.3:
+    resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
+    engines: {node: '>=14.17'}
+    hasBin: true
+
   undici-types@8.3.0:
     resolution: {integrity: sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ==}
 
@@ -1884,6 +1898,8 @@ snapshots:
       json5: 2.2.3
       minimist: 1.2.8
       strip-bom: 3.0.0
+
+  typescript@5.9.3: {}
 
   undici-types@8.3.0: {}
 

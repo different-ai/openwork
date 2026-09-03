@@ -1,6 +1,7 @@
 import { defineConfig } from "vitest/config";
 import { fileURLToPath } from "node:url";
 import { shouldPrepareSuite, suiteWorkerCount } from "./runner/stack-suite.ts";
+import { listQuarantined } from "./scripts/quarantine.mjs";
 
 const common = {
   environment: "node",
@@ -16,6 +17,7 @@ const attachedDen = Boolean(process.env.OPENWORK_EVAL_DEN_API_URL?.trim());
 const managedStack = prepareSuite && !attachedDen;
 const e2eWorkers = managedStack ? suiteWorkerCount(process.argv, process.env) : 1;
 const namedLiveSpec = process.argv.some((argument) => argument.endsWith(".live.test.ts"));
+const quarantinedE2eSpecs = listQuarantined().map((spec) => `**/${spec}`);
 
 export default defineConfig({
   test: {
@@ -24,6 +26,7 @@ export default defineConfig({
     maxWorkers: e2eWorkers,
     projects: [
       {
+        resolve: appResolve,
         test: {
           ...common,
           name: "pr",
@@ -42,6 +45,7 @@ export default defineConfig({
           globalSetup: ["./runner/prepare-stack.ts"],
           setupFiles: ["./runner/stack-env.ts"],
           include: ["specs/**/*.e2e.test.ts"],
+          exclude: quarantinedE2eSpecs,
         },
       },
     ],

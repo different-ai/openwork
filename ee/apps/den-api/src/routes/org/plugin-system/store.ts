@@ -232,6 +232,13 @@ type PluginMcpRequirementServer = {
   url: string
 }
 
+type PluginMcpConnectionSetup = {
+  apiKey?: string
+  authType: PluginMcpRequirementAuthType
+  credentialMode?: PluginMcpRequirementCredentialMode
+  oauthClient?: { clientId: string; clientSecret?: string }
+}
+
 type GithubPluginMcpImportServer = {
   authType: "oauth" | null
   connectionId: string | null
@@ -2682,8 +2689,35 @@ export async function createPlugin(input: {
   return serializePlugin(row, 0)
 }
 
+function pluginMcpConnectionSetupInput(setup: PluginMcpConnectionSetup) {
+  return {
+    apiKey: setup.apiKey,
+    authType: setup.authType,
+    credentialMode: setup.credentialMode ?? (setup.authType === "oauth" ? "per_member" : "shared"),
+    oauthClient: setup.oauthClient,
+  }
+}
+
+/**
+ * A plugin whose inline MCP connection setup failed must not survive as an
+ * active plugin with a half-configured server: the creator would see the
+ * failure, fix the credentials, and then hit a duplicate-name conflict on
+ * retry. Mirror the GitHub import path instead — drop the bindings and the
+ * connections this attempt created, then archive the plugin.
+ */
+async function rollbackPluginMcpConnectionSetup(input: { context: PluginArchActorContext; pluginId: PluginId }) {
+  const organizationId = input.context.organizationContext.organization.id
+  const bindings = await pluginMcpRequirementBindingsForResource({ organizationId, resourceId: input.pluginId, resourceKind: "plugin" }).catch(() => [])
+  await deletePluginMcpRequirementBindingsForPlugin({ organizationId, pluginId: input.pluginId }).catch(() => undefined)
+  for (const binding of bindings) {
+    if (!binding.connectionOwnedByPlugin) continue
+    await deleteExternalMcpConnectionIfUnreferenced({ connectionId: binding.externalMcpConnectionId, organizationId }).catch(() => undefined)
+  }
+  await setPluginLifecycle({ action: "archive", context: input.context, pluginId: input.pluginId }).catch(() => undefined)
+}
+
 export async function createPluginBundle(input: {
-  components?: { type: ConfigObjectRow["objectType"]; value: ConfigObjectInput }[]
+  components?: { connection?: PluginMcpConnectionSetup; type: ConfigObjectRow["objectType"]; value: ConfigObjectInput }[]
   context: PluginArchActorContext
   description?: string | null
   marketplaceId?: MarketplaceId
@@ -2697,6 +2731,11 @@ export async function createPluginBundle(input: {
 
   for (const component of input.components ?? []) {
     deriveProjection({ objectType: component.type, value: component.value })
+    if (!component.connection) continue
+    if (!isPluginArchOrgAdmin(input.context)) {
+      throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can configure plugin MCP connections.")
+    }
+    validatePluginMcpRequirementAuth(pluginMcpConnectionSetupInput(component.connection))
   }
 
   if (input.marketplaceId) {
@@ -2706,6 +2745,7 @@ export async function createPluginBundle(input: {
 
   const plugin = await createPlugin({ context: input.context, description: input.description, name: input.name, sourceRepositoryUrl: input.sourceRepositoryUrl })
 
+  const pendingConnections: Array<{ configObjectId: ConfigObjectId; connection: PluginMcpConnectionSetup; serverNames: string[] }> = []
   for (const component of input.components ?? []) {
     const configObject = await createConfigObject({
       context: input.context,
@@ -2723,6 +2763,13 @@ export async function createPluginBundle(input: {
         value: { orgWide: true, role: "viewer" },
       })
     }
+    if (component.connection) {
+      pendingConnections.push({
+        configObjectId: configObject.id,
+        connection: component.connection,
+        serverNames: marketplaceMcpServerEntries(parseConfigObjectInputSpec(component.value), configObject.title).map((entry) => entry.name),
+      })
+    }
   }
 
   if (input.orgWide) {
@@ -2736,6 +2783,25 @@ export async function createPluginBundle(input: {
 
   if (input.marketplaceId) {
     await attachPluginToMarketplace({ context: input.context, marketplaceId: input.marketplaceId, pluginId: plugin.id })
+  }
+
+  // Grants and the collection are in place, so the derived connection access
+  // is complete the moment each server is configured.
+  try {
+    for (const pending of pendingConnections) {
+      for (const serverName of pending.serverNames) {
+        await configureMarketplacePluginMcpRequirement({
+          ...pluginMcpConnectionSetupInput(pending.connection),
+          configObjectId: pending.configObjectId,
+          context: input.context,
+          pluginId: plugin.id,
+          serverName,
+        })
+      }
+    }
+  } catch (error) {
+    await rollbackPluginMcpConnectionSetup({ context: input.context, pluginId: plugin.id })
+    throw error
   }
 
   return getPluginDetail(input.context, plugin.id)

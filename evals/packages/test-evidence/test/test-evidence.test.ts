@@ -55,6 +55,10 @@ test("test evidence writes visual validations, assertions, failures, and unvalid
     testEvidence.recordVisualValidation(passing.hash, seen("Passing screenshot", true));
     testEvidence.recordVisualValidation(failing.hash, seen("Failing screenshot", false));
     testEvidence.recordAssertionEvidence("API returned success", "HTTP 200", true);
+    testEvidence.recordTrace({ stage: "world", channel: "seed", verb: "den", detail: "den(local)", ok: true });
+    testEvidence.recordTrace({ stage: "body", channel: "user", verb: "reload", detail: "reload", ok: true });
+    testEvidence.recordStep({ name: "reload succeeds", depth: 0, ok: true, ms: 25 });
+    testEvidence.setOutcome("failed", "expected test failure");
     await testEvidence.close();
 
     const testRun = await payload(dir);
@@ -70,6 +74,17 @@ test("test evidence writes visual validations, assertions, failures, and unvalid
       pendingJudgments: 0,
     });
     assert.ok(Array.isArray(testRun.artifacts));
+    assert.ok(Array.isArray(testRun.trace));
+    assert.equal(testRun.trace.length, 2);
+    assert.ok(isRecord(testRun.trace[0]));
+    assert.equal(testRun.trace[0].seq, 1);
+    assert.equal(testRun.trace[0].stage, "world");
+    assert.ok(isRecord(testRun.trace[1]));
+    assert.equal(testRun.trace[1].seq, 2);
+    assert.equal(testRun.trace[1].channel, "user");
+    assert.deepEqual(testRun.steps, [{ seq: 1, name: "reload succeeds", depth: 0, ok: true, ms: 25 }]);
+    assert.equal(testRun.outcome, "failed");
+    assert.equal(testRun.failure, "expected test failure");
     assert.deepEqual(
       testRun.artifacts.map((artifact) => isRecord(artifact) ? artifact.caption : null),
       ["Passing screenshot", "Failing screenshot", "API returned success", "body cam artifact 3"],

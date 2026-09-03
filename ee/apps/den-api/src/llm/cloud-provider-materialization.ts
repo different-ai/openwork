@@ -111,6 +111,8 @@ const requestTimeoutMs = 8_000
  * picker.
  */
 const materializedFingerprintByWorkerInstance = new Map<string, string>()
+// Only write-phase failures are cached. Read failures can occur while the
+// sandbox engine is booting and are safe to retry immediately.
 const materializationFailureByWorkerInstance = new Map<string, {
   failedAt: number
   result: Extract<CloudProviderMaterializationResult, { ok: false }>
@@ -952,6 +954,7 @@ export async function materializeCloudWorkerProviders(input: {
   const cacheKey = materializationCacheKey(input.workerId, instanceUrl)
   let fingerprint: string | null = null
   let providerCount = 0
+  let writePhaseStarted = false
 
   try {
     if (!instanceUrl) {
@@ -1009,6 +1012,7 @@ export async function materializeCloudWorkerProviders(input: {
     let providerPatched = false
 
     try {
+      writePhaseStarted = true
       await writeEnvEntries({
         fetchImpl,
         instanceUrl,
@@ -1101,7 +1105,9 @@ export async function materializeCloudWorkerProviders(input: {
       result,
       cause: error,
     })
-    materializationFailureByWorkerInstance.set(cacheKey, { failedAt: now(), result })
+    if (writePhaseStarted) {
+      materializationFailureByWorkerInstance.set(cacheKey, { failedAt: now(), result })
+    }
     return result
   }
 }

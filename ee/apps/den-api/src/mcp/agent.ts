@@ -72,10 +72,14 @@ import {
 } from "./generated-artifact-views.js"
 import type { PluginArchActorContext } from "../routes/org/plugin-system/access.js"
 import { parseArtifactViewResourceUri } from "../artifact-view-resource.js"
-import { listReadyExternalMcpConnections } from "../capability-sources/external-mcp-connections.js"
+import {
+  listUsableExternalMcpConnections,
+  readyExternalMcpConnectionsForMember,
+} from "../capability-sources/external-mcp-connections.js"
 import {
   CONNECT_MCP_APP_HOST_CAPABILITY_HEADER,
   registerConnectMcpServerIndex,
+  selectConnectMcpServerIndexConnections,
   supportsConnectMcpAppHost,
 } from "./connect-mcp-server-index.js"
 import { registerAgentSkillCreatedApp } from "./skill-created-app.js"
@@ -474,16 +478,25 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     const server = createAgentMcpServer()
     if (method === "server/discover" || method === "initialize" || method === "resources/list" || method === "resources/read") {
       if (memberIdentity) {
-        registerConnectMcpServerIndex({
-          server,
-          enabled: connectMcpAppHostSupported,
-          connections: connectMcpAppHostSupported
-            ? await listReadyExternalMcpConnections({
+        // Select before the per-member readiness probes so an ordinary client
+        // pays only for the connections it may actually see, and skip the
+        // lookup entirely when it can see none.
+        const indexReadable = connectMcpAppHostSupported || externalMcpConnectionsEnabled
+        const indexCandidates = indexReadable
+          ? selectConnectMcpServerIndexConnections({
+              appHostClient: connectMcpAppHostSupported,
+              memberFacingMcpConnectionsEnabled: externalMcpConnectionsEnabled,
+              connections: await listUsableExternalMcpConnections({
                 organizationId,
                 orgMembershipId: memberIdentity.orgMembershipId,
                 teamIds: memberIdentity.teamIds,
-              })
-            : [],
+              }),
+            })
+          : []
+        registerConnectMcpServerIndex({
+          server,
+          enabled: indexReadable,
+          connections: await readyExternalMcpConnectionsForMember(indexCandidates, memberIdentity.orgMembershipId),
           publicOrigin: redirectUriBase,
         })
       }

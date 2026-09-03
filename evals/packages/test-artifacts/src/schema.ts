@@ -37,6 +37,32 @@ export interface TestRunSummary {
   pendingJudgments: number;
 }
 
+export type TraceStage = "world" | "body";
+export type TraceChannel = "seed" | "seed:raw" | "user" | "agent" | "probe" | "probe:raw" | "vision" | "step";
+export type TestOutcome = "passed" | "failed" | "skipped" | "unknown";
+
+export interface TraceEntry {
+  seq: number;
+  at: string;
+  stage: TraceStage;
+  channel: TraceChannel;
+  verb: string;
+  detail: string;
+  surface?: string;
+  ok: boolean;
+  ms?: number;
+  error?: string;
+}
+
+export interface StepRecord {
+  seq: number;
+  name: string;
+  depth: number;
+  ok: boolean | "not-reached";
+  ms?: number;
+  error?: string;
+}
+
 export interface TestRunRecord {
   name: string;
   dir: string;
@@ -46,6 +72,10 @@ export interface TestRunRecord {
   branch?: string;
   summary: TestRunSummary;
   artifacts: TestArtifact[];
+  trace: TraceEntry[];
+  steps: StepRecord[];
+  outcome: TestOutcome;
+  failure?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -139,6 +169,50 @@ function parseArtifact(value: unknown): TestArtifact | null {
   };
 }
 
+function traceChannel(value: unknown): TraceChannel | null {
+  if (value === "seed" || value === "seed:raw" || value === "user" || value === "agent"
+    || value === "probe" || value === "probe:raw" || value === "vision" || value === "step") return value;
+  return null;
+}
+
+function parseTrace(value: unknown): TraceEntry | null {
+  if (!isRecord(value) || !isCount(value.seq) || typeof value.at !== "string"
+    || (value.stage !== "world" && value.stage !== "body") || typeof value.verb !== "string"
+    || typeof value.detail !== "string" || typeof value.ok !== "boolean") return null;
+  const channel = traceChannel(value.channel);
+  if (!channel) return null;
+  if (value.surface !== undefined && typeof value.surface !== "string") return null;
+  if (value.ms !== undefined && typeof value.ms !== "number") return null;
+  if (value.error !== undefined && typeof value.error !== "string") return null;
+  return {
+    seq: value.seq,
+    at: value.at,
+    stage: value.stage,
+    channel,
+    verb: value.verb,
+    detail: value.detail,
+    surface: value.surface,
+    ok: value.ok,
+    ms: value.ms,
+    error: value.error,
+  };
+}
+
+function parseStep(value: unknown): StepRecord | null {
+  if (!isRecord(value) || !isCount(value.seq) || typeof value.name !== "string" || !isCount(value.depth)
+    || (typeof value.ok !== "boolean" && value.ok !== "not-reached")) return null;
+  if (value.ms !== undefined && typeof value.ms !== "number") return null;
+  if (value.error !== undefined && typeof value.error !== "string") return null;
+  return {
+    seq: value.seq,
+    name: value.name,
+    depth: value.depth,
+    ok: value.ok,
+    ms: value.ms,
+    error: value.error,
+  };
+}
+
 function pendingCounts(artifacts: TestArtifact[]): { pendingArtifacts: number; pendingJudgments: number } {
   return {
     pendingArtifacts: artifacts.filter((artifact) => artifact.judgments.some((judgment) => judgment.state === "pending")).length,
@@ -223,6 +297,28 @@ function parseRecord(value: unknown, legacy: boolean): TestRunRecord | null {
   if (!summary) return null;
   const gitSha = typeof value.gitSha === "string" ? value.gitSha : undefined;
   const branch = typeof value.branch === "string" ? value.branch : undefined;
+  const trace: TraceEntry[] = [];
+  if (value.trace !== undefined) {
+    if (!Array.isArray(value.trace)) return null;
+    for (const entry of value.trace) {
+      const parsed = parseTrace(entry);
+      if (!parsed) return null;
+      trace.push(parsed);
+    }
+  }
+  const steps: StepRecord[] = [];
+  if (value.steps !== undefined) {
+    if (!Array.isArray(value.steps)) return null;
+    for (const step of value.steps) {
+      const parsed = parseStep(step);
+      if (!parsed) return null;
+      steps.push(parsed);
+    }
+  }
+  const outcome: TestOutcome = value.outcome === "passed" || value.outcome === "failed" || value.outcome === "skipped"
+    ? value.outcome
+    : "unknown";
+  const failure = typeof value.failure === "string" ? value.failure : undefined;
   return {
     name: value.name,
     dir: value.dir,
@@ -232,6 +328,10 @@ function parseRecord(value: unknown, legacy: boolean): TestRunRecord | null {
     branch,
     summary,
     artifacts,
+    trace,
+    steps,
+    outcome,
+    failure,
   };
 }
 

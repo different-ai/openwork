@@ -36,6 +36,20 @@ module.exports = {
       from: { path: "^packages(?:/|$)" },
       to: { path: "^runner(?:/|$)" },
     },
+    // Specs use the capability-restricted fixture layer, never implementation rails.
+    {
+      name: "specs-use-testkit-only",
+      severity: "error",
+      from: { path: "^specs/.*\\.e2e\\.test\\.ts$" },
+      to: { path: "^@openwork/(?:hosts|cdp|behaviors|test-evidence|labs|env)(?:/|$)" },
+    },
+    // Imperative worlds stay framework-free and arrange only through lower layers.
+    {
+      name: "worlds-use-seed-layer",
+      severity: "error",
+      from: { path: "^worlds(?:/|$)" },
+      to: { path: "^(?:vitest|@openwork/(?:testkit|test-evidence))(?:/|$)" },
+    },
   ],
   options: {
     doNotFollow: { path: "node_modules" },

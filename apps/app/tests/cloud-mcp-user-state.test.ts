@@ -5,6 +5,7 @@ import {
   clearCloudMcpUserState,
   clearCloudMcpUnhealthyRemintAttempt,
   isCloudMcpSyncMarkerFresh,
+  isConnectDirectMcpServerName,
   readCloudMcpSyncMarker,
   readCloudMcpUnhealthyRemintAttempt,
   readCloudMcpUserState,
@@ -157,5 +158,15 @@ describe("isCloudMcpSyncMarkerFresh", () => {
     expect(
       isCloudMcpSyncMarkerFresh({ expiresAt: "not-a-date", now, refreshMarginMs: DAY_MS }),
     ).toBe(false);
+  });
+});
+
+describe("isConnectDirectMcpServerName", () => {
+  test("recognizes only the projected direct org connection entries", () => {
+    expect(isConnectDirectMcpServerName("openwork-direct-linear-3f9a2c")).toBe(true);
+    expect(isConnectDirectMcpServerName("openwork-direct-3f9a2c")).toBe(true);
+    expect(isConnectDirectMcpServerName("openwork-cloud")).toBe(false);
+    expect(isConnectDirectMcpServerName("openwork-connect-legacy")).toBe(false);
+    expect(isConnectDirectMcpServerName("linear")).toBe(false);
   });
 });

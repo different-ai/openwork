@@ -17,6 +17,12 @@ export const CONNECT_MCP_SERVER_INDEX_URI = "openwork://connect/mcp-servers/inde
 export const CONNECT_MCP_SERVER_INDEX_SCHEMA_VERSION = "openwork.connect/mcp-servers/1";
 export const CONNECT_MCP_APP_HOST_NAME_PREFIX = "openwork-app-host-connect-";
 export const CONNECT_MCP_SERVER_NAME_PREFIX = "openwork-connect-";
+/**
+ * Model-facing OpenCode MCP entries for connections an administrator exposed
+ * directly. Distinct from the legacy `openwork-connect-` prefix, which every
+ * projection filter still strips, so a stale legacy row can never resurface.
+ */
+export const CONNECT_DIRECT_MCP_SERVER_NAME_PREFIX = "openwork-direct-";
 export const CONNECT_MCP_APP_HOST_CAPABILITY_HEADER = "x-openwork-mcp-client-capabilities";
 export const CONNECT_MCP_APP_HOST_CAPABILITY = "mcp-app-host-v1";
 
@@ -39,6 +45,7 @@ const indexSchema = z.object({
     name: z.string().min(1).max(255),
     description: z.string().max(1_024).nullable(),
     url: z.string().url().refine((value) => /^https?:\/\//.test(value), "MCP server URL must use HTTP(S)"),
+    exposeDirectly: z.boolean().optional().default(false),
   })).max(100),
 });
 
@@ -47,7 +54,9 @@ const appHostCredentialSchema = z.object({
   origin: z.string().url(),
 });
 
-export type OpenWorkConnectMcpServerIndex = z.infer<typeof indexSchema>;
+export type OpenWorkConnectMcpServerIndex = z.output<typeof indexSchema>;
+/** Index shape as Den publishes it; `exposeDirectly` is absent from older Den releases and defaults to false. */
+export type OpenWorkConnectMcpServerIndexInput = z.input<typeof indexSchema>;
 
 const emptyIndex = (): OpenWorkConnectMcpServerIndex => ({
   schemaVersion: CONNECT_MCP_SERVER_INDEX_SCHEMA_VERSION,
@@ -159,6 +168,50 @@ export function connectMcpAppHostName(connectionId: string): string {
   return `${CONNECT_MCP_APP_HOST_NAME_PREFIX}${digest}`;
 }
 
+/**
+ * OpenCode MCP key for a directly exposed connection. The readable slug tells
+ * the model which service it is talking to; the digest keeps two connections
+ * with the same display name apart.
+ */
+export function connectDirectMcpRuntimeName(server: { connectionId: string; name: string }): string {
+  const slug = server.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+  const digest = createHash("sha256").update(server.connectionId).digest("hex").slice(0, 6);
+  return `${CONNECT_DIRECT_MCP_SERVER_NAME_PREFIX}${slug ? `${slug}-` : ""}${digest}`;
+}
+
+function modelFacingHeaders(cloudMcp: Record<string, unknown>): Record<string, string> | null {
+  const headers = cloudMcp.headers;
+  if (typeof headers !== "object" || headers === null || Array.isArray(headers)) return null;
+  const entries = Object.entries(headers).filter((entry): entry is [string, string] => typeof entry[1] === "string");
+  return entries.length > 0 ? Object.fromEntries(entries) : null;
+}
+
+/**
+ * Model-facing runtime entries for the directly exposed connections in an
+ * index. They reuse the ordinary member credential already carried by the
+ * `openwork-cloud` entry; the private App-host credential never leaves the
+ * App host. `oauth: false` matches the `openwork-cloud` entry so an expired
+ * bearer token during rotation yields a plain 401 instead of the engine
+ * starting an interactive OAuth flow. Without a member credential there is
+ * nothing to project.
+ */
+export function directConnectMcpRuntimeEntries(
+  cloudMcp: Record<string, unknown>,
+  index: OpenWorkConnectMcpServerIndex,
+): Record<string, Record<string, unknown>> {
+  const headers = modelFacingHeaders(cloudMcp);
+  if (!headers) return {};
+  return Object.fromEntries(index.servers
+    .filter((server) => server.exposeDirectly)
+    .map((server) => [connectDirectMcpRuntimeName(server), {
+      type: "remote",
+      url: server.url,
+      enabled: cloudMcp.enabled !== false,
+      headers,
+      oauth: false,
+    }]));
+}
+
 export async function readOpenWorkConnectMcpAppHostCatalog(
   config: ServerConfig,
   workspaceId: string,
@@ -169,7 +222,7 @@ export async function readOpenWorkConnectMcpAppHostCatalog(
 export async function writeOpenWorkConnectMcpAppHostCatalog(
   config: ServerConfig,
   workspaceId: string,
-  catalog: OpenWorkConnectMcpServerIndex,
+  catalog: OpenWorkConnectMcpServerIndexInput,
 ): Promise<void> {
   const parsed = indexSchema.safeParse(catalog);
   await appHostCatalogStore.set(config, workspaceId, parsed.success ? parsed.data : emptyIndex());
@@ -276,9 +329,10 @@ export async function refreshOpenWorkConnectMcpAppHostCatalog(
 }
 
 /**
- * Keeps provider descriptors private to the Desktop App host and removes any
- * legacy OpenWork-owned provider endpoints from the model-facing runtime.
- * User-authored MCP configurations and durable provider records are untouched.
+ * Keeps provider descriptors private to the Desktop App host, projects only the
+ * connections an administrator exposed directly into the model-facing runtime,
+ * and removes any legacy OpenWork-owned provider endpoints. User-authored MCP
+ * configurations and durable provider records are untouched.
  */
 export async function reconcileOpenWorkConnectMcpServers(input: {
   config: ServerConfig;
@@ -286,7 +340,7 @@ export async function reconcileOpenWorkConnectMcpServers(input: {
   cloudMcp: Record<string, unknown>;
   appHostAuthorization?: string;
   fetcher?: McpFetch;
-}): Promise<{ status: "synced" | "unavailable"; appHostNames: string[]; removedNames: string[] }> {
+}): Promise<{ status: "synced" | "unavailable"; appHostNames: string[]; directNames: string[]; removedNames: string[] }> {
   const trustedCloudEndpoint = await trustedAppHostCloudEndpoint(input.cloudMcp);
   if (trustedCloudEndpoint && input.appHostAuthorization !== undefined) {
     await writeOpenWorkConnectMcpAppHostAuthorization(
@@ -309,21 +363,30 @@ export async function reconcileOpenWorkConnectMcpServers(input: {
   const privateCatalog = index ?? emptyIndex();
   await writeOpenWorkConnectMcpAppHostCatalog(input.config, input.workspace.id, privateCatalog);
 
+  // Without a fresh index, fail closed: a connection whose direct exposure was
+  // revoked must not linger in the model-facing runtime on a stale catalog.
+  const directEntries = directConnectMcpRuntimeEntries(input.cloudMcp, privateCatalog);
   let removedNames: string[] = [];
   await writeRuntimeOpencodeConfig(input.config, input.workspace.id, (current) => {
     const currentMcp = runtimeMcpMap(current);
     removedNames = Object.keys(currentMcp)
-      .filter((name) => name.startsWith(CONNECT_MCP_SERVER_NAME_PREFIX))
+      .filter((name) => name.startsWith(CONNECT_MCP_SERVER_NAME_PREFIX)
+        || (name.startsWith(CONNECT_DIRECT_MCP_SERVER_NAME_PREFIX) && !Object.hasOwn(directEntries, name)))
       .sort();
     return {
       ...current,
-      mcp: Object.fromEntries(Object.entries(currentMcp)
-        .filter(([name]) => !name.startsWith(CONNECT_MCP_SERVER_NAME_PREFIX))),
+      mcp: {
+        ...Object.fromEntries(Object.entries(currentMcp)
+          .filter(([name]) => !name.startsWith(CONNECT_MCP_SERVER_NAME_PREFIX)
+            && !name.startsWith(CONNECT_DIRECT_MCP_SERVER_NAME_PREFIX))),
+        ...directEntries,
+      },
     };
   });
   return {
     status: index ? "synced" : "unavailable",
     appHostNames: privateCatalog.servers.map((server) => connectMcpAppHostName(server.connectionId)).sort(),
+    directNames: Object.keys(directEntries).sort(),
     removedNames,
   };
 }

@@ -414,6 +414,42 @@ export async function listActiveExternalMcpConnectionBindings(input: {
     ))
 }
 
+/**
+ * A connection that a plugin created for its own MCP requirement follows that
+ * plugin's lifecycle. Once every plugin bound to it is archived or deleted the
+ * connector is retired: the Connections list must not surface it as an
+ * orphaned, unmanaged row. The binding and credentials stay, so restoring the
+ * plugin brings the connection back. A connection an admin created directly
+ * is never retired here, even when an archived plugin also depends on it.
+ */
+export async function listRetiredPluginOwnedExternalMcpConnectionIds(input: {
+  organizationId: OrganizationId
+  connectionIds: ExternalMcpConnectionId[]
+}): Promise<Set<ExternalMcpConnectionId>> {
+  if (input.connectionIds.length === 0) return new Set()
+  const rows = await db
+    .select({
+      connectionId: PluginMcpRequirementBindingTable.externalMcpConnectionId,
+      connectionOwnedByPlugin: PluginMcpRequirementBindingTable.connectionOwnedByPlugin,
+      pluginDeletedAt: PluginTable.deletedAt,
+      pluginStatus: PluginTable.status,
+    })
+    .from(PluginMcpRequirementBindingTable)
+    .innerJoin(PluginTable, eq(PluginMcpRequirementBindingTable.pluginId, PluginTable.id))
+    .where(and(
+      eq(PluginMcpRequirementBindingTable.organizationId, input.organizationId),
+      inArray(PluginMcpRequirementBindingTable.externalMcpConnectionId, input.connectionIds),
+      eq(PluginTable.organizationId, input.organizationId),
+    ))
+  const ownedByPlugin = new Set<ExternalMcpConnectionId>()
+  const requiredByActivePlugin = new Set<ExternalMcpConnectionId>()
+  for (const row of rows) {
+    if (row.connectionOwnedByPlugin) ownedByPlugin.add(row.connectionId)
+    if (row.pluginStatus === "active" && row.pluginDeletedAt === null) requiredByActivePlugin.add(row.connectionId)
+  }
+  return new Set([...ownedByPlugin].filter((connectionId) => !requiredByActivePlugin.has(connectionId)))
+}
+
 export type ExternalMcpAccessInput = {
   orgWide: boolean
   memberIds: OrgMembershipId[]
@@ -428,6 +464,7 @@ export async function createExternalMcpConnection(input: {
   kind?: "external_mcp" | "native_provider"
   nativeProviderKey?: string | null
   credentialMode: "shared" | "per_member"
+  exposeDirectly?: boolean
   apiKey?: string | null
   oauthConfiguration?: ExternalMcpOAuthConfigurationInput | null
   createdByOrgMembershipId: OrgMembershipId
@@ -455,6 +492,7 @@ export async function createExternalMcpConnection(input: {
     kind: input.kind ?? "external_mcp",
     nativeProviderKey: input.nativeProviderKey ?? null,
     credentialMode: input.credentialMode,
+    exposeDirectly: input.exposeDirectly ?? false,
     apiKey: input.apiKey ?? null,
     oauthConfiguration,
     createdByOrgMembershipId: input.createdByOrgMembershipId,
@@ -948,6 +986,8 @@ export type UpdateExternalMcpConnectionInput = {
   url: string
   authType: "oauth" | "apikey" | "none"
   credentialMode: "shared" | "per_member"
+  /** Omit to keep the stored value. */
+  exposeDirectly?: boolean
   apiKey?: string
   oauthClient?: {
     clientId: string
@@ -1078,10 +1118,12 @@ export async function updateExternalMcpConnection(
       ? Boolean(existingClient || input.oauthClient)
       : Boolean(input.oauthClient && (!existingClient || clientIdChanged || clientSecretChanged || clientExtraChanged))
     const apiKeyChanged = input.apiKey !== undefined && existing.apiKey !== input.apiKey
+    const exposeDirectlyChanged = input.exposeDirectly !== undefined && existing.exposeDirectly !== input.exposeDirectly
     const rowFieldsChanged = existing.name !== input.name
       || existing.url !== input.url
       || existing.authType !== input.authType
       || existing.credentialMode !== input.credentialMode
+      || exposeDirectlyChanged
       || apiKeyChanged
       || identityChanged
       || oauthConfigurationChanged
@@ -1115,6 +1157,7 @@ export async function updateExternalMcpConnection(
           url: input.url,
           authType: input.authType,
           credentialMode: input.credentialMode,
+          ...(input.exposeDirectly !== undefined ? { exposeDirectly: input.exposeDirectly } : {}),
           oauthConfiguration: input.authType === "oauth" ? input.oauthConfiguration ?? null : null,
           apiKey: input.authType === "apikey" ? input.apiKey ?? null : null,
           accessToken: null,
@@ -1140,6 +1183,7 @@ export async function updateExternalMcpConnection(
           url: input.url,
           authType: input.authType,
           credentialMode: input.credentialMode,
+          ...(input.exposeDirectly !== undefined ? { exposeDirectly: input.exposeDirectly } : {}),
           ...(input.apiKey !== undefined ? { apiKey: input.apiKey } : {}),
           ...(input.oauthConfiguration !== undefined ? { oauthConfiguration: input.oauthConfiguration } : {}),
           ...(input.authType === "none" && input.validatedAt ? { connectedAt: input.validatedAt } : {}),

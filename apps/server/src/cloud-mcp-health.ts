@@ -11,6 +11,7 @@ import {
   readGlobalRuntimeOpencodeConfig,
   readRuntimeOpencodeConfig,
   runtimeMcpMap,
+  type RuntimeOpencodeConfig,
   writeGlobalRuntimeOpencodeConfig,
   writeRuntimeOpencodeConfig,
 } from "./runtime-opencode-config-store.js";
@@ -993,26 +994,36 @@ export async function migrateOpenworkCloudMcpRuntimeConfig(
   return { config: selected, changed };
 }
 
-export async function removeOpenworkCloudMcpDesiredConfig(config: ServerConfig): Promise<boolean> {
+/**
+ * Removes the `openwork-cloud` entry everywhere, together with every directly
+ * exposed connection entry: those carry the same member credential and have no
+ * meaning once the member is signed out. Returns the runtime names removed so
+ * the caller can disconnect them from the engine.
+ */
+export async function removeOpenworkCloudMcpDesiredConfig(
+  config: ServerConfig,
+): Promise<{ changed: boolean; removedNames: string[] }> {
+  const { CONNECT_DIRECT_MCP_SERVER_NAME_PREFIX } = await import("./connect-mcp-server-catalog.js");
+  const ownedByCloud = (name: string) =>
+    name === OPENWORK_CLOUD_MCP_NAME || name.startsWith(CONNECT_DIRECT_MCP_SERVER_NAME_PREFIX);
   let changed = false;
+  const removedNames = new Set<string>();
   for (const row of await listRuntimeOpencodeConfigRows(config)) {
-    if (!Object.hasOwn(runtimeMcpMap(row.value), OPENWORK_CLOUD_MCP_NAME)) continue;
+    const owned = Object.keys(runtimeMcpMap(row.value)).filter(ownedByCloud);
+    if (owned.length === 0) continue;
+    const strip = (current: RuntimeOpencodeConfig) => ({
+      ...current,
+      mcp: Object.fromEntries(Object.entries(runtimeMcpMap(current)).filter(([name]) => !ownedByCloud(name))),
+    });
     const result = row.workspaceId === ENGINE_GLOBAL_RUNTIME_CONFIG_ID
-      ? await writeGlobalRuntimeOpencodeConfig(config, (current) => ({
-          ...current,
-          mcp: Object.fromEntries(Object.entries(runtimeMcpMap(current))
-            .filter(([name]) => name !== OPENWORK_CLOUD_MCP_NAME)),
-        }))
-      : await writeRuntimeOpencodeConfig(config, row.workspaceId, (current) => ({
-          ...current,
-          mcp: Object.fromEntries(Object.entries(runtimeMcpMap(current))
-            .filter(([name]) => name !== OPENWORK_CLOUD_MCP_NAME)),
-        }));
+      ? await writeGlobalRuntimeOpencodeConfig(config, strip)
+      : await writeRuntimeOpencodeConfig(config, row.workspaceId, strip);
     changed = result.changed || changed;
+    for (const name of owned) removedNames.add(name);
   }
   const { writeConnectCloudMcp } = await import("./connect-state.js");
   await writeConnectCloudMcp(config, null);
-  return changed;
+  return { changed, removedNames: [...removedNames].sort() };
 }
 
 function locationParams(directory: string | null): { directory?: string } {
@@ -2499,7 +2510,7 @@ export async function reconcileOpenworkCloudMcp(input: {
     workspace: input.workspace,
     cloudMcp: desiredConfig,
     appHostAuthorization: readString(input.body.appHostAuthorization) ?? undefined,
-  }).catch(() => ({ status: "unavailable" as const, appHostNames: [], removedNames: [] }));
+  }).catch(() => ({ status: "unavailable" as const, appHostNames: [], directNames: [], removedNames: [] }));
 
   const opencode = input.createWorkspaceOpencodeClient(input.config, input.workspace);
   for (const name of connectServers.removedNames) {
@@ -2512,6 +2523,12 @@ export async function reconcileOpenworkCloudMcp(input: {
     const registrationError = registrationFailure(registration.failures);
     cloudMcpDeliveryState.markFailed(input.workspace, input.directory, desiredRevision, registrationError);
     return healthWithFailure(await readHealth(), registrationError);
+  }
+  // Directly exposed connections ride the same credential but are separate
+  // servers: one unreachable provider must not mark central Cloud MCP unhealthy.
+  if (connectServers.directNames.length > 0) {
+    await input.registerRuntimeMcp(input.config, input.workspace, connectServers.directNames, { throwOnFailure: false })
+      .catch(() => undefined);
   }
 
   const connectedFailure = await pollConnected({

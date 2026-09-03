@@ -80,7 +80,7 @@ test.skipIf(!localPlacement || !mysqlOpen)(title, async ({ evidence, place }) =>
   const expectedDnsName = `${expectedHost}.${ssoDomain}`;
   expect(domainVerificationToken).toBeTruthy();
   expect(registeredConnection?.domainVerified).toBe(false);
-  expect(readString(registeredConnection, "status")).toBe("pending_verification");
+  expect(readString(registeredConnection, "status")).toBe("disabled");
   expect(readString(registeredConnection, "domainVerificationHost")).toBe(expectedHost);
   expect(readString(registeredConnection, "domainVerificationDnsName")).toBe(expectedDnsName);
 
@@ -99,11 +99,11 @@ test.skipIf(!localPlacement || !mysqlOpen)(title, async ({ evidence, place }) =>
     }),
   });
   expect(directSso.response.ok).toBe(false);
-  expect(directSso.text).toMatch(/has not been verified/i);
+  expect(directSso.text).toMatch(/not enabled|test and enable/i);
   evidence.recordAssertionEvidence(
     "Unverified SSO is configured but inactive",
     `status=${readString(registeredConnection, "status")}; login next step=${readString(loginOptions.body, "nextStep")}; direct SSO HTTP ${directSso.response.status}`,
-    readString(registeredConnection, "status") === "pending_verification"
+    readString(registeredConnection, "status") === "disabled"
       && readString(loginOptions.body, "nextStep") !== "sso"
       && !directSso.response.ok,
   );
@@ -118,14 +118,11 @@ test.skipIf(!localPlacement || !mysqlOpen)(title, async ({ evidence, place }) =>
     timeoutMs: 60_000,
     label: "Den Web before owner auth handoff",
   });
-  const cookieSeparator = sessionCookie.indexOf("=");
-  const browserSessionCookie = await browser.client.send("Network.setCookie", {
-    name: sessionCookie.slice(0, cookieSeparator),
-    value: sessionCookie.slice(cookieSeparator + 1),
-    url: den.ref.webUrl,
-    httpOnly: true,
-  });
-  expect(browserSessionCookie.success).toBe(true);
+  const runtimeConfig: unknown = JSON.parse(String(await evalIn(browser, `(async () => {
+    const response = await fetch("/api/runtime-config", { cache: "no-store" });
+    return JSON.stringify(await response.json());
+  })()`, { awaitPromise: true })));
+  expect(runtimeConfig).toMatchObject({ denApiUrl: den.ref.apiUrl });
   const tokenStored = await evalIn(browser, `(() => {
     localStorage.setItem("openwork:web:auth-token", ${JSON.stringify(org.admin.token)});
     return localStorage.getItem("openwork:web:auth-token") === ${JSON.stringify(org.admin.token)};

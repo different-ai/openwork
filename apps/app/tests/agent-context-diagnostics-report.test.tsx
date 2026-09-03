@@ -50,7 +50,7 @@ function healthyReport(): AgentContextDiagnosticsReport {
   }));
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     runId: "22222222-2222-4222-8222-222222222222",
     startedAt: "2026-07-13T20:00:00.000Z",
     completedAt: "2026-07-13T20:00:00.125Z",
@@ -77,7 +77,7 @@ function healthyReport(): AgentContextDiagnosticsReport {
           markers: {
             searchCapabilities: true,
             executeCapability: true,
-            memoryBank: true,
+            artifacts: true,
           },
         },
         connectToolPermissions: {
@@ -210,7 +210,7 @@ describe("AgentContextDiagnosticsReportView", () => {
 
   test("announces false context markers and diagnostic errors without relying on color", () => {
     const report = healthyReport();
-    report.agent.configuredOpenworkAgent.prompt.markers.memoryBank = false;
+    report.agent.configuredOpenworkAgent.prompt.markers.artifacts = false;
     const reportHtml = renderToStaticMarkup(
       <AgentContextDiagnosticsReportView report={report} copied={false} copying={false} onCopy={() => {}} />,
     );
@@ -218,7 +218,7 @@ describe("AgentContextDiagnosticsReportView", () => {
       <AgentContextDiagnosticsErrorNotice message="Agent diagnostics could not complete." />,
     );
 
-    expect(reportHtml).toContain('aria-label="Memory marker: No"');
+    expect(reportHtml).toContain('aria-label="Artifacts marker: No"');
     expect(reportHtml).toContain('data-marker-value="false"');
     expect(errorHtml).toContain('data-testid="agent-diagnostics-error"');
     expect(errorHtml).toContain('role="alert"');

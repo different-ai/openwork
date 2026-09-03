@@ -2,8 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
-import { denApiCredentials, denApiEndpoint } from "../../(den)/_lib/den-api-origin";
-import { getSocialCallbackUrl } from "../../(den)/_lib/den-flow";
+import { getSocialCallbackUrl, requestJson } from "../../(den)/_lib/den-flow";
 
 export default function OrganizationSsoSignInPage() {
   const params = useParams<{ orgSlug: string }>();
@@ -19,14 +18,12 @@ export default function OrganizationSsoSignInPage() {
 
     void (async () => {
       try {
-        const endpoint = denApiEndpoint("/api/auth/sign-in/sso");
-        const response = await fetch(endpoint, {
+        const { response, payload } = await requestJson("/api/auth/sign-in/sso", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             Accept: "application/json",
           },
-          credentials: denApiCredentials(endpoint),
           body: JSON.stringify({
             organizationSlug: orgSlug,
             callbackURL,
@@ -34,12 +31,15 @@ export default function OrganizationSsoSignInPage() {
           }),
         });
 
-        const payload = await response.json().catch(() => null) as { url?: unknown; message?: unknown } | null;
         if (!response.ok) {
-          throw new Error(typeof payload?.message === "string" ? payload.message : `Failed to start SSO sign-in (${response.status}).`);
+          throw new Error(
+            payload && typeof payload === "object" && "message" in payload && typeof payload.message === "string"
+              ? payload.message
+              : `Failed to start SSO sign-in (${response.status}).`,
+          );
         }
 
-        const nextUrl = typeof payload?.url === "string" ? payload.url : "";
+        const nextUrl = payload && typeof payload === "object" && "url" in payload && typeof payload.url === "string" ? payload.url : "";
         if (!nextUrl) {
           throw new Error("SSO sign-in started without a redirect URL.");
         }

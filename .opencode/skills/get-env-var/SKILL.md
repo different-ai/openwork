@@ -40,9 +40,28 @@ Run the command through Infisical so all project secrets are available only to t
 infisical run -- <command>
 ```
 
+## Discover, check, and forward without ever seeing a value
+
+Always run from the repo root; outside it `infisical` errors and emits an empty stdout, which a downstream `gh secret set` will silently store.
+
+```bash
+# Which secrets exist? Names only, via structured output. Never list with
+# --plain or the default table: both print values, and multi-line values
+# (private keys) defeat any line-based filter such as cut or awk.
+infisical secrets --env dev --output json --silent 2>/dev/null | jq -r '.[].secretKey'
+
+# Does NAME exist and is it non-empty? Prints a byte count, never the value.
+infisical secrets get NAME --plain --silent 2>/dev/null | wc -c
+
+# Forward NAME to a consumer in one pipe (e.g. a GitHub Actions secret).
+infisical secrets get NAME --plain --silent 2>/dev/null | gh secret set NAME --repo <owner>/<repo>
+```
+
 ## Rules
 
 - Never echo, print, or otherwise log secret values.
 - Never write secrets to files, logs, commit messages, PR bodies, or comments.
-- Only use `--plain` inside command substitution, as in `export NAME="$(...)"`.
+- Only use `--plain` with `secrets get NAME` inside command substitution, as in `export NAME="$(...)"`, or piped straight into a single consumer as above. Never use `--plain` to list.
+- Never pass a secret-bearing stream through `grep`, `rg`, `awk`, `sed`, `cut`, `head`, or any line-based filter: multi-line values and one mismatched pattern both land values in the tool output. Listing is `--output json | jq -r '.[].secretKey'` only.
+- Treat every `infisical secrets ...` command as printing values unless it is the JSON name listing above, piped into `wc -c`, or piped into a consumer.
 - If a secret does not exist, STOP and tell the user exactly which secret name and environment to add in Infisical; do not invent values.

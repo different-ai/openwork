@@ -3,31 +3,33 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 /**
- * The xlsx dependency is fetched from cdn.sheetjs.com rather than the npm
- * registry, and some pnpm versions drop its `integrity` field when rewriting
- * the lockfile. Without that hash the tarball is trusted on faith. This canary
- * pins the integrity line so any lockfile rewrite that loses it fails fast.
+ * Every dependency must resolve from the npm registry. A tarball fetched from
+ * any other host is trusted on faith: some pnpm versions drop its `integrity`
+ * field when rewriting the lockfile, and the host can change the bytes at will.
+ * The last such dependency (SheetJS from cdn.sheetjs.com) was replaced by
+ * @openwork/workbook; this canary keeps the door shut.
  */
 describe("root pnpm lockfile supply chain", () => {
-  test("the xlsx CDN tarball keeps its integrity hash", async () => {
+  test("no dependency resolves from a tarball outside the npm registry", async () => {
     const lockfile = await readFile(join(import.meta.dir, "..", "..", "..", "pnpm-lock.yaml"), "utf8");
 
-    const resolutionLines = lockfile
+    const offRegistry = lockfile
       .split("\n")
-      .filter((line) => {
-        if (!line.includes("resolution:")) return false;
+      .filter((line) => line.includes("resolution:") && line.includes("tarball:"))
+      .map((line) => {
         const tarballMatch = line.match(/tarball:\s*([^,\s}]+)/);
-        if (!tarballMatch) return false;
+        return tarballMatch ? tarballMatch[1] : "";
+      })
+      .filter((tarball) => {
+        if (!tarball) return false;
         try {
-          return new URL(tarballMatch[1]).hostname === "cdn.sheetjs.com";
+          return new URL(tarball).hostname !== "registry.npmjs.org";
         } catch {
-          return false;
+          return true;
         }
       });
 
-    expect(resolutionLines.length).toBeGreaterThan(0);
-    for (const line of resolutionLines) {
-      expect(line).toContain("integrity: sha512-");
-    }
+    expect(offRegistry).toEqual([]);
+    expect(lockfile).not.toContain("cdn.sheetjs.com");
   });
 });

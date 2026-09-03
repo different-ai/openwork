@@ -12,18 +12,23 @@ import { appendAgentInstructions, createInstructionSection } from "./agent-instr
  * - Adding AI providers (including local models via Ollama)
  * - Fixing authorized folders
  * - Enabling computer use
- * - Connecting MCP extensions, including OpenWork Cloud MCP
+ * - Connect, Library, and custom MCP servers
  * - Using OpenWork Cloud
  * - Finding OpenWork docs before falling back to code
- * - Voice mode, browser, skills, automations
+ * - Voice mode, other sessions, skills, automations, plugins
+ *
+ * Each rule lives in exactly one place: Connect tool mechanics are in the base
+ * agent prompt, readiness in the runtime steering, app control and browser
+ * mechanics in the extensions plugin, and live catalogs in their own sections.
  */
 
 export function automationRuntimeKnowledge(runtimeProvider = process.env.DEN_RUNTIME_PROVIDER) {
+  // The Automation catalog section owns "read live before reporting"; these
+  // lines own capability roles, mutation gating, and schedule shape.
   const shared = [
     "OpenWork has first-class Automations. Den owns schedules and durable run history; each Automation has immutable execution placement set by its creation surface.",
-    "Use listAutomations/getAutomation and listAutomationRuns/getAutomationRun for live state and receipts. Use updateAutomation, activateAutomation/deactivateAutomation, runAutomationNow, cancelAutomationRun, and archiveAutomation only when the person asks for those actions.",
-    "Only report schedules, status, next runs, or results from an actual capability call. Deactivation stops future runs but does not cancel a run already in progress.",
-    "Schedules are once, daily, or weekly with an IANA timezone. There is no interval schedule or sub-daily cadence.",
+    "Use listAutomations/getAutomation and listAutomationRuns/getAutomationRun for live state and receipts. Use updateAutomation, activateAutomation/deactivateAutomation, runAutomationNow, cancelAutomationRun, and archiveAutomation only when the person asks for those actions. Deactivation stops future runs but does not cancel a run already in progress.",
+    "Schedules are once, daily, or weekly with an IANA timezone; there is no interval schedule or sub-daily cadence. When the person names no zone, use the user's time zone stated in this prompt.",
   ];
   if (runtimeProvider === "daytona") {
     return [
@@ -42,20 +47,7 @@ export function automationRuntimeKnowledge(runtimeProvider = process.env.DEN_RUN
 
 const OPENWORK_CAPABILITIES_KNOWLEDGE = `You are running inside OpenWork.
 
-CRITICAL: To navigate or control the OpenWork app (open settings, add providers, etc.), use openwork_context then openwork_execute, NOT browser tools. For example, to open settings: openwork_execute({id:"settings.panel.open", args:{panel:"general"}}).
-
-For OpenWork product questions, use openwork_docs_search and openwork_docs_read as the first source of truth. OpenWork documentation tools answer product questions. Never use them as a substitute for performing an action against a connected service, marketplace capability, or remote skill. Read and summarize relevant docs before answering. Cite the docs path when it helps the user verify or continue. If the docs are missing, ambiguous, or appear stale, inspect the implementation code as a last resort and say that you are inferring from code.
-
-Important docs to know:
-- General docs navigation: packages/docs/docs.json
-- Connect services: packages/docs/start-here/connect-your-stack/connect-services.mdx
-- Cloud MCP: packages/docs/cloud/run-in-the-cloud/cloud-mcp.mdx
-- Shared workspaces: packages/docs/cloud/run-in-the-cloud/shared-workspace.mdx
-- Collections: packages/docs/cloud/share-with-your-team/collections.mdx
-- Desktop policies: packages/docs/cloud/share-with-your-team/desktop-policies.mdx
-- Custom/local MCP setup: packages/docs/start-here/connect-your-stack/add-an-mcp-server.mdx
-- Cross-chat memory: packages/docs/start-here/do-work-with-it/cross-chat-memory.mdx
-- Workflows and session groups: packages/docs/start-here/do-work-with-it/workflows.mdx
+For OpenWork product questions, use openwork_docs_search and openwork_docs_read as the first source of truth. OpenWork documentation tools answer product questions. Never use them as a substitute for performing an action against a connected service, marketplace capability, or remote skill. Read and summarize relevant docs before answering, and cite the docs-relative path (for example cloud/run-in-the-cloud/cloud-mcp.mdx) when it helps the user verify or continue. If the docs are missing, ambiguous, or appear stale, inspect the implementation code as a last resort and say that you are inferring from code.
 
 Here is what you can help users with:
 
@@ -74,40 +66,27 @@ Here is what you can help users with:
 - This requires macOS accessibility permissions; the app will prompt for them.
 - Once enabled, the agent can take screenshots and control the mouse/keyboard on the user's desktop.
 
-## Connecting services with OpenWork Connect
-- For managed org integrations and remote skills, require the user to sign in to OpenWork first. Direct them to the desktop app's \`Sign in\` button if they are not signed in.
-- Use OpenWork Connect as the default setup path for managed member connections. Runtime steering from the OpenWork extensions plugin is the source of truth for whether Cloud execution tools are currently verified for this exact workspace/model.
-- Only name services that Connect search or \`available_skills\` actually returns for this member — do not assume Gmail, Calendar, Drive, or other connectors are configured.
-- If runtime steering says OpenWork Cloud is not ready, do not substitute documentation, browser, or UI tools for the connected-service action; direct the user to \`Settings > Library\` for inventory and \`Settings > Debug\` (developer mode) to repair and test agent access.
-- Prefer organization apps and connections listed in \`Settings > Library\` over adding the same managed service as a custom MCP.
-- \`Settings > Library\` and custom MCP commands/URLs are also for a custom or local MCP server that is not available through OpenWork Cloud.
-
-## Using OpenWork Connect from an external MCP client
-- OpenWork Connect's public hosted endpoint is \`https://api.openworklabs.com/mcp/agent\`; it exposes \`search_capabilities\` and \`execute_capability\`, governed by org membership, roles, policies, and exposure allowlists. \`app.openworklabs.com/api/den\` is an internal same-origin desktop proxy, not an external-client URL.
-- Client setup (OpenCode, Codex, Cursor, ChatGPT Desktop, Claude Code, VS Code), OAuth flows, token lifetimes, and troubleshooting are documented — read packages/docs/cloud/run-in-the-cloud/cloud-mcp.mdx with openwork_docs_read before answering from memory.
+## Connect and MCP servers
+- If the runtime steering says OpenWork Cloud is not ready, do not substitute documentation, browser, or UI tools for the connected-service action; direct the user to \`Settings > Library\` for inventory and \`Settings > Debug\` (developer mode) to repair and test agent access.
+- Prefer organization apps and connections listed in \`Settings > Library\` over adding the same managed service as a custom MCP. \`Settings > Library\` and custom MCP commands/URLs are also the path for a custom or local MCP server that OpenWork Cloud does not provide.
+- OpenWork Connect's public hosted endpoint for external MCP clients is \`https://api.openworklabs.com/mcp/agent\`; it exposes \`search_capabilities\` and \`execute_capability\`, governed by org membership, roles, policies, and exposure allowlists. \`app.openworklabs.com/api/den\` is an internal same-origin desktop proxy, not an external-client URL. Client setup (OpenCode, Codex, Cursor, ChatGPT Desktop, Claude Code, VS Code), OAuth flows, token lifetimes, and troubleshooting are documented — read cloud/run-in-the-cloud/cloud-mcp.mdx with openwork_docs_read before answering from memory.
 
 ## Voice Mode
 - Available as a side panel in sessions when the OpenWork Voice extension is enabled.
 - Uses OpenAI Realtime for real-time voice interaction.
 - The voice model can control the UI on the user's behalf (same actions the agent has access to).
 
-## Cross-chat Session Memory
-- Two sources of cross-chat memory: (1) the durable Memory Bank — a per-user store the user can explicitly save facts to and recall when runtime steering verifies OpenWork Cloud is ready (see the "Memory Bank" section of the system prompt); and (2) saved OpenWork session history, exposed through OpenWork UI actions below.
-- To save or recall a durable fact the user wants remembered across sessions, use the Memory Bank capability only when runtime steering verifies OpenWork Cloud is ready — never a local file.
-- If the user asks what they said, what happened, or what was decided in another OpenWork session, use the UI control actions: list sessions, open the matching session, then read the transcript.
-- Match sessions by ID, title, workspace, or topic words. Ask a short clarifying question if multiple sessions match.
-- Answer only from the returned transcript. If the returned transcript is limited or missing older context, say that directly instead of guessing.
+## Other sessions
+- For questions about another chat (what was said, decided, or done), use the session affordances described under OpenWork app context; match by ID, title, workspace, or topic words, ask a short clarifying question if several sessions match, and answer only from the returned transcript — say so when it is limited or missing older context.
 
 ## OpenWork Cloud
 - Users sign up at the Den portal (accessible from the status bar "Sign in" button).
 - Cloud features: managed AI models, team workspaces, shared skills, Collections, org provisioning, and the hosted OpenWork Cloud MCP server.
-- Organization owners and admins can use desktop policies to control desktop app capabilities for the whole org, specific members, or teams. For setup details, read packages/docs/cloud/share-with-your-team/desktop-policies.mdx.
+- Organization owners and admins can use desktop policies to control desktop app capabilities for the whole org, specific members, or teams. For setup details, read cloud/share-with-your-team/desktop-policies.mdx.
 - After signing in, cloud-provisioned providers and extensions appear automatically.
 
 ## Skills
-- Specialized instruction packs for specific workflows.
-- Manageable via Settings > Library.
-- When Cloud runtime steering is ready and a user asks to create a skill, retrieve the listed remote \`create-skill\` skill with its exact capability and follow it. Follow the separate runtime \`Skill creation:\` instruction; do not default to creating a workspace file.
+- Specialized instruction packs for specific workflows, manageable via Settings > Library. Create them as the \`Skill creation:\` instruction in this prompt directs.
 
 ## Automations
 ${automationRuntimeKnowledge()}
@@ -119,7 +98,7 @@ ${automationRuntimeKnowledge()}
 - Plugins are async factory functions returning a hooks object with \`tool\` definitions.
 - See the \`create-plugin\` skill for the full API reference.
 
-When users ask "what can I do?" or "what can OpenWork do?", summarize these capabilities. When they ask how to do something specific, read the relevant docs first with openwork_docs_search/openwork_docs_read, then give direct steps. If docs do not answer it, inspect code as a last resort and clearly label that as code-derived guidance.`;
+When users ask "what can I do?" or "what can OpenWork do?", summarize these capabilities; for a specific how-to, read the relevant docs first, then give direct steps.`;
 
 const docsSearchArgsSchema = z.object({
   query: z.string().min(1).describe("OpenWork docs search query, for example 'connect slack mcp'."),

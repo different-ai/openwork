@@ -13,6 +13,14 @@ import { getRequestError, requestJson } from "../../_lib/den-flow";
 import { getImportPluginRoute, getPluginRoute, getPluginsRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useMarketplaces } from "./marketplace-data";
+import {
+  AUTH_TYPE_OPTIONS,
+  CREDENTIAL_MODE_OPTIONS,
+  credentialModeDescription,
+  MCP_OAUTH_REDIRECT_DOCS_URL,
+  SegmentedControl,
+} from "./mcp-connection-form-controls";
+import { McpCredentialInput } from "./mcp-credential-input";
 import { pluginQueryKeys } from "./plugin-data";
 import {
   clearPluginImportDraft,
@@ -21,6 +29,13 @@ import {
   pluginImportSuggestedName,
   type PluginImportDraft,
 } from "./plugin-import-draft";
+import {
+  emptyPluginMcpConnectionDraft,
+  pluginMcpConnectionDraftError,
+  pluginMcpConnectionRequest,
+  withPluginMcpAuthType,
+  type PluginMcpConnectionDraft,
+} from "./plugin-mcp-connection-draft";
 
 type ComponentKind = "skill" | "command" | "mcp";
 
@@ -31,6 +46,8 @@ type DraftComponent = {
   description: string;
   /** Markdown body for skills/commands; remote server URL for MCP. */
   content: string;
+  /** How the MCP server authenticates; unused for skills and commands. */
+  connection: PluginMcpConnectionDraft;
 };
 
 const COMPONENT_META: Record<ComponentKind, { label: string; icon: typeof FileText; hint: string }> = {
@@ -47,7 +64,7 @@ const COMPONENT_META: Record<ComponentKind, { label: string; icon: typeof FileTe
   mcp: {
     label: "MCP server",
     icon: Server,
-    hint: "Connect a remote MCP server by URL. Members get its tools when they install the plugin.",
+    hint: "Connect a remote MCP server by URL and say how it authenticates, the same way you would under Connectors. Members get its tools when they install the plugin.",
   },
 };
 
@@ -90,6 +107,7 @@ function buildComponentBody(component: DraftComponent): Record<string, unknown> 
           description: component.description.trim() || undefined,
         },
       },
+      connection: pluginMcpConnectionRequest(component.connection),
     };
   }
 
@@ -125,6 +143,112 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function createdItemId(payload: unknown): string | null {
   const item = isRecord(payload) && isRecord(payload.item) ? payload.item : null;
   return typeof item?.id === "string" ? item.id : null;
+}
+
+/**
+ * The authentication half of the Connectors page's advanced form. Access is
+ * not asked here because a plugin-declared server follows the plugin's own
+ * sharing and collection grants.
+ */
+function McpConnectionFields({
+  connection,
+  disabled,
+  onChange,
+}: {
+  connection: PluginMcpConnectionDraft;
+  disabled: boolean;
+  onChange: (update: (connection: PluginMcpConnectionDraft) => PluginMcpConnectionDraft) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3 rounded-2xl border border-gray-100 bg-gray-50 p-4">
+      <div>
+        <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Authentication</label>
+        <SegmentedControl
+          options={AUTH_TYPE_OPTIONS}
+          value={connection.authType}
+          disabled={disabled}
+          onChange={(authType) => onChange((current) => withPluginMcpAuthType(current, authType))}
+        />
+      </div>
+
+      {connection.authType === "apikey" ? (
+        <div>
+          <label className="mb-1.5 block text-[12px] font-medium text-gray-700">API key</label>
+          <McpCredentialInput
+            kind="secret"
+            name="plugin-mcp-api-key"
+            value={connection.apiKey}
+            onChange={(event) => onChange((current) => ({ ...current, apiKey: event.target.value }))}
+            placeholder="sk-..."
+            disabled={disabled}
+          />
+          <p className="mt-1.5 text-[11px] leading-5 text-gray-500">Stored encrypted as one organization credential.</p>
+        </div>
+      ) : null}
+
+      {connection.authType === "oauth" && !connection.useOAuthClient ? (
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => onChange((current) => ({ ...current, useOAuthClient: true }))}
+          className="text-left text-[12px] font-medium text-gray-500 underline decoration-gray-300 underline-offset-4 transition hover:text-gray-900"
+        >
+          Use a pre-registered OAuth app instead
+        </button>
+      ) : null}
+
+      {connection.authType === "oauth" && connection.useOAuthClient ? (
+        <div className="rounded-2xl border border-gray-200 bg-white p-4">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[13px] font-semibold text-gray-900">OAuth app</p>
+            <Link href={MCP_OAUTH_REDIRECT_DOCS_URL} target="_blank" rel="noreferrer" className="text-[11px] font-medium text-gray-500 underline underline-offset-2 hover:text-gray-900">
+              OAuth setup
+            </Link>
+          </div>
+          <p className="mt-1 text-[12px] leading-5 text-gray-500">
+            Register this Den instance&apos;s redirect URL with the provider, then add its credentials here.
+          </p>
+          <div className="mt-3 space-y-3">
+            <div>
+              <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client ID (optional for now)</label>
+              <McpCredentialInput
+                kind="identifier"
+                name="plugin-mcp-oauth-client-id"
+                value={connection.oauthClientId}
+                onChange={(event) => onChange((current) => ({ ...current, oauthClientId: event.target.value }))}
+                placeholder="1234567890.1234567890123"
+                disabled={disabled}
+              />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client secret (optional for now)</label>
+              <McpCredentialInput
+                kind="secret"
+                name="plugin-mcp-oauth-client-secret"
+                value={connection.oauthClientSecret}
+                onChange={(event) => onChange((current) => ({ ...current, oauthClientSecret: event.target.value }))}
+                placeholder="Client secret"
+                disabled={disabled}
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {connection.authType === "oauth" ? (
+        <div>
+          <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Whose account does the AI use?</label>
+          <SegmentedControl
+            options={CREDENTIAL_MODE_OPTIONS}
+            value={connection.credentialMode}
+            disabled={disabled}
+            onChange={(credentialMode) => onChange((current) => ({ ...current, credentialMode }))}
+          />
+          <p className="mt-1.5 text-[12px] leading-5 text-gray-500">{credentialModeDescription(connection.credentialMode)}</p>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export function PluginEditorScreen() {
@@ -164,7 +288,7 @@ export function PluginEditorScreen() {
   const addComponent = (kind: ComponentKind) => {
     setComponents((current) => [
       ...current,
-      { key: nextKey, kind, name: "", description: "", content: "" },
+      { key: nextKey, kind, name: "", description: "", content: "", connection: emptyPluginMcpConnectionDraft() },
     ]);
     setNextKey((value) => value + 1);
   };
@@ -172,6 +296,12 @@ export function PluginEditorScreen() {
   const updateComponent = (key: number, patch: Partial<DraftComponent>) => {
     setComponents((current) =>
       current.map((entry) => (entry.key === key ? { ...entry, ...patch } : entry)),
+    );
+  };
+
+  const updateConnection = (key: number, update: (connection: PluginMcpConnectionDraft) => PluginMcpConnectionDraft) => {
+    setComponents((current) =>
+      current.map((entry) => (entry.key === key ? { ...entry, connection: update(entry.connection) } : entry)),
     );
   };
 
@@ -255,6 +385,11 @@ export function PluginEditorScreen() {
             ? `Enter the server URL for "${component.name || "your MCP server"}".`
             : `Write the instructions for "${component.name || "your component"}".`,
         );
+        return;
+      }
+      const connectionError = component.kind === "mcp" ? pluginMcpConnectionDraftError(component.connection, component.name) : null;
+      if (connectionError) {
+        setSaveError(connectionError);
         return;
       }
     }
@@ -447,12 +582,19 @@ export function PluginEditorScreen() {
                     />
                   ) : null}
                   {component.kind === "mcp" ? (
-                    <DenInput
-                      value={component.content}
-                      onChange={(event) => updateComponent(component.key, { content: event.target.value })}
-                      placeholder="https://mcp.example.com/mcp"
-                      disabled={saving}
-                    />
+                    <>
+                      <DenInput
+                        value={component.content}
+                        onChange={(event) => updateComponent(component.key, { content: event.target.value })}
+                        placeholder="https://mcp.example.com/mcp"
+                        disabled={saving}
+                      />
+                      <McpConnectionFields
+                        connection={component.connection}
+                        disabled={saving}
+                        onChange={(update) => updateConnection(component.key, update)}
+                      />
+                    </>
                   ) : (
                     <DenTextarea
                       value={component.content}
