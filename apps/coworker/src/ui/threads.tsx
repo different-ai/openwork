@@ -60,7 +60,7 @@ import { InlineLoader } from "@/ui/brand";
 import { AlertIcon, Button, Empty, ErrorNote, PlusIcon, StatusDot, ThoughtIcon, ToolIcon } from "@/ui/kit";
 import { Markdown } from "@/ui/markdown";
 import { DocumentCard } from "@/ui/documents";
-import { documentCardsFromCalls, shouldFoldReply, splitReplyLead } from "@/lib/documents";
+import { documentCardsFromCalls, isDocumentTool, shouldFoldReply, splitReplyLead } from "@/lib/documents";
 import { McpAppFrame } from "@/ui/mcp-app-frame";
 
 type TranscriptToolCall = {
@@ -2126,7 +2126,8 @@ function ToolAttachments({ calls, client }: { calls: TranscriptToolCall[]; clien
           })}
         </div>
       ) : null}
-      {calls.map((call) => <ToolAppFrame key={call.partId} call={call} client={client} />)}
+      {/* The coworker's own document tools answer with a card in the bubble, never an App. */}
+      {calls.filter((call) => !isDocumentTool(call.tool)).map((call) => <ToolAppFrame key={call.partId} call={call} client={client} />)}
     </>
   );
 }
