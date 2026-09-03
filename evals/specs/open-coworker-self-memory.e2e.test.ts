@@ -1,6 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { clickButton, evalIn, fill, waitFor } from "@openwork/behaviors";
-import { coworker, needs, test } from "@openwork/testkit";
+import { clickButton, coworker, evalIn, fill, needs, test, waitFor } from "@openwork/testkit";
 import { expect, onTestFinished } from "vitest";
 
 /**

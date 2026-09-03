@@ -1,5 +1,4 @@
-import { clickButton, evalIn, fill, waitFor } from "@openwork/behaviors";
-import { coworker, needs, test } from "@openwork/testkit";
+import { clickButton, coworker, evalIn, fill, needs, test, waitFor } from "@openwork/testkit";
 import { expect } from "vitest";
 
 /**
