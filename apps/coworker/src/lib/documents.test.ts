@@ -4,7 +4,6 @@ import {
   LONG_REPLY_FOLD_CHARS,
   askToUpdatePrompt,
   cardSubline,
-  describeActiveDocuments,
   documentCardsFromCalls,
   documentToolName,
   documentsChangedSince,
@@ -118,8 +117,5 @@ test("view helpers: groups by status and recency, the count dot, the in-play lin
   assert.deepEqual(groups.archived.map((document) => document.id), ["d"]);
   assert.equal(documentsChangedSince(documents, 15), 2, "the coworker's changes count; the person's own edit does not");
   assert.equal(documentsChangedSince(documents, 100), 0);
-  assert.equal(describeActiveDocuments(documents), "2 documents in play");
-  assert.equal(describeActiveDocuments([documents[0]!]), "1 document in play");
-  assert.equal(describeActiveDocuments([]), "");
   assert.equal(askToUpdatePrompt("Launch plan"), "Update \"Launch plan\" with ");
 });

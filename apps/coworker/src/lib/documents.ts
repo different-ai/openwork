@@ -204,16 +204,9 @@ export function splitReplyLead(textValue: string): { lead: string; rest: string 
   return { lead, rest };
 }
 
-/** The Documents strip icon's small dot: something changed since the person last opened the view. */
+/** The small dot on the Activity icon, its Documents row, and the summary line: something changed since the person last opened Documents. */
 export function documentsChangedSince(documents: ReadonlyArray<Pick<CoworkerDocumentSummary, "updatedAt" | "updatedBy">>, lastOpenedAt: number): number {
   return documents.filter((document) => document.updatedBy === "coworker" && document.updatedAt > lastOpenedAt).length;
-}
-
-/** "3 documents in play" for the header's status area; empty when none. */
-export function describeActiveDocuments(documents: ReadonlyArray<Pick<CoworkerDocumentSummary, "status">>): string {
-  const active = documents.filter((document) => document.status === "active").length;
-  if (active === 0) return "";
-  return active === 1 ? "1 document in play" : `${active} documents in play`;
 }
 
 /** Documents as the view groups them: active by last update, put aside, archived. */
