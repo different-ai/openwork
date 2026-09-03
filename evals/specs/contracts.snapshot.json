@@ -389,6 +389,7 @@
       "specs": [
         "evals/specs/cloud-provider-auto-import.e2e.test.ts",
         "evals/specs/cloud-provider-before-workspace.e2e.test.ts",
+        "evals/specs/cloud-provider-env-namespacing.test.ts",
         "evals/specs/cloud-provider-local-credential-fallback.e2e.test.ts",
         "evals/specs/cloud-provider-sync-contract.e2e.test.ts",
         "evals/specs/composer-model-picker-no-subscribe-promo.e2e.test.ts",

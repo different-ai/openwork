@@ -336,6 +336,12 @@ export type DenOrgLlmProvider = {
   name: string;
   providerConfig: Record<string, unknown>;
   hasApiKey: boolean;
+  /**
+   * The env names this provider actually reads on a member's machine. Catalog
+   * providers get provider-scoped names here (their stored `providerConfig.env`
+   * keeps the catalog's names); absent from Den servers that predate it.
+   */
+  runtimeEnvKeys?: string[];
   models: DenOrgLlmProviderModel[];
   createdAt: string | null;
   updatedAt: string | null;
@@ -2056,6 +2062,7 @@ function parseDenOrgLlmProvider(value: unknown): DenOrgLlmProvider | null {
     name: value.name,
     providerConfig: parseJsonRecord(value.providerConfig),
     hasApiKey: value.hasApiKey === true,
+    runtimeEnvKeys: parseStringList(value.runtimeEnvKeys),
     models: Array.isArray(value.models)
       ? value.models.flatMap((model) => {
           const parsed = parseDenOrgLlmProviderModel(model);
