@@ -45,7 +45,7 @@ export interface ManagedOpencodeV2Server {
   readonly stdout: string;
   readonly stderr: string;
   health(): Promise<OpencodeV2Health>;
-  fetchJson(path: string, init?: { method?: string; body?: unknown; directory?: string }): Promise<{ status: number; json: unknown }>;
+  fetchJson(path: string, init?: { method?: string; body?: unknown; directory?: string; timeoutMs?: number }): Promise<{ status: number; json: unknown }>;
   injectProvider(spec: OpencodeV2ProviderSpec): Promise<void>;
   setProviders(specs: OpencodeV2ProviderSpec[]): Promise<void>;
   close(): Promise<void>;
@@ -130,7 +130,7 @@ export async function createManagedOpencodeV2Server(
 
   async function fetchJson(
     path: string,
-    init: { method?: string; body?: unknown; directory?: string } = {},
+    init: { method?: string; body?: unknown; directory?: string; timeoutMs?: number } = {},
   ): Promise<{ status: number; json: unknown }> {
     const separator = path.includes("?") ? "&" : "?";
     const requestPath = init.directory === undefined
@@ -143,6 +143,7 @@ export async function createManagedOpencodeV2Server(
         "content-type": "application/json",
       },
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      signal: init.timeoutMs === undefined ? undefined : AbortSignal.timeout(init.timeoutMs),
     });
     const text = await response.text();
     let json: unknown = text;
@@ -155,7 +156,7 @@ export async function createManagedOpencodeV2Server(
   }
 
   async function health(): Promise<OpencodeV2Health> {
-    const response = await fetchJson("/api/health");
+    const response = await fetchJson("/api/health", { timeoutMs: 5_000 });
     if (response.status !== 200 || !isRecord(response.json)) {
       throw new Error(`OpenCode v2 health returned HTTP ${response.status}`);
     }

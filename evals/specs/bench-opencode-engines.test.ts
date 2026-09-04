@@ -262,8 +262,9 @@ async function startWitness(lane: Lane): Promise<Witness> {
       })}\n\n`);
       response.end("data: [DONE]\n\n");
     } catch (error) {
+      console.error(error);
       if (!response.headersSent) response.writeHead(400, { "content-type": "application/json" });
-      response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+      response.end(JSON.stringify({ error: "witness error" }));
     }
   });
 

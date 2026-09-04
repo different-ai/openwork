@@ -97,8 +97,9 @@ test("opencode v2 injects providers at runtime without an engine reload", async 
       for (const chunk of chunks) response.write(`data: ${JSON.stringify(chunk)}\n\n`);
       response.end("data: [DONE]\n\n");
     } catch (error) {
+      console.error(error);
       response.writeHead(400, { "content-type": "application/json" });
-      response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+      response.end(JSON.stringify({ error: "witness error" }));
     }
   });
 
