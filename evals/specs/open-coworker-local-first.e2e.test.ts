@@ -251,7 +251,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   if (profileDir) {
     const copilotDir = path.join(profileDir, "xdg-config", "github-copilot");
     await mkdir(copilotDir, { recursive: true });
-    await writeFile(path.join(copilotDir, "hosts.json"), `${JSON.stringify({ "github.com": { user: "fixture", oauth_token: FAKE_COPILOT_TOKEN } }, null, 2)}\n`, "utf8");
+    await writeFile(path.join(copilotDir, "hosts.json"), `${JSON.stringify({ "github.com.attacker.invalid": { user: "fixture", oauth_token: FAKE_COPILOT_TOKEN } }, null, 2)}\n`, "utf8");
   }
   const cleanup = {
     [Symbol.asyncDispose]: async () => {
@@ -452,6 +452,16 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
 
   // --- Local mode: exactly what this Mac has, one Connect per row, the free model, and Add another.
   await waitFor(app, `document.querySelector('[data-testid="local-providers"]')?.dataset.loaded === "true"`, { timeoutMs: 180_000, label: "local mode screen" });
+  if (profileDir) {
+    expect(await evalIn(app, `Boolean(document.querySelector('[data-testid="found-copilot"]'))`)).toBe(false);
+    await writeFile(path.join(profileDir, "xdg-config", "github-copilot", "hosts.json"), `${JSON.stringify({ "github.com:Iv1.fixture": { user: "fixture", oauth_token: FAKE_COPILOT_TOKEN } }, null, 2)}\n`, "utf8");
+    await evalIn(app, `document.querySelector('[data-testid="local-providers-refresh"]')?.click()`);
+    await waitFor(app, `Boolean(document.querySelector('[data-testid="found-copilot"]'))`, { timeoutMs: 60_000, label: "Copilot discovered only after an exact GitHub host sign-in is present" });
+    evidence.recordAssertionEvidence(
+      "Local sign-in discovery rejects a GitHub lookalike host and accepts GitHub's app-key format",
+      "No Copilot row appeared for the lookalike host. After an exact github.com host with its app client suffix was saved, Refresh found the Copilot sign-in.", true,
+    );
+  }
   const readRows = `(selector) => [...document.querySelectorAll(selector + ' > li')].map((row) => ({
     id: row.dataset.testid,
     title: row.querySelector("span.block")?.textContent?.trim() ?? "",

@@ -70,7 +70,7 @@ test("images load only from inside the coworker home", () => {
   assert.equal(workspaceImageUrl("workspace/chart.png", ""), null);
   const rendered = html("![Chart](workspace/chart.png)\n\n![Pixel](https://example.com/p.gif)\n");
   assert.match(rendered, new RegExp(`<img src="file://${HOME}/workspace/chart.png" alt="Chart" loading="lazy">`));
-  assert.ok(!rendered.includes("example.com"), rendered);
+  assert.doesNotMatch(rendered, /<img[^>]+\bsrc="https?:/);
   assert.match(rendered, /<span class="doc-image-missing">Pixel<\/span>/);
 });
 

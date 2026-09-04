@@ -351,7 +351,7 @@ function readBody(request) {
 function bearerToken(request) {
   const header = request.headers.authorization;
   const value = Array.isArray(header) ? header[0] : header;
-  const match = /^Bearer\s+(.+)$/i.exec(String(value ?? "").trim());
+  const match = /^Bearer[ \t]+([A-Za-z0-9._~+/-]+=*)$/i.exec(String(value ?? "").trim());
   return match ? match[1].trim() : "";
 }
 
