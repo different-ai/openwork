@@ -93,7 +93,38 @@ test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeo
     body: "grant_type=refresh_token",
   });
   assert.equal(tokenResponse.status, 200);
-  assert.equal(typeof (await tokenResponse.json()).access_token, "string");
+  const accessToken = (await tokenResponse.json()).access_token;
+  assert.equal(typeof accessToken, "string");
+
+  const configured = await fetch(`${origin}/admin/tools`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ tools: [{
+      name: "execute_capability",
+      description: "A deterministic handoff witness",
+      inputSchema: { type: "object", properties: { target: { type: "string" } } },
+      result: { content: [{ type: "text", text: "queued" }] },
+    }] }),
+  });
+  assert.equal(configured.status, 200);
+  const rpc = async (method, params) => {
+    const response = await fetch(`${origin}/mcp`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    });
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  const listed = await rpc("tools/list", {});
+  assert.deepEqual(listed.result.tools.map((tool) => tool.name), ["execute_capability"]);
+  assert.equal("result" in listed.result.tools[0], false);
+  const invoked = await rpc("tools/call", { name: "execute_capability", arguments: { target: "desktop" } });
+  assert.equal(invoked.result.content[0].text, "queued");
+  const log = await (await fetch(`${origin}/requests`)).json();
+  assert.deepEqual(log.requests.flatMap((entry) => entry.toolCalls ?? []).map(({ name, args }) => ({ name, args })), [
+    { name: "execute_capability", args: { target: "desktop" } },
+  ]);
 
   const failedResponse = await fetch(`${origin}/admin/agent-workloads`, {
     method: "POST",

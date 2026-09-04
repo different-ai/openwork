@@ -51,6 +51,7 @@ const refreshTokens = new Set();
 const requests = [];
 const drafts = [];
 let agentWorkloads = [];
+let configuredTools = [];
 
 const gmailThreadId = "thread-q3-launch";
 
@@ -629,6 +630,13 @@ function tokenFingerprint(req) {
 }
 
 function mcpResult(message) {
+  if (configuredTools.length && message.method === "tools/list") {
+    return { tools: configuredTools.map(({ result, ...tool }) => tool) };
+  }
+  if (message.method === "tools/call") {
+    const tool = configuredTools.find((candidate) => candidate.name === message.params?.name);
+    if (tool) return tool.result;
+  }
   switch (message.method) {
     case "initialize":
       return {
@@ -860,6 +868,17 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === "/requests") {
       json(res, 200, { requests });
+      return;
+    }
+
+    if (url.pathname === "/admin/tools" && req.method === "POST") {
+      const body = await readJson(req);
+      if (!Array.isArray(body?.tools) || body.tools.some((tool) => !tool || typeof tool.name !== "string" || !tool.inputSchema || !tool.result)) {
+        json(res, 400, { error: "tools must have a name, inputSchema, and result" });
+        return;
+      }
+      configuredTools = body.tools;
+      json(res, 200, { configured: configuredTools.length });
       return;
     }
 

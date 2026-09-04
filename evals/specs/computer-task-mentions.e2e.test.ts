@@ -21,23 +21,32 @@ test("computer mentions steer tasks through Connect and Automations names the co
   });
 
   await step("typing desktop directly works without selecting the menu", async () => {
+    await user.click({ role: "button", label: "New task" });
     await user.type("composer", "@desktop COMPUTER-DESKTOP-TASK Summarize my local project notes.");
     await user.press("Enter");
-    await user.see({ text: "Received computer task.", nth: 1 }, { timeoutMs: 90_000 });
+    await user.see({ text: "Received computer task.", nth: 0 }, { timeoutMs: 90_000 });
+    await user.click({ role: "button", label: "New task" });
     await user.type("composer", "COMPUTER-PLAIN-TASK Explain the address person@cloud and the word desktop.");
     await user.press("Enter");
-    await user.see({ text: "Received computer task.", nth: 2 }, { timeoutMs: 90_000 });
+    await user.see({ text: "Received computer task.", nth: 0 }, { timeoutMs: 90_000 });
   });
 
-  await step("the engine receives the chosen target, while ordinary text is not routed", async () => {
+  await step("computer handoffs reach Connect, while ordinary text makes no tool call", async () => {
     const messages = await world.submittedParts();
     expect(messages).toEqual([
-      { visible: expect.stringContaining("@cloud COMPUTER-CLOUD-TASK"), routing: [expect.stringContaining('target "cloud"')] },
-      { visible: expect.stringContaining("@desktop COMPUTER-DESKTOP-TASK"), routing: [expect.stringContaining('target "desktop"')] },
-      { visible: expect.stringContaining("person@cloud"), routing: [] },
+      { visible: "@cloud COMPUTER-CLOUD-TASK Summarize the project notes.", routing: [expect.stringContaining('target "cloud"')] },
+      { visible: "@desktop COMPUTER-DESKTOP-TASK Summarize my local project notes.", routing: [expect.stringContaining('target "desktop"')] },
+      { visible: "COMPUTER-PLAIN-TASK Explain the address person@cloud and the word desktop.", routing: [] },
+    ]);
+    const calls = await probe.toolCalls(world.den.mocks.agent);
+    expect(calls.map(({ name, args }) => ({ name, args }))).toEqual([
+      { name: "search_capabilities", args: { query: "remote-session:create" } },
+      { name: "execute_capability", args: { name: "remote-session:create", body: { target: "cloud", prompt: "COMPUTER-CLOUD-TASK Summarize the project notes." } } },
+      { name: "search_capabilities", args: { query: "remote-session:create" } },
+      { name: "execute_capability", args: { name: "remote-session:create", body: { target: "desktop", prompt: "COMPUTER-DESKTOP-TASK Summarize my local project notes." } } },
     ]);
     await user.notSee({ text: /Use OpenWork Connect search_capabilities/ });
-    evidence.recordAssertionEvidence("Computer mentions preserve the target at the engine boundary", "Menu-selected @cloud and typed @desktop submit distinct synthetic Connect routing instructions. An email address does not route, and implementation instructions stay out of the visible chat.", true);
+    evidence.recordAssertionEvidence("Computer mentions reach the Connect boundary", "Menu-selected @cloud and typed @desktop submit distinct synthetic Connect routing instructions. The Connect witness serves search and create calls with the matching target and full task. An email address makes no tool call, and routing instructions stay out of the visible chat.", true);
   });
 
   await step("Automations shows where the task runs and explains desktop availability", async () => {

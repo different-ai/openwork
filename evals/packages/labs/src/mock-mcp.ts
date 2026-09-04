@@ -76,7 +76,16 @@ export interface MockMcpHandle {
   [Symbol.asyncDispose](): Promise<void>;
 }
 
+export interface MockMcpTool {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  result: { content: { type: "text"; text: string }[] };
+}
+
 export interface StartMockMcpOptions {
+  /** Replace the catalog with deterministic tools; served calls remain observable through toolCalls(). */
+  tools?: MockMcpTool[];
   port?: number;
   scriptPath?: string;
   publicUrl?: string;
@@ -326,6 +335,16 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
   }
 
   await waitForHealth(url, () => output, child);
+
+  if (options.tools) {
+    const response = await fetch(`${url}/admin/tools`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ tools: options.tools }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new Error(`Mock tool configuration failed: HTTP ${response.status}`);
+  }
 
   if (options.agentWorkloads) {
     const response = await fetch(`${url}/admin/agent-workloads`, {

@@ -1256,7 +1256,36 @@ export async function computerMentions(seed: Seed) {
   const providerId = "computer-mentions-mock";
   const modelId = "computer-mentions-model";
   const mock = seed.mock({
-    agentWorkloads: [{ promptMarker: "COMPUTER-", finalReply: "Received computer task.", steps: [] }],
+    allowUnauthenticatedMcp: true,
+    tools: [
+      {
+        name: "search_capabilities",
+        description: "Find a computer task capability.",
+        inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+        result: { content: [{ type: "text", text: JSON.stringify({ items: [{ name: "remote-session:create" }] }) }] },
+      },
+      {
+        name: "execute_capability",
+        description: "Start a task on the selected computer.",
+        inputSchema: { type: "object", properties: { name: { type: "string" }, body: { type: "object", properties: { target: { type: "string", enum: ["cloud", "desktop"] }, prompt: { type: "string" } }, required: ["target", "prompt"] } }, required: ["name", "body"] },
+        result: { content: [{ type: "text", text: JSON.stringify({ state: "queued", commandId: "computer-task-witness" }) }] },
+      },
+    ],
+    agentWorkloads: [
+      ...[
+        { target: "cloud", prompt: "COMPUTER-CLOUD-TASK Summarize the project notes." },
+        { target: "desktop", prompt: "COMPUTER-DESKTOP-TASK Summarize my local project notes." },
+      ].map(({ target, prompt }) => ({
+        // Only the app's synthetic instruction contains this marker. Without routing, the model refuses the task.
+        promptMarker: `target "${target}"`,
+        finalReply: "Received computer task.",
+        steps: [
+          { tool: "computer_witness_search_capabilities", arguments: { query: "remote-session:create" } },
+          { tool: "computer_witness_execute_capability", arguments: { name: "remote-session:create", body: { target, prompt } } },
+        ],
+      })),
+      { promptMarker: "COMPUTER-PLAIN-TASK", finalReply: "Received computer task.", steps: [] },
+    ],
   });
   const den = await seed.den({ mocks: { agent: mock }, env: { DEN_AUTOMATIONS_ENABLED: "true" } });
   const created = await seed.api(den.admin, "/v1/automations", {
@@ -1272,6 +1301,8 @@ export async function computerMentions(seed: Seed) {
   const app = await seed.desktop({ den, as: "admin", model: `${providerId}/${modelId}` });
   const workspace = await seed.workspace(app, seed.tmpPath("computer-mentions"));
   await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    permission: { "computer_witness_*": "allow" },
+    mcp: { computer_witness: { type: "remote", url: den.mocks.agent.mcpUrl, enabled: true, oauth: false } },
     provider: {
       [providerId]: {
         npm: "@ai-sdk/openai-compatible",
@@ -1286,20 +1317,26 @@ export async function computerMentions(seed: Seed) {
     den, app, workspace, session,
     async submittedParts() {
       // TODO(primitive): inspect submitted engine parts, including synthetic routing instructions.
-      return seed.evalIn(app, `async (workspaceId, sessionId) => {
+      return seed.evalIn(app, `async (workspaceId) => {
         const port = localStorage.getItem("openwork.server.port");
         const token = localStorage.getItem("openwork.server.token");
-        const response = await fetch("http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId)
-          + "/opencode/session/" + encodeURIComponent(sessionId) + "/message", {
-          headers: { Authorization: "Bearer " + token },
-        });
-        if (!response.ok) throw new Error("Transcript read failed: " + response.status);
-        const messages = await response.json();
+        const base = "http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId) + "/opencode/session";
+        const headers = { Authorization: "Bearer " + token };
+        const listed = await fetch(base, { headers });
+        if (!listed.ok) throw new Error("Session list failed: " + listed.status);
+        const sessions = await listed.json();
+        const messages = [];
+        for (const session of sessions) {
+          const response = await fetch(base + "/" + encodeURIComponent(session.id) + "/message", { headers });
+          if (!response.ok) throw new Error("Transcript read failed: " + response.status);
+          messages.push(...await response.json());
+        }
+        messages.sort((a, b) => a.info.time.created - b.info.time.created);
         return messages.filter((message) => message.info.role === "user").map((message) => ({
-          visible: message.parts.filter((part) => part.type === "text" && !part.synthetic).map((part) => part.text).join(""),
+          visible: message.parts.filter((part) => part.type === "text" && !part.synthetic).map((part) => part.text).join("").trim(),
           routing: message.parts.filter((part) => part.type === "text" && part.synthetic && part.text.includes("remote-session:create")).map((part) => part.text),
         }));
-      }`, { args: [workspace.workspaceId, session.sessionId], awaitPromise: true });
+      }`, { args: [workspace.workspaceId], awaitPromise: true });
     },
   };
 }
