@@ -17,6 +17,7 @@ const title = enabled
 interface EngineV2PreviewStatus {
   enabled: boolean;
   running: boolean;
+  chatRouting: boolean;
   version?: string;
   pid?: number;
   binSource?: string;
@@ -79,13 +80,14 @@ function stringArray(value: unknown, field: string): string[] {
 }
 
 function parseStatus(value: unknown): EngineV2PreviewStatus {
-  if (!isRecord(value) || typeof value.enabled !== "boolean" || typeof value.running !== "boolean") {
+  if (!isRecord(value) || typeof value.enabled !== "boolean" || typeof value.running !== "boolean" || typeof value.chatRouting !== "boolean") {
     throw new Error(`Unexpected engine v2 preview status: ${JSON.stringify(value)}`);
   }
   if (value.pid !== undefined && typeof value.pid !== "number") throw new Error(`Unexpected engine v2 pid: ${JSON.stringify(value.pid)}`);
   return {
     enabled: value.enabled,
     running: value.running,
+    chatRouting: value.chatRouting,
     ...(typeof value.version === "string" ? { version: value.version } : {}),
     ...(typeof value.pid === "number" ? { pid: value.pid } : {}),
     ...(typeof value.binSource === "string" ? { binSource: value.binSource } : {}),
@@ -148,9 +150,9 @@ async function untilStatus(
   throw new Error(`Timed out waiting for ${label}; last status: ${JSON.stringify(last)}`);
 }
 
-async function clickPreviewSwitch(app: Parameters<typeof evalIn>[0]): Promise<void> {
+async function clickEngineOption(app: Parameters<typeof evalIn>[0], engine: "v1" | "v2"): Promise<void> {
   const point = await evalIn(app, `(() => {
-    const control = Array.from(document.querySelectorAll('[aria-label="OpenCode v2 engine preview"]'))
+    const control = Array.from(document.querySelectorAll('[aria-label="Chat engine"] [data-engine="${engine}"]'))
       .find((candidate) => {
         const rect = candidate.getBoundingClientRect();
         return rect.width > 0 && rect.height > 0;
@@ -165,25 +167,24 @@ async function clickPreviewSwitch(app: Parameters<typeof evalIn>[0]): Promise<vo
     || typeof point.x !== "number"
     || typeof point.y !== "number"
   ) {
-    throw new Error(`Could not resolve the OpenCode v2 preview switch: ${JSON.stringify(point)}`);
+    throw new Error(`Could not resolve the ${engine} chat engine option: ${JSON.stringify(point)}`);
   }
   await app.client.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y });
   await app.client.send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
   await app.client.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
 }
 
-const switchCheckedExpression = `(() => {
-  const labelled = document.querySelector('[aria-label="OpenCode v2 engine preview"]');
-  if (!labelled) return null;
-  const control = labelled.hasAttribute("aria-checked") ? labelled : labelled.querySelector('[aria-checked]');
-  return control?.getAttribute("aria-checked") ?? null;
+const engineSelectedExpression = (engine: "v1" | "v2") => `(() => {
+  const group = document.querySelector('[aria-label="Chat engine"]');
+  const control = group?.querySelector('[data-engine="${engine}"]');
+  return control?.getAttribute("aria-pressed") === "true" || control?.getAttribute("data-state") === "on";
 })()`;
 
-const switchReadyUncheckedExpression = `(() => {
-  const labelled = document.querySelector('[aria-label="OpenCode v2 engine preview"]');
-  if (!labelled || labelled.getAttribute("aria-disabled") === "true" || labelled.hasAttribute("data-disabled")) return false;
-  const control = labelled.hasAttribute("aria-checked") ? labelled : labelled.querySelector('[aria-checked]');
-  return control?.getAttribute("aria-checked") === "false";
+const engineReadyExpression = `(() => {
+  const group = document.querySelector('[aria-label="Chat engine"]');
+  if (!group || group.getAttribute("aria-disabled") === "true" || group.hasAttribute("data-disabled")) return false;
+  const control = group.querySelector('[data-engine="v1"]');
+  return control?.getAttribute("aria-pressed") === "true" || control?.getAttribute("data-state") === "on";
 })()`;
 
 test.skipIf(!enabled)(title, async ({ evidence, place }) => {
@@ -216,20 +217,20 @@ test.skipIf(!enabled)(title, async ({ evidence, place }) => {
     expect(defaultStatus).toMatchObject({ enabled: false, running: false });
     expect(Object.hasOwn(defaultStatus, "pid")).toBe(false);
     await go(app, `/workspace/${workspaceId}/settings/advanced`);
-    await waitFor(app, switchReadyUncheckedExpression, {
+    await waitFor(app, engineReadyExpression, {
       timeoutMs: 60_000,
-      label: "ready, disabled OpenCode v2 engine preview switch",
+      label: "ready, selected OpenCode v1 chat engine option",
     });
     evidence.recordAssertionEvidence(
       "F1 the preview defaults off without a sidecar",
-      "The server reported enabled=false and running=false with no pid, while Advanced Settings exposed the unchecked preview switch.",
+      "The server reported enabled=false and running=false with no pid, while Advanced Settings selected OpenCode v1.",
       true,
     );
 
-    await clickPreviewSwitch(app);
-    await waitFor(app, `${switchCheckedExpression} === "true"`, {
+    await clickEngineOption(app, "v2");
+    await waitFor(app, engineSelectedExpression("v2"), {
       timeoutMs: 30_000,
-      label: "enabled OpenCode v2 engine preview switch",
+      label: "selected OpenCode v2 chat engine option",
     });
     const runningStatus = await untilStatus(
       app,
@@ -239,6 +240,7 @@ test.skipIf(!enabled)(title, async ({ evidence, place }) => {
     );
     const pid0 = runningStatus.pid;
     if (pid0 === undefined) throw new Error("Running OpenCode v2 status did not contain a pid");
+    expect(runningStatus.chatRouting).toBe(true);
     await waitFor(app, `document.body.innerText.includes("Running v")`, {
       timeoutMs: 30_000,
       label: "OpenCode v2 running status line",
@@ -294,7 +296,7 @@ test.skipIf(!enabled)(title, async ({ evidence, place }) => {
       true,
     );
 
-    await clickPreviewSwitch(app);
+    await clickEngineOption(app, "v1");
     const disabledStatus = await untilStatus(
       app,
       (status) => !status.enabled && !status.running,
@@ -306,13 +308,13 @@ test.skipIf(!enabled)(title, async ({ evidence, place }) => {
     const settledDisabledStatus = await readStatus(app);
     expect(settledDisabledStatus).toMatchObject({ enabled: false, running: false });
     expect(Object.hasOwn(settledDisabledStatus, "pid")).toBe(false);
-    await waitFor(app, `${switchCheckedExpression} === "false"`, {
+    await waitFor(app, engineSelectedExpression("v1"), {
       timeoutMs: 30_000,
-      label: "disabled OpenCode v2 engine preview switch after shutdown",
+      label: "selected OpenCode v1 chat engine option after shutdown",
     });
     evidence.recordAssertionEvidence(
       "F4 disabling stops the sidecar without a zombie restart",
-      "The server remained disabled and not running with no pid after a two-second settling period, and the UI switch returned to unchecked.",
+      "The server remained disabled and not running with no pid after a two-second settling period, and the UI returned to OpenCode v1.",
       true,
     );
   } finally {
