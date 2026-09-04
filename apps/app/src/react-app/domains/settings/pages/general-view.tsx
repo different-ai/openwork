@@ -34,7 +34,7 @@ type SettingsCardDefinition = { tab: SettingsTab; icon: typeof Sparkles } & (
 
 const workspaceCards: SettingsCardDefinition[] = [
   { tab: "preferences", icon: Cog, title: "Preferences", desc: "Default model, reasoning, and compaction." },
-  { tab: "permissions", icon: FolderLock, title: "Permissions", desc: "Authorized folders and file access." },
+  { tab: "permissions", icon: FolderLock, title: "Permissions", desc: "How agents run here, authorized folders, and file access." },
   { tab: "advanced", icon: Wrench, title: "Advanced", desc: "Runtime, engine, and developer options." },
 ];
 

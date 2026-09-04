@@ -269,14 +269,20 @@ describe("tool aggregate long details", () => {
       configurable: true,
       value: true,
     });
+    // Shiki's inline highlighting lands asynchronously and replaces "\n" with
+    // <br>, so read the command the way a person sees it, whether or not the
+    // upgrade has happened yet, to stay independent of timing.
+    const readCommandText = (node: Node): string => {
+      if (node.nodeName === "BR") return "\n";
+      if (node.childNodes.length === 0) return node.textContent ?? "";
+      return Array.from(node.childNodes, readCommandText).join("");
+    };
     Object.defineProperty(HTMLElement.prototype, "getBoundingClientRect", {
       configurable: true,
       value(this: HTMLElement) {
-        // Shiki's inline highlighting replaces "\n" with <br>, and it lands
-        // asynchronously, so count both forms to stay independent of timing.
         const visibleLines = this.classList.contains("line-clamp-1")
           ? 1
-          : Math.max(1, (this.textContent ?? "").split("\n").length, this.querySelectorAll("br").length + 1);
+          : Math.max(1, readCommandText(this).split("\n").length);
         return new DOMRect(0, 0, 320, visibleLines * 20);
       },
     });
@@ -316,7 +322,7 @@ describe("tool aggregate long details", () => {
       const collapsed = container.querySelector<HTMLElement>("[data-tool-aggregate-detail=command] code");
       if (!collapsed) throw new Error("Expected the collapsed command text");
       expect(Math.round(collapsed.getBoundingClientRect().height / 20)).toBe(1);
-      expect(collapsed.textContent).toBe(command);
+      expect(readCommandText(collapsed)).toBe(command);
 
       const toggle = container.querySelector<HTMLButtonElement>("[data-tool-aggregate-detail=command]");
       if (!toggle) throw new Error("Expected the command detail toggle");
@@ -325,7 +331,7 @@ describe("tool aggregate long details", () => {
       const revealed = container.querySelector<HTMLElement>("[data-tool-aggregate-detail=command] code");
       if (!revealed) throw new Error("Expected the revealed command text");
       expect(Math.round(revealed.getBoundingClientRect().height / 20)).toBe(command.split("\n").length);
-      expect(revealed.textContent).toBe(command);
+      expect(readCommandText(revealed)).toBe(command);
 
       const copy = container.querySelector<HTMLButtonElement>("[data-tool-aggregate-copy]");
       if (!copy) throw new Error("Expected the expanded command copy action");

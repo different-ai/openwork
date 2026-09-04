@@ -6,8 +6,12 @@ import {
   listConfiguredEnvKeys,
   readProviderEnvNames,
   resolveProviderCredential,
+  runtimeProviderEnvName,
+  runtimeProviderEnvNames,
+  runtimeProviderEnvTag,
   selectLegacyScalarCredentialEnvName,
   selectPrimaryCredentialEnvName,
+  toRuntimeProviderEnv,
 } from "../src/llm/provider-credentials.js"
 
 const AWS_ENV = [
@@ -232,5 +236,53 @@ describe("listConfiguredEnvKeys", () => {
     expect(listConfiguredEnvKeys("sk-test", ["AZURE_RESOURCE_NAME", "AZURE_API_KEY"])).toEqual(["AZURE_API_KEY"])
     expect(listConfiguredEnvKeys("sk-test", [])).toEqual([])
     expect(listConfiguredEnvKeys(null, AWS_ENV)).toEqual([])
+  })
+})
+
+describe("runtime provider env names", () => {
+  const rowId = "lpr_01kx4t3amgendr682dmp6120jv"
+
+  test("the tag is a pure function of the row id", () => {
+    expect(runtimeProviderEnvTag(rowId)).toBe("LPR_120JV")
+    expect(runtimeProviderEnvTag(rowId)).toBe(runtimeProviderEnvTag(rowId))
+    expect(runtimeProviderEnvTag("lpr_01kx4t3apjendr685c2ryzevqe")).toBe("LPR_ZEVQE")
+  })
+
+  test("catalog providers get provider-scoped names that still rank as credentials", () => {
+    const provider = { id: rowId, source: "models_dev", providerConfig: { env: ["AZURE_RESOURCE_NAME", "AZURE_API_KEY"] } }
+    const names = runtimeProviderEnvNames(provider)
+    expect(names).toEqual(["LPR_120JV_AZURE_RESOURCE_NAME", "LPR_120JV_AZURE_API_KEY"])
+    expect(selectPrimaryCredentialEnvName(names, names)).toBe("LPR_120JV_AZURE_API_KEY")
+  })
+
+  test("custom and hosted providers keep exactly the names they declare", () => {
+    const custom = { id: rowId, source: "custom", providerConfig: { env: ["LITELLM_API_KEY"] } }
+    const hosted = { id: rowId, source: "openwork", providerConfig: { env: ["OPENWORK_API_KEY"] } }
+    expect(runtimeProviderEnvNames(custom)).toEqual(["LITELLM_API_KEY"])
+    expect(runtimeProviderEnvName(custom, "OPENAI_API_KEY")).toBe("OPENAI_API_KEY")
+    expect(runtimeProviderEnvNames(hosted)).toEqual(["OPENWORK_API_KEY"])
+    expect(toRuntimeProviderEnv({ ...custom, apiKeys: { LITELLM_API_KEY: "k" } })).toEqual({
+      ...custom,
+      apiKeys: { LITELLM_API_KEY: "k" },
+    })
+  })
+
+  test("toRuntimeProviderEnv renames the block and the multi-env map together, never the stored input", () => {
+    const stored = {
+      id: rowId,
+      source: "models_dev",
+      providerConfig: { id: "azure", env: ["AZURE_RESOURCE_NAME", "AZURE_API_KEY"] },
+      apiKeys: { AZURE_RESOURCE_NAME: "resource", AZURE_API_KEY: "secret" },
+    }
+    const runtime = toRuntimeProviderEnv(stored)
+    expect(runtime.providerConfig).toEqual({ id: "azure", env: ["LPR_120JV_AZURE_RESOURCE_NAME", "LPR_120JV_AZURE_API_KEY"] })
+    expect(runtime.apiKeys).toEqual({ LPR_120JV_AZURE_RESOURCE_NAME: "resource", LPR_120JV_AZURE_API_KEY: "secret" })
+    expect(stored.providerConfig.env).toEqual(["AZURE_RESOURCE_NAME", "AZURE_API_KEY"])
+    expect(Object.keys(stored.apiKeys)).toEqual(["AZURE_RESOURCE_NAME", "AZURE_API_KEY"])
+  })
+
+  test("a provider without a declared env list is returned untouched", () => {
+    const provider = { id: rowId, source: "models_dev", providerConfig: { id: "x" }, apiKeys: null }
+    expect(toRuntimeProviderEnv(provider)).toBe(provider)
   })
 })

@@ -107,6 +107,8 @@ export type OpenworkServerInfo = {
   hostToken: string | null;
   managedOpencodeBinPath: string | null;
   managedOpencodeBinSource: string | null;
+  /** Structured server log on disk, or null when the server runs without a file sink. */
+  logFilePath: string | null;
   pid: number | null;
   lastStdout: string | null;
   lastStderr: string | null;

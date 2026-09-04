@@ -975,7 +975,11 @@ export class CloudProviderSync {
       fetchImpl: this.fetchImpl,
       logger: this.logger,
     });
-    const authChanged = authResult.delivered.length > 0 || authResult.removed.length > 0;
+    // Only a rotated value or a removal invalidates cached SDK clients.
+    // Re-seeding the same key to a replaced engine generation is not a
+    // change; counting it forced a standby after every rollover, and the
+    // next sync then re-seeded that generation, forever.
+    const authChanged = authResult.rotated.length > 0 || authResult.removed.length > 0;
 
     // Provider *config* (models, npm,
     // options.baseURL) has no live path: the engine reads it from

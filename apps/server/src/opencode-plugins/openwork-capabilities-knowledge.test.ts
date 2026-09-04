@@ -77,25 +77,6 @@ describe("OpenWork capabilities knowledge plugin", () => {
     expect(output.system[0].startsWith("engine header\n\nYou are running inside OpenWork.")).toBe(true);
   });
 
-  test("retrieves Slack connection guidance from bundled docs", async () => {
-    process.env.OPENWORK_DOCS_DIR = resolve(import.meta.dir, "../../../../packages/docs");
-
-    const plugin = await OpenWorkCapabilitiesKnowledge();
-    const search = await plugin.tool.openwork_docs_search.execute({ query: "how can i connect slack", limit: 3 });
-
-    expect(search).toContain("start-here/connect-your-stack/connect-slack-mcp.mdx");
-    expect(search).toContain("Connect Slack as a custom MCP");
-
-    const read = await plugin.tool.openwork_docs_read.execute({
-      path: "start-here/connect-your-stack/connect-slack-mcp.mdx",
-    });
-
-    expect(read).toContain("https://mcp.slack.com/mcp");
-    expect(read).toContain("Advanced OAuth");
-    expect(read).toContain("http://127.0.0.1:19876/mcp/oauth/callback");
-    expect(read).toContain("search:read.public");
-  });
-
   test("retrieves the Connect-first member flow from bundled docs", async () => {
     process.env.OPENWORK_DOCS_DIR = resolve(import.meta.dir, "../../../../packages/docs");
 

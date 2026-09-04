@@ -59,6 +59,8 @@ export interface HeadlessWorldRuntimePaths {
   serverConfigPath: string;
   webLogPath: string;
   headlessLogPath: string;
+  /** Sessions database for the world's managed OpenCode engine. */
+  opencodeDbPath: string;
 }
 
 export interface InstalledProductionHeadlessState {
@@ -291,6 +293,7 @@ export function resolveHeadlessWorldRuntimePaths(
       serverConfigPath: resolveHeadlessServerConfigPath(repoRoot),
       webLogPath: join(directory, "dev-web.log"),
       headlessLogPath: join(directory, "dev-headless.log"),
+      opencodeDbPath: join(directory, "dev-headless-opencode.db"),
     };
   }
   const directory = join(repoRoot, "tmp", "worlds", "runtime", name);
@@ -300,7 +303,24 @@ export function resolveHeadlessWorldRuntimePaths(
     serverConfigPath: join(directory, "server.json"),
     webLogPath: join(directory, "web.log"),
     headlessLogPath: join(directory, "server.log"),
+    opencodeDbPath: join(directory, "opencode.db"),
   };
+}
+
+/**
+ * Engine data for an `isolated` world. Only the sessions database moves: the
+ * default engine otherwise opens the same ~/.local/share/opencode/opencode.db
+ * as the installed desktop app, so both processes contend for one SQLite
+ * writer and the world's sessions land in the person's history. Provider
+ * credentials and the engine log stay where they are so the world keeps
+ * working with the person's configured providers. An explicit OPENCODE_DB wins.
+ */
+export function isolatedHeadlessEngineEnv(
+  runtimePaths: Pick<HeadlessWorldRuntimePaths, "opencodeDbPath">,
+  env: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+  const explicit = env.OPENCODE_DB?.trim();
+  return { OPENCODE_DB: explicit || runtimePaths.opencodeDbPath };
 }
 
 export async function readHeadlessRuntimeManifest(path: string): Promise<HeadlessRuntimeManifest | null> {
@@ -783,7 +803,7 @@ export async function launchHeadlessWeb(options: HeadlessWebLaunchOptions): Prom
   const headlessEnv: NodeJS.ProcessEnv = {
     ...env,
     OPENWORK_DEV_MODE: "1",
-    ...(productionState ? installedProductionHeadlessEnv(productionState) : {}),
+    ...(productionState ? installedProductionHeadlessEnv(productionState) : isolatedHeadlessEngineEnv(runtimePaths, env)),
     ...(productionState ? {} : { OPENWORK_WORKSPACE: workspace }),
     OPENWORK_HOST: host,
     OPENWORK_REMOTE_ACCESS: remoteAccessEnabled ? "1" : "0",

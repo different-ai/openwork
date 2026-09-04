@@ -5,7 +5,6 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router"
 
 import { captureAnalyticsEvent, initAnalytics } from "../../app/lib/analytics";
 import {
-  createDenClient,
   readDenBootstrapConfig,
   readDenSettings,
   setDenBootstrapConfig,
@@ -239,10 +238,8 @@ function DenAuthControlActions() {
       if (!grant?.trim()) return { ok: false, error: "grant is required" };
       const settings = readDenSettings();
       const targetBaseUrl = argBaseUrl?.trim() || settings.baseUrl;
-      const client = createDenClient({ baseUrl: targetBaseUrl });
       const result = await exchangeHandoffAndSignIn(grant.trim(), {
         baseUrl: targetBaseUrl,
-        client,
         // Automation surface: commit the exchange-reported org directly; a
         // UI chooser would strand a headless driver.
         desktopInitiated: false,

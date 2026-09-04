@@ -35,7 +35,6 @@
               "start-here/connect-your-stack/add-a-custom-llm",
               "start-here/connect-your-stack/connect-services",
               "start-here/connect-your-stack/add-an-mcp-server",
-              "start-here/connect-your-stack/connect-slack-mcp",
               "start-here/connect-your-stack/enable-exa-search"
             ]
           },
@@ -214,6 +213,10 @@
     {
       "source": "/cloud/share-with-your-team/team-templates",
       "destination": "/cloud/share-with-your-team/collections"
+    },
+    {
+      "source": "/start-here/connect-your-stack/connect-slack-mcp",
+      "destination": "/cloud/share-with-your-team/shared-mcp-connections#slack"
     }
   ],
   "errors": {

@@ -1323,6 +1323,21 @@ export function LlmProviderEditorScreen({
                     </div>
 
                     {credentialFields}
+                    {provider?.source === "models_dev" && provider.runtimeEnvKeys.length > 0 ? (
+                        <p className="mt-6 text-[13px] leading-6 text-gray-500">
+                            On members&apos; machines and cloud workers this provider reads{" "}
+                            {provider.runtimeEnvKeys.map((envName, index) => (
+                                <span key={envName}>
+                                    {index > 0 ? ", " : null}
+                                    <code className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[12px]">
+                                        {envName}
+                                    </code>
+                                </span>
+                            ))}
+                            , so it never collides with a key someone set themselves or
+                            with another provider of the same kind.
+                        </p>
+                    ) : null}
                 </section>
             )}
 

@@ -8,6 +8,7 @@ import {
   clearEnginePoolForConfig,
   EnginePool,
   computeEngineConfigFingerprint,
+  enginePoolForConfig,
   isEngineConnectionFailure,
   setEnginePoolForConfig,
   type EnginePoolHooks,
@@ -559,6 +560,52 @@ describe("engine pool", () => {
     expect(await waitUntil(async () => pool.snapshot().generations.length === 1, 5_000)).toBe(true);
     expect(pool.snapshot().generations[0]?.role).toBe("primary");
     expect(await fixture.logLines()).toContain(`${oldPort} SIGTERM`);
+  });
+
+  test("seeds the healthy standby before flipping and flips anyway when seeding fails", async () => {
+    const fixture = await createFixture();
+    const seeded: Array<{ generationId: string; baseUrl: string; primaryAtSeed: string | null; hasAuth: boolean }> = [];
+    let failSeed = false;
+    fixture.hooks.prepareStandby = async (_config, standby) => {
+      const pool = enginePoolForConfig(fixture.config);
+      seeded.push({
+        generationId: standby.generationId,
+        baseUrl: standby.baseUrl,
+        primaryAtSeed: pool?.primaryUrl() ?? null,
+        hasAuth: standby.username.length > 0 && standby.password.length > 0,
+      });
+      if (failSeed) throw new Error("engine auth API rejected the seed");
+    };
+    const { pool, primary } = await createPool(fixture);
+    await fixture.setBusy(portOf(primary.url), ["ses_live"]);
+    await fixture.setRuntimeConfig(JSON.stringify({ generation: 2 }));
+
+    const outcome = await pool.requestRollover({ reason: "config_changed", workspace: fixture.workspace });
+    expect(outcome.action).toBe("rolled_over");
+    if (outcome.action !== "rolled_over") throw new Error("expected a rollover");
+
+    // Seeded exactly once, with the standby's own connection, while the old
+    // engine was still primary: the new generation never served unseeded.
+    expect(seeded).toHaveLength(1);
+    expect(seeded[0]?.generationId).toBe(outcome.generationId);
+    const promotedUrl = pool.primaryUrl();
+    if (!promotedUrl) throw new Error("expected a promoted primary");
+    expect(seeded[0]?.baseUrl).toBe(promotedUrl);
+    expect(seeded[0]?.baseUrl).not.toBe(primary.url);
+    expect(seeded[0]?.primaryAtSeed).toBe(primary.url);
+    expect(seeded[0]?.hasAuth).toBe(true);
+
+    // A failed seed must not strand the pool on the old engine.
+    await fixture.setBusy(portOf(primary.url), []);
+    expect(await waitUntil(async () => pool.snapshot().generations.length === 1, 5_000)).toBe(true);
+    const secondPrimaryUrl = pool.primaryUrl();
+    await fixture.setBusy(portOf(secondPrimaryUrl ?? "http://127.0.0.1:0"), ["ses_live_2"]);
+    await fixture.setRuntimeConfig(JSON.stringify({ generation: 3 }));
+    failSeed = true;
+    const second = await pool.requestRollover({ reason: "config_changed", workspace: fixture.workspace, manual: true });
+    expect(second.action).toBe("rolled_over");
+    expect(seeded).toHaveLength(2);
+    expect(pool.primaryUrl()).not.toBe(secondPrimaryUrl);
   });
 
   test("keeps a live session from another workspace on the draining generation", async () => {

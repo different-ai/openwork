@@ -22,6 +22,8 @@ import {
   listConfiguredEnvKeys,
   readProviderEnvNames,
   resolveProviderCredential,
+  runtimeProviderEnvNames,
+  toRuntimeProviderEnv,
 } from "../../llm/provider-credentials.js"
 import {
   jsonValidator,
@@ -730,6 +732,7 @@ async function loadLlmProviders(input: {
     } : {}),
     hasApiKey: Boolean(provider.apiKey && provider.apiKey.trim().length > 0),
     configuredEnvKeys: listConfiguredEnvKeys(provider.apiKey, readProviderEnvNames(provider.providerConfig ?? {})),
+    runtimeEnvKeys: runtimeProviderEnvNames({ ...provider, providerConfig: provider.providerConfig ?? {} }),
     models: (modelsByProviderId.get(provider.id) ?? [])
       .map((model) => ({
         id: model.modelId,
@@ -1009,11 +1012,13 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       // single-secret providers keep returning `apiKey`, multi-env providers
       // return `apiKeys` with `apiKey: null` so old clients fail with their
       // missing-credential error instead of applying a JSON blob as the key.
+      // Catalog providers leave Den under provider-scoped env names (see
+      // toRuntimeProviderEnv); the stored row keeps the catalog's names.
+      const runtime = toRuntimeProviderEnv({ ...provider, apiKeys: credential.apiKeys })
       return c.json({
         llmProvider: {
-          ...provider,
+          ...runtime,
           apiKey: credential.apiKey,
-          apiKeys: credential.apiKeys,
           ...(memberCredential ? { memberCredential } : {}),
           models: models
             .map((model) => ({
@@ -1454,6 +1459,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
             credentialMode: input.credentialMode,
             hasApiKey: Boolean(normalized.apiKey),
             configuredEnvKeys: listConfiguredEnvKeys(normalized.apiKey, readProviderEnvNames(normalized.providerConfig)),
+            runtimeEnvKeys: runtimeProviderEnvNames({ id: llmProviderId, ...normalized }),
             createdAt: now,
             updatedAt: now,
           },
@@ -1625,6 +1631,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
             apiKey: undefined,
             hasApiKey: Boolean(normalized.apiKey),
             configuredEnvKeys: listConfiguredEnvKeys(normalized.apiKey, readProviderEnvNames(normalized.providerConfig)),
+            runtimeEnvKeys: runtimeProviderEnvNames({ id: provider.id, ...normalized }),
             updatedAt,
           },
         })

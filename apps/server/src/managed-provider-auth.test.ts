@@ -358,6 +358,92 @@ describe("managed provider auth delivery", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  test("seeding a standby generation leaves the promoted primary unchanged on the next sync", async () => {
+    const config = await makeConfig(dir);
+    await seedProvider(config, { id: "anthropic", env: ["ANTHROPIC_API_KEY"] });
+    const fetchStub = stubFetch();
+    const env = { list: async () => [{ key: "ANTHROPIC_API_KEY", value: "sk-ant-secret" }] };
+    let primary = {
+      generationId: "generation-one",
+      role: "primary" as const,
+      baseUrl: "http://127.0.0.1:39999",
+      username: "engine-user",
+      password: "engine-pass",
+    };
+    installManagedPool(config, () => primary);
+
+    const first = await syncManagedProviderAuth({ config, env, fetchImpl: fetchStub.impl });
+    expect(first.delivered).toEqual([PROVIDER]);
+    expect(first.rotated).toEqual([PROVIDER]);
+
+    // The pool seeds the healthy standby before flipping to it.
+    const seeded = await syncManagedProviderAuth({
+      config,
+      env,
+      fetchImpl: fetchStub.impl,
+      target: {
+        generationId: "generation-two",
+        baseUrl: "http://127.0.0.1:40001",
+        username: "standby-user",
+        password: "standby-pass",
+      },
+    });
+    expect(seeded.delivered).toEqual([PROVIDER]);
+    expect(seeded.rotated).toEqual([]);
+    const standbyPut = fetchStub.calls.at(-1);
+    expect(standbyPut?.method).toBe("PUT");
+    expect(standbyPut?.url).toBe(`http://127.0.0.1:40001/auth/${PROVIDER}`);
+    expect(standbyPut?.authorization).toBe(`Basic ${Buffer.from("standby-user:standby-pass").toString("base64")}`);
+
+    // After the flip the primary-scoped sync finds its fingerprints applied.
+    primary = {
+      generationId: "generation-two",
+      role: "primary",
+      baseUrl: "http://127.0.0.1:40001",
+      username: "standby-user",
+      password: "standby-pass",
+    };
+    const afterFlip = await syncManagedProviderAuth({ config, env, fetchImpl: fetchStub.impl });
+    expect(afterFlip.unchanged).toEqual([PROVIDER]);
+    expect(afterFlip.delivered).toEqual([]);
+    expect(afterFlip.rotated).toEqual([]);
+    expect(fetchStub.calls.filter((call) => call.method === "PUT")).toHaveLength(2);
+    clearEnginePoolForConfig(config);
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("re-seeding a replaced engine with the same key is delivered but not rotated", async () => {
+    const config = await makeConfig(dir);
+    await seedProvider(config, { id: "anthropic", env: ["ANTHROPIC_API_KEY"] });
+    const fetchStub = stubFetch();
+    let credential = "sk-ant-secret";
+    const env = { list: async () => [{ key: "ANTHROPIC_API_KEY", value: credential }] };
+    let generationId = "generation-one";
+    installManagedPool(config, () => ({
+      generationId,
+      role: "primary",
+      baseUrl: "http://127.0.0.1:39999",
+      username: "engine-user",
+      password: "engine-pass",
+    }));
+
+    const first = await syncManagedProviderAuth({ config, env, fetchImpl: fetchStub.impl });
+    expect(first.rotated).toEqual([PROVIDER]);
+
+    generationId = "generation-two";
+    const reseeded = await syncManagedProviderAuth({ config, env, fetchImpl: fetchStub.impl });
+    expect(reseeded.delivered).toEqual([PROVIDER]);
+    expect(reseeded.rotated).toEqual([]);
+
+    credential = "sk-ant-rotated";
+    const rotated = await syncManagedProviderAuth({ config, env, fetchImpl: fetchStub.impl });
+    expect(rotated.delivered).toEqual([PROVIDER]);
+    expect(rotated.rotated).toEqual([PROVIDER]);
+    expect(fetchStub.calls.filter((call) => call.method === "PUT")).toHaveLength(3);
+    clearEnginePoolForConfig(config);
+    await rm(dir, { recursive: true, force: true });
+  });
+
   test("serializes reconciliation and ignores a completion from an obsolete managed engine generation", async () => {
     const config = await makeConfig(dir);
     await seedProvider(config, { id: "anthropic", env: ["ANTHROPIC_API_KEY"] });
