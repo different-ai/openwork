@@ -81,7 +81,7 @@ export async function voiceConversation(seed: Seed, { place }: { place: Place })
     await arrangeControl(seed, app, "voice.panel.open");
     const fixture = (method: string, args: unknown[] = []) => seed.evalIn(app, `(method, args) => window.__voiceFixture[method](...JSON.parse(args))`, { args: [method, JSON.stringify(args)], awaitPromise: true });
     const facts = () => evalIn(app, "window.__voiceFixture.facts()");
-    const messages = (sessionId: string) => evalIn(app, `(async () => {
+    const messages = (sessionId: string) => evalIn(app, String.raw`(async () => {
       const workspaceId = ${JSON.stringify(workspace.workspaceId)};
       const sessionId = ${JSON.stringify(sessionId)};
       const root = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");

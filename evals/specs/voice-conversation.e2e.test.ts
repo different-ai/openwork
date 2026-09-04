@@ -23,6 +23,7 @@ test("voice sends and steers real conversation work, interrupts speech, cancels,
     expect(await waitForUsers(1)).toEqual(["Create a note in this workspace."]);
     expect(await probe.eventually(() => world.file("voice-note.txt"), { within: 60_000, until: (value) => object(value).status === 200, label: "real engine created the requested file" })).toEqual(expect.objectContaining({ body: expect.stringContaining("created by spoken request") }));
     expect(await world.messages(world.b.sessionId)).toEqual([]);
+    expect(await world.providerFacts()).toEqual(expect.arrayContaining([expect.objectContaining({ model: "voice-task-model", tools: expect.arrayContaining(["bash"]) })]));
     await user.see({ text: "Reading the conversation’s response…" });
     await user.screenshot();
   });
@@ -52,12 +53,15 @@ test("voice sends and steers real conversation work, interrupts speech, cancels,
     await world.fixture("say", ["Start a slow operation.", "slow"]);
     await waitForUsers(3);
     await probe.eventually(() => world.messages(world.a.sessionId), { within: 30_000, until: (value) => JSON.stringify(value).includes('"status":"running"'), label: "real slow tool is running" });
+    await world.fixture("say", ["When this finishes, change the note again.", "running-follow-up"]);
+    expect(await waitForUsers(4)).toContain("When this finishes, change the note again.");
+    expect(JSON.stringify(await world.messages(world.a.sessionId))).toContain('"status":"running"');
     await world.fixture("say", ["cancel this operation", "cancel"]);
     await user.see({ text: "Cancellation requested." });
     await probe.eventually(() => world.messages(world.a.sessionId), { within: 30_000, until: (value) => !JSON.stringify(value).includes('"status":"running"'), label: "cancelled tool is no longer running" });
     expect(object(await world.file("voice-slow.txt")).status).toBe(404);
     expect(String(object(await world.file("voice-note.txt")).body)).toContain("updated by follow-up");
-    expect(users(await world.messages(world.a.sessionId))).toHaveLength(3);
+    expect(users(await world.messages(world.a.sessionId))).toHaveLength(4);
   });
   await step("a lost connection releases audio and reconnect never resubmits accepted requests", async () => {
     await world.fixture("disconnect");
@@ -66,7 +70,7 @@ test("voice sends and steers real conversation work, interrupts speech, cancels,
     await user.click("Reconnect voice");
     await capture(1);
     await world.fixture("say", ["Old connection callback must not run", "late", -0.05, 0]);
-    expect(users(await world.messages(world.a.sessionId))).toHaveLength(3);
+    expect(users(await world.messages(world.a.sessionId))).toHaveLength(4);
     expect(await world.messages(world.b.sessionId)).toEqual([]);
   });
   await step("switching conversations ends the call and discards delayed callbacks", async () => {
@@ -75,7 +79,7 @@ test("voice sends and steers real conversation work, interrupts speech, cancels,
     expect(object(await world.facts()).liveTracks).toBe(0);
     await world.fixture("say", ["Do not cross conversations", "cross", -0.05, 1]);
     expect(await world.messages(world.b.sessionId)).toEqual([]);
-    expect(users(await world.messages(world.a.sessionId))).toHaveLength(3);
+    expect(users(await world.messages(world.a.sessionId))).toHaveLength(4);
     await agent.run("voice.panel.open");
     await user.notSee({ text: "Uncertain words" });
   });
@@ -97,7 +101,7 @@ test("voice sends and steers real conversation work, interrupts speech, cancels,
     await user.type({ label: "Voice request" }, "Create a note in this workspace.", { replace: true });
     await user.click("Send request");
     expect(await probe.eventually(() => world.messages(world.b.sessionId).then(users), { within: 45_000, until: (messages) => messages.length === 1, label: "typed fallback submitted to conversation B" })).toEqual(["Create a note in this workspace."]);
-    expect(users(await world.messages(world.a.sessionId))).toHaveLength(3);
+    expect(users(await world.messages(world.a.sessionId))).toHaveLength(4);
     expect(object(await world.facts()).liveTracks).toBe(0);
   });
 });

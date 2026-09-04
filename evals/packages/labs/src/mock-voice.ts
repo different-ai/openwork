@@ -124,7 +124,7 @@ export const voiceAudioFixtureSource = String.raw`(() => {
       channel.emit({ type: "conversation.item.input_audio_transcription.completed", item_id: id, transcript: text, logprobs: [{ logprob: confidence }] });
       return id;
     },
-    finish() { current().emit({ type: "output_audio_buffer.stopped" }); },
+    finish() { current().emit({ type: "output_audio_buffer.stopped", response_id: current().responseId }); },
     disconnect() { current().close(); },
     deny(value) { deny = value; },
     delay(value) { delayCapture = value; },

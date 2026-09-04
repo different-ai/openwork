@@ -42,17 +42,18 @@ The base review covered current `dev`, all-author open PR metadata, relevant dif
 
 | Work | Observed relationship |
 | --- | --- |
-| Original Voice Mode #1888 and managed-voice proposal #2325 | Closed unmerged; newer code supersedes the original proposals |
-| #1976, #2327, #2333 | Earlier audio checks, context improvements, and managed voice landed; current `dev` owns the substrate |
-| #4193, #4212 | Native conversation reads and bounded runtime caches already landed; preserve those contracts |
-| #4382, local dictation | Open, separate composer/MLX implementation; explicitly excludes realtime playback and automatic submission. No dependency or shared implementation edits |
-| #3189, untrusted input validation | Open, owns broker model validation among other changes. Preserve existing broker model defaults; do not copy its server/inference edits |
-| #4358, inference gateway | Open, separate provider routing/credentials/usage work; no dependency |
-| #4111 and current browser-task work | WebMCP/browser internals remain separate. Voice enters through the normal sender; no browser/native transport changes |
-| #4459, UI control through server | Merged into the current base, separate control mailbox transport. Voice no longer depends on general UI-control tools |
-| #4461, computer task mentions | Open, owns composer encoding and routing hints. Plain spoken requests use the existing capabilities; no copying of the mention implementation |
+| Original Voice Mode [#1888](https://github.com/different-ai/openwork/pull/1888) and managed-voice proposal [#2325](https://github.com/different-ai/openwork/pull/2325) | Closed unmerged; newer code supersedes the original proposals |
+| [#1976](https://github.com/different-ai/openwork/pull/1976), [#2327](https://github.com/different-ai/openwork/pull/2327), [#2333](https://github.com/different-ai/openwork/pull/2333) | Earlier audio checks, context improvements, and managed voice landed; current `dev` owns the substrate |
+| [#4193](https://github.com/different-ai/openwork/pull/4193), [#4212](https://github.com/different-ai/openwork/pull/4212) | Native conversation reads and bounded runtime caches already landed; preserve those contracts |
+| [#4382](https://github.com/different-ai/openwork/pull/4382), local dictation | Open, separate composer/MLX implementation; explicitly excludes realtime playback and automatic submission. No dependency or shared implementation edits |
+| [#3189](https://github.com/different-ai/openwork/pull/3189), untrusted input validation | Open, owns broker model validation among other changes. Preserve existing broker model defaults; do not copy its server/inference edits |
+| [#4358](https://github.com/different-ai/openwork/pull/4358), inference gateway | Open, separate provider routing/credentials/usage work; no dependency |
+| [#4111](https://github.com/different-ai/openwork/pull/4111) and current browser-task work | WebMCP/browser internals remain separate. Voice enters through the normal sender; no browser/native transport changes |
+| [#4459](https://github.com/different-ai/openwork/pull/4459), UI control through server | Merged into the current base, separate control mailbox transport. Voice no longer depends on general UI-control tools |
+| [#4461](https://github.com/different-ai/openwork/pull/4461), computer task mentions | Open, owns composer encoding and routing hints. Plain spoken requests use the existing capabilities; no copying of the mention implementation |
+| [#4463](https://github.com/different-ai/openwork/pull/4463), scoped native computer sessions | Open, owns native consent, app/window scope, and its cancellation client. No dependency: voice uses the normal executor and its existing tool contract. The shared extension catalog changes separate Voice Mode and Computer Use entries |
 
-PR links use `https://github.com/different-ai/openwork/pull/<number>`. No unrelated open branch is imported. The only conversation-shell wiring passes its existing sender and immutable owner into the voice panel.
+No unrelated open branch is imported. The only conversation-shell wiring passes its existing sender and immutable owner into the voice panel.
 
 ## Proof and remaining live verification
 

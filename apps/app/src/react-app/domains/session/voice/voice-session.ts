@@ -47,6 +47,7 @@ type Connection = {
   heardAt: number;
   heartbeatAt: number;
   responseId: string;
+  cancelEventId: string;
   outputId: string;
   outputText: string;
   interrupted: boolean;
@@ -223,7 +224,7 @@ export class VoiceSession {
       document.body.appendChild(audio);
       connection = {
         generation, abort: new AbortController(), peer, channel, audio, stream, sender: null, ready: false,
-        startedAt: Date.now(), heardAt: Date.now(), heartbeatAt: Date.now(), responseId: "", outputId: "", outputText: "",
+        startedAt: Date.now(), heardAt: Date.now(), heartbeatAt: Date.now(), responseId: "", cancelEventId: "", outputId: "", outputText: "",
         interrupted: false, generating: false, playing: false, userSpeaking: false, echoCancellation: false,
         spokenItems: new Set(), seenItems: new Set(), watch: 0, deadline: 0, removeListeners: () => {},
       };
@@ -329,15 +330,26 @@ export class VoiceSession {
       return;
     }
     if (type === "error") {
+      // VAD can cancel before our explicit interruption reaches the server.
+      // Only suppress the corresponding already-inactive cancellation error.
+      if (connection.cancelEventId && field(event.error, "event_id") === connection.cancelEventId && field(event.error, "code") === "response_cancel_not_active") return;
       // Provider error messages may echo payloads. Show useful recovery without
       // putting provider bodies, credentials, or transcript text in diagnostics.
       this.fail(connection, "The voice provider reported an error. Reconnect or continue in text; requests already sent will not be replayed.");
       return;
     }
     if (!connection.ready) return;
+    // Delayed playback events must never clear or finish a newer response.
+    if (type.startsWith("response.") || type.startsWith("output_audio_buffer.")) {
+      const responseId = field(event, "response_id") || field(event.response, "id");
+      if (type === "response.created") {
+        if (!connection.generating || connection.responseId) return;
+      } else if (!connection.responseId || responseId !== connection.responseId) return;
+    }
     if (type === "input_audio_buffer.speech_started") {
       const id = field(event, "item_id");
       if (!id || !this.store.getSnapshot().captureActive) return;
+      if (connection.spokenItems.size >= MAX_TURNS) return this.pause("Voice could not finish its pending transcripts. Reconnect to continue; accepted work stays here.");
       connection.spokenItems.add(id);
       connection.userSpeaking = true;
       connection.heardAt = Date.now();
@@ -383,10 +395,14 @@ export class VoiceSession {
         if (!connection.echoCancellation) this.capture(connection, false);
       }
     } else if (type === "output_audio_buffer.cleared" || type === "conversation.item.truncated") {
+      if (type === "conversation.item.truncated" && field(event, "item_id") !== connection.outputId) return;
+      if (!connection.interrupted && connection.outputText) this.store.append("system", "Speech interrupted. The full written response remains in the conversation; it may not all have been heard.");
       connection.interrupted = true;
       connection.playing = false;
+      connection.audio.muted = true;
       this.store.update({ assistantPreview: "" });
       if (!this.store.getSnapshot().micMuted) this.capture(connection, true);
+      if (!connection.generating) this.finishSpeech(connection);
     } else if (type === "response.done") {
       connection.generating = false;
       const response = event.response;
@@ -403,11 +419,14 @@ export class VoiceSession {
     const connection = this.connection;
     this.queuedSpeech = "";
     if (!connection || !this.current(connection)) return;
-    if (connection.generating) this.send(connection, { type: "response.cancel", ...(connection.responseId ? { response_id: connection.responseId } : {}) });
-    if (connection.generating || connection.playing) {
-      connection.audio.muted = true;
-      this.send(connection, { type: "output_audio_buffer.clear" });
+    if ((connection.generating || connection.playing) && !connection.interrupted) {
       connection.interrupted = true;
+      connection.audio.muted = true;
+      if (connection.generating) {
+        connection.cancelEventId = crypto.randomUUID();
+        this.send(connection, { type: "response.cancel", event_id: connection.cancelEventId, ...(connection.responseId ? { response_id: connection.responseId } : {}) });
+      }
+      this.send(connection, { type: "output_audio_buffer.clear" });
       this.store.append("system", "Speech interrupted. The full written response remains in the conversation; it may not all have been heard.");
     }
     this.store.update({ assistantPreview: "" });
