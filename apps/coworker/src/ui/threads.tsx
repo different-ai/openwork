@@ -77,15 +77,16 @@ import {
 } from "@/lib/thread-queue";
 import {
   NO_REPLY,
-  RETRY_LINE,
   WAIT_BUDGET_MS,
+  choiceNavigates,
   deriveTurnOutcome,
+  retrySummary,
   type TurnChoice,
   type TurnEngineStatus,
   type TurnOutcome,
   type TurnReplyState,
 } from "@/lib/turn-outcome";
-import { describeTurnFailure } from "@/lib/turn-failure";
+import { describeTurnFailure, failureText } from "@/lib/turn-failure";
 import { classifyFailure, retryDelayMs } from "@/lib/turn-retry";
 import { applyStreamEvent, type LiveStream } from "@/lib/live-stream";
 import { useAutoGrow } from "@/ui/use-auto-grow";
@@ -122,7 +123,7 @@ type TranscriptMessage = {
   /** When the engine closed a reply; null while it is being written, or when it was cut off. */
   completedAt: number | null;
   /** Why a reply ended without an answer; null when it did not fail. */
-  error: { name: string; message: string; retryable: boolean | null } | null;
+  error: { name: string; message: string; retryable: boolean | null; providerError: string | null } | null;
   reasoning: string;
   /** Provider/model the engine attributed this reply to; null for user turns and unbound replies. */
   model: { providerId: string; modelId: string } | null;
@@ -187,7 +188,7 @@ function replyStateFor(messages: readonly TranscriptMessage[], messageId: string
   if (last.error) {
     return {
       state: "error",
-      error: `${last.error.name}: ${last.error.message}`,
+      error: failureText(last.error),
       retryable: last.error.retryable,
       aborted: /abort/i.test(last.error.name) || /abort/i.test(last.error.message),
     };
@@ -306,6 +307,7 @@ export function ThreadsPanel({
   headerSlots,
   onOpenModelSettings,
   onOpenAccount,
+  onOpenProviders,
   onActivityChange,
   documents,
   summary = null,
@@ -335,6 +337,8 @@ export function ThreadsPanel({
   onOpenModelSettings: () => void;
   /** The OpenWork account section — where a provider is reconnected. */
   onOpenAccount: () => void;
+  /** OpenWork › AI models — where the person connects their own AI provider when the free model is busy. */
+  onOpenProviders: () => void;
   onActivityChange: (activity: CoworkerActivity | null) => void;
   documents?: DocumentHooks;
   /** What the coworker holds, for the quiet line under the composer; null hides the line. */
@@ -602,6 +606,7 @@ export function ThreadsPanel({
         onInitialTurnHandled={(id) => setQueuedTurn((current) => current?.id === id ? null : current)}
         onOpenModelSettings={onOpenModelSettings}
         onOpenAccount={onOpenAccount}
+        onOpenProviders={onOpenProviders}
         session={session}
         onSyncProviders={onSyncProviders}
         onActivityChange={onActivityChange}
@@ -659,6 +664,7 @@ export function ThreadsPanel({
       onInitialTurnHandled={(id) => setQueuedTurn((current) => current?.id === id ? null : current)}
       onOpenModelSettings={onOpenModelSettings}
       onOpenAccount={onOpenAccount}
+      onOpenProviders={onOpenProviders}
       session={session}
       onSyncProviders={onSyncProviders}
       onActivityChange={onActivityChange}
@@ -925,6 +931,7 @@ function ThreadView({
   onInitialTurnHandled,
   onOpenModelSettings,
   onOpenAccount,
+  onOpenProviders,
   session,
   onSyncProviders,
   onActivityChange,
@@ -962,6 +969,7 @@ function ThreadView({
   onInitialTurnHandled: (id: number) => void;
   onOpenModelSettings: () => void;
   onOpenAccount: () => void;
+  onOpenProviders: () => void;
   session: DenSession | null;
   onSyncProviders: () => Promise<ProviderSyncRun>;
   onActivityChange: (activity: CoworkerActivity | null) => void;
@@ -1441,10 +1449,9 @@ function ThreadView({
         if (send.mode === "retry" && send.switchedTo) setResolution({ messageId, note: `Retried with ${send.switchedTo}` });
         commitTurnState(clearPending);
       } else if (result.outcome === "failed") {
-        const failureText = result.terminalError
-          ? `${result.terminalError.name}: ${result.terminalError.message}`
-          : "The model stopped before producing a response.";
-        await settleFailure(failureText, result.terminalError?.retryable ?? null, result.terminalError !== null);
+        // The same raw text the transcript's failure reads, so the retry decision sees the provider's own error type too.
+        const terminal = result.terminalError ? failureText(result.terminalError) : "The model stopped before producing a response.";
+        await settleFailure(terminal, result.terminalError?.retryable ?? null, result.terminalError !== null);
       } else if (result.outcome === "timeout") {
         // The engine went idle without a reply or an error: the turn ended in silence.
         await settleFailure("The model stopped before producing a response.", false, false);
@@ -1696,6 +1703,9 @@ function ThreadView({
       case "continue-with-openwork":
         onOpenAccount();
         return;
+      case "connect-provider":
+        onOpenProviders();
+        return;
       case "refresh-providers":
         void refreshProvidersAndRetry();
         return;
@@ -1818,7 +1828,7 @@ function ThreadView({
       return;
     }
     if (outcome?.kind === "retrying") {
-      onActivityChange({ state: "retrying", label: outcome.label, detail: subject, summary: `${RETRY_LINE} Trying again…`, updatedAt: Date.now(), threadId });
+      onActivityChange({ state: "retrying", label: outcome.label, detail: subject, summary: retrySummary(outcome.retry?.reason ?? null), updatedAt: Date.now(), threadId });
       return;
     }
     if (outcome?.kind === "slow") {
@@ -1901,7 +1911,7 @@ function ThreadView({
             // unresolved is told by the outcome below instead, with its actions.
             if (block.kind === "ended") {
               if (block.message.parentId === pendingTurn?.messageId) return null;
-              return <QuietLine key={block.message.id} outcome={block.ended} text={block.ended === "stopped" ? "Stopped." : describeTurnFailure(block.message.error?.message ?? "", coworker.name).headline} />;
+              return <QuietLine key={block.message.id} outcome={block.ended} text={block.ended === "stopped" ? "Stopped." : describeTurnFailure(block.message.error ? failureText(block.message.error) : "", coworker.name).headline} />;
             }
             return (
               <Fragment key={block.message.id}>
@@ -2457,7 +2467,8 @@ function TurnFailureBubble({ coworkerName, outcome, onChoose }: { coworkerName: 
   }, [outcome.since]);
   const choose = (choice: TurnChoice) => {
     if (busy) return;
-    setBusy(choice.id);
+    // Opening a screen is not acting on the turn: the card stays ready for the person's return.
+    if (!choiceNavigates(choice.id)) setBusy(choice.id);
     onChoose(choice);
   };
   useEffect(() => {

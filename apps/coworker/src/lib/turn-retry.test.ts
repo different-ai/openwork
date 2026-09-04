@@ -31,6 +31,7 @@ test("a model that cannot do the job, a refused account, a denied tool, or a sto
     "Invalid API key",
     "Insufficient credits",
     "Free usage exceeded, subscribe to Go",
+    "APIError · FreeUsageLimitError: Error from provider (Console): Rate limit exceeded. Please try again later.",
     "Tool execution failed: permission denied",
     "MessageAbortedError: aborted",
     "The model stopped before producing a response.",
