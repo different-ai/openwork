@@ -243,7 +243,7 @@ export async function pinnedSessions(seed: Seed) {
   const workspacePath = seed.tmpPath("pinned-sessions-exposed");
   const workspace = await seed.workspace(app, workspacePath);
   await waitForWorkspaceSessionsLoaded(seed, app, workspace.workspaceId);
-  const [candidate, neighbor] = await seed.sessions(app, ["Pinned candidate", "Unpinned neighbor"]);
+  const [candidate, neighbor] = await seed.sessions(app, ["Candidate session", "Neighbor session"]);
   if (!candidate || !neighbor) throw new Error("Pinned world did not create both sessions.");
 
   // TODO(primitive): probe.context should expose the OpenWork context snapshot.
@@ -270,7 +270,7 @@ export async function pinnedSessions(seed: Seed) {
     };
   }
 
-  // TODO(primitive): probe.sidebar should expose the global pinned section rows.
+  // TODO(primitive): probe.sidebar complements user.see("Pinned") by exposing which rows the section contains.
   async function pinnedSidebarRows(): Promise<string[] | null> {
     const value = await seed.evalIn(app, `(() => {
       const section = document.querySelector("[data-global-pinned-sessions]");
