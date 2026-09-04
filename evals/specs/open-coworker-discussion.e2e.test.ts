@@ -1,5 +1,8 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { EVAL_COWORKER_MODEL, clickButton, coworker, evalIn, fill, needs, test, waitFor, waitForText } from "@openwork/testkit";
-import { expect } from "vitest";
+import { expect, onTestFinished } from "vitest";
 
 const enabled = process.env.OPENWORK_EVAL_E2E_TESTS === "1";
 const title = enabled
@@ -102,7 +105,12 @@ async function sendDiscussionMessage(
 
 test.skipIf(!enabled)(title, async ({ evidence }) => {
   needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"], commands: ["opencode"] });
-  await using app = await coworker({ name: "persistent-discussion" });
+  // Keep the profile outside this repository: OpenCode walks parent directories for project
+  // configuration, and a profile under evals/results would inherit this checkout's own plugins and
+  // MCPs — a slow first start that has nothing to do with a person's first launch.
+  const profileDir = await mkdtemp(path.join(os.tmpdir(), "open-coworker-discussion-profile-"));
+  onTestFinished(() => rm(profileDir, { recursive: true, force: true }));
+  await using app = await coworker({ name: "persistent-discussion", profileDir });
 
   await waitFor(app, `(document.body?.innerText ?? "").toLowerCase().includes("welcome to open coworker")`, {
     timeoutMs: 120_000,
