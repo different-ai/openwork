@@ -656,6 +656,16 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
       label: "Scout starts on the custom server's chosen model",
     });
   }
+  // The record says who chose the model, so the rule reads the same after a relaunch: a model the person started
+  // with on the local mode screen is theirs (never swapped); one the app picked is the app's (swapped once if it fails).
+  const firstChoice = await waitFor(app, `window.__COWORKER__.invoke("coworkers.list").then((response) => {
+    const scout = (response.result ?? [])[0];
+    return scout && scout.model ? { model: scout.model, chosenBy: scout.modelChosenBy } : false;
+  })`, { awaitPromise: true, timeoutMs: 120_000, label: "Scout's first model and who chose it" });
+  expect(firstChoice).toEqual(sameMachine && stub
+    ? { model: "custom-stub-box/stub-large", chosenBy: "person" }
+    : { model: expect.stringMatching(/^[a-z0-9-]+\/.+/), chosenBy: "app" });
+  const appChoseFirst = isRecord(firstChoice) && firstChoice.chosenBy === "app";
 
   // A new coworker opens on the conversation alone: one header that carries the
   // coworker, a quiet empty state with no starter cards, and the details panel
@@ -1030,6 +1040,17 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     return Boolean(row && profile) && row.getBoundingClientRect().top < profile.getBoundingClientRect().top && (row.textContent ?? "").includes("Apps & tools");
   })()`)).toBe(true);
   expect(String(await evalIn(app, `document.querySelector('[data-testid="coworker-model-settings"]')?.innerText ?? ""`))).toContain("AI model");
+  // A model the app chose says so in one plain line, with where it came from; a model the person chose has no such line.
+  const chosenForYou = await waitFor(app, `(() => {
+    const section = document.querySelector('[data-testid="coworker-model-settings"]');
+    const picker = section?.querySelector('[data-testid="model-picker"] > button');
+    if (!(picker instanceof HTMLElement) || !(picker.textContent ?? "").trim()) return false;
+    const line = section?.querySelector('[data-testid="model-chosen-for-you"]');
+    return { shown: Boolean(line), text: line?.textContent?.trim() ?? "" };
+  })()`, { timeoutMs: 60_000, label: "the AI model row with or without its chosen-for-you line" });
+  expect(chosenForYou).toEqual(appChoseFirst
+    ? { shown: true, text: expect.stringMatching(/^Chosen for you, (from your OpenWork account|from a subscription or key on this Mac|from a model server on this Mac|the free model, nothing to set up)\. It stays until you pick one; if it can't answer, the next best takes over once\.$/) }
+    : { shown: false, text: "" });
   // Who the coworker is comes before what it runs on.
   expect(await evalIn(app, `(() => {
     const profile = document.querySelector('[data-testid="coworker-profile-settings"]');
@@ -1055,6 +1076,13 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     timeoutMs: 30_000,
     label: "Big Pickle selected in Coworker settings",
   });
+  // The person chose: the record says so, the chosen-for-you line is gone, and this model is never swapped.
+  await waitFor(app, `window.__COWORKER__.invoke("coworkers.get", { slug: "scout" }).then((response) => response.result?.model === "opencode/big-pickle" && response.result?.modelChosenBy === "person")`, {
+    awaitPromise: true,
+    timeoutMs: 30_000,
+    label: "Scout's record says the person chose Big Pickle",
+  });
+  expect(await evalIn(app, `Boolean(document.querySelector('[data-testid="model-chosen-for-you"]'))`)).toBe(false);
   const thinkingEffort = await evalIn(app, `(() => {
     const section = document.querySelector('[data-testid="coworker-model-settings"]');
     const labels = [...(section?.querySelectorAll("label") ?? [])].map((label) => label.textContent ?? "");
@@ -1078,7 +1106,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-activity-summary"]'))`, { timeoutMs: 30_000, label: "Activity sidebar restored" });
   evidence.recordAssertionEvidence(
     "A coworker's AI model and thinking effort are configured in Coworker settings",
-    "The strip's Coworker settings icon opened the settings with Apps & tools as their first row, then the AI model section, where the searchable picker selected Big Pickle for Scout and the thinking-effort control appears only when the chosen model offers reasoning variants.",
+    `The strip's Coworker settings icon opened the settings with Apps & tools as their first row, then the AI model section${appChoseFirst ? ", whose one line said the model was chosen for the person and where it came from" : ", with no chosen-for-you line because the person had started this model on the local mode screen"}; the searchable picker selected Big Pickle for Scout, the record then said the person chose it and the line was gone, and the thinking-effort control appears only when the chosen model offers reasoning variants.`,
     true,
   );
   const avatarMotion = await evalIn(app, `(() => {

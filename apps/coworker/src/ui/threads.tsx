@@ -1237,7 +1237,7 @@ function ThreadView({
      * the person what happened. A model the person chose is never swapped.
      */
     const fallBack = async (message: string): Promise<boolean> => {
-      if (!wasAutoPicked(coworker.slug, turnModelId) || failedModels.length >= 2) return false;
+      if (!wasAutoPicked(coworker, turnModelId) || failedModels.length >= 2) return false;
       if (!describeTurnFailure(message, coworker.name).modelRelated) return false;
       try {
         const excluded = [...failedModels, turnModelId];
@@ -1246,7 +1246,7 @@ function ThreadView({
         if (!next || !nextModel) return false;
         markAutoPicked(coworker.slug, next.id);
         const modelVariant = carryVariant(coworker.modelVariant, next);
-        onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { model: next.id, modelVariant }));
+        onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { model: next.id, modelVariant, modelChosenBy: "app" }));
         setProviderRefreshNote(`${turnModelId} could not answer, so ${coworker.name} is trying ${next.modelLabel} instead.`);
         window.setTimeout(() => void submitTurn(prompt, messageId, { mode: "retry", attempt, switchedTo: next.modelLabel }, { ...nextModel, ...(modelVariant ? { variant: modelVariant } : {}) }, excluded), 0);
         return true;
@@ -1324,7 +1324,7 @@ function ThreadView({
           if (chosen) turnModel = chosen;
           turnModelId = pick.id;
           markAutoPicked(coworker.slug, pick.id);
-          void coworkerBridge.coworkers.update(coworker.slug, { model: pick.id, modelVariant: "" })
+          void coworkerBridge.coworkers.update(coworker.slug, { model: pick.id, modelVariant: "", modelChosenBy: "app" })
             .then(onCoworkerChanged)
             .catch(() => undefined);
         }
@@ -1500,7 +1500,7 @@ function ThreadView({
     // The person's thinking effort stays when the new model offers it; the retry runs with it too.
     const modelVariant = carryVariant(coworker.modelVariant, pick);
     try {
-      onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { model: pick.id, modelVariant }));
+      onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { model: pick.id, modelVariant, modelChosenBy: "person" }));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
       return;

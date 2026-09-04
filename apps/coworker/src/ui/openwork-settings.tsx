@@ -131,7 +131,7 @@ export function OpenWorkSettings({
     setError("");
     try {
       clearAutoPicked(coworker.slug);
-      onCoworkerChanged?.(await coworkerBridge.coworkers.update(coworker.slug, { model: modelId, modelVariant: "" }));
+      onCoworkerChanged?.(await coworkerBridge.coworkers.update(coworker.slug, { model: modelId, modelVariant: "", modelChosenBy: "person" }));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }

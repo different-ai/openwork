@@ -418,7 +418,8 @@ export function CoworkerHome({
         if (pick) {
           if (chosen) takeStartingModel();
           else markAutoPicked(coworker.slug, pick.id);
-          onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { model: pick.id, modelVariant: "" }));
+          // The record says who chose, so the choice reads the same after a relaunch: the person's is never swapped, the app's may be, once.
+          onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { model: pick.id, modelVariant: "", modelChosenBy: chosen ? "person" : "app" }));
           return;
         }
       } catch {
@@ -956,7 +957,7 @@ function CoworkerSettings({
     setError("");
     try {
       clearAutoPicked(coworker.slug);
-      onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, selection));
+      onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { ...selection, modelChosenBy: "person" }));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
@@ -1040,6 +1041,7 @@ function CoworkerSettings({
           coworker={coworker}
           value={coworker.model}
           modelVariant={coworker.modelVariant}
+          chosenBy={coworker.modelChosenBy}
           onChange={(selection) => void updateModel(selection)}
           onSyncProviders={onSyncProviders}
           onConnect={onOpenAccount}
