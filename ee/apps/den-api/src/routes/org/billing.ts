@@ -2,7 +2,7 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { getCloudWorkerBillingStatus } from "../../billing/polar.js"
-import { createInferenceCheckoutSession, createInferencePortalSession, createOpenWorkWebCheckout, createSeatCheckoutSession, getOpenWorkWebBillingSummary, getOrgBillingSummary, syncStripeCheckoutSession } from "../../stripe-billing.js"
+import { createSelfServeCheckout, createInferenceCheckoutSession, createInferencePortalSession, createOpenWorkWebCheckout, createSeatCheckoutSession, getOpenWorkWebBillingSummary, getOrgBillingSummary, syncStripeCheckoutSession } from "../../stripe-billing.js"
 import { orgRoleRoute } from "../../middleware/index.js"
 import { forbiddenSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { getRequiredUserEmail } from "../../user.js"
@@ -214,6 +214,10 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
       }
       const payload = c.get("organizationContext")
       const subscriptionType = parsed.data.type ?? "inference"
+      if (subscriptionType === "seat" && env.stripe.teamPriceId) {
+        const ownerPermission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can purchase plans.")
+        if (!ownerPermission.ok) return c.json(ownerPermission.response, orgAccessFailureStatus(ownerPermission.response))
+      }
       if (subscriptionType === "web" && !isOpenWorkWebAvailableForOrganization(payload.organization.metadata)) {
         return c.json(openWorkWebUnavailableResponse(), 404)
       }
@@ -255,6 +259,45 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         }, 409)
       }
       return c.json({ url: session.url })
+    },
+  )
+
+  app.post(
+    "/v1/billing/plans/checkout",
+    orgRoleRoute(["super-admin"]),
+    async (c) => {
+      const permission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can purchase plans.")
+      if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
+      const parsed = z.object({ product: z.enum(["team", "enterprise", "sso"]) }).strict().safeParse(await c.req.json().catch(() => null))
+      if (!parsed.success) return c.json({ error: "invalid_request" }, 400)
+      const payload = c.get("organizationContext")
+      const user = c.get("user")
+      const email = getRequiredUserEmail(user)
+      if (!email) return c.json({ error: "user_email_required" }, 400)
+      try {
+        const session = await createSelfServeCheckout({
+          product: parsed.data.product,
+          organizationId: payload.organization.id,
+          orgMemberId: payload.currentMember.id,
+          email, name: user.name ?? email,
+          successUrl: seatCheckoutSuccessUrl(c), cancelUrl: seatCheckoutReturnUrl(c),
+        })
+        return c.json({ url: session.url })
+      } catch (error) {
+        const messages: Record<string, string> = {
+          self_serve_team_limit: "Team supports up to 100 users. Choose Enterprise for a larger organization.",
+          self_serve_not_configured: "This plan is not available for purchase yet.",
+          self_serve_price_contract_invalid: "This plan's billing configuration needs attention. No purchase was created.",
+          self_serve_managed_plan: "Your organization has a managed agreement. Contact support to change plans.",
+          self_serve_sso_requires_team: "Start a Team plan to purchase SSO. Enterprise already includes SSO.",
+          self_serve_cancel_web_first: "Cancel the standalone OpenWork Web subscription and wait for it to end before upgrading. Enterprise includes OpenWork Web.",
+          self_serve_cancel_sso_first: "Cancel the separate SSO add-on in Manage billing and wait for it to end before upgrading. Enterprise includes SSO.",
+          self_serve_subscription_exists: "You already have this subscription. Use Manage billing to update or cancel it.",
+          self_serve_plan_changes_not_configured: "Plan changes are not configured yet. Contact support.",
+        }
+        if (error instanceof Error && messages[error.message]) return c.json({ error: error.message, message: messages[error.message] }, 409)
+        throw error
+      }
     },
   )
 

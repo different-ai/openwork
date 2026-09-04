@@ -479,7 +479,11 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       const currentMetadata = normalizeOrganizationMetadata(payload.organization.metadata).metadata
       const enablesRequireSso = input.requireSso === true && currentMetadata.requireSso !== true
       const enablesVersionPinning = Array.isArray(input.allowedDesktopVersions) && input.allowedDesktopVersions.length > 0
-      if (enablesRequireSso || enablesVersionPinning) {
+      if (enablesRequireSso) {
+        const entitlement = checkEntitlement(payload.organization.metadata, "sso")
+        if (!entitlement.ok) return c.json(entitlement.response, entitlement.status)
+      }
+      if (enablesVersionPinning) {
         const entitlement = checkEntitlement(payload.organization.metadata, "orgControls")
         if (!entitlement.ok) {
           return c.json(entitlement.response, entitlement.status)

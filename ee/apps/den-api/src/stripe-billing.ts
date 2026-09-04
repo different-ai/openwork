@@ -1,4 +1,6 @@
 import Stripe from "stripe"
+import { selfServeCatalog, selfServeProductForPrice, type SelfServeProduct } from "./plan-catalog.js"
+import { parseOrganizationPlan } from "./entitlements.js"
 import { and, eq, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   MemberTable,
@@ -46,6 +48,8 @@ function stripe() {
   if (!stripeClient) {
     stripeClient = new Stripe(env.stripe.secretKey, {
       apiVersion: STRIPE_API_VERSION as any,
+      ...(process.env.OPENWORK_DEV_MODE === "1" && process.env.OPENWORK_TEST_STRIPE_PORT
+        ? { host: "127.0.0.1", port: Number(process.env.OPENWORK_TEST_STRIPE_PORT), protocol: "http" as const } : {}),
     })
   }
   return stripeClient
@@ -119,6 +123,8 @@ function parseSubscriptionType(value: string | null | undefined): OrgSubscriptio
     case SEAT_SUBSCRIPTION_TYPE:
     case "seats":
       return SEAT_SUBSCRIPTION_TYPE
+    case "sso":
+      return "sso"
     case WEB_SUBSCRIPTION_TYPE:
     case "openwork_web":
       return WEB_SUBSCRIPTION_TYPE
@@ -142,6 +148,8 @@ function getSubscriptionMetadata(subscription: Stripe.Subscription) {
 }
 
 function subscriptionTypeFromStripeSubscription(subscription: Stripe.Subscription, item: Stripe.SubscriptionItem | null) {
+  const product = selfServeProductForPrice(item?.price.id)
+  if (product) return product.id === "sso" ? "sso" : SEAT_SUBSCRIPTION_TYPE
   const metadataType = getSubscriptionMetadata(subscription).subscriptionType
   if (metadataType) {
     return metadataType
@@ -263,7 +271,9 @@ export function calculateOrganizationSeatBillingCounts(input: {
   const additionalFree = input.additionalFreeSeats === undefined
     ? additionalFreeSeatCountFromMetadata(input.metadata)
     : normalizeAdditionalFreeSeats(input.additionalFreeSeats)
-  const free = FREE_ORG_SEAT_COUNT + additionalFree
+  const paidPlan = parseOrganizationPlan(input.metadata)
+  const selfServe = paidPlan.source === "stripe" && paidPlan.tier !== "free"
+  const free = selfServe ? 0 : FREE_ORG_SEAT_COUNT + additionalFree
   const chargeable = Math.max(0, total - free)
 
   return {
@@ -405,7 +415,7 @@ export async function organizationHasActiveInferenceSubscription(organizationId:
 
 export async function organizationHasActiveSeatSubscription(organizationId: OrgId) {
   const row = await findSeatSubscriptionByOrg(organizationId)
-  return Boolean(row && ACTIVE_STATUSES.has(row.status))
+  return Boolean(row && ACTIVE_STATUSES.has(row.status) && !row.payment_failed)
 }
 
 function isEligibleOpenWorkWebSubscriptionRow(row: Awaited<ReturnType<typeof findWebSubscriptionByOrg>>) {
@@ -441,10 +451,17 @@ export async function organizationHasOngoingOpenWorkWebSubscription(organization
 
 export async function getOrganizationSeatAddEligibility(organizationId: OrgId) {
   const seatCounts = await getOrganizationSeatBillingCounts({ organizationId })
+  const [organization] = await db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable)
+    .where(eq(OrganizationTable.id, organizationId)).limit(1)
+  const plan = parseOrganizationPlan(organization?.metadata)
+  if (plan.source === "stripe" && plan.tier === "team" && seatCounts.total >= 100) {
+    return { allowed: false, currentCount: seatCounts.total, freeSeatCount: seatCounts.free,
+      billableSeatCount: seatCounts.chargeable, hasActiveSeatSubscription: true }
+  }
   const gateEnabled = isSeatBillingGateEnabled({
     orgMode: env.orgMode,
     stripeSecretKey: env.stripe.secretKey,
-    stripeSeatPriceId: env.stripe.seatPriceId,
+    stripeSeatPriceId: env.stripe.teamPriceId ?? env.stripe.seatPriceId,
   })
   if (!gateEnabled || seatCounts.total < seatCounts.free) {
     return {
@@ -869,6 +886,7 @@ export async function createInferenceCheckoutSession(input: Omit<Parameters<type
 }
 
 export async function createSeatCheckoutSession(input: Omit<Parameters<typeof createOrgSubscriptionCheckoutSession>[0], "subscriptionType">) {
+  if (env.stripe.teamPriceId) return createSelfServeCheckout({ ...input, product: "team" })
   return createOrgSubscriptionCheckoutSession({ ...input, subscriptionType: SEAT_SUBSCRIPTION_TYPE })
 }
 
@@ -979,7 +997,7 @@ export async function getOrgBillingSummary(input: { organizationId: OrgId; inclu
   const webRow = webBillingState.row
   const seatCounts = await getOrganizationSeatBillingCounts({ organizationId: input.organizationId })
   const hasActiveSubscription = Boolean(row && ACTIVE_STATUSES.has(row.status))
-  const hasActiveSeatSubscription = Boolean(seatRow && ACTIVE_STATUSES.has(seatRow.status))
+  const hasActiveSeatSubscription = Boolean(seatRow && ACTIVE_STATUSES.has(seatRow.status) && !seatRow.payment_failed)
   const hasEligibleWebSubscription = isEligibleOpenWorkWebSubscriptionRow(webRow)
   let portalUrl: string | null = null
   if (input.includePortalUrl && (row?.stripe_customer_id || seatRow?.stripe_customer_id || webRow?.stripe_customer_id)) {
@@ -1001,10 +1019,11 @@ export async function getOrgBillingSummary(input: { organizationId: OrgId; inclu
       hasActiveSubscription,
       portalUrl,
       subscription: serializeSubscription(row),
+      plans: await getSelfServeBillingSummary(input.organizationId),
       seats: {
-        configured: Boolean(env.stripe.secretKey && env.stripe.seatPriceId),
-        priceId: env.stripe.seatPriceId ?? null,
-        unitAmount: 1000,
+        configured: Boolean(env.stripe.secretKey && (env.stripe.seatPriceId || env.stripe.teamPriceId)),
+        priceId: seatRow?.stripe_price_id ?? env.stripe.seatPriceId ?? null,
+        unitAmount: selfServeProductForPrice(seatRow?.stripe_price_id)?.unitAmount ?? 1000,
         currency: "usd",
         interval: "month",
         freeSeatCount: seatCounts.free,
@@ -1050,13 +1069,13 @@ export async function syncSeatSubscriptionQuantityAfterMemberChange(input: { org
   }
 
   const row = await findSeatSubscriptionByOrg(input.organizationId)
-  if (!row || !ACTIVE_STATUSES.has(row.status) || !row.stripe_subscription_item_id) {
+  if (!row || !ACTIVE_STATUSES.has(row.status) || row.payment_failed || !row.stripe_subscription_item_id) {
     return
   }
 
   const seatCounts = await getOrganizationSeatBillingCounts(input)
   await stripe().subscriptionItems.update(row.stripe_subscription_item_id, {
-    quantity: seatCounts.chargeable,
+    quantity: selfServeProductForPrice(row.stripe_price_id) ? Math.max(1, seatCounts.total) : seatCounts.chargeable,
     // See syncInferenceSubscriptionQuantityAfterMemberChange: one invoice per
     // cycle instead of a card charge per seat change.
     proration_behavior: "create_prorations",
@@ -1163,6 +1182,7 @@ export async function syncStripeCheckoutSession(input: { organizationId: OrgId; 
     throw new Error("stripe_checkout_session_org_mismatch")
   }
   const eventId = `checkout-session-sync:${session.id}`
+  if (await reconcileSelfServeSubscription(subscription.id, eventId)) return findOrgSubscriptionByStripeId(subscription.id)
   let row = await syncCurrentStripeSubscription(subscription.id, eventId)
   if (row?.type === WEB_SUBSCRIPTION_TYPE) {
     row = await syncOpenWorkWebPaymentStateFromCurrentInvoice({
@@ -1318,6 +1338,18 @@ export async function handleStripeWebhook(input: { payload: string; signature: s
   }
 
   const event = stripe().webhooks.constructEvent(input.payload, input.signature, env.stripe.webhookSecret)
+  const object = event.data.object
+  let planSubscriptionId: string | null = null
+  if (event.type.startsWith("customer.subscription.") && "id" in object) {
+    planSubscriptionId = object.id
+  } else if ("subscription" in object) {
+    planSubscriptionId = stripeResourceId(object.subscription)
+  } else if ("parent" in object && object.parent?.type === "subscription_details") {
+    planSubscriptionId = stripeResourceId(object.parent.subscription_details?.subscription)
+  }
+  if (planSubscriptionId && await reconcileSelfServeSubscription(planSubscriptionId, event.id)) {
+    return { received: true, type: event.type }
+  }
   switch (event.type) {
     case "checkout.session.async_payment_failed": {
       const session = event.data.object as Stripe.Checkout.Session
@@ -1393,4 +1425,180 @@ export async function handleStripeWebhook(input: { payload: string; signature: s
   }
 
   return { received: true, type: event.type }
+}
+
+async function validateSelfServePrice(product: ReturnType<typeof selfServeCatalog>[number]) {
+  if (!product.priceId || !env.stripe.secretKey) throw new Error("self_serve_not_configured")
+  const price = await stripe().prices.retrieve(product.priceId)
+  if (!price.active || price.type !== "recurring" || price.billing_scheme !== "per_unit"
+    || price.transform_quantity !== null || price.unit_amount !== product.unitAmount
+    || price.currency !== "usd" || price.recurring?.interval !== "month"
+    || price.recurring.interval_count !== 1 || price.recurring.usage_type !== "licensed") {
+    throw new Error("self_serve_price_contract_invalid")
+  }
+  return product.priceId
+}
+
+export async function getSelfServeBillingSummary(organizationId: OrgId) {
+  const [organization] = await db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable)
+    .where(eq(OrganizationTable.id, organizationId)).limit(1)
+  const sso = await findOrgSubscriptionByType(organizationId, "sso")
+  const plan = parseOrganizationPlan(organization?.metadata)
+  return {
+    tier: plan.tier,
+    source: plan.source,
+    catalog: selfServeCatalog().map(({ priceId, ...product }) => ({
+      ...product,
+      configured: Boolean(priceId && env.stripe.secretKey),
+      currency: "usd",
+      interval: "month",
+    })),
+    sso: {
+      hasActiveSubscription: Boolean(sso && ACTIVE_STATUSES.has(sso.status) && !sso.payment_failed),
+      subscription: serializeSubscription(sso),
+      unitAmount: 30000,
+    },
+  }
+}
+
+export async function createSelfServeCheckout(input: {
+  product: SelfServeProduct
+  organizationId: OrgId
+  orgMemberId: MemberId
+  email: string
+  name: string
+  successUrl: string
+  cancelUrl: string
+}) {
+  const product = selfServeCatalog().find((entry) => entry.id === input.product)
+  if (!product) throw new Error("self_serve_product_invalid")
+  const priceId = await validateSelfServePrice(product)
+  const customer = await findOrCreateStripeCustomer({
+    organizationId: input.organizationId, email: input.email, name: input.name,
+  })
+  const currentSubscriptions: Stripe.Subscription[] = []
+  for await (const subscription of stripe().subscriptions.list({ customer, status: "all", limit: 100 })) {
+    currentSubscriptions.push(subscription)
+    await reconcileSelfServeSubscription(subscription.id)
+  }
+  const summary = await getSelfServeBillingSummary(input.organizationId)
+  if (summary.source === "manual" || summary.source === "grandfathered") {
+    throw new Error("self_serve_managed_plan")
+  }
+  if (input.product === "sso" && summary.tier !== "team") throw new Error("self_serve_sso_requires_team")
+  // SSO is included in Enterprise. Require the separate add-on to finish
+  // cancellation before upgrading so no customer pays for SSO twice.
+  if (input.product === "enterprise" && (currentSubscriptions.some((subscription) =>
+    subscriptionTypeFromStripeSubscription(subscription, firstSubscriptionItem(subscription)) === "web"
+    && ONGOING_STATUSES.has(subscriptionStatus(subscription.status)))
+    || await organizationHasOngoingOpenWorkWebSubscription(input.organizationId))) {
+    throw new Error("self_serve_cancel_web_first")
+  }
+  const sso = await findOrgSubscriptionByType(input.organizationId, "sso")
+  if (input.product === "enterprise" && sso && ONGOING_STATUSES.has(sso.status)) {
+    throw new Error("self_serve_cancel_sso_first")
+  }
+  const quantity = input.product === "sso" ? 1 : Math.max(1, await activeMemberCount(input.organizationId))
+  if (input.product === "team" && quantity > 100) throw new Error("self_serve_team_limit")
+  const subscriptionType = input.product === "sso" ? "sso" : "seat"
+  // Expire unpaid SSO checkouts before an Enterprise upgrade to avoid a
+  // previously opened add-on checkout charging after the plan includes SSO.
+  if (input.product === "enterprise") {
+    for await (const session of stripe().checkout.sessions.list({ customer, limit: 100 })) {
+      if (session.status === "open" && getBillingMetadata(session.metadata).subscriptionType === "sso") {
+        await stripe().checkout.sessions.expire(session.id)
+      }
+    }
+  }
+  // Paginated above: older subscriptions still prevent duplicate purchases.
+  for (const subscription of currentSubscriptions) {
+    if (getSubscriptionMetadata(subscription).organizationId !== input.organizationId
+      || subscriptionTypeFromStripeSubscription(subscription, firstSubscriptionItem(subscription)) !== subscriptionType
+      || !ONGOING_STATUSES.has(subscriptionStatus(subscription.status))) continue
+    const item = firstSubscriptionItem(subscription)
+    if (input.product === "sso" || item?.price.id === priceId || !ACTIVE_STATUSES.has(subscriptionStatus(subscription.status))) {
+      throw new Error("self_serve_subscription_exists")
+    }
+    if (!item || !env.stripe.planPortalConfigurationId) throw new Error("self_serve_plan_changes_not_configured")
+    return stripe().billingPortal.sessions.create({
+      customer, configuration: env.stripe.planPortalConfigurationId, return_url: input.cancelUrl,
+      flow_data: {
+        type: "subscription_update_confirm",
+        subscription_update_confirm: { subscription: subscription.id, items: [{ id: item.id, price: priceId, quantity }] },
+        after_completion: { type: "redirect", redirect: { return_url: input.cancelUrl } },
+      },
+    })
+  }
+  let previousSessionId: string | undefined
+  for await (const session of stripe().checkout.sessions.list({ customer, limit: 100 })) {
+    if (getBillingMetadata(session.metadata).subscriptionType !== subscriptionType
+      || session.client_reference_id !== input.organizationId) continue
+    previousSessionId ??= session.id
+    if (session.status === "open") {
+      const lines = await stripe().checkout.sessions.listLineItems(session.id, { limit: 2 })
+      if (lines.data.length === 1 && lines.data[0]?.price?.id === priceId && lines.data[0].quantity === quantity && session.url) return session
+      await stripe().checkout.sessions.expire(session.id)
+    }
+  }
+  const metadata = { org_id: input.organizationId, created_by_org_member_id: input.orgMemberId, subscription_type: subscriptionType }
+  return stripe().checkout.sessions.create({
+    mode: "subscription", customer, client_reference_id: input.organizationId,
+    automatic_tax: { enabled: true }, customer_update: { address: "auto" }, billing_address_collection: "required",
+    line_items: [{ price: priceId, quantity }], metadata, subscription_data: { metadata },
+    success_url: input.successUrl, cancel_url: input.cancelUrl,
+  }, {
+    idempotencyKey: `openwork-plan:${input.organizationId}:${input.product}:${quantity}:${previousSessionId ?? "initial"}`,
+  })
+}
+
+export async function reconcileSelfServeSubscription(subscriptionId: string, eventId?: string) {
+  if (!selfServeCatalog().some((product) => product.priceId)) return false
+  const subscription = await stripe().subscriptions.retrieve(subscriptionId)
+  const item = firstSubscriptionItem(subscription)
+  const product = selfServeProductForPrice(item?.price.id)
+  const existing = await findOrgSubscriptionByStripeId(subscriptionId)
+  // Reconcile removed/unrecognized prices as well, to revoke former access.
+  if (!product && !selfServeProductForPrice(existing?.stripe_price_id)) return false
+  const metadata = getSubscriptionMetadata(subscription)
+  if (!metadata.organizationId) throw new Error("self_serve_organization_missing")
+  const organizationId = metadata.organizationId as OrgId
+  if (!await stripeCustomerBelongsToOrganization(customerIdFromSubscription(subscription), organizationId)) {
+    throw new Error("self_serve_customer_mismatch")
+  }
+  const validPrice = product ? await validateSelfServePrice(product).then(() => true).catch((error: unknown) => {
+    if (error instanceof Error && error.message === "self_serve_price_contract_invalid") return false
+    throw error
+  }) : false
+  const type = product?.id === "sso" || existing?.type === "sso" ? "sso" : "seat"
+  const current = await findOrgSubscriptionByType(organizationId, type)
+  if (current && current.stripe_subscription_id !== subscriptionId && ONGOING_STATUSES.has(current.status)) return true
+  const invoiceId = stripeResourceId(subscription.latest_invoice)
+  const invoice = invoiceId ? await stripe().invoices.retrieve(invoiceId) : null
+  const paid = Boolean(validPrice && product && subscription.items.data.length === 1
+    && (product.id !== "sso" || item?.quantity === 1)
+    && ACTIVE_STATUSES.has(subscriptionStatus(subscription.status))
+    && invoice?.status === "paid")
+  const row = await upsertOrgSubscriptionFromStripe(subscription, eventId)
+  if (!row) return true
+  await db.update(OrgSubscriptionTable).set({ payment_failed: !paid }).where(eq(OrgSubscriptionTable.id, row.id))
+  await db.transaction(async (tx) => {
+    const [organization] = await tx.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable)
+      .where(eq(OrganizationTable.id, organizationId)).for("update")
+    if (!organization) return
+    const metadata = organization.metadata ?? {}
+    const plan = parseOrganizationPlan(metadata)
+    if (plan.source === "manual" || plan.source === "grandfathered") return
+    const next = { ...metadata }
+    if (type === "seat") {
+      next.plan = { tier: paid && product?.id !== "sso" ? product?.id ?? "free" : "free", source: "stripe" }
+    } else {
+      next.billingAddons = paid ? ["sso"] : []
+    }
+    await tx.update(OrganizationTable).set({ metadata: next }).where(eq(OrganizationTable.id, organizationId))
+  })
+  if (paid && type === "seat" && item) {
+    const quantity = Math.max(1, await activeMemberCount(organizationId))
+    if (quantity !== item.quantity) await stripe().subscriptionItems.update(item.id, { quantity, proration_behavior: "create_prorations" })
+  }
+  return true
 }

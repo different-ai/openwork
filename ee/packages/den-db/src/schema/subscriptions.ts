@@ -3,7 +3,7 @@ import { boolean, index, int, mysqlEnum, mysqlTable, timestamp, uniqueIndex, var
 import { denTypeIdColumn, timestamps } from "../columns"
 import { MemberTable, OrganizationTable } from "./org"
 
-export const OrgSubscriptionType = ["inference", "seat", "web"] as const
+export const OrgSubscriptionType = ["inference", "seat", "web", "sso"] as const
 export const OrgSubscriptionStatus = [
   "incomplete",
   "incomplete_expired",

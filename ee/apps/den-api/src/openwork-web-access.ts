@@ -20,7 +20,10 @@ function parseMetadata(value: Record<string, unknown> | string | null | undefine
 }
 
 export function hasOpenWorkWebComplimentaryAccess(metadata: Record<string, unknown> | string | null | undefined) {
-  const complimentaryAccess = parseMetadata(metadata).complimentaryAccess
+  const parsed = parseMetadata(metadata)
+  const plan = parsed.plan
+  if (isRecord(plan) && plan.source === "stripe" && plan.tier === "enterprise") return true
+  const complimentaryAccess = parsed.complimentaryAccess
   return isRecord(complimentaryAccess) && complimentaryAccess.openworkWeb === true
 }
 

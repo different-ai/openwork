@@ -5,3 +5,4 @@ export * from "./mock-github.ts";
 export * from "./mock-mcp.ts";
 export * from "./not-implemented.ts";
 export * from "./release-feed.ts";
+export * from "./mock-stripe.ts";
