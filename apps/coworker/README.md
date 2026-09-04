@@ -46,7 +46,8 @@ continuous policy enforcement of local files. Live model and app access
 continues to follow the member's existing Connect permissions.
 
 Connect's editor can export a template file for import into another
-organization. Open Coworker's Account page can import one, or export the
+organization. Open Coworker's welcome screen can import one before setup;
+the Account page can import one, or export the
 selected coworker's starting profile and explicitly reusable instructions.
 Exports omit conversations, evolving soul and memory, working documents,
 credentials, model choices, schedules, and active tasks. Extra payload fields
