@@ -40,6 +40,7 @@ describe("Den org sidebar information architecture", () => {
     const marketplace = indexOfNeedle('label: "Collections"');
     const pluginDirectory = indexOfNeedle('label: "Plugin Directory"');
     const connectors = indexOfNeedle('label: "Connectors"');
+    const toolTester = indexOfNeedle('label: "Tool Tester"');
     const sources = indexOfNeedle('label: "Sources"');
     const managedDashboards = indexOfNeedle('label: "Dashboards"');
     const workflowRuns = indexOfNeedle('label: "Workflow Runs"');
@@ -51,7 +52,8 @@ describe("Den org sidebar information architecture", () => {
 
     expect(marketplace).toBeLessThan(pluginDirectory);
     expect(pluginDirectory).toBeLessThan(connectors);
-    expect(connectors).toBeLessThan(sources);
+    expect(connectors).toBeLessThan(toolTester);
+    expect(toolTester).toBeLessThan(sources);
     expect(sources).toBeLessThan(managedDashboards);
     expect(workflowRuns).toBeLessThan(analytics);
     expect(workSection).toBeLessThan(manageSection);
@@ -59,8 +61,8 @@ describe("Den org sidebar information architecture", () => {
     expect(observabilitySection).toBeLessThan(teamSection);
     expect(shell).toContain('badge: "Providers"');
     expect(shell).toContain('badge: "MCPs"');
-    expect(shell).toContain('label: "Tool Tester"');
     expect(shell).toContain("mcpConnectionsEnabled && access.isAdmin");
+    expect(shell.slice(shell.indexOf("const settingsChildren"), shell.indexOf("const settingsGroup"))).not.toContain('label: "Tool Tester"');
   });
 
   test("redirects the old Script runs path to Workflow runs", () => {
