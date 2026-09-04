@@ -8,7 +8,9 @@ import test from "node:test";
 const electronStub = `
 export const app = { on() {} };
 export const clipboard = { writeText() {} };
-export const session = { fromPartition() { return {}; } };
+// Every tab installs the organization URL-allowlist request guard on the
+// browser session, so the stub session must accept a webRequest listener.
+export const session = { fromPartition() { return { webRequest: { onBeforeRequest() {} } }; } };
 export const shell = { openExternal() { return Promise.resolve(); } };
 export class WebContentsView {
   constructor() {

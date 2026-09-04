@@ -29,7 +29,7 @@ import {
   writeCachedDenDesktopConfig,
   type DenDesktopConfig,
 } from "../../../app/lib/den";
-import { applyBrandAppName, applyBrandIcon, getBrandIconState } from "../../../app/lib/desktop";
+import { applyBrandAppName, applyBrandIcon, applyBrowserUrlPolicy, getBrandIconState } from "../../../app/lib/desktop";
 import { createOpenworkServerClient } from "../../../app/lib/openwork-server";
 import {
   denSessionUpdatedEvent,
@@ -88,6 +88,7 @@ const DESKTOP_CONFIG_ITEMS = [
   "connectEnabled",
   "onboardingPrompts",
   "onboardingPromptDescriptions",
+  "allowedBrowserHosts",
 ] as const satisfies readonly (keyof DenDesktopConfig)[];
 
 export function resolveConnectStateToPush(config: DenDesktopConfig): boolean | null {
@@ -263,6 +264,14 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
       const appName = typeof brandAppNameAction.nextValue === "string" ? brandAppNameAction.nextValue : null;
       document.title = appName ?? "OpenWork";
       void applyBrandAppName(appName).catch(() => null);
+    }
+
+    // The shell enforces the browser allowlist on every built-in browser tab;
+    // an absent list (sign-out, cleared policy) restores unrestricted browsing.
+    if (actions.some((action) => action.item === "allowedBrowserHosts")) {
+      void applyBrowserUrlPolicy(normalizedConfig.allowedBrowserHosts ?? null).catch((error: unknown) => {
+        console.warn("[desktop-policy] Browser allowlist was not applied", error);
+      });
     }
 
     // Keep desktop-bootstrap.json aligned so a cleared wordmark/icon cannot

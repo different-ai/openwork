@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
 import {
+  calculateEffectiveAllowedBrowserHosts,
+  desktopPolicyDocumentWriteSchema,
+  normalizeAllowedBrowserHost,
   normalizeDesktopPolicyDocumentWrite,
   resolveDesktopPolicyDocumentWrite,
   selectEffectiveOnboardingPromptConfig,
@@ -283,5 +286,91 @@ describe("Den desktop config client", () => {
       onboardingPrompts: null,
       onboardingPromptDescriptions: null,
     });
+  });
+
+  test("normalizes browser allowlist hosts to canonical host patterns", () => {
+    expect(normalizeAllowedBrowserHost(" Example.COM. ")).toBe("example.com");
+    expect(normalizeAllowedBrowserHost("*.example.com")).toBe("example.com");
+    expect(normalizeAllowedBrowserHost("https://docs.example.com:8443/guide?x=1")).toBe("docs.example.com");
+    expect(normalizeAllowedBrowserHost("user:secret@evil.example")).toBe("evil.example");
+    expect(normalizeAllowedBrowserHost("bücher.example")).toBe("xn--bcher-kva.example");
+    expect(normalizeAllowedBrowserHost("127.0.0.1")).toBe("127.0.0.1");
+    expect(normalizeAllowedBrowserHost("[::1]")).toBe("[::1]");
+    expect(normalizeAllowedBrowserHost("intranet")).toBe("intranet");
+    expect(normalizeAllowedBrowserHost("*")).toBe("*");
+    expect(normalizeAllowedBrowserHost("")).toBeNull();
+    expect(normalizeAllowedBrowserHost("exa mple.com")).toBeNull();
+    expect(normalizeAllowedBrowserHost("*.")).toBeNull();
+    expect(normalizeAllowedBrowserHost("docs.*.example.com")).toBeNull();
+    expect(normalizeAllowedBrowserHost(42)).toBeNull();
+
+    expect(normalizeDenDesktopConfig({
+      allowedBrowserHosts: ["Example.com", "*.example.com", "https://docs.example.com/x", "", "not a host"],
+    })).toEqual({ allowedBrowserHosts: ["example.com", "docs.example.com"] });
+    expect(normalizeDenDesktopConfig({ allowedBrowserHosts: [] })).toEqual({});
+    expect(normalizeDenDesktopConfig({ allowedBrowserHosts: "example.com" })).toEqual({});
+
+    const rejected = desktopPolicyDocumentWriteSchema.safeParse({ allowedBrowserHosts: ["example.com", "not a host"] });
+    expect(rejected.success).toBe(false);
+    expect(desktopPolicyDocumentWriteSchema.safeParse({ allowedBrowserHosts: null }).success).toBe(true);
+  });
+
+  test("applies browser allowlist write semantics", () => {
+    const existingPolicy = { allowZenModel: true, allowedBrowserHosts: ["example.com"] };
+
+    expect(resolveDesktopPolicyDocumentWrite({
+      value: { allowZenModel: false },
+      existingPolicy,
+      preserveExistingOnboardingPrompts: true,
+    })).toEqual({ allowZenModel: false, allowedBrowserHosts: ["example.com"] });
+
+    expect(resolveDesktopPolicyDocumentWrite({
+      value: { allowedBrowserHosts: null },
+      existingPolicy,
+      preserveExistingOnboardingPrompts: true,
+    })).toEqual({});
+
+    expect(resolveDesktopPolicyDocumentWrite({
+      value: { allowedBrowserHosts: [] },
+      existingPolicy,
+      preserveExistingOnboardingPrompts: true,
+    })).toEqual({});
+
+    expect(resolveDesktopPolicyDocumentWrite({
+      value: { allowedBrowserHosts: ["*.Docs.example.com", "docs.example.com"] },
+      existingPolicy,
+      preserveExistingOnboardingPrompts: true,
+    })).toEqual({ allowedBrowserHosts: ["docs.example.com"] });
+
+    expect(resolveDesktopPolicyDocumentWrite({ value: { allowZenModel: false }, existingPolicy })).toEqual({
+      allowZenModel: false,
+    });
+  });
+
+  test("unions browser allowlists as grants anchored on the default policy", () => {
+    expect(calculateEffectiveAllowedBrowserHosts({ orgPolicyCount: 0, assignedPolicies: [] })).toBeUndefined();
+
+    // No allowlist on the default policy leaves the browser unrestricted, even
+    // when a targeted policy carries one: targeted policies only add grants.
+    expect(calculateEffectiveAllowedBrowserHosts({
+      orgPolicyCount: 2,
+      defaultPolicy: { allowZenModel: true },
+      assignedPolicies: [{ allowedBrowserHosts: ["example.com"] }],
+    })).toBeUndefined();
+
+    expect(calculateEffectiveAllowedBrowserHosts({
+      orgPolicyCount: 3,
+      defaultPolicy: JSON.stringify({ allowedBrowserHosts: ["example.com"] }),
+      assignedPolicies: [
+        { allowedBrowserHosts: ["docs.partner.example", "example.com"] },
+        { allowZenModel: false },
+      ],
+    })).toEqual(["example.com", "docs.partner.example"]);
+
+    expect(calculateEffectiveAllowedBrowserHosts({
+      orgPolicyCount: 2,
+      defaultPolicy: { allowedBrowserHosts: ["example.com"] },
+      assignedPolicies: [{ allowedBrowserHosts: ["*"] }],
+    })).toBeUndefined();
   });
 });

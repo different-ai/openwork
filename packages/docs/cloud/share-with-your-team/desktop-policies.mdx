@@ -16,6 +16,20 @@ Current desktop policy keys map to concrete product capabilities:
 - `Manage Extensions`: allow or block local extension management.
 - `Built-in Extensions`: allow or block OpenWork-provided built-in extensions, including browser, image, and local-provider extensions.
 - `Welcome Page`: show or hide the getting-started page for new users.
+- `Browser URL allowlist`: limit OpenWork's built-in browser to approved websites.
+
+## Browser URL allowlist
+
+Turn on `Browser URL allowlist` in a policy and list the websites members may open in the built-in browser, one per line:
+
+- `example.com` allows that host and every subdomain, such as `docs.example.com`.
+- `*.example.com` means the same as `example.com`.
+- `*` allows every website.
+- Schemes, ports, and paths are ignored: `https://example.com:8443/docs` is stored as `example.com`.
+
+Any other website — whether a member types it, follows a link, or the agent drives the browser — shows a `Blocked by your organization` page that names the host. Agent requests to open a blocked website fail with the same explanation, so the agent can tell the member instead of continuing on a blocked page. The allowlist covers pages and frames only; resources an allowed page loads itself are not filtered.
+
+Set the allowlist on the default policy. Like the boolean keys, the effective policy is a union of grants: a targeted policy can add websites for its members or teams, but it cannot restrict a browser that the default policy leaves open. When the default policy has no allowlist, members can open any website. The allowlist is separate from `Built-in Extensions`, which turns the browser off entirely.
 
 ## Configure a policy
 
