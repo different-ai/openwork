@@ -202,6 +202,8 @@ export interface HeadlessTranscriptMessage {
   reasoning: string;
   /** Which model answered; null for user messages and replies the engine has not attributed yet. */
   model: HeadlessThreadMessageModel | null;
+  /** What this reply cost in tokens, as the engine reported it; null for user messages and until the engine reports it. */
+  usage: HeadlessThreadUsage | null;
   toolCalls: HeadlessTranscriptToolCall[];
 }
 
