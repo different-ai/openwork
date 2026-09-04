@@ -99,8 +99,6 @@ import {
 } from "@/react-app/domains/connections/cloud-inventory-cache";
 import { createOpaqueDiagnosticsScopeKey } from "@/react-app/domains/settings/pages/agent-context-diagnostics-section";
 import { CloudProvidersView } from "@/react-app/domains/settings/pages/cloud-providers-view";
-import { MemoryView } from "@/react-app/domains/settings/pages/memory-view";
-import { useFeatureFlagsPreferences } from "@/react-app/domains/settings/state/feature-flags-preferences";
 import { DebugView } from "@/react-app/domains/settings/pages/debug-view";
 import { EnvironmentView } from "@/react-app/domains/settings/pages/environment-view";
 import { ExtensionsView, type ExtensionsSection } from "@/react-app/domains/settings/pages/extensions-view";
@@ -308,7 +306,6 @@ export function parseSettingsPath(pathname: string): {
       return { tab: head, redirectPath: null };
     case "cloud-account":
     case "cloud-providers":
-    case "memory":
       return { tab: head, redirectPath: null };
     case "connect":
       return { tab: "extensions", redirectPath: "extensions", extensionsSection: "all" };
@@ -450,10 +447,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const routeWorkspaceIdRef = useRef(routeWorkspaceId);
   routeWorkspaceIdRef.current = routeWorkspaceId;
   const local = useLocal();
-  const {
-    memoryEnabled,
-    toggleMemory,
-  } = useFeatureFlagsPreferences();
   const platform = usePlatform();
   const checkDesktopRestriction = useCheckDesktopRestriction();
   const restrictionNotice = useRestrictionNotice();
@@ -2458,8 +2451,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             onDesktopNotificationsChange={(desktopNotifications) => {
               local.setPrefs((previous) => ({ ...previous, desktopNotifications }));
             }}
-            memoryEnabled={memoryEnabled}
-            onToggleMemory={toggleMemory}
           />
         );
       case "extensions":
@@ -2571,8 +2562,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             session={denSession}
           />
         );
-      case "memory":
-        return <MemoryView onOpenAccount={openCloudAccountSettings} />;
       case "cloud-providers":
         return (
           <CloudProvidersView
