@@ -1,4 +1,5 @@
 import { OnboardingMascotStack } from "@/ui/onboarding-mascot";
+import { useState } from "react";
 
 function CloudIcon() {
   return (
@@ -29,10 +30,14 @@ function ArrowIcon() {
 export function OnboardingWelcome({
   onConnect,
   onContinueLocally,
+  onImport,
 }: {
   onConnect: () => void;
   onContinueLocally: () => void;
+  onImport: () => Promise<void>;
 }) {
+  const [importing, setImporting] = useState(false);
+  const [importError, setImportError] = useState("");
   return (
     <div className="window-shell window-drag flex h-full min-h-[560px] flex-col overflow-y-auto" data-testid="onboarding-welcome">
       <header className="flex shrink-0 items-center justify-end px-6 pb-3 pt-5 md:px-8">
@@ -73,7 +78,7 @@ export function OnboardingWelcome({
                   <span className="text-[13px] font-semibold text-snow">Continue with OpenWork</span>
                   <span className="rounded-full bg-spark/15 px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-[0.08em] text-[#b8caff]">Recommended</span>
                 </span>
-                <span className="mt-0.5 block text-[11px] leading-relaxed text-mist">Bring your connected apps and available AI models. Cloud responsibilities are set up separately.</span>
+                <span className="mt-0.5 block text-[11px] leading-relaxed text-mist">Get your team's assigned coworkers, connected apps, and available AI models. Cloud responsibilities are set up separately.</span>
               </span>
               <span className="flex size-8 shrink-0 items-center justify-center rounded-full border border-white/10 text-mist transition-colors group-hover:border-white/18 group-hover:text-snow">
                 <ArrowIcon />
@@ -98,6 +103,11 @@ export function OnboardingWelcome({
               </span>
             </button>
           </div>
+          <button type="button" className="mt-4 text-xs text-mist underline-offset-4 hover:text-snow hover:underline disabled:opacity-50" disabled={importing} onClick={() => {
+            setImporting(true); setImportError("");
+            void onImport().catch((cause) => setImportError(cause instanceof Error ? cause.message : "This template could not be imported.")).finally(() => setImporting(false));
+          }}>{importing ? "Preparing your coworker…" : "Import a coworker template"}</button>
+          {importError ? <p className="mt-2 text-xs text-rose" role="alert">{importError}</p> : null}
           <p className="mx-auto mt-4 max-w-[510px] text-xs leading-5 text-mist">Conversations and local workers run while Open Coworker is open. Only responsibilities assigned to Cloud can run while this Mac is off.</p>
         </section>
       </main>
