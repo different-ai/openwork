@@ -1,0 +1,88 @@
+name: API Contract
+
+# Keeps packages/docs/openapi.json (the published Den API contract) in sync
+# with the route source and lints it with Spectral. The ruleset and the
+# warning baseline are documented in docs/api-style.md.
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/api-contract.yml"
+      - ".spectral.yaml"
+      - ".spectral-baseline.json"
+      - "scripts/api-lint.mjs"
+      - "packages/docs/openapi.json"
+      - "ee/apps/den-api/**"
+      - "ee/packages/**"
+      - "packages/automations/**"
+      - "packages/codemode/**"
+      - "packages/connect-link/**"
+      - "packages/email/**"
+      - "packages/enterprise-mcp-client/**"
+      - "packages/headless-threads/**"
+      - "packages/install-config/**"
+      - "packages/mcp-apps/**"
+      - "packages/types/**"
+  push:
+    branches:
+      - dev
+    paths:
+      - ".spectral.yaml"
+      - ".spectral-baseline.json"
+      - "scripts/api-lint.mjs"
+      - "packages/docs/openapi.json"
+      - "ee/apps/den-api/**"
+      - "ee/packages/**"
+      - "packages/types/**"
+
+permissions:
+  contents: read
+
+jobs:
+  openapi-snapshot-and-lint:
+    name: OpenAPI snapshot is current and lints clean
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --filter "@openwork-ee/den-api..." --filter "@different-ai/openwork-workspace"
+
+      - name: Build den-api workspace dependencies
+        run: pnpm --filter @openwork-ee/den-api build:workspace-dependencies
+
+      - name: Regenerate the OpenAPI snapshot
+        run: pnpm api:snapshot
+
+      - name: Fail if the committed snapshot drifted from the route source
+        run: |
+          set -euo pipefail
+          if ! git diff --exit-code --stat -- packages/docs/openapi.json; then
+            echo "::error::packages/docs/openapi.json is out of date. Run 'pnpm api:snapshot' locally and commit the regenerated document."
+            exit 1
+          fi
+          echo "OpenAPI snapshot is in sync with the route source."
+
+      - name: Lint the regenerated document with Spectral
+        if: ${{ !cancelled() }}
+        run: pnpm api:lint --json tmp/spectral-report.json
+
+      - name: Upload Spectral report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: spectral-report
+          path: tmp/spectral-report.json
+          if-no-files-found: warn
