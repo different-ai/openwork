@@ -23,6 +23,7 @@ const stops: Array<() => void | Promise<void>> = [];
 const previousRuntimeDb = process.env.OPENWORK_RUNTIME_DB;
 const previousEnvStore = process.env.OPENWORK_ENV_STORE;
 const previousInterval = process.env.OPENWORK_CLOUD_PROVIDER_SYNC_INTERVAL_MS;
+const previousReloadRetry = process.env.OPENWORK_ENGINE_RELOAD_RETRY_MS;
 
 type FakeModel = {
   id: string;
@@ -174,6 +175,8 @@ afterEach(async () => {
   else process.env.OPENWORK_ENV_STORE = previousEnvStore;
   if (previousInterval === undefined) delete process.env.OPENWORK_CLOUD_PROVIDER_SYNC_INTERVAL_MS;
   else process.env.OPENWORK_CLOUD_PROVIDER_SYNC_INTERVAL_MS = previousInterval;
+  if (previousReloadRetry === undefined) delete process.env.OPENWORK_ENGINE_RELOAD_RETRY_MS;
+  else process.env.OPENWORK_ENGINE_RELOAD_RETRY_MS = previousReloadRetry;
 });
 
 describe("cloud provider sync gateway", () => {
@@ -415,6 +418,50 @@ describe("cloud provider sync gateway", () => {
     expect((await sync.run("interval")).status).toBe("applied");
     expect(reloads).toBe(2);
     expect(authPuts).toEqual(["generation-one", "generation-2", "generation-2"]);
+  });
+
+  test("defers a reload while a generation drains and retries it once", async () => {
+    process.env.OPENWORK_ENGINE_RELOAD_RETRY_MS = "50";
+    const root = await createRoot();
+    const provider = buildProvider([{ id: "model-a", name: "Model A", config: {} }]);
+    const config = serverConfig(root, "https://engine.example.test");
+    let draining = true;
+    let reloads = 0;
+    const fetchImpl = Object.assign(async (input: Parameters<typeof globalThis.fetch>[0]) => {
+      const url = new URL(String(input));
+      if (url.hostname === "den.example.test") {
+        if (url.pathname === "/v1/llm-providers") return Response.json({ llmProviders: [provider] });
+        if (url.pathname === `/v1/llm-providers/${provider.id}/connect`) return Response.json({ llmProvider: provider });
+      }
+      if (url.hostname === "engine.example.test" && url.pathname === `/auth/${provider.id}`) return Response.json(true);
+      return Response.json({ error: "not_found" }, { status: 404 });
+    }, { preconnect: globalThis.fetch.preconnect });
+    const sync = new CloudProviderSync({
+      config,
+      env: new EnvService({ path: process.env.OPENWORK_ENV_STORE }),
+      fetchImpl,
+      engineBusy: async () => draining,
+      reloadEngine: async () => { reloads += 1; },
+      intervalMs: 3_600_000,
+    });
+    stops.push(() => sync.stop());
+    await sync.setSession({ baseUrl: "https://den.example.test", token: "token-a", orgId: "org_a" });
+
+    const result = await Promise.race([
+      sync.run("sign_in"),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("sync run timed out")), 5_000)),
+    ]);
+    expect(result.status).toBe("applied");
+    expect(sync.status().lastRun?.detail?.reloadDeferred).toBe(true);
+    expect(sync.status().reloadPending).toBe(true);
+    expect(reloads).toBe(0);
+
+    draining = false;
+    for (let attempt = 0; attempt < 100 && reloads !== 1; attempt += 1) await Bun.sleep(10);
+    expect(reloads).toBe(1);
+    expect(sync.status().reloadPending).toBe(false);
+    await Bun.sleep(100);
+    expect(reloads).toBe(1);
   });
 
   test("materializes providers before the first workspace exists and finishes setup later", async () => {
