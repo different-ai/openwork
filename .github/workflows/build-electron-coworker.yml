@@ -64,6 +64,9 @@ jobs:
 
       - name: Typecheck and unit tests
         run: |
+          # The tests import the built workspace packages, as build:electron does.
+          pnpm --filter @openwork/automations build
+          pnpm --filter @openwork/headless-threads build
           pnpm --filter @openwork/coworker typecheck
           pnpm --filter @openwork/coworker test
 
