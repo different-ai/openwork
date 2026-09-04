@@ -33,14 +33,9 @@ test("a streaming answer renders as markdown block by block and settles to the s
   await user.see({ text: prompt }, { timeoutMs: 30_000 });
 
   await step("finished blocks render as markdown while later blocks are still arriving", async () => {
-    const midStream = await probe.eventually(() => probe.text(), {
-      within: 90_000,
-      label: "first streamed block",
-      until: (text) => text.includes(headingText),
-    });
-    expect(midStream).not.toContain(closingText);
-    expect(midStream).not.toContain("## Streamed");
-    await user.see({ text: headingText });
+    await user.see({ text: headingText }, { timeoutMs: 90_000 });
+    await user.notSee({ text: closingText });
+    await user.notSee({ text: "## Streamed" });
   });
 
   await step("the settled answer shows every block exactly once and no markdown syntax", async () => {
