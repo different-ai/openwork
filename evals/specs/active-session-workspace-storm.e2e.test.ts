@@ -2,12 +2,14 @@ import { readFile } from "node:fs/promises";
 import { expect } from "vitest";
 import {
   control,
+  engineSessionProbe,
   evalIn,
   go,
   selectModel,
   waitFor,
   writeComposerText,
 } from "@openwork/behaviors";
+import { resolveEvalEngine } from "@openwork/env";
 import { screenshot, validate } from "@openwork/test-evidence";
 import {
   app,
@@ -125,31 +127,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
-}
-
-function parseSessionFacts(value: unknown): SessionFacts {
-  if (!isRecord(value) || typeof value.ok !== "boolean" || typeof value.status !== "number") {
-    throw new Error(`Invalid session facts: ${JSON.stringify(value)}`);
-  }
-  const tools: ToolFact[] = [];
-  if (Array.isArray(value.tools)) {
-    for (const candidate of value.tools) {
-      if (!isRecord(candidate) || typeof candidate.tool !== "string" || typeof candidate.status !== "string") continue;
-      tools.push({
-        tool: candidate.tool,
-        status: candidate.status,
-        input: isRecord(candidate.input) ? candidate.input : {},
-        output: typeof candidate.output === "string" ? candidate.output : "",
-      });
-    }
-  }
-  return {
-    ok: value.ok,
-    status: value.status,
-    sessionId: typeof value.sessionId === "string" ? value.sessionId : "",
-    text: typeof value.text === "string" ? value.text : "",
-    tools,
-  };
 }
 
 function parseSurfaceFacts(value: unknown): SurfaceFacts {
@@ -388,54 +365,26 @@ async function openExactSessionRoute(desktopApp: App, plan: WorkspacePlan): Prom
 }
 
 async function readSessionFacts(desktopApp: App, workspaceId: string, sessionId: string): Promise<SessionFacts> {
-  const value = await evalIn(desktopApp, `(async () => {
-    const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
-    if (!info?.running || !info.baseUrl) return { ok: false, status: 0, error: "local_server_unavailable" };
-    const base = String(info.baseUrl).replace(/\\/+$/, "") + "/workspace/" + encodeURIComponent(${JSON.stringify(workspaceId)})
-      + "/opencode/session";
-    const encodedSessionId = encodeURIComponent(${JSON.stringify(sessionId)});
-    const options = {
-      headers: { Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? "") },
-      signal: AbortSignal.timeout(15000),
-    };
-    const responses = await Promise.all([
-      fetch(base + "/" + encodedSessionId, options),
-      fetch(base + "/" + encodedSessionId + "/message?limit=50", options),
-      fetch(base + "/" + encodedSessionId + "/todo", options),
-      fetch(base + "/status", options),
-    ]);
-    const failed = responses.find((response) => !response.ok);
-    if (failed) return { ok: false, status: failed.status, sessionId: ${JSON.stringify(sessionId)}, text: "", tools: [] };
-    const [session, messageWires, todos, statuses] = await Promise.all(responses.map((response) => response.json()));
-    const item = { session, messages: messageWires, todos, status: statuses?.[session?.id] ?? { type: "idle" } };
-    const messages = Array.isArray(item?.messages) ? item.messages : [];
-    const text = messages.flatMap((message) => Array.isArray(message?.parts) ? message.parts : [])
-      .flatMap((part) => typeof part?.text === "string" ? [part.text] : []).join("\\n");
-    const tools = messages.flatMap((message) => Array.isArray(message?.parts) ? message.parts : [])
-      .flatMap((part) => {
-        if (!part || typeof part.tool !== "string") return [];
-        const state = part.state && typeof part.state === "object" ? part.state : {};
-        const output = typeof state.output === "string"
-          ? state.output
-          : typeof state.metadata?.output === "string"
-            ? state.metadata.output
-            : "";
-        return [{
-          tool: part.tool,
-          status: typeof state.status === "string" ? state.status : "",
-          input: state.input && typeof state.input === "object" && !Array.isArray(state.input) ? state.input : {},
-          output,
-        }];
-      });
-    return {
-      ok: true,
-      status: responses[0].status,
-      sessionId: typeof item?.session?.id === "string" ? item.session.id : "",
-      text,
-      tools,
-    };
-  })()`, { awaitPromise: true, timeoutMs: 20_000 });
-  return parseSessionFacts(value);
+  const probe = engineSessionProbe({
+    engine: resolveEvalEngine(),
+    surface: desktopApp,
+    workspaceId,
+  });
+  const snapshot = await probe.snapshot(sessionId);
+  if (!snapshot.ok) return { ok: false, status: snapshot.status, sessionId, text: "", tools: [] };
+  const parts = snapshot.data.messages.flatMap((message) => message.parts);
+  return {
+    ok: true,
+    status: snapshot.status,
+    sessionId: snapshot.data.session?.id ?? "",
+    text: parts.flatMap((part) => part.text ? [part.text] : []).join("\n"),
+    tools: parts.flatMap((part) => part.tool ? [{
+      tool: part.tool,
+      status: part.status,
+      input: part.input,
+      output: part.output,
+    }] : []),
+  };
 }
 
 async function readSurfaceFacts(desktopApp: App, marker: string): Promise<SurfaceFacts> {
@@ -523,59 +472,14 @@ async function allowVisibleToolPermission(desktopApp: App): Promise<boolean> {
 }
 
 async function approvePendingToolPermissions(desktopApp: App, plan: WorkspacePlan): Promise<number> {
-  const result = await evalIn(desktopApp, `(async () => {
-    const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
-    if (!info?.running || !info.baseUrl) return { error: "local_server_unavailable" };
-    const root = String(info.baseUrl).replace(/\\/+$/, "")
-      + "/workspace/" + encodeURIComponent(${JSON.stringify(plan.workspaceId)}) + "/opencode";
-    const headers = {
-      Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? ""),
-      "Content-Type": "application/json",
-    };
-    const sessionId = ${JSON.stringify(plan.sessionId)};
-    const candidates = [];
-    const v2 = await fetch(root + "/api/session/" + encodeURIComponent(sessionId) + "/permission", {
-      headers,
-      signal: AbortSignal.timeout(10000),
-    });
-    if (v2.ok) {
-      const requests = await v2.json();
-      for (const request of Array.isArray(requests) ? requests : []) {
-        if (typeof request?.id === "string") candidates.push({ id: request.id, protocol: "v2" });
-      }
-    }
-    if (candidates.length === 0) {
-      const legacy = await fetch(root + "/permission", { headers, signal: AbortSignal.timeout(10000) });
-      if (legacy.ok) {
-        const requests = await legacy.json();
-        for (const request of Array.isArray(requests) ? requests : []) {
-          if (typeof request?.id === "string" && request?.sessionID === sessionId) {
-            candidates.push({ id: request.id, protocol: "legacy" });
-          }
-        }
-      }
-    }
-    const replies = [];
-    for (const candidate of candidates) {
-      const path = candidate.protocol === "v2"
-        ? "/api/session/" + encodeURIComponent(sessionId) + "/permission/" + encodeURIComponent(candidate.id) + "/reply"
-        : "/permission/" + encodeURIComponent(candidate.id) + "/reply";
-      const response = await fetch(root + path, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ reply: "once" }),
-        signal: AbortSignal.timeout(10000),
-      });
-      replies.push({ id: candidate.id, protocol: candidate.protocol, status: response.status });
-    }
-    return { replies };
-  })()`, { awaitPromise: true, timeoutMs: 30_000 });
-  if (!isRecord(result) || !Array.isArray(result.replies)) {
-    throw new Error(`Permission approval failed for ${plan.sessionId}: ${JSON.stringify(result)}`);
-  }
-  const failures = result.replies.filter((reply) => !isRecord(reply) || typeof reply.status !== "number" || reply.status < 200 || reply.status >= 300);
+  const statuses = await engineSessionProbe({
+    engine: resolveEvalEngine(),
+    surface: desktopApp,
+    workspaceId: plan.workspaceId,
+  }).approvePendingPermissions(plan.sessionId);
+  const failures = statuses.filter((status) => status < 200 || status >= 300);
   if (failures.length > 0) throw new Error(`Permission replies failed for ${plan.sessionId}: ${JSON.stringify(failures)}`);
-  return result.replies.length;
+  return statuses.length;
 }
 
 async function waitForSlowTool(desktopApp: App, plan: WorkspacePlan): Promise<SessionFacts> {

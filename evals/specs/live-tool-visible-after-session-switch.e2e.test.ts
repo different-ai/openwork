@@ -2,11 +2,13 @@ import { expect } from "vitest";
 import {
   control,
   createAndSelectWorkspace,
+  engineSessionProbe,
   evalIn,
   selectModel,
   waitFor,
   writeComposerText,
 } from "@openwork/behaviors";
+import { resolveEvalEngine } from "@openwork/env";
 import { screenshot } from "@openwork/test-evidence";
 import {
   app,
@@ -60,25 +62,6 @@ interface VisibleToolFact {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function parseSessionFacts(value: unknown): SessionFacts {
-  if (!isRecord(value) || typeof value.sessionId !== "string" || typeof value.text !== "string") {
-    throw new Error(`Invalid session facts: ${JSON.stringify(value)}`);
-  }
-  const tools: ToolFact[] = [];
-  if (Array.isArray(value.tools)) {
-    for (const candidate of value.tools) {
-      if (!isRecord(candidate)) continue;
-      tools.push({
-        callId: typeof candidate.callId === "string" ? candidate.callId : "",
-        status: typeof candidate.status === "string" ? candidate.status : "",
-        command: typeof candidate.command === "string" ? candidate.command : "",
-        description: typeof candidate.description === "string" ? candidate.description : "",
-      });
-    }
-  }
-  return { sessionId: value.sessionId, text: value.text, tools };
 }
 
 function parseVisibleToolFact(value: unknown): VisibleToolFact {
@@ -185,83 +168,39 @@ async function clickSessionRow(appSurface: App, workspaceId: string, sessionId: 
 }
 
 async function readSessionFacts(appSurface: App, workspaceId: string, sessionId: string): Promise<SessionFacts> {
-  const value = await evalIn(appSurface, `(async () => {
-    const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
-    if (!info?.running || !info.baseUrl) return { sessionId: "", text: "", tools: [] };
-    const base = String(info.baseUrl).replace(/\\/+$/, "") + "/workspace/" + encodeURIComponent(${JSON.stringify(workspaceId)})
-      + "/opencode/session";
-    const encodedSessionId = encodeURIComponent(${JSON.stringify(sessionId)});
-    const options = {
-      headers: { Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? "") },
-      signal: AbortSignal.timeout(15000),
-    };
-    const responses = await Promise.all([
-      fetch(base + "/" + encodedSessionId, options),
-      fetch(base + "/" + encodedSessionId + "/message?limit=50", options),
-      fetch(base + "/" + encodedSessionId + "/todo", options),
-      fetch(base + "/status", options),
-    ]);
-    if (responses.some((response) => !response.ok)) return { sessionId: "", text: "", tools: [] };
-    const [session, messageWires, todos, statuses] = await Promise.all(responses.map((response) => response.json()));
-    const item = { session, messages: messageWires, todos, status: statuses?.[session?.id] ?? { type: "idle" } };
-    const messages = Array.isArray(item.messages) ? item.messages : [];
-    const parts = messages.flatMap((message) => Array.isArray(message?.parts) ? message.parts : []);
-    return {
-      sessionId: typeof item?.session?.id === "string" ? item.session.id : "",
-      text: parts.flatMap((part) => typeof part?.text === "string" ? [part.text] : []).join("\\n"),
-      tools: parts.flatMap((part) => {
-        if (!part || typeof part.tool !== "string") return [];
-        const state = part.state && typeof part.state === "object" ? part.state : {};
-        const input = state.input && typeof state.input === "object" ? state.input : {};
-        return [{
-          callId: typeof part.callID === "string" ? part.callID : "",
-          status: typeof state.status === "string" ? state.status : "",
-          command: typeof input.command === "string" ? input.command : "",
-          description: typeof input.description === "string" ? input.description : "",
-        }];
-      }),
-    };
-  })()`, { awaitPromise: true, timeoutMs: 20_000 });
-  return parseSessionFacts(value);
+  const probe = engineSessionProbe({
+    engine: resolveEvalEngine(),
+    surface: appSurface,
+    workspaceId,
+  });
+  const snapshot = await probe.snapshot(sessionId);
+  if (!snapshot.ok) return { sessionId: "", text: "", tools: [] };
+  const parts = snapshot.data.messages.flatMap((message) => message.parts);
+  return {
+    sessionId: snapshot.data.session?.id ?? "",
+    text: parts.flatMap((part) => part.text ? [part.text] : []).join("\n"),
+    tools: parts.flatMap((part) => {
+      if (!part.tool) return [];
+      return [{
+        callId: part.callId,
+        status: part.status,
+        command: typeof part.input.command === "string" ? part.input.command : "",
+        description: typeof part.input.description === "string" ? part.input.description : "",
+      }];
+    }),
+  };
 }
 
 async function approvePendingPermission(appSurface: App, workspaceId: string, sessionId: string): Promise<number> {
-  const value = await evalIn(appSurface, `(async () => {
-    const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
-    if (!info?.running || !info.baseUrl) return [];
-    const root = String(info.baseUrl).replace(/\\/+$/, "")
-      + "/workspace/" + encodeURIComponent(${JSON.stringify(workspaceId)}) + "/opencode";
-    const headers = {
-      Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? ""),
-      "Content-Type": "application/json",
-    };
-    const sessionId = ${JSON.stringify(sessionId)};
-    const pending = await fetch(root + "/api/session/" + encodeURIComponent(sessionId) + "/permission", {
-      headers,
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!pending.ok) return [];
-    const requests = await pending.json();
-    const statuses = [];
-    for (const request of Array.isArray(requests) ? requests : []) {
-      if (typeof request?.id !== "string") continue;
-      const response = await fetch(
-        root + "/api/session/" + encodeURIComponent(sessionId) + "/permission/" + encodeURIComponent(request.id) + "/reply",
-        {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ reply: "once" }),
-          signal: AbortSignal.timeout(10000),
-        },
-      );
-      statuses.push(response.status);
-    }
-    return statuses;
-  })()`, { awaitPromise: true, timeoutMs: 30_000 });
-  if (!Array.isArray(value) || value.some((status) => typeof status !== "number" || status < 200 || status >= 300)) {
-    throw new Error(`Permission approval failed: ${JSON.stringify(value)}`);
+  const statuses = await engineSessionProbe({
+    engine: resolveEvalEngine(),
+    surface: appSurface,
+    workspaceId,
+  }).approvePendingPermissions(sessionId);
+  if (statuses.some((status) => status < 200 || status >= 300)) {
+    throw new Error(`Permission approval failed: ${JSON.stringify(statuses)}`);
   }
-  return value.length;
+  return statuses.length;
 }
 
 async function readVisibleTool(

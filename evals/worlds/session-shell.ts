@@ -1,7 +1,9 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { mkdir, rm } from "node:fs/promises";
-import { daytonaSandbox, desktop as launchDesktop } from "@openwork/hosts";
+import { engineSessionProbe } from "@openwork/behaviors";
+import { resolveEvalEngine } from "@openwork/env";
 import type { Seed } from "@openwork/env";
+import { daytonaSandbox, desktop as launchDesktop } from "@openwork/hosts";
 
 const stormProviderId = "active-session-storm-mock";
 const stormModelId = "mock-agent-workload-model";
@@ -373,8 +375,14 @@ export async function externalSessionVisibility(seed: Seed) {
   if (!repoRoot) throw new Error("External session visibility needs a spawned desktop with a known workspace root.");
   // Real checkout directories avoid conflating session-list freshness with a
   // missing-directory cold start in OpenCode.
-  const home = await seed.workspace(app, `${repoRoot}/apps/app`);
-  const other = await additionalWorkspace(seed, app, `${repoRoot}/apps/server`);
+  const homePath = `${repoRoot}/apps/app`;
+  const otherPath = `${repoRoot}/apps/server`;
+  const home = await seed.workspace(app, homePath);
+  const other = await additionalWorkspace(seed, app, otherPath);
+  const workspaceDirectories = new Map([
+    [home.workspaceId, homePath],
+    [other.workspaceId, otherPath],
+  ]);
   // TODO(primitive): seed.desktop should accept an initial viewport for Electron surfaces.
   // The sidebar renders its workspace rows only on a desktop-width viewport.
   await app.client.send("Emulation.setDeviceMetricsOverride", {
@@ -436,18 +444,18 @@ export async function externalSessionVisibility(seed: Seed) {
      */
     // TODO(primitive): seed.externalSession should create a session on the server without touching the renderer.
     async createSessionOutsideWindow(workspaceId: string, title: string): Promise<string> {
-      const url = `${externalServerUrl.replace(/\/+$/, "")}/workspace/${encodeURIComponent(workspaceId)}/opencode/session`;
-      const headers = {
-        Authorization: `Bearer ${serverToken}`,
-        "Content-Type": "application/json",
-      };
+      const directory = workspaceDirectories.get(workspaceId);
+      if (!directory) throw new Error(`No directory is registered for workspace ${workspaceId}.`);
+      const probe = engineSessionProbe({
+        engine: resolveEvalEngine(),
+        serverUrl: externalServerUrl,
+        token: serverToken,
+        workspaceId,
+      });
       const findCreatedSession = async (): Promise<string | null> => {
         try {
-          const response = await fetch(`${url}?limit=200`, { headers, signal: AbortSignal.timeout(15_000) });
-          const value: unknown = await response.json().catch(() => null);
-          if (!response.ok || !Array.isArray(value)) return null;
-          const match = value.find((session) => isRecord(session) && session.title === title && typeof session.id === "string");
-          return isRecord(match) && typeof match.id === "string" ? match.id : null;
+          const response = await probe.list();
+          return response.ok ? response.data.find((session) => session.title === title)?.id ?? null : null;
         } catch {
           return null;
         }
@@ -458,15 +466,9 @@ export async function externalSessionVisibility(seed: Seed) {
         const existing = await findCreatedSession();
         if (existing) return existing;
         try {
-          const response = await fetch(url, {
-            method: "POST",
-            headers,
-            body: JSON.stringify({ title }),
-            signal: AbortSignal.timeout(30_000),
-          });
-          const value: unknown = await response.json().catch(() => null);
-          if (response.ok && isRecord(value) && typeof value.id === "string") return value.id;
-          lastError = `HTTP ${response.status}: ${JSON.stringify(value)}`;
+          const response = await probe.create(directory, title);
+          if (response.ok && response.data) return response.data.id;
+          lastError = `HTTP ${response.status}: ${JSON.stringify(response.body)}`;
         } catch (error) {
           lastError = error instanceof Error ? error.message : String(error);
         }
