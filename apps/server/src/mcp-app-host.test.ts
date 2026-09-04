@@ -7,7 +7,9 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import {
   CallToolRequestSchema,
+  ErrorCode,
   ListToolsRequestSchema,
+  McpError,
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { addMcp } from "./mcp.js";
@@ -161,10 +163,18 @@ async function startFixtureMcp(
       }],
     };
   });
-  mcp.setRequestHandler(CallToolRequestSchema, async ({ params }) => ({
-    content: [{ type: "text", text: `detail:${String(params.arguments?.id ?? "")}` }],
-    structuredContent: { id: params.arguments?.id ?? null },
-  }));
+  mcp.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
+    if (params.name === "render_report" && typeof params.arguments?.id !== "string") {
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        'Invalid arguments for tool render_report: [{"path":["id"],"message":"Required"}]',
+      );
+    }
+    return {
+      content: [{ type: "text", text: `detail:${String(params.arguments?.id ?? "")}` }],
+      structuredContent: { id: params.arguments?.id ?? null },
+    };
+  });
 
   let transport: WebStandardStreamableHTTPServerTransport;
   let serverOrigin = "";
@@ -648,6 +658,27 @@ describe("MCP Apps host transport", () => {
     expect(result).toMatchObject({
       content: [{ type: "text", text: "detail:42" }],
       structuredContent: { id: "42" },
+    });
+  });
+
+  test("surfaces a provider argument rejection as a typed host error, not an unhandled failure", async () => {
+    const { config, root } = await configuredFixture("openwork-mcp-app-call-rejected-");
+
+    // A dashboard tile launched with input that omits a required argument must
+    // show the provider's rejection, which names the missing key, instead of
+    // the generic 500 "Unexpected server error" an untyped throw produces.
+    await expect(callMcpAppTool({
+      serverConfig: config,
+      workspaceId: WORKSPACE_ID,
+      workspaceRoot: root,
+      serverName: "fixture",
+      name: "render_report",
+      resourceUri: RESOURCE_URI,
+      arguments: {},
+    })).rejects.toMatchObject({
+      name: "McpAppHostError",
+      code: "tool_call_failed",
+      message: expect.stringContaining('"path":["id"],"message":"Required"'),
     });
   });
 

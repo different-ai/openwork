@@ -33,6 +33,14 @@ function elementKey(element: DashboardElement) {
   return `${element.serverName}:${element.toolName}`;
 }
 
+/** Required launch-input keys the author left out (or set to undefined). */
+export function missingRequiredInputKeys(
+  requiredInputKeys: string[],
+  launchArguments: Record<string, unknown>,
+): string[] {
+  return requiredInputKeys.filter((key) => !Object.hasOwn(launchArguments, key) || launchArguments[key] === undefined);
+}
+
 export function OrgDashboardDetailScreen({ dashboardId }: { dashboardId: string }) {
   const { orgSlug } = useOrgDashboard();
   const router = useRouter();
@@ -364,6 +372,13 @@ function ConnectionAppRow({
         setArgumentsError("Launch input must be valid JSON.");
         return;
       }
+      // A tile whose input omits a key the tool requires fails on every
+      // launch, so refuse it here and name the missing keys.
+      const missingKeys = missingRequiredInputKeys(app.requiredInputKeys, launchArguments);
+      if (missingKeys.length > 0) {
+        setArgumentsError(`Launch input is missing required ${missingKeys.length === 1 ? "key" : "keys"}: ${missingKeys.join(", ")}.`);
+        return;
+      }
     }
     setArgumentsError(null);
     onAdd({
@@ -417,10 +432,19 @@ function ConnectionAppRow({
       {!added && app.requiresInput ? (
         <label className="mt-2 block">
           <span className="mb-1 block text-[11.5px] font-medium text-gray-600">Launch input (JSON, required by this app)</span>
+          {app.requiredInputKeys.length > 0 ? (
+            <span className="mb-1 block text-[11.5px] text-gray-500" data-testid="required-input-keys">
+              Required {app.requiredInputKeys.length === 1 ? "key" : "keys"}: {app.requiredInputKeys.map((key) => (
+                <code key={key} className="mr-1 rounded bg-gray-100 px-1 font-mono text-[11px] text-gray-800">{key}</code>
+              ))}
+            </span>
+          ) : null}
           <textarea
             value={argumentsText}
             onChange={(event) => setArgumentsText(event.target.value)}
-            placeholder='{ "example": "value" }'
+            placeholder={app.requiredInputKeys.length > 0
+              ? `{ ${app.requiredInputKeys.map((key) => `"${key}": "…"`).join(", ")} }`
+              : '{ "example": "value" }'}
             rows={2}
             className="w-full resize-none rounded-xl border border-gray-200 px-3 py-2 font-mono text-[12px] text-gray-900 outline-none transition placeholder:text-gray-300 focus:border-gray-400"
           />

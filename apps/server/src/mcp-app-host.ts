@@ -760,7 +760,15 @@ export async function callMcpAppTool(input: {
         "This MCP App tool requires user approval before OpenWork can call it.",
       );
     }
-    const result = await client.callTool({ name: input.name, arguments: input.arguments ?? {} });
+    // A provider that rejects the call (for example JSON-RPC -32602 for a
+    // missing required argument) must reach the member as that rejection,
+    // not as an unhandled 500 "Unexpected server error".
+    const result = await client.callTool({ name: input.name, arguments: input.arguments ?? {} }).catch((error: unknown) => {
+      throw new McpAppHostError(
+        "tool_call_failed",
+        error instanceof Error && error.message ? error.message : "The MCP App tool call failed.",
+      );
+    });
     if (new TextEncoder().encode(JSON.stringify(result)).byteLength > MAX_RESULT_BYTES) {
       throw new McpAppHostError("result_too_large", "The MCP App tool result exceeds the 1 MiB host limit.");
     }
