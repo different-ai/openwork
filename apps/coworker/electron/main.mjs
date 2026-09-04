@@ -130,7 +130,13 @@ const APP_IDENTIFIER = isDev ? "com.differentai.opencoworker.dev" : "com.differe
 const DEFAULT_SERVER_PORT = 8790;
 const DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
 const HOSTED_DEN_APEX_HOST = "openworklabs.com";
-const APP_ICON_PATH = path.resolve(__dirname, "..", "resources", "icons", "icon.png");
+const APP_ICON_PATH = path.resolve(
+  __dirname,
+  "..",
+  "resources",
+  "icons",
+  process.platform === "darwin" ? "icon-macos.png" : "icon.png",
+);
 
 const explicitCdpPort = Number.parseInt(
   process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT?.trim() ?? "",

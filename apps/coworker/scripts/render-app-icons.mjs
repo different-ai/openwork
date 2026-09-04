@@ -11,6 +11,7 @@ const coworkerRoot = path.resolve(scriptDir, "..");
 const iconsRoot = path.join(coworkerRoot, "resources", "icons");
 const source = path.join(iconsRoot, "open-coworker-app-icon.svg");
 const masterPng = path.join(iconsRoot, "icon.png");
+const macMasterPng = path.join(iconsRoot, "icon-macos.png");
 const linuxRoot = path.join(iconsRoot, "linux");
 const macIcon = path.join(iconsRoot, "icon.icns");
 const windowsIcon = path.join(iconsRoot, "icon.ico");
@@ -68,6 +69,7 @@ const createIco = async (entries, output) => {
 const temporaryRoot = await mkdtemp(path.join(tmpdir(), "open-coworker-icons-"));
 
 try {
+  assertPngSize(await readFile(macMasterPng), 1024, path.basename(macMasterPng));
   await mkdir(linuxRoot, { recursive: true });
   await execFileAsync("sips", ["-s", "format", "png", source, "--out", masterPng]);
   assertPngSize(await readFile(masterPng), 1024, path.basename(masterPng));
@@ -91,7 +93,7 @@ try {
     [1024, "icon_512x512@2x.png"],
   ];
   await Promise.all(macEntries.map(([size, filename]) => (
-    renderSize(masterPng, size, path.join(iconsetRoot, filename))
+    renderSize(macMasterPng, size, path.join(iconsetRoot, filename))
   )));
   await execFileAsync("iconutil", ["-c", "icns", iconsetRoot, "-o", macIcon]);
 
