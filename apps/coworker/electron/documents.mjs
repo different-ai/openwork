@@ -480,11 +480,11 @@ export async function setDocumentStatus(coworkersDir, slug, id, status, { now = 
 // ---------------------------------------------------------------------------
 // The always-loaded index and the style log behind its reminder line.
 
+// The facts only (`id — title — summary`); what the index is for is the contract's (`## Files`), said once.
 const INDEX_HEADER = [
   "# Documents",
   "",
-  "One line per active document in `documents/` (`id — title — summary`). Loaded",
-  "every turn so I know what I have; `document_read` opens one when it matters.",
+  "Active documents, one line each (`id — title — summary`):",
   "",
 ].join("\n");
 

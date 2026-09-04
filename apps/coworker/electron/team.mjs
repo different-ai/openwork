@@ -328,12 +328,13 @@ export function rosterFor(self, teammates, declined = [], { now = Date.now() } =
   const others = (Array.isArray(teammates) ? teammates : [])
     .filter((member) => member.slug !== self.slug)
     .sort((a, b) => a.name.localeCompare(b.name));
+  // Only the facts live here; when to refer or suggest is the contract's (`## My team`), said once.
   const lines = [
     "# My team",
     "",
     `I am ${self.name}${self.role ? ` (${cut(self.role, 60)})` : ""}.`,
     "",
-    "My teammates, one line each. Open Coworker writes this file whenever the team changes; I never edit it.",
+    "My teammates, one line each:",
     "",
   ];
   if (others.length === 0) lines.push("(No teammates yet — I am the only coworker.)");
@@ -350,15 +351,10 @@ export function rosterFor(self, teammates, declined = [], { now = Date.now() } =
     .sort((a, b) => b.at - a.at)
     .slice(0, ROSTER_DECLINED_CAP);
   if (recent.length > 0) {
-    lines.push("", "## Recently declined", "", "The person said not now to these; I do not bring them up again unless asked.", "");
+    lines.push("", "## Recently declined", "", "The person said not now to these:", "");
     for (const entry of recent) lines.push(`- a ${describeRoleWord(entry)} coworker — ${shortDate(entry.at)}`);
   }
-  lines.push(
-    "",
-    "To pass work to a teammate, I call `coworker_team_refer` before doing it and let the person choose.",
-    "To propose a new teammate, I call `coworker_team_suggest`; only the person can add one.",
-    "",
-  );
+  lines.push("");
   return lines.join("\n");
 }
 

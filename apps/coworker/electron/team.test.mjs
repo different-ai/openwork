@@ -122,8 +122,8 @@ test("rosterFor names teammates one line each, caps the list, lists recent decli
   assert.match(alone, /^# My team\n/);
   assert.match(alone, /I am Nova \(Research and synthesis\)\./);
   assert.match(alone, /No teammates yet — I am the only coworker\./);
-  assert.match(alone, /coworker_team_refer/);
-  assert.match(alone, /coworker_team_suggest/);
+  // The facts only: when to refer or suggest is the contract's rule, said once there, not repeated here.
+  assert.doesNotMatch(alone, /coworker_team_refer|coworker_team_suggest|never edit it/);
 
   const roster = rosterFor(self, TEAM, [
     { id: "s1", roleId: "support", role: "support", state: "declined", at: NOW - 2 * DAY },
