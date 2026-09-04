@@ -32,8 +32,12 @@ import {
 export const COWORKER_TOOLS_MCP_NAME = "coworker";
 export const SUPPORTED_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"];
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
-/** What the engine shows the model about this server; callers serving more than documents extend it. */
-export const DEFAULT_INSTRUCTIONS = "These are your document tools. Keep replies short and put the depth in a document; keep the active set to about five with context_set.";
+/**
+ * What the engine shows the model about this server. The rules for when to use
+ * each tool live in the coworker's AGENTS.md and are said once, there; this line
+ * only says whose tools these are and where the rules are.
+ */
+export const DEFAULT_INSTRUCTIONS = "Open Coworker's own tools for this coworker: documents, Workers, assignments, memory and soul, and the team. When to use each is in AGENTS.md (How I talk, Workers, My team, Keeping memory and soul current, Scheduling).";
 
 const DOCUMENT_ID_SCHEMA = { type: "string", description: "The document id, as listed in documents/index.md or returned when it was created." };
 
