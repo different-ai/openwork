@@ -19,6 +19,9 @@ export function registerUiControlRoutes(options: RegisterUiControlRoutesOptions)
   const { routes, jsonResponse, readJsonBody } = options;
 
   addRoute(routes, "POST", "/experimental/ui-control/request", "client", async (ctx) => {
+    if (ctx.actor?.scope === "viewer") {
+      throw new ApiError(403, "forbidden", "Viewer tokens cannot request UI control");
+    }
     const body = await readJsonBody(ctx.request);
     if (!isUiControlKind(body.kind)) {
       throw new ApiError(
@@ -31,12 +34,12 @@ export function registerUiControlRoutes(options: RegisterUiControlRoutesOptions)
     return jsonResponse(result);
   });
 
-  addRoute(routes, "GET", "/experimental/ui-control/pending", "client", async (ctx) => {
+  addRoute(routes, "GET", "/experimental/ui-control/pending", "host", async (ctx) => {
     const items = await ctx.uiControl.pending({ wait: ctx.url.searchParams.get("wait") === "1", signal: ctx.request.signal });
     return jsonResponse({ items });
   });
 
-  addRoute(routes, "POST", "/experimental/ui-control/:id/reply", "client", async (ctx) => {
+  addRoute(routes, "POST", "/experimental/ui-control/:id/reply", "host", async (ctx) => {
     const body = await readJsonBody(ctx.request);
     if (!ctx.uiControl.reply(ctx.params.id, body.result)) {
       throw new ApiError(404, "ui_control_request_not_found", "UI control request not found");

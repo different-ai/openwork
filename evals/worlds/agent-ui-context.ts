@@ -35,6 +35,7 @@ export interface FakeWindow {
 export interface AgentUiContextWorld extends AsyncDisposable {
   base: string;
   token: string;
+  hostToken: string;
   workspaceId: string;
   requests: AgentUiContextProviderRequest[];
   engine(method: string, path: string, body?: unknown): Promise<unknown>;
@@ -148,7 +149,7 @@ export async function agentUiContext(seed: Seed): Promise<AgentUiContextWorld> {
   try {
     managed = await bootManagedOpenworkServer({ scratch, workspace, token, sink });
     const server = managed;
-    const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+    const headers = { authorization: `Bearer ${token}`, "x-openwork-host-token": `${token}-host`, "content-type": "application/json" };
 
     const request = async (path: string, init: RequestInit, timeoutMs: number): Promise<unknown> => {
       const response = await fetch(`${server.base}${path}`, {
@@ -211,6 +212,7 @@ export async function agentUiContext(seed: Seed): Promise<AgentUiContextWorld> {
     return {
       base: server.base,
       token,
+      hostToken: `${token}-host`,
       workspaceId: server.workspaceId,
       requests,
       engine: server.engine,

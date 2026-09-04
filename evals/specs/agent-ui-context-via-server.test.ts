@@ -131,6 +131,7 @@ test("the in-app agent reads renderer context through openwork-server and gets a
 
   await step("only authenticated clients can exchange requests, and each command is delivered once", async () => {
     const headers = { authorization: `Bearer ${world.token}`, "content-type": "application/json" };
+    const hostHeaders = { ...headers, "x-openwork-host-token": world.hostToken };
     const requestPath = `${world.base}/experimental/ui-control/request`;
     const pendingPath = `${world.base}/experimental/ui-control/pending`;
     for (const [path, init] of [
@@ -144,14 +145,28 @@ test("the in-app agent reads renderer context through openwork-server and gets a
       method: "POST", headers, body: JSON.stringify({ kind: "invalid" }),
     })).status).toBe(400);
 
+    const issued: unknown = await (await fetch(`${world.base}/tokens`, {
+      method: "POST", headers: hostHeaders, body: JSON.stringify({ scope: "viewer", label: "UI read-only witness" }),
+    })).json();
+    if (!isRecord(issued) || typeof issued.token !== "string") throw new Error("Expected an issued viewer token");
+    const viewerHeaders = { authorization: `Bearer ${issued.token}`, "content-type": "application/json" };
+    for (const kind of ["context", "query", "command"]) {
+      expect((await fetch(requestPath, {
+        method: "POST", headers: viewerHeaders, body: JSON.stringify({ kind, input: { id: "route.session" } }),
+      })).status).toBe(403);
+    }
+    for (const untrustedHeaders of [headers, viewerHeaders]) {
+      expect((await fetch(pendingPath, { headers: untrustedHeaders })).status).toBe(401);
+    }
+
     for (const kind of ["query", "command"]) {
-      await fetch(pendingPath, { headers });
+      await fetch(pendingPath, { headers: hostHeaders });
       const input = { id: "mailbox.witness", args: { marker: kind } };
       const result = { ok: true, result: { marker: kind } };
       const requested = fetch(requestPath, {
         method: "POST", headers, body: JSON.stringify({ kind, input }), signal: AbortSignal.timeout(10_000),
       });
-      const response = await fetch(`${pendingPath}?wait=1`, { headers, signal: AbortSignal.timeout(12_000) });
+      const response = await fetch(`${pendingPath}?wait=1`, { headers: hostHeaders, signal: AbortSignal.timeout(12_000) });
       const payload: unknown = await response.json();
       if (!isRecord(payload) || !Array.isArray(payload.items) || !isRecord(payload.items[0])) {
         throw new Error("Expected a delivered mailbox item");
@@ -160,16 +175,21 @@ test("the in-app agent reads renderer context through openwork-server and gets a
       const item = payload.items[0];
       expect(item.kind).toBe(kind);
       expect(item.input).toEqual(input);
-      expect(await (await fetch(pendingPath, { headers })).json()).toEqual({ items: [] });
+      expect(await (await fetch(pendingPath, { headers: hostHeaders })).json()).toEqual({ items: [] });
       const replyPath = `${world.base}/experimental/ui-control/${item.id}/reply`;
-      const reply = { method: "POST", headers, body: JSON.stringify({ result }) };
+      for (const untrustedHeaders of [headers, viewerHeaders]) {
+        expect((await fetch(replyPath, {
+          method: "POST", headers: untrustedHeaders, body: JSON.stringify({ result: { ok: true, forged: true } }),
+        })).status).toBe(401);
+      }
+      const reply = { method: "POST", headers: hostHeaders, body: JSON.stringify({ result }) };
       expect((await fetch(replyPath, reply)).status).toBe(200);
       expect(await (await requested).json()).toEqual(result);
       expect((await fetch(replyPath, reply)).status).toBe(404);
     }
     evidence.recordAssertionEvidence(
-      "Authentication protects all mailbox endpoints and queries and commands are claimed only once",
-      "Unauthenticated requests returned 401, invalid kinds returned 400, both payloads and replies survived the relay, a second poll was empty, and duplicate replies returned 404.",
+      "Viewer tokens cannot control the UI; only host or owner tokens can claim or answer requests",
+      "Unauthenticated calls returned 401, viewer control requests returned 403, collaborator/viewer poll and forged replies returned 401, invalid kinds returned 400, host replies survived the relay, a second poll was empty, and duplicate replies returned 404.",
       true,
     );
   });

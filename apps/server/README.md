@@ -116,11 +116,11 @@ Inbox/outbox:
 - `GET /files/sessions/:sessionId/catalog/snapshot`
 - `POST /files/sessions/:sessionId/ops`
 
-UI control mailbox (client auth):
+UI control mailbox:
 
-- `POST /experimental/ui-control/request`
-- `GET /experimental/ui-control/pending` (optional `?wait=1`)
-- `POST /experimental/ui-control/:id/reply`
+- `POST /experimental/ui-control/request` (collaborator or owner bearer token)
+- `GET /experimental/ui-control/pending` (host/owner auth; optional `?wait=1`)
+- `POST /experimental/ui-control/:id/reply` (host/owner auth)
 
 Desktop and web renderers poll the same server they are connected to. The first
 polling window claims each request; commands are never broadcast to every tab.
