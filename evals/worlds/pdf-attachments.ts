@@ -179,6 +179,47 @@ function stopChild(child: ChildProcess): Promise<void> {
   });
 }
 
+/**
+ * Spawns the openwork-server CLI with a managed engine. Every stdout/stderr
+ * chunk goes to `sink`; `listening` resolves with the base URL once the server
+ * reports its port, or rejects when the process exits first.
+ */
+function bootServer(env: NodeJS.ProcessEnv, token: string, workspace: string, sink: (chunk: string) => void): { child: ChildProcess; listening: Promise<string> } {
+  const child = spawn("bun", [
+    "--conditions=development",
+    "src/cli.ts",
+    "--host", "127.0.0.1",
+    "--port", "0",
+    "--token", token,
+    "--host-token", `${token}-host`,
+    "--approval", "auto",
+    "--cors", "*",
+    "--workspace", workspace,
+  ], { cwd: serverRoot, env, stdio: ["ignore", "pipe", "pipe"] });
+  let seen = "";
+  const listening = new Promise<string>((resolveBase, reject) => {
+    const timer = setTimeout(() => reject(new Error(`openwork-server did not report a port within 60s:\n${seen.slice(-2_000)}`)), 60_000);
+    const onChunk = (chunk: Buffer) => {
+      const text = chunk.toString("utf8");
+      seen += text;
+      sink(text);
+      const match = seen.match(/OpenWork server listening on (http:\/\/127\.0\.0\.1:\d+)/);
+      if (match?.[1]) {
+        clearTimeout(timer);
+        resolveBase(match[1]);
+      }
+    };
+    child.stdout?.on("data", onChunk);
+    child.stderr?.on("data", onChunk);
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      reject(new Error(`openwork-server exited early (code ${code}):\n${seen.slice(-2_000)}`));
+    });
+    child.on("error", reject);
+  });
+  return { child, listening };
+}
+
 export interface PdfRoutingWorld extends AsyncDisposable {
   /** openwork-server base URL. */
   base: string;
@@ -241,36 +282,22 @@ export async function pdfRouting(seed: Seed): Promise<PdfRoutingWorld> {
   // OPENCODE_* and OPENWORK_* variables (config path, models URL, credentials,
   // workspaces) must not reach the isolated server and engine under test.
   const inherited = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("OPENCODE") && !key.startsWith("OPENWORK_")));
-  const child = spawn("bun", [
-    "--conditions=development",
-    "src/cli.ts",
-    "--host", "127.0.0.1",
-    "--port", "0",
-    "--token", token,
-    "--host-token", `${token}-host`,
-    "--approval", "auto",
-    "--cors", "*",
-    "--workspace", workspace,
-  ], {
-    cwd: serverRoot,
-    env: {
-      ...inherited,
-      HOME: home,
-      XDG_CONFIG_HOME: join(home, ".config"),
-      XDG_DATA_HOME: join(home, ".local", "share"),
-      XDG_CACHE_HOME: join(home, ".cache"),
-      XDG_STATE_HOME: join(home, ".local", "state"),
-      OPENWORK_MANAGE_OPENCODE: "1",
-      OPENWORK_OPENCODE_BIN: binary,
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  let output = "";
-  child.stdout?.on("data", (chunk: Buffer) => { output += chunk.toString("utf8"); });
-  child.stderr?.on("data", (chunk: Buffer) => { output += chunk.toString("utf8"); });
+  const env = {
+    ...inherited,
+    HOME: home,
+    XDG_CONFIG_HOME: join(home, ".config"),
+    XDG_DATA_HOME: join(home, ".local", "share"),
+    XDG_CACHE_HOME: join(home, ".cache"),
+    XDG_STATE_HOME: join(home, ".local", "state"),
+    OPENWORK_MANAGE_OPENCODE: "1",
+    OPENWORK_OPENCODE_BIN: binary,
+  };
 
+  let output = "";
+  const sink = (chunk: string) => { output += chunk; };
+  let child: ChildProcess | null = null;
   const dispose = async () => {
-    await stopChild(child);
+    if (child) await stopChild(child);
     await close(provider);
     // The engine installs its plugin runtime and packages cache into the scratch
     // HOME (hundreds of MB), so the world removes what it created.
@@ -278,24 +305,24 @@ export async function pdfRouting(seed: Seed): Promise<PdfRoutingWorld> {
   };
 
   try {
-    const base = await new Promise<string>((resolveBase, reject) => {
-      const timer = setTimeout(() => reject(new Error(`openwork-server did not report a port within 60s:\n${output.slice(-2_000)}`)), 60_000);
-      const check = () => {
-        const match = output.match(/OpenWork server listening on (http:\/\/127\.0\.0\.1:\d+)/);
-        if (match?.[1]) {
-          clearTimeout(timer);
-          resolveBase(match[1]);
-        }
-      };
-      child.stdout?.on("data", check);
-      child.stderr?.on("data", check);
-      child.on("exit", (code) => {
-        clearTimeout(timer);
-        reject(new Error(`openwork-server exited early (code ${code}):\n${output.slice(-2_000)}`));
-      });
-      child.on("error", reject);
-      check();
-    });
+    // The server spawns the managed engine with a fixed 15 s start budget; a slow
+    // moment on a fresh profile (plugin runtime install, cold transpile) can
+    // exceed it once and exit the server. Boot at most twice; the first attempt's
+    // output stays in the diagnostics.
+    let base = "";
+    for (let attempt = 1; ; attempt += 1) {
+      const booted = bootServer(env, token, workspace, sink);
+      child = booted.child;
+      try {
+        base = await booted.listening;
+        break;
+      } catch (error) {
+        await stopChild(booted.child);
+        child = null;
+        sink(`\n[world] boot attempt ${attempt} failed: ${error instanceof Error ? error.message.split("\n")[0] : String(error)}\n`);
+        if (attempt >= 2 || !(error instanceof Error && error.message.startsWith("openwork-server exited early"))) throw error;
+      }
+    }
 
     const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
     const workspaces = await (await fetch(`${base}/workspaces`, { headers })).json() as { items?: { id?: string }[] };
