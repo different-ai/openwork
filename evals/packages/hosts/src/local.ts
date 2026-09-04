@@ -822,6 +822,10 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
     kind: "local",
     workspaceRoot: options.repoRoot,
 
+    async signal(_surface: SurfaceHandle, pid: number, signal: "SIGSTOP" | "SIGCONT"): Promise<void> {
+      process.kill(pid, signal);
+    },
+
     async spawnElectron(name: string, opts: ElectronSurfaceOptions = {}): Promise<SurfaceHandle> {
       if (opts.prepareSharedResources !== false) {
         await prepareSharedElectronResources(options.repoRoot, log);
