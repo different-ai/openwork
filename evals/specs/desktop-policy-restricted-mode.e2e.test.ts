@@ -52,7 +52,7 @@ function count(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
 }
 
-test("an admin switches the default desktop policy to Restricted and a member's desktop hides settings and local extension add flows", async ({ world, user, agent, probe, step, evidence }) => {
+test("an admin switches the default desktop policy to Restricted and a member's desktop hides settings and local extension add flows", async ({ world, user, agent, probe, step, evidence, seed }) => {
   const member = { user: user.on(world.member), agent: agent.on(world.member), probe: probe.on(world.member) };
   const admin = { user: user.on(world.admin), probe: probe.on(world.admin) };
   const lockNotes = () => admin.probe.text().then((text) => count(text, lockNote));
@@ -258,4 +258,98 @@ test("an admin switches the default desktop policy to Restricted and a member's 
     `hash=${libraryHashAfter}; manage-extensions notice visible; builtInNotice=${builtInNoticeShown}`,
     libraryHashAfter.includes("/extensions") && builtInNoticeShown,
   );
+
+  // Team limits must win even when the organization grants every capability.
+  await step("prepare an unrestricted organization with a focused-work team", async () => {
+    const reset = await seed.api(world.den.admin, `/v1/desktop-policies/${world.policyId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ policyName: "Default desktop policy", policy: Object.fromEntries(Object.keys(restrictedSavedValues).map((key) => [key, true])) }),
+    });
+    expect(reset.response.ok).toBe(true);
+  });
+  const org = await probe.api(world.den.members.jordan, "/v1/org");
+  const currentMember = isRecord(org.body) && isRecord(org.body.currentMember) ? org.body.currentMember : null;
+  expect(typeof currentMember?.id).toBe("string");
+  const createdTeam = await seed.api(world.den.admin, "/v1/teams", {
+    method: "POST",
+    body: JSON.stringify({ name: "Focused work", memberIds: [currentMember?.id] }),
+  });
+  expect(createdTeam.response.ok).toBe(true);
+  const team = isRecord(createdTeam.body) && isRecord(createdTeam.body.team) ? createdTeam.body.team : null;
+  if (typeof team?.id !== "string") throw new Error("Expected a created team");
+  const otherTeamResult = await seed.api(world.den.admin, "/v1/teams", {
+    method: "POST", body: JSON.stringify({ name: "Additional tools", memberIds: [currentMember?.id] }),
+  });
+  const otherTeam = isRecord(otherTeamResult.body) && isRecord(otherTeamResult.body.team) ? otherTeamResult.body.team : null;
+  if (typeof otherTeam?.id !== "string") throw new Error("Expected overlapping team");
+  const overlappingGrant = await seed.api(world.den.admin, "/v1/desktop-policies", {
+    method: "POST", body: JSON.stringify({ policyName: "Additional team grants", policy: Object.fromEntries(lockedKeys.map((key) => [key, true])), teamIds: [otherTeam.id] }),
+  });
+  expect(overlappingGrant.response.ok).toBe(true);
+  const teamPath = new URL(`/dashboard/members/teams/${team.id}`, world.den.ref.webUrl).toString();
+  const effective = async (identity: typeof world.den.admin) => {
+    const result = await probe.api(identity, "/v1/me/desktop-config");
+    expect(result.response.ok).toBe(true);
+    if (!isRecord(result.body)) throw new Error("Expected effective permissions");
+    return result.body;
+  };
+  await step("the admin locks the team from its Access page", async () => {
+    await admin.user.navigate(teamPath);
+    await admin.user.see({ text: "What this team can do" }, { timeoutMs: 90_000 });
+    await admin.user.click({ role: "radio", label: /^Locked/ });
+    await admin.user.click("Save permissions");
+    await admin.probe.eventually(async () => (await effective(world.den.members.jordan)).allowManageExtensions, {
+      within: 30_000, label: "team lock overrides the default grant", until: (value) => value === false,
+    });
+    await admin.user.reload();
+    await admin.user.see({ text: "Locked for this team" }, { timeoutMs: 60_000 });
+  });
+  const lockedMember = await effective(world.den.members.jordan);
+  const unlockedAdmin = await effective(world.den.admin);
+  for (const key of lockedKeys) {
+    expect(lockedMember[key]).toBe(false);
+    expect(unlockedAdmin[key]).toBe(true);
+  }
+  await admin.user.looks([
+    "The Focused work team Access page shows Locked selected, a list of blocked app capabilities, and Plugins & connections below",
+  ]);
+  evidence.recordAssertionEvidence("Team lock overrides organization and overlapping team grants without restricting someone outside the team", JSON.stringify({ lockedMember, unlockedAdmin }), lockedKeys.every((key) => lockedMember[key] === false && unlockedAdmin[key] === true));
+
+  await step("the member can understand the restriction and how to get an MCP server", async () => {
+    await member.user.reload();
+    await member.user.see(manageExtensionsNotice, { timeoutMs: 90_000 });
+    await member.user.see({ text: /Need an MCP server or skill/ });
+    await member.user.click(accountMenu);
+    await member.user.click(accountMenuItem);
+    await member.user.see({ text: "What can I do?" }, { timeoutMs: 60_000 });
+    await member.user.click({ text: "What can I do?" });
+    await member.user.see({ text: "Add tools, skills & MCP servers" });
+  });
+  await member.user.looks(["The account page shows expanded app permissions with capabilities marked Blocked by organization"]);
+  evidence.recordAssertionEvidence("Members can inspect app permissions and find instructions for requesting an MCP server", "Library MCP guidance and expanded account permission list visible", true);
+
+  await step("the admin grants selected capabilities while keeping tool installation blocked", async () => {
+    await admin.user.click({ role: "radio", label: /^Custom/ });
+    await admin.user.click({ role: "checkbox", label: "Add and manage tools, skills & MCP servers" });
+    await admin.user.click("Save permissions");
+    await admin.probe.eventually(async () => (await effective(world.den.members.jordan)).allowControlSettings, {
+      within: 30_000, label: "custom mode restores selected capabilities", until: (value) => value === true,
+    });
+    await admin.user.reload();
+    await admin.user.see({ text: "Fine-tune access" }, { timeoutMs: 60_000 });
+  });
+  const customMember = await effective(world.den.members.jordan);
+  expect(customMember.allowManageExtensions).toBe(false);
+  expect(customMember.allowControlSettings).toBe(true);
+  expect(customMember.allowCustomProviders).toBe(true);
+  await admin.user.looks(["The team Access page shows Custom selected, tool installation Blocked, and other capabilities Allowed"]);
+  evidence.recordAssertionEvidence("Custom permissions persist independently: settings and providers allowed, tool installation blocked", JSON.stringify(customMember), customMember.allowManageExtensions === false && customMember.allowControlSettings === true && customMember.allowCustomProviders === true);
+
+  const forbidden = await seed.api(world.den.members.jordan, "/v1/desktop-policies", {
+    method: "POST", body: JSON.stringify({ policyName: "Unauthorized access change", policy: { access: { mode: "custom", capabilities: {} } }, teamIds: [team.id] }),
+  });
+  expect(forbidden.response.status).toBe(403);
+  expect((await effective(world.den.members.jordan)).allowManageExtensions).toBe(false);
+  evidence.recordAssertionEvidence("A member cannot change their own team permissions", `HTTP ${forbidden.response.status}; tool installation remains blocked`, forbidden.response.status === 403);
+
 });

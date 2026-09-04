@@ -141,8 +141,23 @@ export type OnboardingPromptConfig = {
   onboardingPromptDescriptions?: string[];
 };
 
+// Explicit access limits are applied after legacy grants. Omitted access keeps
+// existing policies' grant semantics unchanged.
+export const teamAccessSchema = z.object({
+  mode: z.enum(["custom", "locked"]),
+  capabilities: desktopPolicyValueSchema,
+});
+export type TeamAccess = z.infer<typeof teamAccessSchema>;
+
+function normalizeTeamAccess(value: unknown): TeamAccess | undefined {
+  const raw = coerceJsonRecord(value);
+  const parsed = teamAccessSchema.safeParse(isRecord(raw) ? raw.access : undefined);
+  return parsed.success ? parsed.data : undefined;
+}
+
 export const desktopPolicyDocumentSchema = desktopPolicyValueSchema
   .extend({
+    access: teamAccessSchema.optional(),
     onboardingPrompts: onboardingPromptsSchema.optional(),
     onboardingPromptDescriptions: onboardingPromptDescriptionsSchema.optional(),
   })
@@ -150,6 +165,7 @@ export const desktopPolicyDocumentSchema = desktopPolicyValueSchema
 
 export const desktopPolicyDocumentWriteSchema = desktopPolicyValueSchema
   .extend({
+    access: teamAccessSchema.optional(),
     onboardingPrompts: onboardingPromptsSchema.nullable().optional(),
     onboardingPromptDescriptions: onboardingPromptDescriptionsSchema
       .nullable()
@@ -162,6 +178,7 @@ export type DesktopPolicyDocumentWrite = z.infer<
   typeof desktopPolicyDocumentWriteSchema
 >;
 export type DefaultDesktopPolicyDocument = Required<DesktopPolicyValue> & {
+  access?: TeamAccess;
   onboardingPrompts?: string[];
   onboardingPromptDescriptions?: string[];
 };
@@ -385,8 +402,10 @@ export function normalizeDesktopPolicyDocument(
   const policy = normalizeDesktopPolicyValue(coerced);
   const onboardingPromptConfig = normalizeOnboardingPromptConfig(coerced);
 
+  const access = normalizeTeamAccess(coerced);
   return {
     ...policy,
+    ...(access !== undefined ? { access } : {}),
     ...(onboardingPromptConfig !== undefined ? onboardingPromptConfig : {}),
   };
 }
@@ -405,8 +424,10 @@ export function normalizeDesktopPolicyDocumentWrite(
     onboardingPrompts?.length,
   );
 
+  const access = normalizeTeamAccess(coerced);
   return {
     ...policy,
+    ...(access !== undefined ? { access } : {}),
     ...(rawPrompts === null
       ? { onboardingPrompts: null, onboardingPromptDescriptions: null }
       : onboardingPrompts !== undefined
@@ -455,8 +476,10 @@ export function resolveDesktopPolicyDocumentWrite(input: {
           )
         : undefined;
 
+  const access = write.access ?? normalizeTeamAccess(input.existingPolicy);
   return {
     ...policy,
+    ...(access !== undefined ? { access } : {}),
     ...(onboardingPrompts !== undefined ? { onboardingPrompts } : {}),
     ...(onboardingPromptDescriptions !== undefined
       ? { onboardingPromptDescriptions }
@@ -471,8 +494,10 @@ export function normalizeDefaultDesktopPolicyDocument(
   const policy = normalizeDefaultDesktopPolicyValue(coerced);
   const onboardingPromptConfig = normalizeOnboardingPromptConfig(coerced);
 
+  const access = normalizeTeamAccess(coerced);
   return {
     ...policy,
+    ...(access !== undefined ? { access } : {}),
     ...(onboardingPromptConfig !== undefined ? onboardingPromptConfig : {}),
   };
 }
@@ -506,6 +531,17 @@ export function calculateEffectiveDesktopPolicy(input: {
     for (const key of desktopPolicyKeys) {
       if (policy[key] === true) {
         calculated[key] = true;
+      }
+    }
+  }
+
+  for (const document of [input.defaultPolicy, ...input.assignedPolicies]) {
+    const access = normalizeTeamAccess(document);
+    if (!access) continue;
+    for (const definition of desktopPolicyDefinitions) {
+      if (definition.restrictedValue === null) continue;
+      if (access.mode === "locked" || access.capabilities[definition.id] === false) {
+        calculated[definition.id] = false;
       }
     }
   }

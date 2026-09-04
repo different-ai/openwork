@@ -1346,7 +1346,9 @@ export function McpView(props: McpViewProps) {
           data-testid="manage-extensions-policy-notice"
           className="mb-5 rounded-xl border border-amber-6 bg-amber-2 px-4 py-3 text-xs text-amber-11"
         >
-          {manageExtensionsDisabledReason()}
+          <p className="font-medium">Adding tools is managed by your organization</p>
+          <p className="mt-1">{manageExtensionsDisabledReason()}</p>
+          <p className="mt-2">Need an MCP server or skill? Ask your organization admin to add it for your team or enable “Add and manage tools, skills &amp; MCP servers” in Team → Access. You can still sign in to available connections below.</p>
         </div>
       )}
 

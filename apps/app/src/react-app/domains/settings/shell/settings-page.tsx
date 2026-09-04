@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
 import type * as React from "react";
+import { desktopPolicyDefinitions } from "@openwork/types/den/desktop-policies";
 import {
   ArrowLeft,
   Bug,
@@ -415,8 +416,20 @@ function DesktopPolicyBanner() {
           {t("settings.desktop_policy_active_title")}
         </p>
         <p className="mt-0.5 text-xs text-indigo-11">
-          {t("settings.desktop_policy_active_body")}
+          Your organization manages access in Cloud → Team → Access. These are your current app permissions; ask your admin if you need a change.
+
         </p>
+        <details className="mt-3">
+          <summary className="cursor-pointer text-xs font-medium text-indigo-12">What can I do?</summary>
+          <dl className="mt-2 divide-y divide-indigo-6/30">
+            {desktopPolicyDefinitions.filter((entry) => entry.restrictedValue !== null).map((entry) => (
+              <div key={entry.id} className="flex items-center justify-between gap-4 py-2 text-xs">
+                <dt>{entry.id === "allowManageExtensions" ? "Add tools, skills & MCP servers" : entry.name}</dt>
+                <dd className="shrink-0 font-medium">{config[entry.id] === false ? "Blocked by organization" : "Allowed"}</dd>
+              </div>
+            ))}
+          </dl>
+        </details>
       </div>
     </div>
   );

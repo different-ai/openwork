@@ -16,7 +16,7 @@ import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-templ
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenTextarea } from "../../_components/ui/textarea";
-import { getDesktopPoliciesRoute, getMembersRoute, getOrgAccessFlags } from "../../_lib/den-org";
+import { getDesktopPoliciesRoute, getMembersRoute, getTeamRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
   createDesktopPolicy,
@@ -358,7 +358,7 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
     <DashboardPageTemplate
       icon={Laptop}
       title={isEditing ? "Edit desktop policy" : "New desktop policy"}
-      description="Default policy values apply org-wide. Other policies can grant access to specific users or teams."
+      description="Advanced app defaults and grants. Manage team modes and permissions from Team → Access."
       colors={["#F8FAFC", "#0F172A", "#38BDF8", "#A78BFA"]}
     >
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
@@ -385,6 +385,14 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
         <div className="rounded-[32px] border border-dashed border-gray-200 bg-white px-6 py-12 text-center text-[15px] text-gray-500">
           Desktop policy not found.
         </div>
+      ) : policy?.policy.access ? (
+        <section className="rounded-2xl border border-gray-200 bg-white p-6">
+          <h2 className="text-lg font-semibold">Managed in Team access</h2>
+          <p className="mt-2 text-sm text-gray-500">This configuration represents the team’s permissions. Change the mode and individual capabilities from the team’s Access page.</p>
+          {policy.assignments.flatMap((assignment) => assignment.teamId ? [
+            <DenButton key={assignment.teamId} className="mt-4" href={getTeamRoute(orgSlug, assignment.teamId)}>Open team access</DenButton>,
+          ] : [])}
+        </section>
       ) : !canView ? (
         <div className="rounded-[32px] border border-dashed border-gray-200 bg-white px-6 py-12 text-center text-[15px] text-gray-500">
           Only workspace admins can view desktop policies.
