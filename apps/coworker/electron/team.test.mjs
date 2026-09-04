@@ -15,7 +15,9 @@ import {
   recommendTeam,
   recordReferral,
   recordSuggestion,
+  referralGuard,
   rosterFor,
+  sameRequest,
   scoreRole,
   setReferralState,
   setSuggestionState,
@@ -143,6 +145,22 @@ test("rosterFor names teammates one line each, caps the list, lists recent decli
   assert.equal(capped.match(/^- Coworker /gm)?.length, 12);
   assert.match(capped, /- and 3 more/);
   assert.match(capped, /x{139}…/, "a long mission is cut");
+});
+
+test("a request the person chose to keep with the coworker is never offered again; a new request may be", () => {
+  const referrals = [
+    { id: "r1", to: "editor", message: "Draft the launch announcement", state: "continued", stateAt: NOW - DAY },
+    { id: "r2", to: "editor", message: "Rewrite the pricing page", state: "asked", stateAt: NOW - DAY },
+    { id: "r3", to: "ops", message: "Book the offsite", state: "offered", stateAt: NOW },
+  ];
+  assert.deepEqual(referralGuard({ message: "Draft the launch announcement", referrals }), { kind: "kept", at: NOW - DAY });
+  assert.deepEqual(referralGuard({ message: "  draft the LAUNCH announcement!  ", referrals }), { kind: "kept", at: NOW - DAY }, "case, spacing, and punctuation do not make it a new request");
+  assert.deepEqual(referralGuard({ message: "Rewrite the pricing page", referrals }), { kind: "ok" }, "a request the person handed over is not a kept one");
+  assert.deepEqual(referralGuard({ message: "Book the offsite", referrals }), { kind: "ok" }, "an open offer is not a kept one");
+  assert.deepEqual(referralGuard({ message: "Draft the launch announcement for May", referrals }), { kind: "ok" }, "a different request is a different request");
+  assert.deepEqual(referralGuard({ message: "", referrals }), { kind: "ok" });
+  assert.equal(sameRequest("A. ", "a"), true);
+  assert.equal(sameRequest("", ""), false, "two empty requests are not the same request");
 });
 
 test("logs fold by id, latest state wins, and states survive a torn line", () => {

@@ -46,6 +46,11 @@ test("team tool names are recognised with or without the MCP prefix", () => {
   assert.equal(teamToolName("edit"), null);
 });
 
+test("a kept request (the person chose to continue) leaves no tile", () => {
+  const cards = teamCardsFromCalls([{ tool: "coworker_team_refer", status: "completed", output: null, metadata: kept({ kept: { at: 1 } }) }]);
+  assert.deepEqual(cards, []);
+});
+
 test("tiles come only from kept tool results: a suggestion, a hand-over, never a guard outcome or prose", () => {
   const cards = teamCardsFromCalls([
     { tool: "coworker_team_suggest", status: "completed", output: null, metadata: kept({ suggestion: SUGGESTION }) },
@@ -122,6 +127,7 @@ test("receipts for the team tools never show ids or slugs, and name the guard ou
   assert.equal(step("coworker_team_refer", "completed", { referral: REFERRAL }).label, "Offered to pass this to Editor");
   assert.equal(step("coworker_team_refer", "running", null, { to: "editor" }).label, "Offering to pass this on");
   assert.equal(step("coworker_team_refer", "error", null, { to: "Care" }).label, "Couldn't offer to pass this to Care");
+  assert.equal(step("coworker_team_refer", "completed", { kept: { at: 1 } }, { to: "editor" }).label, "Checked the team · you asked to keep this here");
   assert.equal(step("coworker_team_suggest", "completed", { suggestion: SUGGESTION }).label, "Suggested a teammate · Care");
   assert.equal(step("coworker_team_suggest", "completed", { existing: { slug: "editor", name: "Editor" } }).label, "Checked the team · Editor already covers this");
   assert.equal(step("coworker_team_suggest", "completed", { existing: { slug: "nova", name: "Nova" }, self: true }).label, "Checked the team · that is its own job");
