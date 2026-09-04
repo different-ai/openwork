@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readdir, realpath, rmdir, unlink } from "node:fs/promises";
+import { lstat, mkdir, open, realpath } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { encode as encodePng } from "fast-png";
 import { encode as encodeJpeg } from "jpeg-js";
 import { looksLikePdf, withPdfDocument } from "./pdfium.js";
@@ -17,8 +17,11 @@ import type { PdfRenderedBitmap } from "./pdfium.js";
  * attachment bytes. The workspace copy (materialized PDF, `text.md`, page
  * images, `manifest.json`) exists for the agent's own tools and for people; it
  * is write-only here and never read back, so a hostile workspace cannot steer
- * what the model sees. Writes refuse any path that resolves through a symlink
- * and are verified through handles on both sides of the publishing step.
+ * what the model sees. Writes refuse any path that resolves through a symlink,
+ * open each file at its final name, and let content flow only through a handle
+ * verified against that place. Nothing is ever deleted: Node has no
+ * directory-relative delete, and a path-based one could be redirected, so the
+ * derived bundles accumulate under the inbox until a person clears them.
  *
  * Limits are deliberate. They keep a single attachment from stalling the turn,
  * blowing the provider's request size, or filling the workspace, while still
@@ -48,8 +51,6 @@ export const PAGE_IMAGE_MAX_BYTES = 1.5 * 1024 * 1024;
 /** Above this PNG size a page is photographic or scanned; JPEG keeps its resolution at a fraction of the bytes. */
 const JPEG_CONSIDER_BYTES = 300 * 1024;
 const JPEG_QUALITY = 85;
-/** Derived bundles kept per workspace; the oldest are pruned when a new one is written. */
-export const MAX_DERIVED_BUNDLES = 64;
 /** In-memory page images across all PDFs; least recently used documents are dropped past this. */
 export const MEMORY_IMAGE_BUDGET_BYTES = 96 * 1024 * 1024;
 const MANIFEST_VERSION = 3;
@@ -241,15 +242,7 @@ function sameFile(left: FileIdentity, right: FileIdentity): boolean {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
-/** Removes `path` only while it still names the file this module created; a swapped path names someone else's file and is left alone. */
-async function unlinkOwn(path: string, identity: FileIdentity): Promise<void> {
-  try {
-    const named = await lstat(path);
-    if (named.isFile() && sameFile(named, identity)) await unlink(path);
-  } catch {
-    // Already gone, or not ours to remove.
-  }
-}
+const WRITE_OCCUPIED = "PDF attachment storage path is occupied by something this module did not write; refusing to use it.";
 
 /**
  * Opens `name` inside the verified `realDirectory` for writing and confirms,
@@ -266,11 +259,12 @@ async function unlinkOwn(path: string, identity: FileIdentity): Promise<void> {
  * point this write at another file, and a path swapped around the open fails
  * the identity check. `create` refuses an existing file (`EEXIST`) and leaves
  * it for the caller to judge; `replace` opens an existing regular single-link
- * file in place and lets the caller truncate it only after verification, while
- * anything else planted at the name (a symlink, a hardlink, a directory) has
- * its entry removed — never what it points to — before a fresh file is
- * created. A file this call created and then refused is removed only while
- * the path still names it. Exported for tests.
+ * file in place and lets the caller truncate it only after verification, and
+ * refuses anything else planted at the name (a symlink, a hardlink, a
+ * directory) rather than removing it. This module never deletes: a path-based
+ * delete resolves the path again and could itself be redirected, so a file
+ * this call created and then refused is left where it is, empty. Exported for
+ * tests.
  */
 export async function openVerifiedForWrite(realDirectory: string, name: string, mode: "replace" | "create"): Promise<{ handle: FileHandle; created: boolean; identity: FileIdentity }> {
   const target = join(realDirectory, name);
@@ -282,27 +276,20 @@ export async function openVerifiedForWrite(realDirectory: string, name: string, 
   } catch (cause) {
     if (mode === "create" || errorCode(cause) !== "EEXIST") throw cause;
     const existing = await lstat(target);
-    if (existing.isFile() && existing.nlink === 1) {
-      handle = await open(target, constants.O_WRONLY | constants.O_NOFOLLOW);
-      created = false;
-    } else {
-      if (existing.isDirectory()) await rmdir(target);
-      else await unlink(target);
-      handle = await create();
-    }
+    if (!existing.isFile() || existing.nlink !== 1) throw new Error(WRITE_OCCUPIED);
+    handle = await open(target, constants.O_WRONLY | constants.O_NOFOLLOW);
+    created = false;
   }
-  let identity: FileIdentity | null = null;
   try {
     const opened = await handle.stat();
-    identity = { dev: opened.dev, ino: opened.ino };
-    if (!opened.isFile() || opened.nlink !== 1) throw new Error(WRITE_CHANGED);
+    const identity = { dev: opened.dev, ino: opened.ino };
+    if (!opened.isFile() || opened.nlink !== 1) throw new Error(created ? WRITE_CHANGED : WRITE_OCCUPIED);
     const real = await realpath(target);
     const named = await lstat(real);
     if (real !== target || !sameFile(named, identity)) throw new Error(WRITE_CHANGED);
     return { handle, created, identity };
   } catch (cause) {
     await handle.close();
-    if (created && identity) await unlinkOwn(target, identity);
     throw cause;
   }
 }
@@ -315,16 +302,13 @@ export async function openVerifiedForWrite(realDirectory: string, name: string, 
  */
 export async function writeVerifiedFile(realDirectory: string, name: string, content: Uint8Array | string, mode: "replace" | "create"): Promise<void> {
   const bytes = typeof content === "string" ? Buffer.from(content, "utf8") : content;
-  const { handle, created, identity } = await openVerifiedForWrite(realDirectory, name, mode);
+  const { handle, created } = await openVerifiedForWrite(realDirectory, name, mode);
   try {
     if (!created) await handle.truncate(0);
     await handle.writeFile(bytes);
-  } catch (cause) {
+  } finally {
     await handle.close();
-    if (created) await unlinkOwn(join(realDirectory, name), identity);
-    throw cause;
   }
-  await handle.close();
 }
 
 async function materializePdf(root: string, safeFilename: string, digest: string, bytes: Uint8Array): Promise<string> {
@@ -497,63 +481,6 @@ function remember(entry: MemoryEntry): MemoryEntry {
   return entry;
 }
 
-const BUNDLE_NAME = /^[0-9a-f]{16}-/;
-
-/** Removes the oldest bundles beneath the verified real `pdf-pages` directory once it holds more than the cap. */
-async function pruneDerivedBundles(realDirectory: string, keep: string): Promise<void> {
-  let entries: string[];
-  try {
-    entries = await readdir(realDirectory);
-  } catch {
-    return;
-  }
-  if (entries.length <= MAX_DERIVED_BUNDLES) return;
-  const dated: Array<{ name: string; mtimeMs: number }> = [];
-  for (const name of entries) {
-    if (name === keep || !BUNDLE_NAME.test(name)) continue;
-    try {
-      const entry = await lstat(join(realDirectory, name));
-      if (!entry.isDirectory()) continue;
-      const manifest = await lstat(join(realDirectory, name, MANIFEST_FILENAME));
-      if (!manifest.isFile()) continue;
-      dated.push({ name, mtimeMs: manifest.mtimeMs });
-    } catch {
-      // Not a derived bundle this code wrote; leave it alone.
-    }
-  }
-  dated.sort((left, right) => left.mtimeMs - right.mtimeMs);
-  const excess = entries.length - MAX_DERIVED_BUNDLES;
-  for (const { name } of dated.slice(0, Math.max(0, excess))) {
-    await removeBundle(realDirectory, name);
-  }
-}
-
-const BUNDLE_FILE = /^(?:manifest\.json|text\.md|page-\d{3}\.(?:png|jpg))$/;
-
-/**
- * Removes one derived bundle. Deletion resolves paths itself, so the blast
- * radius of a parent swapped underneath it is bounded: only the fixed file
- * names this module writes are unlinked (never following a symlink, never
- * recursing), the parent is re-checked before every deletion, and the directory
- * is removed only once it is empty. Anything unexpected inside is left alone.
- */
-async function removeBundle(realDirectory: string, name: string): Promise<void> {
-  const bundle = join(realDirectory, name);
-  try {
-    const info = await lstat(bundle);
-    if (!info.isDirectory()) return;
-    const files = (await readdir(bundle)).filter((file) => BUNDLE_FILE.test(file));
-    for (const file of files) {
-      if ((await realpath(bundle)) !== bundle) return;
-      await unlink(join(bundle, file));
-    }
-    if ((await realpath(bundle)) !== bundle) return;
-    await rmdir(bundle);
-  } catch {
-    // A bundle that is not entirely this module's is left for a person to judge.
-  }
-}
-
 function derivedDirectoryFor(root: string, digest: string, safeFilename: string): string {
   return join(root, DERIVED_DIR, `${digest.slice(0, 16)}-${stemOf(safeFilename)}`);
 }
@@ -603,7 +530,6 @@ async function build(root: string | null, filename: string, bytes: Uint8Array, o
       base.textPath = `${displayDirectory}/${TEXT_FILENAME}`;
       current = { ...base, text };
       await writeManifest(derivedDirectory, current);
-      await pruneDerivedBundles(dirname(derivedDirectory), basename(derivedDirectory));
     } else {
       current = { ...base, text };
     }

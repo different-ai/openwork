@@ -8,7 +8,6 @@ import {
   DERIVED_DIR,
   EAGER_RENDERED_PAGES,
   MATERIALIZED_DIR,
-  MAX_DERIVED_BUNDLES,
   MAX_PAGES_PER_REQUEST,
   MAX_TEXT_PAGES,
   PAGE_IMAGE_MAX_BYTES,
@@ -183,17 +182,6 @@ describe("derivePdf", () => {
     expect(pageTextFrom(text, 4)).toBeNull();
   });
 
-  test("prunes the oldest derived bundles once the workspace holds more than the cap", async () => {
-    await withWorkspace(async (root) => {
-      for (let index = 0; index < MAX_DERIVED_BUNDLES + 3; index += 1) {
-        await derivePdf(root, `doc-${index}.pdf`, buildTestPdf([`Document ${index}`]), { renderPages: false });
-      }
-      const bundles = await readdir(join(root, DERIVED_DIR));
-      expect(bundles.length).toBe(MAX_DERIVED_BUNDLES);
-      expect(bundles.some((name) => name.endsWith(`-doc-${MAX_DERIVED_BUNDLES + 2}`))).toBe(true);
-    });
-  }, 60_000);
-
   test("works without a workspace root by keeping everything in memory", async () => {
     const derived = await derivePdf(null, "memo.pdf", buildTestPdf(["Memo"]), { renderPages: true });
     expect(derived.pdfPath).toBeNull();
@@ -218,13 +206,20 @@ describe("derivePdf", () => {
         await symlink(secret, join(bundle, "text.md"));
         await symlink(secret, join(bundle, "page-001.png"));
 
+        // A planted entry at a name this module writes is refused, never followed, never removed: the derivation fails closed and the secret is untouched.
+        await expect(derivePdf(root, "planted.pdf", pdf, { renderPages: true })).rejects.toThrow("occupied by something this module did not write");
+        expect(await readFile(secret, "utf8")).toBe("TOP SECRET CONTENT");
+        expect((await lstat(join(bundle, "text.md"))).isSymbolicLink()).toBe(true);
+        expect((await lstat(join(bundle, "page-001.png"))).isSymbolicLink()).toBe(true);
+
+        // Without the planted entries the same bytes derive normally, from memory, never from the bundle.
+        await rm(join(bundle, "text.md"));
+        await rm(join(bundle, "page-001.png"));
         const derived = await derivePdf(root, "planted.pdf", pdf, { renderPages: true });
         expect(derived.text).toContain("--- page 1 ---\nPlanted");
         expect(derived.text.includes("TOP SECRET")).toBe(false);
         const image = pageImageOf(derived, derived.renderedPages[0]);
         expect(Buffer.from(image?.subarray(0, 8) ?? [])).toEqual(PNG_SIGNATURE);
-        // The planted symlinks were replaced by real files (their entries removed, never followed); the secret is untouched.
-        expect(await readFile(secret, "utf8")).toBe("TOP SECRET CONTENT");
         expect(await readFile(join(bundle, "text.md"), "utf8")).toBe(derived.text);
       } finally {
         await rm(outside, { recursive: true, force: true });
@@ -324,9 +319,11 @@ describe("derivePdf", () => {
           await rename(bundle, moved);
           await symlink(outside, bundle);
 
-          // No file at the redirected place: the create is refused and cleaned up again.
+          // No file at the redirected place: the create is refused before any byte is written. This module never
+          // deletes, so the empty file it created stays where the swap sent it; nothing of ours lands in it.
           await expect(writeVerifiedFile(bundle, "text.md", bytes, mode)).rejects.toThrow("changed underneath");
-          expect(await readdir(outside)).toEqual([]);
+          expect(await readdir(outside)).toEqual(["text.md"]);
+          expect((await lstat(join(outside, "text.md"))).size).toBe(0);
 
           // An existing file at the redirected place is never truncated or overwritten.
           await writeFile(join(outside, "text.md"), "ATTACKER");
@@ -344,7 +341,7 @@ describe("derivePdf", () => {
     });
   });
 
-  test("writes replace an earlier copy in place and never write through a symlink or hardlink planted at the name", async () => {
+  test("writes replace an earlier copy in place and refuse a symlink or hardlink planted at the name", async () => {
     await withWorkspace(async (root) => {
       const outside = await mkdtemp(join(tmpdir(), "openwork-pdf-planted-"));
       try {
@@ -361,17 +358,16 @@ describe("derivePdf", () => {
         expect(await readFile(target, "utf8")).toBe("second");
         expect((await lstat(target)).nlink).toBe(1);
 
-        // A symlink planted at the name is replaced by a real file; the file it pointed at is untouched.
+        // A symlink planted at the name is never followed and never removed; the file it points at is untouched.
         const secret = join(outside, "secret.md");
         await writeFile(secret, "TOP SECRET");
         await rm(target);
         await symlink(secret, target);
-        await writeVerifiedFile(directory, "text.md", "ours", "replace");
-        expect((await lstat(target)).isSymbolicLink()).toBe(false);
-        expect(await readFile(target, "utf8")).toBe("ours");
+        await expect(writeVerifiedFile(directory, "text.md", "ours", "replace")).rejects.toThrow("occupied by something this module did not write");
+        expect((await lstat(target)).isSymbolicLink()).toBe(true);
         expect(await readFile(secret, "utf8")).toBe("TOP SECRET");
 
-        // A hardlink planted at the name would make an in-place write land in the other file; the name is re-pointed at a fresh inode instead.
+        // A hardlink planted at the name would make an in-place write land in the other file; refuse it too.
         await rm(target);
         let hardlinked = true;
         try {
@@ -380,10 +376,9 @@ describe("derivePdf", () => {
           hardlinked = false; // cross-device temp dirs cannot be hardlinked on this machine
         }
         if (hardlinked) {
-          await writeVerifiedFile(directory, "text.md", "ours again", "replace");
-          expect(await readFile(target, "utf8")).toBe("ours again");
+          await expect(writeVerifiedFile(directory, "text.md", "ours", "replace")).rejects.toThrow("occupied by something this module did not write");
           expect(await readFile(secret, "utf8")).toBe("TOP SECRET");
-          expect((await lstat(secret)).nlink).toBe(1);
+          expect((await lstat(secret)).nlink).toBe(2);
         }
 
         // The handle stays bound to the verified inode: a parent swapped after the open cannot redirect the bytes.
@@ -402,28 +397,6 @@ describe("derivePdf", () => {
       }
     });
   });
-
-  test("pruning removes only the files this module writes and never recurses into anything else", async () => {
-    await withWorkspace(async (root) => {
-      for (let index = 0; index < MAX_DERIVED_BUNDLES; index += 1) {
-        await derivePdf(root, `doc-${index}.pdf`, buildTestPdf([`Document ${index}`]), { renderPages: false });
-      }
-      const bundles = await readdir(join(root, DERIVED_DIR));
-      const oldest = bundles.find((name) => name.endsWith("-doc-0"));
-      expect(oldest).toBeDefined();
-      // Something a person or another tool left inside the oldest bundle.
-      await mkdir(join(root, DERIVED_DIR, oldest ?? "", "notes"));
-      await writeFile(join(root, DERIVED_DIR, oldest ?? "", "notes", "keep.txt"), "not ours");
-
-      await derivePdf(root, "doc-last.pdf", buildTestPdf(["Last"]), { renderPages: false });
-      const after = await readdir(join(root, DERIVED_DIR));
-      expect(after.some((name) => name.endsWith("-doc-last"))).toBe(true);
-      // The oldest bundle lost only manifest.json and text.md; the foreign directory and the bundle itself remain.
-      expect(after).toContain(oldest ?? "");
-      expect((await readdir(join(root, DERIVED_DIR, oldest ?? ""))).sort()).toEqual(["notes"]);
-      expect(await readFile(join(root, DERIVED_DIR, oldest ?? "", "notes", "keep.txt"), "utf8")).toBe("not ours");
-    });
-  }, 60_000);
 
   test("safe filenames keep readable stems and always end in .pdf", () => {
     expect(safePdfFilename("../../etc/passwd")).toBe("passwd.pdf");
