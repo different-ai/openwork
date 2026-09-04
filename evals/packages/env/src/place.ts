@@ -169,10 +169,10 @@ class DaytonaPlacementHost implements Host {
   readonly #preparedHost: Host | undefined;
   readonly #surfaces = new Map<SurfaceHandle, PlacedSurface>();
 
-  constructor(ref: string, preparedSandbox?: string) {
+  constructor(ref: string, preparedSandbox?: string, preparedEngineCacheDir?: string) {
     this.#ref = ref;
     this.#preparedSandbox = preparedSandbox;
-    this.#preparedHost = preparedSandbox ? daytonaSandbox(preparedSandbox) : undefined;
+    this.#preparedHost = preparedSandbox ? daytonaSandbox(preparedSandbox, preparedEngineCacheDir) : undefined;
   }
 
   async #provision(name: string): Promise<PlacedSurface> {
@@ -189,7 +189,7 @@ class DaytonaPlacementHost implements Host {
       log: (line) => console.error(`[openwork/testkit] ${line}`),
     });
     return {
-      host: daytonaSandbox(provisioned.sandbox),
+      host: daytonaSandbox(provisioned.sandbox, provisioned.engineCacheDir ?? undefined),
       sandbox: provisioned.sandbox,
       created: provisioned.created,
     };
@@ -244,9 +244,9 @@ class DaytonaPlace implements Place {
   readonly #ref: string;
   readonly #host: Host;
 
-  constructor(ref: string, preparedDesktopSandbox?: string) {
+  constructor(ref: string, preparedDesktopSandbox?: string, preparedEngineCacheDir?: string) {
     this.#ref = ref;
-    this.#host = new DaytonaPlacementHost(ref, preparedDesktopSandbox);
+    this.#host = new DaytonaPlacementHost(ref, preparedDesktopSandbox, preparedEngineCacheDir);
   }
 
   host(): Host {
@@ -277,7 +277,11 @@ export function resolvePlace(env: NodeJS.ProcessEnv = process.env): Place {
     || (worldPlace === undefined && env.OPENWORK_EVAL_DAYTONA?.trim() === "1");
   if (useDaytona) {
     const ref = env.OPENWORK_EVAL_REF?.trim() || env.GITHUB_SHA?.trim() || "dev";
-    return new DaytonaPlace(ref, env.OPENWORK_EVAL_DAYTONA_DESKTOP_SANDBOX?.trim());
+    return new DaytonaPlace(
+      ref,
+      env.OPENWORK_EVAL_DAYTONA_DESKTOP_SANDBOX?.trim(),
+      env.OPENWORK_EVAL_DAYTONA_ENGINE_CACHE_DIR?.trim(),
+    );
   }
   return new LocalPlace(env.OPENWORK_EVAL_MYSQL_URL?.trim() || DEFAULT_MYSQL_URL);
 }

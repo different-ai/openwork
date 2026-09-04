@@ -547,8 +547,14 @@ export async function validateWorkflowAutomationAction(input: {
       )),
     ])
     const grantInput = { memberId: ownerMemberId, teamIds: teams.map((team) => team.id) }
-    if (!resolvePluginArchGrantRole({ ...grantInput, grants: configObjectGrants })
-      && !resolvePluginArchGrantRole({ ...grantInput, grants: pluginGrants })) {
+    // Scheduling a Workflow executes it, so the owner needs run access — the
+    // same editor-or-manager bar the detail response reports as `canRun`. A
+    // viewer may read results but must not gain scheduled execution.
+    const roles = [
+      resolvePluginArchGrantRole({ ...grantInput, grants: configObjectGrants }),
+      resolvePluginArchGrantRole({ ...grantInput, grants: pluginGrants }),
+    ]
+    if (!roles.some((role) => role === "editor" || role === "manager")) {
       throw new Error("automation_saved_script_forbidden")
     }
   }

@@ -288,6 +288,10 @@ export async function pinnedSessions(seed: Seed) {
   return { app, workspace, workspacePath, candidate, neighbor, context, pinnedSidebarRows };
 }
 
+export async function commandPaletteSearch(seed: Seed) {
+  return oneWorkspace(seed, `command-palette-search-${Date.now()}`);
+}
+
 export async function archiveSessions(seed: Seed) {
   const stamp = `${Date.now()}-${process.pid}`;
   const app = await seed.desktop({ name: "session-archive-button" });

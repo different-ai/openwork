@@ -3,7 +3,7 @@ import type { UIMessage } from "ai";
 import { safeStringify } from "../../../../app/utils";
 import { normalizeErrorText } from "../../../../lib/error-text";
 
-export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "generic";
+export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "free-model-limit" | "generic";
 
 export type OpencodeSessionErrorPresentation = {
   kind: OpencodeSessionErrorKind;
@@ -53,7 +53,12 @@ function defaultErrorMessage(name: string | null, fallback: string) {
   return fallback;
 }
 
-function sessionErrorKind(name: string | null, message: string | null, code: string | null): OpencodeSessionErrorKind {
+function sessionErrorKind(
+  name: string | null,
+  message: string | null,
+  code: string | null,
+  responseBody: string | null,
+): OpencodeSessionErrorKind {
   const searchable = [name, message, code].filter(Boolean).join(" ");
   if (
     name === "MessageAbortedError" ||
@@ -69,12 +74,16 @@ function sessionErrorKind(name: string | null, message: string | null, code: str
   ) {
     return "provider-timeout";
   }
+  if (responseBody?.includes("FreeUsageLimitError") || message?.includes("FreeUsageLimitError")) {
+    return "free-model-limit";
+  }
   return "generic";
 }
 
 function errorTitle(kind: OpencodeSessionErrorKind, fallback: string) {
   if (kind === "aborted") return "Task interrupted";
   if (kind === "provider-timeout") return "Provider did not respond in time";
+  if (kind === "free-model-limit") return "The free starter model is busy right now";
   return fallback;
 }
 
@@ -84,6 +93,9 @@ function errorDescription(kind: OpencodeSessionErrorKind) {
   }
   if (kind === "provider-timeout") {
     return "The provider connection timed out before a response began. Output and files already produced are kept.";
+  }
+  if (kind === "free-model-limit") {
+    return "Too many people are using the free model at once. Wait a few minutes and try again, or connect your own model provider in Settings → AI Providers to keep working.";
   }
   return null;
 }
@@ -179,7 +191,7 @@ function technicalErrorDetails(error: unknown, fallback: string, fields: ReturnT
 
 export function presentOpencodeSessionError(error: unknown, fallback = "Session failed"): OpencodeSessionErrorPresentation {
   const fields = sessionErrorFields(error, fallback);
-  const kind = sessionErrorKind(fields.name, fields.message, fields.code);
+  const kind = sessionErrorKind(fields.name, fields.message, fields.code, fields.responseBody);
   const fallbackTitle = normalizeSessionError(fields.message ?? defaultErrorMessage(fields.name, fallback));
   return {
     kind,

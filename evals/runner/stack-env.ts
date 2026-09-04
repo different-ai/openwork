@@ -13,4 +13,6 @@ if (preparation.kind === "daytona") {
   if (!slot) throw new Error("Vitest worker did not resolve to a prepared Daytona slot.");
   process.env.OPENWORK_EVAL_DAYTONA_DEN_SANDBOX = slot.denSandbox;
   process.env.OPENWORK_EVAL_DAYTONA_DESKTOP_SANDBOX = slot.desktopSandbox;
+  if (slot.engineCacheDir) process.env.OPENWORK_EVAL_DAYTONA_ENGINE_CACHE_DIR = slot.engineCacheDir;
+  else delete process.env.OPENWORK_EVAL_DAYTONA_ENGINE_CACHE_DIR;
 }
