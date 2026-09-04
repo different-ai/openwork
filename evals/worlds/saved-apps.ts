@@ -1,5 +1,5 @@
 import type { Seed } from "@openwork/env";
-import { runWorkflow, saveWorkflow } from "@openwork/behaviors";
+import { go, runWorkflow, saveWorkflow } from "@openwork/behaviors";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -69,6 +69,19 @@ export async function savedAppCreation(seed: Seed) {
   const workspace = await seed.workspace(app, seed.tmpPath("saved-app-creation"));
   return {
     app, den, workspace, appId, revisionId, rpc, run,
+    open: (path: string) => go(app, path),
+    async previewText() {
+      const snapshot = record(await app.client.send("DOMSnapshot.captureSnapshot", { computedStyles: [] }));
+      const strings = snapshot.strings;
+      const documents = snapshot.documents;
+      if (!Array.isArray(strings) || !Array.isArray(documents)) return "";
+      return documents.flatMap((document) => {
+        const item = record(document);
+        if (strings[Number(item.documentURL)] !== "about:srcdoc") return [];
+        const nodes = record(item.nodes);
+        return Array.isArray(nodes.nodeValue) ? nodes.nodeValue.flatMap((index) => typeof strings[Number(index)] === "string" ? [strings[Number(index)]] : []) : [];
+      }).join(" ");
+    },
     receiptId: field(firstRun, "receiptId"),
     render: () => rpc("render_workflow_artifact", { configObjectId }),
     async revise() {

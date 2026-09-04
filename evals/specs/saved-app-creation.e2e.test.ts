@@ -18,9 +18,11 @@ test("create, preview, save and reopen an app without changing already-open resu
   expect(record(await world.render())["_meta"]).not.toHaveProperty("openwork/mcpApp");
 
   await step("try a draft and cancel saving", async () => {
-    await user.navigate(originalPath);
+    await world.open(originalPath);
     await user.see("Save app", { timeoutMs: 60_000 });
     await user.see({ text: "App draft" });
+    const preview = await probe.eventually(() => world.previewText(), { within: 30_000, label: "generated preview rendered", until: (text) => text.includes("Weekly overview") && text.includes("Launch briefing") });
+    expect(preview).not.toContain("could not render");
     await user.click("Save app");
     await user.see("Save to Apps");
     await user.see({ label: "App name" }, { value: "Briefing app" });
@@ -44,7 +46,7 @@ test("create, preview, save and reopen an app without changing already-open resu
   evidence.recordAssertionEvidence("Drafts stay out of Apps until saved, and Cancel does not save them", "Draft list was empty; Cancel retained a null active revision; Save persisted the exact selected revision and workflow use.", true);
 
   await step("reopen the saved app after a reload", async () => {
-    await user.navigate("/apps");
+    await world.open("/apps");
     await user.reload();
     await user.click("Open Team briefing");
     await user.see("Saved", { timeoutMs: 30_000 });
@@ -61,7 +63,7 @@ test("create, preview, save and reopen an app without changing already-open resu
   expect(field(original.revision, "id")).toBe(world.revisionId);
 
   await step("save changes without automatic workflow use", async () => {
-    await user.navigate(`${appPath}?revisionId=${newerRevision}`);
+    await world.open(`${appPath}?revisionId=${newerRevision}`);
     await user.click("Save changes");
     await user.click({ role: "checkbox" });
     await user.click("Save changes");
@@ -84,7 +86,7 @@ test("create, preview, save and reopen an app without changing already-open resu
   evidence.recordAssertionEvidence("Stale saves and members without workflow access cannot overwrite or read the saved app", "Stale activation returned 409 and kept the title; the ungranted colleague received 404 without result content.", true);
 
   await step("New app returns to a creation conversation", async () => {
-    await user.navigate("/apps");
+    await world.open("/apps");
     await user.click("New app");
     await probe.eventually(() => probe.composer(), { within: 30_000, label: "app creation prompt", until: (composer) => JSON.stringify(composer).includes("Create a reusable app that") });
     await user.screenshot();
