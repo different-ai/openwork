@@ -10,7 +10,6 @@ import {
   ChevronDown,
   ChevronRight,
   FileText,
-  GitFork,
   Globe,
   Home,
   LayoutDashboard,
@@ -20,7 +19,7 @@ import {
   MessageSquare,
   ScrollText,
   Plug,
-  Puzzle,
+  Settings2,
   SlidersHorizontal,
   Sparkles,
   type LucideIcon,
@@ -79,6 +78,8 @@ type DashboardNavItem = {
   icon: LucideIcon;
   badge?: string;
   testId?: string;
+  /** Extra pathname prefixes that select this entry. */
+  matchHrefs?: string[];
   /**
    * Grouped entries (Models, Settings) link to the first child and expand
    * their children while the current page is inside the group.
@@ -274,8 +275,12 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname.startsWith(getCustomLlmProvidersRoute(orgSlug))) {
     return "Bring your Own Keys";
   }
-  if (pathname.startsWith(getDesktopPoliciesRoute(orgSlug))) {
-    return "Desktop Policies";
+  if (
+    pathname.startsWith(getDesktopPoliciesRoute(orgSlug))
+    || pathname.startsWith(getMarketplacesRoute(orgSlug))
+    || pathname.startsWith(getBrandAppearanceRoute(orgSlug))
+  ) {
+    return "Advanced";
   }
   if (pathname.startsWith(getDiagnosticsRoute(orgSlug))) {
     return "Diagnostics";
@@ -292,11 +297,8 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname.startsWith(getPluginsRoute(orgSlug))) {
     return "Plugin Directory";
   }
-  if (pathname.startsWith(getMarketplacesRoute(orgSlug))) {
-    return "Collections";
-  }
   if (pathname.startsWith(getIntegrationsRoute(orgSlug))) {
-    return "Sources";
+    return "Plugin Directory";
   }
   if (pathname.startsWith(getMcpConnectionsRoute(orgSlug))) {
     return "Connectors";
@@ -315,9 +317,6 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   }
   if (pathname.startsWith(getBillingRoute(orgSlug))) {
     return "Billing";
-  }
-  if (pathname.startsWith(getBrandAppearanceRoute(orgSlug))) {
-    return "Brand appearance";
   }
   if (pathname.startsWith(getOrgSettingsRoute(orgSlug))) {
     return "Org Settings";
@@ -420,8 +419,8 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     && orgContext?.capabilities.openworkWeb === true;
 
   // One nav, two audiences. Members see Work only. Admins add Manage
-  // (catalog + connectors + models), Observability, and Team. Connections
-  // live inside My Library; Tool Tester lives under Settings.
+  // (catalog + connectors + models + Advanced), Observability, and Team.
+  // Advanced groups collections, desktop policies, and brand appearance as tabs.
   const workItems: DashboardNavItem[] = [
     {
       href: activeOrg ? getOrgDashboardRoute(activeOrg.slug) : "#",
@@ -471,11 +470,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   const manageItems: DashboardNavItem[] = access.isAdmin && activeOrg
     ? [
         {
-          href: getMarketplacesRoute(activeOrg.slug),
-          label: "Collections",
-          icon: Puzzle,
-        },
-        {
           href: getPluginsRoute(activeOrg.slug),
           label: "Plugin Directory",
           icon: Box,
@@ -486,12 +480,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           icon: Plug,
           badge: "MCPs",
         },
-        {
-          href: getIntegrationsRoute(activeOrg.slug),
-          label: "Sources",
-          icon: GitFork,
-          badge: "Alpha",
-        },
         ...(orgManagedDashboardsEnabled
           ? [{
               href: getManagedDashboardsRoute(activeOrg.slug),
@@ -500,6 +488,15 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
             }]
           : []),
         ...(modelsGroup ? [modelsGroup] : []),
+        {
+          href: getMarketplacesRoute(activeOrg.slug),
+          label: "Advanced",
+          icon: Settings2,
+          matchHrefs: [
+            getDesktopPoliciesRoute(activeOrg.slug),
+            getBrandAppearanceRoute(activeOrg.slug),
+          ],
+        },
       ]
     : [];
   const observabilityItems: DashboardNavItem[] = access.isAdmin && activeOrg
@@ -521,8 +518,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           ? [
               { href: getOrgSettingsRoute(activeOrg.slug), label: "General" },
               { href: getDiagnosticsRoute(activeOrg.slug), label: "Diagnostics" },
-              { href: getBrandAppearanceRoute(activeOrg.slug), label: "Brand appearance" },
-              { href: getDesktopPoliciesRoute(activeOrg.slug), label: "Desktop Policies" },
               { href: getBillingRoute(activeOrg.slug), label: "Billing" },
               { href: getApiKeysRoute(activeOrg.slug), label: "API Keys" },
               { href: getSsoRoute(activeOrg.slug), label: "SSO" },
@@ -763,7 +758,11 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                               pathname === getYourConnectionsRoute(activeOrg.slug)
                               || pathname.startsWith(`${getYourConnectionsRoute(activeOrg.slug)}/`)
                             ))
-                          : pathname === item.href || pathname.startsWith(`${item.href}/`));
+                          : pathname === item.href
+                            || pathname.startsWith(`${item.href}/`)
+                            || (item.matchHrefs ?? []).some(
+                              (href) => pathname === href || pathname.startsWith(`${href}/`),
+                            ));
 
                   return (
                     <div key={item.label}>

@@ -36,12 +36,11 @@ describe("Den org sidebar information architecture", () => {
     expect(shell).not.toMatch(/label: "OpenWork Web"[\s\S]{0,120}badge:/);
   });
 
-  test("admins see Manage then Observability then Team, with Models as a Providers category", () => {
-    const marketplace = indexOfNeedle('label: "Collections"');
+  test("admins see the streamlined Manage section before Observability and Team", () => {
     const pluginDirectory = indexOfNeedle('label: "Plugin Directory"');
     const connectors = indexOfNeedle('label: "Connectors"');
-    const sources = indexOfNeedle('label: "Sources"');
     const managedDashboards = indexOfNeedle('label: "Dashboards"');
+    const advanced = indexOfNeedle('label: "Advanced"');
     const workflowRuns = indexOfNeedle('label: "Workflow Runs"');
     const analytics = indexOfNeedle('label: "Analytics"');
     const workSection = indexOfNeedle('{ label: "Work", items: workItems }');
@@ -49,10 +48,9 @@ describe("Den org sidebar information architecture", () => {
     const observabilitySection = indexOfNeedle('{ label: "Observability", items: observabilityItems }');
     const teamSection = indexOfNeedle('{ label: "Team", items: teamItems }');
 
-    expect(marketplace).toBeLessThan(pluginDirectory);
     expect(pluginDirectory).toBeLessThan(connectors);
-    expect(connectors).toBeLessThan(sources);
-    expect(sources).toBeLessThan(managedDashboards);
+    expect(connectors).toBeLessThan(managedDashboards);
+    expect(managedDashboards).toBeLessThan(advanced);
     expect(workflowRuns).toBeLessThan(analytics);
     expect(workSection).toBeLessThan(manageSection);
     expect(manageSection).toBeLessThan(observabilitySection);
@@ -61,6 +59,13 @@ describe("Den org sidebar information architecture", () => {
     expect(shell).toContain('badge: "MCPs"');
     expect(shell).toContain('label: "Tool Tester"');
     expect(shell).toContain("mcpConnectionsEnabled && access.isAdmin");
+    expect(shell).toMatch(
+      /matchHrefs:\s*\[\s*getDesktopPoliciesRoute\(activeOrg\.slug\),\s*getBrandAppearanceRoute\(activeOrg\.slug\),\s*\]/,
+    );
+    expect(shell).not.toContain('label: "Collections"');
+    expect(shell).not.toContain('label: "Sources"');
+    expect(shell).not.toContain('label: "Brand appearance"');
+    expect(shell).not.toContain('label: "Desktop Policies"');
   });
 
   test("redirects the old Script runs path to Workflow runs", () => {
