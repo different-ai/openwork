@@ -51,6 +51,7 @@ import {
 } from "@/lib/discussions";
 import { effortForTurn, laneWithPreference, replyKindForLane, type EffortStop } from "@/lib/effort";
 import { EffortDial } from "@/ui/effort-dial";
+import { PopoverDisclosure, TechnicalText } from "@/ui/details-popover";
 import { carryVariant, chooseModelForLane, classifyRequest, describeModelChoice, markAutoPicked, wasAutoPicked, type ModelLane } from "@/lib/model-choice";
 import { describeReview, parseWorkerReview, parseWorkerTurn, workerNameFromTitle, type WorkerReview, type WorkerSummary } from "@/lib/workers";
 import { WorkerDecisionCards } from "@/ui/worker-decision";
@@ -223,10 +224,7 @@ function WorkspaceProblemNote({ problem, onRetry }: { problem: WorkspaceProblem;
         <Button variant="ghost" className="text-xs" onClick={onRetry}>Try again</Button>
       </div>
       <p className="mt-1 text-[11px] leading-relaxed text-mist">If this keeps happening, restart the AI service from AI &amp; local setup.</p>
-      <details className="mt-2 text-[11px] text-mist">
-        <summary className="cursor-pointer select-none">Technical details</summary>
-        <p className="mt-1 break-words font-mono">{problem.technical}</p>
-      </details>
+      <TechnicalText text={problem.technical} testId="coworker-workspace-problem-technical" />
     </div>
   );
 }
@@ -2138,19 +2136,15 @@ const REVIEW_KIND_WORDS = { finding: "reported", decision: "needs a decision", d
 /** "Reviewed 2 updates from Workers", opening into what each Worker said. */
 function ReviewDisclosure({ review }: { review: WorkerReview }) {
   return (
-    <details className="group text-[11px] text-mist" data-testid="coworker-worker-review">
-      <summary className="flex cursor-pointer list-none items-center gap-1.5 py-0.5 marker:hidden hover:text-snow">
-        <span>{describeReview(review)}</span>
-        <span className="text-mist/60 transition-transform group-open:rotate-90" aria-hidden="true">›</span>
-      </summary>
-      <ul className="mt-1 space-y-1.5 border-l border-line pl-3 leading-relaxed">
+    <PopoverDisclosure label={describeReview(review)} title="What the Workers reported" testId="coworker-worker-review" className="text-[11px] text-mist">
+      <ul className="space-y-1.5">
         {review.updates.map((update, index) => (
           <li key={index} className="whitespace-pre-wrap">
             <span className="font-semibold text-snow/80">{update.worker}</span> {REVIEW_KIND_WORDS[update.kind]}: {update.text}
           </li>
         ))}
       </ul>
-    </details>
+    </PopoverDisclosure>
   );
 }
 
@@ -2251,19 +2245,20 @@ function MessageBubble({
             <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/70">Assignment for {coworker.name}</p>
             <p className="mt-1 whitespace-pre-wrap" data-testid="coworker-assignment-outcome">{brief.outcome}</p>
             {brief.context.length > 0 ? (
-              <details className="group mt-2 text-xs text-white/80" data-testid="coworker-assignment-context">
-                <summary className="flex cursor-pointer list-none items-center gap-1 marker:hidden hover:text-white">
-                  <span>From your discussion · {brief.context.length} message{brief.context.length === 1 ? "" : "s"}</span>
-                  <span className="transition-transform group-open:rotate-90" aria-hidden="true">›</span>
-                </summary>
-                <ol className="mt-1.5 space-y-1.5 border-l border-white/25 pl-2.5">
+              <PopoverDisclosure
+                label={`From your discussion · ${brief.context.length} message${brief.context.length === 1 ? "" : "s"}`}
+                title="From your discussion"
+                testId="coworker-assignment-context"
+                className="mt-2 text-xs text-white/80"
+              >
+                <ol className="space-y-1.5">
                   {brief.context.map((entry, index) => (
                     <li key={index} className="whitespace-pre-wrap">
-                      <span className="font-semibold">{entry.speaker === "you" ? "You" : coworker.name}:</span> {entry.text}
+                      <span className="font-semibold text-snow/80">{entry.speaker === "you" ? "You" : coworker.name}:</span> {entry.text}
                     </li>
                   ))}
                 </ol>
-              </details>
+              </PopoverDisclosure>
             ) : null}
           </div>
         </article>
@@ -2372,14 +2367,9 @@ function ReplyText({ message, active, turnCalls, onLongReply }: { message: Trans
 /** Provider-returned thinking, folded to one quiet line once the reply is complete. Only what the transcript makes available is shown. */
 function ThinkingDisclosure({ text }: { text: string }) {
   return (
-    <details className="group text-[11px] text-mist" data-testid="coworker-thinking">
-      <summary className="flex cursor-pointer list-none items-center gap-1.5 py-0.5 marker:hidden hover:text-snow">
-        <ThoughtIcon className="size-3.5 shrink-0" />
-        <span>Thought through</span>
-        <span className="text-mist/60 transition-transform group-open:rotate-90" aria-hidden="true">›</span>
-      </summary>
-      <p className="mt-1 whitespace-pre-wrap border-l border-line pl-3 leading-relaxed">{text}</p>
-    </details>
+    <PopoverDisclosure label="Thought through" title="Thinking" icon={<ThoughtIcon className="size-3.5 shrink-0" />} testId="coworker-thinking" className="text-[11px] text-mist">
+      <p className="whitespace-pre-wrap" data-testid="coworker-thinking-landed-text">{text}</p>
+    </PopoverDisclosure>
   );
 }
 
@@ -2505,12 +2495,7 @@ function TurnFailureBubble({ coworkerName, outcome, onChoose }: { coworkerName: 
             />
           ))}
         </div>
-        {outcome.technical ? (
-          <details className="mt-2 text-[11px] text-mist" data-testid="coworker-turn-technical">
-            <summary className="cursor-pointer select-none">Technical details</summary>
-            <p className="mt-1 break-words font-mono">{outcome.technical}</p>
-          </details>
-        ) : null}
+        {outcome.technical ? <TechnicalText text={outcome.technical} testId="coworker-turn-technical" /> : null}
       </InteractionCard>
     </div>
   );

@@ -184,7 +184,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     const status = document.querySelector('[data-testid="coworker-thread-status"]');
     if (!(status instanceof HTMLElement) || status.dataset.state !== "idle" || status.textContent?.trim() !== "Ready") return false;
     return {
-      thinking: [...document.querySelectorAll('[data-testid="coworker-thinking"] summary')].map((node) => node.textContent?.trim() ?? ""),
+      thinking: [...document.querySelectorAll('[data-testid="coworker-thinking"] button')].map((node) => node.textContent?.trim() ?? ""),
       receipts: [...document.querySelectorAll('[data-testid="coworker-work-summary"]')].map((node) => node.textContent?.trim() ?? ""),
       liveRows: document.querySelectorAll('[data-testid="coworker-working"]').length,
     };
@@ -343,10 +343,13 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   await fill(app, 'textarea[aria-label="Message Editor"]', failurePrompt);
   await clickButton(app, "Send");
   // The failure is a message on Editor's side of the conversation, not a card across the column:
-  // one headline, the exact model id in the detail, lettered ways out, the raw text folded away.
+  // one headline, the exact model id in the detail, lettered ways out, the raw text small and bounded at the foot of the
+  // bubble from the start — the bubble lands at its full height and never grows.
   const failureText = await waitFor(app, `(() => {
     const failure = document.querySelector('[data-testid="coworker-turn-failed"]');
-    return failure?.textContent ?? false;
+    if (!failure) return false;
+    const technical = failure.querySelector('[data-testid="coworker-turn-technical"]');
+    return (failure.textContent ?? "").replace(technical?.textContent ?? "", "");
   })()`, { timeoutMs: 120_000, label: "actionable failed discussion turn" });
   expect(await evalIn(app, `document.querySelector('[data-testid="coworker-turn-headline"]')?.textContent?.trim()`)).toBe("Editor's AI model is not available.");
   expect(failureText).toContain("missing-provider/missing-model");
@@ -360,7 +363,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     const choices = [...(failure?.querySelectorAll('[data-testid="coworker-turn-choice"]') ?? [])];
     return {
       headlineFirst: Boolean(headline) && failure?.firstElementChild?.contains(headline) === true,
-      technicalOpen: technical instanceof HTMLDetailsElement ? technical.open : null,
+      technicalShown: technical instanceof HTMLElement && technical.getBoundingClientRect().height > 0 && !(technical instanceof HTMLDetailsElement),
       loadingIndicator: Boolean(document.querySelector('[data-testid="coworker-working"]')),
       roseCard: /rose/.test(failure?.className ?? "") || Boolean(document.querySelector('[data-testid="coworker-turn-timeout"]')),
       widthRatio: failure && failure.parentElement ? failure.getBoundingClientRect().width / failure.parentElement.getBoundingClientRect().width : null,
@@ -368,7 +371,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
       outcome: document.querySelector('[data-testid="coworker-thread-status"]')?.getAttribute("data-outcome"),
     };
   })()`);
-  expect(failureLayout).toMatchObject({ headlineFirst: true, loadingIndicator: false, roseCard: false, outcome: "failed" });
+  expect(failureLayout).toMatchObject({ headlineFirst: true, loadingIndicator: false, roseCard: false, outcome: "failed", technicalShown: true });
   if (!isRecord(failureLayout) || !Array.isArray(failureLayout.choices)) throw new Error("Failure layout facts were unavailable.");
   expect(failureLayout.choices.length).toBeLessThanOrEqual(3);
   expect(failureLayout.choices.map((choice) => (isRecord(choice) ? choice.letter : null))).toEqual(["A", "B", "C"].slice(0, failureLayout.choices.length));

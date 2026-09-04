@@ -424,10 +424,11 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     const technical = failure.querySelector('[data-testid="coworker-turn-technical"]');
     return {
       headline: failure.querySelector('[data-testid="coworker-turn-headline"]')?.textContent?.trim() ?? "",
-      text: failure.innerText ?? "",
+      text: (failure.innerText ?? "").replace(technical instanceof HTMLElement ? technical.innerText : "", ""),
       className: failure.className,
       needsYou: failure.getAttribute("data-needs-you"),
-      technicalOpen: technical instanceof HTMLDetailsElement ? technical.open : null,
+      technicalShown: technical instanceof HTMLElement && technical.getBoundingClientRect().height > 0 && !(technical instanceof HTMLDetailsElement),
+      technicalText: technical?.textContent ?? "",
       choices: [...failure.querySelectorAll('[data-testid="coworker-turn-choice"]')].map((choice) => ({ letter: choice.getAttribute("data-letter"), choice: choice.getAttribute("data-choice"), label: choice.textContent?.trim() ?? "" })),
       widthRatio: failure.parentElement ? failure.getBoundingClientRect().width / failure.parentElement.getBoundingClientRect().width : null,
       header: document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() ?? "",
@@ -440,7 +441,9 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(hardCard.headline).toBe("Nova's AI model cannot use the tools enabled for this coworker.");
   expect(hardCard.className).not.toMatch(/rose/);
   expect(hardCard.needsYou).toBe("true");
-  expect(hardCard.technicalOpen).toBe(false);
+  // The raw reason is part of the bubble from the start, small and bounded, so the bubble never grows; the words the person reads first stay plain.
+  expect(hardCard.technicalShown).toBe(true);
+  expect(String(hardCard.technicalText)).toMatch(/Technical details/);
   expect(String(hardCard.text)).not.toMatch(/APIError|status code|400/);
   expect(hardCard.choices.length).toBeLessThanOrEqual(3);
   expect(hardCard.choices.map((choice) => (isRecord(choice) ? `${choice.letter} ${choice.choice}` : ""))).toEqual(["A use-model", "B choose-model", "C continue-with-openwork"]);
