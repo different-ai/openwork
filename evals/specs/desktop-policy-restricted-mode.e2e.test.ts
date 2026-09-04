@@ -37,6 +37,9 @@ const restrictedSavedValues: Record<string, boolean> = {
 const lockedKeys = Object.keys(restrictedSavedValues).filter((key) => key !== "showWelcomePage");
 
 const settingsHub = { role: "button", label: "Settings" } as const;
+const accountMenu = { testId: "account-status-menu" };
+const settingsMenuItem = { role: "menuitem", label: "Settings" } as const;
+const accountMenuItem = { role: "menuitem", label: "Account" } as const;
 const policyBanner = { testId: "desktop-policy-banner" };
 const manageExtensionsNotice = { testId: "manage-extensions-policy-notice" };
 const builtInExtensionsNotice = "Built-in OpenWork extensions are disabled by your organization";
@@ -65,7 +68,7 @@ test("an admin switches the default desktop policy to Restricted and a member's 
   // banner is not a discriminator here: it already reacts to unrelated
   // organization flags such as Dashboards or Automations being off.)
   const libraryHashBefore = await step("the member opens the Library before the policy changes", async () => {
-    await member.agent.run("route.extensions.skills");
+    await member.user.click("Library");
     await member.user.see({ text: "Library" }, { timeoutMs: 90_000 });
     await member.user.notSee(manageExtensionsNotice);
     return member.probe.hash();
@@ -80,8 +83,10 @@ test("an admin switches the default desktop policy to Restricted and a member's 
     libraryHashBefore.includes("/extensions"),
   );
 
-  const hashBefore = await step("the member opens settings before the policy changes", async () => {
-    await member.agent.run("route.settings.general");
+  const hashBefore = await step("the member opens settings from the account menu before the policy changes", async () => {
+    await member.user.click(accountMenu);
+    await member.user.see(settingsMenuItem);
+    await member.user.click(settingsMenuItem);
     await member.user.see(settingsHub, { timeoutMs: 60_000 });
     for (const group of ["Workspace", "Global", "Cloud"]) await member.user.see({ text: group });
     return member.probe.hash();
@@ -216,8 +221,22 @@ test("an admin switches the default desktop policy to Restricted and a member's 
     redirectedHash.includes("/settings/cloud-account"),
   );
 
+  await step("the account menu offers only the Account page", async () => {
+    await member.user.click({ role: "button", label: "Back to app" });
+    await member.user.click(accountMenu);
+    await member.user.see(accountMenuItem);
+    await member.user.notSee(settingsMenuItem);
+    await member.user.press("Escape");
+    await member.user.notSee(accountMenuItem, { timeoutMs: 10_000 });
+  });
+  evidence.recordAssertionEvidence(
+    "Under the Restricted policy the account menu leads to the Account page instead of desktop settings",
+    "account menu shows an Account item and no Settings item",
+    true,
+  );
+
   const { libraryHashAfter, builtInNoticeShown } = await step("the member opens the Library under the Restricted policy", async () => {
-    await member.agent.run("route.extensions.skills");
+    await member.user.click("Library");
     await member.user.see(manageExtensionsNotice, { timeoutMs: 90_000, text: /disabled local extension management/ });
     // Restricted also turns off allowBuiltInExtensions, so the Library's
     // existing built-in banner appears alongside the new notice.
