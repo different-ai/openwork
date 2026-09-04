@@ -54,10 +54,10 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
   Stopped… — with no dot: mist unless the coworker is asking for the person
   (amber: Needs you, Waiting for permission, Waiting for an answer) or reporting
   a failure (rose: AI unavailable, Not responding, Reply failed, Response
-  delayed). The moment-to-moment phases (Sending, Thinking, Using a tool) fold
-  into Working there; the live row in the transcript owns those phrases, and a
-  tooltip on the word adds the reason and the time ("Retrying after an
-  interruption · since 7:40 AM"). An empty conversation shows only a small
+  delayed). The moment-to-moment phases (Sending, Thinking, Using a tool,
+  Writing) fold into Working there; the live turn in the transcript shows them
+  as shapes, and a tooltip on the word adds the reason and the time ("Retrying
+  after an interruption · since 7:40 AM"). An empty conversation shows only a small
   avatar, the coworker's name and role, one line ("What should we work
   through?", or, for a coworker a teammate proposed, "Nova suggested me — …"),
   and the focused composer; there are no starter cards. At the foot
@@ -279,16 +279,34 @@ the engine reports (idle, busy, or retrying with its next attempt), the reply
 it holds for that message, and the wait budget. The header status, the rail
 line, Activity's Now card, and the journeys read the same value.
 
-- **Working** is the live row: a small avatar, three dots, and one phrase that
-  changes only with the phase ("Nova is thinking…"). Tap the phrase when you
-  get impatient and one discreet gray line below shows the end of what is
-  streaming right now — the words being written, the thinking, or the tool
-  step — live from the engine's events (the thread itself only carries a text
-  or reasoning part once it has ended); it hides itself after twelve seconds,
-  or on a second tap.
+- **Working** is the live turn, the way someone typing reads in Messages
+  (`ui/live-row.tsx`, `ui/thinking-popover.tsx`; the rules in
+  `lib/live-phase.ts`). The phase comes from what is streaming, not from a
+  label: a reasoning part arriving is *thinking*, a text part arriving is
+  *writing*, an unsettled tool call is a *tool*, nothing yet is thinking.
+  While thinking, the row is the avatar and a small typing bubble — three
+  dots rising and falling in turn — and no phrase; tap it and a light popover
+  under the row shows the thinking as it arrives, pinned to the newest line
+  unless you scrolled up, with "thinking for 4 s" in small print. A model
+  that shares no thinking gets the same dots, and the popover says so in one
+  line once words have arrived ("This AI model doesn't share its thinking.").
+  While a tool runs the row is a chip — the tool glyph and the step in plain
+  words ("Reading a web page") — and the same popover shows the step with its
+  technical details behind a fold. The moment the reply's words start, the row
+  goes away and a real bubble fills in as they come (an open code fence is
+  closed for the live render only; the transcript follows only while you are
+  already at the end), then is simply the landed bubble. A landed reply's
+  tooltip says how fast it came: "first words in 1.8 s · 6.3 s in all · 320
+  words of thinking" (`lib/turn-speed.ts`; the first-words moment is kept for
+  the profile so a reload keeps it; "words of thinking" are the reasoning
+  tokens the model reported). Nothing about speed appears in the transcript
+  itself. Escape, a click outside, the words starting, or the turn ending
+  closes the popover.
 - **Still working** is not a failure. When two minutes pass while the engine
-  is still busy, the phrase softens to "Nova is still working on it…" and gains
-  one inline *Stop*; the header and rail say *Still working*. Only the engine
+  is still busy, the row keeps its shape (the typing bubble or the chip; under
+  the live bubble when words have stalled) and gains the soft phrase "Nova is
+  still working on it…" with one inline *Stop*; the header and rail say *Still
+  working*. Only the engine
   going idle without a reply ends the turn without one.
 - **Retrying.** The engine retries a rate limit or a 5xx by itself and says
   when; the app shows "Couldn't reach the AI model. Trying again in 6 s…" with
@@ -338,6 +356,15 @@ loopback, so this journey runs on the local lane by construction):
 OPENWORK_EVAL_ELECTRON_BINARY="apps/coworker/dist-electron/mac-arm64/Open Coworker.app/Contents/MacOS/Open Coworker" \
   pnpm evals:e2e open-coworker-turn-recovery --local
 ```
+
+The live turn has its own journey, `open-coworker-live-turn`: a scripted model
+paces its stream and thinks out loud through the openai-compatible reasoning
+field (the engine surfaces it as reasoning parts), so the typing bubble, the
+popover filling with the thinking, the chip for a slow web page with its Doing
+popover, the words streaming into a live bubble, the tooltip's speed line, the
+same dots for a model that shares no thinking, the typing bubble past the wait
+budget with its soft phrase and Stop, and a reload are each read from a trace
+of the live shapes.
 
 ## Architecture
 
@@ -794,11 +821,12 @@ complete, and all the tool calls behind one reply become one work receipt
 ("Edited index.md", "Worked with your files and Calendar · 3 steps") that opens
 into plain-word steps with the tool name behind Technical details
 (`lib/work-receipt.ts`). Documents and Apps the work produced stay first-class
-as compact attachment chips beneath the receipt. While a turn runs, one live row
-carries the moving state — a small avatar, three dots, and one phrase that
-changes only with the phase ("Nova is thinking…", "Nova is editing index.md…",
-"Nova is putting it together…"). Consecutive messages from the same speaker
-drop the repeated avatar and name and sit closer together.
+as compact attachment chips beneath the receipt. While a turn runs, the live
+turn carries the moving state — a typing bubble while thinking (tap for the
+thinking), a chip while a tool runs, and the words themselves streaming into
+the bubble once they arrive (see *Working* under the turn outcomes above).
+Consecutive messages from the same speaker drop the repeated avatar and name
+and sit closer together.
 
 The message that opens an assignment carries scaffolding for the model (the
 outcome, the visible discussion it came from, and a short instruction); the
