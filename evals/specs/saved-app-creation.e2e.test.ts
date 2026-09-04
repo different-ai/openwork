@@ -24,16 +24,20 @@ test("create, preview, save and reopen an app without changing already-open resu
     try {
       const preview = await probe.eventually(() => world.previewText(), { within: 30_000, label: "generated preview rendered", until: (text) => text.includes("Weekly overview") && text.includes("Launch briefing") });
       expect(preview).not.toContain("could not render");
+      await world.showDetails();
+      await probe.eventually(() => world.previewText(), { within: 10_000, label: "preview interaction", until: (text) => text.includes("Hide details") && text.includes("Workers:") });
     } finally {
       await user.screenshot();
     }
     await user.click("Save app");
     await user.see("Save to Apps");
     await user.see({ label: "App name" }, { value: "Briefing app" });
+    await user.screenshot();
     await user.click("Cancel");
     expect(record((await readApp(originalPath)).view).activeRevisionId).toBeNull();
     await user.screenshot();
   });
+  evidence.recordAssertionEvidence("The generated app renders workflow data and supports preview interactions", "The sandbox displayed Weekly overview and Launch briefing, and Show details revealed the worker count before saving.", true);
 
   await step("save the app with its workflow", async () => {
     await user.click("Save app");

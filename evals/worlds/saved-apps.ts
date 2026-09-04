@@ -1,5 +1,6 @@
 import type { Seed } from "@openwork/env";
 import { go, runWorkflow, saveWorkflow } from "@openwork/behaviors";
+import { connect, debuggerUrlFor, evaluate, listTargets } from "@openwork/cdp";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -67,30 +68,20 @@ export async function savedAppCreation(seed: Seed) {
   const revisionId = field(view.revisions[0], "id");
   const app = await seed.desktop({ den, name: "saved-app-creation" });
   const workspace = await seed.workspace(app, seed.tmpPath("saved-app-creation"));
+  const inPreview = async (expression: string) => {
+    // The opaque sandbox is an out-of-process frame; the parent's DOM snapshot excludes it.
+    const targets = await listTargets(app.handle.cdpUrl);
+    const target = targets.find((entry) => entry.type === "iframe" && entry.url === "about:srcdoc");
+    if (!target) return "";
+    const client = await connect(debuggerUrlFor(app.handle.cdpUrl, target));
+    try { return await evaluate(client, expression); }
+    finally { client.close(); }
+  };
   return {
     app, den, workspace, appId, revisionId, rpc, run,
     open: (path: string) => go(app, path),
-    async previewText() {
-      const snapshot = record(await app.client.send("DOMSnapshot.captureSnapshot", { computedStyles: [] }));
-      const strings = snapshot.strings;
-      const documents = snapshot.documents;
-      if (!Array.isArray(strings) || !Array.isArray(documents)) return "";
-      return documents.flatMap((document) => {
-        const item = record(document);
-        const nodes = record(item.nodes);
-        const names = nodes.nodeName;
-        const parents = nodes.parentIndex;
-        const values = nodes.nodeValue;
-        if (!Array.isArray(names) || !Array.isArray(parents) || !Array.isArray(values)) return [];
-        return values.flatMap((value, index) => {
-          if (strings[Number(names[index])] !== "#text") return [];
-          const parentName = strings[Number(names[Number(parents[index])])];
-          if (parentName === "SCRIPT" || parentName === "STYLE") return [];
-          const text = strings[Number(value)];
-          return typeof text === "string" ? [text] : [];
-        });
-      }).join(" ");
-    },
+    previewText: async () => String(await inPreview("document.body.innerText")),
+    showDetails: () => inPreview('document.querySelector("button")?.click()'),
     receiptId: field(firstRun, "receiptId"),
     render: () => rpc("render_workflow_artifact", { configObjectId }),
     async revise() {
