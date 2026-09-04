@@ -178,7 +178,17 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
   — and starts one with New Worker. At most three Workers are live per
   coworker; a Worker never starts a Worker. `workers.json` keeps Worker threads
   out of discussions and assignments; a Worker left mid-turn by a quit resumes
-  on the next launch and waits its turn like any run.
+  on the next launch and waits its turn like any run. The contract sends
+  complex or long work to a Worker *so the coworker stays in the conversation*:
+  a reply that runs for minutes leaves the person waiting, while a Worker runs
+  beside them and the coworker keeps answering. For each Worker the app keeps
+  one line in the coworker's working memory on its behalf (`**Worker · Market
+  scan** — started — …`, then `latest: …`, `needs a decision: …`, `paused`,
+  cleared when it ends), written through the same `memory_note` path the
+  coworker uses for its own work, so the person sees what is running from the
+  Memory view and the coworker reads it at the start of every turn. A full
+  working memory or a refused text only logs a warning; the Worker itself is
+  never held up by its line.
 - **Skills and MCP** come for free from the same engine configuration layering
   the OpenWork desktop uses.
 - **Personality is a voice, not a behavior.** Each coworker can have a
@@ -260,7 +270,7 @@ read more.
   the reply, an assignment, and a Worker — see *Automatic choices* below — with
   five before/after examples: a research question, a plan request, a quick
   question that needs no document, work on a clock, and a goal for a Worker).
-  It is versioned (6) and regenerated on launch for existing coworkers without
+  It is versioned (7) and regenerated on launch for existing coworkers without
   touching `soul.md` or anything under `memory/`; the repair also adds
   `documents/index.md` to `opencode.json`'s instructions and creates the index
   when it is missing.
@@ -993,6 +1003,23 @@ back, so *"what do you know about me?"* is answered honestly). The coworker
 contract (`AGENTS.md`, refreshed on launch for existing coworkers without
 touching their soul or memory) asks for this in the same turn the person says
 it, and to state a significant soul change in one sentence rather than ask.
+
+Working memory is also the coworker's notebook for work in progress.
+`memory_note` keeps one line per piece of work under `## Now`
+(`**Vendor comparison** — two contracts read; next: call Beta`): the same work
+name replaces the line in place instead of piling up, an empty text clears it,
+and the first name given sticks so a later "vendor comparison." still finds
+the line. The contract asks the coworker to write that line *before* it starts
+anything longer than a quick answer (what it is doing, what done looks like,
+the next step), to refresh it after each meaningful step or change of plan —
+not after every tool call — and to clear it when the work is done; a line it
+does not remember writing is its own note from before an interruption, so it
+picks up there instead of starting over. The person sees these lines in the
+Memory view's Working memory tab as the coworker works, and the conversation
+shows each one as an action line (*"Noted · Vendor comparison — …"*,
+*"Cleared the note · Vendor comparison"*). Open Coworker writes the same kind of
+line for each Worker itself (see *Workers* above), so the coworker never
+keeps a second one.
 
 Every write is atomic (temp file + rename), keeps the files small (working
 memory is curated, capped, never appended blindly; a fact promoted to
