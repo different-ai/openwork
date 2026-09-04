@@ -993,6 +993,8 @@ function ThreadView({
   /** The turn in flight or left unresolved, and the messages waiting as Next — the record turns.json keeps. */
   const [turnState, setTurnState] = useState<ThreadTurnState>(EMPTY_THREAD_TURNS);
   const turnStateRef = useRef<ThreadTurnState>(EMPTY_THREAD_TURNS);
+  /** The person's own messages in this thread: the engine streams their text parts too, and those are never the reply. */
+  const userMessageIdsRef = useRef<Set<string>>(new Set());
   const [turnsLoaded, setTurnsLoaded] = useState(false);
   /** The pending turn was read back from disk: a quit or reload happened while it ran. */
   const [recovered, setRecovered] = useState(false);
@@ -1069,6 +1071,7 @@ function ThreadView({
         if (!activeTurnRef.current) setFailure(stall);
       }
       setEngineStatus(status);
+      userMessageIdsRef.current = new Set(transcript.messages.filter((message) => message.role === "user").map((message) => message.id));
       setMessages(
         transcript.messages.map((message) => ({
           id: message.id,
@@ -1115,9 +1118,11 @@ function ThreadView({
     const unsubscribe = threads.subscribe(
       () => void refresh(),
       (event) => setLiveStream((current) => {
+        // The person's message streams as a text part too; only the coworker's parts are the reply.
+        const pendingId = turnStateRef.current.pending?.messageId;
+        if (event.messageId === pendingId || userMessageIdsRef.current.has(event.messageId)) return current;
         const next = applyStreamEvent(current, event, threadId);
         // The first words of the reply on screen: the moment the speed line is measured from.
-        const pendingId = turnStateRef.current.pending?.messageId;
         if (pendingId && next && next.type === "text" && next.text.trim()) rememberFirstWords(window.localStorage, pendingId, Date.now());
         return next;
       }),
