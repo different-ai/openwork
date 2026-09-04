@@ -688,7 +688,7 @@ describe("OpenWorkExtensionsPreview session tools", () => {
   });
 
   test("stamps the requesting conversation on UI commands so the app acts for that thread, not the one on screen", async () => {
-    const bridge = await startFakeUiBridge();
+    const fake = startFakeOpenWorkServer();
     const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
 
     await plugin.tool.openwork_execute.execute({
@@ -698,11 +698,17 @@ describe("OpenWorkExtensionsPreview session tools", () => {
       origin: { sessionId: "ses_spoofed" },
     }, { sessionID: "ses_origin", workspaceId: "ws_2" });
 
-    expect(bridge.commands.map((command) => command.body)).toEqual([
+    expect(fake.uiControlRequests).toEqual([
       {
-        id: "browser.open_url",
-        args: { url: "https://example.com" },
-        origin: { sessionId: "ses_origin", workspaceId: "ws_2" },
+        authorization: "Bearer test-token",
+        body: {
+          kind: "command",
+          input: {
+            id: "browser.open_url",
+            args: { url: "https://example.com" },
+            origin: { sessionId: "ses_origin", workspaceId: "ws_2" },
+          },
+        },
       },
     ]);
   });

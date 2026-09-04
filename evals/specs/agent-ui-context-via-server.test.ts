@@ -109,6 +109,9 @@ test("the in-app agent reads renderer context through openwork-server and gets a
       const layout = conversations && isRecord(conversations.layout) ? conversations.layout : null;
       const providerRequests = world.requests.slice(before);
 
+      expect(layout?.kind).toBe("split");
+      expect(layout?.focused).toBe("secondary");
+      expect(layout?.primarySessionId).toBe("ses_left");
       expect(layout?.secondarySessionId).toBe("ses_right");
       expect(Array.isArray(context?.availableAffordances)).toBe(true);
       expect(fakeWindow.handled).toHaveLength(1);
@@ -125,4 +128,50 @@ test("the in-app agent reads renderer context through openwork-server and gets a
       await fakeWindow.detach();
     }
   });
+
+  await step("only authenticated clients can exchange requests, and each command is delivered once", async () => {
+    const headers = { authorization: `Bearer ${world.token}`, "content-type": "application/json" };
+    const requestPath = `${world.base}/experimental/ui-control/request`;
+    const pendingPath = `${world.base}/experimental/ui-control/pending`;
+    for (const [path, init] of [
+      [requestPath, { method: "POST", body: JSON.stringify({ kind: "context" }) }],
+      [pendingPath, {}],
+      [`${world.base}/experimental/ui-control/unknown/reply`, { method: "POST", body: JSON.stringify({ result: {} }) }],
+    ] satisfies [string, RequestInit][]) {
+      expect((await fetch(path, { ...init, signal: AbortSignal.timeout(5_000) })).status).toBe(401);
+    }
+    expect((await fetch(requestPath, {
+      method: "POST", headers, body: JSON.stringify({ kind: "invalid" }),
+    })).status).toBe(400);
+
+    for (const kind of ["query", "command"]) {
+      await fetch(pendingPath, { headers });
+      const input = { id: "mailbox.witness", args: { marker: kind } };
+      const result = { ok: true, result: { marker: kind } };
+      const requested = fetch(requestPath, {
+        method: "POST", headers, body: JSON.stringify({ kind, input }), signal: AbortSignal.timeout(10_000),
+      });
+      const response = await fetch(`${pendingPath}?wait=1`, { headers, signal: AbortSignal.timeout(12_000) });
+      const payload: unknown = await response.json();
+      if (!isRecord(payload) || !Array.isArray(payload.items) || !isRecord(payload.items[0])) {
+        throw new Error("Expected a delivered mailbox item");
+      }
+      expect(payload.items).toHaveLength(1);
+      const item = payload.items[0];
+      expect(item.kind).toBe(kind);
+      expect(item.input).toEqual(input);
+      expect(await (await fetch(pendingPath, { headers })).json()).toEqual({ items: [] });
+      const replyPath = `${world.base}/experimental/ui-control/${item.id}/reply`;
+      const reply = { method: "POST", headers, body: JSON.stringify({ result }) };
+      expect((await fetch(replyPath, reply)).status).toBe(200);
+      expect(await (await requested).json()).toEqual(result);
+      expect((await fetch(replyPath, reply)).status).toBe(404);
+    }
+    evidence.recordAssertionEvidence(
+      "Authentication protects all mailbox endpoints and queries and commands are claimed only once",
+      "Unauthenticated requests returned 401, invalid kinds returned 400, both payloads and replies survived the relay, a second poll was empty, and duplicate replies returned 404.",
+      true,
+    );
+  });
+
 });

@@ -122,6 +122,12 @@ UI control mailbox (client auth):
 - `GET /experimental/ui-control/pending` (optional `?wait=1`)
 - `POST /experimental/ui-control/:id/reply`
 
+Desktop and web renderers poll the same server they are connected to. The first
+polling window claims each request; commands are never broadcast to every tab.
+Requests expire after five seconds, and a server with no recent renderer poll
+returns an explicit no-window result. The external desktop UI MCP bridge remains
+available; in-app tools no longer discover or fall back to that bridge.
+
 OpenCode proxy:
 
 - `GET|POST|... /opencode/*`

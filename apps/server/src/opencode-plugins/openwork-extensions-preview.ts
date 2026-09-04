@@ -279,7 +279,7 @@ async function uiControlRequest(
   input?: unknown,
 ): Promise<unknown> {
   try {
-    return await postJson("/experimental/ui-control/request", { kind, input });
+    return await postJson("/experimental/ui-control/request", { kind, input }, AbortSignal.timeout(7_000));
   } catch (error) {
     return { ok: false, error: unknownErrorMessage(error) };
   }
@@ -862,9 +862,10 @@ function proposeAutomation(rawArgs: unknown, context: OpenCodeContext): object {
   };
 }
 
-async function postJson(path: string, body: ExtensionActionPayload | Record<string, unknown>): Promise<unknown> {
+async function postJson(path: string, body: ExtensionActionPayload | Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
   const { url, token } = requireOpenWorkServer();
   const response = await fetch(url + path, {
+    signal,
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,

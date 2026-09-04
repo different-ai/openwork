@@ -45,7 +45,8 @@ export class UiControlMailbox {
     });
   }
 
-  async pending(options: { wait: boolean }): Promise<UiControlRequest[]> {
+  async pending(options: { wait: boolean; signal: AbortSignal }): Promise<UiControlRequest[]> {
+    if (options.signal.aborted) return [];
     this.lastPollAt = Date.now();
     const items = this.takeUndelivered();
     if (items.length > 0 || !options.wait) return items;
@@ -54,13 +55,15 @@ export class UiControlMailbox {
       const wake = () => {
         clearTimeout(timeout);
         this.waiters.delete(wake);
+        options.signal.removeEventListener("abort", wake);
         resolve();
       };
       const timeout = setTimeout(wake, PENDING_WAIT_TIMEOUT_MS);
       this.waiters.add(wake);
+      options.signal.addEventListener("abort", wake, { once: true });
     });
 
-    return this.takeUndelivered();
+    return options.signal.aborted ? [] : this.takeUndelivered();
   }
 
   reply(id: string, result: unknown): boolean {

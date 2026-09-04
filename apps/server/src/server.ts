@@ -1008,7 +1008,6 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
   const routes = createRoutes(
     config,
     approvals,
-    uiControl,
     tokens,
     env,
     restartReloadWatchers,
@@ -2184,7 +2183,6 @@ function serializeWorkspace(workspace: ServerConfig["workspaces"][number]) {
 function createRoutes(
   config: ServerConfig,
   approvals: ApprovalService,
-  uiControl: UiControlMailbox,
   tokens: TokenService,
   env: EnvService,
   onWorkspacesChanged: () => void,

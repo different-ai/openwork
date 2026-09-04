@@ -1340,7 +1340,9 @@ async function fetchWithTimeout(
 
   const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
   const signal = controller?.signal;
-  const initWithSignal = signal && !init.signal ? { ...init, signal } : init;
+  const initWithSignal = signal
+    ? { ...init, signal: init.signal ? AbortSignal.any([signal, init.signal]) : signal }
+    : init;
 
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   const timeoutPromise = new Promise<never>((_, reject) => {
@@ -1370,7 +1372,7 @@ async function fetchWithTimeout(
 async function requestJson<T>(
   baseUrl: string,
   path: string,
-  options: { method?: string; token?: string; hostToken?: string; body?: unknown; timeoutMs?: number } = {},
+  options: { method?: string; token?: string; hostToken?: string; body?: unknown; timeoutMs?: number; signal?: AbortSignal } = {},
 ): Promise<T> {
   const url = `${baseUrl}${path}`;
   const fetchImpl = resolveFetch(url);
@@ -1379,6 +1381,7 @@ async function requestJson<T>(
     url,
     {
       method: options.method ?? "GET",
+      signal: options.signal,
       headers: buildHeaders(options.token, options.hostToken),
       body: options.body ? JSON.stringify(options.body) : undefined,
     },
@@ -1806,11 +1809,11 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         { token, hostToken },
       );
     },
-    listUiControlPending: (options?: { wait?: boolean }) =>
+    listUiControlPending: (options?: { wait?: boolean; signal?: AbortSignal }) =>
       requestJson<{ items: OpenworkUiControlRequest[] }>(
         baseUrl,
         `/experimental/ui-control/pending${options?.wait ? "?wait=1" : ""}`,
-        { token, hostToken, timeoutMs: 15_000 },
+        { token, hostToken, timeoutMs: 15_000, signal: options?.signal },
       ),
     replyUiControl: (id: string, result: unknown) =>
       requestJson<{ ok: boolean }>(baseUrl, `/experimental/ui-control/${encodeURIComponent(id)}/reply`, {

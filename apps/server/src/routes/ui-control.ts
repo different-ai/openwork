@@ -32,7 +32,7 @@ export function registerUiControlRoutes(options: RegisterUiControlRoutesOptions)
   });
 
   addRoute(routes, "GET", "/experimental/ui-control/pending", "client", async (ctx) => {
-    const items = await ctx.uiControl.pending({ wait: ctx.url.searchParams.get("wait") === "1" });
+    const items = await ctx.uiControl.pending({ wait: ctx.url.searchParams.get("wait") === "1", signal: ctx.request.signal });
     return jsonResponse({ items });
   });
 

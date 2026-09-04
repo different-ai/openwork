@@ -31,26 +31,25 @@ export function useUiControlMailbox(apiRef: RefObject<OpenworkControlAPI | null>
     if (import.meta.env.MODE === "test") return;
 
     let mounted = true;
-    let client: ReturnType<typeof createOpenworkServerClient> | null = null;
+    const controller = new AbortController();
 
     async function poll(): Promise<void> {
       while (mounted) {
         try {
-          if (!client) {
-            const connection = await resolveOpenworkConnection();
-            if (!mounted) return;
-            if (!connection.normalizedBaseUrl || !connection.resolvedToken) {
-              await wait(3_000);
-              continue;
-            }
-            client = createOpenworkServerClient({
-              baseUrl: connection.normalizedBaseUrl,
-              token: connection.resolvedToken,
-              hostToken: connection.resolvedHostToken,
-            });
+          // Resolve again after each poll so switching servers or signing in
+          // cannot leave this window answering a previous server's mailbox.
+          const connection = await resolveOpenworkConnection();
+          if (!mounted) return;
+          if (!connection.normalizedBaseUrl || !connection.resolvedToken) {
+            await wait(3_000);
+            continue;
           }
-
-          const { items } = await client.listUiControlPending({ wait: true });
+          const client = createOpenworkServerClient({
+            baseUrl: connection.normalizedBaseUrl,
+            token: connection.resolvedToken,
+            hostToken: connection.resolvedHostToken,
+          });
+          const { items } = await client.listUiControlPending({ wait: true, signal: controller.signal });
           if (!mounted) return;
           for (const item of items) {
             let result: unknown;
@@ -64,7 +63,6 @@ export function useUiControlMailbox(apiRef: RefObject<OpenworkControlAPI | null>
             await client.replyUiControl(item.id, result);
           }
         } catch {
-          client = null;
           if (mounted) await wait(2_000);
         }
       }
@@ -73,6 +71,7 @@ export function useUiControlMailbox(apiRef: RefObject<OpenworkControlAPI | null>
     void poll();
     return () => {
       mounted = false;
+      controller.abort();
     };
   }, [apiRef]);
 }
