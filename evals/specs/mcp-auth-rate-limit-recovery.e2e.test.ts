@@ -53,7 +53,7 @@ test("MCP requests keep valid credentials after the public auth rate limit is ex
     headers: { cookie, "content-type": "application/json" },
     body: JSON.stringify({ accept: true, scope, oauth_query: new URL(consentLocation, origin).search.slice(1) }),
   });
-  expect(consent.status).toBe(200);
+  expect(consent.status, await consent.clone().text()).toBe(200);
   const callback = new URL(stringField(await consent.json(), "url"));
   const code = callback.searchParams.get("code");
   if (!code) throw new Error("Missing authorization code");
