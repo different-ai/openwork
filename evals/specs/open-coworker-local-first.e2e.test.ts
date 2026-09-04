@@ -1955,8 +1955,8 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   });
   if (!isRecord(chatScheduling) || typeof chatScheduling.collapsedText !== "string") throw new Error("Action line facts were unavailable.");
   expect(chatScheduling.collapsedText).not.toMatch(/coworker_|assignment_create|"kind"|\{/);
-  // The tool's name waits behind Technical details, never in the line itself. The receipt stays
-  // open on its own until the person writes again, so open it only if it is closed.
+  // The tool's name waits behind Technical details, never in the line itself. The steps wait in a
+  // popover the person opens from the line, so open it only if it is closed.
   await evalIn(app, `(() => {
     const summary = [...document.querySelectorAll('[data-testid="coworker-work-summary"]')].find((button) => (button.textContent ?? "").includes("Created assignment"));
     if (summary instanceof HTMLElement && summary.getAttribute("aria-expanded") !== "true") summary.click();

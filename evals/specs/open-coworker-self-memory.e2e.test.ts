@@ -169,38 +169,64 @@ async function waitForNovaReady(app: Awaited<ReturnType<typeof coworker>>): Prom
 }
 
 /** Send one message and wait for the coworker's reply text; returns the settled action line's collapsed words. */
-async function converse(app: Awaited<ReturnType<typeof coworker>>, prompt: string, reply: string): Promise<{ summary: string; steps: string[]; text: string }> {
+async function converse(app: Awaited<ReturnType<typeof coworker>>, prompt: string, reply: string): Promise<{ summary: string; steps: string[]; text: string; stackedBeforeOpen: number; expandedBeforeOpen: string; popover: string }> {
   await fill(app, 'textarea[aria-label="Message Nova"]', prompt);
   await clickButton(app, "Send");
   await waitFor(app, `[...document.querySelectorAll('[data-message-role="assistant"]')].some((message) => (message.textContent ?? "").includes(${json(reply)}))`, {
     timeoutMs: 300_000,
     label: `reply ${json(reply)}`,
   });
-  const facts = await waitFor(app, `(() => {
+  // The line between the prompt and its reply, read before anyone opens it: the chat holds one
+  // line and no steps stack beneath it.
+  const closed = await waitFor(app, `(() => {
     const bubbles = [...document.querySelectorAll('[data-message-role]')];
     const userIndex = bubbles.findIndex((bubble) => (bubble.textContent ?? "").includes(${json(prompt)}));
     const replyIndex = bubbles.findIndex((bubble) => (bubble.textContent ?? "").includes(${json(reply)}));
     if (userIndex === -1 || replyIndex === -1) return false;
     const top = bubbles[userIndex].getBoundingClientRect().bottom;
     const bottom = bubbles[replyIndex].getBoundingClientRect().top;
-    const line = [...document.querySelectorAll('[data-testid="coworker-action-line"]')].find((candidate) => {
+    const lines = [...document.querySelectorAll('[data-testid="coworker-action-line"]')];
+    const line = lines.find((candidate) => {
       const rect = candidate.getBoundingClientRect();
       return rect.top >= top - 1 && rect.bottom <= bottom + 1;
     });
     const receipt = line?.querySelector('[data-testid="coworker-work-receipt"]');
     if (!(line instanceof HTMLElement) || !(receipt instanceof HTMLElement) || receipt.dataset.state !== "done") return false;
     const summary = line.querySelector('[data-testid="coworker-work-summary"]');
-    if (summary instanceof HTMLElement && summary.getAttribute("aria-expanded") !== "true") summary.click();
     return {
+      lineIndex: lines.indexOf(line),
       summary: summary?.querySelector("span.truncate")?.textContent?.trim() ?? "",
-      steps: [...line.querySelectorAll('[data-testid="coworker-work-step"]')].map((step) => step.querySelector("span.truncate")?.textContent?.trim() ?? ""),
-      text: line.innerText,
+      stackedBeforeOpen: line.querySelectorAll('[data-testid="coworker-work-step"]').length,
+      expandedBeforeOpen: summary?.getAttribute("aria-expanded") ?? "",
     };
   })()`, { timeoutMs: 60_000, label: `the action line between ${json(prompt)} and its reply` });
-  if (!isRecord(facts) || typeof facts.summary !== "string" || !Array.isArray(facts.steps) || typeof facts.text !== "string") {
+  if (!isRecord(closed) || typeof closed.lineIndex !== "number" || typeof closed.summary !== "string" || typeof closed.stackedBeforeOpen !== "number" || typeof closed.expandedBeforeOpen !== "string") {
     throw new Error("Action line facts were unavailable.");
   }
-  return { summary: facts.summary, steps: facts.steps.map(String), text: facts.text };
+  // Tapping the line opens its steps in a popover; React paints it on its next tick, so it is read on a later poll.
+  const lineSelector = `document.querySelectorAll('[data-testid="coworker-action-line"]')[${closed.lineIndex}]`;
+  await evalIn(app, `(() => { const summary = ${lineSelector}?.querySelector('[data-testid="coworker-work-summary"]'); if (summary instanceof HTMLElement && summary.getAttribute("aria-expanded") !== "true") summary.click(); return true; })()`);
+  const opened = await waitFor(app, `(() => {
+    const line = ${lineSelector};
+    const popover = line?.querySelector('[data-testid="coworker-work-steps"]');
+    if (!(line instanceof HTMLElement) || !(popover instanceof HTMLElement)) return false;
+    return {
+      steps: [...line.querySelectorAll('[data-testid="coworker-work-step"]')].map((step) => step.querySelector("span.truncate")?.textContent?.trim() ?? ""),
+      text: line.innerText,
+      popover: popover.dataset.placement ?? "",
+    };
+  })()`, { timeoutMs: 30_000, label: `the steps behind ${json(closed.summary)}` });
+  if (!isRecord(opened) || !Array.isArray(opened.steps) || typeof opened.text !== "string" || typeof opened.popover !== "string") {
+    throw new Error("Receipt popover facts were unavailable.");
+  }
+  return {
+    summary: closed.summary,
+    steps: opened.steps.map(String),
+    text: opened.text,
+    stackedBeforeOpen: closed.stackedBeforeOpen,
+    expandedBeforeOpen: closed.expandedBeforeOpen,
+    popover: opened.popover,
+  };
 }
 
 async function openMemoryView(app: Awaited<ReturnType<typeof coworker>>): Promise<void> {
@@ -280,6 +306,16 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   const remembered = await converse(app, FACT_PROMPT, FACT_REPLY);
   expect(remembered.summary).toBe("Remembered · You work in Product");
   expect(remembered.text).not.toMatch(/coworker_|memory_remember|"kind"|\{/);
+  // The chat holds one line; its steps wait in a popover the person opens from it and closes with Escape.
+  expect(remembered).toMatchObject({ stackedBeforeOpen: 0, expandedBeforeOpen: "false", popover: "below" });
+  expect(remembered.steps).toEqual(["Remembered · You work in Product"]);
+  const closedLine = await waitFor(app, `(() => {
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    const summary = document.querySelector('[data-testid="coworker-work-summary"]');
+    const closed = summary instanceof HTMLElement && summary.getAttribute("aria-expanded") === "false" && !document.querySelector('[data-testid="coworker-work-steps"]');
+    return closed ? summary.textContent?.trim() ?? "" : false;
+  })()`, { timeoutMs: 15_000, label: "the steps popover closed with Escape, leaving the line" });
+  expect(String(closedLine)).toContain("Remembered · You work in Product");
   const aboutYou = resultText(await invokeCoworker(app, "coworkers.files.read", { slug: "nova", path: "memory/long-term/about-you.md" }));
   expect(aboutYou).toBe("# About you\n\n- You work in Product\n");
   expect(resultText(await invokeCoworker(app, "coworkers.files.read", { slug: "nova", path: "memory/index.md" }))).toContain("- `long-term/about-you.md` — About you");
@@ -301,7 +337,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(String(await evalIn(app, `[...document.querySelectorAll('[data-testid="coworker-work-summary"]')].map((button) => button.textContent?.trim()).join(" | ")`))).not.toMatch(/coworker_|\{/);
   evidence.recordAssertionEvidence(
     "The coworker records a fact, a way of working, and reads itself back in the same turns, each as one plain action line",
-    `Three turns produced three action lines — "Remembered · You work in Product", "Updated how I work · Shorter replies.", "Checked what I remember" — with no tool ids or JSON in them. The fact landed in memory/long-term/about-you.md and the index; the soul gained one Communication bullet with its other three sections byte for byte unchanged; the self read returned the memory files to the model.`,
+    `Three turns produced three action lines — "Remembered · You work in Product", "Updated how I work · Shorter replies.", "Checked what I remember" — with no tool ids or JSON in them and no steps stacked in the chat; the first line opened a popover below it listing its one step and closed again with Escape. The fact landed in memory/long-term/about-you.md and the index; the soul gained one Communication bullet with its other three sections byte for byte unchanged; the self read returned the memory files to the model.`,
     true,
   );
 
