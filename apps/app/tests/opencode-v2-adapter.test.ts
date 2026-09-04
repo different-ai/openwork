@@ -462,6 +462,26 @@ describe("OpenCode v2 event translation", () => {
 });
 
 describe("OpenCode v2 client compatibility", () => {
+  test("maps active v2 sessions to busy compatibility statuses", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.method === "GET" && request.url.endsWith("/api/session/active")) {
+        return jsonResponse({ data: { ses_active: { type: "running" } } });
+      }
+      throw new Error(`Unexpected request: ${request.method} ${request.url}`);
+    };
+
+    try {
+      const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
+      const result = await client.session.status();
+
+      expect(result.data).toEqual({ ses_active: { type: "busy" } });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("maps captured v2 message content and presents shell tool parts as bash", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async (input, init) => {

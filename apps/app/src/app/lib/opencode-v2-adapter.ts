@@ -6,6 +6,7 @@ import type {
   Provider,
   ProviderListResponse,
   Session,
+  SessionStatus,
   TextPart,
   ToolPart,
 } from "@opencode-ai/sdk/v2/client";
@@ -1313,8 +1314,20 @@ export function createClientV2(
     },
     todo: async (parameters: SessionParameters): Promise<FieldsResult<never[]>> =>
       localResult(baseUrl, `/api/session/${encodeURIComponent(parameters.sessionID)}/todo`, []),
-    status: async (): Promise<FieldsResult<Record<string, never>>> =>
-      localResult(baseUrl, "/api/session/status", {}),
+    status: async (
+      _parameters: DirectoryParameters = {},
+      options?: RequestOptions,
+    ): Promise<FieldsResult<Record<string, SessionStatus>>> => {
+      const result = await request("GET", "/api/session/active", undefined, options?.signal);
+      if (!result.response.ok) return failedResult(result);
+      const data = responseData(result.payload);
+      if (!isRecord(data)) return failedResult({ ...result, payload: { name: "InvalidV2SessionActiveResponse" } });
+      const statuses: Record<string, SessionStatus> = {};
+      for (const [sessionID, active] of Object.entries(data)) {
+        if (readString(active, "type") === "running") statuses[sessionID] = { type: "busy" };
+      }
+      return successfulResult(result, statuses);
+    },
     promptAsync: async (
       parameters: PromptParameters,
       options?: RequestOptions,
