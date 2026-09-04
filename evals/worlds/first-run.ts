@@ -110,7 +110,10 @@ export async function parentChildPermissionWorld(seed: Seed) {
     });
     return { child, activity };
   })()`, { awaitPromise: true });
-  if (!isRecord(seeded)) throw new Error(`Child permission seed failed: ${JSON.stringify(seeded)}`);
+  if (!isRecord(seeded) || !isRecord(seeded.child) || seeded.child.ok !== true
+    || !isRecord(seeded.activity) || seeded.activity.ok !== true) {
+    throw new Error(`Child permission seed failed: ${JSON.stringify(seeded)}`);
+  }
   return base;
 }
 

@@ -2477,6 +2477,9 @@ export function SessionRoute() {
         if (!parent) return { ok: false, error: "The selected session is unavailable." };
 
         const childSessionId = `${selectedSessionId}:eval-child`;
+        // Match a real session.created event: a concurrent list snapshot must
+        // not remove this newly seeded child before its approval is answered.
+        rememberPendingCreatedSession(selectedWorkspaceId, childSessionId);
         const request: PendingPermission = {
           id: `${selectedSessionId}:eval-child-permission`,
           sessionID: childSessionId,
@@ -2521,7 +2524,7 @@ export function SessionRoute() {
         return { childSessionId };
       },
     };
-  }, [selectedSessionId, selectedWorkspaceEndpoint?.workspaceId, selectedWorkspaceId, sessionsByWorkspaceId, setSessionsByWorkspaceId]);
+  }, [rememberPendingCreatedSession, selectedSessionId, selectedWorkspaceEndpoint?.workspaceId, selectedWorkspaceId, sessionsByWorkspaceId, setSessionsByWorkspaceId]);
   useControlAction(seedChildPermissionControlAction);
 
   const commandPaletteControlAction = useMemo<OpenworkControlAction>(() => ({
