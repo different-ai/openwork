@@ -2733,6 +2733,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       <CommandPalette
         open={commandPaletteOpen}
         onClose={() => setCommandPaletteOpen(false)}
+        developerMode={developerMode}
         onCreateNewSession={() => void handleCreatePaletteSession()}
         onOpenSession={(workspaceId, sessionId) => {
           navigate(workspaceSessionRoute(workspaceId, sessionId));
@@ -2749,10 +2750,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           }
           navigateSettingsPath(settingsPath);
         }}
-        onOpenExtensions={() => {
+        onOpenExtensions={(section) => {
           const target = selectedWorkspaceId
-            ? workspaceExtensionsRoute(selectedWorkspaceId)
-            : globalExtensionsRoute();
+            ? workspaceExtensionsRoute(selectedWorkspaceId, section)
+            : globalExtensionsRoute(section);
           navigate(target);
         }}
         onOpenModelPicker={() => {

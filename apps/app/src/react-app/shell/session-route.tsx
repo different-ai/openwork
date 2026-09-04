@@ -223,6 +223,7 @@ import { useShellConfig } from "./shell-config";
 import { useShellShortcuts } from "./use-shell-shortcuts";
 import { useEngineReload } from "./use-engine-reload";
 import { useSessionGroupSync } from "./use-session-group-sync";
+import { useUiStateStore } from "./ui-state-store";
 import { useWorkspaceRouteState } from "./use-workspace-route-state";
 import { CloudWorkspaceBootTakeover, useCloudWorkspaceStatus } from "./cloud-workspace-overlay";
 import {
@@ -360,6 +361,7 @@ export function SessionRoute() {
   const dashboardWorkspaceRoute = dashboardRouteRequested
     && (dashboardAvailabilityLoading || mcpAppsDashboardEnabled);
   const platform = usePlatform();
+  const toggleSidebar = useUiStateStore((state) => state.toggleSidebar);
   const denAuth = useDenAuth();
   const { config: shellConfig } = useShellConfig();
   const local = useLocal();
@@ -3481,6 +3483,7 @@ export function SessionRoute() {
     <CommandPalette
       open={commandPaletteOpen}
       onClose={() => setCommandPaletteOpen(false)}
+      developerMode={developerMode}
       onCreateNewSession={() => {
         if (selectedWorkspaceId) {
           void handleCreateTaskInWorkspace(selectedWorkspaceId);
@@ -3503,7 +3506,11 @@ export function SessionRoute() {
         workbench.setSplit(tab);
       }}
       onOpenSettings={(route) => handleOpenSettings(route ?? "/settings/general")}
-      onOpenExtensions={() => handleOpenExtensions()}
+      onOpenExtensions={(section) => handleOpenExtensions(section)}
+      onToggleSidebar={toggleSidebar}
+      onOpenAutomations={() => navigate(automationsRoute())}
+      onOpenDashboard={() => navigate(dashboardRoute())}
+      onCreateWorkspace={handleOpenCreateWorkspace}
       modelOptions={modelPicker.options}
       selectedModel={paletteSelectedModel}
       selectedModelBehavior={paletteSelectedModelBehavior}
