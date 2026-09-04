@@ -1,5 +1,19 @@
 import { expect } from "vitest"
-import { createOrgConnection, denFetch } from "@openwork/behaviors"
+import {
+  createCloudAutomation,
+  createOrgConnection,
+  denFetch,
+  grantOpenWorkWebAccess,
+  listWorkflows,
+  patchAutomation,
+  readAutomation,
+  readAutomationRun,
+  readAutomationRuns,
+  readWorkflowDetail,
+  runAutomationNow,
+  runWorkflow,
+  saveWorkflow,
+} from "@openwork/behaviors"
 import { mcpMock, needs, server, test } from "@openwork/testkit"
 
 const requirements = {
@@ -79,12 +93,11 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
   // Cloud Automations require OpenWork Web access for the organization. The
   // launched Den seeds this admin into the platform-admin allowlist, so the
   // spec grants the audited complimentary entitlement inline.
-  const webAccess = await denFetch(den.admin, `/v1/admin/organizations/${organizationId}/openwork-web-access`, {
-    method: "PUT",
-    headers: { authorization: `Bearer ${den.admin.token}` },
-    body: JSON.stringify({ enabled: true, reason: "saved-script-automations spec exercises Cloud Automations" }),
-  })
-  expect(webAccess.response.ok, webAccess.text).toBe(true)
+  await grantOpenWorkWebAccess(
+    den.admin,
+    organizationId,
+    "saved-script-automations spec exercises Cloud Automations",
+  )
 
   const connection = await createOrgConnection(den.admin, {
     name: "Report source",
@@ -142,19 +155,15 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
   expect(executed.isError).not.toBe(true)
   expect(JSON.stringify(executed.content)).toContain(firstMarker)
 
-  const savedResponse = await denFetch(den.admin, "/v1/workflows", {
-    method: "POST",
-    headers: { authorization: `Bearer ${den.admin.token}` },
-    body: JSON.stringify({
-      name: scriptName,
-      description: "Builds a reusable launch briefing from the organization's worker roster.",
-      code,
-      currentInput: { topic: firstMarker },
-      inputSchema,
-      outputSchema,
-    }),
+  const savedResponse = await saveWorkflow(den.admin, {
+    name: scriptName,
+    description: "Builds a reusable launch briefing from the organization's worker roster.",
+    code,
+    currentInput: { topic: firstMarker },
+    inputSchema,
+    outputSchema,
   })
-  expect(savedResponse.response.status, savedResponse.text).toBe(201)
+  expect(savedResponse.status, savedResponse.text).toBe(201)
   const saved = requireRecord(savedResponse.body, "saved Workflow")
   const pluginId = typeof saved.pluginId === "string" ? saved.pluginId : ""
   const configObjectId = typeof saved.configObjectId === "string" ? saved.configObjectId : ""
@@ -168,13 +177,11 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
     true,
   )
 
-  const manualRun = await denFetch(den.admin, `/v1/workflows/${configObjectId}/run`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${den.admin.token}` },
-    body: JSON.stringify({ pluginId, configObjectVersionId, input: { topic: firstMarker } }),
+  const manualResult = await runWorkflow(den.admin, configObjectId, {
+    pluginId,
+    configObjectVersionId,
+    input: { topic: firstMarker },
   })
-  expect(manualRun.response.ok, manualRun.text).toBe(true)
-  const manualResult = requireRecord(manualRun.body, "manual Script result")
   expect(manualResult.status).toBe("succeeded")
   expect(JSON.stringify(manualResult.value)).toContain(firstMarker)
   expect(String(manualResult.receiptId ?? "")).not.toBe("")
@@ -185,30 +192,24 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
   )
 
   const scheduledAfter = new Date().toISOString()
-  const automationResponse = await denFetch(den.admin, "/v1/cloud-automations", {
-    method: "POST",
-    headers: { authorization: `Bearer ${den.admin.token}` },
-    body: JSON.stringify({
-      name: `${scriptName} once`,
-      schedule: { kind: "once", timezone: "UTC", at: Date.now() + 30_000 },
-      action: {
-        kind: "saved_script",
-        script: { pluginId, configObjectId, configObjectVersionId },
-        input: { topic: scheduledMarker },
-      },
-    }),
+  const automationResponse = await createCloudAutomation(den.admin, {
+    name: `${scriptName} once`,
+    schedule: { kind: "once", timezone: "UTC", at: Date.now() + 30_000 },
+    action: {
+      kind: "saved_script",
+      script: { pluginId, configObjectId, configObjectVersionId },
+      input: { topic: scheduledMarker },
+    },
   })
-  expect(automationResponse.response.status, automationResponse.text).toBe(201)
+  expect(automationResponse.status, automationResponse.text).toBe(201)
   const automationDetail = requireRecord(automationResponse.body, "Automation")
   const automation = requireRecord(automationDetail.automation, "Automation identity")
   const automationId = typeof automation.id === "string" ? automation.id : ""
   expect(automationId).not.toBe("")
 
   const scheduledRun = await eventually(async () => {
-    const response = await denFetch(den.admin, `/v1/automations/${automationId}/runs`, {
-      headers: { authorization: `Bearer ${den.admin.token}` },
-    })
-    expect(response.response.ok, response.text).toBe(true)
+    const response = await readAutomationRuns(den.admin, automationId)
+    expect(response.status >= 200 && response.status < 300, response.text).toBe(true)
     return isRecord(response.body)
       ? records(response.body.items).find((run) => run.trigger === "scheduled")
       : undefined
@@ -222,10 +223,8 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
   })
   expect(scheduledExternalCalls).toHaveLength(0)
 
-  const scheduledReceiptResponse = await denFetch(den.admin, `/v1/automation-runs/${scheduledRunId}`, {
-    headers: { authorization: `Bearer ${den.admin.token}` },
-  })
-  expect(scheduledReceiptResponse.response.ok, scheduledReceiptResponse.text).toBe(true)
+  const scheduledReceiptResponse = await readAutomationRun(den.admin, scheduledRunId)
+  expect(scheduledReceiptResponse.status >= 200 && scheduledReceiptResponse.status < 300, scheduledReceiptResponse.text).toBe(true)
   const scheduledReceipt = requireRecord(scheduledReceiptResponse.body, "scheduled Automation receipt")
   const scheduledReceiptRun = requireRecord(scheduledReceipt.run, "scheduled Automation run")
   const scheduledReceiptAutomation = requireRecord(scheduledReceipt.automation, "scheduled Automation identity")
@@ -329,19 +328,15 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
     matchingStringInputCalls.length === 1 && stringInputCallsHaveText,
   )
 
-  const externalSavedResponse = await denFetch(den.admin, "/v1/workflows", {
-    method: "POST",
-    headers: { authorization: `Bearer ${den.admin.token}` },
-    body: JSON.stringify({
-      name: `${scriptName} external`,
-      description: "Checks the unattended Cloud boundary for external MCP tools.",
-      code: externalCode,
-      currentInput: { topic: externalMarker },
-      inputSchema,
-      outputSchema,
-    }),
+  const externalSavedResponse = await saveWorkflow(den.admin, {
+    name: `${scriptName} external`,
+    description: "Checks the unattended Cloud boundary for external MCP tools.",
+    code: externalCode,
+    currentInput: { topic: externalMarker },
+    inputSchema,
+    outputSchema,
   })
-  expect(externalSavedResponse.response.status, externalSavedResponse.text).toBe(201)
+  expect(externalSavedResponse.status, externalSavedResponse.text).toBe(201)
   const externalSaved = requireRecord(externalSavedResponse.body, "external saved Workflow")
   const externalPluginId = typeof externalSaved.pluginId === "string" ? externalSaved.pluginId : ""
   const externalConfigObjectId = typeof externalSaved.configObjectId === "string" ? externalSaved.configObjectId : ""
@@ -358,11 +353,8 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
   expect(String(externalSaved.mermaid ?? "")).toMatch(/^flowchart TD\n/)
   expect(String(externalSaved.mermaid ?? "")).toContain("report_source.mock_echo")
 
-  const detail = await denFetch(den.admin, `/v1/workflows/${externalConfigObjectId}`, {
-    headers: { authorization: `Bearer ${den.admin.token}` },
-  })
-  expect(detail.response.ok, detail.text).toBe(true)
-  const script = requireRecord(requireRecord(detail.body, "Workflow detail").script, "Workflow script")
+  const detail = await readWorkflowDetail(den.admin, externalConfigObjectId)
+  const script = detail.script
   const currentVersion = requireRecord(script.currentVersion, "current version")
   expect(currentVersion.graph).toEqual(graph)
   evidence.recordAssertionEvidence(
@@ -371,32 +363,21 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
     true,
   )
 
-  const externalManualRun = await denFetch(den.admin, `/v1/workflows/${externalConfigObjectId}/run`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${den.admin.token}` },
-    body: JSON.stringify({
-      pluginId: externalPluginId,
-      configObjectVersionId: externalConfigObjectVersionId,
-      input: { topic: externalMarker },
-    }),
+  const externalManualRun = await runWorkflow(den.admin, externalConfigObjectId, {
+    pluginId: externalPluginId,
+    configObjectVersionId: externalConfigObjectVersionId,
+    input: { topic: externalMarker },
   })
-  expect(externalManualRun.response.ok, externalManualRun.text).toBe(true)
-  expect(requireRecord(externalManualRun.body, "external manual Workflow result").status).toBe("succeeded")
+  expect(externalManualRun.status).toBe("succeeded")
 
-  const latestDetail = await denFetch(den.admin, `/v1/workflows/${externalConfigObjectId}`, {
-    headers: { authorization: `Bearer ${den.admin.token}` },
-  })
-  expect(latestDetail.response.ok, latestDetail.text).toBe(true)
-  const latestScript = requireRecord(requireRecord(latestDetail.body, "external Workflow detail").script, "external Workflow script")
+  const latestDetail = await readWorkflowDetail(den.admin, externalConfigObjectId)
+  const latestScript = latestDetail.script
   const latest = requireRecord(latestScript.latestSnapshot, "latest snapshot")
   const externalToolCallNames = records(latest.toolCalls).map((call) => call.name)
   expect(externalToolCallNames).toEqual(["report_source.mock_echo"])
 
-  const internalDetail = await denFetch(den.admin, `/v1/workflows/${configObjectId}`, {
-    headers: { authorization: `Bearer ${den.admin.token}` },
-  })
-  expect(internalDetail.response.ok, internalDetail.text).toBe(true)
-  const internalScript = requireRecord(requireRecord(internalDetail.body, "internal Workflow detail").script, "internal Workflow script")
+  const internalDetail = await readWorkflowDetail(den.admin, configObjectId)
+  const internalScript = internalDetail.script
   const internalLatest = requireRecord(internalScript.latestSnapshot, "internal latest snapshot")
   const internalToolCallNames = records(internalLatest.toolCalls).map((call) => call.name)
   expect(internalToolCallNames).toEqual(["den.getWorkers"])
@@ -416,72 +397,56 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
   })
   expect(searchExecuted.isError).not.toBe(true)
 
-  const rejectedSearchWorkflow = await denFetch(den.admin, "/v1/workflows", {
-    method: "POST",
-    headers: { authorization: `Bearer ${den.admin.token}` },
-    body: JSON.stringify({
-      name: `${scriptName} search`,
-      code: searchCode,
-      currentInput: { topic: "workers" },
-      inputSchema,
-    }),
+  const rejectedSearchWorkflow = await saveWorkflow(den.admin, {
+    name: `${scriptName} search`,
+    code: searchCode,
+    currentInput: { topic: "workers" },
+    inputSchema,
   })
-  expect(rejectedSearchWorkflow.response.status, rejectedSearchWorkflow.text).toBe(400)
+  expect(rejectedSearchWorkflow.status, rejectedSearchWorkflow.text).toBe(400)
   const rejectedSearchBody = requireRecord(rejectedSearchWorkflow.body, "rejected search Workflow")
   expect(rejectedSearchBody.error).toBe("workflow_capability_unavailable")
   expect(String(rejectedSearchBody.capability ?? "")).toMatch(/\$codemode\.search$/)
   const rejectedSearchMessage = String(rejectedSearchBody.message ?? "")
   expect(rejectedSearchMessage).toContain("search_capabilities")
 
-  const workflowList = await denFetch(den.admin, "/v1/workflows", {
-    headers: { authorization: `Bearer ${den.admin.token}` },
-  })
-  expect(workflowList.response.ok, workflowList.text).toBe(true)
-  const searchWorkflowWasSaved = records(requireRecord(workflowList.body, "Workflow list").items)
+  const workflowList = await listWorkflows(den.admin)
+  const searchWorkflowWasSaved = workflowList.items
     .some((item) => item.name === `${scriptName} search`)
   expect(searchWorkflowWasSaved).toBe(false)
   evidence.recordAssertionEvidence(
     "Saving a Workflow that depends on in-script search is rejected with a next step",
     rejectedSearchMessage,
-    rejectedSearchWorkflow.response.status === 400
+    rejectedSearchWorkflow.status === 400
       && rejectedSearchBody.error === "workflow_capability_unavailable"
       && /\$codemode\.search$/.test(String(rejectedSearchBody.capability ?? ""))
       && rejectedSearchMessage.includes("search_capabilities")
       && !searchWorkflowWasSaved,
   )
 
-  const externalAutomation = await denFetch(den.admin, `/v1/automations/${automationId}`, {
-    method: "PATCH",
-    headers: { authorization: `Bearer ${den.admin.token}` },
-    body: JSON.stringify({
-      action: {
-        kind: "saved_script",
-        script: {
-          pluginId: externalPluginId,
-          configObjectId: externalConfigObjectId,
-          configObjectVersionId: externalConfigObjectVersionId,
-        },
-        input: { topic: externalMarker },
+  const externalAutomation = await patchAutomation(den.admin, automationId, {
+    action: {
+      kind: "saved_script",
+      script: {
+        pluginId: externalPluginId,
+        configObjectId: externalConfigObjectId,
+        configObjectVersionId: externalConfigObjectVersionId,
       },
-    }),
+      input: { topic: externalMarker },
+    },
   })
-  expect(externalAutomation.response.ok, externalAutomation.text).toBe(true)
+  expect(externalAutomation.status >= 200 && externalAutomation.status < 300, externalAutomation.text).toBe(true)
 
   const unattendedRunStartedAt = new Date().toISOString()
-  const failedRunResponse = await denFetch(den.admin, `/v1/automations/${automationId}/run`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${den.admin.token}` },
-  })
-  expect(failedRunResponse.response.status, failedRunResponse.text).toBe(202)
+  const failedRunResponse = await runAutomationNow(den.admin, automationId)
+  expect(failedRunResponse.status, failedRunResponse.text).toBe(202)
   const queued = isRecord(failedRunResponse.body) ? requireRecord(failedRunResponse.body.run, "queued Automation run") : {}
   const failedRunId = typeof queued.id === "string" ? queued.id : ""
   expect(failedRunId).not.toBe("")
 
   const failedReceipt = await eventually(async () => {
-    const response = await denFetch(den.admin, `/v1/automation-runs/${failedRunId}`, {
-      headers: { authorization: `Bearer ${den.admin.token}` },
-    })
-    expect(response.response.ok, response.text).toBe(true)
+    const response = await readAutomationRun(den.admin, failedRunId)
+    expect(response.status >= 200 && response.status < 300, response.text).toBe(true)
     return requireRecord(response.body, "failed Automation receipt")
   }, (receipt) => isRecord(receipt.run)
     && ["failed", "skipped", "cancelled"].includes(String(receipt.run.status)), "external-capability run to finish")
@@ -491,10 +456,8 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
   expect(String(failedRunError.message ?? "")).toContain("must be read-only and explicitly approved")
 
   const afterBoundaryRejection = await eventually(async () => {
-    const response = await denFetch(den.admin, `/v1/automations/${automationId}`, {
-      headers: { authorization: `Bearer ${den.admin.token}` },
-    })
-    expect(response.response.ok, response.text).toBe(true)
+    const response = await readAutomation(den.admin, automationId)
+    expect(response.status >= 200 && response.status < 300, response.text).toBe(true)
     return requireRecord(response.body, "Automation after unattended boundary rejection")
   }, (detail) => isRecord(detail.automation) && detail.automation.state === "needs_attention", "Automation to need attention")
   expect(JSON.stringify(afterBoundaryRejection)).toContain(scheduledMarker)
