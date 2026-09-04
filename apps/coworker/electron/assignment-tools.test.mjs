@@ -64,7 +64,7 @@ function resultText(reply) {
 
 test("every tool takes the coworker from its token, never from the model", async () => {
   const { tools } = await fixture();
-  assert.deepEqual(tools.map((tool) => tool.name), ["assignments_list", "assignment_create", "assignment_update", "assignment_run_now", "assignment_remove", "memory_remember", "memory_forget", "soul_update", "self_read"]);
+  assert.deepEqual(tools.map((tool) => tool.name), ["assignments_list", "assignment_create", "assignment_update", "assignment_run_now", "assignment_remove", "memory_remember", "memory_forget", "memory_note", "soul_update", "self_read"]);
   for (const tool of tools) {
     assert.equal(tool.inputSchema.type, "object");
     assert.equal(Object.hasOwn(tool.inputSchema.properties ?? {}, "slug"), false, `${tool.name} must not take a coworker`);
@@ -181,9 +181,23 @@ test("the self tools write the bound coworker's memory and soul and refuse secre
     assert.equal(secret.body.result.isError, true);
     assert.match(resultText(secret), /^Couldn't remember that: That looks like a secret or a credential/);
     assert.doesNotMatch(await readCoworkerFile(coworkersDir, "scout", "memory/working.md"), /hunter2/);
+    // A progress note is one line under Now that the same work name replaces and an empty text clears.
+    const noted = await call(server, scout, "tools/call", { name: "memory_note", arguments: { work: "Vendor comparison", text: "Reading the three contracts; next: call Beta." } });
+    assert.match(resultText(noted), /^Noted for Vendor comparison: Reading the three contracts; next: call Beta\./);
+    assert.match(await readCoworkerFile(coworkersDir, "scout", "memory/working.md"), /- \*\*Vendor comparison\*\* — Reading the three contracts; next: call Beta\./);
     const read = await call(server, scout, "tools/call", { name: "self_read", arguments: { what: "memory" } });
     assert.match(resultText(read), /You work in Product/);
     assert.match(resultText(read), /The brief is due Friday/);
+    assert.match(resultText(read), /\*\*Vendor comparison\*\* — Reading the three contracts/);
+    const renoted = await call(server, scout, "tools/call", { name: "memory_note", arguments: { work: "Vendor comparison", text: "Beta called; Acme is the pick." } });
+    assert.match(resultText(renoted), /^Noted for Vendor comparison: Beta called; Acme is the pick\./);
+    assert.equal(((await readCoworkerFile(coworkersDir, "scout", "memory/working.md")).match(/Vendor comparison/g) ?? []).length, 1);
+    const clearedNote = await call(server, scout, "tools/call", { name: "memory_note", arguments: { work: "Vendor comparison" } });
+    assert.match(resultText(clearedNote), /^Cleared the note for Vendor comparison/);
+    assert.doesNotMatch(await readCoworkerFile(coworkersDir, "scout", "memory/working.md"), /Vendor comparison/);
+    const badNote = await call(server, scout, "tools/call", { name: "memory_note", arguments: { work: "", text: "x" } });
+    assert.equal(badNote.body.result.isError, true);
+    assert.match(resultText(badNote), /^Couldn't note where the work stands: Say which piece of work/);
     const forgot = await call(server, scout, "tools/call", { name: "memory_forget", arguments: { target: "brief is due" } });
     assert.equal(resultText(forgot), "Forgot from working memory: The brief is due Friday");
     const missing = await call(server, scout, "tools/call", { name: "memory_forget", arguments: { target: "the moon" } });

@@ -17,10 +17,14 @@ import { createDocument } from "./documents.mjs";
 import { teamToolCatalog } from "./team-tools.mjs";
 import { workerToolCatalog } from "./workers.mjs";
 
-/** The whole fixed stack for a fresh coworker with one teammate, in characters (about four characters per token). */
-export const FIXED_STACK_BUDGET_CHARS = 30_000;
+/**
+ * The whole fixed stack for a fresh coworker with one teammate, in characters
+ * (about four characters per token). Raised from 30,000 when the contract
+ * gained "Keeping track of what I'm doing" and the tools gained memory_note.
+ */
+export const FIXED_STACK_BUDGET_CHARS = 32_000;
 /** The same coworker with five documents in play and ten long-term memories. */
-export const BUSY_STACK_BUDGET_CHARS = 32_000;
+export const BUSY_STACK_BUDGET_CHARS = 34_000;
 
 const roots = [];
 after(async () => {
@@ -59,9 +63,9 @@ test("the fixed instruction stack stays within its budget, and the variable part
   assert.ok(freshTotal <= FIXED_STACK_BUDGET_CHARS, `the fixed stack is ${freshTotal} chars; the budget is ${FIXED_STACK_BUDGET_CHARS}`);
   // The tool catalog is the largest fixed cost; the contract is the second. Both are known quantities.
   const catalog = fresh.find(([name]) => name === "tool catalog")[1];
-  assert.equal(fullCatalog().length, 23);
-  assert.ok(catalog.length < 17_000, `the tool catalog is ${catalog.length} chars`);
-  assert.ok(fresh.find(([name]) => name === "AGENTS.md")[1].length < 10_500);
+  assert.equal(fullCatalog().length, 24);
+  assert.ok(catalog.length < 18_000, `the tool catalog is ${catalog.length} chars`);
+  assert.ok(fresh.find(([name]) => name === "AGENTS.md")[1].length < 12_500);
 
   for (let index = 1; index <= 5; index += 1) {
     await createDocument(dir, nova.slug, {

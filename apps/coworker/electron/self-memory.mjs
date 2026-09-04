@@ -577,6 +577,100 @@ export async function forgetFact(coworkersDir, slug, { target }, { now = Date.no
   throw new MemoryError(`I couldn't find anything in memory about "${wanted}".`);
 }
 
+// ---------------------------------------------------------------------------
+// Progress notes
+
+/** How long the name of one piece of work may be in a progress note. */
+export const NOTE_WORK_LIMIT = 80;
+const NOTE_BULLET = /^\*\*(.+?)\*\*\s+—\s+(.*)$/;
+
+/** The work and its state behind one `Now` bullet written as a progress note, or null for an ordinary fact. */
+export function parseProgressNote(bullet) {
+  const match = NOTE_BULLET.exec(String(bullet ?? "").trim());
+  return match ? { work: match[1].trim(), text: match[2].trim() } : null;
+}
+
+function cleanWork(work) {
+  const value = String(work ?? "").replace(/\s+/g, " ").trim().replace(/^[-*]\s+/, "").replace(/\*\*/g, "").replace(/[\s.:!]+$/, "");
+  if (!value) throw new MemoryError("Say which piece of work the note is about, in a few words.");
+  if (value.length > NOTE_WORK_LIMIT) throw new MemoryError(`Name the work in under ${NOTE_WORK_LIMIT} characters; the state goes in the note itself.`);
+  return value;
+}
+
+/**
+ * Set, replace, or clear the `Now` bullet for one piece of work. The bullet is
+ * keyed by the work's name (`**Market scan** — reading the first results`), so
+ * a note replaces the previous one in place instead of piling up, and an empty
+ * note removes it. Returns the new text or null when nothing changes.
+ */
+function setWorkingNote(text, work, note) {
+  const document = parseSections(text);
+  let now = findSection(document, WORKING_NOW_HEADING);
+  if (!now) {
+    now = { name: WORKING_NOW_HEADING, lines: [] };
+    document.sections.unshift(now);
+  }
+  const wanted = normalizeLine(work);
+  const bullets = sectionBullets(now).filter((bullet) => !WORKING_PLACEHOLDERS.has(normalizeLine(bullet)));
+  const index = bullets.findIndex((bullet) => {
+    const parsed = parseProgressNote(bullet);
+    return parsed !== null && normalizeLine(parsed.work) === wanted;
+  });
+  const previous = index === -1 ? null : parseProgressNote(bullets[index]);
+  // The first note names the work; later notes keep that name so the line stays recognisable.
+  const label = previous ? previous.work : work;
+  if (!note) {
+    if (index === -1) return { text: null, previous: null, work: label, count: workingBulletCount(document) };
+    setSectionBullets(now, bullets.filter((_, position) => position !== index));
+    return { text: serializeSections(document), previous, work: label, count: workingBulletCount(document) };
+  }
+  const line = `**${label}** — ${note}`;
+  if (previous && normalizeLine(previous.text) === normalizeLine(note)) return { text: null, previous, work: label, count: workingBulletCount(document) };
+  if (index === -1) {
+    if (workingBulletCount(document) >= WORKING_MEMORY_BULLET_LIMIT) {
+      throw new MemoryError(`Working memory already holds ${WORKING_MEMORY_BULLET_LIMIT} items. Forget what is done or move what is durable to long-term memory before adding more.`);
+    }
+    setSectionBullets(now, [...bullets, line]);
+  } else {
+    setSectionBullets(now, bullets.map((bullet, position) => (position === index ? line : bullet)));
+  }
+  return { text: serializeSections(document), previous, work: label, count: workingBulletCount(document) };
+}
+
+/**
+ * `memory_note`: the coworker's own note of where one piece of work stands,
+ * kept as one line in working memory so the person can see it and the coworker
+ * can pick the work up again after an interruption. Setting it again replaces
+ * the line; an empty note clears it. Open Coworker writes the same kind of line
+ * for each Worker on the coworker's behalf.
+ */
+export async function noteProgress(coworkersDir, slug, { work, text }, { now = Date.now(), actor = "coworker" } = {}) {
+  const subject = cleanWork(work);
+  const note = String(text ?? "").replace(/\s+/g, " ").trim().replace(/^[-*]\s+/, "");
+  refuseSecrets(subject, note);
+  if (note && `**${subject}** — ${note}`.length > MEMORY_TEXT_LIMIT) {
+    throw new MemoryError(`Keep one note under ${MEMORY_TEXT_LIMIT} characters; put the details in a document.`);
+  }
+  const working = await readWorking(coworkersDir, slug);
+  const next = setWorkingNote(working, subject, note);
+  if (next.text === null) {
+    return { output: note ? `Already noted for ${next.work}: ${note}` : `No note to clear for ${next.work}.`, change: null, previous: next.previous };
+  }
+  const output = note ? `Noted for ${next.work}: ${note}` : `Cleared the note for ${next.work}`;
+  const { change } = await trackChange(coworkersDir, slug, [WORKING_MEMORY_FILE], {
+    tool: "memory_note",
+    input: { work: next.work, text: note },
+    output,
+    now,
+    actor,
+  }, () => writeAtomic(resolveCoworkerFile(coworkersDir, slug, WORKING_MEMORY_FILE), next.text));
+  return {
+    output: `${output}\nWorking memory now holds ${next.count} item${next.count === 1 ? "" : "s"}.`,
+    change,
+    previous: next.previous,
+  };
+}
+
 /** Long-term files have no sections; remove a matching bullet anywhere in them. */
 function removeBulletFromFile(text, target) {
   const lines = String(text ?? "").replace(/\r\n/g, "\n").split("\n");

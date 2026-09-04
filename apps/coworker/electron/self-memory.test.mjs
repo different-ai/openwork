@@ -7,11 +7,14 @@ import { createCoworker, listLongTermMemories, readCoworkerFile } from "./cowork
 import {
   CHANGES_FILE,
   CHANGES_LIMIT,
+  NOTE_WORK_LIMIT,
   SECRET_REFUSAL,
   WORKING_MEMORY_BULLET_LIMIT,
   applySoulChange,
   forgetFact,
   looksLikeSecret,
+  noteProgress,
+  parseProgressNote,
   parseSections,
   parseSoul,
   readChanges,
@@ -148,6 +151,79 @@ test("remembering curates working memory, promotes to long-term memory, and forg
   await assert.rejects(forgetFact(coworkersDir, slug, { target: "the moon" }), /couldn't find anything in memory about "the moon"/);
   await assert.rejects(rememberFact(coworkersDir, slug, { text: "x", kind: "somewhere" }), /two places/);
   await assert.rejects(rememberFact(coworkersDir, slug, { text: "  ", kind: "working" }), /Say what to remember/);
+});
+
+test("a progress note keeps one line per piece of work: set, replaced in place, cleared, and read back as its own kind", async () => {
+  const { coworkersDir, slug } = await fixture();
+  await rememberFact(coworkersDir, slug, { text: "The launch brief is due Friday", kind: "working" }, { now: 1 });
+  const started = await noteProgress(coworkersDir, slug, { work: "Vendor comparison", text: "Comparing three vendors on price and support; next: read the contracts." }, { now: 2 });
+  assert.equal(started.output.split("\n")[0], "Noted for Vendor comparison: Comparing three vendors on price and support; next: read the contracts.");
+  assert.equal(started.previous, null);
+  assert.equal(started.change.tool, "memory_note");
+  assert.deepEqual(started.change.input, { work: "Vendor comparison", text: "Comparing three vendors on price and support; next: read the contracts." });
+  let working = await readCoworkerFile(coworkersDir, slug, "memory/working.md");
+  assert.match(working, /## Now\n\n- The launch brief is due Friday\n- \*\*Vendor comparison\*\* — Comparing three vendors on price and support; next: read the contracts\.\n/);
+  // A second note for the same work replaces the line where it stands, whatever the casing or a trailing full stop,
+  // and the line keeps the name the work was first given.
+  const later = await noteProgress(coworkersDir, slug, { work: "vendor comparison.", text: "Two contracts read; Acme is cheapest but has no SLA. Next: call Beta." }, { now: 3 });
+  assert.equal(later.previous.text, "Comparing three vendors on price and support; next: read the contracts.");
+  assert.match(later.output, /^Noted for Vendor comparison: Two contracts read/);
+  working = await readCoworkerFile(coworkersDir, slug, "memory/working.md");
+  assert.match(working, /- The launch brief is due Friday\n- \*\*Vendor comparison\*\* — Two contracts read; Acme is cheapest but has no SLA\. Next: call Beta\.\n/);
+  assert.equal((working.match(/\*\*vendor comparison\*\*/gi) ?? []).length, 1);
+  assert.deepEqual(parseProgressNote("**Vendor comparison** — Two contracts read"), { work: "Vendor comparison", text: "Two contracts read" });
+  assert.equal(parseProgressNote("The launch brief is due Friday"), null);
+  // The same state again changes nothing and records nothing.
+  const same = await noteProgress(coworkersDir, slug, { work: "Vendor comparison", text: "Two contracts read; Acme is cheapest but has no SLA. Next: call Beta" }, { now: 4 });
+  assert.equal(same.change, null);
+  assert.match(same.output, /^Already noted for Vendor comparison/);
+  // Notes for different work sit side by side; an ordinary fact with the same words is left alone.
+  await noteProgress(coworkersDir, slug, { work: "Launch plan", text: "Drafting phase two." }, { now: 5 });
+  working = await readCoworkerFile(coworkersDir, slug, "memory/working.md");
+  assert.equal(working.match(/^- /gm).length, 4); // the fact, two notes, and the Carrying forward placeholder
+  // Clearing removes only that line; clearing again is a no-op that says so.
+  const cleared = await noteProgress(coworkersDir, slug, { work: "Vendor comparison", text: "" }, { now: 6 });
+  assert.equal(cleared.output.split("\n")[0], "Cleared the note for Vendor comparison");
+  assert.equal(cleared.previous.text, "Two contracts read; Acme is cheapest but has no SLA. Next: call Beta.");
+  working = await readCoworkerFile(coworkersDir, slug, "memory/working.md");
+  assert.doesNotMatch(working, /Vendor comparison/i);
+  assert.match(working, /- The launch brief is due Friday\n- \*\*Launch plan\*\* — Drafting phase two\.\n/);
+  const nothing = await noteProgress(coworkersDir, slug, { work: "Vendor comparison" }, { now: 7 });
+  assert.equal(nothing.change, null);
+  assert.equal(nothing.output, "No note to clear for Vendor comparison.");
+  // The changes list shows the notes in the same words and undo restores the previous line.
+  const changes = await readChanges(coworkersDir, slug);
+  assert.deepEqual(changes.map((change) => [change.at, change.tool, change.output]), [
+    [6, "memory_note", "Cleared the note for Vendor comparison"],
+    [5, "memory_note", "Noted for Launch plan: Drafting phase two."],
+    [3, "memory_note", "Noted for Vendor comparison: Two contracts read; Acme is cheapest but has no SLA. Next: call Beta."],
+    [2, "memory_note", "Noted for Vendor comparison: Comparing three vendors on price and support; next: read the contracts."],
+    [1, "memory_remember", "Remembered in working memory: The launch brief is due Friday"],
+  ]);
+  await undoChange(coworkersDir, slug, changes[0].id, { now: 8 });
+  assert.match(await readCoworkerFile(coworkersDir, slug, "memory/working.md"), /\*\*Vendor comparison\*\* — Two contracts read/);
+  // forget still works on a note, by its work name.
+  const forgot = await forgetFact(coworkersDir, slug, { target: "vendor comparison" }, { now: 9 });
+  assert.match(forgot.output, /^Forgot from working memory: \*\*Vendor comparison\*\*/);
+  // Guardrails: the work needs a name, the line stays bounded, and secrets are refused.
+  await assert.rejects(noteProgress(coworkersDir, slug, { work: "  ", text: "x" }), /Say which piece of work/);
+  await assert.rejects(noteProgress(coworkersDir, slug, { work: "w".repeat(NOTE_WORK_LIMIT + 1), text: "x" }), /under 80 characters/);
+  await assert.rejects(noteProgress(coworkersDir, slug, { work: "Long", text: "x".repeat(600) }), /under 600 characters/);
+  await assert.rejects(noteProgress(coworkersDir, slug, { work: "Keys", text: "the api key is sk-live-1234567890abcdef1234" }), new RegExp(SECRET_REFUSAL.slice(0, 20)));
+  assert.doesNotMatch(await readCoworkerFile(coworkersDir, slug, "memory/working.md"), /sk-live/);
+});
+
+test("a progress note respects the working-memory cap for new work but can still update or clear existing work", async () => {
+  const { coworkersDir, slug } = await fixture();
+  await noteProgress(coworkersDir, slug, { work: "Vendor comparison", text: "Started." }, { now: 0 });
+  for (let index = 1; index < WORKING_MEMORY_BULLET_LIMIT; index += 1) {
+    await rememberFact(coworkersDir, slug, { text: `Item ${index}`, kind: "working" }, { now: index });
+  }
+  await assert.rejects(noteProgress(coworkersDir, slug, { work: "Another job", text: "Started." }), /already holds 30 items/);
+  const updated = await noteProgress(coworkersDir, slug, { work: "Vendor comparison", text: "Halfway." }, { now: 100 });
+  assert.match(updated.output, /^Noted for Vendor comparison: Halfway\./);
+  const cleared = await noteProgress(coworkersDir, slug, { work: "Vendor comparison", text: "" }, { now: 101 });
+  assert.match(cleared.output, /^Cleared the note for Vendor comparison\nWorking memory now holds 29 items\./);
 });
 
 test("working memory stays small: past the limit the coworker is told to curate", async () => {

@@ -16,7 +16,7 @@ export const ASSIGNMENT_TOOL_NAMES = [
   "assignment_remove",
 ] as const;
 
-export const SELF_TOOL_NAMES = ["memory_remember", "memory_forget", "soul_update", "self_read"] as const;
+export const SELF_TOOL_NAMES = ["memory_remember", "memory_forget", "memory_note", "soul_update", "self_read"] as const;
 
 /** The team tools: who else is on the team, hand work to a teammate, propose a new one. Only the person ever adds a coworker. */
 export const TEAM_TOOL_NAMES = ["team_list", "team_refer", "team_suggest"] as const;

@@ -152,7 +152,7 @@ ${mission || "Help with the work I am given, and own it over time."}
  * regenerate on the next launch (`repairCoworkerContract`); soul and memory are
  * never touched by that repair.
  */
-export const AGENTS_CONTRACT_VERSION = 6;
+export const AGENTS_CONTRACT_VERSION = 7;
 const AGENTS_CONTRACT_MARKER = /<!-- open-coworker-contract: (\d+) -->/;
 
 export function agentsTemplate({ name }) {
@@ -255,14 +255,46 @@ After: \`worker_spawn\` "Ticket themes" with a goal that says what done looks
 like (every ticket read, themes named, one example each, in a document), then:
 "Started a Ticket themes Worker — I'll bring you the themes as they take shape."
 
+## Keeping track of what I'm doing
+
+Working memory is also my notebook for work in progress. The person reads it in
+the Memory view and I read it at the start of every turn, so it is how they see
+where I am without asking, and how I pick up again after a reload, a stop, or a
+long silence. \`coworker_memory_note\` keeps one line per piece of work under
+\`## Now\`: the same work name replaces the line in place, and an empty note
+clears it.
+
+- Before I start anything longer than a quick answer — a multi-step job, a
+  research pass, a document I will build over several turns — I first call
+  \`coworker_memory_note\` with the work in a few words and where it stands:
+  what I am doing, what done looks like, and the next step. Only then do I
+  start.
+- While it runs I keep that line true. After each meaningful step, finding, or
+  change of plan — not after every tool call — I note it again with the same
+  work name, saying what is done, what I found, what comes next, and what I am
+  waiting on. One or two lines per piece of work, never a log: details belong
+  in a document, and what stays true belongs in long-term memory.
+- When the work is done or the person drops it, I clear its note in that same
+  turn and put what remains where it belongs.
+- A line under \`## Now\` about work I do not remember doing is my own note from
+  before an interruption. I check what still holds, say in one sentence where I
+  am picking up, and continue from there instead of starting over.
+
 ## Workers
 
-A Worker (see *Which shape an answer takes*) gets a short name, a goal that
-says what done looks like, and a lifespan: a number of turns (ten when I say
-nothing), a deadline, or until stopped. Its turns follow one another as soon as
-this Mac has room, so it is for work in steps, not for a check that should
-repeat on a clock. At most three Workers run at once; \`workers_list\` shows
-them.
+Complex or long work goes to a Worker so that I stay in the conversation: a
+reply of mine that runs for minutes leaves the person waiting, while a Worker
+runs beside us and I keep answering. A Worker (see *Which shape an answer
+takes*: one goal with an end, not on a clock — anything likely to take more
+than a couple of minutes or a handful of tool steps, or that the person may
+want to discuss while it runs) gets a short name, a goal that says what done
+looks like, and a lifespan: a number of turns (ten when I say nothing), a
+deadline, or until stopped. Its turns follow one another as soon as this Mac
+has room, so it is for work in steps, not for a check that should repeat on a
+clock. Then I tell the person in a sentence what I started. At most three
+Workers run at once; \`workers_list\` shows them. Open Coworker keeps the
+\`## Now\` line for each Worker itself — started, its latest finding, waiting for
+a decision, cleared when it ends — so I do not write a second one.
 
 - Each finding a Worker posts wakes me in the discussion. I read it, tell the
   person in a few sentences what changed and what I will do, and act:
@@ -311,6 +343,9 @@ self tools in that same turn, then reply:
   needs approval.
 - \`coworker_memory_forget\` when something no longer holds or the person asks
   you to drop it.
+- \`coworker_memory_note\` only for where a piece of work stands, as described
+  under *Keeping track of what I'm doing*; facts and preferences are remembered,
+  not noted.
 - \`coworker_self_read\` to answer honestly what you know about them or how you
   are meant to behave.
 
