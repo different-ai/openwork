@@ -274,16 +274,20 @@ async function createVerifiedFile(realDirectory: string, path: string): Promise<
 
 /**
  * Confirms `target` names the file just published at its intended place:
- * reached without a symlink, a regular file with a single link, and either the
- * inode written here or another writer's copy of the same bytes. Anything else
- * means the publishing call resolved a swapped path. Exported for tests.
+ * reached without a symlink, a regular file with a single link, holding
+ * exactly the bytes written here (or another writer's copy of them). The
+ * inode written here is not proof on its own: its write handle is closed by
+ * now, and once a swapped path frees that inode the filesystem may hand the
+ * same number to the next file (ext4 does), so only the content is checked.
+ * Anything else means the publishing call resolved a swapped path. Exported
+ * for tests.
  */
-export async function verifyPublished(target: string, identity: FileIdentity, bytes: Uint8Array): Promise<void> {
+export async function verifyPublished(target: string, bytes: Uint8Array): Promise<void> {
   const handle = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const published = await handle.stat();
     if ((await realpath(target)) !== target || !published.isFile() || published.nlink !== 1) throw new Error(WRITE_CHANGED);
-    if (!sameFile(published, identity) && !(await handle.readFile()).equals(bytes)) throw new Error(WRITE_CHANGED);
+    if (!(await handle.readFile()).equals(bytes)) throw new Error(WRITE_CHANGED);
   } finally {
     await handle.close();
   }
@@ -307,7 +311,7 @@ export async function publishVerifiedFile(realDirectory: string, tmp: string, na
   } finally {
     await unlinkOwn(tmp, identity);
   }
-  await verifyPublished(target, identity, bytes);
+  await verifyPublished(target, bytes);
 }
 
 /** Writes `content` to `name` inside the verified `realDirectory` through a fresh temporary file and a verified publish. */

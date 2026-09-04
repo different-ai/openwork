@@ -351,35 +351,37 @@ describe("derivePdf", () => {
       const bytes = Buffer.from("ours");
       await mkdir(directory);
       await writeFile(target, bytes);
-      const ours = await lstat(target);
-      await verifyPublished(target, ours, bytes);
+      await verifyPublished(target, bytes);
 
       // Another writer published the same bytes first (a different inode, allocated while ours still existed).
       const twin = join(directory, "twin.md");
       await writeFile(twin, bytes);
       await rename(twin, target);
-      await verifyPublished(target, ours, bytes);
+      await verifyPublished(target, bytes);
 
-      // Different bytes from someone else are not this write.
+      // Different bytes from someone else are not this write, even when the
+      // filesystem hands their file the inode number ours had (ext4 reuses a
+      // freed inode for the very next file; APFS does not), so identity alone
+      // could never be the proof.
+      await rm(target);
       const other = join(directory, "other.md");
       await writeFile(other, "theirs");
       await rename(other, target);
-      await expect(verifyPublished(target, ours, bytes)).rejects.toThrow("changed underneath");
+      await expect(verifyPublished(target, bytes)).rejects.toThrow("changed underneath");
 
       // A symlink at the final component is never followed.
       await rm(target);
       await symlink(join(realRoot, "elsewhere.md"), target);
       await writeFile(join(realRoot, "elsewhere.md"), bytes);
-      await expect(verifyPublished(target, ours, bytes)).rejects.toThrow();
+      await expect(verifyPublished(target, bytes)).rejects.toThrow();
 
-      // The very inode written here, reached through a directory that is now a symlink, is not trusted either.
+      // The very bytes written here, reached through a directory that is now a symlink, are not trusted either.
       await rm(target);
       await writeFile(target, bytes);
-      const identity = await lstat(target);
-      await verifyPublished(target, identity, bytes);
+      await verifyPublished(target, bytes);
       await rename(directory, join(realRoot, "moved"));
       await symlink(join(realRoot, "moved"), directory);
-      await expect(verifyPublished(target, identity, bytes)).rejects.toThrow("changed underneath");
+      await expect(verifyPublished(target, bytes)).rejects.toThrow("changed underneath");
     });
   });
 
