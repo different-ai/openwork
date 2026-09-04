@@ -15,11 +15,11 @@ const DEBUG_PANEL_TITLE = /react session debug/i;
 const detailsToggle = { testId: "session-error-details-toggle" };
 const detailsPanel = { testId: "session-error-details" };
 
-test("session error cards expose provider diagnostics only in Developer mode", async ({ user, agent, probe, step }) => {
+test("session error cards expose provider diagnostics only in Developer mode", async ({ user, probe, step }) => {
   // Toggle Developer mode the way a person does: command palette → "Enable/Disable Developer Mode".
   const toggleDeveloperMode = async (next: "on" | "off") => {
     const label = next === "on" ? /enable developer mode/i : /disable developer mode/i;
-    await agent.run("command_palette.open");
+    await user.press(process.platform === "darwin" ? "Meta+K" : "Control+K");
     await user.click({ role: "option", label });
     await probe.eventually(() => probe.storage("openwork.developerMode"), {
       until: (value) => String(value) === (next === "on" ? "1" : "0"),
