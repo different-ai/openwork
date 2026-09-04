@@ -56,7 +56,21 @@ test("viewer and editor projections omit manager-only Workflow authoring data", 
     id: "cov_test",
     code: "return input.token",
     graph: {
-      nodes: [{ id: "input", kind: "input", label: "Input", fields: ["token"] }],
+      nodes: [
+        { id: "input", kind: "input", label: "Input", fields: ["token"] },
+        {
+          id: "tool1",
+          kind: "tool",
+          label: "tools.reports.list",
+          namespace: "reports",
+          tool: "list",
+          scriptPath: "tools.reports.list",
+          assignsTo: "reports",
+          parallelGroup: null,
+        },
+        { id: "branch1", kind: "branch", label: "input.apiKey === \"sk-live-123\"" },
+        { id: "return1", kind: "return", label: "secret" },
+      ],
       edges: [],
       parseError: null,
     },
@@ -78,7 +92,21 @@ test("viewer and editor projections omit manager-only Workflow authoring data", 
   })
 
   assert.equal(projected.code, null)
-  assert.deepEqual(projected.graph?.nodes, [{ id: "input", kind: "input", label: "Input", fields: ["token"] }])
+  assert.deepEqual(projected.graph?.nodes, [
+    { id: "input", kind: "input", label: "Input", fields: ["token"] },
+    {
+      id: "tool1",
+      kind: "tool",
+      label: "tools.reports.list",
+      namespace: "reports",
+      tool: "list",
+      scriptPath: "tools.reports.list",
+      assignsTo: "reports",
+      parallelGroup: null,
+    },
+    { id: "branch1", kind: "branch", label: "Condition" },
+    { id: "return1", kind: "return", label: "Result" },
+  ])
   assert.equal(projected.exampleInput, null)
   assert.equal("input" in projected.automationReferences[0]!, false)
   assert.equal(JSON.stringify(projected).includes("authoring-secret"), false)
