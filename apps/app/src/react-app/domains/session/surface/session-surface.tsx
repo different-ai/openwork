@@ -766,7 +766,12 @@ function TodoPanel(props: { todos: TodoItem[] }) {
   if (todos.length === 0) return null;
 
   return (
-    <div className="overflow-hidden border-b border-dls-border bg-transparent">
+    <div
+      className="overflow-hidden border-b border-dls-border bg-transparent"
+      data-todo-progress-panel
+      data-todo-progress-completed={completedTodos}
+      data-todo-progress-total={todos.length}
+    >
         <button
           type="button"
           className="flex w-full items-center justify-between px-4 py-3 text-xs text-gray-9 transition-colors hover:bg-gray-2/50"
