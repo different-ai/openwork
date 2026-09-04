@@ -15,6 +15,10 @@
 {{- end -}}
 {{- end -}}
 
+{{- define "openwork-ee.namespace" -}}
+{{- .Values.namespace | default .Release.Namespace | toString | quote -}}
+{{- end -}}
+
 {{- define "openwork-ee.chart" -}}
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" -}}
 {{- end -}}

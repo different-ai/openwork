@@ -3,6 +3,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: {{ include "openwork-ee.fullname" . }}
+  namespace: {{ include "openwork-ee.namespace" . }}
   labels:
     {{- include "openwork-ee.labels" . | nindent 4 }}
   {{- with .Values.ingress.annotations }}
