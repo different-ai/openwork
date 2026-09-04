@@ -11,6 +11,8 @@ const graph: WorkflowGraph = {
     { id: "gmail", kind: "tool", label: "gmail.search", namespace: "gmail", tool: "search", scriptPath: "tools.gmail.search", assignsTo: "messages", parallelGroup: "p1" },
     { id: "branch", kind: "branch", label: "channels.length > 0" },
     { id: "return", kind: "return", label: "{ channels, messages }" },
+    { id: "orgs", kind: "tool", label: "den.getMeOrgs", namespace: "den", tool: "getMeOrgs", scriptPath: "tools.den.getMeOrgs", assignsTo: "orgs", parallelGroup: null },
+    { id: "final-return", kind: "return", label: "{ orgs }" },
   ],
   edges: [
     { from: "input", to: "slack", label: null, kind: "flow" },
@@ -19,6 +21,8 @@ const graph: WorkflowGraph = {
     { from: "slack", to: "branch", label: null, kind: "flow" },
     { from: "gmail", to: "branch", label: null, kind: "flow" },
     { from: "branch", to: "return", label: "yes", kind: "flow" },
+    { from: "branch", to: "orgs", label: "no", kind: "flow" },
+    { from: "orgs", to: "final-return", label: null, kind: "flow" },
   ],
   parseError: null,
 };
@@ -33,5 +37,8 @@ describe("Workflow flow diagram", () => {
     expect(markup).toContain('data-node-kind="branch"');
     expect(markup).toContain("channels.length &gt; 0");
     expect(markup).toContain(">yes<");
+    expect(markup).toContain(">no · from if<");
+    expect(markup).toContain('data-terminal="true"');
+    expect(markup.match(/data-connector="flow"/g)).toHaveLength(5);
   });
 });

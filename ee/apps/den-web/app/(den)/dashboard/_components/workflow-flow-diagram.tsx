@@ -84,6 +84,12 @@ function nodeBadge(node: WorkflowGraphNode): string {
   return node.kind;
 }
 
+function sourceLabel(node: WorkflowGraphNode): string {
+  if (node.kind === "branch") return "if";
+  if (node.kind === "tool") return node.tool;
+  return node.kind;
+}
+
 function FlowNode({ node, graph }: { node: WorkflowGraphNode; graph: WorkflowGraph }) {
   const sourceNodes = new Map(graph.nodes.map((candidate) => [candidate.id, candidate]));
   const dataLabels = graph.edges.flatMap((edge) => {
@@ -92,7 +98,7 @@ function FlowNode({ node, graph }: { node: WorkflowGraphNode; graph: WorkflowGra
   });
 
   return (
-    <div className={`w-full max-w-sm rounded-xl border px-3.5 py-3 shadow-sm ${cardStyle(node.kind)}`} data-node-kind={node.kind}>
+    <div className={`w-full max-w-sm rounded-xl border px-3.5 py-3 shadow-sm ${cardStyle(node.kind)}`} data-node-kind={node.kind} data-terminal={node.kind === "return" ? "true" : undefined}>
       <div className="flex min-w-0 items-start gap-2.5">
         <span className="mt-0.5 rounded-lg border border-current/10 bg-white p-1.5 text-gray-500"><NodeIcon kind={node.kind} /></span>
         <div className="min-w-0 flex-1">
@@ -120,11 +126,18 @@ export function WorkflowFlowDiagram({ graph }: { graph: WorkflowGraph }) {
       <div className="flex flex-col items-center">
         {rows.map((row, index) => {
           const rowIds = new Set(row.nodes.map((node) => node.id));
-          const edgeLabels = [...new Set(graph.edges.flatMap((edge) => edge.kind === "flow" && rowIds.has(edge.from) && edge.label ? [edge.label] : []))];
+          const previousRowIds = new Set(rows[index - 1]?.nodes.map((node) => node.id) ?? []);
+          const sourceNodes = new Map(graph.nodes.map((node) => [node.id, node]));
+          const incoming = graph.edges.filter((edge) => edge.kind === "flow" && rowIds.has(edge.to));
+          const labeledIncoming = [...new Map(incoming.flatMap((edge) => edge.label ? [[`${edge.from}:${edge.to}:${edge.label}`, edge]] : [])).values()];
           return (
             <div key={row.nodes.map((node) => node.id).join(":")} className="flex w-full flex-col items-center" data-node-ids={row.nodes.map((node) => node.id).join(",")} data-parallel-group={row.parallelGroup ?? undefined}>
+              {index > 0 ? incoming.length > 0 ? <div className="flex h-8 flex-col items-center justify-center" data-connector="flow"><div className="h-5 w-px bg-gray-200" />{labeledIncoming.length > 0 ? <div className="flex gap-1">{labeledIncoming.map((edge) => {
+                const source = sourceNodes.get(edge.from);
+                const label = `${edge.label}${!previousRowIds.has(edge.from) && source ? ` · from ${sourceLabel(source)}` : ""}`;
+                return <span key={`${edge.from}:${edge.to}:${edge.label}`} className="rounded-full bg-gray-100 px-1.5 text-[9px] text-gray-500">{label}</span>;
+              })}</div> : null}</div> : <div className="h-4" /> : null}
               <div className="flex w-full justify-center gap-3">{row.nodes.map((node) => <FlowNode key={node.id} node={node} graph={graph} />)}</div>
-              {index < rows.length - 1 ? <div className="flex h-8 flex-col items-center justify-center"><div className="h-5 w-px bg-gray-200" />{edgeLabels.length > 0 ? <div className="flex gap-1">{edgeLabels.map((label) => <span key={label} className="rounded-full bg-gray-100 px-1.5 text-[9px] text-gray-500">{label}</span>)}</div> : null}</div> : null}
             </div>
           );
         })}
