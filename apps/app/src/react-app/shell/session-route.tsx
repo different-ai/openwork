@@ -75,6 +75,7 @@ import {
   type RouteSession,
   describeRouteError,
   describeTaskCreateFailure,
+  describeTaskCreateRetry,
   describeWorkspaceCreateError,
   downloadWorkspaceJson,
   folderNameFromPath,
@@ -2087,9 +2088,10 @@ export function SessionRoute() {
         ),
         retryDelaysMs: TASK_CREATE_RETRY_DELAYS_MS,
         onRetry: (attempt) => {
-          toast.info(t("session.engine_catching_up_title"), {
+          const notice = describeTaskCreateRetry({ developerMode, attempt, attempts });
+          toast.info(notice.title, {
             id: toastId,
-            description: t("session.engine_catching_up_detail", { attempt: String(attempt), total: String(attempts) }),
+            description: notice.description,
             duration: Infinity,
           });
         },
@@ -2159,7 +2161,7 @@ export function SessionRoute() {
       }
       return null;
     }
-  }, [applyLastUsedModelToSession, endpointForWorkspace, loading, navigateToWorkspaceSession, refreshCloudProviderSync, refreshRouteState, rememberPendingCreatedSession, retryingWorkspaceIds, selectedWorkspaceId, workspaces]);
+  }, [applyLastUsedModelToSession, developerMode, endpointForWorkspace, loading, navigateToWorkspaceSession, refreshCloudProviderSync, refreshRouteState, rememberPendingCreatedSession, retryingWorkspaceIds, selectedWorkspaceId, workspaces]);
 
   // Latest session-list state for prev/next session tab navigation. The
   // `options` field is updated by `onSessionTabsChange` from SessionPage so we
