@@ -5,6 +5,60 @@ platform. Open Coworker is a second product client, not a second platform: it
 assembles existing OpenWork primitives into a coworker-centric experience and
 adds no new database concepts.
 
+## Team onboarding through OpenWork Connect
+
+An organization can prepare a team once and give every new teammate a useful
+starting point. In Connect, open a plugin and choose **Add coworker**. Define
+the name, role, mission, description, and reusable instructions, or import a
+`.coworker.json` file. Include several coworkers, skills, and MCP connections
+in the same plugin, then assign the plugin to people, a team, or an organization
+marketplace using the existing access controls.
+
+With **Add automatically for assigned teammates** enabled, Open Coworker
+creates the assigned coworkers when the member signs in, relaunches with a
+saved account, or chooses **Account → Refresh assigned coworkers**. Coworkers
+marked optional remain available through **Add coworker**. An administrator's
+visibility or ownership of a catalog does not itself trigger installation.
+Team membership, including membership managed through the existing enterprise
+identity flow, controls which assignments the member receives on the next sync.
+
+For example, a Marketing starter plugin can contain a campaign partner and a
+research partner, together with brand skills and the team's approved connected
+apps. Someone joining Marketing signs in and gets both coworkers without
+building each profile. They use the apps and models available to their own
+account. Provisioning starts no conversations, schedules, or inference runs.
+
+The template is a versioned `agent` config object with schema marker
+`openwork.coworker.v1` and a strict `{ kind: "coworker", schemaVersion: 1, ... }`
+payload. It reuses plugin, person, team, and marketplace permissions, version
+history, and archive operations; it introduces no database migration.
+`GET /v1/me/coworkers` returns paginated visible templates with their version
+and an explicit `assigned` flag. Generic agents remain separate in the UI.
+
+Each installation is a personal working copy. A local receipt is scoped to
+the Connect server, organization, account, and template ID. Repeat syncs do
+not create duplicates, and retiring a coworker does not make it reappear.
+New template versions are shown as available updates; they supply future
+copies and never overwrite an existing copy's memory or instructions.
+Removing access or archiving a template stops future delivery. Existing
+downloaded copies are retained; this is distribution, not remote deletion or
+continuous policy enforcement of local files. Live model and app access
+continues to follow the member's existing Connect permissions.
+
+Connect's editor can export a template file for import into another
+organization. Open Coworker's Account page can import one, or export the
+selected coworker's starting profile and explicitly reusable instructions.
+Exports omit conversations, evolving soul and memory, working documents,
+credentials, model choices, schedules, and active tasks. Extra payload fields
+are rejected. A normal coworker exported for the first time contains its
+profile; add reusable instructions in Connect's editor before distribution.
+File portability does not transfer marketplace access between organizations.
+
+Verification lives in `evals/specs/coworker-template-distribution.test.ts`
+(real permission and assignment boundaries) and the existing
+`evals/specs/open-coworker-openwork-account.e2e.test.ts` (native first sign-in,
+optional installation, reload, template changes, and retirement).
+
 ## What a coworker is
 
 ```

@@ -467,7 +467,7 @@ function opencodeConfigTemplate() {
   )}\n`;
 }
 
-function coworkerConfigTemplate({ name, role, mission, avatarColor: color, avatarGlasses: glasses, personality: voice, roleId, suggestedBy, createdAt }) {
+function coworkerConfigTemplate({ name, role, mission, avatarColor: color, avatarGlasses: glasses, personality: voice, roleId, suggestedBy, createdAt, templateOrigin = "", templateVersion = "" }) {
   return serializeFrontmatter(
     {
       name,
@@ -476,6 +476,7 @@ function coworkerConfigTemplate({ name, role, mission, avatarColor: color, avata
       avatarColor: avatarColor(color),
       avatarGlasses: avatarGlasses(glasses),
       personality: personality(voice),
+      ...(templateOrigin ? { templateOrigin, templateVersion } : {}),
       ...(roleId ? { roleId } : {}),
       ...(suggestedBy ? { suggestedBySlug: suggestedBy.slug, suggestedByWhy: suggestedBy.why } : {}),
       workspaceId: "",
@@ -538,6 +539,8 @@ async function readCoworkerRecord(coworkersDir, slug) {
     roleId: roleIdOf(data.roleId),
     /** The teammate who proposed this coworker and why; null when the person added it themselves. */
     suggestedBy: suggestedByOf({ slug: data.suggestedBySlug, why: data.suggestedByWhy }),
+    templateOrigin: typeof data.templateOrigin === "string" ? data.templateOrigin : "",
+    templateVersion: typeof data.templateVersion === "string" ? data.templateVersion : "",
     workspaceId: typeof data.workspaceId === "string" ? data.workspaceId.trim() : "",
     /** Native OpenWork session used for ongoing discussion, never counted as an assignment. */
     conversationThreadId: typeof data.conversationThreadId === "string" ? data.conversationThreadId.trim() : "",
@@ -597,10 +600,12 @@ export async function createCoworker(coworkersDir, input) {
   await mkdir(path.join(root, WORKSPACE_DIR), { recursive: true });
   await writeFile(
     path.join(root, COWORKER_CONFIG_FILE),
-    coworkerConfigTemplate({ name, role, mission, avatarColor: color, avatarGlasses: glasses, personality: voice, roleId, suggestedBy, createdAt }),
+    coworkerConfigTemplate({ name, role, mission, avatarColor: color, avatarGlasses: glasses, personality: voice, roleId, suggestedBy, createdAt, templateOrigin: input?.templateOrigin, templateVersion: input?.templateVersion }),
     "utf8",
   );
-  await writeFile(path.join(root, SOUL_FILE), soulTemplate({ name, role, mission }), "utf8");
+  const reusableInstructions = typeof input?.templateInstructions === "string" ? input.templateInstructions.trim() : "";
+  await writeFile(path.join(root, SOUL_FILE), soulTemplate({ name, role, mission }) + (reusableInstructions ? `\n## Starting instructions\n\n${reusableInstructions}\n` : ""), "utf8");
+  if (input?.templateOrigin) await writeFile(path.join(root, "template-instructions.md"), reusableInstructions, "utf8");
   await writeFile(path.join(root, "AGENTS.md"), agentsTemplate({ name }), "utf8");
   await writeFile(path.join(root, "opencode.json"), opencodeConfigTemplate(), "utf8");
   // The one line memory starts with is written here, once; after this the memory is the coworker's.

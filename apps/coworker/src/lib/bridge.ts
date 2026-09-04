@@ -5,6 +5,12 @@ import type { EffortStop } from "./effort.ts";
 import type { ModelMode } from "./model-choice.ts";
 import type { Personality } from "./personalities";
 import type { WorkerEvent, WorkerLifespan, WorkerSummary } from "./workers";
+import type { AssignedCoworkerTemplate } from "@openwork/types/coworker-template";
+
+export type CoworkerTemplateSync = {
+  items: Array<AssignedCoworkerTemplate & { installed: boolean; slug: string | null; updateAvailable: boolean }>;
+  created: CoworkerSummary[];
+};
 
 /** A group chat: several coworkers in one conversation with the person. */
 export type CoworkerGroupSummary = {
@@ -347,6 +353,11 @@ async function invoke<T>(command: string, payload?: unknown): Promise<T> {
 }
 
 export const coworkerBridge = {
+  templates: {
+    sync: (input: { userEmail: string; automatic?: boolean; installIds?: string[] }) => invoke<CoworkerTemplateSync>("templates.sync", input),
+    import: () => invoke<CoworkerTemplateSync | null>("templates.import"),
+    export: (slug: string) => invoke<{ saved: boolean }>("templates.export", { slug }),
+  },
   runtimeInfo: () => invoke<RuntimeInfo>("runtime.info"),
   /** Stop and start the local AI service, then report the fresh state. */
   restartRuntime: () => invoke<RuntimeInfo>("runtime.restart"),
