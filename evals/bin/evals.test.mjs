@@ -15,28 +15,6 @@ import {
   worldSnapshotsSince,
 } from "./evals.mjs";
 
-test("resolveTestNames reports named quarantined specs with their reason", () => {
-  const previous = process.env.OPENWORK_EVAL_IGNORE_QUARANTINE;
-  delete process.env.OPENWORK_EVAL_IGNORE_QUARANTINE;
-  assert.throws(
-    () => resolveTestNames(["tool-tester-page"], [join("/tmp", "tool-tester-page.e2e.test.ts")]),
-    /quarantined: seeded token lands on sign-in/,
-  );
-  if (previous === undefined) delete process.env.OPENWORK_EVAL_IGNORE_QUARANTINE;
-  else process.env.OPENWORK_EVAL_IGNORE_QUARANTINE = previous;
-});
-
-test("resolveTestNames allows an explicit quarantine bypass", () => {
-  const previous = process.env.OPENWORK_EVAL_IGNORE_QUARANTINE;
-  process.env.OPENWORK_EVAL_IGNORE_QUARANTINE = "1";
-  assert.deepEqual(
-    resolveTestNames(["tool-tester-page"], [join("/tmp", "tool-tester-page.e2e.test.ts")]),
-    [join("/tmp", "tool-tester-page.e2e.test.ts")],
-  );
-  if (previous === undefined) delete process.env.OPENWORK_EVAL_IGNORE_QUARANTINE;
-  else process.env.OPENWORK_EVAL_IGNORE_QUARANTINE = previous;
-});
-
 test("consentVarsFromSource extracts, deduplicates, and sorts only opt-in variables", () => {
   const source = `
     needs({ optIn: ["OPENWORK_EVAL_ZETA", 'OPENWORK_EVAL_ALPHA'] });

@@ -144,10 +144,8 @@ jobs:
           # Raw desktop() detection remains as a guard for newly added tests
           # that have not been classified yet.
           profile='evals/specs/daytona-e2e-regression-profile.json'
-          quarantined="$(node evals/scripts/quarantine.mjs)"
           profile_excluded_json="$(jq -c '[.excluded[].test]' "$profile")"
           raw_desktop_json="$(printf '%s\n' "$raw_desktop" | jq -Rsc 'split("\n") | map(select(length > 0))')"
-          quarantined_json="$(printf '%s\n' "$quarantined" | jq -Rsc 'split("\n") | map(select(length > 0))')"
           dedicated_workflow_json='["org-team-lifecycle-critical-path.e2e.test.ts"]'
           excluded="$(
             printf '%s\n' "$raw_desktop" "$(echo "$profile_excluded_json" | jq -r '.[]')" \
@@ -160,10 +158,9 @@ jobs:
           all_tests="$(
             printf '%s\n' evals/specs/*.e2e.test.ts \
               | sed 's#^evals/specs/##' \
-              | jq -Rsc --argjson quarantined "$quarantined_json" '
+              | jq -Rsc '
                   split("\n")
                   | map(select(length > 0))
-                  | map(select(. as $test | $quarantined | index($test) | not))
                 '
           )"
           lane_excluded_json="$(echo "$all_tests" | jq -c --argjson excluded "$excluded_json" 'map(select(. as $test | $excluded | index($test)))')"
@@ -175,8 +172,7 @@ jobs:
           )"
 
           if [ "$EVENT_NAME" = "workflow_run" ]; then
-            # spec-impact emits evals/specs/… paths; the matrix speaks basenames.
-            matched_tests="$(node evals/scripts/spec-impact.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --matched-tests | jq -c 'map(sub("^evals/specs/"; ""))')"
+            matched_tests="$(git diff --name-only --diff-filter=ACMR "$BASE_SHA...$HEAD_SHA" | { grep -E '^evals/specs/[^/]+\.e2e\.test\.ts$' || true; } | sed 's#^evals/specs/##' | jq -Rsc 'split("\n") | map(select(length > 0))')"
             only_filter=""
           else
             matched_tests='[]'
@@ -212,7 +208,7 @@ jobs:
           {
             echo "### Daytona E2E regression plan"
             echo
-            echo "Inventory: $(($(echo "$all_tests" | jq 'length') + $(echo "$quarantined_json" | jq 'length'))) total; $(echo "$quarantined_json" | jq 'length') quarantined; $(echo "$lane_excluded_json" | jq 'length') topology-excluded; $(echo "$eligible_tests" | jq 'length') eligible for the shared topology"
+            echo "Inventory: $(echo "$all_tests" | jq 'length') total; $(echo "$lane_excluded_json" | jq 'length') topology-excluded; $(echo "$eligible_tests" | jq 'length') eligible for the shared topology"
             echo "- Profile exclusions: $(echo "$profile_excluded_json" | jq 'length')"
             echo "- Raw desktop() exclusions: $(echo "$raw_desktop_json" | jq 'length')"
             echo "- Dedicated-workflow exclusions: $(echo "$dedicated_workflow_json" | jq 'length')"
@@ -282,31 +278,6 @@ jobs:
           set -euo pipefail
           pnpm install --frozen-lockfile
           pnpm --dir evals install --frozen-lockfile --ignore-scripts
-
-      # The opencode MCP OAuth spec (opencode-mcp-agent-oauth.e2e.test.ts)
-      # drives the real opencode CLI as an OAuth MCP client against the Den
-      # agent endpoint. Install the exact validated version without lifecycle
-      # scripts before Daytona credentials are provisioned on the runner, then
-      # run the package's one known postinstall deliberately — the bin shim
-      # refuses to start without it, and --ignore-scripts must not silently
-      # skip it for every transitive dependency's sake.
-      - name: Install opencode CLI
-        shell: bash
-        run: |
-          set -euo pipefail
-          export PNPM_HOME="$RUNNER_TEMP/pnpm-global"
-          export PATH="$PNPM_HOME/bin:$PNPM_HOME:$PATH"
-          mkdir -p "$PNPM_HOME/bin"
-          pnpm add --global --ignore-scripts opencode-ai@1.18.18
-          package_dir=""
-          while IFS= read -r candidate; do
-            package_dir="$candidate"
-          done < <(pnpm list --global --parseable opencode-ai)
-          [ -n "$package_dir" ]
-          (cd "$package_dir" && node postinstall.mjs)
-          opencode --version
-          echo "$PNPM_HOME/bin" >> "$GITHUB_PATH"
-          echo "$PNPM_HOME" >> "$GITHUB_PATH"
 
       # The eval harness shells out to the daytona CLI (testkit daytonaAvailable
       # gate and @openwork/hosts exec). The binary is pinned to a release tag
