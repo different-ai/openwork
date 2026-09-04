@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util"
-import { and, desc, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
+import { and, asc, desc, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
 import {
   ConnectedAccountTable,
   ConfigObjectAccessGrantTable,
@@ -359,6 +359,7 @@ export async function listExternalMcpConnections(organizationId: OrganizationId)
     .select()
     .from(ExternalMcpConnectionTable)
     .where(eq(ExternalMcpConnectionTable.organizationId, organizationId))
+    .orderBy(asc(ExternalMcpConnectionTable.createdAt), asc(ExternalMcpConnectionTable.id))
 }
 
 export async function getExternalMcpConnection(input: {
@@ -371,6 +372,21 @@ export async function getExternalMcpConnection(input: {
     .where(and(
       eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
       eq(ExternalMcpConnectionTable.id, input.connectionId),
+    ))
+    .limit(1)
+  return rows[0] ?? null
+}
+
+export async function getExternalMcpConnectionByExternalKey(input: {
+  organizationId: OrganizationId
+  externalKey: string
+}): Promise<ExternalMcpConnectionRow | null> {
+  const rows = await db
+    .select()
+    .from(ExternalMcpConnectionTable)
+    .where(and(
+      eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+      eq(ExternalMcpConnectionTable.externalKey, input.externalKey),
     ))
     .limit(1)
   return rows[0] ?? null
@@ -459,6 +475,7 @@ export type ExternalMcpAccessInput = {
 export async function createExternalMcpConnection(input: {
   organizationId: OrganizationId
   name: string
+  externalKey?: string | null
   url: string
   authType: "oauth" | "apikey" | "none"
   kind?: "external_mcp" | "native_provider"
@@ -487,6 +504,7 @@ export async function createExternalMcpConnection(input: {
     id,
     organizationId: input.organizationId,
     name: input.name,
+    externalKey: input.externalKey ?? null,
     url: input.url,
     authType: input.authType,
     kind: input.kind ?? "external_mcp",
