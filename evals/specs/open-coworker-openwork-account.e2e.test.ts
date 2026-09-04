@@ -821,6 +821,40 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     true,
   );
 
+  const ownToolsEndpoint = await evalIn(app, `(async () => {
+    const runtime = await window.__COWORKER__.invoke("runtime.info");
+    const scout = await window.__COWORKER__.invoke("coworkers.get", { slug: "scout" });
+    const response = await fetch(runtime.result.serverUrl + "/workspace/" + encodeURIComponent(scout.result.workspaceId) + "/config", {
+      headers: { Authorization: "Bearer " + runtime.result.ownerToken },
+    });
+    const config = await response.json();
+    return { status: response.status, url: config.opencode?.mcp?.coworker?.url };
+  })()`, { awaitPromise: true, timeoutMs: 30_000 });
+  if (!isRecord(ownToolsEndpoint) || typeof ownToolsEndpoint.url !== "string") throw new Error("Coworker tools endpoint was unavailable.");
+  expect(ownToolsEndpoint.status).toBe(200);
+  expect(new URL(ownToolsEndpoint.url).hostname).toBe("127.0.0.1");
+  for (const authorization of ["Basic unknown", "Bearer " + " ".repeat(8_000) + "invalid token", "Bearer unknown"] ) {
+    const rejected = await fetch(ownToolsEndpoint.url, { method: "POST", headers: { Authorization: authorization }, body: "{}", signal: AbortSignal.timeout(5_000) });
+    expect(rejected.status).toBe(401);
+    expect(await rejected.json()).toMatchObject({ error: "unauthorized" });
+  }
+  const ownTools = await evalIn(app, `(async () => {
+    const runtime = await window.__COWORKER__.invoke("runtime.info");
+    const scout = await window.__COWORKER__.invoke("coworkers.get", { slug: "scout" });
+    const response = await fetch(runtime.result.serverUrl + "/workspace/" + encodeURIComponent(scout.result.workspaceId) + "/mcp/coworker/tools", {
+      headers: { Authorization: "Bearer " + runtime.result.ownerToken },
+    });
+    const listed = await response.json();
+    return { status: response.status, count: listed.tools?.length ?? 0 };
+  })()`, { awaitPromise: true, timeoutMs: 30_000 });
+  expect(ownTools).toMatchObject({ status: 200 });
+  if (!isRecord(ownTools) || typeof ownTools.count !== "number") throw new Error("Coworker tool discovery was unavailable.");
+  expect(ownTools.count).toBeGreaterThan(0);
+  evidence.recordAssertionEvidence(
+    "The packaged coworker tool server rejects malformed bearer credentials and remains usable with its registered credentials",
+    "Unknown, wrong-scheme, and long whitespace-bearing credentials returned 401 without tool access; authenticated tool discovery still returned the coworker's tools afterward.", true,
+  );
+
   // --- The Connected screen's four groups, read through the gateway's skill index and its search.
   const connectedRows = await waitFor(app, `(() => {
     const rows = ["connected-apps", "skills", "plugins", "connections"].map((id) => document.querySelector('[data-testid="apps-tools-row-' + id + '"]'));
