@@ -108,28 +108,30 @@ function partValues(value: Record<string, unknown>): unknown[] {
   return text === undefined ? [] : [{ type: "text", text }];
 }
 
-function parsePart(value: unknown): EngineSessionProbePart | null {
+function parsePart(value: unknown, engine: EngineSessionProbeEngine): EngineSessionProbePart | null {
   if (!isRecord(value)) return null;
   const state = readRecord(value, "state") ?? {};
   const metadata = readRecord(state, "metadata");
   return {
     type: readString(value, "type") ?? "",
     text: readString(value, "text") ?? "",
-    tool: readString(value, "tool") ?? "",
-    callId: readString(value, "callID") ?? readString(value, "callId") ?? readString(value, "toolCallId") ?? "",
+    tool: engine === "v2" ? readString(value, "name") ?? readString(value, "tool") ?? "" : readString(value, "tool") ?? "",
+    callId: engine === "v2"
+      ? readString(value, "id") ?? readString(value, "callID") ?? ""
+      : readString(value, "callID") ?? readString(value, "callId") ?? readString(value, "toolCallId") ?? "",
     status: readString(state, "status") ?? "",
     input: readRecord(state, "input") ?? readRecord(value, "input") ?? {},
     output: readString(state, "output") ?? readString(metadata, "output") ?? readString(value, "output") ?? "",
   };
 }
 
-function parseMessage(value: unknown): EngineSessionProbeMessage | null {
+function parseMessage(value: unknown, engine: EngineSessionProbeEngine): EngineSessionProbeMessage | null {
   if (!isRecord(value)) return null;
   const source = responseData(value);
   if (!isRecord(source)) return null;
   return {
     parts: partValues(source).flatMap((part) => {
-      const parsed = parsePart(part);
+      const parsed = parsePart(part, engine);
       return parsed ? [parsed] : [];
     }),
   };
@@ -240,7 +242,7 @@ export function engineSessionProbe(options: EngineSessionProbeOptions) {
       `${mount}${sessionPath}/${encodeURIComponent(sessionId)}/message?limit=${encodeURIComponent(String(limit))}`,
     );
     const parsed = responseItems(response.body).flatMap((message) => {
-      const item = parseMessage(message);
+      const item = parseMessage(message, options.engine);
       return item ? [item] : [];
     });
     return result(response, parsed);
@@ -263,7 +265,7 @@ export function engineSessionProbe(options: EngineSessionProbeOptions) {
     if (!sessionResponse || !messagesResponse) throw new Error("Engine session snapshot responses were incomplete.");
     const session = parseSession(sessionResponse.body);
     const parsedMessages = responseItems(messagesResponse.body).flatMap((message) => {
-      const item = parseMessage(message);
+      const item = parseMessage(message, options.engine);
       return item ? [item] : [];
     });
     const failed = responses.find((response) => response.status < 200 || response.status >= 300);
