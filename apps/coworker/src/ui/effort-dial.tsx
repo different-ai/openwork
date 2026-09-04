@@ -103,8 +103,8 @@ export function EffortDial({
         data-testid="effort-dial-pill"
         onClick={() => setOpen((current) => !current)}
       >
-        <span className="text-mist/70">Effort</span>
-        <span className="font-medium text-snow/85">{effortStopLabel(stop)}</span>
+        <span className="text-mist/70">Effort</span>{" "}
+        <span className="font-medium text-snow/85">{effortStopLabel(stop)}</span>{" "}
         <span aria-hidden="true">⌄</span>
       </button>
       {open ? (
