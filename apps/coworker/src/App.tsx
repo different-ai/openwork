@@ -183,7 +183,8 @@ export default function App() {
     setOnboardingReady(true);
     setOnboardingStep("");
     setCreating(false);
-  }, []);
+    void refreshRuntime();
+  }, [refreshRuntime]);
 
   const receiveTemplates = useCallback((result: CoworkerTemplateSync) => {
     setTemplateSync(result);
@@ -699,6 +700,13 @@ export default function App() {
       <OnboardingWelcome
         onConnect={() => setConnecting(true)}
         onContinueLocally={() => setLocalSetup(true)}
+        onImport={async () => {
+          const result = await coworkerBridge.templates.import();
+          if (result) {
+            if (result.created.length === 0) throw new Error("This template was already added. Its previous working copy has been kept.");
+            receiveImportedTemplates(result);
+          }
+        }}
       />
     );
   }
