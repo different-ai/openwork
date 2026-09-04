@@ -40,12 +40,12 @@ test("the pinned version comes from the sidecar's versions.json and is otherwise
   assert.equal(await readSidecarVersion(path.join(fixture.home, "missing.json")), "");
 });
 
-test("an installer is found on PATH or in the usual places, bun before npm", () => {
+test("an installer is found on PATH or in the usual places, npm before bun", () => {
   const files = new Set(["/opt/homebrew/bin/npm", "/Users/me/.bun/bin/bun"]);
   const exists = (candidate) => files.has(candidate);
-  assert.deepEqual(findInstaller({ env: { PATH: "/usr/bin", HOME: "/Users/me" }, platform: "darwin", fileExists: exists }), { name: "bun", path: "/Users/me/.bun/bin/bun" });
-  files.delete("/Users/me/.bun/bin/bun");
   assert.deepEqual(findInstaller({ env: { PATH: "/usr/bin", HOME: "/Users/me" }, platform: "darwin", fileExists: exists }), { name: "npm", path: "/opt/homebrew/bin/npm" });
+  files.delete("/opt/homebrew/bin/npm");
+  assert.deepEqual(findInstaller({ env: { PATH: "/usr/bin", HOME: "/Users/me" }, platform: "darwin", fileExists: exists }), { name: "bun", path: "/Users/me/.bun/bin/bun" });
   assert.equal(findInstaller({ env: { PATH: "/usr/bin", HOME: "/Users/me" }, platform: "darwin", fileExists: () => false }), null);
   assert.deepEqual(findInstaller({ env: { PATH: "C:\\tools", HOME: "" }, platform: "win32", fileExists: (c) => c === "C:\\tools\\npm.cmd" }), { name: "npm", path: "C:\\tools\\npm.cmd" });
 });
@@ -60,6 +60,8 @@ test("prepareEngineSdk seeds each missing directory with the pinned plugin and l
     installs.push([installer.name, directory]);
     const manifest = JSON.parse(await readFile(path.join(directory, "package.json"), "utf8"));
     await seedPlugin(directory, manifest.dependencies[PLUGIN_PACKAGE]);
+    // What bun leaves behind, and what the seeding must not.
+    await writeFile(path.join(directory, "bun.lock"), "{}", "utf8");
   };
   const logged = [];
   const result = await prepareEngineSdk({
@@ -73,6 +75,7 @@ test("prepareEngineSdk seeds each missing directory with the pinned plugin and l
   assert.deepEqual(result.results.map((entry) => [path.basename(entry.directory), entry.outcome]), [["opencode", "present"], ["opencode-config", "seeded"]]);
   assert.deepEqual(installs, [["bun", extra]], "only the missing directory was installed into");
   assert.equal(await sdkPresent(extra, "1.18.18"), true);
+  await assert.rejects(readFile(path.join(extra, "bun.lock")), "no bun lockfile is left for the engine's own install to stall on");
   const manifest = JSON.parse(await readFile(path.join(extra, "package.json"), "utf8"));
   assert.deepEqual(manifest, { dependencies: { [PLUGIN_PACKAGE]: "1.18.18" } });
   assert.match(logged[0], /engine sdk 1\.18\.18: present, seeded via bun/);
