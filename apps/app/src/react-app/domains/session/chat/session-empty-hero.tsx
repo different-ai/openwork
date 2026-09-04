@@ -103,7 +103,6 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
 
   const submit = (resolvedPrompt: string, attachments: ComposerAttachment[]) => {
     const trimmedPrompt = resolvedPrompt.trim();
-    console.error("[diag] hero submit", { trimmedLength: trimmedPrompt.length, busy: props.busy });
     if (!trimmedPrompt || props.busy) return;
     props.onRunTask(trimmedPrompt, attachments);
   };
