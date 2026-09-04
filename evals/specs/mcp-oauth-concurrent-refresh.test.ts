@@ -85,12 +85,14 @@ test("overlapping MCP refreshes reuse one successor without granting another cli
     const successors = results.map((result) => string(result.body, "refresh_token"));
     expect(new Set(successors).size).toBe(1);
     expect(successors[0]).not.toBe(refreshToken);
-    const wrongClient = await token({ grant_type: "refresh_token", client_id: otherClientId, refresh_token: refreshToken });
-    expect(wrongClient.response.status).toBe(400);
-    expect(record(wrongClient.body).error).toBe("invalid_grant");
-    const widerScope = await token({ grant_type: "refresh_token", client_id: clientId, refresh_token: refreshToken, scope: "mcp:read mcp:write offline_access" });
-    expect(widerScope.response.status).toBe(400);
-    expect(record(widerScope.body).error).toBe("invalid_scope");
+    for (const restrictedToken of [refreshToken, successors[0]]) {
+      const wrongClient = await token({ grant_type: "refresh_token", client_id: otherClientId, refresh_token: restrictedToken });
+      expect(wrongClient.response.status).toBe(400);
+      expect(record(wrongClient.body).error).toBe("invalid_grant");
+      const widerScope = await token({ grant_type: "refresh_token", client_id: clientId, refresh_token: restrictedToken, scope: "mcp:read mcp:write offline_access" });
+      expect(widerScope.response.status).toBe(400);
+      expect(record(widerScope.body).error).toBe("invalid_scope");
+    }
     refreshToken = successors[0];
   }
   const mismatchedReplay = await token({ grant_type: "refresh_token", client_id: clientId, refresh_token: originalRefreshToken, scope: "mcp:read" });
@@ -107,8 +109,15 @@ test("overlapping MCP refreshes reuse one successor without granting another cli
   });
   expect(initialized.response.status).toBe(200);
   expect(initialized.text).toContain("protocolVersion");
+  // A valid replay still succeeds well inside the configured 30-second grace.
+  await new Promise((resolve) => setTimeout(resolve, 20_000));
+  const delayedReplay = await token({ grant_type: "refresh_token", client_id: clientId, refresh_token: refreshToken });
+  expect(delayedReplay.response.status).toBe(200);
+  expect(string(delayedReplay.body, "refresh_token")).toBe(string(final.body, "refresh_token"));
+  expect(string(delayedReplay.body, "access_token")).toBe(string(final.body, "access_token"));
+  evidence.recordAssertionEvidence("Replay remains usable later within the grace interval", "After 20 seconds, the same refresh request returns HTTP 200 and the identical access and refresh tokens.", true);
   // Stale replay retains the provider's existing family-revocation policy.
-  await new Promise((resolve) => setTimeout(resolve, 31_000));
+  await new Promise((resolve) => setTimeout(resolve, 11_000));
   const stale = await token({ grant_type: "refresh_token", client_id: clientId, refresh_token: originalRefreshToken });
   expect(stale.response.status).toBe(400);
   expect(record(stale.body).error).toBe("invalid_grant");
