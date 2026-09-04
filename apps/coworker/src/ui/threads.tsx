@@ -49,7 +49,7 @@ import {
   registerDiscussion,
   rememberWorkspaceSlug,
 } from "@/lib/discussions";
-import { carryVariant, markAutoPicked, wasAutoPicked } from "@/lib/model-choice";
+import { carryVariant, chooseModelForLane, classifyRequest, describeModelChoice, markAutoPicked, wasAutoPicked, type ModelLane } from "@/lib/model-choice";
 import { describeReview, parseWorkerReview, parseWorkerTurn, workerNameFromTitle, type WorkerReview, type WorkerSummary } from "@/lib/workers";
 import { WorkerDecisionCards } from "@/ui/worker-decision";
 import { coworkerToolName } from "@/lib/coworker-tools";
@@ -1008,6 +1008,7 @@ function ThreadView({
   const [resolution, setResolution] = useState<{ messageId: string; note: string } | null>(null);
   /** The words of the reply as they arrive, for a glimpse from the live row; the transcript owns what has landed. */
   const [liveStream, setLiveStream] = useState<LiveStream | null>(null);
+  /** In Automatic mode, which lane and model this turn runs on when it is not the standard one ("quick reply on GPT-5 mini"); empty otherwise. */
   /** Re-derive the outcome every second while a turn is unresolved: "still working" and the retry count are live. */
   const [now, setNow] = useState(() => Date.now());
   const [providerRefreshNote, setProviderRefreshNote] = useState("");
@@ -1228,23 +1229,35 @@ function ThreadView({
     if (activeTurnRef.current) return;
     /** The model this turn actually ran on, so a failure can be attributed and, if it was the app's pick, replaced. */
     let turnModelId = modelOverride ? `${modelOverride.providerId}/${modelOverride.modelId}` : coworker.model;
+    /** In Automatic mode: how much thinking this message deserves, decided once per message and kept across the app's own retries. */
+    const automatic = coworker.modelMode === "auto";
+    const turnLane: ModelLane = automatic ? classifyRequest(prompt) : "standard";
     const attempt = send.mode === "retry" ? send.attempt : 0;
     /**
      * When a model the app chose by itself cannot answer, move to the next
-     * recommendation and try the same message again, once or twice, telling
-     * the person what happened. A model the person chose is never swapped.
+     * choice and try the same message again, once or twice, telling the
+     * person what happened. In Automatic mode every pick is the app's: a lane
+     * pick that fails steps back towards the standard model, and only the
+     * standard model failing changes what is saved. A model the person chose
+     * is never swapped.
      */
     const fallBack = async (message: string): Promise<boolean> => {
-      if (!wasAutoPicked(coworker, turnModelId) || failedModels.length >= 2) return false;
+      if (!(automatic || wasAutoPicked(coworker, turnModelId)) || failedModels.length >= 2) return false;
       if (!describeTurnFailure(message, coworker.name).modelRelated) return false;
       try {
         const excluded = [...failedModels, turnModelId];
-        const next = recommendModel(await threads.listModelCatalog(), { exclude: excluded });
+        const catalog = await threads.listModelCatalog();
+        const next = automatic
+          ? chooseModelForLane(catalog, turnLane, { standard: coworker.model, exclude: excluded })
+          : recommendModel(catalog, { exclude: excluded });
         const nextModel = next ? parseModelPreference(next.id) : undefined;
         if (!next || !nextModel) return false;
         markAutoPicked(coworker.slug, next.id);
         const modelVariant = carryVariant(coworker.modelVariant, next);
-        onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { model: next.id, modelVariant, modelChosenBy: "app" }));
+        // In Automatic mode a lane model that failed is simply not chosen again this turn; the saved standard model changes only when it was the one that failed.
+        if (!automatic || turnModelId === coworker.model || !coworker.model) {
+          onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { model: next.id, modelVariant, modelChosenBy: "app" }));
+        }
         setProviderRefreshNote(`${turnModelId} could not answer, so ${coworker.name} is trying ${next.modelLabel} instead.`);
         window.setTimeout(() => void submitTurn(prompt, messageId, { mode: "retry", attempt, switchedTo: next.modelLabel }, { ...nextModel, ...(modelVariant ? { variant: modelVariant } : {}) }, excluded), 0);
         return true;
@@ -1308,23 +1321,46 @@ function ThreadView({
       let turnModel: HeadlessThreadModel | undefined = modelOverride;
       if (!turnModel) {
         const savedModel = parseModelPreference(coworker.model);
+        const catalog = await threads.listModelCatalog();
+        /** The standard model: the saved one, or — when nobody chose yet — the recommendation, kept from now on. */
+        let standardId = coworker.model;
         if (savedModel) {
-          const catalog = await threads.listModelCatalog();
           if (!catalog.models.some((model) => model.id === coworker.model)) {
             throw new Error(describeUnavailableModel(coworker.model, catalog.models, session));
           }
           turnModel = { ...savedModel, ...(coworker.modelVariant.trim() ? { variant: coworker.modelVariant.trim() } : {}) };
         } else {
           // Nobody chose a model yet: start on a connected model that can use tools and keep it.
-          const pick = recommendModel(await threads.listModelCatalog(), { exclude: failedModels });
+          const pick = recommendModel(catalog, { exclude: failedModels });
           if (!pick) throw new Error(NO_TOOL_MODEL_MESSAGE);
           const chosen = parseModelPreference(pick.id);
           if (chosen) turnModel = chosen;
           turnModelId = pick.id;
+          standardId = pick.id;
           markAutoPicked(coworker.slug, pick.id);
           void coworkerBridge.coworkers.update(coworker.slug, { model: pick.id, modelVariant: "", modelChosenBy: "app" })
             .then(onCoworkerChanged)
             .catch(() => undefined);
+        }
+        // Automatic: the right brain for this message, from the standard model's own provider.
+        // The standard lane keeps the standard model and its thinking effort; a quick or deep
+        // pick is a sibling model, said in the live row and the rail so the choice is never hidden.
+        if (automatic && turnLane !== "standard") {
+          const pick = chooseModelForLane(catalog, turnLane, { standard: standardId, exclude: failedModels });
+          const chosen = pick ? parseModelPreference(pick.id) : undefined;
+          if (pick && chosen && pick.id !== standardId) {
+            turnModel = chosen;
+            turnModelId = pick.id;
+            markAutoPicked(coworker.slug, pick.id);
+            // The live row keeps to its shapes (Phase 10); the lane reads in the rail's line and the landed reply's tooltip.
+            onActivityChange({
+              state: "working",
+              label: "Working",
+              detail: describeModelChoice(turnLane, pick, { tense: "detail" }),
+              updatedAt: Date.now(),
+              threadId,
+            });
+          }
         }
       }
       // A re-send waits for the engine to let go of the earlier attempt (a stop is still settling, say).

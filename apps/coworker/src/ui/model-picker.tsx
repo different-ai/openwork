@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CoworkerSummary, ModelChosenBy, ProviderSyncRun, RuntimeInfo } from "@/lib/bridge";
 import { describeSkippedProvider, type DenSession } from "@/lib/den";
-import { carryVariant, describeModelChoice } from "@/lib/model-choice";
+import { carryVariant, describeModelPick, previewAutomaticChoice, type ModelMode } from "@/lib/model-choice";
 import {
   createCoworkerThreads,
   modelSourceLabel,
@@ -11,14 +11,32 @@ import {
 import { Button, ErrorNote, Field, StatusDot, inputClass } from "@/ui/kit";
 import { InlineLoader } from "@/ui/brand";
 
-export type ModelSelection = { model: string; modelVariant: string };
+export type ModelSelection = { model: string; modelVariant: string; modelMode: ModelMode };
 
 const EMPTY_CATALOG: EngineModelCatalog = { models: [], connectedProviderIds: [], cloud: null };
+
+export const AUTOMATIC_LABEL = "Automatic";
+export const AUTOMATIC_BLURB = "Picks a quick, standard, or deep model for each message.";
 
 function selectedDescription(option: EngineModelOption | undefined, value: string): string {
   if (!value) return "Uses OpenWork's default AI model."
   if (!option) return "This saved model is not currently available from a connected provider.";
   return `${option.providerLabel} · ${option.modelId} · ${modelSourceLabel(option.source)}`;
+}
+
+/**
+ * What Automatic would do right now, in one line: "Quick GPT-5 mini · Standard
+ * GPT-5 · Deep GPT-5 pro". Falls back to the blurb until the catalog is read.
+ */
+export function describeAutomaticChoice(catalog: Pick<EngineModelCatalog, "models">, standard: string): string {
+  const preview = previewAutomaticChoice(catalog, standard);
+  if (!preview.standard) return AUTOMATIC_BLURB;
+  const parts = [
+    `Quick ${preview.quick?.modelLabel ?? preview.standard.modelLabel}`,
+    `Standard ${preview.standard.modelLabel}`,
+    `Deep ${preview.deep?.modelLabel ?? preview.standard.modelLabel}`,
+  ];
+  return parts.join(" · ");
 }
 
 function SourceTag({ source }: { source: EngineModelOption["source"] }) {
@@ -40,6 +58,7 @@ export function ModelPicker({
   coworker,
   value,
   modelVariant,
+  modelMode = "fixed",
   onChange,
   onSyncProviders,
   onConnect,
@@ -51,6 +70,8 @@ export function ModelPicker({
   coworker: CoworkerSummary;
   value: string;
   modelVariant: string;
+  /** `auto`: the coworker picks a lane per message around `value`; `fixed`: `value` every time. */
+  modelMode?: ModelMode;
   onChange: (selection: ModelSelection) => void;
   /** Re-read the signed-in account's providers before re-listing models. */
   onSyncProviders?: () => Promise<ProviderSyncRun>;
@@ -127,36 +148,47 @@ export function ModelPicker({
   const reloadPending = catalog.cloud?.reloadPending === true;
   const lastRunFailed = catalog.cloud?.lastRun?.status === "failed" ? catalog.cloud.lastRun : null;
 
+  const automatic = modelMode === "auto";
+  const automaticLine = automatic ? describeAutomaticChoice(catalog, value) : "";
+
+  /** A model row: that model, every time. */
   function selectModel(model: EngineModelOption | null) {
     onChange({
       model: model?.id ?? "",
       modelVariant: carryVariant(modelVariant, model),
+      modelMode: "fixed",
     });
     if (compact) setOpen(false);
   }
 
+  /** The Automatic row: lanes around the current model (or the recommendation when none is saved). */
+  function selectAutomatic() {
+    onChange({ model: value, modelVariant, modelMode: "auto" });
+    if (compact) setOpen(false);
+  }
+
   return (
-    <div className="space-y-3" data-testid="model-picker">
+    <div className="space-y-3" data-testid="model-picker" data-model-mode={modelMode}>
       <button
         type="button"
         className="flex w-full items-center gap-3 rounded-xl border border-line bg-panel px-3 py-3 text-left transition-colors hover:border-white/20 hover:bg-white/5"
         onClick={() => setOpen((current) => !current)}
       >
         <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-line bg-ink">
-          <StatusDot tone={selected || !value ? "mint" : "amber"} />
+          <StatusDot tone={automatic || selected || !value ? "mint" : "amber"} />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-xs font-semibold text-snow">
-            {selected?.modelLabel || (value ? value : "Default AI model")}
+          <span className="block truncate text-xs font-semibold text-snow" data-testid="model-picker-current">
+            {automatic ? AUTOMATIC_LABEL : selected?.modelLabel || (value ? value : "Default AI model")}
           </span>
-          <span className="mt-0.5 block truncate text-[11px] text-mist">
-            {selectedDescription(selected, value)}
+          <span className="mt-0.5 block truncate text-[11px] text-mist" data-testid="model-picker-current-detail">
+            {automatic ? automaticLine : selectedDescription(selected, value)}
           </span>
         </span>
         <span className="text-xs text-mist" aria-hidden="true">{open ? "⌃" : "⌄"}</span>
       </button>
       {chosenBy === "app" && selected ? (
-        <p className="text-[11px] leading-relaxed text-mist" data-testid="model-chosen-for-you">{describeModelChoice(selected)}</p>
+        <p className="text-[11px] leading-relaxed text-mist" data-testid="model-chosen-for-you">{describeModelPick(selected)}</p>
       ) : null}
 
       {open ? (
@@ -183,13 +215,35 @@ export function ModelPicker({
           <div className="max-h-64 overflow-y-auto p-2">
             <button
               type="button"
-              className={`flex w-full items-start gap-2 rounded-xl px-2.5 py-2.5 text-left ${!value ? "bg-white/8" : "hover:bg-white/5"}`}
+              className={`flex w-full items-start gap-2 rounded-xl px-2.5 py-2.5 text-left ${automatic ? "bg-white/8" : "hover:bg-white/5"}`}
+              data-testid="model-option-automatic"
+              aria-pressed={automatic}
+              onClick={selectAutomatic}
+            >
+              <StatusDot tone={automatic ? "mint" : "mist"} />
+              <span className="min-w-0 flex-1">
+                <span className="block text-xs font-semibold text-snow">{AUTOMATIC_LABEL}</span>
+                <span className="mt-0.5 block text-[11px] leading-relaxed text-mist">
+                  {AUTOMATIC_BLURB} A greeting or a one-line question gets a fast model, ordinary work the standard one, research, plans, drafts, and code a reasoning model — from the same provider, so nothing surprising is billed. Your own words win: “quickly” or “think carefully”.
+                </span>
+                {catalog.models.length > 0 ? (
+                  <span className="mt-1 block text-[11px] text-mist/80" data-testid="model-option-automatic-preview">
+                    {describeAutomaticChoice(catalog, value)}
+                    {selected ? " · Pick a model below, then Automatic again, to change the standard one." : ""}
+                  </span>
+                ) : null}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              className={`mt-1 flex w-full items-start gap-2 rounded-xl px-2.5 py-2.5 text-left ${!automatic && !value ? "bg-white/8" : "hover:bg-white/5"}`}
               onClick={() => selectModel(null)}
             >
-              <StatusDot tone={!value ? "mint" : "mist"} />
+              <StatusDot tone={!automatic && !value ? "mint" : "mist"} />
               <span>
                 <span className="block text-xs font-semibold text-snow">Default AI model</span>
-                <span className="mt-0.5 block text-[11px] text-mist">Follow the current OpenWork default.</span>
+                <span className="mt-0.5 block text-[11px] text-mist">Follow the current OpenWork default, every time.</span>
               </span>
             </button>
 
@@ -209,15 +263,18 @@ export function ModelPicker({
                   <button
                     type="button"
                     key={option.id}
-                    className={`flex w-full items-start gap-2 rounded-xl px-2.5 py-2 text-left ${option.id === value ? "bg-white/8" : "hover:bg-white/5"}`}
+                    className={`flex w-full items-start gap-2 rounded-xl px-2.5 py-2 text-left ${option.id === value && !automatic ? "bg-white/8" : "hover:bg-white/5"}`}
                     onClick={() => selectModel(option)}
                   >
-                    <StatusDot tone={option.id === value ? "mint" : "mist"} />
+                    <StatusDot tone={option.id === value && !automatic ? "mint" : "mist"} />
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center gap-1.5">
                         <span className="truncate text-xs font-medium text-snow">{option.modelLabel}</span>
                         {option.isProviderDefault ? (
                           <span className="shrink-0 rounded-full bg-white/7 px-1.5 py-0.5 text-[8px] uppercase tracking-wide text-mist">Default</span>
+                        ) : null}
+                        {automatic && option.id === value ? (
+                          <span className="shrink-0 rounded-full bg-spark/14 px-1.5 py-0.5 text-[8px] uppercase tracking-wide text-[#b8caff]" data-testid="model-standard-tag">Standard</span>
                         ) : null}
                       </span>
                       <span className="mt-0.5 block truncate text-[10px] text-mist">{option.modelId}</span>
@@ -255,11 +312,11 @@ export function ModelPicker({
       ) : null}
 
       {value && variants.length > 0 ? (
-        <Field label="Thinking effort">
+        <Field label={automatic ? "Thinking effort for the standard model" : "Thinking effort"}>
           <select
             className={`${inputClass} bg-panel`}
             value={modelVariant}
-            onChange={(event) => onChange({ model: value, modelVariant: event.target.value })}
+            onChange={(event) => onChange({ model: value, modelVariant: event.target.value, modelMode })}
           >
             <option value="">Model default</option>
             {variants.map((variant) => (

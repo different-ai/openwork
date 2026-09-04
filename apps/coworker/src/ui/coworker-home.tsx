@@ -1042,12 +1042,17 @@ function CoworkerSettings({
           value={coworker.model}
           modelVariant={coworker.modelVariant}
           chosenBy={coworker.modelChosenBy}
+          modelMode={coworker.modelMode}
           onChange={(selection) => void updateModel(selection)}
           onSyncProviders={onSyncProviders}
           onConnect={onOpenAccount}
           compact
         />
-        <p className="mt-2 text-xs leading-relaxed text-mist">{coworker.name} uses this AI model and thinking effort for every discussion, assignment, and responsibility.</p>
+        <p className="mt-2 text-xs leading-relaxed text-mist" data-testid="coworker-model-note">
+          {coworker.modelMode === "auto"
+            ? `${coworker.name} reads each message and picks a quick, standard, or deep model for it; the header says which one is answering. Assignments, responsibilities, and Workers use the standard model.`
+            : `${coworker.name} uses this AI model and thinking effort for every discussion, assignment, and responsibility.`}
+        </p>
       </section>
 
       <section className="flex items-center justify-between gap-3 border-t border-line/60 pt-4">
