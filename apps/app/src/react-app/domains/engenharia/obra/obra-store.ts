@@ -10,6 +10,9 @@ type ObraStoreState = {
   /** Módulo selecionado por obraId (lembrança de UI; não decide a rota). */
   selectedModules: Record<string, ObraModule | null>;
   selectModule: (obraId: string, module: ObraModule | null) => void;
+  /** Obra atualmente aberta (contexto da obra ativa; não decide a rota). */
+  activeObraId: string | null;
+  setActiveObra: (obraId: string | null) => void;
 };
 
 export const useObraStore = create<ObraStoreState>()(
@@ -23,6 +26,8 @@ export const useObraStore = create<ObraStoreState>()(
             [obraId]: module,
           },
         })),
+      activeObraId: null,
+      setActiveObra: (obraId) => set({ activeObraId: obraId }),
     }),
     {
       name: "openwork-obra-store",

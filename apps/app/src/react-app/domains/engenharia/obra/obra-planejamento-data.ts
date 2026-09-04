@@ -9,8 +9,37 @@
 // dos nós + escopo. O resumo (duração total, críticos) é sempre derivado.
 import type { ObraEapNode } from "./obra-eap-types";
 
-/** Data de início da obra (05/01/2026) — base do cronograma. */
-export const DATA_INICIO_OBRA = new Date(2026, 0, 5);
+/** Data de início padrão da obra (05/01/2026) — fallback do cronograma. */
+export const DATA_INICIO_DEFAULT = new Date(2026, 0, 5);
+
+/**
+ * Data de início da obra (05/01/2026) — base do cronograma.
+ * Mantida como alias de `DATA_INICIO_DEFAULT` para compatibilidade; o
+ * cronograma agora deriva a data de início da obra via `dataInicioEfetiva`.
+ */
+export const DATA_INICIO_OBRA = DATA_INICIO_DEFAULT;
+
+/**
+ * Resolve a data de início efetiva do cronograma a partir do cadastro da obra
+ * (`obra.dataInicio`, string ISO "yyyy-mm-dd" | null | undefined).
+ * Se ausente/vazia/inválida, usa o fallback `DATA_INICIO_DEFAULT` (05/01/2026),
+ * preservando as seeds da Obra Modelo (que não definem `dataInicio`).
+ * Parse local (não UTC) para manter consistência com `diaParaDataIso`.
+ */
+export function dataInicioEfetiva(obraDataInicio?: string | null): Date {
+  if (obraDataInicio) {
+    const match = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(obraDataInicio.trim());
+    if (match) {
+      const year = Number(match[1]);
+      const month = Number(match[2]);
+      const day = Number(match[3]);
+      if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+        return new Date(year, month - 1, day);
+      }
+    }
+  }
+  return new Date(DATA_INICIO_DEFAULT);
+}
 
 /** Quantidade e produtividade por WBS (escopo de referência da Obra Modelo). */
 export type ObraEapScopeRef = {
@@ -135,10 +164,16 @@ function taxaDiaria(produtividade: string): number | null {
   return rate && rate > 0 ? rate : null;
 }
 
-/** Duração estimada (dias) de um nó TRABALHO com produtividade; senão 0. */
-export function calcDuracao(node: ObraEapNode): number {
+/**
+ * Duração estimada (dias) de um nó TRABALHO com produtividade; senão 0.
+ * Recebe o escopo da obra (wbs → ref); sem escopo resolve a "sem escopo" (0).
+ */
+export function calcDuracao(
+  node: ObraEapNode,
+  escopo: Record<string, ObraEapScopeRef>,
+): number {
   if (node.tipo !== "TRABALHO") return 0;
-  const ref = OBRA_SCOPE_REF[node.wbs];
+  const ref = escopo[node.wbs];
   if (!ref || ref.produtividade === "—") return 0;
   const rate = taxaDiaria(ref.produtividade);
   if (rate === null) return 0;
@@ -169,6 +204,8 @@ export type ObraPlanejamentoLinha = {
 /** Sequencia os nós por disciplina (depois pré-order) e calcula datas. */
 export function derivarPlanejamento(
   nodes: readonly ObraEapNode[],
+  escopo: Record<string, ObraEapScopeRef>,
+  _startDate: Date = DATA_INICIO_DEFAULT,
 ): ObraPlanejamentoLinha[] {
   const indiceOriginal = new Map(nodes.map((n, i) => [n.wbs, i]));
   const sequenciados = [...nodes].sort((a, b) => {
@@ -181,8 +218,8 @@ export function derivarPlanejamento(
   let diaAtual = 0;
   const linhas: ObraPlanejamentoLinha[] = [];
   for (const node of sequenciados) {
-    const ref = OBRA_SCOPE_REF[node.wbs];
-    const duracao = calcDuracao(node);
+    const ref = escopo[node.wbs];
+    const duracao = calcDuracao(node, escopo);
     const inicio = diaAtual;
     const fim = inicio + duracao;
     diaAtual = fim;
@@ -243,8 +280,8 @@ export function marcarCriticoEPredecessora(
 }
 
 /** Converte dia acumulado em data ISO (yyyy-mm-dd) a partir do início da obra. */
-export function diaParaDataIso(dia: number): string {
-  const d = new Date(DATA_INICIO_OBRA);
+export function diaParaDataIso(dia: number, startDate: Date = DATA_INICIO_DEFAULT): string {
+  const d = new Date(startDate);
   d.setDate(d.getDate() + dia);
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -255,6 +292,8 @@ export function diaParaDataIso(dia: number): string {
 /** Planejamento completo derivado dos nós reais da EAP. */
 export function derivarPlanejamentoCompleto(
   nodes: readonly ObraEapNode[],
+  escopo: Record<string, ObraEapScopeRef>,
+  startDate: Date = DATA_INICIO_DEFAULT,
 ): ObraPlanejamentoLinha[] {
-  return marcarCriticoEPredecessora(derivarPlanejamento(nodes));
+  return marcarCriticoEPredecessora(derivarPlanejamento(nodes, escopo, startDate));
 }

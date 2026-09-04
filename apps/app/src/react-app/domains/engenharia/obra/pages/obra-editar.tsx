@@ -7,8 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useObraRepository } from "../obra-repository";
-import { obraNovaRoute, obraRoute, obrasListRoute } from "../obra-routes";
-import type { ObraStatus } from "../obra-types";
+import { obraRoute, obrasListRoute } from "../obra-routes";
+import type { Obra, ObraStatus } from "../obra-types";
 
 const STATUS_OPTIONS: { value: ObraStatus; label: string }[] = [
   { value: "PROPOSTA", label: "Proposta" },
@@ -18,21 +18,34 @@ const STATUS_OPTIONS: { value: ObraStatus; label: string }[] = [
 ];
 
 /**
- * Cadastro de obra (FASE 04.2-B / FASE 22).
- * Identificação (nome) + metadados opcionais (status, dataInicio, localização,
- * responsável). Caracterização/EAP/planejamento ficam para etapas posteriores.
- * Após criar, abre a nova obra (contexto da obra = obraId na URL).
+ * Edição de identificação da obra (FASE 22).
+ * Edita nome, status, dataInicio, dataFim, localização e responsável.
+ * `dataInicio` é metadado do cadastro (fonte única do cadastro) — NÃO é
+ * sobrescrito pelo Planejamento.
  */
-export function ObraNovaPage() {
+export function ObraEditarPage({ obraId }: { obraId: string }) {
   const navigate = useNavigate();
-  const createObra = useObraRepository((state) => state.createObra);
-  const [nome, setNome] = useState("");
-  const [status, setStatus] = useState<ObraStatus>("PROPOSTA");
-  const [dataInicio, setDataInicio] = useState("");
-  const [localizacao, setLocalizacao] = useState("");
-  const [responsavel, setResponsavel] = useState("");
+  const obra = useObraRepository((state) =>
+    state.obras.find((candidate) => candidate.id === obraId),
+  );
+  const updateObra = useObraRepository((state) => state.updateObra);
+
+  const [nome, setNome] = useState(obra?.nome ?? "");
+  const [status, setStatus] = useState<ObraStatus>(obra?.status ?? "PROPOSTA");
+  const [dataInicio, setDataInicio] = useState(obra?.dataInicio ?? "");
+  const [dataFim, setDataFim] = useState(obra?.dataFim ?? "");
+  const [localizacao, setLocalizacao] = useState(obra?.localizacao ?? "");
+  const [responsavel, setResponsavel] = useState(obra?.responsavel ?? "");
   const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+
+  if (!obra) {
+    return (
+      <div className="flex min-h-[60vh] w-full flex-col items-center justify-center gap-2 p-8 text-center">
+        <p className="text-lg font-semibold">Obra não encontrada</p>
+        <p className="text-sm text-muted-foreground">{obraId}</p>
+      </div>
+    );
+  }
 
   const trimmed = nome.trim();
 
@@ -43,16 +56,15 @@ export function ObraNovaPage() {
       return;
     }
     setError(null);
-    setSubmitting(true);
-    const obra = createObra({
+    updateObra(obra.id, {
       nome: trimmed,
       status,
       dataInicio: dataInicio || null,
+      dataFim: dataFim || null,
       localizacao: localizacao.trim() || null,
       responsavel: responsavel.trim() || null,
     });
-    // Preferência da fase: após criar, abrir a nova obra.
-    navigate(obraRoute(obra.id), { replace: false });
+    navigate(obraRoute(obra.id));
   };
 
   return (
@@ -60,14 +72,14 @@ export function ObraNovaPage() {
       <div className="max-w-lg">
         <Card>
           <CardHeader>
-            <CardTitle>Nova obra</CardTitle>
+            <CardTitle>Editar obra</CardTitle>
             <CardDescription>
-              Identificação básica. Informações técnicas podem ser preenchidas
-              posteriormente.
+              Identificação e metadados da obra. Informações técnicas continuam
+              nos módulos específicos.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <form className="flex flex-col gap-4" onSubmit={handleSubmit} data-obra-nova>
+            <form className="flex flex-col gap-4" onSubmit={handleSubmit} data-obra-editar>
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="obra-nome">Nome</Label>
                 <Input
@@ -77,13 +89,9 @@ export function ObraNovaPage() {
                     setNome(event.target.value);
                     if (error) setError(null);
                   }}
-                  placeholder="Ex.: Obra Demonstrativa 03"
-                  autoFocus
                   maxLength={120}
                 />
-                {error ? (
-                  <p className="text-xs text-destructive">{error}</p>
-                ) : null}
+                {error ? <p className="text-xs text-destructive">{error}</p> : null}
               </div>
 
               <div className="flex flex-col gap-1.5">
@@ -102,14 +110,25 @@ export function ObraNovaPage() {
                 </select>
               </div>
 
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="obra-data-inicio">Data de início</Label>
-                <Input
-                  id="obra-data-inicio"
-                  type="date"
-                  value={dataInicio}
-                  onChange={(e) => setDataInicio(e.target.value)}
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="obra-data-inicio">Data de início</Label>
+                  <Input
+                    id="obra-data-inicio"
+                    type="date"
+                    value={dataInicio}
+                    onChange={(e) => setDataInicio(e.target.value)}
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="obra-data-fim">Data de fim</Label>
+                  <Input
+                    id="obra-data-fim"
+                    type="date"
+                    value={dataFim}
+                    onChange={(e) => setDataFim(e.target.value)}
+                  />
+                </div>
               </div>
 
               <div className="flex flex-col gap-1.5">
@@ -142,17 +161,14 @@ export function ObraNovaPage() {
                 >
                   Cancelar
                 </Button>
-                <Button type="submit" disabled={!trimmed || submitting}>
-                  {submitting ? "Criando…" : "Criar obra"}
+                <Button type="submit" disabled={!trimmed}>
+                  Salvar
                 </Button>
               </div>
             </form>
           </CardContent>
         </Card>
       </div>
-      <p className="mt-2 text-xs text-muted-foreground">
-        Rota atual: <span className="font-mono">{obraNovaRoute()}</span>
-      </p>
     </div>
   );
 }

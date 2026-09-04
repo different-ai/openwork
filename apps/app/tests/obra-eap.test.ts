@@ -93,7 +93,7 @@ describe("EAP real da Obra Modelo — fonte × destino (FASE 06.2-B)", () => {
 
 describe("EAP — integridade estrutural", () => {
   test("nenhum WBS duplicado, pai inexistente, raiz com pai ou ciclo", () => {
-    const result = validateEap(OBRA_MODELO_EAP_NODES);
+    const result = validateEap(OBRA_MODELO_EAP_NODES, OBRA_MODELO_EAP_ID);
     expect(result.ok).toBe(true);
     expect(result.total).toBe(81);
     expect(result.wbsDuplicados).toEqual([]);
@@ -108,7 +108,7 @@ describe("EAP — integridade estrutural", () => {
       ...OBRA_MODELO_EAP_NODES.slice(0, 2),
       { ...OBRA_MODELO_EAP_NODES[1] },
     ];
-    const result = validateEap(nodes);
+    const result = validateEap(nodes, OBRA_MODELO_EAP_ID);
     expect(result.ok).toBe(false);
     expect(result.wbsDuplicados).toContain("1.1");
   });
@@ -117,7 +117,7 @@ describe("EAP — integridade estrutural", () => {
     const nodes = OBRA_MODELO_EAP_NODES.map((n) =>
       n.wbs === "1.1.1" ? { ...n, pai: "99.99" } : n,
     );
-    const result = validateEap(nodes);
+    const result = validateEap(nodes, OBRA_MODELO_EAP_ID);
     expect(result.ok).toBe(false);
     expect(result.paisInexistentes).toContain("1.1.1");
   });

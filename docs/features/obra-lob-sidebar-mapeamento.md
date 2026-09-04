@@ -119,52 +119,57 @@ A grade **tempo × serviço** (como a aba `LINHA DE BALANÇO (GRADE)`): 100 sema
 81 serviços, células ativas quando o serviço está em execução. Renderizada em
 React (não é imagem estática), derivada das mesmas datas.
 
-## 6. Dados de planejamento (o que falta)
+## 6. Dados de planejamento (implementado)
 
-Hoje o app **não tem** as datas/durações de planejamento como dados de domínio.
-Elas existem apenas no gerador da planilha (`dados-eap.js`) e na aba
-`PLANEJAMENTO`. Para alimentar o app precisamos:
+O app agora **tem** as datas/durações de planejamento como dados de domínio,
+derivados deterministicamente dos 81 nós reais + escopo de referência:
 
-1. **Criar um modelo de planejamento da obra** (datas, durações, predecessoras,
-   crítico) — espelhando a aba `PLANEJAMENTO`.
-2. **Criar um adapter** que converte os 81 nós + datas em `PlanningDashboardData`
-   (contrato do módulo `planejamento/`), substituindo o `PLANNING_DEMO_DATA`.
-3. **Criar a grade LOB** em React, derivada das mesmas datas.
+1. **`obra-planejamento-data.ts`** — modelo de planejamento (datas, durações,
+   predecessoras, crítico), espelhando a aba `PLANEJAMENTO`.
+2. **`obra-planejamento-adapter.ts`** — converte os 81 nós + datas em
+   `PlanningDashboardData`, substituindo o `PLANNING_DEMO_DATA`.
+3. **`obra-lob-data.ts` + `obra-lob-grade.tsx`** — grade LOB em React, derivada
+   das mesmas datas.
 
-## 7. Impacto / arquivos
+## 7. Impacto / arquivos (implementado)
 
-| Arquivo | Mudança |
-| --- | --- |
-| `obra-routes.ts` | Novos módulos: `caracterizacao`, `disciplinas`, `servicos`, `linha-de-balanco` |
-| `obra-navigation.ts` | Fases (grupos) + subdivisões na sidebar (data-driven) |
-| `obra-shell-route.tsx` | Rotear os novos módulos para as novas páginas |
-| `obra-planejamento.tsx` | Adapter real (substitui demo) |
-| `obra-eap-data.ts` | Fonte única (já existe) |
-| `obra-planejamento-data.ts` (novo) | Datas/durações/predecessoras/crítico |
-| `obra-planejamento-adapter.ts` (novo) | EAP + datas → `PlanningDashboardData` |
-| `obra-lob-grade.tsx` (novo) | Grade tempo × serviço em React |
-| `obra-disciplinas.tsx` / `obra-servicos.tsx` (novos) | Visões derivadas |
-| `obra-caracterizacao.tsx` (novo) | Módulo próprio de caracterização |
+| Arquivo | Mudança | Estado |
+| --- | --- | --- |
+| `obra-routes.ts` | Novos módulos + fases | ✅ |
+| `obra-navigation.ts` | Fases (grupos) na sidebar | ✅ |
+| `obra-shell-route.tsx` | Rotear os novos módulos | ✅ |
+| `obra-planejamento.tsx` | Adapter real (substitui demo) | ✅ |
+| `obra-planejamento-data.ts` | Datas/durações/predecessoras/crítico | ✅ |
+| `obra-planejamento-adapter.ts` | EAP + datas → `PlanningDashboardData` | ✅ |
+| `obra-lob-data.ts` | Grade LOB (dados puros) | ✅ |
+| `obra-lob-grade.tsx` | Grade tempo × serviço em React | ✅ |
+| `obra-disciplinas.tsx` / `obra-servicos.tsx` | Visões derivadas | ✅ |
+| `obra-caracterizacao.tsx` | Módulo próprio de caracterização | ✅ |
 
 ## 8. Riscos / decisões em aberto
 
-- **Escopo:** a proposta completa (fases + subdivisões + grade LOB + adapter) é um
-  trabalho de várias etapas. Podemos entregar em fases.
 - **Frentes/Produção/RDO/IA** continuam placeholders (futuro), mas já aparecem
   agrupados na fase **Execução** / **Suporte** para refletir o fluxo real.
-- **Grade LOB em React** é uma nova visualização; o `PlanningDashboard` atual é
-  Gantt (árvore + timeline). A grade LOB é um layout diferente (tempo × serviço),
-  então será um componente novo, não uma extensão do Gantt.
-- **Fonte de datas:** precisamos decidir se as datas de planejamento entram como
-  dados de domínio persistidos (como a EAP) ou como seed estático derivado.
+- **Grade LOB em React** é uma nova visualização (tempo × serviço), separada do
+  Gantt do `PlanningDashboard`.
+- **Fonte de datas:** as datas são derivadas como seed estático a partir dos nós
+  + escopo. Persistir como dados de domínio editáveis (como a EAP) é evolução
+  futura.
 - **Caracterização** hoje vive dentro da Visão Geral; movê-la para módulo próprio
   muda a Visão Geral (que passa a ser só o resumo).
 
-## 9. Próximo passo sugerido
+## 9. Status da implementação
 
-1. Confirmar a estrutura da sidebar por fases (§4).
-2. Implementar em fases:
-   - **Fase A:** adapter real no Planejamento (substitui demo) + teste.
-   - **Fase B:** fases/grupos na sidebar + subdivisões Disciplinas e Serviços.
-   - **Fase C:** grade LOB em React.
-3. Cada fase com teste em `apps/app/tests/` e evidência de execução.
+As três fases foram implementadas e verificadas:
+
+- **Fase A ✅** — adapter real no Planejamento (substitui demo) + teste
+  (`obra-planejamento-adapter.test.ts`).
+- **Fase B ✅** — fases/grupos na sidebar + módulos Caracterização, Disciplinas e
+  Serviços + testes (`obra-modulos-ui.test.tsx`, `engenharia-navigation.test.ts`).
+- **Fase C ✅** — grade LOB em React (`obra-lob-grade.tsx`) + teste
+  (`obra-lob-grade.test.tsx`).
+
+**Evidência:** 110 testes passando (14 arquivos) + `pnpm typecheck` sem erros.
+
+**Evolução futura:** persistir as datas de planejamento como dados de domínio
+editáveis (como a EAP) e implementar Frentes/Produção/RDO/IA.

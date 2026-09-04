@@ -11,6 +11,7 @@ import {
   deriveEapSummary,
   getEapForObra,
 } from "../obra-eap-repository";
+import { KpiBar, type KpiItem } from "../obra-kpi-bar";
 import type { Obra } from "../obra-types";
 
 const LINHAS_EAP: Array<{ label: string; value: number }> = [];
@@ -67,8 +68,19 @@ export function ObraEap({ obra }: { obra: Obra }) {
       ]
     : LINHAS_EAP;
 
+  const kpis: KpiItem[] = summary
+    ? [
+        { id: "kpi-total", label: "Total de nós", value: summary.total },
+        { id: "kpi-disciplinas", label: "Disciplinas", value: summary.raizes },
+        { id: "kpi-pacotes", label: "Pacotes", value: summary.pacotes },
+        { id: "kpi-trabalhos", label: "Trabalhos", value: summary.trabalhos },
+        { id: "kpi-folhas", label: "Folhas", value: leaves },
+      ]
+    : [];
+
   return (
     <div className="flex w-full flex-col gap-4">
+      <KpiBar items={kpis} />
       <Card>
         <CardHeader>
           <CardTitle>EAP — Estrutura Analítica do Projeto</CardTitle>

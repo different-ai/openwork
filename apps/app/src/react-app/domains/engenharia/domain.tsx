@@ -15,6 +15,7 @@ import {
 } from "./obra/obra-repository";
 import { ObraListaPage } from "./obra/pages/obra-lista";
 import { ObraNovaPage } from "./obra/pages/obra-nova";
+import { ObraEditarPage } from "./obra/pages/obra-editar";
 import { ObraShellRoute } from "./obra/obra-shell-route";
 import { initializeObraEapRepository } from "./obra/obra-eap-repository";
 
@@ -42,6 +43,10 @@ export function buildEngenhariaDomain(): DomainDefinition {
         if (segment === "nova") {
           // /obras/nova → criação
           return <ObraNovaPage />;
+        }
+        if (segments[2] === "editar") {
+          // /obras/:obraId/editar → edição de identificação
+          return <ObraEditarPage obraId={segment} />;
         }
         // /obras/:obraId[/:modulo]
         const modulo = isObraModule(segments[2]) ? segments[2] : null;

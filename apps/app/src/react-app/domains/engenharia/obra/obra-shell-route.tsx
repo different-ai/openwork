@@ -1,34 +1,61 @@
 /** @jsxImportSource react */
+import type { ReactNode } from "react";
+import { useEffect } from "react";
 import { useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { OBRA_MODULES, OBRA_MODULE_LABEL, obraRoute } from "./obra-routes";
+import { OBRA_FASES, OBRA_MODULE_LABEL, obraRoute } from "./obra-routes";
+import { listModulesByFase, moduleFase } from "./obra-modules";
 import { useObraStore } from "./obra-store";
 import { useObraRepository } from "./obra-repository";
-import type { ObraModule } from "./obra-types";
+import type { Obra, ObraFase, ObraModule } from "./obra-types";
 import { ObraCaracterizacao } from "./pages/obra-caracterizacao";
 import { ObraDisciplinas } from "./pages/obra-disciplinas";
 import { ObraEap } from "./pages/obra-eap";
+import { ObraFrentes } from "./pages/obra-frentes";
 import { ObraLobGrade } from "./pages/obra-lob-grade";
 import { ObraModuloPlaceholder } from "./pages/obra-modulo-placeholder";
 import { ObraPlanejamento } from "./pages/obra-planejamento";
+import { ObraProducao } from "./pages/obra-producao";
 import { ObraServicos } from "./pages/obra-servicos";
 import { ObraVisaoGeral } from "./pages/obra-visao-geral";
 
-const MODULE_DESCRIPTIONS: Record<
-  Exclude<ObraModule, "visao-geral" | "caracterizacao" | "eap" | "disciplinas" | "servicos" | "planejamento" | "linha-de-balanco">,
-  string
-> = {
-  frentes:
-    "A estrutura deste módulo será vinculada posteriormente aos elementos da EAP (elemento_eap_id).",
-  producao: "Produção da obra será vinculada aos elementos da EAP em fase futura.",
-  rdo: "Registro Diário de Obra (RDO) será vinculado aos elementos da EAP em fase futura.",
-  ia: "Assistência de IA da obra será vinculada aos elementos da EAP em fase futura.",
+/**
+ * Resolução de TELA dos módulos (FASE 22).
+ * Camada de renderização: mapeia cada id de módulo para o componente que o
+ * renderiza. O catálogo (obra-modules.ts) permanece declarativo (sem React);
+ * esta é a camada apropriada para a resolução da tela.
+ */
+const MODULE_RENDERERS: Record<ObraModule, (obra: Obra) => ReactNode> = {
+  "visao-geral": (obra) => <ObraVisaoGeral obra={obra} />,
+  caracterizacao: (obra) => <ObraCaracterizacao obra={obra} />,
+  eap: (obra) => <ObraEap obra={obra} />,
+  disciplinas: (obra) => <ObraDisciplinas obra={obra} />,
+  servicos: (obra) => <ObraServicos obra={obra} />,
+  planejamento: (obra) => <ObraPlanejamento obra={obra} />,
+  "linha-de-balanco": (obra) => <ObraLobGrade obra={obra} />,
+  frentes: (obra) => <ObraFrentes obra={obra} />,
+  producao: (obra) => <ObraProducao obra={obra} />,
+  rdo: (obra) => (
+    <ObraModuloPlaceholder
+      titulo="RDO"
+      descricao="Registro Diário de Obra (RDO) será vinculado aos elementos da EAP em fase futura."
+    />
+  ),
+  ia: (obra) => (
+    <ObraModuloPlaceholder
+      titulo="IA"
+      descricao="Assistência de IA da obra será vinculada aos elementos da EAP em fase futura."
+    />
+  ),
 };
 
 /**
- * Casca da entidade Obra (domínio Engenharia): navegação interna entre os módulos
- * (Visão Geral, EAP, Frentes, Planejamento, Produção, RDO, IA).
+ * Casca da entidade Obra (domínio Engenharia) — FASE 21 / FASE 22.
+ * Navegação em TABS POR FASE com subitens: uma barra de fases (Preparação,
+ * Execução, Suporte) e, dentro da fase ativa, as abas dos módulos (subitens).
+ * FASE 22: a navegação e o conteúdo são derivados do catálogo declarativo
+ * (obra-modules.ts) + mapa de renderização — sem switch hardcoded.
  */
 export function ObraShellRoute({
   obraId,
@@ -39,9 +66,15 @@ export function ObraShellRoute({
 }) {
   const navigate = useNavigate();
   const selectModule = useObraStore((state) => state.selectModule);
+  const setActiveObra = useObraStore((state) => state.setActiveObra);
   const obra = useObraRepository((state) =>
     state.obras.find((candidate) => candidate.id === obraId),
   );
+
+  // Contexto da obra ativa: ao abrir uma obra, registra-a como ativa.
+  useEffect(() => {
+    if (obra) setActiveObra(obra.id);
+  }, [obra, setActiveObra]);
 
   if (!obra) {
     return (
@@ -53,31 +86,15 @@ export function ObraShellRoute({
   }
 
   const activeModule: ObraModule = modulo ?? "visao-geral";
+  const activeFase: ObraFase = moduleFase(activeModule);
+  const activeModules = listModulesByFase(activeFase);
 
-  const content =
-    activeModule === "eap" ? (
-      <ObraEap obra={obra} />
-    ) : activeModule === "caracterizacao" ? (
-      <ObraCaracterizacao obra={obra} />
-    ) : activeModule === "disciplinas" ? (
-      <ObraDisciplinas obra={obra} />
-    ) : activeModule === "servicos" ? (
-      <ObraServicos obra={obra} />
-    ) : activeModule === "frentes" ? (
-      <ObraModuloPlaceholder titulo="Frentes de Serviço" descricao={MODULE_DESCRIPTIONS.frentes} />
-    ) : activeModule === "planejamento" ? (
-      <ObraPlanejamento obra={obra} />
-    ) : activeModule === "linha-de-balanco" ? (
-      <ObraLobGrade obra={obra} />
-    ) : activeModule === "producao" ? (
-      <ObraModuloPlaceholder titulo="Produção" descricao={MODULE_DESCRIPTIONS.producao} />
-    ) : activeModule === "rdo" ? (
-      <ObraModuloPlaceholder titulo="RDO" descricao={MODULE_DESCRIPTIONS.rdo} />
-    ) : activeModule === "ia" ? (
-      <ObraModuloPlaceholder titulo="IA" descricao={MODULE_DESCRIPTIONS.ia} />
-    ) : (
-      <ObraVisaoGeral obra={obra} />
-    );
+  const content = MODULE_RENDERERS[activeModule](obra);
+
+  const goToModule = (module: ObraModule) => {
+    selectModule(obraId, module);
+    navigate(obraRoute(obraId, module));
+  };
 
   return (
     <div className="flex h-full w-full flex-col gap-4 overflow-auto p-4">
@@ -88,23 +105,53 @@ export function ObraShellRoute({
         <h1 className="text-xl font-bold">{obra.nome}</h1>
       </div>
 
-      <nav className="flex flex-wrap items-center gap-1.5" aria-label="Módulos da obra">
-        {OBRA_MODULES.map((module) => {
-          const active = module === activeModule;
+      {/* Tabs por fase (nível 1) */}
+      <nav
+        className="flex flex-wrap items-center gap-1.5 border-b border-border pb-2"
+        aria-label="Fases da obra"
+        data-obra-fases
+      >
+        {OBRA_FASES.map((fase) => {
+          const active = fase.id === activeFase;
           return (
             <Button
-              key={module}
+              key={fase.id}
               type="button"
               size="sm"
               variant={active ? "default" : "ghost"}
               className={cn(active && "text-primary-foreground")}
-              data-obra-module={module}
+              data-obra-fase={fase.id}
               onClick={() => {
-                selectModule(obraId, module);
-                navigate(obraRoute(obraId, module));
+                // Ao trocar de fase, navega para o primeiro módulo da fase.
+                const primeiro = fase.modules[0];
+                if (primeiro) goToModule(primeiro);
               }}
             >
-              {OBRA_MODULE_LABEL[module]}
+              {fase.label}
+            </Button>
+          );
+        })}
+      </nav>
+
+      {/* Subitens da fase ativa (nível 2) */}
+      <nav
+        className="flex flex-wrap items-center gap-1.5"
+        aria-label={`Módulos da fase ${activeFase}`}
+        data-obra-modulos
+      >
+        {activeModules.map((module) => {
+          const active = module.id === activeModule;
+          return (
+            <Button
+              key={module.id}
+              type="button"
+              size="sm"
+              variant={active ? "secondary" : "ghost"}
+              className={cn(active && "font-medium")}
+              data-obra-module={module.id}
+              onClick={() => goToModule(module.id)}
+            >
+              {OBRA_MODULE_LABEL[module.id]}
             </Button>
           );
         })}

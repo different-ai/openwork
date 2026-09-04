@@ -109,8 +109,15 @@ export type EapValidation = {
   foraDaObra: string[];
 };
 
-/** Valida a integridade estrutural da EAP (espelha o verificador oficial). */
-export function validateEap(nodes: readonly ObraEapNode[]): EapValidation {
+/**
+ * Valida a integridade estrutural da EAP (espelha o verificador oficial).
+ * Desacoplado da Obra Modelo (D8): recebe o `obraId` real e considera
+ * `foraDaObra` todo nó cujo `node.obraId` difere da obra validada.
+ */
+export function validateEap(
+  nodes: readonly ObraEapNode[],
+  obraId: string,
+): EapValidation {
   const byWbs = new Map<string, ObraEapNode>();
   const wbsDuplicados: string[] = [];
   for (const node of nodes) {
@@ -144,7 +151,7 @@ export function validateEap(nodes: readonly ObraEapNode[]): EapValidation {
   }
 
   const foraDaObra = nodes
-    .filter((node) => node.obraId !== OBRA_MODELO_EAP_ID)
+    .filter((node) => node.obraId !== obraId)
     .map((node) => node.wbs);
 
   return {
