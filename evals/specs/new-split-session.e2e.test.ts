@@ -7,6 +7,7 @@ const paletteInput = { placeholder: "Search actions, settings, and sessions…" 
 
 type SplitFacts = {
   layoutKind: string;
+  focusedPane: string;
   primarySessionId: string;
   secondarySessionId: string;
   primaryWorkspaceId: string;
@@ -27,6 +28,7 @@ function parseSplitFacts(value: unknown): SplitFacts {
   const text = (key: string) => typeof value[key] === "string" ? value[key] : "";
   return {
     layoutKind: text("layoutKind"),
+    focusedPane: text("focusedPane"),
     primarySessionId: text("primarySessionId"),
     secondarySessionId: text("secondarySessionId"),
     primaryWorkspaceId: text("primaryWorkspaceId"),
@@ -39,7 +41,7 @@ function parseSplitFacts(value: unknown): SplitFacts {
   };
 }
 
-test("new split creates fresh same-workspace secondary sessions without moving the primary", async ({ world, user, agent, probe, step, place }) => {
+test("new split creates fresh same-workspace secondary sessions without moving the primary; New session replaces the focused pane", async ({ world, user, agent, probe, step, place }) => {
   // The key chord belongs to the machine running the app, not the one running the spec.
   const paletteShortcut = place.kind !== "daytona" && process.platform === "darwin" ? "Meta+K" : "Control+K";
   const workspaceId = world.workspace.workspaceId;
@@ -122,7 +124,7 @@ test("new split creates fresh same-workspace secondary sessions without moving t
     await user.see({ text: "New session" });
   });
 
-  await step("the palette creates one more session while preserving the primary route", async () => {
+  const { secondFacts, afterPalette } = await step("the palette creates one more session while preserving the primary route", async () => {
     const afterContextMenuIds = afterContextMenu.map((session) => session.sessionId);
     const secondValue = await probe.eventually(() => world.splitFacts(), {
       within: 60_000,
@@ -167,5 +169,99 @@ test("new split creates fresh same-workspace secondary sessions without moving t
     expect(afterPalette).toHaveLength(before.length + 2);
     expect(afterPalette.map((session) => session.sessionId)).toContain(secondFacts.secondarySessionId);
     await user.screenshot();
+    return { secondFacts, afterPalette };
+  });
+
+  await step("New session replaces the focused secondary pane", async () => {
+    await agent.run("workbench.session.focus", { sessionId: secondFacts.secondarySessionId });
+    await probe.eventually(() => world.splitFacts(), {
+      within: 15_000,
+      label: "secondary pane is focused",
+      until: (value) => parseSplitFacts(value).focusedPane === "secondary",
+    });
+    await user.press(paletteShortcut);
+    await user.see(paletteInput);
+    await user.type(paletteInput, "new task", { replace: true });
+    await user.see({ role: "option", label: /^New session/ });
+    await user.press("Enter");
+  });
+
+  const { focusedSecondaryFacts, afterFocusedSecondary } = await step("the focused secondary is replaced while the primary route stays put", async () => {
+    const previousIds = afterPalette.map((session) => session.sessionId);
+    const value = await probe.eventually(() => world.splitFacts(), {
+      within: 60_000,
+      label: "new session replaces the focused secondary",
+      until: (candidate) => {
+        const facts = parseSplitFacts(candidate);
+        return facts.layoutKind === "split"
+          && facts.primarySessionId === primarySessionId
+          && facts.primarySurfaceSessionId === primarySessionId
+          && /^ses_/.test(facts.secondarySessionId)
+          && facts.secondarySessionId !== secondFacts.secondarySessionId
+          && !previousIds.includes(facts.secondarySessionId)
+          && facts.secondarySurfaceSessionId === facts.secondarySessionId
+          && facts.secondaryPaneCount === 1
+          && facts.locationHash.includes(`/workspace/${workspaceId}/session/${primarySessionId}`);
+      },
+    });
+    const focusedSecondaryFacts = parseSplitFacts(value);
+    expect(focusedSecondaryFacts.layoutKind).toBe("split");
+    expect(focusedSecondaryFacts.primarySessionId).toBe(primarySessionId);
+    expect(focusedSecondaryFacts.primarySurfaceSessionId).toBe(primarySessionId);
+    expect(focusedSecondaryFacts.locationHash).toContain(`/workspace/${workspaceId}/session/${primarySessionId}`);
+    expect(focusedSecondaryFacts.secondarySessionId).toMatch(/^ses_/);
+    expect(previousIds).not.toContain(focusedSecondaryFacts.secondarySessionId);
+    expect(focusedSecondaryFacts.secondarySurfaceSessionId).toBe(focusedSecondaryFacts.secondarySessionId);
+    expect(focusedSecondaryFacts.secondaryPaneCount).toBe(1);
+    const afterFocusedSecondary = await probe.eventually(() => agent.list(), {
+      within: 60_000,
+      label: "focused-secondary new session appears in the session list",
+      until: (sessions) => sessions.length === afterPalette.length + 1,
+    });
+    expect(afterFocusedSecondary).toHaveLength(afterPalette.length + 1);
+    return { focusedSecondaryFacts, afterFocusedSecondary };
+  });
+
+  await step("New session replaces the focused primary pane", async () => {
+    await agent.run("workbench.session.focus", { sessionId: primarySessionId });
+    await probe.eventually(() => world.splitFacts(), {
+      within: 15_000,
+      label: "primary pane is focused",
+      until: (value) => parseSplitFacts(value).focusedPane === "primary",
+    });
+    await user.press(paletteShortcut);
+    await user.see(paletteInput);
+    await user.type(paletteInput, "new task", { replace: true });
+    await user.see({ role: "option", label: /^New session/ });
+    await user.press("Enter");
+  });
+
+  await step("the focused primary is replaced without changing the secondary", async () => {
+    const value = await probe.eventually(() => world.splitFacts(), {
+      within: 60_000,
+      label: "new session replaces the focused primary",
+      until: (candidate) => {
+        const facts = parseSplitFacts(candidate);
+        return facts.layoutKind === "split"
+          && /^ses_/.test(facts.primarySessionId)
+          && facts.primarySessionId !== primarySessionId
+          && !facts.locationHash.includes(primarySessionId)
+          && facts.locationHash.includes(`/workspace/${workspaceId}/session/${facts.primarySessionId}`)
+          && facts.secondarySessionId === focusedSecondaryFacts.secondarySessionId
+          && facts.secondaryPaneCount === 1;
+      },
+    });
+    const focusedPrimaryFacts = parseSplitFacts(value);
+    expect(focusedPrimaryFacts.primarySessionId).toMatch(/^ses_/);
+    expect(focusedPrimaryFacts.primarySessionId).not.toBe(primarySessionId);
+    expect(focusedPrimaryFacts.locationHash).toContain(`/workspace/${workspaceId}/session/${focusedPrimaryFacts.primarySessionId}`);
+    expect(focusedPrimaryFacts.secondarySessionId).toBe(focusedSecondaryFacts.secondarySessionId);
+    expect(focusedPrimaryFacts.secondaryPaneCount).toBe(1);
+    const afterFocusedPrimary = await probe.eventually(() => agent.list(), {
+      within: 60_000,
+      label: "focused-primary new session appears in the session list",
+      until: (sessions) => sessions.length === afterFocusedSecondary.length + 1,
+    });
+    expect(afterFocusedPrimary).toHaveLength(afterFocusedSecondary.length + 1);
   });
 });

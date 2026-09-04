@@ -8,6 +8,7 @@ import { TeamTable } from "./teams"
 export const DesktopPolicyTable = mysqlTable(
   "desktop_policy",
   {
+    externalKey: varchar("external_key", { length: 128 }),
     id: denTypeIdColumn("desktopPolicy", "id").notNull().primaryKey(),
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
     policyName: varchar("policy_name", { length: 255 }).notNull(),
@@ -23,6 +24,7 @@ export const DesktopPolicyTable = mysqlTable(
     deletedAt: timestamp("deleted_at", { fsp: 3 }),
   },
   (table) => [
+    uniqueIndex("desktop_policy_org_external_key").on(table.organizationId, table.externalKey),
     index("desktop_policy_created_by_member_id").on(table.createdByOrgMemberId),
     index("desktop_policy_is_enabled").on(table.isEnabled),
     index("desktop_policy_priority").on(table.priority),

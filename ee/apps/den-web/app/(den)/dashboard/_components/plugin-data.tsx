@@ -718,8 +718,9 @@ async function fetchResolvedPlugin(id: string): Promise<DenPlugin | null> {
   } satisfies DenPlugin;
 }
 
-export function usePlugins() {
+export function usePlugins({ enabled = true }: { enabled?: boolean } = {}) {
   return useQuery({
+    enabled,
     queryKey: pluginQueryKeys.list(),
     queryFn: async () => {
       const { response, payload } = await requestJson("/v1/plugins?status=active&limit=100", { method: "GET" }, 20000);

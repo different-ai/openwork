@@ -25,7 +25,10 @@ describe("stdio error handling", () => {
 
     installStdioErrorHandlers({ stdout, stderr });
 
-    assert.doesNotThrow(() => stdout.emit("error", streamError("EPIPE")));
+    for (const code of ["EPIPE", "ERR_STREAM_DESTROYED", "ENOSPC", "EDQUOT"]) {
+      assert.doesNotThrow(() => stdout.emit("error", streamError(code)));
+      assert.doesNotThrow(() => stderr.emit("error", streamError(code)));
+    }
     assert.throws(() => stderr.emit("error", streamError("ECONNRESET")), /stream failed/);
   });
 

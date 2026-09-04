@@ -21,8 +21,8 @@ Under the hood, OpenWork is a GUI for OpenCode — anything OpenCode supports wo
 ## Pricing summary
 
 - **Solo — $0**: open-source desktop app (macOS, Windows, Linux), bring your own provider keys, free forever.
-- **Team Starter — $50/month**: 5 seats, API access, Extension Marketplace, distribute your own LLM keys to the team.
-- **Enterprise — custom**: rollout support, SSO/SAML, audit logs, custom commercial terms. See [Enterprise](https://openworklabs.com/enterprise).
+- **Team — $10 per seat/month**: up to 100 users, Extension Marketplace, distribute your own LLM keys to the team, standard support.
+- **Enterprise — $40 per user/month**: SSO/SAML and SCIM, desktop policies, OpenWork Web, spend observability, standard SLA support. Same price cloud or self-hosted; volume pricing above 100 users. See [Enterprise](https://openworklabs.com/enterprise).
 
 ## FAQ
 

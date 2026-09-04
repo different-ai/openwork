@@ -47,6 +47,35 @@ describe("session error resilience", () => {
     expect(presentation.technicalDetails).toContain("FreeUsageLimitError")
   })
 
+  test.each(["ENOSPC", "EDQUOT", "SQLITE_FULL", "database or disk is full"])("explains %s without exposing the stack trace", (code) => {
+    const raw = `effect/sql/SqlError: Failed to execute statement\n at runLoop (/$bunfs/root/chunk.js:25:2045)\n${code}`
+    const presentation = presentOpencodeSessionError({ name: "SqlError", data: { message: raw } })
+    expect(presentation.kind).toBe("disk-full")
+    expect(presentation.title).toBe("Not enough disk space")
+    expect(presentation.description).toContain("Free up some disk space")
+    expect(presentation.description).toContain("cloud workspace")
+    expect(presentation.technicalDetails).toContain(code)
+    expect(presentation.technicalDetails).toContain("at runLoop")
+    expect(presentation.recoveryPrompt).toBeNull()
+  })
+
+  test("reads disk-full codes from native errors and nested causes", () => {
+    for (const error of [
+      Object.assign(new Error("write failed"), { code: "ENOSPC" }),
+      { name: "SqlError", message: "Failed to execute statement", cause: { code: "SQLITE_FULL" } },
+    ]) {
+      expect(presentOpencodeSessionError(error).kind).toBe("disk-full")
+    }
+  })
+
+  test("does not diagnose a generic database failure as a full disk", () => {
+    const presentation = presentOpencodeSessionError("effect/sql/SqlError: Failed to execute statement\n at runLoop (/$bunfs/root/chunk.js:25:2045)")
+    expect(presentation.kind).toBe("database-error")
+    expect(presentation.title).toBe("OpenWork couldn’t access its saved data")
+    expect(presentation.description).toContain("check the available disk space")
+    expect(presentation.description).not.toContain("has run out")
+  })
+
   test("classifies an OpenCode abort and retains its diagnostic payload", () => {
     const presentation = presentOpencodeSessionError({
       name: "MessageAbortedError",
@@ -416,6 +445,18 @@ describe("session error technical details", () => {
     // Collapsed by default: the payload is not in the DOM until opened.
     expect(html).not.toContain('data-testid="session-error-details"')
     expect(html).not.toContain("Status: 429")
+  })
+
+  test("storage errors show guidance without technical codes outside developer mode", () => {
+    const raw = "effect/sql/SqlError: Failed to execute statement\n at runLoop (/$bunfs/root/chunk.js:25:2045)\nENOSPC: no space left on device"
+    const html = renderErrorTranscript(raw, false)
+    expect(html).toContain("Not enough disk space")
+    expect(html).toContain("Free up some disk space")
+    expect(html).not.toContain("SqlError")
+    expect(html).not.toContain("runLoop")
+    expect(html).not.toContain("ENOSPC")
+    expect(html).not.toContain('data-testid="session-error-details-toggle"')
+    expect(renderErrorTranscript(raw, true)).toContain('data-testid="session-error-details-toggle"')
   })
 
   test("a bare error whose details only repeat the message gets no disclosure even in developer mode", () => {

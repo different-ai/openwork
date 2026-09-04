@@ -16,8 +16,12 @@ async function payload(path: string, init: RequestInit = { method: "GET" }) {
   return result.payload;
 }
 
-export function useAutomations() {
-  return useQuery({ queryKey: ["automations", "list"], queryFn: async () => automationListSchema.parse(await payload("/v1/automations?limit=100")) });
+export function useAutomations({ enabled = true }: { enabled?: boolean } = {}) {
+  return useQuery({
+    enabled,
+    queryKey: ["automations", "list"],
+    queryFn: async () => automationListSchema.parse(await payload("/v1/automations?limit=100")),
+  });
 }
 
 export function useAutomation(automationId: string | null) {

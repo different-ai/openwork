@@ -20,9 +20,11 @@ import {
   openworkCapabilitiesKnowledgePluginPath,
   openworkAnthropicAdaptiveThinkingPluginPath,
   openworkAnthropicToolSchemaPluginPath,
+  openworkProviderConnectionPluginPath,
   openworkOfficeAttachmentsPluginPath,
   openworkSpreadsheetsPluginPath,
   openworkChromeDevtoolsPluginPath,
+  openworkPdfAttachmentsPluginPath,
 } from "./openwork-extensions-plugin-path.js";
 import type { ServerConfig } from "./types.js";
 import { runtimeStorageDir } from "./runtime-db.js";
@@ -88,8 +90,10 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
       openworkExtensionsPreviewPluginPath(),
       openworkOfficeAttachmentsPluginPath(),
       openworkSpreadsheetsPluginPath(),
+      openworkPdfAttachmentsPluginPath(),
       openworkAnthropicAdaptiveThinkingPluginPath(),
       openworkAnthropicToolSchemaPluginPath(),
+      openworkProviderConnectionPluginPath(),
       ...runtimePluginList(runtimeConfig),
     ],
     ...(disabledProviders.length ? { disabled_providers: disabledProviders } : {}),
