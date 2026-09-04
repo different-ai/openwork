@@ -95,3 +95,11 @@ test("usage analytics follows the same enterprise gate", () => {
   expect(entitlements.checkEntitlement({ plan: { tier: "enterprise" } }, "analytics", { gatingEnabled: true })).toEqual({ ok: true })
   expect(entitlements.checkEntitlement(null, "analytics", { gatingEnabled: false })).toEqual({ ok: true })
 })
+
+test("Team SSO add-on does not grant other Enterprise features", () => {
+  expect(entitlements.getOrganizationEntitlements({ plan: { tier: "team", source: "stripe" }, billingAddons: ["sso"] }, { gatingEnabled: true })).toEqual({
+    sso: true, desktopPolicies: false, orgControls: false, analytics: false,
+  })
+  expect(entitlements.getOrganizationEntitlements({ plan: { tier: "free", source: "stripe" }, billingAddons: ["sso"] }, { gatingEnabled: true }).sso).toBe(false)
+  expect(entitlements.getOrganizationEntitlements({ plan: { tier: "team", source: "stripe" }, billingAddons: "sso" }, { gatingEnabled: true }).sso).toBe(false)
+})

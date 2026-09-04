@@ -1473,6 +1473,14 @@ export async function createSelfServeCheckout(input: {
   const product = selfServeCatalog().find((entry) => entry.id === input.product)
   if (!product) throw new Error("self_serve_product_invalid")
   const priceId = await validateSelfServePrice(product)
+  const customer = await findOrCreateStripeCustomer({
+    organizationId: input.organizationId, email: input.email, name: input.name,
+  })
+  const currentSubscriptions: Stripe.Subscription[] = []
+  for await (const subscription of stripe().subscriptions.list({ customer, status: "all", limit: 100 })) {
+    currentSubscriptions.push(subscription)
+    await reconcileSelfServeSubscription(subscription.id)
+  }
   const summary = await getSelfServeBillingSummary(input.organizationId)
   if (summary.source === "manual" || summary.source === "grandfathered") {
     throw new Error("self_serve_managed_plan")
@@ -1480,7 +1488,10 @@ export async function createSelfServeCheckout(input: {
   if (input.product === "sso" && summary.tier !== "team") throw new Error("self_serve_sso_requires_team")
   // SSO is included in Enterprise. Require the separate add-on to finish
   // cancellation before upgrading so no customer pays for SSO twice.
-  if (input.product === "enterprise" && await organizationHasOngoingOpenWorkWebSubscription(input.organizationId)) {
+  if (input.product === "enterprise" && (currentSubscriptions.some((subscription) =>
+    subscriptionTypeFromStripeSubscription(subscription, firstSubscriptionItem(subscription)) === "web"
+    && ONGOING_STATUSES.has(subscriptionStatus(subscription.status)))
+    || await organizationHasOngoingOpenWorkWebSubscription(input.organizationId))) {
     throw new Error("self_serve_cancel_web_first")
   }
   const sso = await findOrgSubscriptionByType(input.organizationId, "sso")
@@ -1490,15 +1501,20 @@ export async function createSelfServeCheckout(input: {
   const quantity = input.product === "sso" ? 1 : Math.max(1, await activeMemberCount(input.organizationId))
   if (input.product === "team" && quantity > 100) throw new Error("self_serve_team_limit")
   const subscriptionType = input.product === "sso" ? "sso" : "seat"
-  const customer = await findOrCreateStripeCustomer({
-    organizationId: input.organizationId, email: input.email, name: input.name,
-  })
-  // Paginate: older subscriptions must still prevent duplicate purchases.
-  for await (const subscription of stripe().subscriptions.list({ customer, status: "all", limit: 100 })) {
+  // Expire unpaid SSO checkouts before an Enterprise upgrade to avoid a
+  // previously opened add-on checkout charging after the plan includes SSO.
+  if (input.product === "enterprise") {
+    for await (const session of stripe().checkout.sessions.list({ customer, limit: 100 })) {
+      if (session.status === "open" && getBillingMetadata(session.metadata).subscriptionType === "sso") {
+        await stripe().checkout.sessions.expire(session.id)
+      }
+    }
+  }
+  // Paginated above: older subscriptions still prevent duplicate purchases.
+  for (const subscription of currentSubscriptions) {
     if (getSubscriptionMetadata(subscription).organizationId !== input.organizationId
       || subscriptionTypeFromStripeSubscription(subscription, firstSubscriptionItem(subscription)) !== subscriptionType
       || !ONGOING_STATUSES.has(subscriptionStatus(subscription.status))) continue
-    await reconcileSelfServeSubscription(subscription.id)
     const item = firstSubscriptionItem(subscription)
     if (input.product === "sso" || item?.price.id === priceId || !ACTIVE_STATUSES.has(subscriptionStatus(subscription.status))) {
       throw new Error("self_serve_subscription_exists")
@@ -1536,6 +1552,7 @@ export async function createSelfServeCheckout(input: {
 }
 
 export async function reconcileSelfServeSubscription(subscriptionId: string, eventId?: string) {
+  if (!selfServeCatalog().some((product) => product.priceId)) return false
   const subscription = await stripe().subscriptions.retrieve(subscriptionId)
   const item = firstSubscriptionItem(subscription)
   const product = selfServeProductForPrice(item?.price.id)
