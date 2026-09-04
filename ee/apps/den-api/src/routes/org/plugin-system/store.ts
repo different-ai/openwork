@@ -1669,14 +1669,14 @@ export async function listMeCoworkerTemplates(input: { context: PluginArchActorC
   const organizationId = context.organizationContext.organization.id
   const memberId = context.organizationContext.currentMember.id
   const teamIds = context.memberTeams.map((team) => team.id)
-  const page = await listConfigObjects({ ...input, type: "agent", status: "active" })
-  const parsedItems = page.items.flatMap((item) => {
-    if (!item.latestVersion || item.latestVersion.isDeletedVersion) return []
-    const parsed = coworkerTemplateSchema.safeParse(item.latestVersion.normalizedPayloadJson)
-    return parsed.success ? [{ id: item.id, versionId: item.latestVersion.id, template: parsed.data }] : []
-  })
-  if (parsedItems.length === 0) return { items: [], nextCursor: page.nextCursor }
-  const ids = parsedItems.map((item) => item.id)
+  const rows = await db.select().from(ConfigObjectTable).where(and(
+    eq(ConfigObjectTable.organizationId, organizationId),
+    eq(ConfigObjectTable.objectType, "agent"),
+    eq(ConfigObjectTable.status, "active"),
+    isNull(ConfigObjectTable.deletedAt),
+  )).orderBy(desc(ConfigObjectTable.updatedAt), desc(ConfigObjectTable.id))
+  if (rows.length === 0) return { items: [], nextCursor: null }
+  const ids = rows.map((row) => row.id)
   const access = await listMeEffectivePluginAccessWithComponentKinds({ context, assignmentsOnly: true })
   // Administrators can browse everything; that is not an assignment. Likewise,
   // creating a template must not automatically install every template they author.
@@ -1700,8 +1700,20 @@ export async function listMeCoworkerTemplates(input: { context: PluginArchActorC
     if (grant.orgWide || (grant.teamId && teamIds.includes(grant.teamId))
       || (grant.orgMembershipId === memberId && grant.createdByOrgMembershipId !== memberId)) assignedIds.add(grant.configObjectId)
   }
-  const items: AssignedCoworkerTemplate[] = parsedItems.map((item) => ({ ...item, assigned: assignedIds.has(item.id) }))
-  return { items, nextCursor: page.nextCursor }
+  const latestVersions = await getLatestVersions(ids)
+  const items: AssignedCoworkerTemplate[] = []
+  for (const row of rows) {
+    // Marketplace grants already authorize the plugin's resolved contents.
+    // Follow that same active grant here; generic config-object discovery
+    // currently resolves only direct plugin grants.
+    const assigned = assignedIds.has(row.id)
+    if (!assigned && !await resolvePluginArchResourceRole({ context, resourceId: row.id, resourceKind: "config_object" })) continue
+    const version = latestVersions.get(row.id)
+    if (!version || version.isDeletedVersion) continue
+    const parsed = coworkerTemplateSchema.safeParse(version.normalizedPayloadJson)
+    if (parsed.success) items.push({ id: row.id, versionId: version.id, template: parsed.data, assigned })
+  }
+  return pageItems(items, input.cursor, input.limit)
 }
 
 export async function createConfigObject(input: {

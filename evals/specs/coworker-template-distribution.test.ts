@@ -63,7 +63,7 @@ test.skipIf(!mysql || !redis)(title, { timeout: 300_000 }, async ({ place, evide
   expect(await available(outsider)).toEqual([]);
 
   const teamId = id((await request(admin, "/v1/teams", "POST", { name: "Marketing", memberIds: [] }, 201)).team);
-  await request(admin, `/v1/plugins/${pluginId}/access`, "POST", { teamId: teamId, role: "viewer" }, 201);
+  await request(admin, `/v1/plugins/${pluginId}/access`, "POST", { teamId, role: "viewer" }, 201);
   expect(await available(teammate)).toEqual([]);
   // Membership is added after the coworker bundle was assigned to the team.
   await request(admin, `/v1/teams/${teamId}`, "PATCH", { memberIds: [teammateId] });
@@ -75,7 +75,7 @@ test.skipIf(!mysql || !redis)(title, { timeout: 300_000 }, async ({ place, evide
   if (!campaign) throw new Error("The campaign coworker was not delivered.");
   await request(teammate, `/v1/config-objects/${campaign.id}/versions`, "POST", { input: { schemaVersion: "openwork.coworker.v1", normalizedPayloadJson: template("Changed by a viewer") } }, 403);
   await request(teammate, `/v1/plugins/${pluginId}/access`, "POST", { orgMembershipId: outsiderId, role: "viewer" }, 403);
-  evidence.recordAssertionEvidence("Joining an assigned team supplies its coworkers without granting edit or reshare rights", "An existing team bundle became visible and assigned after the member joined. The unrelated member saw no templates; viewer version creation and resharing both returned 403. Creator visibility alone returned assigned=false, including across pagination.", true);
+  evidence.recordAssertionEvidence("Joining an assigned team supplies its coworkers without rights to edit templates or manage grants", "An existing team bundle became visible and assigned after the member joined. The unrelated member saw no templates; viewer version creation and changing plugin grants both returned 403. Creator visibility alone returned assigned=false, including across pagination.", true);
 
   const marketplace = await createMarketplace(admin, { name: "Marketing starter team" });
   await assignPluginToMarketplace(admin, marketplace.id, pluginId);
@@ -102,11 +102,11 @@ test.skipIf(!mysql || !redis)(title, { timeout: 300_000 }, async ({ place, evide
   // A direct person grant uses the same native assignment path.
   await request(admin, `/v1/config-objects/${campaign.id}/access`, "POST", { orgMembershipId: teammateId, role: "viewer" }, 201);
   expect(await available(teammate)).toEqual([expect.objectContaining({ id: campaign.id, assigned: true })]);
-  for (const field of ["memory", "apiKey", "workspaceId", "automations"]) {
+  for (const field of ["memory", "apiKey", "workspaceId", "automations", "model"]) {
     await request(admin, "/v1/config-objects", "POST", { type: "agent", sourceMode: "cloud", input: { schemaVersion: "openwork.coworker.v1", normalizedPayloadJson: { ...template("Invalid"), [field]: "must not travel" } } }, 400);
   }
   await request(admin, `/v1/config-objects/${campaign.id}/archive`, "POST");
   expect(await available(teammate)).toEqual([]);
   expect(await available(outsider)).toHaveLength(1);
-  evidence.recordAssertionEvidence("Versioned templates support direct assignment and exclude nonportable fields", "A new version kept the template identity and changed its version ID and instructions. A direct person grant assigned that template. Memory, API key, workspace ID, and automation fields each returned 400. Archiving the template removed delivery through both direct and marketplace grants.", true);
+  evidence.recordAssertionEvidence("Versioned templates support direct assignment and exclude nonportable fields", "A new version kept the template identity and changed its version ID and instructions. A direct person grant assigned that template. Memory, API key, workspace ID, automation, and model fields each returned 400. Archiving the template removed delivery through both direct and marketplace grants.", true);
 });
