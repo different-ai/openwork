@@ -188,7 +188,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
 
   // The first finding wakes the coworker: its discussion shows one quiet action line, then the coworker's own reply.
   const reviewLine = await waitFor(app, `(() => {
-    const line = document.querySelector('[data-testid="coworker-worker-review"] summary > span:not([aria-hidden])');
+    const line = document.querySelector('[data-testid="coworker-worker-review"] button > span:not([aria-hidden])');
     return line?.textContent?.trim() || false;
   })()`, { timeoutMs: 420_000, label: "review action line in the discussion" });
   expect(String(reviewLine)).toMatch(/^Reviewed (an update|\d+ updates) from Echo check$/);

@@ -170,8 +170,8 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     return {
       outcome: brief.querySelector('[data-testid="coworker-assignment-outcome"]')?.textContent?.trim() ?? "",
       visibleText: brief.innerText,
-      contextSummary: context?.querySelector("summary span:not([aria-hidden])")?.textContent?.trim() ?? "",
-      contextOpen: context instanceof HTMLDetailsElement ? context.open : null,
+      contextSummary: context?.querySelector("button span:not([aria-hidden])")?.textContent?.trim() ?? "",
+      contextOpen: context?.querySelector("button")?.getAttribute("aria-expanded") === "true",
       plainUserBubbles: document.querySelectorAll('[data-message-role="user"]:not([data-assignment-brief])').length,
     };
   })()`);

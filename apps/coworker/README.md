@@ -422,9 +422,10 @@ line, Activity's Now card, and the journeys read the same value.
   (signed out) or `C Refresh providers` (signed in) when the model is the
   likely cause, or `C Connect an AI provider` (OpenWork › AI models) when the
   free model's limit is. Never more than three. An amber dot says it needs you;
-  the raw text waits behind a closed *Technical details*. When the retry
-  replies the bubble goes and, if the model changed, one line stays: "Retried
-  with Claude".
+  the raw text is part of the bubble from the start — small, monospaced,
+  bounded to a few lines that scroll — so the bubble lands at its full height
+  and never grows. When the retry replies the bubble goes and, if the model
+  changed, one line stays: "Retried with Claude".
 - **Stopped.** The round send control becomes a stop control while a reply runs
   and the field is empty; the live row's *Stop* and the header's *Stop* do the
   same. Stopping leaves one quiet line — "Stopped." · *Retry* — and Retry runs
@@ -990,12 +991,20 @@ personality) as hairline-separated rows, the AI model, Memory, and a quiet
 Retire row — with Save appearing only when something changed; no card sits
 inside another card.
 
-Thinking and tool work fold into two quiet lines above a reply: provider-returned
-thinking becomes a borderless "Thought through" disclosure once the reply is
+**Nothing that has landed in the conversation grows when the person looks
+closer.** A bubble keeps the height it landed with; detail floats in a light
+popover under (or over) its line — the same shell for all of them
+(`ui/details-popover.tsx`) — or is part of the bubble from the start. Thinking
+and tool work are two quiet lines above a reply: provider-returned thinking is
+a "Thought through" line whose popover holds the thinking once the reply is
 complete, and all the tool calls behind one reply become one work receipt
-("Edited index.md", "Worked with your files and Calendar · 3 steps") that opens
-into plain-word steps with the tool name behind Technical details
-(`lib/work-receipt.ts`). Documents and Apps the work produced stay first-class
+("Edited index.md", "Worked with your files and Calendar · 3 steps") whose
+popover lists the plain-word steps with the tool name behind Technical details
+(`lib/work-receipt.ts`, `ui/work-popover.tsx`). The same rule holds for a
+Worker review's updates and for the discussion an assignment carries; a
+failure's raw reason and a workspace problem's raw reason are shown small and
+bounded from the start. The one fold left in the conversation is a long reply's
+*Show the rest*, which exists to keep a wall of text short. Documents and Apps the work produced stay first-class
 as compact attachment chips beneath the receipt. While a turn runs, the live
 turn carries the moving state — a typing bubble while thinking (tap for the
 thinking), a chip while a tool runs, and the words themselves streaming into
@@ -1005,9 +1014,10 @@ and sit closer together.
 
 The message that opens an assignment carries scaffolding for the model (the
 outcome, the visible discussion it came from, and a short instruction); the
-person sees it as a brief — "Assignment for Nova", the outcome, and a closed
-"From your discussion · n messages" disclosure — never the headings or the
-instruction (`parseAssignmentBrief` in `lib/conversation.ts`). The engine still
+person sees it as a brief — "Assignment for Nova", the outcome, and a
+"From your discussion · n messages" line whose popover holds those messages —
+never the headings or the instruction (`parseAssignmentBrief` in
+`lib/conversation.ts`). The engine still
 receives the exact prompt the journeys verify.
 
 Scheduled assignments read like a to-do list for a person: one line per
