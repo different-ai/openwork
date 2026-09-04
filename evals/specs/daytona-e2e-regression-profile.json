@@ -8,11 +8,6 @@
       "reason": "spawns a fresh-profile/second Electron; cannot reuse the shared prewarmed desktop sandbox"
     },
     {
-      "test": "dashboard-duplicate-capability-tiles.e2e.test.ts",
-      "category": "per-test-den-env",
-      "reason": "requires DEN_DASHBOARDS_ENABLED=true before Den starts"
-    },
-    {
       "test": "first-run-cloud-share.e2e.test.ts",
       "category": "fresh-desktop-profile",
       "reason": "spawns a fresh-profile/second Electron; cannot reuse the shared prewarmed desktop sandbox"
