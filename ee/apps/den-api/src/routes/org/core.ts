@@ -1,3 +1,4 @@
+import { organizationHasCapability } from "../../organization-capabilities.js"
 import { createHash } from "node:crypto"
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { OrganizationTable, ScimProviderTable, SsoConnectionTable } from "@openwork-ee/den-db/schema"
@@ -699,6 +700,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         plan: parseOrganizationPlan(payload.organization.metadata),
         entitlements: getOrganizationEntitlements(payload.organization.metadata),
         capabilities: {
+          coworkerTeams: organizationHasCapability(payload.organization.metadata, "coworkerTeams"),
           // Protocol capability: clients must see this explicit signal before
           // calling the dashboard routes. Older Den versions omit the field,
           // allowing newer Desktop builds to fail closed during a staggered

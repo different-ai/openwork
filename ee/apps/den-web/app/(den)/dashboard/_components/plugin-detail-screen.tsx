@@ -225,7 +225,7 @@ export function PluginDetailScreen({
           error={pluginAccessQuery.error}
         />
         <SkillsSection orgSlug={orgSlug} plugin={plugin} canEdit={access.isAdmin} />
-        <section data-testid="plugin-coworkers">
+        {orgContext?.capabilities.coworkerTeams === true ? <section data-testid="plugin-coworkers">
           <div className="mb-3 flex items-center justify-between gap-3">
             <div><h2 className="text-sm font-semibold text-gray-950">Coworkers</h2><p className="mt-1 text-xs text-gray-500">Prepared teammates included with this plugin. Assign the plugin to give people a team at sign-in.</p></div>
             {access.isAdmin ? <Link href={`${getPluginRoute(orgSlug, plugin.id)}/coworkers/new`} className={buttonVariants({ size: "sm" })}>Add coworker</Link> : null}
@@ -235,7 +235,7 @@ export function PluginDetailScreen({
             <p className="mt-1 text-xs text-gray-500">{item.description}</p>
           </div>)}
           {!plugin.agents.some((item) => item.coworker) ? <p className="rounded-xl border border-dashed border-gray-200 px-5 py-6 text-sm text-gray-500">Add a marketing partner, researcher, or another coworker your team needs.</p> : null}
-        </section>
+        </section> : null}
         <WorkflowsSection
           plugin={plugin}
           canEdit={access.isAdmin}

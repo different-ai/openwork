@@ -747,7 +747,7 @@ export async function coworkerTemplateEditor(seed: Seed) {
     headless: true,
     viewport: { width: 1440, height: 1400 },
   });
-  return { den, web, pluginId };
+  return { den, web, pluginId, organizationId: await activeOrganizationId(seed, den.admin) };
 }
 
 export async function pluginEditorWithConnector(seed: Seed) {

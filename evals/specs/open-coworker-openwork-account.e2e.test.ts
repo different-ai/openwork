@@ -460,6 +460,7 @@ async function openDetails(app: Awaited<ReturnType<typeof coworker>>): Promise<v
 test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"], commands: ["opencode"] });
   let assignedTemplates: Array<Record<string, unknown>> = [];
+  let coworkerTeamsEnabled = false;
 
   // --- Mock organization model: an OpenAI-compatible endpoint that answers deterministically.
   const completionAuthorizations: string[] = [];
@@ -618,7 +619,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
       return;
     }
     if (request.method === "GET" && path === "/v1/me/coworkers") {
-      respondJson(response, 200, { items: assignedTemplates, nextCursor: null });
+      respondJson(response, 200, { enabled: coworkerTeamsEnabled, items: assignedTemplates, nextCursor: null });
       return;
     }
     if (request.method === "GET" && path === "/v1/llm-providers") {
@@ -1175,6 +1176,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   await app.stop();
   const starts = completionAuthorizations.length;
   const startingTemplate = { kind: "coworker", schemaVersion: 1, description: "Ready for the marketing team", role: "Marketing", mission: "Help plan campaigns", instructions: "Ask for the audience before drafting.", provisioning: "automatic" };
+  coworkerTeamsEnabled = true;
   assignedTemplates = [
     { id: "campaign", versionId: "one", assigned: true, template: { ...startingTemplate, name: "Campaign partner" } },
     { id: "research", versionId: "one", assigned: true, template: { ...startingTemplate, name: "Research partner" } },
@@ -1220,5 +1222,16 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   await waitFor(teammateApp, `!document.querySelector('[data-testid="assigned-coworkers"] button')?.disabled`, { timeoutMs: 120_000, label: "assignment refresh after retirement" });
   expect(await readTeam()).toHaveLength(2);
   expect(completionAuthorizations.length).toBe(starts);
+  coworkerTeamsEnabled = false;
+  await clickButton(teammateApp, "Refresh assigned coworkers");
+  await waitFor(teammateApp, `document.querySelector('[data-testid="assigned-coworkers"]')?.textContent.includes("Coworker templates") && !document.querySelector('[data-template-id="optional"]')`, { timeoutMs: 30_000, label: "disabled team controls hidden" });
+  expect(await readTeam()).toHaveLength(2);
+  expect(await evalIn(teammateApp, `document.body.innerText.includes("Refresh assigned coworkers")`)).toBe(false);
+  coworkerTeamsEnabled = true;
+  await clickButton(teammateApp, "General");
+  await clickButton(teammateApp, "Account");
+  await waitForText(teammateApp, "Refresh assigned coworkers", { timeoutMs: 30_000 });
+  expect(await readTeam()).toHaveLength(2);
+  evidence.recordAssertionEvidence("Turning prepared teams off hides their controls while keeping personal coworkers", "The disabled catalog deliberately still contained templates; the client failed closed on enabled=false, hid team controls, and preserved both personal coworkers. Returning to Account after re-enabling discovered the flag and restored the controls without duplicates.", true);
   evidence.recordAssertionEvidence("Refreshes preserve personal work, optional choices, and retirement", "After a version update and reload, the team still had two coworkers and Account explained the preserved working copy. Original starting instructions and edited working memory were unchanged. Explicitly adding an optional coworker created one copy; retiring another and refreshing did not recreate it. No background completion requests were made.", true);
 });

@@ -132,6 +132,7 @@ type AdminOrganizationCapabilities = {
   modelsAnalytics: boolean;
   installLinks: boolean;
   mcpConnections: boolean;
+  coworkerTeams: boolean;
 };
 
 type AdminOpenWorkWebAccess = {
@@ -453,7 +454,8 @@ function parseAdminPayload(payload: unknown): AdminPayload | null {
           capabilities: {
             modelsAnalytics: capabilities.modelsAnalytics === true,
             installLinks: capabilities.installLinks === true,
-            mcpConnections: capabilities.mcpConnections === true
+            mcpConnections: capabilities.mcpConnections === true,
+            coworkerTeams: capabilities.coworkerTeams === true
           },
           openworkWebAccess: parseAdminOpenWorkWebAccess(value.openworkWebAccess)
         };
@@ -824,7 +826,7 @@ function buildFixtureOrganization(index: number): AdminOrganization {
     freeSeatCount: target ? 25 : DEFAULT_FREE_SEAT_COUNT,
     seatsFreeAdditional: target ? 20 : 0,
     billableSeatCount: target ? 103 : 0,
-    capabilities: { installLinks: target, mcpConnections: target, modelsAnalytics: false },
+    capabilities: { installLinks: target, mcpConnections: target, modelsAnalytics: false, coworkerTeams: false },
     openworkWebAccess: {
       hasAccess: target,
       accessSource: target ? "complimentary" : null,
@@ -2743,6 +2745,19 @@ export function DenAdminPanel() {
                         />
                         OpenWork Connect (alpha)
                       </label>
+                      <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                        <input
+                          type="checkbox"
+                          data-testid="admin-capability-coworkerTeams"
+                          checked={org.capabilities.coworkerTeams}
+                          disabled={savingCapabilityOrgId === org.id}
+                          onChange={(event) => {
+                            void saveOrganizationCapability(org, "coworkerTeams", event.target.checked);
+                          }}
+                          className="h-4 w-4 rounded border-slate-300"
+                        />
+                        Prepared coworker teams (preview)
+                      </label>
                     </div>
                     <label className="mt-3 inline-flex items-center gap-2 text-sm text-slate-700">
                       <input type="checkbox" checked={org.capabilities.modelsAnalytics} disabled={savingCapabilityOrgId === org.id}
@@ -2756,6 +2771,7 @@ export function DenAdminPanel() {
                     ) : null}
                     <p className="mt-1 text-xs text-slate-400">On by default. Turn off to stop workspace admins from minting desktop install links for this organization.</p>
                     <p className="mt-1 text-xs text-slate-400">On by default. Turn off to hide member-facing org connections, marketplace capabilities on the agent rail, and the desktop Connect tab.</p>
+                    <p className="mt-1 text-xs text-slate-400">Prepared coworker teams are off by default. Enable publishing and delivery only for this organization.</p>
                     <p className="mt-1 text-xs text-slate-400">Confined multi-tool scripts run server-side for this organization.</p>
                     <p className="mt-1 text-xs text-slate-400">Off by default. Requires the deployment master switch and exposes native provider MCP Apps and imported Apps for this organization.</p>
                   </div>

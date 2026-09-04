@@ -137,6 +137,9 @@ export function OpenWorkSettings({
   onCoworkerChanged?: (coworker: CoworkerSummary) => void;
 }) {
   const [section, setSection] = useState<SettingsSection>(initialSection);
+  useEffect(() => {
+    if (active && session && section === "account") void onSyncTemplates();
+  }, [active, session, section, onSyncTemplates]);
   async function chooseModelFor(coworker: CoworkerSummary, modelId: string) {
     setError("");
     try {
