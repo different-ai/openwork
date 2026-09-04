@@ -238,6 +238,8 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
   // When the organization blocks settings control, the settings surface is the
   // Cloud account page only, so the entry is labelled for where it lands and
   // the Debug shortcut is hidden.
+  // Reuses Den’s existing allowControlSettings boolean contract (PR #1838);
+  // no new response field is required. Missing values retain the hook’s default.
   const controlSettingsBlocked = useDesktopRestriction("allowControlSettings");
 
   const docsControlAction = useMemo<OpenworkControlAction>(() => ({
