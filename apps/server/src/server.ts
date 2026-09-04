@@ -949,7 +949,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
   const approvals = new ApprovalService(config.approval);
   const reloadEvents = new ReloadEventStore();
   const tokens = new TokenService(config);
-  const env = new EnvService();
+  const env = new EnvService({ config });
   envServicesByConfig.set(config, env);
   const logger = createServerLogger(config);
   try {
