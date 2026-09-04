@@ -479,31 +479,16 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place, ski
     if (!address || typeof address === "string") throw new Error("Witness server did not bind a TCP port");
     witnessBaseUrl = `http://127.0.0.1:${address.port}/v1`;
   }
-  const profileDir = await mkdtemp(join(tmpdir(), "openwork-v2-chat-routing-eval-"));
-  const workspacePath = join(profileDir, "workspace");
-  const secondWorkspacePath = join(profileDir, "workspace-2");
-  await mkdir(workspacePath, { recursive: true });
-  await mkdir(secondWorkspacePath, { recursive: true });
-  if (witnessBaseUrl !== undefined) {
-    await writeFile(join(workspacePath, "opencode.json"), `${JSON.stringify({
-      $schema: "https://opencode.ai/config.json",
-      provider: {
-        "witness-v1": {
-          npm: "@ai-sdk/openai-compatible",
-          name: "Witness V1",
-          options: { baseURL: witnessBaseUrl, apiKey: keyV1 },
-          models: { [modelIdV1]: { name: modelNameV1 } },
-        },
-      },
-    }, null, 2)}\n`);
-  }
+  const profileDir = place.kind === "local"
+    ? await mkdtemp(join(tmpdir(), "openwork-v2-chat-routing-eval-"))
+    : undefined;
 
   let app: Awaited<ReturnType<typeof desktop>> | undefined;
   try {
     app = await desktop({
       name: "opencode-v2-chat-routing",
       host: place.host(),
-      profileDir,
+      ...(profileDir === undefined ? {} : { profileDir }),
       env: {
         // This benchmark measures engine and UI latency, not plugins. On a fresh isolated HOME, the engine's external-plugin dependency bootstrap
         // (injected by apps/server/src/openwork-runtime-config.ts) can hold its install lock for minutes and block /config + /provider, so the picker
@@ -518,6 +503,33 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place, ski
         OPENWORK_INFERENCE_BASE_URL: "",
       },
     });
+    let workspacePath: string;
+    let secondWorkspacePath: string;
+    if (place.kind === "daytona") {
+      if (!app.workspaceRoot) throw new Error("Daytona desktop did not expose its workspace root");
+      const workspaceRunRoot = `${app.workspaceRoot}/evals-tmp/opencode-v2-chat-routing-${Date.now()}`;
+      workspacePath = `${workspaceRunRoot}/workspace`;
+      secondWorkspacePath = `${workspaceRunRoot}/workspace-2`;
+    } else {
+      if (profileDir === undefined) throw new Error("Local desktop profile directory was unavailable");
+      workspacePath = join(profileDir, "workspace");
+      secondWorkspacePath = join(profileDir, "workspace-2");
+      await mkdir(workspacePath, { recursive: true });
+      await mkdir(secondWorkspacePath, { recursive: true });
+    }
+    if (witnessBaseUrl !== undefined) {
+      await writeFile(join(workspacePath, "opencode.json"), `${JSON.stringify({
+        $schema: "https://opencode.ai/config.json",
+        provider: {
+          "witness-v1": {
+            npm: "@ai-sdk/openai-compatible",
+            name: "Witness V1",
+            options: { baseURL: witnessBaseUrl, apiKey: keyV1 },
+            models: { [modelIdV1]: { name: modelNameV1 } },
+          },
+        },
+      }, null, 2)}\n`);
+    }
     const { workspaceId } = await createAndSelectWorkspace(app, { path: workspacePath });
     if (place.kind === "daytona") {
       await readStatus(app);
@@ -687,6 +699,6 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place, ski
       witness.closeAllConnections();
       await new Promise<void>((resolve, reject) => witness.close((error) => error ? reject(error) : resolve()));
     }
-    await rm(profileDir, { recursive: true, force: true });
+    if (profileDir !== undefined) await rm(profileDir, { recursive: true, force: true });
   }
 });

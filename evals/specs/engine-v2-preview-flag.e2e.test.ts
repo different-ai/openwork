@@ -190,17 +190,26 @@ test.skipIf(!enabled)(title, async ({ evidence, place }) => {
   needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"] });
 
   const binPath = place.kind === "local" ? await resolveOpencodeV2Bin() : undefined;
-  const profileDir = await mkdtemp(join(tmpdir(), "openwork-engine-v2-preview-eval-"));
-  const workspacePath = join(profileDir, "workspace");
+  const profileDir = place.kind === "local"
+    ? await mkdtemp(join(tmpdir(), "openwork-engine-v2-preview-eval-"))
+    : undefined;
   let app: Awaited<ReturnType<typeof desktop>> | undefined;
 
   try {
     app = await desktop({
       name: "engine-v2-preview-flag",
       host: place.host(),
-      profileDir,
+      ...(profileDir === undefined ? {} : { profileDir }),
       env: binPath === undefined ? {} : { OPENWORK_OPENCODE2_BIN: binPath },
     });
+    let workspacePath: string;
+    if (place.kind === "daytona") {
+      if (!app.workspaceRoot) throw new Error("Daytona desktop did not expose its workspace root");
+      workspacePath = `${app.workspaceRoot}/evals-tmp/engine-v2-preview-${Date.now()}`;
+    } else {
+      if (profileDir === undefined) throw new Error("Local desktop profile directory was unavailable");
+      workspacePath = join(profileDir, "workspace");
+    }
     const { workspaceId } = await createAndSelectWorkspace(app, { path: workspacePath });
 
     const defaultStatus = await readStatus(app);
@@ -302,6 +311,6 @@ test.skipIf(!enabled)(title, async ({ evidence, place }) => {
     );
   } finally {
     if (app !== undefined) await app.stop();
-    await rm(profileDir, { recursive: true, force: true });
+    if (profileDir !== undefined) await rm(profileDir, { recursive: true, force: true });
   }
 });
