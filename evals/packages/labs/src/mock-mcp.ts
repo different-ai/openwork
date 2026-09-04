@@ -36,12 +36,6 @@ export interface MockAgentWorkload {
   finalReplyChunkSize?: number;
   /** Tool calls the agent makes before its final reply; empty answers directly. */
   steps: MockAgentToolStep[];
-  /**
-   * Declared fault: the first N main completions stream their opening chunk
-   * and then go quiet without ending (a half-open socket after the client
-   * slept). Recorded as kind "quiet"; later completions proceed normally.
-   */
-  quietCompletions?: number;
 }
 
 export interface MockAgentRequest {
@@ -49,7 +43,7 @@ export interface MockAgentRequest {
   promptMarker: string | null;
   matchedMarkers: string[];
   completedTools: number;
-  kind: "utility" | "tool" | "final" | "error" | "quiet";
+  kind: "utility" | "tool" | "final" | "error";
   toolName: string | null;
   arguments: Record<string, unknown>;
   at: string;
@@ -407,7 +401,7 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
       const at = typeof entry.at === "string" ? entry.at : "";
       if (sinceIso && at < sinceIso) continue;
       const kind = completion.kind;
-      if (kind !== "utility" && kind !== "tool" && kind !== "final" && kind !== "error" && kind !== "quiet") continue;
+      if (kind !== "utility" && kind !== "tool" && kind !== "final" && kind !== "error") continue;
       const marker = typeof completion.promptMarker === "string" ? completion.promptMarker : null;
       if (promptMarker && marker !== promptMarker) continue;
       if (typeof completion.model !== "string"

@@ -199,14 +199,7 @@ function validateAgentWorkloads(value) {
       }
       return { tool: step.tool.trim(), arguments: structuredClone(step.arguments), argumentsFrom: step.argumentsFrom };
     });
-    // Declared fault: the first N main completions stream their opening chunk
-    // and then go quiet without ending, the way a half-open socket behaves
-    // after the client machine slept. Later completions proceed normally.
-    const quietCompletions = workload.quietCompletions ?? 0;
-    if (!Number.isInteger(quietCompletions) || quietCompletions < 0) {
-      throw new Error(`agent workload ${promptMarker} quietCompletions must be a non-negative integer`);
-    }
-    return { promptMarker, finalReply, finalReplyChunkSize, steps, quietCompletions, mainCompletions: 0 };
+    return { promptMarker, finalReply, finalReplyChunkSize, steps };
   });
 }
 
@@ -217,17 +210,6 @@ function finalReplyChunks(workload) {
     chunks.push(workload.finalReply.slice(offset, offset + workload.finalReplyChunkSize));
   }
   return chunks;
-}
-
-function agentQuietStream(res, model) {
-  res.writeHead(200, {
-    "access-control-allow-origin": "*",
-    "content-type": "text/event-stream",
-    "cache-control": "no-cache",
-    connection: "keep-alive",
-  });
-  // Opening chunk only; the response is never ended or closed by the mock.
-  res.write(`data: ${JSON.stringify(agentChunk(model, { role: "assistant" }))}\n\n`);
 }
 
 function offeredAgentTool(body, wanted) {
@@ -319,12 +301,6 @@ async function handleAgentCompletion(req, res, entry) {
   }
   const workload = agentWorkloads.find((candidate) => candidate.promptMarker === matchedMarkers[0]);
   if (!workload) throw new Error("matched agent workload disappeared");
-  workload.mainCompletions += 1;
-  if (workload.mainCompletions <= workload.quietCompletions) {
-    entry.agentCompletion = { ...baseRequest, kind: "quiet", promptMarker: workload.promptMarker, toolName: null, arguments: {} };
-    agentQuietStream(res, model);
-    return;
-  }
   if (completedTools >= workload.steps.length) {
     entry.agentCompletion = { ...baseRequest, kind: "final", promptMarker: workload.promptMarker, toolName: null, arguments: {} };
     agentStream(res, model, [
