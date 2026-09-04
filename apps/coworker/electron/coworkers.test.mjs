@@ -92,7 +92,7 @@ test("createCoworker writes the minimal coworker filesystem representation", asy
   // The contract names the coworker's own tools and when to use them.
   assert.match(agents, /## Scheduling/);
   assert.match(agents, /coworker_assignment_create/);
-  assert.match(agents, /Never invent\na time zone/);
+  assert.match(agents, /Never invent a time zone/);
   assert.match(agents, /## Keeping memory and soul current/);
   assert.match(agents, /coworker_memory_remember/);
   assert.match(agents, /coworker_soul_update/);
@@ -151,8 +151,10 @@ test("the coworker contract decides the shape of an answer once: reply, document
   assert.match(shapes, /Work on a clock is always an assignment, never a\s+Worker/);
   assert.match(shapes, /a schedule wins over a Worker, and a document beside a\s+short reply wins over a long reply/);
   // The four rules agree with each other: the Workers and Scheduling sections repeat the boundary, not a different one.
-  assert.match(agents, /## Workers[\s\S]*not on a clock[\s\S]*ten when I say nothing[\s\S]*not for a check that should repeat\s+on a clock/);
-  assert.match(agents, /## Scheduling[\s\S]*recurring or timed work/);
+  assert.match(agents, /## Workers[\s\S]*see \*Which shape an answer takes\*[\s\S]*ten when I say\s+nothing[\s\S]*not for a check that should\s+repeat on a clock/);
+  assert.match(agents, /## Scheduling[\s\S]*Recurring or timed work is an assignment \(see \*Which shape an answer takes\*\)/);
+  // The quick-question rule is said once, in the shape rule, not again as a bullet.
+  assert.equal(agents.match(/quick\s+question gets a quick answer/g)?.length, 1);
   // Each shape has one example the model can pattern on.
   assert.match(agents, /\*\*Work on a clock\.\*\* "Every weekday at 9 remind me to move the car\."[\s\S]*`coworker_assignment_create` "Move the car"/);
   assert.match(agents, /\*\*A goal that outlives one reply\.\*\*[\s\S]*`worker_spawn` "Ticket themes"/);
