@@ -220,6 +220,9 @@ export async function newSplitPrimary(seed: Seed) {
     return {
       layoutKind: layout?.kind ?? "",
       focusedPane: layout?.focused ?? "",
+      focusedComposerSessionId: document.activeElement?.matches('[contenteditable="true"]')
+        ? document.activeElement.closest("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? ""
+        : "",
       primarySessionId: layout?.primarySessionId ?? layout?.sessionId ?? "",
       secondarySessionId: layout?.secondarySessionId ?? "",
       primaryWorkspaceId: layout?.primaryWorkspaceId ?? "",

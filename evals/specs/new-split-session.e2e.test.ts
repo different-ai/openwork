@@ -8,6 +8,7 @@ const paletteInput = { placeholder: "Search actions, settings, and sessions…" 
 type SplitFacts = {
   layoutKind: string;
   focusedPane: string;
+  focusedComposerSessionId: string;
   primarySessionId: string;
   secondarySessionId: string;
   primaryWorkspaceId: string;
@@ -29,6 +30,7 @@ function parseSplitFacts(value: unknown): SplitFacts {
   return {
     layoutKind: text("layoutKind"),
     focusedPane: text("focusedPane"),
+    focusedComposerSessionId: text("focusedComposerSessionId"),
     primarySessionId: text("primarySessionId"),
     secondarySessionId: text("secondarySessionId"),
     primaryWorkspaceId: text("primaryWorkspaceId"),
@@ -89,6 +91,12 @@ test("new split creates fresh same-workspace secondary sessions without moving t
       },
     });
     const firstFacts = parseSplitFacts(firstValue);
+    await probe.eventually(() => world.splitFacts(), {
+      within: 15_000,
+      label: "new secondary composer receives keyboard focus",
+      until: (candidate) => parseSplitFacts(candidate).focusedComposerSessionId === firstFacts.secondarySessionId,
+    });
+    expect(parseSplitFacts(await world.splitFacts()).focusedComposerSessionId).toBe(firstFacts.secondarySessionId);
     expect(firstFacts.layoutKind).toBe("split");
     expect(firstFacts.primarySessionId).toBe(primarySessionId);
     expect(firstFacts.primaryWorkspaceId).toBe(workspaceId);
@@ -146,6 +154,12 @@ test("new split creates fresh same-workspace secondary sessions without moving t
       },
     });
     const secondFacts = parseSplitFacts(secondValue);
+    await probe.eventually(() => world.splitFacts(), {
+      within: 15_000,
+      label: "new secondary composer receives keyboard focus",
+      until: (candidate) => parseSplitFacts(candidate).focusedComposerSessionId === secondFacts.secondarySessionId,
+    });
+    expect(parseSplitFacts(await world.splitFacts()).focusedComposerSessionId).toBe(secondFacts.secondarySessionId);
     expect(secondFacts.layoutKind).toBe("split");
     expect(secondFacts.primarySessionId).toBe(primarySessionId);
     expect(secondFacts.primaryWorkspaceId).toBe(workspaceId);
@@ -224,6 +238,12 @@ test("new split creates fresh same-workspace secondary sessions without moving t
       },
     });
     const focusedSecondaryFacts = parseSplitFacts(value);
+    await probe.eventually(() => world.splitFacts(), {
+      within: 15_000,
+      label: "new secondary composer receives keyboard focus",
+      until: (candidate) => parseSplitFacts(candidate).focusedComposerSessionId === focusedSecondaryFacts.secondarySessionId,
+    });
+    expect(parseSplitFacts(await world.splitFacts()).focusedComposerSessionId).toBe(focusedSecondaryFacts.secondarySessionId);
     expect(focusedSecondaryFacts.layoutKind).toBe("split");
     expect(focusedSecondaryFacts.primarySessionId).toBe(primarySessionId);
     expect(focusedSecondaryFacts.primarySurfaceSessionId).toBe(primarySessionId);
@@ -271,6 +291,12 @@ test("new split creates fresh same-workspace secondary sessions without moving t
       },
     });
     const focusedPrimaryFacts = parseSplitFacts(value);
+    await probe.eventually(() => world.splitFacts(), {
+      within: 15_000,
+      label: "new primary composer receives keyboard focus",
+      until: (candidate) => parseSplitFacts(candidate).focusedComposerSessionId === focusedPrimaryFacts.primarySessionId,
+    });
+    expect(parseSplitFacts(await world.splitFacts()).focusedComposerSessionId).toBe(focusedPrimaryFacts.primarySessionId);
     expect(focusedPrimaryFacts.primarySessionId).toMatch(/^ses_/);
     expect(focusedPrimaryFacts.primarySessionId).not.toBe(primarySessionId);
     expect(focusedPrimaryFacts.locationHash).toContain(`/workspace/${workspaceId}/session/${focusedPrimaryFacts.primarySessionId}`);

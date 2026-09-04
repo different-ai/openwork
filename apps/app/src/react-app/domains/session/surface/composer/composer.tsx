@@ -8,6 +8,7 @@ import { toast } from "@/components/ui/sonner";
 import type { CloudImportedPlugin, CloudImportedPluginFile } from "@/app/cloud/import-state";
 import type { ComposerAttachment, McpServerEntry, McpStatus, McpStatusMap, ModelOption, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
 import { t } from "@/i18n";
+import { useComposerStateStore } from "../composer-state-store";
 import {
   composerConfigureSectionForMenu,
   isLibraryCommand,
@@ -954,6 +955,23 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     }
     return false;
   };
+
+  const focusRequested = useComposerStateStore((state) => (
+    Boolean(props.sessionId) && state.pendingFocusSessionId === props.sessionId
+  ));
+  useEffect(() => {
+    if (!focusRequested || props.disabled) return;
+    // Wait for the editor to mount and the creating menu to close. Keep the
+    // request until this session is ready, even when its snapshot loads slowly.
+    const frame = requestAnimationFrame(() => {
+      if (useComposerStateStore.getState().pendingFocusSessionId !== props.sessionId) return;
+      const editable = rootRef.current?.querySelector<HTMLElement>("[contenteditable='true']");
+      if (!editable) return;
+      editable.focus();
+      useComposerStateStore.setState({ pendingFocusSessionId: null });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focusRequested, props.disabled, props.sessionId]);
 
   // Listen for cross-app focus + draft flush events. The Solid shell uses
   // these from deep-link handlers, the command palette, and the browser
