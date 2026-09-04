@@ -53,6 +53,9 @@ test("first use without an invite or cloud reaches local task UI with honest mod
       { within: 180_000, label: "assistant reply or honest free-model notice", until: (value) => value !== null },
     );
     expect(outcome === "replied" || outcome === "free-model-busy").toBe(true);
+    if (outcome === "free-model-busy") {
+      await user.see({ text: "The free starter model is busy right now" });
+    }
     await user.notSee({ text: /subscribe to Go/i });
     await user.notSee({ text: /Error from provider/ });
     await user.notSee({ text: /Something went wrong/ });
