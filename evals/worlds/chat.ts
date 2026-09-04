@@ -233,7 +233,18 @@ export async function newSplitPrimary(seed: Seed) {
       locationHash: window.location.hash,
     };
   })()`);
-  return { app, workspace, session, splitFacts };
+  const agentContextViaServer = () => evalIn(app, `(async () => {
+    const response = await fetch("http://127.0.0.1:" + localStorage.getItem("openwork.server.port") + "/experimental/ui-control/request", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + localStorage.getItem("openwork.server.token"),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ kind: "context" }),
+    });
+    return response.json();
+  })()`, { awaitPromise: true, timeoutMs: 15_000 });
+  return { app, workspace, session, splitFacts, agentContextViaServer };
 }
 
 export async function shimmerChat(seed: Seed) {

@@ -920,6 +920,13 @@ export type OpenworkReloadEvent = {
   timestamp: number;
 };
 
+export type OpenworkUiControlRequest = {
+  id: string;
+  kind: "context" | "query" | "command";
+  input: unknown;
+  createdAt: number;
+};
+
 export type OpenworkSessionGroupDefinition = {
   id: string;
   label: string;
@@ -1799,6 +1806,19 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         { token, hostToken },
       );
     },
+    listUiControlPending: (options?: { wait?: boolean }) =>
+      requestJson<{ items: OpenworkUiControlRequest[] }>(
+        baseUrl,
+        `/experimental/ui-control/pending${options?.wait ? "?wait=1" : ""}`,
+        { token, hostToken, timeoutMs: 15_000 },
+      ),
+    replyUiControl: (id: string, result: unknown) =>
+      requestJson<{ ok: boolean }>(baseUrl, `/experimental/ui-control/${encodeURIComponent(id)}/reply`, {
+        token,
+        hostToken,
+        method: "POST",
+        body: { result },
+      }),
     reloadEngine: (workspaceId: string) =>
       requestJson<{ ok: boolean; reloadedAt?: number }>(baseUrl, `/workspace/${workspaceId}/engine/reload`, {
         token,

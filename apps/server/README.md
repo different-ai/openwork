@@ -116,6 +116,12 @@ Inbox/outbox:
 - `GET /files/sessions/:sessionId/catalog/snapshot`
 - `POST /files/sessions/:sessionId/ops`
 
+UI control mailbox (client auth):
+
+- `POST /experimental/ui-control/request`
+- `GET /experimental/ui-control/pending` (optional `?wait=1`)
+- `POST /experimental/ui-control/:id/reply`
+
 OpenCode proxy:
 
 - `GET|POST|... /opencode/*`

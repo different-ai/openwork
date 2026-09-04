@@ -172,6 +172,19 @@ test("new split creates fresh same-workspace secondary sessions without moving t
     return { secondFacts, afterPalette };
   });
 
+  await step("the agent's server path sees the same layout", async () => {
+    const currentFacts = parseSplitFacts(await world.splitFacts());
+    const result = await world.agentContextViaServer();
+    if (!isRecord(result)) throw new Error(`Invalid server UI context: ${JSON.stringify(result)}`);
+    const context = isRecord(result.context) ? result.context : null;
+    const conversations = context && isRecord(context.conversations) ? context.conversations : null;
+    const layout = conversations && isRecord(conversations.layout) ? conversations.layout : null;
+    expect(result.ok).toBe(true);
+    expect(layout?.kind).toBe(currentFacts.layoutKind);
+    expect(layout?.primarySessionId).toBe(currentFacts.primarySessionId);
+    expect(layout?.secondarySessionId).toBe(currentFacts.secondarySessionId);
+  });
+
   await step("New session replaces the focused secondary pane", async () => {
     await agent.run("workbench.session.focus", { sessionId: secondFacts.secondarySessionId });
     await probe.eventually(() => world.splitFacts(), {

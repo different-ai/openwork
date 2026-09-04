@@ -221,6 +221,15 @@ export interface ApprovalRequest {
   actor: Actor;
 }
 
+export type UiControlKind = "context" | "query" | "command";
+
+export interface UiControlRequest {
+  id: string;
+  kind: UiControlKind;
+  input?: unknown;
+  createdAt: number;
+}
+
 export interface AuditEntry {
   id: string;
   workspaceId: string;
