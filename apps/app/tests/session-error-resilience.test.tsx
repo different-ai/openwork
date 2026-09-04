@@ -1,5 +1,9 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, mock, test } from "bun:test"
+import { GlobalRegistrator } from "@happy-dom/global-registrator"
+import type { SessionStatus } from "@opencode-ai/sdk/v2/client"
 import type { UIMessage } from "ai"
+import { act } from "react"
+import { createRoot } from "react-dom/client"
 import { renderToStaticMarkup } from "react-dom/server"
 
 import { MessageList } from "../src/components/chat/message-list"
@@ -22,6 +26,27 @@ afterEach(() => {
 })
 
 describe("session error resilience", () => {
+  const freeTierFailure = {
+    name: "APIError",
+    data: {
+      message: "Error from provider (Console): Rate limit exceeded. Please try again later.",
+      statusCode: 429,
+      isRetryable: true,
+      responseBody: '{"type":"error","error":{"type":"FreeUsageLimitError","message":"Error from provider (Console): Rate limit exceeded. Please try again later."}}',
+    },
+  }
+
+  test("classifies the free starter model limit while retaining developer details", () => {
+    const presentation = presentOpencodeSessionError(freeTierFailure)
+
+    expect(presentation.kind).toBe("free-model-limit")
+    expect(presentation.title).toBe("The free starter model is busy right now")
+    expect(presentation.description).toContain("connect your own model provider")
+    expect(presentation.recoveryPrompt).toBeNull()
+    expect(presentation.technicalDetails).toContain("429")
+    expect(presentation.technicalDetails).toContain("FreeUsageLimitError")
+  })
+
   test("classifies an OpenCode abort and retains its diagnostic payload", () => {
     const presentation = presentOpencodeSessionError({
       name: "MessageAbortedError",
@@ -223,6 +248,117 @@ describe("session error resilience", () => {
 
     expect(html).not.toContain('data-testid="session-error-resume"')
     expect(html).not.toContain(">Resume<")
+  })
+
+  test("renders the free starter model limit without provider details or Resume", () => {
+    const html = renderErrorTranscriptWithResume(freeTierFailure)
+
+    expect(html).toContain("The free starter model is busy right now")
+    expect(html).toContain("connect your own model provider")
+    expect(html).not.toContain("Error from provider")
+    expect(html).not.toContain('data-testid="session-error-resume"')
+    expect(html).not.toContain(">Resume<")
+  })
+
+  test("renders provider setup for free-tier retries without changing other retry actions", async () => {
+    const registeredDom = typeof globalThis.window === "undefined" || typeof globalThis.document === "undefined"
+    if (registeredDom) GlobalRegistrator.register({ url: "http://localhost/" })
+    Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", {
+      configurable: true,
+      value: true,
+    })
+    const container = document.createElement("div")
+    document.body.append(container)
+    const root = createRoot(container)
+    const dispatchAction = mock(() => undefined)
+    type RetryStatus = Extract<SessionStatus, { type: "retry" }>
+    const renderRetry = async (retryStatus: RetryStatus) => {
+      await act(async () => {
+        root.render(
+          <MessageListProvider
+            workspaceId="workspace-1"
+            sessionId="session-1"
+            showThinking={false}
+            developerMode={false}
+            displaySuggestions={false}
+            providerConnectedCount={1}
+            dispatchAction={dispatchAction}
+            setPrompt={() => undefined}
+            onRevertToUserMessage={() => undefined}
+            onForkAtMessage={() => undefined}
+            onEditUserMessage={() => undefined}
+            onMcpReconnect={async () => "connected"}
+            onMcpReopenAuthorization={async () => undefined}
+            onMcpRetry={() => undefined}
+          >
+            <MessageList
+              messages={[{
+                id: "assistant-turn",
+                role: "assistant",
+                parts: [{ type: "text", text: "Existing response" }],
+              }]}
+              status="retrying"
+              retryStatus={retryStatus}
+            />
+          </MessageListProvider>,
+        )
+      })
+    }
+
+    try {
+      await renderRetry({
+        type: "retry",
+        attempt: 2,
+        next: Date.now() + 8000,
+        message: "Free usage exceeded, subscribe to Go",
+        action: {
+          reason: "free_tier_limit",
+          provider: "opencode",
+          title: "Free limit reached",
+          message: "Subscribe to OpenCode Go for reliable access to the best open-source models, starting at $5/month.",
+          label: "subscribe",
+          link: "https://opencode.ai/go",
+        },
+      })
+
+      expect(container.textContent).toContain("The free starter model is busy right now")
+      expect(container.textContent).toContain("Connect a model provider")
+      expect(container.textContent).not.toContain("subscribe to Go")
+      expect(container.textContent).not.toContain("OpenCode Go")
+      expect(container.textContent).not.toContain("$5/month")
+      const connectButton = Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent === "Connect a model provider",
+      )
+      if (!connectButton) throw new Error("Expected the Connect a model provider button")
+      await act(async () => connectButton.click())
+      expect(dispatchAction).toHaveBeenCalledWith({
+        target: "settings",
+        action: "open",
+        section: "providers",
+      })
+
+      await renderRetry({
+        type: "retry",
+        attempt: 2,
+        next: Date.now() + 8000,
+        message: "Account rate limited",
+        action: {
+          reason: "account_rate_limit",
+          provider: "opencode",
+          title: "Account rate limit reached",
+          message: "Review your account limits.",
+          label: "Review account",
+          link: "https://opencode.ai/account",
+        },
+      })
+
+      expect(container.textContent).toContain("Account rate limit reached")
+      expect(container.textContent).toContain("Review account")
+    } finally {
+      await act(async () => root.unmount())
+      container.remove()
+      if (registeredDom) GlobalRegistrator.unregister()
+    }
   })
 })
 
