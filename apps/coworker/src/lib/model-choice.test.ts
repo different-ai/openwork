@@ -6,6 +6,7 @@ import {
   chooseModelForLane,
   classifyRequest,
   clearAutoPicked,
+  costsNoMoreThan,
   describeModelChoice,
   describeModelPick,
   markAutoPicked,
@@ -17,14 +18,34 @@ import {
   wasAutoPicked,
 } from "./model-choice.ts";
 import { fixtureCatalog, fixtureProvider } from "./provider-catalog.fixture.ts";
-import { connectedModelCatalog } from "./threads.ts";
+import { connectedModelCatalog, type EngineModelOption } from "./threads.ts";
 
-test("the model mode a stored record means: explicit wins, a chosen model is fixed, a blank is automatic", () => {
+test("the model mode a stored record means: explicit wins, otherwise one model every time (Automatic is chosen in the picker)", () => {
   assert.equal(modelModeOf({ modelMode: "auto", model: "openai/gpt-5" }), "auto");
   assert.equal(modelModeOf({ modelMode: "fixed", model: "" }), "fixed");
   assert.equal(modelModeOf({ model: "openai/gpt-5" }), "fixed");
-  assert.equal(modelModeOf({ model: "" }), "auto");
-  assert.equal(modelModeOf({ modelMode: "whatever", model: "  " }), "auto");
+  assert.equal(modelModeOf({ model: "" }), "fixed");
+  assert.equal(modelModeOf({ modelMode: "whatever", model: "  " }), "fixed");
+});
+
+test("a lane pick never costs more than the standard model: on a provider that mixes free and paid models the free standard stays among the free", () => {
+  const model = (id: string, extra: Partial<EngineModelOption>): EngineModelOption => ({
+    id, providerId: id.split("/")[0] ?? "", providerLabel: "OpenCode", modelId: id.split("/")[1] ?? "", modelLabel: id.split("/")[1] ?? "", label: id, description: "", family: "",
+    variants: [], isProviderDefault: false, source: "local", tier: "free", toolCall: true, reasoning: true, status: "active", releaseDate: "2026-01-01", cost: { input: 0, output: 0 }, ...extra,
+  });
+  const catalog = { models: [
+    model("opencode/big-pickle", { reasoning: true }),
+    model("opencode/claude-3-5-haiku", { reasoning: false, cost: { input: 0.8, output: 4 }, releaseDate: "2026-02-01" }),
+    model("opencode/ling-2.6-flash-free", { reasoning: false, cost: { input: 0, output: 0 }, releaseDate: "2026-01-15" }),
+    model("opencode/claude-opus-4-8", { reasoning: true, cost: { input: 5, output: 25 }, releaseDate: "2026-03-01" }),
+    model("opencode/gpt-5.5-pro", { reasoning: true, cost: { input: 30, output: 120 }, releaseDate: "2026-03-02" }),
+  ] };
+  assert.equal(chooseModelForLane(catalog, "quick", { standard: "opencode/big-pickle" })?.id, "opencode/ling-2.6-flash-free", "the free fast sibling, never the paid haiku");
+  assert.equal(chooseModelForLane(catalog, "deep", { standard: "opencode/big-pickle" })?.id, "opencode/big-pickle", "no free deep sibling: the standard model stays; never opus or pro");
+  assert.equal(costsNoMoreThan({ cost: { input: 0, output: 0 } }, { cost: { input: 0, output: 0 } }), true);
+  assert.equal(costsNoMoreThan({ cost: { input: 0.05, output: 0 } }, { cost: { input: 0, output: 0 } }), false);
+  // A paid standard may still step down to cheaper siblings.
+  assert.equal(chooseModelForLane(catalog, "quick", { standard: "opencode/claude-opus-4-8" })?.id, "opencode/claude-3-5-haiku");
 });
 
 test("classifyRequest: the person's words about speed or depth win over the shape of the message", () => {
