@@ -93,9 +93,13 @@ export type CoworkerSummary = {
   model: string;
   /** Optional reasoning/behavior variant for the preferred model. */
   modelVariant: string;
+  /** Who chose the model: the app by itself ("app", may be swapped once when it fails), the person ("person"), or "" for a record that never said (read as the person's). */
+  modelChosenBy: ModelChosenBy;
   automations: string[];
   createdAt: string;
 };
+
+export type ModelChosenBy = "app" | "person" | "";
 
 export type AvatarColor = "blue" | "violet" | "mint" | "orange" | "rose" | "slate";
 export type AvatarGlasses = "round" | "square" | "none";
@@ -345,7 +349,7 @@ export const coworkerBridge = {
     get: (slug: string) => invoke<CoworkerSummary>("coworkers.get", { slug }),
     create: (input: { name: string; role: string; mission: string; avatarColor: AvatarColor; avatarGlasses: AvatarGlasses; personality: Personality; roleId?: string; firstNote?: string }) =>
       invoke<CoworkerSummary>("coworkers.create", input),
-    update: (slug: string, patch: Partial<Pick<CoworkerSummary, "workspaceId" | "conversationThreadId" | "automations" | "mission" | "role" | "model" | "modelVariant" | "avatarColor" | "avatarGlasses" | "personality">>) =>
+    update: (slug: string, patch: Partial<Pick<CoworkerSummary, "workspaceId" | "conversationThreadId" | "automations" | "mission" | "role" | "model" | "modelVariant" | "modelChosenBy" | "avatarColor" | "avatarGlasses" | "personality">>) =>
       invoke<CoworkerSummary>("coworkers.update", { slug, patch }),
     ensureWorkspace: (slug: string) => invoke<CoworkerSummary>("coworkers.ensureWorkspace", { slug }),
     /** Retire: archive the whole home under `.retired/`; nothing is deleted. */
