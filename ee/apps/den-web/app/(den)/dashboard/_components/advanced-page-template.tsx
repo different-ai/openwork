@@ -2,7 +2,6 @@
 
 import { Laptop, Palette, Store } from "lucide-react";
 import { useRouter } from "next/navigation";
-import type { ReactNode } from "react";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
 import {
@@ -26,7 +25,7 @@ const ADVANCED_DESCRIPTIONS: Record<AdvancedTab, string> = {
   "brand-appearance": "Customize how your workspace appears across OpenWork.",
 };
 
-export function AdvancedPageTemplate({ tab, children }: { tab: AdvancedTab; children: ReactNode }) {
+export function AdvancedPageTemplate({ tab, children }: { tab: AdvancedTab; children: React.ReactNode }) {
   const router = useRouter();
   const { orgSlug } = useOrgDashboard();
 
