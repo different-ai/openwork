@@ -1,4 +1,7 @@
+import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import os from "node:os";
+import path from "node:path";
 import { coworker, evalIn, fill, needs, test, waitFor } from "@openwork/testkit";
 import { expect, onTestFinished } from "vitest";
 
@@ -322,8 +325,14 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   const scripted = await startScriptedModel();
   // No key from the runner's shell may reach the app: the scripted provider must be the only model
   // worth recommending besides the free one, so "Use <model>" is deterministic.
+  // Keep the profile outside this repository: OpenCode walks parent directories for project
+  // configuration, and a profile under evals/results would inherit this checkout's own plugins and
+  // MCPs — a slow first start that has nothing to do with a person's first launch.
+  const profileDir = await mkdtemp(path.join(os.tmpdir(), "open-coworker-turn-recovery-profile-"));
+  onTestFinished(() => rm(profileDir, { recursive: true, force: true }));
   await using app = await coworker({
     name: "turn-recovery",
+    profileDir,
     env: { ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "", OPENROUTER_API_KEY: "", GEMINI_API_KEY: "", GOOGLE_API_KEY: "", XAI_API_KEY: "", GROQ_API_KEY: "", MISTRAL_API_KEY: "", DEEPSEEK_API_KEY: "" },
   });
 
