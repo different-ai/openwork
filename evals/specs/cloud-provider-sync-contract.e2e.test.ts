@@ -40,10 +40,14 @@ const CUSTOM_PROVIDER_KEY = "sync-contract-custom-models";
 const CUSTOM_MODEL_ID = "sync-contract-custom-model";
 const CATALOG_PROVIDER_NAME = "Sync Contract Catalog Models";
 const CATALOG_MODEL_ID = "gpt-5.4";
+const THIRD_MODEL_ID = "sync-contract-third-model";
 const REQUEST_TIMEOUT_MS = 10_000;
 
 const TERMINAL_BUDGET_MS = 120_000;
 const MODEL_BUDGET_MS = 30_000;
+const V2_START_BUDGET_MS = 180_000;
+const V2_MIRROR_BUDGET_MS = 60_000;
+const THIRD_PROVIDER_BUDGET_MS = 360_000;
 const QUIET_DELAY_MS = 30_000;
 const OBSERVATION_WINDOW_MS = 60_000;
 // Intended poll cadence: one sync pass per 5 minutes (defaultIntervalMs =
@@ -207,6 +211,48 @@ async function readSyncStatusPayload(surface: Parameters<typeof evalIn>[0]): Pro
   return value;
 }
 
+async function engineV2Status(surface: Parameters<typeof evalIn>[0], enabled?: boolean) {
+  const value = await evalIn(surface, `(async () => {
+    const port = localStorage.getItem("openwork.server.port");
+    const token = localStorage.getItem("openwork.server.token");
+    if (!port || !token) return { specProbeError: "missing local server credentials" };
+    const enabled = ${String(enabled)};
+    const response = await fetch("http://127.0.0.1:" + port + "/experimental/engine-v2-preview" + (enabled === undefined ? "/status" : ""), {
+      ...(enabled === undefined ? {} : { method: "PUT", body: JSON.stringify({ enabled }) }),
+      headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+    });
+    if (!response.ok) return { specProbeError: "HTTP " + response.status + " " + (await response.text()).slice(0, 200) };
+    return await response.json();
+  })()`, { awaitPromise: true, timeoutMs: 30_000 });
+  if (!isRecord(value) || typeof value.specProbeError === "string"
+    || typeof value.enabled !== "boolean" || typeof value.running !== "boolean") {
+    throw new Error(`Engine v2 preview status was invalid: ${JSON.stringify(value)}`);
+  }
+  const ids = (field: string): string[] => {
+    const entries = value[field];
+    if (!Array.isArray(entries) || !entries.every((entry) => typeof entry === "string")) {
+      throw new Error(`Engine v2 preview ${field} was invalid: ${JSON.stringify(entries)}`);
+    }
+    return entries;
+  };
+  return {
+    enabled: value.enabled,
+    running: value.running,
+    ...(typeof value.pid === "number" ? { pid: value.pid } : {}),
+    mirroredProviderIds: ids("mirroredProviderIds"),
+    skippedProviderIds: ids("skippedProviderIds"),
+    catalogModelIds: ids("catalogModelIds"),
+  };
+}
+
+type EngineV2Status = Awaited<ReturnType<typeof engineV2Status>>;
+function waitForEngineV2(
+  surface: Parameters<typeof evalIn>[0],
+  until: (status: EngineV2Status) => boolean, within: number, label: string,
+): Promise<EngineV2Status> {
+  return eventually(() => engineV2Status(surface), { within, intervalMs: 1_000, label, until });
+}
+
 function connectLogEntries(logText: string): ConnectLogEntry[] {
   const entries: ConnectLogEntry[] = [];
   for (const line of logText.split(/\r?\n/)) {
@@ -250,6 +296,7 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
       id: CUSTOM_PROVIDER_KEY,
       name: CUSTOM_PROVIDER_NAME,
       npm: "@ai-sdk/openai-compatible",
+      options: { baseURL: "https://gateway.example.test/v1" },
       env: ["SYNC_CONTRACT_PROVIDER_API_KEY"],
       models: [{ id: CUSTOM_MODEL_ID, name: "Sync Contract Custom Model" }],
     },
@@ -452,4 +499,72 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
     seen.ok,
   );
   expect(seen.ok, `${seen.why}\nLatest status payload: ${JSON.stringify(statusAfterWindow.raw)}`).toBe(true);
+
+  // ── Claim 6: Den provider writes hot-mirror into the live v2 sidecar ─────
+  const customRuntime = settledStatus.providers.find((entry) => entry.cloudProviderId === customProviderId);
+  const catalogRuntime = settledStatus.providers.find((entry) => entry.cloudProviderId === catalogProviderId);
+  if (!customRuntime || !catalogRuntime) throw new Error("Settled sync status lost an initially published provider.");
+  onTestFinished(async () => {
+    await engineV2Status(desktopApp, false).catch(() => undefined);
+  });
+  await engineV2Status(desktopApp, true);
+  const startedV2 = await waitForEngineV2(
+    desktopApp, (status) => status.enabled && status.running && typeof status.pid === "number",
+    V2_START_BUDGET_MS, "OpenCode v2 sidecar to install and start",
+  );
+  const pid0 = startedV2.pid;
+  if (pid0 === undefined) throw new Error("Running OpenCode v2 status omitted its pid.");
+  const initialV2 = await waitForEngineV2(
+    desktopApp,
+    (status) => status.mirroredProviderIds.includes(customRuntime.providerId)
+      && status.catalogModelIds.includes(CUSTOM_MODEL_ID)
+      && (status.mirroredProviderIds.includes(catalogRuntime.providerId)
+        || status.skippedProviderIds.includes(catalogRuntime.providerId)),
+    V2_MIRROR_BUDGET_MS, "initial Den providers to be mirrored or explicitly skipped by v2",
+  );
+  const thirdPublishedAt = Date.now();
+  const thirdProviderId = await createProvider(den.admin, orgId, {
+    name: "Sync Contract Third Models",
+    source: "custom",
+    customConfig: {
+      id: "sync-contract-third-models",
+      name: "Sync Contract Third Models",
+      npm: "@ai-sdk/openai-compatible",
+      options: { baseURL: "https://third-gateway.example.test/v1" },
+      env: ["SYNC_CONTRACT_THIRD_PROVIDER_API_KEY"],
+      models: [{ id: THIRD_MODEL_ID, name: "Sync Contract Third Model" }],
+    },
+    apiKey: "sk-openwork-sync-contract-third-eval-only",
+    allMembers: true,
+    memberIds: [],
+    teamIds: [],
+  });
+  onTestFinished(async () => {
+    await deleteProvider(den.admin, orgId, thirdProviderId).catch(() => undefined);
+  });
+  const thirdSync = await eventually(async () => parseSyncStatus(await readSyncStatusPayload(desktopApp)), {
+    within: THIRD_PROVIDER_BUDGET_MS,
+    intervalMs: 3_000,
+    label: "third Den provider to reach desktop runtime config",
+    until: (status) => status.providers.some((entry) => entry.cloudProviderId === thirdProviderId),
+  });
+  const thirdRuntime = thirdSync.providers.find((entry) => entry.cloudProviderId === thirdProviderId);
+  if (!thirdRuntime) throw new Error("Third provider disappeared from its settled sync status.");
+  const thirdV2 = await waitForEngineV2(
+    desktopApp,
+    (status) => status.mirroredProviderIds.includes(thirdRuntime.providerId)
+      && status.catalogModelIds.includes(THIRD_MODEL_ID),
+    V2_MIRROR_BUDGET_MS, "third Den provider to hot-mirror into v2",
+  );
+  const mirrorLatencyMs = Date.now() - thirdPublishedAt;
+  const catalogOutcome = initialV2.mirroredProviderIds.includes(catalogRuntime.providerId) ? "mirrored" : "skipped (no baseURL)";
+  const hotMirrored = initialV2.running && initialV2.pid === pid0
+    && thirdV2.running && thirdV2.pid === pid0;
+  evidence.recordAssertionEvidence(
+    "Den-published providers hot-mirror into the OpenCode v2 sidecar without restarting it",
+    `baseURL providers ${customRuntime.providerId} and ${thirdRuntime.providerId} mirrored with models ${CUSTOM_MODEL_ID} and ${THIRD_MODEL_ID}; catalog provider ${catalogRuntime.providerId} was ${catalogOutcome}; third-provider latency=${mirrorLatencyMs}ms; sidecar stayed at pid ${pid0}.`,
+    hotMirrored,
+  );
+  await engineV2Status(desktopApp, false);
+  expect(hotMirrored, `Initial v2 status: ${JSON.stringify(initialV2)}; third v2 status: ${JSON.stringify(thirdV2)}`).toBe(true);
 });
