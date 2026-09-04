@@ -28,6 +28,7 @@ describe("toTranscript", () => {
           role: "assistant",
           createdAt: 200,
           model: { providerId: "anthropic", modelId: "claude-sonnet-5" },
+          usage: { inputTokens: 120, outputTokens: 9, reasoningTokens: 40, cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0.001 },
           parts: [
             { id: "prt_2", type: "reasoning", text: "check the policy" },
             {
@@ -48,7 +49,7 @@ describe("toTranscript", () => {
     );
 
     expect(transcript.messages).toEqual([
-      { id: "msg_1", role: "user", parentId: null, createdAt: null, completedAt: null, error: null, text: "Why?", reasoning: "", model: null, toolCalls: [] },
+      { id: "msg_1", role: "user", parentId: null, createdAt: null, completedAt: null, error: null, text: "Why?", reasoning: "", model: null, usage: null, toolCalls: [] },
       {
         id: "msg_2",
         role: "assistant",
@@ -59,6 +60,7 @@ describe("toTranscript", () => {
         text: "Because the window closed.",
         reasoning: "check the policy",
         model: { providerId: "anthropic", modelId: "claude-sonnet-5" },
+        usage: { inputTokens: 120, outputTokens: 9, reasoningTokens: 40, cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0.001 },
         toolCalls: [{
           partId: "prt_3",
           name: "read",
@@ -72,6 +74,8 @@ describe("toTranscript", () => {
       },
     ]);
     expect(transcript.finalAssistantText).toBe("Because the window closed.");
+    // The thread total still sums what each reply reported.
+    expect(transcript.usage.reasoningTokens).toBe(40);
   });
 
   test("drops synthetic and ignored parts the app also hides", () => {

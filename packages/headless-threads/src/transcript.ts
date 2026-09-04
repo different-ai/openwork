@@ -51,6 +51,7 @@ export function toTranscriptMessage(message: HeadlessThreadMessage): HeadlessTra
     text: joinPartText(message, "text"),
     reasoning: joinPartText(message, "reasoning"),
     model: message.model,
+    usage: message.role === "assistant" ? message.usage : null,
     toolCalls: toToolCalls(message),
   };
 }
