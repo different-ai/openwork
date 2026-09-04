@@ -4,7 +4,13 @@ on:
   workflow_dispatch:
   push:
     branches:
+      # Alpha line: every push builds a signed, notarized macOS app as a run artifact.
+      - coworker-pre
       - electron-coworker-notary-test
+    tags:
+      # Alpha tags publish a GitHub pre-release; the prefix keeps them out of the
+      # desktop's `v*` release workflow.
+      - "coworker-v*"
     paths:
       - apps/coworker/**
       - apps/server/**
@@ -20,6 +26,7 @@ permissions:
 
 jobs:
   build-electron:
+    if: github.ref_type != 'tag'
     strategy:
       fail-fast: false
       matrix:
@@ -69,11 +76,18 @@ jobs:
           name: open-coworker-electron-${{ matrix.artifact }}
           path: apps/coworker/dist-electron/**
 
-  electron-macos-notarization-smoke:
-    name: Open Coworker macOS notarization smoke
+  electron-macos-signed:
+    name: Open Coworker macOS signed + notarized
     runs-on: macos-14
-    # Signing and notarization need the Apple secrets the desktop already uses; the job is manual until they are granted to this workflow.
-    if: github.event_name == 'workflow_dispatch'
+    # Runs on the manual button, on every push to the alpha branch, and on alpha tags.
+    # Signing uses the Apple secrets the desktop release already uses.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.ref == 'refs/heads/coworker-pre' ||
+      github.ref == 'refs/heads/electron-coworker-notary-test' ||
+      github.ref_type == 'tag'
+    outputs:
+      version: ${{ steps.version.outputs.version }}
 
     steps:
       - name: Checkout
@@ -97,11 +111,58 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Resolve alpha version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            # coworker-v0.1.0-alpha.1 -> 0.1.0-alpha.1
+            version="${GITHUB_REF_NAME#coworker-v}"
+          else
+            version="0.0.0-alpha.${GITHUB_RUN_NUMBER}+${GITHUB_SHA::9}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Open Coworker alpha version: $version"
+
+      - name: Stamp alpha version
+        shell: bash
+        env:
+          COWORKER_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("node:fs");
+            const p = "apps/coworker/package.json";
+            const pkg = JSON.parse(fs.readFileSync(p, "utf8"));
+            pkg.version = process.env.COWORKER_VERSION;
+            fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + "\n");
+          '
+
       - name: Write notary API key
         env:
           APPLE_NOTARY_API_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_API_KEY_P8_BASE64 }}
+          APPLE_NOTARY_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_NOTARY_API_ISSUER_ID: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
+          APPLE_CODESIGN_CERT_P12_BASE64: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
+          APPLE_CODESIGN_CERT_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
         run: |
           set -euo pipefail
+          missing=()
+          for name in \
+            APPLE_NOTARY_API_KEY_P8_BASE64 \
+            APPLE_NOTARY_API_KEY_ID \
+            APPLE_NOTARY_API_ISSUER_ID \
+            APPLE_CODESIGN_CERT_P12_BASE64 \
+            APPLE_CODESIGN_CERT_PASSWORD; do
+            if [ -z "${!name:-}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing macOS signing/notarization secrets for this workflow: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
           NOTARY_KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
           printf '%s' "$APPLE_NOTARY_API_KEY_P8_BASE64" | base64 --decode > "$NOTARY_KEY_PATH"
           chmod 600 "$NOTARY_KEY_PATH"
@@ -120,6 +181,16 @@ jobs:
           pnpm --filter @openwork/coworker run build:electron
           pnpm --dir apps/coworker exec electron-builder --config electron-builder.yml --mac dmg zip --publish never
 
+      - name: Verify signature and notarization ticket
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$(find apps/coworker/dist-electron -maxdepth 2 -name 'Open Coworker.app' -print -quit)"
+          test -n "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          spctl --assess --type execute --verbose=2 "$app"
+          xcrun stapler validate "$app"
+
       - name: Upload signed macOS artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -127,3 +198,36 @@ jobs:
           path: |
             apps/coworker/dist-electron/*.dmg
             apps/coworker/dist-electron/*.zip
+
+  alpha-prerelease:
+    name: Publish Open Coworker alpha pre-release
+    needs: electron-macos-signed
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download signed macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: open-coworker-macos-signed
+          path: release-assets
+
+      - name: Create or update pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.electron-macos-signed.outputs.version }}
+        run: |
+          set -euo pipefail
+          notes="Open Coworker alpha ${VERSION}. Signed and notarized macOS build for early testing; not a general release."
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-assets/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" release-assets/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --prerelease \
+              --title "Open Coworker ${VERSION} (alpha)" \
+              --notes "$notes"
+          fi
