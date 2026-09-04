@@ -497,6 +497,8 @@ export default {
   "session.export_local_only": "Экспорт поддерживается только для локальных воркеров.",
   "session.engine_catching_up_title": "OpenCode догоняет",
   "session.engine_catching_up_detail": "Движок не ответил вовремя. Повтор ({attempt}/{total})…",
+  "session.still_loading_title": "Всё ещё загружается…",
+  "session.still_loading_detail": "Подготавливаем рабочее пространство. Это может занять немного времени.",
   "session.engine_not_responding_title": "OpenCode не отвечает",
   "session.engine_not_responding_detail": "Движок не ответил после {attempts} попыток. Возможно, он перезапускается или перегружен.",
   "session.engine_unavailable_title": "OpenCode недоступен",

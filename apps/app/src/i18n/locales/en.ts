@@ -1265,6 +1265,8 @@ export default {
   "session.export_local_only": "Export is only supported for local workers.",
   "session.engine_catching_up_title": "OpenCode is catching up",
   "session.engine_catching_up_detail": "The engine did not answer in time. Retrying ({attempt}/{total})…",
+  "session.still_loading_title": "Still loading…",
+  "session.still_loading_detail": "Getting your workspace ready. This can take a moment.",
   "session.engine_not_responding_title": "OpenCode is not responding",
   "session.engine_not_responding_detail": "The engine did not answer after {attempts} attempts. It may be restarting or overloaded.",
   "session.engine_unavailable_title": "OpenCode unavailable",

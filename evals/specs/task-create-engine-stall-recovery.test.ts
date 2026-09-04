@@ -31,7 +31,7 @@ test("task creation retry policy is bounded and classifies an exhausted engine s
   expect(result.error, output).toBeUndefined();
   expect(result.status, output).toBe(0);
   expect(output).toContain("0 fail");
-  expect(output).toMatch(/\b(8|9) pass\b/);
+  expect(output).toMatch(/\b10 pass\b/);
   expect(output).not.toContain("(fail)");
 
   evidence.recordAssertionEvidence(
@@ -47,6 +47,11 @@ test("task creation retry policy is bounded and classifies an exhausted engine s
   evidence.recordAssertionEvidence(
     "The final toast distinguishes a stalled engine from an unavailable one",
     "Timeouts and opencode_engine_unreachable/503 yield 'OpenCode is not responding' with the attempt count (and a Reload engine action in the route); terminal errors keep 'OpenCode unavailable' with the raw message.",
+    true,
+  );
+  evidence.recordAssertionEvidence(
+    "Retry countdown hides engine internals unless developer mode is on",
+    "With developer mode off the retry toast says 'Still loading…' with no engine, retry, or attempt-count wording; with developer mode on it keeps 'OpenCode is catching up — Retrying (n/4)…'.",
     true,
   );
 });

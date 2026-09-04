@@ -166,9 +166,14 @@ export function mcpToolVisibleToApp(tool: { _meta?: unknown }): boolean {
 
 /** True when the launch tool declares required input, so a tile cannot start it with empty arguments. */
 export function mcpToolRequiresInput(tool: { inputSchema?: unknown }): boolean {
+  return mcpToolRequiredInputKeys(tool).length > 0
+}
+
+/** The launch-input keys the tool's schema marks required, so an author can supply them and Den can validate. */
+export function mcpToolRequiredInputKeys(tool: { inputSchema?: unknown }): string[] {
   const schema: unknown = tool.inputSchema
-  if (!isRecord(schema)) return false
-  return Array.isArray(schema.required) && schema.required.length > 0
+  if (!isRecord(schema) || !Array.isArray(schema.required)) return []
+  return schema.required.filter((key): key is string => typeof key === "string" && key.length > 0)
 }
 const MANUAL_MCP_TOOL_REQUEST_MAX_BYTES = 1024 * 1024
 const externalMcpDiscoveryFetch = env.allowPrivateMcpUrls ? createRealmSafeFetch() : createGuardedFetch()
@@ -505,6 +510,8 @@ const connectionMcpAppSchema = z.object({
   title: z.string().nullable(),
   description: z.string().nullable(),
   requiresInput: z.boolean(),
+  /** Launch-input keys the tool's input schema marks required. Empty when the app launches with no input. */
+  requiredInputKeys: z.array(z.string()),
   requiresApproval: z.boolean(),
 }).meta({ ref: "ExternalMcpConnectionMcpApp" })
 
@@ -2006,6 +2013,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
             title: typeof tool.title === "string" && tool.title.trim() ? tool.title : tool.annotations?.title ?? null,
             description: typeof tool.description === "string" ? tool.description : null,
             requiresInput: mcpToolRequiresInput(tool),
+            requiredInputKeys: mcpToolRequiredInputKeys(tool),
             requiresApproval: tool.annotations?.readOnlyHint !== true || tool.annotations?.destructiveHint === true,
           }]
         })

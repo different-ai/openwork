@@ -502,6 +502,11 @@ describe("external MCP diagnostics", () => {
       providerErrorMessage: "Provider rejected private argument detail",
     })
     expect(error.diagnostic.operatorAction).toContain("do not retry the same arguments")
+    // The member-facing message must carry the provider's rejection so a
+    // dashboard launch that omits a required argument names that argument.
+    expect(error.message).toBe(
+      'The provider rejected the tool arguments. Provider-declared message (untrusted): "Provider rejected private argument detail".',
+    )
   })
 
   test("classifies downstream provider authorization links without treating -32001 as a timeout", () => {
