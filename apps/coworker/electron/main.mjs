@@ -8,6 +8,7 @@
  * a coworker-centric renderer. It never talks to, or requires, the OpenWork
  * desktop app process.
  */
+import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -78,6 +79,7 @@ import {
   setLocalResponsibilityActive,
   updateLocalResponsibility,
 } from "./local-responsibilities.mjs";
+import { prepareEngineSdk, readSidecarVersion } from "./engine-sdk.mjs";
 import {
   SignInImportError,
   codexAuthFromFile,
@@ -313,6 +315,37 @@ function resolveOpencodeBin() {
     || "opencode";
 }
 
+/** The engine's exact version: the sidecar's record beside the binary, else what the binary says. */
+async function resolveOpencodeVersion(binary) {
+  const recorded = await readSidecarVersion(path.join(path.dirname(binary), "versions.json"));
+  if (recorded) return recorded;
+  return new Promise((resolve) => {
+    execFile(binary, ["--version"], { timeout: 8_000, windowsHide: true }, (error, stdout) => {
+      const match = /(\d+\.\d+\.\d+)/.exec(String(stdout ?? ""));
+      resolve(!error && match ? match[1] : "");
+    });
+  });
+}
+
+/**
+ * Seed the engine's SDK directories before it starts, once per launch. In a
+ * fresh profile the engine's own first install leaves its first read stalled
+ * until a restart (see `engine-sdk.mjs`); a seeded directory makes that install
+ * a no-op. Bounded and best effort: without an installer or a network the
+ * engine's own path still applies.
+ */
+let engineSdkPrepared = null;
+function prepareEngineSdkOnce(binary) {
+  engineSdkPrepared ??= (async () => {
+    const version = await resolveOpencodeVersion(binary);
+    return prepareEngineSdk({ version, log: debugLog });
+  })().catch((error) => {
+    console.warn("[open-coworker] could not prepare the AI service's SDK directory", error);
+    return { version: "", results: [], installer: "" };
+  });
+  return engineSdkPrepared;
+}
+
 async function fetchJson(url, init, timeoutMs = 8000) {
   const response = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
   const text = await response.text();
@@ -363,6 +396,7 @@ async function startPlatformServer() {
 
   engineError = "";
   try {
+    await prepareEngineSdkOnce(resolveOpencodeBin());
     serverHandle = await startOnce(true);
   } catch (error) {
     // Missing/broken engine binary must not take the whole product down:
@@ -1084,7 +1118,8 @@ async function runCoworkerWorkspaceWarmup(coworker) {
   for (const [attempt, timeoutMs] of [20_000, 60_000].entries()) {
     try {
       const response = await fetch(
-        `${handle.url}/workspace/${encodeURIComponent(coworker.workspaceId)}/opencode/provider`,
+        // The connected-providers read: a few kilobytes, and it is the same bootstrap the full list would wait on.
+        `${handle.url}/workspace/${encodeURIComponent(coworker.workspaceId)}/opencode/config/providers`,
         {
           headers: { Authorization: `Bearer ${ownerToken}` },
           signal: AbortSignal.timeout(timeoutMs),
