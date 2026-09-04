@@ -184,6 +184,9 @@ export function renderOpenWorkBootstrapScript(config: OpenWorkBootstrapConfig) {
     shellQuote("/opt/openwork/opencode-plugins"),
     " DEN_RUNTIME_PROVIDER=",
     shellQuote(config.runtimeProvider),
+    // Den owns this instance's idle lifecycle regardless of which host runs it.
+    " DEN_RUNTIME_MANAGED=",
+    shellQuote("1"),
     " DEN_WORKER_ID=",
     shellQuote(config.workerId),
     " DEN_ACTIVITY_HEARTBEAT_ENABLED=",

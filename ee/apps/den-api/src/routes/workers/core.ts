@@ -33,6 +33,9 @@ const workerInstanceSchema = z.object({
   provider: z.string(),
   region: z.string().nullable(),
   url: z.string().nullable(),
+  endpointKind: z.enum(["signed-expiring", "stable", "den-tunnel"]).describe(
+    "How the instance endpoint behaves. Anything other than stable means only Den's lifecycle route is durable.",
+  ),
   status: z.string(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),

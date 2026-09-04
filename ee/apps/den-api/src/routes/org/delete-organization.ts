@@ -15,6 +15,7 @@ import {
   ConnectorSourceTombstoneTable,
   ConnectorSyncEventTable,
   ConnectorTargetTable,
+  CloudRuntimeInstanceTable,
   DaytonaSandboxTable,
   DesktopConnectGrantTable,
   DesktopPolicyMemberTable,
@@ -407,6 +408,7 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
           .map((row) => row.id)
         if (workerIds.length > 0) {
           await tx.delete(WorkerInstanceTable).where(inArray(WorkerInstanceTable.worker_id, workerIds))
+          await tx.delete(CloudRuntimeInstanceTable).where(inArray(CloudRuntimeInstanceTable.worker_id, workerIds))
           await tx.delete(DaytonaSandboxTable).where(inArray(DaytonaSandboxTable.worker_id, workerIds))
           await tx.delete(WorkerTokenTable).where(inArray(WorkerTokenTable.worker_id, workerIds))
           await tx.delete(WorkerBundleTable).where(inArray(WorkerBundleTable.worker_id, workerIds))

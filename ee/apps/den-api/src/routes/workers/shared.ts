@@ -3,6 +3,7 @@ import { and, asc, desc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle
 import {
   AuditEventTable,
   AuthUserTable,
+  CloudRuntimeInstanceTable,
   DaytonaSandboxTable,
   MemberTable,
   WorkerBundleTable,
@@ -31,7 +32,7 @@ import {
 import { customDomainForWorker } from "../../workers/vanity-domain.js"
 import { resolveCloudRuntimeAccess } from "../../workers/worker-access.js"
 import { CLOUD_INSTANCE_BACKEND } from "../../workers/cloud-constants.js"
-import { cloudRuntimeConfigured, isCloudRuntimeProviderId } from "../../workers/cloud-runtime.js"
+import { cloudRuntimeConfigured, endpointKindForProvider, isCloudRuntimeProviderId } from "../../workers/cloud-runtime.js"
 import { fetchPreviewNoRedirect } from "../../workers/preview-fetch.js"
 import {
   getOpenWorkWebRuntimeAccess,
@@ -431,6 +432,8 @@ export function toInstanceResponse(instance: WorkerInstanceRow | null) {
     provider: instance.provider,
     region: instance.region,
     url: isCloudRuntimeProviderId(instance.provider) ? null : instance.url,
+    // Clients decide URL durability from this, never from the provider name.
+    endpointKind: endpointKindForProvider(instance.provider),
     status: instance.status,
     createdAt: instance.created_at,
     updatedAt: instance.updated_at,
@@ -699,6 +702,7 @@ export async function deleteWorkerCascade(worker: WorkerRow) {
 
   await db.transaction(async (tx) => {
     await tx.delete(WorkerTokenTable).where(eq(WorkerTokenTable.worker_id, worker.id))
+    await tx.delete(CloudRuntimeInstanceTable).where(eq(CloudRuntimeInstanceTable.worker_id, worker.id))
     await tx.delete(DaytonaSandboxTable).where(eq(DaytonaSandboxTable.worker_id, worker.id))
     await tx.delete(WorkerInstanceTable).where(eq(WorkerInstanceTable.worker_id, worker.id))
     await tx.delete(WorkerBundleTable).where(eq(WorkerBundleTable.worker_id, worker.id))

@@ -126,6 +126,8 @@ export type WorkerLaunch = {
   workerName: string;
   status: string;
   provider: string | null;
+  /** The instance endpoint expires or is proxied, so only Den's lifecycle route is durable. */
+  expiringEndpoint?: boolean;
   instanceUrl: string | null;
   openworkUrl: string | null;
   previewOpenworkUrl?: string | null;
@@ -562,8 +564,20 @@ export function getToken(payload: unknown): string | null {
   return typeof payload.token === "string" ? payload.token : null;
 }
 
+function instanceUsesExpiringEndpoint(instance: Record<string, unknown> | null) {
+  if (!instance) return false;
+  if (typeof instance.endpointKind === "string") return instance.endpointKind !== "stable";
+  // Dens that predate endpointKind only ever hosted expiring Daytona previews.
+  return instance.provider === "daytona";
+}
+
+function workerUsesExpiringEndpoint(worker: Pick<WorkerLaunch, "provider" | "expiringEndpoint"> | null) {
+  if (!worker) return false;
+  return worker.expiringEndpoint ?? worker.provider === "daytona";
+}
+
 function getDurableWorkerInstanceUrl(instance: Record<string, unknown> | null) {
-  if (!instance || instance.provider === "daytona") return null;
+  if (!instance || instanceUsesExpiringEndpoint(instance)) return null;
   return typeof instance.url === "string" ? instance.url : null;
 }
 
@@ -585,6 +599,7 @@ export function getWorker(payload: unknown): WorkerLaunch | null {
     workerName: worker.name,
     status: getEffectiveWorkerStatus(worker.status, instance),
     provider: instance && typeof instance.provider === "string" ? instance.provider : null,
+    expiringEndpoint: instanceUsesExpiringEndpoint(instance),
     instanceUrl: getDurableWorkerInstanceUrl(instance),
     openworkUrl: getDurableWorkerInstanceUrl(instance),
     previewOpenworkUrl: null,
@@ -667,7 +682,7 @@ export function withWorkerConnection(worker: WorkerLaunch, tokens: WorkerTokens)
 export function getWorkerConnectionTargets(worker: WorkerLaunch | null) {
   const desktopUrl = worker?.openworkUrl ?? worker?.instanceUrl ?? null;
   const webUrl = worker?.previewOpenworkUrl
-    ?? (worker?.provider === "daytona" || worker?.instanceUrl === null ? null : desktopUrl);
+    ?? (workerUsesExpiringEndpoint(worker) || worker?.instanceUrl === null ? null : desktopUrl);
   return { desktopUrl, webUrl };
 }
 
@@ -695,7 +710,7 @@ export function workerNeedsConnectionResolution(worker: WorkerLaunch, now = Date
   const hasRequiredTokens = Boolean(worker.clientToken?.trim() && (worker.hostToken?.trim() || worker.ownerToken?.trim()));
   if (!hasRequiredTokens || !worker.openworkUrl?.trim()) return true;
 
-  const usesExpiringPreview = worker.provider === "daytona" || worker.instanceUrl === null || Boolean(worker.previewOpenworkUrl);
+  const usesExpiringPreview = workerUsesExpiringEndpoint(worker) || worker.instanceUrl === null || Boolean(worker.previewOpenworkUrl);
   if (!usesExpiringPreview) return false;
   if (!worker.workspaceId?.trim() || !worker.previewOpenworkUrl?.trim() || !worker.previewExpiresAt) return true;
 

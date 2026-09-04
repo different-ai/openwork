@@ -41,6 +41,7 @@ describe("OpenWork bootstrap renderer", () => {
     expect(command.startsWith("set -u\n")).toBe(true)
     expect(command).toContain(`OPENWORK_HOST_TOKEN='host'"'"'s-token'`)
     expect(command).toContain("DEN_RUNTIME_PROVIDER='fake'")
+    expect(command).toContain("DEN_RUNTIME_MANAGED='1'")
     expect(command).toContain("openwork-server binary missing from fake runtime image; rebuild the fake image")
     expect(command).toContain('OPENWORK_STATE_MANIFEST="/tmp/openwork-data /tmp/openwork-workspace $ENGINE_STATE_PATH"')
     expect(command).toContain("trap on_term TERM INT")
