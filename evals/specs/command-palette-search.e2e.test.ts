@@ -3,6 +3,7 @@ import {
   control,
   createAndSelectWorkspace,
   evalIn,
+  selectModel,
   waitFor,
 } from "@openwork/behaviors";
 import { screenshot } from "@openwork/test-evidence";
@@ -10,12 +11,16 @@ import {
   app,
   localMysqlIsRunning,
   localRedisIsRunning,
+  mcpMock,
   needs,
   server,
   test,
 } from "@openwork/testkit";
 import type { App } from "@openwork/testkit";
 
+const providerId = "command-palette-search-mock";
+const modelId = "command-palette-search-model";
+const modelName = "Command palette search model";
 const e2eTestsEnabled = process.env.OPENWORK_EVAL_E2E_TESTS === "1";
 const daytonaEnabled = process.env.OPENWORK_EVAL_DAYTONA === "1";
 const configuredDen = Boolean(process.env.OPENWORK_EVAL_DEN_API_URL?.trim());
@@ -70,6 +75,66 @@ function parseRecentFacts(value: unknown): RecentFacts {
     ? value.storedIds.filter((item): item is string => typeof item === "string")
     : [];
   return { itemIds, storedIds };
+}
+
+async function configureWorkspaces(appSurface: App, workspaceIds: string[], baseUrl: string): Promise<void> {
+  const result = await evalIn(appSurface, `(async () => {
+    const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
+    if (!info?.running || !info.baseUrl) return "local_server_unavailable";
+    const root = String(info.baseUrl).replace(/\\/+$/, "");
+    const headers = {
+      Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? ""),
+      "Content-Type": "application/json",
+    };
+    for (const workspaceId of ${JSON.stringify(workspaceIds)}) {
+      const configured = await fetch(root + "/workspace/" + encodeURIComponent(workspaceId) + "/config", {
+        method: "PATCH",
+        headers,
+        body: JSON.stringify({
+          opencode: {
+            permission: { bash: "allow" },
+            provider: {
+              [${JSON.stringify(providerId)}]: {
+                npm: "@ai-sdk/openai-compatible",
+                name: ${JSON.stringify(modelName)},
+                options: { baseURL: ${JSON.stringify(`${baseUrl}/v1`)}, apiKey: "sk-command-palette-search" },
+                models: {
+                  [${JSON.stringify(modelId)}]: { name: ${JSON.stringify(modelName)}, tool_call: true },
+                },
+              },
+            },
+          },
+        }),
+        signal: AbortSignal.timeout(30000),
+      });
+      if (!configured.ok) return "config:" + configured.status + ":" + (await configured.text()).slice(0, 300);
+      const reloaded = await fetch(root + "/workspace/" + encodeURIComponent(workspaceId) + "/engine/reload", {
+        method: "POST",
+        headers,
+        signal: AbortSignal.timeout(60000),
+      });
+      if (!reloaded.ok) return "reload:" + reloaded.status + ":" + (await reloaded.text()).slice(0, 300);
+    }
+    const raw = localStorage.getItem("openwork.preferences");
+    let preferences = {};
+    try { preferences = raw ? JSON.parse(raw) : {}; } catch { preferences = {}; }
+    if (!preferences || typeof preferences !== "object" || Array.isArray(preferences)) preferences = {};
+    localStorage.setItem("openwork.preferences", JSON.stringify({
+      ...preferences,
+      defaultModel: { providerID: ${JSON.stringify(providerId)}, modelID: ${JSON.stringify(modelId)} },
+      modelVariant: null,
+      providerStepCompleted: true,
+    }));
+    localStorage.setItem("openwork.defaultModel", ${JSON.stringify(`${providerId}/${modelId}`)});
+    return "ok";
+  })()`, { awaitPromise: true, timeoutMs: 120_000 });
+  expect(result).toBe("ok");
+
+  await evalIn(appSurface, "location.reload(); true");
+  await waitFor(appSurface, "Boolean(window.__openworkControl)", {
+    timeoutMs: 60_000,
+    label: "desktop restored after mock provider configuration",
+  });
 }
 
 async function createSession(appSurface: App): Promise<string> {
@@ -152,6 +217,15 @@ test.skipIf(!runnable)(
 
     await using den = await server({
       place,
+      mocks: {
+        agent: mcpMock({
+          agentWorkloads: [{
+            promptMarker: `UNUSED-PALETTE-${runId}`,
+            finalReply: "unused",
+            steps: [],
+          }],
+        }),
+      },
       org: {
         name: "Command Palette Search",
         admin: { name: "Palette Admin" },
@@ -163,6 +237,8 @@ test.skipIf(!runnable)(
     const workspace = await createAndSelectWorkspace(desktopApp, {
       path: `/tmp/openwork-palette-${runId}`,
     });
+    await configureWorkspaces(desktopApp, [workspace.workspaceId], den.mocks.agent.url);
+    await selectModel(desktopApp, modelId);
     const sessionId = await createSession(desktopApp);
     await control(desktopApp, "session.rename", { sessionId, title: `Palette Probe ${runId}` });
 
