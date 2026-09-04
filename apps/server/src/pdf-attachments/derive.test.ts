@@ -15,13 +15,13 @@ import {
   PAGE_LONG_EDGE_PX,
   derivePdf,
   openVerifiedForRead,
+  openVerifiedForWrite,
   pageImageOf,
   pageTextFrom,
-  publishVerifiedFile,
   renderPdfPages,
   resetDerivedPdfMemory,
   safePdfFilename,
-  verifyPublished,
+  writeVerifiedFile,
 } from "./derive.js";
 import { buildTestPdf, corruptTestPdf } from "./pdf-fixture.test-helper.js";
 
@@ -223,7 +223,7 @@ describe("derivePdf", () => {
         expect(derived.text.includes("TOP SECRET")).toBe(false);
         const image = pageImageOf(derived, derived.renderedPages[0]);
         expect(Buffer.from(image?.subarray(0, 8) ?? [])).toEqual(PNG_SIGNATURE);
-        // The symlinks were replaced by real files written atomically; the secret is untouched.
+        // The planted symlinks were replaced by real files (their entries removed, never followed); the secret is untouched.
         expect(await readFile(secret, "utf8")).toBe("TOP SECRET CONTENT");
         expect(await readFile(join(bundle, "text.md"), "utf8")).toBe(derived.text);
       } finally {
@@ -309,33 +309,34 @@ describe("derivePdf", () => {
     });
   });
 
-  test("a directory swapped for a symlink after the temporary file was written is refused, and nothing lands outside", async () => {
+  test("writes land only through a handle verified at the final name: a parent swapped for a symlink before the open leaves nothing outside", async () => {
     await withWorkspace(async (root) => {
       const outside = await mkdtemp(join(tmpdir(), "openwork-pdf-swap-"));
       try {
         const realRoot = await realpath(root);
         const bundle = join(realRoot, "bundle");
-        await mkdir(bundle);
-        for (const publish of ["replace", "create"] as const) {
-          // The temporary file was created and written while `bundle` was the verified directory...
-          const tmp = join(bundle, `text.md.${publish}.tmp`);
-          const bytes = Buffer.from(`derived text (${publish})`);
-          await writeFile(tmp, bytes);
-          const written = await lstat(tmp);
-          // ...and the directory is swapped for a symlink before the publishing call resolves the path.
-          const moved = join(realRoot, `moved-${publish}`);
+        for (const mode of ["replace", "create"] as const) {
+          // `bundle` was the verified directory when the caller resolved it...
+          await mkdir(bundle);
+          const bytes = Buffer.from(`derived text (${mode})`);
+          // ...and is swapped for a symlink before the write resolves the path.
+          const moved = join(realRoot, `moved-${mode}`);
           await rename(bundle, moved);
           await symlink(outside, bundle);
-          await writeFile(join(outside, basename(tmp)), "ATTACKER");
 
-          await expect(publishVerifiedFile(bundle, tmp, "text.md", written, bytes, publish)).rejects.toThrow("changed underneath");
-          expect(await readdir(outside)).toEqual([basename(tmp)]);
-          expect(await readFile(join(outside, basename(tmp)), "utf8")).toBe("ATTACKER");
-          expect(await readFile(join(moved, basename(tmp)))).toEqual(bytes);
+          // No file at the redirected place: the create is refused and cleaned up again.
+          await expect(writeVerifiedFile(bundle, "text.md", bytes, mode)).rejects.toThrow("changed underneath");
+          expect(await readdir(outside)).toEqual([]);
 
-          await rm(join(outside, basename(tmp)));
+          // An existing file at the redirected place is never truncated or overwritten.
+          await writeFile(join(outside, "text.md"), "ATTACKER");
+          await expect(writeVerifiedFile(bundle, "text.md", bytes, mode)).rejects.toThrow();
+          expect(await readFile(join(outside, "text.md"), "utf8")).toBe("ATTACKER");
+          expect(await readdir(moved)).toEqual([]);
+
+          await rm(join(outside, "text.md"));
           await rm(bundle);
-          await rename(moved, bundle);
+          await rm(moved, { recursive: true, force: true });
         }
       } finally {
         await rm(outside, { recursive: true, force: true });
@@ -343,47 +344,86 @@ describe("derivePdf", () => {
     });
   });
 
-  test("a published file is trusted only while its path names it directly", async () => {
+  test("writes replace an earlier copy in place and never write through a symlink or hardlink planted at the name", async () => {
     await withWorkspace(async (root) => {
-      const realRoot = await realpath(root);
-      const directory = join(realRoot, "bundle");
-      const target = join(directory, "text.md");
-      const bytes = Buffer.from("ours");
-      await mkdir(directory);
-      await writeFile(target, bytes);
-      await verifyPublished(target, bytes);
+      const outside = await mkdtemp(join(tmpdir(), "openwork-pdf-planted-"));
+      try {
+        const realRoot = await realpath(root);
+        const directory = join(realRoot, "bundle");
+        await mkdir(directory);
+        const target = join(directory, "text.md");
 
-      // Another writer published the same bytes first (a different inode, allocated while ours still existed).
-      const twin = join(directory, "twin.md");
-      await writeFile(twin, bytes);
-      await rename(twin, target);
-      await verifyPublished(target, bytes);
+        await writeVerifiedFile(directory, "text.md", "first", "create");
+        expect(await readFile(target, "utf8")).toBe("first");
+        await expect(writeVerifiedFile(directory, "text.md", "second", "create")).rejects.toThrow();
+        expect(await readFile(target, "utf8")).toBe("first");
+        await writeVerifiedFile(directory, "text.md", "second", "replace");
+        expect(await readFile(target, "utf8")).toBe("second");
+        expect((await lstat(target)).nlink).toBe(1);
 
-      // Different bytes from someone else are not this write, even when the
-      // filesystem hands their file the inode number ours had (ext4 reuses a
-      // freed inode for the very next file; APFS does not), so identity alone
-      // could never be the proof.
-      await rm(target);
-      const other = join(directory, "other.md");
-      await writeFile(other, "theirs");
-      await rename(other, target);
-      await expect(verifyPublished(target, bytes)).rejects.toThrow("changed underneath");
+        // A symlink planted at the name is replaced by a real file; the file it pointed at is untouched.
+        const secret = join(outside, "secret.md");
+        await writeFile(secret, "TOP SECRET");
+        await rm(target);
+        await symlink(secret, target);
+        await writeVerifiedFile(directory, "text.md", "ours", "replace");
+        expect((await lstat(target)).isSymbolicLink()).toBe(false);
+        expect(await readFile(target, "utf8")).toBe("ours");
+        expect(await readFile(secret, "utf8")).toBe("TOP SECRET");
 
-      // A symlink at the final component is never followed.
-      await rm(target);
-      await symlink(join(realRoot, "elsewhere.md"), target);
-      await writeFile(join(realRoot, "elsewhere.md"), bytes);
-      await expect(verifyPublished(target, bytes)).rejects.toThrow();
+        // A hardlink planted at the name would make an in-place write land in the other file; the name is re-pointed at a fresh inode instead.
+        await rm(target);
+        let hardlinked = true;
+        try {
+          await link(secret, target);
+        } catch {
+          hardlinked = false; // cross-device temp dirs cannot be hardlinked on this machine
+        }
+        if (hardlinked) {
+          await writeVerifiedFile(directory, "text.md", "ours again", "replace");
+          expect(await readFile(target, "utf8")).toBe("ours again");
+          expect(await readFile(secret, "utf8")).toBe("TOP SECRET");
+          expect((await lstat(secret)).nlink).toBe(1);
+        }
 
-      // The very bytes written here, reached through a directory that is now a symlink, are not trusted either.
-      await rm(target);
-      await writeFile(target, bytes);
-      await verifyPublished(target, bytes);
-      await rename(directory, join(realRoot, "moved"));
-      await symlink(join(realRoot, "moved"), directory);
-      await expect(verifyPublished(target, bytes)).rejects.toThrow("changed underneath");
+        // The handle stays bound to the verified inode: a parent swapped after the open cannot redirect the bytes.
+        await rm(target);
+        const { handle, created } = await openVerifiedForWrite(directory, "text.md", "create");
+        expect(created).toBe(true);
+        const moved = join(realRoot, "moved");
+        await rename(directory, moved);
+        await symlink(outside, directory);
+        await handle.writeFile("bound to the inode");
+        await handle.close();
+        expect(await readFile(join(moved, "text.md"), "utf8")).toBe("bound to the inode");
+        expect(await readdir(outside)).toEqual(["secret.md"]);
+      } finally {
+        await rm(outside, { recursive: true, force: true });
+      }
     });
   });
+
+  test("pruning removes only the files this module writes and never recurses into anything else", async () => {
+    await withWorkspace(async (root) => {
+      for (let index = 0; index < MAX_DERIVED_BUNDLES; index += 1) {
+        await derivePdf(root, `doc-${index}.pdf`, buildTestPdf([`Document ${index}`]), { renderPages: false });
+      }
+      const bundles = await readdir(join(root, DERIVED_DIR));
+      const oldest = bundles.find((name) => name.endsWith("-doc-0"));
+      expect(oldest).toBeDefined();
+      // Something a person or another tool left inside the oldest bundle.
+      await mkdir(join(root, DERIVED_DIR, oldest ?? "", "notes"));
+      await writeFile(join(root, DERIVED_DIR, oldest ?? "", "notes", "keep.txt"), "not ours");
+
+      await derivePdf(root, "doc-last.pdf", buildTestPdf(["Last"]), { renderPages: false });
+      const after = await readdir(join(root, DERIVED_DIR));
+      expect(after.some((name) => name.endsWith("-doc-last"))).toBe(true);
+      // The oldest bundle lost only manifest.json and text.md; the foreign directory and the bundle itself remain.
+      expect(after).toContain(oldest ?? "");
+      expect((await readdir(join(root, DERIVED_DIR, oldest ?? ""))).sort()).toEqual(["notes"]);
+      expect(await readFile(join(root, DERIVED_DIR, oldest ?? "", "notes", "keep.txt"), "utf8")).toBe("not ours");
+    });
+  }, 60_000);
 
   test("safe filenames keep readable stems and always end in .pdf", () => {
     expect(safePdfFilename("../../etc/passwd")).toBe("passwd.pdf");

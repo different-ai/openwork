@@ -1,6 +1,6 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { link, lstat, mkdir, open, readdir, realpath, rename, rm, unlink } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, realpath, rmdir, unlink } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { encode as encodePng } from "fast-png";
@@ -252,84 +252,79 @@ async function unlinkOwn(path: string, identity: FileIdentity): Promise<void> {
 }
 
 /**
- * Creates a new file (never following a symlink) and confirms it landed inside
- * `realDirectory` before any content is written through the returned handle.
+ * Opens `name` inside the verified `realDirectory` for writing and confirms,
+ * through the handle, that the opened inode is a regular single-link file that
+ * the path still names at exactly that place, before any byte is written.
+ *
+ * Node has no directory-relative open, rename, or link, so every path-based
+ * call resolves the path on its own. Rather than write somewhere else and move
+ * the result into place (a move resolves two paths and can be redirected
+ * between them), the file is opened at its final name and content flows only
+ * through this handle: once the identity check passes, no later swap of a
+ * parent directory can change where the bytes land. The final component is
+ * never followed as a symlink, a hardlink is refused so a planted name cannot
+ * point this write at another file, and a path swapped around the open fails
+ * the identity check. `create` refuses an existing file (`EEXIST`) and leaves
+ * it for the caller to judge; `replace` opens an existing regular single-link
+ * file in place and lets the caller truncate it only after verification, while
+ * anything else planted at the name (a symlink, a hardlink, a directory) has
+ * its entry removed — never what it points to — before a fresh file is
+ * created. A file this call created and then refused is removed only while
+ * the path still names it. Exported for tests.
  */
-async function createVerifiedFile(realDirectory: string, path: string): Promise<{ handle: FileHandle; identity: FileIdentity }> {
-  const handle = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+export async function openVerifiedForWrite(realDirectory: string, name: string, mode: "replace" | "create"): Promise<{ handle: FileHandle; created: boolean; identity: FileIdentity }> {
+  const target = join(realDirectory, name);
+  const create = () => open(target, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+  let handle: FileHandle;
+  let created = true;
+  try {
+    handle = await create();
+  } catch (cause) {
+    if (mode === "create" || errorCode(cause) !== "EEXIST") throw cause;
+    const existing = await lstat(target);
+    if (existing.isFile() && existing.nlink === 1) {
+      handle = await open(target, constants.O_WRONLY | constants.O_NOFOLLOW);
+      created = false;
+    } else {
+      if (existing.isDirectory()) await rmdir(target);
+      else await unlink(target);
+      handle = await create();
+    }
+  }
   let identity: FileIdentity | null = null;
   try {
-    const created = await handle.stat();
-    identity = { dev: created.dev, ino: created.ino };
-    const real = await realpath(path);
+    const opened = await handle.stat();
+    identity = { dev: opened.dev, ino: opened.ino };
+    if (!opened.isFile() || opened.nlink !== 1) throw new Error(WRITE_CHANGED);
+    const real = await realpath(target);
     const named = await lstat(real);
-    if (!isWithin(realDirectory, real) || !sameFile(named, identity)) throw new Error(WRITE_CHANGED);
-    return { handle, identity };
+    if (real !== target || !sameFile(named, identity)) throw new Error(WRITE_CHANGED);
+    return { handle, created, identity };
   } catch (cause) {
     await handle.close();
-    if (identity) await unlinkOwn(path, identity);
+    if (created && identity) await unlinkOwn(target, identity);
     throw cause;
   }
 }
 
 /**
- * Confirms `target` names the file just published at its intended place:
- * reached without a symlink, a regular file with a single link, holding
- * exactly the bytes written here (or another writer's copy of them). The
- * inode written here is not proof on its own: its write handle is closed by
- * now, and once a swapped path frees that inode the filesystem may hand the
- * same number to the next file (ext4 does), so only the content is checked.
- * Anything else means the publishing call resolved a swapped path. Exported
- * for tests.
+ * Writes `content` to `name` inside the verified `realDirectory` through a
+ * verified handle: `replace` overwrites an earlier copy in place, `create`
+ * fails with `EEXIST` and leaves an existing file for the caller to judge.
+ * Exported for tests.
  */
-export async function verifyPublished(target: string, bytes: Uint8Array): Promise<void> {
-  const handle = await open(target, constants.O_RDONLY | constants.O_NOFOLLOW);
-  try {
-    const published = await handle.stat();
-    if ((await realpath(target)) !== target || !published.isFile() || published.nlink !== 1) throw new Error(WRITE_CHANGED);
-    if (!(await handle.readFile()).equals(bytes)) throw new Error(WRITE_CHANGED);
-  } finally {
-    await handle.close();
-  }
-}
-
-/**
- * Publishes the verified temporary file `tmp` as `name` inside `realDirectory`:
- * `replace` renames over an earlier copy, `create` links and leaves an existing
- * file for the caller to judge. Node has no directory-relative rename or link,
- * so the publishing call resolves the path itself; the directory is confirmed
- * symlink-free immediately before it and the result is verified through a
- * handle immediately after, and the temporary file is removed only while the
- * path still names it. Exported for tests.
- */
-export async function publishVerifiedFile(realDirectory: string, tmp: string, name: string, identity: FileIdentity, bytes: Uint8Array, publish: "replace" | "create"): Promise<void> {
-  const target = join(realDirectory, name);
-  try {
-    if ((await realpath(realDirectory)) !== realDirectory) throw new Error(WRITE_CHANGED);
-    if (publish === "replace") await rename(tmp, target);
-    else await link(tmp, target);
-  } finally {
-    await unlinkOwn(tmp, identity);
-  }
-  await verifyPublished(target, bytes);
-}
-
-/** Writes `content` to `name` inside the verified `realDirectory` through a fresh temporary file and a verified publish. */
-async function writeVerifiedFile(realDirectory: string, name: string, content: Uint8Array | string, publish: "replace" | "create"): Promise<void> {
+export async function writeVerifiedFile(realDirectory: string, name: string, content: Uint8Array | string, mode: "replace" | "create"): Promise<void> {
   const bytes = typeof content === "string" ? Buffer.from(content, "utf8") : content;
-  const tmp = join(realDirectory, `${name}.${randomUUID()}.tmp`);
-  const { handle, identity } = await createVerifiedFile(realDirectory, tmp);
+  const { handle, created, identity } = await openVerifiedForWrite(realDirectory, name, mode);
   try {
-    try {
-      await handle.writeFile(bytes);
-    } finally {
-      await handle.close();
-    }
+    if (!created) await handle.truncate(0);
+    await handle.writeFile(bytes);
   } catch (cause) {
-    await unlinkOwn(tmp, identity);
+    await handle.close();
+    if (created) await unlinkOwn(join(realDirectory, name), identity);
     throw cause;
   }
-  await publishVerifiedFile(realDirectory, tmp, name, identity, bytes, publish);
+  await handle.close();
 }
 
 async function materializePdf(root: string, safeFilename: string, digest: string, bytes: Uint8Array): Promise<string> {
@@ -529,9 +524,33 @@ async function pruneDerivedBundles(realDirectory: string, keep: string): Promise
   dated.sort((left, right) => left.mtimeMs - right.mtimeMs);
   const excess = entries.length - MAX_DERIVED_BUNDLES;
   for (const { name } of dated.slice(0, Math.max(0, excess))) {
-    // Deletion resolves the path itself: only ever remove a bundle-named directory while the parent is still reached without a symlink.
-    if ((await realpath(realDirectory)) !== realDirectory) return;
-    await rm(join(realDirectory, name), { recursive: true, force: true });
+    await removeBundle(realDirectory, name);
+  }
+}
+
+const BUNDLE_FILE = /^(?:manifest\.json|text\.md|page-\d{3}\.(?:png|jpg))$/;
+
+/**
+ * Removes one derived bundle. Deletion resolves paths itself, so the blast
+ * radius of a parent swapped underneath it is bounded: only the fixed file
+ * names this module writes are unlinked (never following a symlink, never
+ * recursing), the parent is re-checked before every deletion, and the directory
+ * is removed only once it is empty. Anything unexpected inside is left alone.
+ */
+async function removeBundle(realDirectory: string, name: string): Promise<void> {
+  const bundle = join(realDirectory, name);
+  try {
+    const info = await lstat(bundle);
+    if (!info.isDirectory()) return;
+    const files = (await readdir(bundle)).filter((file) => BUNDLE_FILE.test(file));
+    for (const file of files) {
+      if ((await realpath(bundle)) !== bundle) return;
+      await unlink(join(bundle, file));
+    }
+    if ((await realpath(bundle)) !== bundle) return;
+    await rmdir(bundle);
+  } catch {
+    // A bundle that is not entirely this module's is left for a person to judge.
   }
 }
 
