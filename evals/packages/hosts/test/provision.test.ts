@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   deleteSandboxes,
   desktopSandboxName,
+  encodeDenExtraEnv,
   parseConnectorE2eTestEnv,
   provisionDesktopSandbox,
   renderConnectorE2eTestEnv,
@@ -72,6 +73,18 @@ test("connector E2E test env rendering and parsing round-trip the provision cont
   assert.match(content, /OPENWORK_EVAL_MODEL=big-pickle/);
   const missingApi = content.split("\n").filter((line) => !line.startsWith("OPENWORK_EVAL_DEN_API_URL=")).join("\n");
   assert.throws(() => parseConnectorE2eTestEnv(missingApi), /OPENWORK_EVAL_DEN_API_URL/);
+});
+
+test("Den extra env is carried as base64 KEY=VALUE lines and refuses unsafe names", () => {
+  const encoded = encodeDenExtraEnv({ DEN_DASHBOARDS_ENABLED: "true", DEN_WORKER_URL_TEMPLATE: "https://w.local/{id}?a=b" });
+  assert.match(encoded, /^[A-Za-z0-9+/=]+$/);
+  assert.equal(
+    Buffer.from(encoded, "base64").toString("utf8"),
+    "DEN_DASHBOARDS_ENABLED=true\nDEN_WORKER_URL_TEMPLATE=https://w.local/{id}?a=b",
+  );
+  assert.throws(() => encodeDenExtraEnv({ "den-flag": "x" }), /Unsafe Den environment name/);
+  assert.throws(() => encodeDenExtraEnv({ "$(id)": "x" }), /Unsafe Den environment name/);
+  assert.throws(() => encodeDenExtraEnv({ DEN_X: "a\nb" }), /may not contain a newline/);
 });
 
 test("server sandbox names are unique within the same CI process and second", () => {

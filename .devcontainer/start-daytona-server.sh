@@ -14,6 +14,20 @@ fi
 
 cd "$REPO_DIR"
 
+# Per-test Den env from the eval harness (base64 KEY=VALUE lines, one per
+# line). Exported first so a caller's value wins over the defaults below.
+if [ -n "${OPENWORK_DEN_EXTRA_ENV_B64:-}" ]; then
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    case "$line" in
+      [A-Z_]*=*) export "$line" ;;
+      *) echo "ERROR: invalid Den env line from OPENWORK_DEN_EXTRA_ENV_B64." >&2; exit 1 ;;
+    esac
+  done <<EOF_EXTRA_ENV
+$(printf %s "$OPENWORK_DEN_EXTRA_ENV_B64" | base64 -d)
+EOF_EXTRA_ENV
+fi
+
 DEN_API_PORT="${DEN_API_PORT:-8788}"
 DEN_WEB_PORT="${DEN_WEB_PORT:-3005}"
 PNPM_STORE="${PNPM_STORE:-$REPO_DIR/.openwork-daytona/pnpm-store}"
