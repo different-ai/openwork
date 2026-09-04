@@ -340,6 +340,26 @@ async function createNewSessionThroughSidebar(app: Surface): Promise<string> {
   return value;
 }
 
+async function clickSessionRow(app: Surface, sessionId: string, workspaceId: string): Promise<void> {
+  const clicked = await evalIn(app, `(() => {
+    const row = document.querySelector(${JSON.stringify(`[data-sidebar-session-id="${sessionId}"][data-sidebar-session-workspace-id="${workspaceId}"]`)});
+    const control = row?.querySelector(${JSON.stringify(`[data-session-tab-id="${sessionId}"]`)});
+    if (!(row instanceof HTMLElement) || !(control instanceof HTMLElement)) return false;
+    row.scrollIntoView({ block: "center" });
+    control.click();
+    return true;
+  })()`);
+  expect(clicked).toBe(true);
+}
+
+async function waitForChatSurface(app: Surface, sessionId: string, workspaceId: string): Promise<void> {
+  await waitFor(app, `(() => {
+    const surface = document.querySelector("[data-session-surface-id]");
+    return surface?.getAttribute("data-session-surface-id") === ${JSON.stringify(sessionId)}
+      && (localStorage.getItem("openwork.react.activeWorkspace") ?? "") === ${JSON.stringify(workspaceId)};
+  })()`, { timeoutMs: 10_000, label: "v2 session surface after workspace switch" });
+}
+
 async function waitForWitnessRequest(
   requests: WitnessRequest[],
   predicate: (request: WitnessRequest) => boolean,
@@ -466,7 +486,9 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence }) => {
   const witnessBaseUrl = `http://127.0.0.1:${address.port}/v1`;
   const profileDir = await mkdtemp(join(tmpdir(), "openwork-v2-chat-routing-eval-"));
   const workspacePath = join(profileDir, "workspace");
+  const secondWorkspacePath = join(profileDir, "workspace-2");
   await mkdir(workspacePath, { recursive: true });
+  await mkdir(secondWorkspacePath, { recursive: true });
   await writeFile(join(workspacePath, "opencode.json"), `${JSON.stringify({
     $schema: "https://opencode.ai/config.json",
     provider: {
@@ -487,6 +509,10 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence }) => {
       host,
       profileDir,
       env: {
+        // This benchmark measures engine and UI latency, not plugins. On a fresh isolated HOME, the engine's external-plugin dependency bootstrap
+        // (injected by apps/server/src/openwork-runtime-config.ts) can hold its install lock for minutes and block /config + /provider, so the picker
+        // reports "No models found" and the run times out. OPENCODE_PURE skips plugin loading for both the v1 and v2 lanes alike.
+        OPENCODE_PURE: "true",
         OPENWORK_OPENCODE2_BIN: binPath,
         ANTHROPIC_API_KEY: "",
         OPENAI_API_KEY: "",
@@ -580,7 +606,7 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence }) => {
 
     // New task uses the selected workspace's currently swapped client. This
     // avoids sending a v2 prompt to the pre-toggle v1 session id.
-    await createNewSessionThroughSidebar(app);
+    const v2SessionId = await createNewSessionThroughSidebar(app);
     await selectModel(app, modelNameV2);
     const r2 = await sendAndWaitForNonce(
       app,
@@ -603,6 +629,18 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence }) => {
       `The v2 transcript streamed ${r2.request.nonce} from ${modelIdV2} with Bearer ${keyV2} in ${r2.latencyMs}ms; v2 sessions grew ${v2BeforeR2}→${v2AfterR2}, while v1 stayed frozen at ${v1BeforeR2}.`,
       true,
     );
+
+    await createAndSelectWorkspace(app, { path: secondWorkspacePath });
+    await sleep(31_000);
+    await clickSessionRow(app, v2SessionId, workspaceId);
+    await waitForChatSurface(app, v2SessionId, workspaceId);
+    await sleep(1_000);
+    // Guards the dev #4364 refetch-on-select interaction: the sidebar must list from the routed engine
+    // (`route-workspaces.ts` v2 transport), never drop a v2 session because the refetch listed v1.
+    await waitFor(app, `Boolean(document.querySelector(${JSON.stringify(`[data-sidebar-session-id="${v2SessionId}"][data-sidebar-session-workspace-id="${workspaceId}"]`)}))`, {
+      timeoutMs: 10_000,
+      label: "v2 session remains in the sidebar after switching workspaces",
+    });
 
     const statusAfterR2 = await readStatus(serverInfo);
     expect(statusAfterR2.running).toBe(true);
