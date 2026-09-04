@@ -94,7 +94,7 @@ import {
   openAiCompatibleProviderConfig,
 } from "./local-providers.mjs";
 import { resolveBundledOpencodeBinary, resolveUserDataDir } from "./runtime-paths.mjs";
-import { readChanges, trackChange, undoChange, writeTrackedFile } from "./self-memory.mjs";
+import { noteProgress, readChanges, trackChange, undoChange, writeTrackedFile } from "./self-memory.mjs";
 import { SETTINGS_FILE, readSettings, scheduleGuardrails, updateSettings } from "./settings.mjs";
 import {
   BEGIN_BODY,
@@ -115,6 +115,7 @@ import {
   reviewPrompt,
   steerBody,
   updateWorker,
+  workerProgressNote,
   workerThreadTitle,
   workerToolCatalog,
   workerTurnPrompt,
@@ -771,6 +772,19 @@ async function readyWorkerClient(coworker) {
   });
 }
 
+/**
+ * Keep the one working-memory line Open Coworker writes for a Worker on the
+ * coworker's behalf (started, latest finding, waiting for a decision, cleared
+ * once it ends). Best effort: a full working memory or a refused text is
+ * logged and never touches the Worker itself.
+ */
+async function syncWorkerNote(slug, worker, finding = null) {
+  if (!worker) return;
+  await noteProgress(coworkersDir, slug, workerProgressNote(worker, finding)).catch((error) => {
+    console.warn(`[open-coworker] could not keep the working-memory line for Worker ${worker.id}`, error instanceof Error ? error.message : error);
+  });
+}
+
 async function spawnWorker(slug, input, spawnedBy) {
   const coworker = await getCoworker(coworkersDir, slug);
   if (!coworker.workspaceId) throw new Error("This coworker's workspace is not ready yet.");
@@ -780,6 +794,7 @@ async function spawnWorker(slug, input, spawnedBy) {
     text: spawnedBy === "coworker" ? `Started by ${coworker.name}` : "Started by you",
     by: spawnedBy,
   });
+  await syncWorkerNote(slug, worker);
   void admitWorkerTurn(slug, worker.id);
   return worker;
 }
@@ -823,8 +838,9 @@ async function executeWorkerTurn(slug, id, { onStarted }) {
         return;
       }
       if (lifespanSpent(worker.lifespan)) {
-        await updateWorker(coworkersDir, slug, id, { status: "finished" });
+        const finished = await updateWorker(coworkersDir, slug, id, { status: "finished" });
         await appendWorkerEvent(coworkersDir, slug, id, { kind: "status", text: "Finished: reached the end of its lifespan." });
+        await syncWorkerNote(slug, finished);
         onStarted();
         return;
       }
@@ -899,15 +915,19 @@ async function settleWorkerTurn(slug, id, outcome) {
   const updated = Object.keys(step.patch).length > 0
     ? await updateWorker(coworkersDir, slug, id, step.patch, { now }).catch(() => current)
     : current;
+  let latestFinding = null;
   for (const event of step.events) {
     const recorded = await appendWorkerEvent(coworkersDir, slug, id, event, { now }).catch(() => null);
     if (!recorded) continue;
     if (event.kind === "finding") {
+      latestFinding = recorded;
       workerReviews.add(slug, { id: recorded.id, workerId: id, workerName: updated.name, report: recorded.report, text: recorded.text });
     } else if (updated.status === "failed") {
       workerReviews.add(slug, { id: recorded.id, workerId: id, workerName: updated.name, report: "failed", text: updated.error || recorded.text });
     }
   }
+  // A turn that reported nothing leaves the line as it was; a finding or an ending rewrites it.
+  if (latestFinding || isWorkerFinished(updated)) await syncWorkerNote(slug, updated, latestFinding);
   return step.schedule === "continue";
 }
 
@@ -939,6 +959,7 @@ async function cancelWorker(slug, id, reason, by) {
   const updated = await updateWorker(coworkersDir, slug, id, { status: "cancelled" });
   const why = String(reason ?? "").trim();
   await appendWorkerEvent(coworkersDir, slug, id, { kind: "status", text: why ? `Stopped: ${why}` : "Stopped", by });
+  await syncWorkerNote(slug, updated);
   const controller = liveWorkerTurns.get(key);
   if (controller) {
     controller.abort();
@@ -960,6 +981,7 @@ async function pauseWorker(slug, id) {
     kind: "status",
     text: worker.status === "running" ? "Paused; it finishes its current step first." : "Paused",
   });
+  await syncWorkerNote(slug, updated);
   return updated;
 }
 
@@ -968,6 +990,7 @@ async function resumeWorker(slug, id) {
   if (worker.status !== "paused") return worker;
   const updated = await updateWorker(coworkersDir, slug, id, { status: "waiting", waitingFor: "turn" });
   await appendWorkerEvent(coworkersDir, slug, id, { kind: "status", text: "Resumed" });
+  await syncWorkerNote(slug, updated);
   void admitWorkerTurn(slug, id);
   return updated;
 }

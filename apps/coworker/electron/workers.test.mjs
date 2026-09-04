@@ -30,6 +30,8 @@ import {
   reviewPrompt,
   steerBody,
   updateWorker,
+  WORKER_NOTE_TEXT,
+  workerProgressNote,
   workerThreadTitle,
   workerToolCatalog,
   workerTurnPrompt,
@@ -236,6 +238,31 @@ test("a settled turn decides whether the worker continues, holds, or stops", () 
 
   // A stop that arrived while the turn ran wins over the turn's outcome.
   assert.deepEqual(nextWorkerState({ ...base, status: "cancelled" }, { kind: "settled", report: { kind: "done", text: "x" } }, { now: NOW }), { patch: {}, events: [], schedule: "stop" });
+});
+
+test("the working-memory line for a Worker follows it from start to finding to decision and clears when it ends", () => {
+  const base = { id: "wrk_a", name: "Market scan", goal: "Watch the three competitors' pricing pages and report any change.", status: "starting", waitingFor: "", lifespan: { kind: "turns", max: 10, used: 0 } };
+  // Keyed by the Worker's name so it never collides with the coworker's own notes.
+  const started = workerProgressNote(base);
+  assert.deepEqual(started, { work: "Worker · Market scan", text: "started — Watch the three competitors' pricing pages and report any change" });
+  assert.equal(workerProgressNote({ ...base, status: "running" }).text, "working — Watch the three competitors' pricing pages and report any change");
+  assert.equal(workerProgressNote({ ...base, status: "waiting", waitingFor: "turn" }).text, "working — Watch the three competitors' pricing pages and report any change");
+  // A finding replaces the goal with the latest state; a decision says it is waiting for one.
+  assert.equal(workerProgressNote({ ...base, status: "waiting", waitingFor: "turn" }, { kind: "finding", report: "finding", text: "Acme dropped its Pro tier by 10%." }).text, "latest: Acme dropped its Pro tier by 10%.");
+  assert.equal(workerProgressNote({ ...base, status: "waiting", waitingFor: "decision" }, { kind: "finding", report: "decision", text: "Should I include the annual plans too?" }).text, "needs a decision: Should I include the annual plans too?");
+  assert.equal(workerProgressNote({ ...base, status: "waiting", waitingFor: "decision" }).text, "waiting for a decision — Watch the three competitors' pricing pages and report any change");
+  // A steer or a status event is not a finding and leaves the goal in place.
+  assert.equal(workerProgressNote({ ...base, status: "running" }, { kind: "steer", text: "Skip Beta." }).text, "working — Watch the three competitors' pricing pages and report any change");
+  assert.equal(workerProgressNote({ ...base, status: "paused" }).text, "paused — Watch the three competitors' pricing pages and report any change");
+  // Every ending clears the line, whatever the last finding said.
+  for (const status of ["finished", "cancelled", "failed"]) {
+    assert.deepEqual(workerProgressNote({ ...base, status }, { kind: "finding", report: "done", text: "All three pages checked." }), { work: "Worker · Market scan", text: "" });
+  }
+  // Long goals and findings are cut so the line fits the memory limit; an empty goal leaves no dangling dash.
+  const long = "x".repeat(WORKER_NOTE_TEXT + 50);
+  assert.equal(workerProgressNote({ ...base, goal: long }).text, `started — ${"x".repeat(WORKER_NOTE_TEXT)}`);
+  assert.equal(workerProgressNote({ ...base, status: "running" }, { kind: "finding", report: "finding", text: long }).text, `latest: ${"x".repeat(WORKER_NOTE_TEXT)}`);
+  assert.equal(workerProgressNote({ ...base, goal: "" }).text, "started");
 });
 
 test("the review prompt opens with the marker the renderer recognises and lists each update", () => {

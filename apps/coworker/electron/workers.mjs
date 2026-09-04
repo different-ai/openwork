@@ -557,6 +557,28 @@ function workerStatusForPrompt(worker, now) {
   }
 }
 
+/** How much of a goal or a finding the Worker's working-memory line repeats. */
+export const WORKER_NOTE_TEXT = 240;
+
+/**
+ * The one line Open Coworker keeps in the coworker's working memory for a
+ * Worker, on the coworker's behalf, so the coworker and the person both see
+ * what is running without asking: `{ work, text }` for `memory_note`, with an
+ * empty text once the Worker has ended so the line is cleared. A finding
+ * replaces the goal with the latest state; a decision says it is waiting.
+ */
+export function workerProgressNote(worker, finding = null) {
+  const work = `Worker · ${worker.name}`;
+  if (isWorkerFinished(worker)) return { work, text: "" };
+  const goal = cleanText(worker.goal, WORKER_NOTE_TEXT).replace(/[\s.]+$/, "");
+  const about = goal ? ` — ${goal}` : "";
+  if (worker.status === "paused") return { work, text: `paused${about}` };
+  const latest = finding && finding.kind === "finding" ? cleanText(finding.text, WORKER_NOTE_TEXT) : "";
+  if (latest) return { work, text: finding.report === "decision" ? `needs a decision: ${latest}` : `latest: ${latest}` };
+  if (worker.status === "waiting" && worker.waitingFor === "decision") return { work, text: `waiting for a decision${about}` };
+  return { work, text: `${worker.status === "starting" ? "started" : "working"}${about}` };
+}
+
 function reportVerb(report) {
   if (report === "decision") return "needs a decision";
   if (report === "done") return "finished";

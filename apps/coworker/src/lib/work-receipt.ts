@@ -223,6 +223,15 @@ function describeCoworkerTool(name: CoworkerToolName, call: WorkStepInput, state
       if (running) return step(target ? `Forgetting · ${target}` : "Forgetting something", "forgetting something");
       return step(target ? `Forgot · ${target}` : "Forgot something", "forgetting something");
     }
+    case "memory_note": {
+      const work = clipLabel(text(input.work));
+      const note = text(input.text);
+      const clearing = !note;
+      if (failed) return step(clearing ? "Couldn't clear the note" : "Couldn't note that", "noting where the work stands");
+      if (running) return step(work ? `${clearing ? "Clearing the note" : "Noting"} · ${work}` : "Noting where the work stands", "noting where the work stands");
+      if (clearing) return step(work ? `Cleared the note · ${work}` : "Cleared a note", "noting where the work stands");
+      return step(work ? `Noted · ${work} — ${clipLabel(note)}` : `Noted · ${clipLabel(note)}`, "noting where the work stands");
+    }
     case "soul_update": {
       const change = isRecord(input.change) ? input.change : {};
       const summary = clipLabel(text(change.text) || (text(change.target) ? `dropped “${text(change.target)}”` : "") || text(input.section));

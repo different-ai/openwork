@@ -151,7 +151,7 @@ test("the coworker contract decides the shape of an answer once: reply, document
   assert.match(shapes, /Work on a clock is always an assignment, never a\s+Worker/);
   assert.match(shapes, /a schedule wins over a Worker, and a document beside a\s+short reply wins over a long reply/);
   // The four rules agree with each other: the Workers and Scheduling sections repeat the boundary, not a different one.
-  assert.match(agents, /## Workers[\s\S]*see \*Which shape an answer takes\*[\s\S]*ten when I say\s+nothing[\s\S]*not for a check that should\s+repeat on a clock/);
+  assert.match(agents, /## Workers[\s\S]*see \*Which shape an answer\s+takes\*[\s\S]*ten when I say\s+nothing[\s\S]*not for a check that should\s+repeat on a\s+clock/);
   assert.match(agents, /## Scheduling[\s\S]*Recurring or timed work is an assignment \(see \*Which shape an answer takes\*\)/);
   // The quick-question rule is said once, in the shape rule, not again as a bullet.
   assert.equal(agents.match(/quick\s+question gets a quick answer/g)?.length, 1);
@@ -160,7 +160,34 @@ test("the coworker contract decides the shape of an answer once: reply, document
   assert.match(agents, /\*\*A goal that outlives one reply\.\*\*[\s\S]*`worker_spawn` "Ticket themes"/);
   assert.match(agents, /\*\*Quick factual question\.\*\*[\s\S]*Before: a document titled "Vendor call"/);
   // The contract is versioned so every existing coworker picks the rule up on its next launch.
-  assert.equal(AGENTS_CONTRACT_VERSION, 6);
+  assert.equal(AGENTS_CONTRACT_VERSION, 7);
+});
+
+test("the coworker contract says to note where work stands before starting it and to hand long work to a Worker so it stays in the conversation", () => {
+  const agents = agentsTemplate({ name: "Nova" });
+  assert.match(agents, /## Keeping track of what I'm doing/);
+  // The note comes first, is refreshed after meaningful steps (not every tool call), and is cleared when the work ends.
+  assert.match(agents, /Before I start anything longer than a quick answer/);
+  assert.match(agents, /I first call\s+`coworker_memory_note`/);
+  assert.match(agents, /Only then do I\s+start/);
+  assert.match(agents, /After each meaningful step, finding, or\s+change of plan — not after every tool call/);
+  assert.match(agents, /never a log/);
+  assert.match(agents, /I clear its note in that same\s+turn/);
+  // A note it does not remember writing is its own, from before an interruption.
+  assert.match(agents, /my own note from\s+before an interruption/);
+  assert.match(agents, /continue from there instead of starting over/);
+  // Long work goes to a Worker so the coworker keeps answering; the app keeps the Worker's own line.
+  const workers = agents.slice(agents.indexOf("## Workers"), agents.indexOf("## My team"));
+  assert.match(workers, /so that I stay in the conversation/);
+  assert.match(workers, /more\s+than a couple of minutes or a handful of tool steps/);
+  assert.match(workers, /that the person may\s+want to discuss while it runs/);
+  assert.match(workers, /Open Coworker keeps the\s+`## Now` line for each Worker itself/);
+  assert.match(workers, /so I do not write a second one/);
+  // The self-tools list points at the note tool for progress only.
+  assert.match(agents, /`coworker_memory_note` only for where a piece of work stands/);
+  // The new section sits between the talk examples and Workers, so the two rules read together.
+  assert.ok(agents.indexOf("## Keeping track of what I'm doing") > agents.indexOf("**Quick factual question.**"));
+  assert.ok(agents.indexOf("## Keeping track of what I'm doing") < agents.indexOf("## Workers"));
 });
 
 test("the coworker contract says how to work with the team: refer before doing a teammate's job, suggest sparingly, never create", () => {
