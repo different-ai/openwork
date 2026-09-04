@@ -19,9 +19,11 @@ launcher is the way in.
 - The OpenCode engine binary: `opencode` on the PATH, or set
   `OPENWORK_OPENCODE_BIN=/path/to/opencode`. Without it the app starts but
   says the AI is unavailable and cannot run a turn.
-- A model. Local mode finds what this Mac already has (a Codex or Claude Code
-  sign-in, GitHub Copilot, keys in the environment, Ollama or LM Studio) and
-  connects it in one step, and a free model is ready with nothing to set up.
+- A model. Local mode finds what this Mac already has (a ChatGPT sign-in kept
+  by Codex, GitHub Copilot, keys in the environment, Ollama or LM Studio) and
+  connects it in one step; a Claude Code sign-in is shown but cannot be used
+  outside Claude Code, so an Anthropic key is offered instead. A free model is
+  ready with nothing to set up.
   An OpenWork Cloud account (free for up to 5 users; sign up at
   https://app.openworklabs.com?mode=sign-up) adds the organization's models.
 
