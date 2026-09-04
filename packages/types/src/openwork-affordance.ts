@@ -58,11 +58,24 @@ export const openworkAffordanceDescriptorSchema = z.object({
 })
 export type OpenworkAffordanceDescriptor = z.infer<typeof openworkAffordanceDescriptorSchema>
 
+/**
+ * Where a request came from: the conversation (session) whose agent issued
+ * it. Set by the OpenWork bridge, never by the agent, so UI commands such as
+ * opening a browser tab can act for the requesting conversation instead of
+ * whichever one happens to be on screen.
+ */
+export const openworkAffordanceOriginSchema = z.object({
+  sessionId: z.string().trim().min(1),
+  workspaceId: z.string().trim().min(1).optional(),
+})
+export type OpenworkAffordanceOrigin = z.infer<typeof openworkAffordanceOriginSchema>
+
 export const openworkAffordanceRequestSchema = z.object({
   id: z.string().trim().min(1),
   args: z.record(z.string(), z.unknown()).optional(),
   expectedRevision: z.number().int().nonnegative().optional(),
   actor: z.string().trim().min(1).optional(),
+  origin: openworkAffordanceOriginSchema.optional(),
 })
 export type OpenworkAffordanceRequest = z.infer<typeof openworkAffordanceRequestSchema>
 

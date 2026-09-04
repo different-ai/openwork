@@ -31,6 +31,7 @@
     "@modelcontextprotocol/client": "^2.0.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@opencode-ai/sdk": "^1.18.15",
+    "@openwork/browser-tabs": "workspace:*",
     "@openwork/enterprise-mcp-client": "workspace:*",
     "@openwork/headless-threads": "workspace:*",
     "@openwork/paths": "workspace:*",
