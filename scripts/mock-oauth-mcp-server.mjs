@@ -175,11 +175,17 @@ function validateAgentWorkloads(value) {
     if (!workload || typeof workload !== "object") throw new Error("agent workload must be an object");
     const promptMarker = typeof workload.promptMarker === "string" ? workload.promptMarker.trim() : "";
     const finalReply = typeof workload.finalReply === "string" ? workload.finalReply : "";
-    if (!promptMarker || !finalReply || !Array.isArray(workload.steps) || workload.steps.length === 0) {
-      throw new Error("agent workload needs promptMarker, finalReply, and at least one step");
+    if (!promptMarker || !finalReply || !Array.isArray(workload.steps)) {
+      throw new Error("agent workload needs promptMarker, finalReply, and a steps array");
     }
     if (markers.has(promptMarker)) throw new Error(`duplicate agent workload marker: ${promptMarker}`);
     markers.add(promptMarker);
+    // Deliver the final reply as consecutive content deltas of this many
+    // characters, so a spec can watch an answer render while it streams.
+    const finalReplyChunkSize = workload.finalReplyChunkSize === undefined ? null : workload.finalReplyChunkSize;
+    if (finalReplyChunkSize !== null && (!Number.isInteger(finalReplyChunkSize) || finalReplyChunkSize < 1)) {
+      throw new Error(`agent workload ${promptMarker} finalReplyChunkSize must be a positive integer`);
+    }
     const steps = workload.steps.map((step) => {
       if (!step || typeof step !== "object" || typeof step.tool !== "string" || !step.tool.trim()) {
         throw new Error(`agent workload ${promptMarker} has an invalid tool step`);
@@ -189,8 +195,17 @@ function validateAgentWorkloads(value) {
       }
       return { tool: step.tool.trim(), arguments: structuredClone(step.arguments) };
     });
-    return { promptMarker, finalReply, steps };
+    return { promptMarker, finalReply, finalReplyChunkSize, steps };
   });
+}
+
+function finalReplyChunks(workload) {
+  if (workload.finalReplyChunkSize === null) return [workload.finalReply];
+  const chunks = [];
+  for (let offset = 0; offset < workload.finalReply.length; offset += workload.finalReplyChunkSize) {
+    chunks.push(workload.finalReply.slice(offset, offset + workload.finalReplyChunkSize));
+  }
+  return chunks;
 }
 
 function offeredAgentTool(body, wanted) {
@@ -269,7 +284,7 @@ async function handleAgentCompletion(req, res, entry) {
     entry.agentCompletion = { ...baseRequest, kind: "final", promptMarker: workload.promptMarker, toolName: null, arguments: {} };
     agentStream(res, model, [
       agentChunk(model, { role: "assistant" }),
-      agentChunk(model, { content: workload.finalReply }),
+      ...finalReplyChunks(workload).map((content) => agentChunk(model, { content })),
       agentChunk(model, {}, "stop"),
     ]);
     return;
