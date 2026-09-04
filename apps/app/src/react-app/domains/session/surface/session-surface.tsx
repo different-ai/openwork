@@ -1108,6 +1108,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [cloudQueueRetryVersion, setCloudQueueRetryVersion] = useState(0);
   const sending = props.cloudMcpSubmissionState.status === "sending";
   const cloudQueueBlockedRef = useRef(false);
+  const evalSnapshotFailureRef = useRef(false);
   // Shared with promote-to-send so a manual send-now cannot race the idle drain.
   const drainingQueueRef = useRef(false);
   // Admission-aware drain state. It lives in a module-level per-session store
@@ -1144,6 +1145,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const snapshotQuery = useQuery<OpenworkSessionSnapshot>({
     queryKey: snapshotQueryKey,
     queryFn: async ({ signal }) => {
+      if (evalSnapshotFailureRef.current) {
+        throw new Error("eval: forced session snapshot failure");
+      }
       const startedAt = Date.now();
       const item = await composeNativeSessionSnapshot(
         { opencodeBaseUrl: props.opencodeBaseUrl, token: props.openworkToken },
@@ -1154,6 +1158,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       return item;
     },
     staleTime: 500,
+    retry: (failureCount) => !evalSnapshotFailureRef.current && failureCount < 3,
   });
 
   const currentSnapshot = snapshotQuery.data?.session.id === props.sessionId ? snapshotQuery.data : null;
@@ -1177,6 +1182,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [props.sessionId, currentSnapshot]);
 
   useEffect(() => {
+    evalSnapshotFailureRef.current = false;
     hydratedKeyRef.current = null;
     setSteering(false);
     setError(null);
@@ -1670,6 +1676,22 @@ export function SessionSurface(props: SessionSurfaceProps) {
     isFetching: snapshotQuery.isFetching,
     isError: snapshotQuery.isError || Boolean(error),
   });
+  const failSessionSnapshotControlAction = useMemo<OpenworkControlAction | null>(() => {
+    if (!import.meta.env.DEV) return null;
+
+    return {
+      id: "eval.session_snapshot.fail",
+      label: "Force the session snapshot query to fail",
+      sideEffect: "mutation",
+      disabled: !props.sessionId,
+      execute: async () => {
+        evalSnapshotFailureRef.current = true;
+        const result = await snapshotQuery.refetch();
+        return { ok: true, isError: result.isError };
+      },
+    };
+  }, [props.sessionId, snapshotQuery.refetch]);
+  useControlAction(props.isControlTarget ? failSessionSnapshotControlAction : null);
 
   const buildDraft = useCallback((text: string, nextAttachments: ComposerAttachment[]): ComposerDraft => {
     const parts: ComposerPart[] = text.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|@[^\s@]+)/).flatMap((segment) => {

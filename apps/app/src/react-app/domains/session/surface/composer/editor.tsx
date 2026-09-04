@@ -53,7 +53,7 @@ type EditorProps = {
   mentions: Record<string, ComposerMentionKind>;
   pastedText?: PastedTextToken[];
   attachments?: ComposerAttachmentToken[];
-  disabled: boolean;
+  submitDisabled: boolean;
   placeholder: string;
   onChange: (value: string) => void;
   onSubmit: (options: { queue: boolean }) => void | Promise<void>;
@@ -818,14 +818,9 @@ function SyncPlugin(props: {
   mentions: Record<string, ComposerMentionKind>;
   pastedText?: PastedTextToken[];
   attachments?: ComposerAttachmentToken[];
-  disabled: boolean;
 }) {
   const [editor] = useLexicalComposerContext();
   const valueRef = useRef(props.value);
-
-  useEffect(() => {
-    editor.setEditable(!props.disabled);
-  }, [editor, props.disabled]);
 
   useEffect(() => {
     // When the external value is cleared (e.g. after sending a message),
@@ -1235,12 +1230,12 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
       onError(error: Error) {
         throw error;
       },
-        editable: !props.disabled,
-        nodes: [ComposerMentionNode, ComposerSlashCommandNode, ComposerSkillNode, ComposerPastedTextNode, ComposerAttachmentNode],
-        editorState: () => {
-          setPrompt(props.value, props.mentions, props.pastedText, props.attachments);
-        },
-      }),
+      editable: true,
+      nodes: [ComposerMentionNode, ComposerSlashCommandNode, ComposerSkillNode, ComposerPastedTextNode, ComposerAttachmentNode],
+      editorState: () => {
+        setPrompt(props.value, props.mentions, props.pastedText, props.attachments);
+      },
+    }),
     [],
   );
 
@@ -1291,9 +1286,8 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
           mentions={props.mentions}
           pastedText={props.pastedText}
           attachments={props.attachments}
-          disabled={props.disabled}
         />
-        <SubmitPlugin onSubmit={props.onSubmit} disabled={props.disabled} />
+        <SubmitPlugin onSubmit={props.onSubmit} disabled={props.submitDisabled} />
         <PasteChipPlugin onPasteText={props.onPasteText} />
         <PastedTextExpandPlugin pastedText={props.pastedText} onExpandPastedText={props.onExpandPastedText} />
         <AttachmentRemovePlugin onRemoveAttachment={props.onRemoveAttachment} />
