@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Copy, Pencil, Trash2 } from "lucide-react";
 import { denApiCredentials, denApiEndpoint } from "../app/(den)/_lib/den-api-origin";
+import { getRuntimeConfig } from "../app/(den)/_lib/runtime-config";
 
 type AccessState = "loading" | "ready" | "signed-out" | "forbidden" | "error";
 type ViewMode = "users" | "companies" | "organizations";
@@ -1019,6 +1020,9 @@ async function requestJson(path: string, signal?: AbortSignal) {
     return { response: new Response(JSON.stringify(fixturePayload), { status: 200 }), payload: fixturePayload };
   }
 
+  // /admin lives outside DenFlowProvider, so a direct visit must resolve the
+  // configured API origin before making authenticated backoffice requests.
+  await getRuntimeConfig();
   const endpoint = denApiEndpoint(path);
   const response = await fetch(endpoint, {
     method: "GET",
@@ -1048,6 +1052,7 @@ function isAbortError(error: unknown): boolean {
 }
 
 async function patchJson(path: string, body: unknown) {
+  await getRuntimeConfig();
   const endpoint = denApiEndpoint(path);
   const response = await fetch(endpoint, {
     method: "PATCH",
@@ -1074,6 +1079,7 @@ async function patchJson(path: string, body: unknown) {
 }
 
 async function postJson(path: string, body: unknown) {
+  await getRuntimeConfig();
   const endpoint = denApiEndpoint(path);
   const response = await fetch(endpoint, {
     method: "POST",
@@ -1098,6 +1104,7 @@ async function postJson(path: string, body: unknown) {
 }
 
 async function putJson(path: string, body: unknown) {
+  await getRuntimeConfig();
   const endpoint = denApiEndpoint(path);
   const response = await fetch(endpoint, {
     method: "PUT",
@@ -1124,6 +1131,7 @@ async function putJson(path: string, body: unknown) {
 }
 
 async function deleteJson(path: string) {
+  await getRuntimeConfig();
   const endpoint = denApiEndpoint(path);
   const response = await fetch(endpoint, {
     method: "DELETE",

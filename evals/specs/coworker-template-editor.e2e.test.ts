@@ -24,6 +24,7 @@ test("an administrator prepares, revises, and withdraws a coworker through Conne
     await user.see({ text: "Prepared coworker teams are not enabled for this organization." });
     await user.notSee("Save coworker");
     await user.navigate(new URL("/admin", world.den.ref.webUrl).toString());
+    await user.see({ text: "User backoffice" }, { timeoutMs: 30_000 });
     await user.click({ role: "button", label: /^Organizations/ });
     await user.type({ placeholder: "Org name, slug, or id" }, world.organizationId);
     await user.see({ text: /page 1-1 of 1 / }, { timeoutMs: 90_000 });
