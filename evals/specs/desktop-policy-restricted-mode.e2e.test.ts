@@ -84,20 +84,31 @@ test(defaultJourney, async ({ world: selectedWorld, user, agent, probe, step, ev
   // no extension-management notice, and the settings hub and every settings
   // group are reachable. Settings comes last so the desktop is still on that
   // route when it reloads in phase 3.
-  const libraryHashBefore = await step("the member opens the Library before the policy changes", async () => {
+  const { libraryHashBefore, localMcpFormText } = await step("the member opens the Library before the policy changes", async () => {
     await member.user.click("Library");
     await member.user.see({ text: "Library" }, { timeoutMs: 90_000 });
     await member.user.notSee(manageExtensionsNotice);
-    return member.probe.hash();
+    await member.user.click({ role: "button", label: /^MCPs$/ });
+    await member.user.click({ role: "button", label: /^Add$/ });
+    await member.user.see({ text: "Workspace MCP" });
+    await member.user.click({ text: "Workspace MCP" });
+    await member.user.click({ role: "button", label: "Continue" });
+    await member.user.see({ text: "Add workspace MCP" });
+    await member.user.see({ role: "textbox", label: "App name" });
+    const localMcpFormText = await member.probe.text();
+    await member.user.press("Escape");
+    await member.user.notSee({ text: "Add workspace MCP" });
+    await member.user.click({ role: "button", label: /^All$/ });
+    return { libraryHashBefore: await member.probe.hash(), localMcpFormText };
   });
   expect(libraryHashBefore).toContain("/extensions");
   await member.user.looks([
     "The Library page is open and shows no notice that extension management was disabled by an organization administrator",
   ]);
   evidence.recordAssertionEvidence(
-    "Before the policy change the Library carries no extension-management restriction",
-    `hash=${libraryHashBefore}; manage-extensions notice absent`,
-    libraryHashBefore.includes("/extensions"),
+    "Before the policy change the member can open the local workspace MCP add form",
+    `hash=${libraryHashBefore}; manage-extensions notice absent; local form=${localMcpFormText}`,
+    libraryHashBefore.includes("/extensions") && localMcpFormText.includes("Add workspace MCP") && localMcpFormText.includes("App name"),
   );
 
   const hashBefore = await step("the member opens settings from the account menu before the policy changes", async () => {
@@ -224,7 +235,7 @@ test(defaultJourney, async ({ world: selectedWorld, user, agent, probe, step, ev
     hashAfter.includes("/settings/cloud-account"),
   );
 
-  const redirectedHash = await step("a hidden settings tab redirects", async () => {
+  const redirectedHash = await step("a forced hidden appearance route redirects to the visible Account page", async () => {
     await member.agent.run("route.settings.appearance");
     return member.probe.eventually(() => member.probe.hash(), {
       within: 60_000,
@@ -233,37 +244,50 @@ test(defaultJourney, async ({ world: selectedWorld, user, agent, probe, step, ev
     });
   });
   expect(redirectedHash).toContain("/settings/cloud-account");
+  await member.user.see(accountTab);
+  await member.user.see(signOut);
+  await member.user.notSee(settingsHub);
   evidence.recordAssertionEvidence(
     "A route to a hidden settings tab lands on the Cloud account page instead",
-    `requested=/settings/appearance; landed=${redirectedHash}`,
+    `forced route=/settings/appearance; landed=${redirectedHash}; Account tab and Sign out visible; Settings hub absent`,
     redirectedHash.includes("/settings/cloud-account"),
   );
 
-  await step("the account menu offers only the Account page", async () => {
+  const restrictedMenuText = await step("the account menu offers only the Account page", async () => {
     await member.user.click({ role: "button", label: "Back to app" });
     await member.user.click(accountMenu);
     await member.user.see(accountMenuItem);
     await member.user.notSee(settingsMenuItem);
+    const menuText = await member.probe.text();
     await member.user.press("Escape");
     await member.user.notSee(accountMenuItem, { timeoutMs: 10_000 });
+    return menuText;
   });
   evidence.recordAssertionEvidence(
     "Under the Restricted policy the account menu leads to the Account page instead of desktop settings",
-    "account menu shows an Account item and no Settings item",
-    true,
+    restrictedMenuText,
+    restrictedMenuText.includes("Account") && !restrictedMenuText.includes("Settings"),
   );
 
-  const { libraryHashAfter, builtInNoticeShown } = await step("the member opens the Library under the Restricted policy", async () => {
+  const { libraryHashAfter, builtInNoticeShown, restrictedMcpText } = await step("the member opens the Library under the Restricted policy", async () => {
     await member.user.click("Library");
     await member.user.see(manageExtensionsNotice, { timeoutMs: 90_000, text: /disabled local extension management/ });
     // Restricted also turns off allowBuiltInExtensions, so the Library's
     // existing built-in banner appears alongside the new notice.
+    await member.user.see({ text: builtInExtensionsNotice });
     const builtInNoticeShown = await member.probe.eventually(() => member.probe.has(builtInExtensionsNotice), {
       within: 30_000,
       label: "built-in extensions notice",
       until: (shown) => shown,
     });
-    return { libraryHashAfter: await member.probe.hash(), builtInNoticeShown };
+    await member.user.click({ role: "button", label: /^MCPs$/ });
+    await member.user.see({ role: "button", label: "Add organization MCP" });
+    await member.user.notSee({ role: "button", label: /^Add$/ });
+    await member.user.notSee({ text: "Add workspace MCP" });
+    const restrictedMcpText = await member.probe.text();
+    expect(restrictedMcpText).not.toContain("Add workspace MCP");
+    await member.user.click({ role: "button", label: /^All$/ });
+    return { libraryHashAfter: await member.probe.hash(), builtInNoticeShown, restrictedMcpText };
   });
   expect(libraryHashAfter).toContain("/extensions");
   expect(builtInNoticeShown).toBe(true);
@@ -272,9 +296,9 @@ test(defaultJourney, async ({ world: selectedWorld, user, agent, probe, step, ev
     "A notice says built-in OpenWork extensions are disabled by your organization",
   ]);
   evidence.recordAssertionEvidence(
-    "The Library stays reachable but local extension and MCP add flows are disabled with the catalog notice",
-    `hash=${libraryHashAfter}; manage-extensions notice visible; builtInNotice=${builtInNoticeShown}`,
-    libraryHashAfter.includes("/extensions") && builtInNoticeShown,
+    "The Library removes the local workspace MCP add path while keeping organization MCP authoring available",
+    `hash=${libraryHashAfter}; manage-extensions notice visible; builtInNotice=${builtInNoticeShown}; MCPs filter=${restrictedMcpText}`,
+    libraryHashAfter.includes("/extensions") && builtInNoticeShown && restrictedMcpText.includes("Add organization MCP") && !restrictedMcpText.includes("Add workspace MCP"),
   );
 
 });
@@ -317,7 +341,16 @@ test(teamJourney, async ({ world: selectedWorld, user, agent, probe, step, evide
     await admin.user.see({ text: mode === "Locked" ? "Locked for this team" : "Fine-tune access" }, { timeoutMs: 60_000 });
   };
 
-  await step("both ordinary members start unrestricted and the target can open Settings", async () => {
+  const targetBaseline = await effective(world.den.members.jordan);
+  const controlBaseline = await effective(world.den.members.casey);
+  const defaultPolicy = await readDefaultDesktopPolicy(probe, world.den.admin);
+  if (!isRecord(defaultPolicy.policy)) throw new Error("Expected default policy capabilities");
+  expect(defaultPolicy.policy.allowAlphaUpdates).toBe(false);
+  const grantPolicy = (await policies()).find((entry) => Array.isArray(entry.assignments)
+    && entry.assignments.some((assignment: unknown) => isRecord(assignment) && assignment.teamId === world.grantTeamId));
+  if (!grantPolicy || !isRecord(grantPolicy.policy)) throw new Error("Expected overlapping grant policy");
+  expect(grantPolicy.policy.allowAlphaUpdates).toBe(true);
+  await step("the target receives Alpha access only from the overlapping grant and can open Settings", async () => {
     const roles = [];
     for (const identity of [world.den.members.jordan, world.den.members.casey]) {
       const org = await probe.api(identity, "/v1/org");
@@ -326,7 +359,9 @@ test(teamJourney, async ({ world: selectedWorld, user, agent, probe, step, evide
       roles.push(org.body.currentMember.role);
       expect(org.body.currentMember.role).toBe("member");
       const config = await effective(identity);
-      for (const key of lockedKeys) expect(config[key]).toBe(true);
+      for (const key of lockedKeys) {
+        expect(config[key]).toBe(identity === world.den.members.jordan || key !== "allowAlphaUpdates");
+      }
     }
     await member.user.click(accountMenu);
     await member.user.click(settingsMenuItem);
@@ -342,11 +377,11 @@ test(teamJourney, async ({ world: selectedWorld, user, agent, probe, step, evide
     expect(baselinePermissions).not.toContain("Blocked");
     await member.user.click(accountTab);
     await member.user.see(signOut);
-    await member.agent.run("route.settings.general");
+    await member.user.click(settingsHub);
     await member.user.see(settingsHub);
     const hash = await member.probe.hash();
     expect(hash).toContain("/settings/general");
-    evidence.recordAssertionEvidence("The target and control have the same ordinary role and unrestricted baseline with a working App permissions tab", JSON.stringify({ roles, hash, baselinePermissions }), roles.every((role) => role === "member") && hash.includes("/settings/general") && count(baselinePermissions, "Allowed") === lockedKeys.length && !baselinePermissions.includes("Blocked"));
+    evidence.recordAssertionEvidence("The same-role target receives grant-only Alpha access while the outside control does not, and the target can inspect all Allowed permissions", JSON.stringify({ roles, hash, baselinePermissions, targetBaseline, controlBaseline, defaultPolicy, grantPolicy }), roles.every((role) => role === "member") && targetBaseline.allowAlphaUpdates === true && controlBaseline.allowAlphaUpdates === false && hash.includes("/settings/general") && count(baselinePermissions, "Allowed") === lockedKeys.length && !baselinePermissions.includes("Blocked"));
   });
 
   await step("the admin locks the team through Team Access", async () => {
@@ -357,9 +392,9 @@ test(teamJourney, async ({ world: selectedWorld, user, agent, probe, step, evide
   const control = await effective(world.den.members.casey);
   for (const key of lockedKeys) {
     expect(lockedMember[key]).toBe(false);
-    expect(control[key]).toBe(true);
+    expect(control[key]).toBe(controlBaseline[key]);
   }
-  evidence.recordAssertionEvidence("Team blocks override overlapping grants while an ordinary member outside the team stays unrestricted", JSON.stringify({ lockedMember, control }), lockedKeys.every((key) => lockedMember[key] === false && control[key] === true));
+  evidence.recordAssertionEvidence("Team blocks override the grant-only Alpha permission while the outside ordinary member keeps their baseline", JSON.stringify({ targetBaseline, lockedMember, controlBaseline, control }), targetBaseline.allowAlphaUpdates === true && lockedKeys.every((key) => lockedMember[key] === false && control[key] === controlBaseline[key]));
   await admin.user.looks(["The Focused work team Access page shows Locked selected and blocked app capabilities"]);
 
   await step("locked members retain their approved team skill without exposing it outside the team", async () => {
@@ -390,10 +425,12 @@ test(teamJourney, async ({ world: selectedWorld, user, agent, probe, step, evide
     await member.user.notSee(settingsHub);
     await member.user.notSee({ text: "Workspace" });
     await member.user.notSee({ text: "Global" });
+    // Force a hidden route to test the guard, rather than a user navigation path.
     await member.agent.run("route.settings.appearance");
     const forbiddenRoute = await member.probe.eventually(() => member.probe.hash(), {
       within: 60_000, label: "forbidden appearance route redirects", until: (hash) => hash.includes("/settings/cloud-account"),
     });
+    await member.user.see(accountTab);
     await member.user.see(signOut);
     await member.user.click(permissionsTab);
     await member.user.see({ text: "Your app permissions" });
@@ -423,6 +460,14 @@ test(teamJourney, async ({ world: selectedWorld, user, agent, probe, step, evide
     await member.user.click("Library");
     await member.user.see(manageExtensionsNotice, { timeoutMs: 90_000 });
     await member.user.see({ text: /Need an MCP server or skill/ });
+    await member.user.click({ role: "button", label: /^MCPs$/ });
+    await member.user.see({ role: "button", label: "Add organization MCP" });
+    await member.user.notSee({ role: "button", label: /^Add$/ });
+    await member.user.notSee({ text: "Add workspace MCP" });
+    const mcpText = await member.probe.text();
+    expect(mcpText).not.toContain("Add workspace MCP");
+    evidence.recordAssertionEvidence("Blocked local tool management removes the workspace MCP add path without removing organization MCP authoring", mcpText, mcpText.includes("Add organization MCP") && !mcpText.includes("Add workspace MCP"));
+    await member.user.click({ role: "button", label: /^All$/ });
     const libraryText = await member.probe.text();
     evidence.recordAssertionEvidence("The locked desktop hides Settings, redirects forbidden routes, and explains how to get an MCP server", JSON.stringify({ redirected, forbiddenRoute, permissionsText, menuText, libraryText }), redirected.includes("/settings/cloud-account") && forbiddenRoute.includes("/settings/cloud-account") && count(permissionsText, "Blocked") === lockedKeys.length && libraryText.includes("Need an MCP server or skill"));
     await member.user.looks(["The Library shows organization restrictions and guidance for requesting an MCP server or skill"]);
@@ -452,6 +497,14 @@ test(teamJourney, async ({ world: selectedWorld, user, agent, probe, step, evide
     for (const key of lockedKeys.filter((key) => key !== "allowManageExtensions")) expect(config[key]).toBe(true);
     await member.user.reload();
     await member.user.see(manageExtensionsNotice, { timeoutMs: 90_000 });
+    await member.user.click({ role: "button", label: /^MCPs$/ });
+    await member.user.see({ role: "button", label: "Add organization MCP" });
+    await member.user.notSee({ role: "button", label: /^Add$/ });
+    await member.user.notSee({ text: "Add workspace MCP" });
+    const mcpText = await member.probe.text();
+    expect(mcpText).not.toContain("Add workspace MCP");
+    evidence.recordAssertionEvidence("Blocked local tool management removes the workspace MCP add path without removing organization MCP authoring", mcpText, mcpText.includes("Add organization MCP") && !mcpText.includes("Add workspace MCP"));
+    await member.user.click({ role: "button", label: /^All$/ });
     const libraryText = await member.probe.text();
     await member.user.click(accountMenu);
     await member.user.see(settingsMenuItem);

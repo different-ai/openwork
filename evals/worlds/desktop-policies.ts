@@ -53,7 +53,8 @@ export async function defaultPolicyEditorAndMemberDesktop(seed: Seed) {
   return { den, member, admin, policyId, editorPath };
 }
 
-/** Two ordinary members share an all-allow default. Jordan belongs to both the
+/** Two ordinary members share defaults that block Alpha updates. Jordan gets
+ * Alpha access only from the overlapping grant team and belongs to both the
  * focused team and an overlapping grant team; Casey is the unaffected control.
  * The admin starts at Team Access and Jordan starts in a real desktop. */
 export async function teamAccess(seed: Seed) {
@@ -72,7 +73,7 @@ export async function teamAccess(seed: Seed) {
   };
   const initial = await readDefaultDesktopPolicy(seed, den.admin);
   const reset = await seed.api(den.admin, `/v1/desktop-policies/${initial.id}`, {
-    method: "PATCH", body: JSON.stringify({ policyName: "Default desktop policy", policy: flags }),
+    method: "PATCH", body: JSON.stringify({ policyName: "Default desktop policy", policy: { ...flags, allowAlphaUpdates: false } }),
   });
   if (!reset.response.ok) throw new Error(`Default grants failed: ${reset.text}`);
   const org = await seed.api(den.members.jordan, "/v1/org");
