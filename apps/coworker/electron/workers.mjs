@@ -726,7 +726,7 @@ export function workerToolCatalog() {
     },
     {
       name: "worker_spawn",
-      description: `Start a Worker for one goal that outlives this reply: watching something over time, a long research pass, a multi-step job. It works in my workspace with my files and tools, reports a finding after each bounded step, and each finding wakes me to review it. Give it a short name and a goal that says what done looks like. Choose its lifespan: a number of turns (default ${DEFAULT_TURN_BUDGET}), a deadline, or until stopped. Then tell the person in a sentence what I started. Never start a Worker to answer a quick question, and never from inside a Worker.`,
+      description: `Start a Worker for one goal that outlives this reply: watching something over time, a long research pass, a multi-step job. It works in my workspace with my files and tools, reports a finding after each bounded step, and each finding wakes me to review it. Give it a short name and a goal that says what done looks like. Choose its lifespan — a number of turns, a deadline, or until stopped — or leave it out and the person's effort dial sets the turns (${DEFAULT_TURN_BUDGET} at Balanced). Then tell the person in a sentence what I started. Never start a Worker to answer a quick question, and never from inside a Worker.`,
       inputSchema: {
         type: "object",
         properties: {
@@ -846,7 +846,8 @@ export function createWorkerToolHandlers({ coworkersDir, spawn, steer, cancel, n
       const worker = await spawn(slug, {
         name: typeof args.name === "string" ? args.name : "",
         goal: typeof args.goal === "string" ? args.goal : "",
-        lifespan: lifespanFromToolArgs(args.lifespan, { now: now() }),
+        // A lifespan the coworker did not choose is left to the app: the effort dial sets the default turns.
+        lifespan: args.lifespan === undefined || args.lifespan === null ? undefined : lifespanFromToolArgs(args.lifespan, { now: now() }),
       });
       return {
         text: `Started Worker "${worker.name}" (id ${worker.id}), ${describeLifespanForPrompt(worker.lifespan, now())}. It will report a finding after each step and each finding wakes you. Now tell the person in a sentence what you started.`,

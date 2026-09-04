@@ -822,6 +822,42 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   })()`);
   // A coworker that has never held or finished anything gets no summary line under its first message.
   expect(composerFacts).toEqual({ present: true, hasModelControl: false, mentionsModel: false, brandLine: false, summaryLine: false });
+  // The effort dial sits at the foot of the conversation: a pill naming the stop (Balanced to start), a popover with the
+  // stop's name, one line of meaning, and a five-stop slider; moving it is kept on the record and shown at once.
+  const dialBefore = await evalIn(app, `(() => {
+    const dial = document.querySelector('[data-testid="coworker-composer"] [data-testid="effort-dial"]');
+    const pill = dial?.querySelector('[data-testid="effort-dial-pill"]');
+    return dial instanceof HTMLElement && pill instanceof HTMLElement ? { stop: dial.dataset.stop, pill: pill.textContent?.trim(), open: Boolean(document.querySelector('[data-testid="effort-dial-panel"]')) } : null;
+  })()`);
+  expect(dialBefore).toEqual({ stop: "balanced", pill: "Effort Balanced ⌄", open: false });
+  await evalIn(app, `document.querySelector('[data-testid="coworker-composer"] [data-testid="effort-dial-pill"]').click(); true`);
+  const panel = await waitFor(app, `(() => {
+    const panel = document.querySelector('[data-testid="effort-dial-panel"]');
+    if (!(panel instanceof HTMLElement)) return false;
+    const range = panel.querySelector('[data-testid="effort-dial-range"]');
+    return { stop: panel.querySelector('[data-testid="effort-dial-stop"]')?.textContent?.trim(), meaning: panel.querySelector('[data-testid="effort-dial-meaning"]')?.textContent?.trim(), stops: range instanceof HTMLInputElement ? Number(range.max) + 1 : 0, reset: Boolean(panel.querySelector('[data-testid="effort-dial-reset"]')) };
+  })()`, { timeoutMs: 10_000, label: "the effort dial's popover" });
+  expect(panel).toEqual({ stop: "Balanced", meaning: "The usual: quick questions get quick answers, real work and Workers think harder.", stops: 5, reset: false });
+  await evalIn(app, `(() => {
+    const range = document.querySelector('[data-testid="effort-dial-range"]');
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+    setter.call(range, "3");
+    range.dispatchEvent(new Event("input", { bubbles: true }));
+    range.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  })()`);
+  await waitFor(app, `window.__COWORKER__.invoke("coworkers.get", { slug: "scout" }).then((response) => response.result?.effortPreference === "thorough")`, { awaitPromise: true, timeoutMs: 15_000, label: "the dial's stop kept on the record" });
+  const dialAfter = await waitFor(app, `(() => {
+    const panel = document.querySelector('[data-testid="effort-dial-panel"]');
+    const pill = document.querySelector('[data-testid="coworker-composer"] [data-testid="effort-dial-pill"]');
+    if (!(panel instanceof HTMLElement) || !(pill instanceof HTMLElement)) return false;
+    return panel.querySelector('[data-testid="effort-dial-stop"]')?.textContent?.trim() === "Thorough" ? { pill: pill.textContent?.trim(), reset: Boolean(panel.querySelector('[data-testid="effort-dial-reset"]')) } : false;
+  })()`, { timeoutMs: 10_000, label: "the dial showing Thorough" });
+  expect(dialAfter).toEqual({ pill: "Effort Thorough ⌄", reset: true });
+  await evalIn(app, `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); true`);
+  await waitFor(app, `!document.querySelector('[data-testid="effort-dial-panel"]')`, { timeoutMs: 5_000, label: "the popover closed" });
+  // Back to Balanced so the rest of the journey reads the defaults.
+  await invokeCoworker(app, "coworkers.update", { slug: "scout", patch: { effortPreference: "balanced" } });
   // Returning to Activity re-opens the panel with its 180ms unfold; let it settle before measuring it.
   await waitFor(app, `(() => {
     const panel = document.querySelector('[data-testid="context-panel"]');
@@ -829,7 +865,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   })()`, { timeoutMs: 10_000, label: "context panel open and settled" });
   evidence.recordAssertionEvidence(
     "The Activity view leads with what is happening, holds Documents, Workers, and Assignments as levels, and the composer carries no model controls or brand line",
-    "Once opened, Scout's Activity view showed one quiet note, three flat rows (Documents, Workers, Assignments) with no card, no second settings control, and no footer links, while the header carried the only Ready — plain text, no dot; the Assignments row opened its level with New assignment, an empty once list, and a single compact Add assignment empty state (Nothing on a schedule yet.); the Workers row opened a level with Workers only and New Worker; the panel and composer contained no model, thinking-effort, or engine vocabulary, and the composer carried neither a brand line nor a summary line for a coworker that has nothing yet.",
+    "Once opened, Scout's Activity view showed one quiet note, three flat rows (Documents, Workers, Assignments) with no card, no second settings control, and no footer links, while the header carried the only Ready — plain text, no dot; the Assignments row opened its level with New assignment, an empty once list, and a single compact Add assignment empty state (Nothing on a schedule yet.); the Workers row opened a level with Workers only and New Worker; the panel and composer contained no model, thinking-effort, or engine vocabulary, and the composer carried neither a brand line nor a summary line for a coworker that has nothing yet. Its effort dial read Effort Balanced; the popover showed the stop's name, its one-line meaning, a five-stop slider and no Reset; moving it to Thorough was kept on Scout's record, renamed the pill, and offered Reset; Escape closed it.",
     true,
   );
 
@@ -1088,7 +1124,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     const labels = [...(section?.querySelectorAll("label") ?? [])].map((label) => label.textContent ?? "");
     return {
       hasSelect: Boolean(section?.querySelector("select")),
-      mentionsThinkingEffort: labels.some((label) => label.includes("Thinking effort")),
+      mentionsThinkingEffort: labels.some((label) => label.toLowerCase().includes("thinking effort")),
       sectionText: section?.innerText ?? "",
     };
   })()`);

@@ -49,6 +49,8 @@ import {
   registerDiscussion,
   rememberWorkspaceSlug,
 } from "@/lib/discussions";
+import { effortForTurn, laneWithPreference, replyKindForLane, type EffortStop } from "@/lib/effort";
+import { EffortDial } from "@/ui/effort-dial";
 import { carryVariant, chooseModelForLane, classifyRequest, describeModelChoice, markAutoPicked, wasAutoPicked, type ModelLane } from "@/lib/model-choice";
 import { describeReview, parseWorkerReview, parseWorkerTurn, workerNameFromTitle, type WorkerReview, type WorkerSummary } from "@/lib/workers";
 import { WorkerDecisionCards } from "@/ui/worker-decision";
@@ -630,6 +632,7 @@ export function ThreadsPanel({
         discussionDraft={discussionDraft}
         summary={summary}
         onOpenSummary={onOpenSummary}
+        onCoworkerChanged={onCoworkerChanged}
         proposerName={team?.coworkers.find((member) => member.slug === coworker.suggestedBy?.slug)?.name ?? ""}
       />
     );
@@ -683,12 +686,15 @@ function DiscussionWelcome({
   headerSlots,
   summary,
   onOpenSummary,
+  onCoworkerChanged,
   proposerName = "",
 }: {
   coworker: CoworkerSummary;
   problem: WorkspaceProblem | null;
   warmingUp: boolean;
   onRetry: () => void;
+  /** The effort dial writes the coworker's preference; the record comes back through here. */
+  onCoworkerChanged: (coworker: CoworkerSummary) => void;
   assignmentDraft?: AssignmentDraft;
   discussionDraft?: AssignmentDraft;
   headerSlots: HeaderSlots;
@@ -777,6 +783,8 @@ function DiscussionWelcome({
         coworkerName={coworker.name}
         summary={summary}
         onOpenSummary={onOpenSummary}
+        effortStop={coworker.effortPreference}
+        onEffortChange={(stop) => void coworkerBridge.coworkers.update(coworker.slug, { effortPreference: stop }).then(onCoworkerChanged).catch(() => undefined)}
       />
     </section>
   );
@@ -1229,9 +1237,14 @@ function ThreadView({
     if (activeTurnRef.current) return;
     /** The model this turn actually ran on, so a failure can be attributed and, if it was the app's pick, replaced. */
     let turnModelId = modelOverride ? `${modelOverride.providerId}/${modelOverride.modelId}` : coworker.model;
-    /** In Automatic mode: how much thinking this message deserves, decided once per message and kept across the app's own retries. */
+    /**
+     * How much thinking this message deserves, decided once per message and kept across the app's own
+     * retries: the message's own lane, nudged by the effort dial. In Automatic mode the lane also picks
+     * the model; in fixed mode it only sets the effort the fixed model is asked for.
+     */
     const automatic = coworker.modelMode === "auto";
-    const turnLane: ModelLane = automatic ? classifyRequest(prompt) : "standard";
+    const messageLane: ModelLane = laneWithPreference(classifyRequest(prompt), coworker.effortPreference);
+    const turnLane: ModelLane = automatic ? messageLane : "standard";
     const attempt = send.mode === "retry" ? send.attempt : 0;
     /**
      * When a model the app chose by itself cannot answer, move to the next
@@ -1328,7 +1341,7 @@ function ThreadView({
           if (!catalog.models.some((model) => model.id === coworker.model)) {
             throw new Error(describeUnavailableModel(coworker.model, catalog.models, session));
           }
-          turnModel = { ...savedModel, ...(coworker.modelVariant.trim() ? { variant: coworker.modelVariant.trim() } : {}) };
+          turnModel = savedModel;
         } else {
           // Nobody chose a model yet: start on a connected model that can use tools and keep it.
           const pick = recommendModel(catalog, { exclude: failedModels });
@@ -1361,6 +1374,13 @@ function ThreadView({
               threadId,
             });
           }
+        }
+        // The effort this turn is asked for: the dial through the message's lane, snapped to what the
+        // model offers; an exact effort the person fixed in Coworker settings wins. Never the dial's own value.
+        if (turnModel) {
+          const offered = catalog.models.find((model) => model.id === turnModelId)?.variants ?? [];
+          const variant = effortForTurn({ kind: replyKindForLane(messageLane), stop: coworker.effortPreference, fixedVariant: coworker.modelVariant, variants: offered });
+          turnModel = variant ? { ...turnModel, variant } : { providerId: turnModel.providerId, modelId: turnModel.modelId };
         }
       }
       // A re-send waits for the engine to let go of the earlier attempt (a stop is still settling, say).
@@ -1445,7 +1465,7 @@ function ThreadView({
         setActiveTurn(null);
       }
     }
-  }, [abortUntilQuiet, commitTurnState, coworker.model, coworker.modelVariant, coworker.name, coworker.slug, defaultDiscussionTitle, kind, onActivityChange, onCoworkerChanged, refresh, resolution?.messageId, session, threadId, threads, title, titleDiscussionAfterFirstMessage]);
+  }, [abortUntilQuiet, commitTurnState, coworker.effortPreference, coworker.model, coworker.modelChosenBy, coworker.modelMode, coworker.modelVariant, coworker.name, coworker.slug, defaultDiscussionTitle, kind, onActivityChange, onCoworkerChanged, refresh, resolution?.messageId, session, threadId, threads, title, titleDiscussionAfterFirstMessage]);
 
   /**
    * After a quit or reload the engine may still be on the turn. Follow it to
@@ -1984,6 +2004,8 @@ function ThreadView({
           coworkerName={coworker.name}
           summary={summary}
           onOpenSummary={onOpenSummary}
+          effortStop={coworker.effortPreference}
+          onEffortChange={(stop) => void coworkerBridge.coworkers.update(coworker.slug, { effortPreference: stop }).then(onCoworkerChanged).catch(() => undefined)}
         />
       ) : kind === "worker" ? (
         <p className="border-t border-line px-5 py-3 text-center text-[11px] text-mist" data-testid="coworker-worker-readonly">
@@ -2728,6 +2750,8 @@ function DiscussionComposer({
   coworkerName,
   summary = null,
   onOpenSummary,
+  effortStop,
+  onEffortChange,
 }: {
   message: string;
   onMessageChange: (value: string) => void;
@@ -2748,6 +2772,9 @@ function DiscussionComposer({
   coworkerName: string;
   summary?: CoworkerSummaryLine | null;
   onOpenSummary?: (kind: SummaryKind) => void;
+  /** The effort dial's stop, and the change the person makes on it; absent, no dial is shown. */
+  effortStop?: EffortStop;
+  onEffortChange?: (stop: EffortStop) => void;
 }) {
   const value = assignmentMode ? assignment : message;
   const submit = assignmentMode ? onCreateAssignment : onSend;
@@ -2811,7 +2838,10 @@ function DiscussionComposer({
                 ? "Enter sends it next · Shift Enter for a new line"
                 : `Enter to ${assignmentMode ? "create" : "send"} · Shift Enter for a new line`}
           </span>
-          <SummaryLine summary={summary} onOpen={onOpenSummary} />
+          <span className="flex min-w-0 items-center gap-3">
+            {effortStop && onEffortChange ? <EffortDial stop={effortStop} onChange={onEffortChange} coworkerName={coworkerName} /> : null}
+            <SummaryLine summary={summary} onOpen={onOpenSummary} />
+          </span>
         </div>
       </div>
     </div>

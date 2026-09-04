@@ -391,7 +391,7 @@ test("the coworker starts, lists, steers, reads, and stops Workers through its o
   const handlers = createWorkerToolHandlers({
     coworkersDir,
     spawn: async (slug, input) => {
-      calls.push(["spawn", slug, input.name]);
+      calls.push(["spawn", slug, input.name, input.lifespan === undefined ? "lifespan left to the app" : "lifespan chosen"]);
       const worker = await createWorker(coworkersDir, slug, { ...input, spawnedBy: "coworker" }, { now: NOW });
       return updateWorker(coworkersDir, slug, worker.id, { status: "running", threadId: "ses_w" }, { now: NOW });
     },
@@ -435,7 +435,7 @@ test("the coworker starts, lists, steers, reads, and stops Workers through its o
     assert.match(started.content[0].text, /^Started Worker "Market scan" \(id wrk_[a-z0-9]+\), 3 of 3 turns left\./);
     assert.match(started.content[0].text, /tell the person in a sentence/);
     const id = started.structuredContent.worker.id;
-    assert.deepEqual(calls[0], ["spawn", "scout", "Market scan"]);
+    assert.deepEqual(calls[0], ["spawn", "scout", "Market scan", "lifespan chosen"]);
     assert.equal(started.structuredContent.worker.action, "started");
 
     const listed = await call("workers_list", {});
@@ -456,6 +456,12 @@ test("the coworker starts, lists, steers, reads, and stops Workers through its o
     const stopped = await call("worker_cancel", { id, reason: "Enough" });
     assert.match(stopped.content[0].text, /^Stopped "Market scan"\./);
     assert.deepEqual(calls[2], ["cancel", "scout", id, "Enough"]);
+
+    // A lifespan the coworker leaves out is not the tool's to fill in: the app's effort dial sets the default turns.
+    const unchosen = await call("worker_spawn", { name: "Inbox pass", goal: "Read the inbox." });
+    assert.equal(unchosen.isError, false);
+    assert.deepEqual(calls[3], ["spawn", "scout", "Inbox pass", "lifespan left to the app"]);
+    assert.match(unchosen.content[0].text, /10 of 10 turns left/, "the store's default holds when nothing else decides");
     assert.equal((await getWorker(coworkersDir, "scout", id)).status, "cancelled");
 
     const again = await call("worker_cancel", { id, reason: "Twice" });

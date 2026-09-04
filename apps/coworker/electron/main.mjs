@@ -54,6 +54,7 @@ import {
   updateDocument,
 } from "./documents.mjs";
 import { ensureCoordinatorHome, updateCoordinator } from "./coordinator.mjs";
+import { effortForTurn, effortStopOf, workerTurnsFor } from "../src/lib/effort.ts";
 import {
   appendGroupEvent,
   archiveGroup,
@@ -540,14 +541,47 @@ function flushPendingDeepLinks() {
   contents.send(DEEP_LINK_EVENT, pendingDeepLinks.splice(0, pendingDeepLinks.length));
 }
 
-function localRunModel(coworker) {
+/** The efforts each model offers, read from the engine once per model per launch; "" when it could not be read. */
+const variantsByModel = new Map();
+
+async function modelVariantsFor(coworker) {
+  const preference = String(coworker?.model ?? "").trim();
+  if (!preference || !coworker?.workspaceId) return null;
+  if (variantsByModel.has(preference)) return variantsByModel.get(preference);
+  try {
+    const handle = await ensurePlatformServer();
+    const payload = await fetchJson(`${handle.url}/workspace/${encodeURIComponent(coworker.workspaceId)}/opencode/config/providers`, {
+      headers: { Authorization: `Bearer ${ownerToken}` },
+    });
+    const separator = preference.indexOf("/");
+    const provider = (payload?.providers ?? []).find((entry) => entry.id === preference.slice(0, separator));
+    const variants = Object.keys(provider?.models?.[preference.slice(separator + 1)]?.variants ?? {});
+    variantsByModel.set(preference, variants);
+    return variants;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The model a background turn runs on, with the effort the dial decides for
+ * that kind of turn (an assignment run, a Worker turn, a review) — an exact
+ * effort the person fixed wins. When the model's efforts cannot be read, the
+ * fixed effort is passed as it is and the dial stays out of it.
+ */
+async function localRunModel(coworker, kind = "assignment-run") {
   const preference = String(coworker?.model ?? "").trim();
   const separator = preference.indexOf("/");
   if (separator <= 0 || separator === preference.length - 1) return undefined;
+  const fixedVariant = String(coworker?.modelVariant ?? "").trim();
+  const variants = await modelVariantsFor(coworker);
+  const variant = variants === null
+    ? fixedVariant
+    : effortForTurn({ kind, stop: effortStopOf(coworker?.effortPreference), fixedVariant, variants });
   return {
     providerId: preference.slice(0, separator),
     modelId: preference.slice(separator + 1),
-    variant: String(coworker?.modelVariant ?? "").trim() || undefined,
+    variant: variant || undefined,
   };
 }
 
@@ -604,7 +638,7 @@ async function executeLocalResponsibility(
         baseUrl: handle.url,
         workspaceId: coworker.workspaceId,
         token: ownerToken,
-        defaultModel: localRunModel(coworker),
+        defaultModel: await localRunModel(coworker, "assignment-run"),
       });
       let threadId = resumeThreadId;
       let acceptance;
@@ -759,8 +793,8 @@ function workerKey(slug, id) {
   return `${slug}:${id}`;
 }
 
-/** A thread client in the coworker's workspace, on its own model; throws when AI is unavailable here. */
-async function readyWorkerClient(coworker) {
+/** A thread client in the coworker's workspace, on its own model at the effort the dial gives this kind of turn; throws when AI is unavailable here. */
+async function readyWorkerClient(coworker, kind = "worker-turn") {
   const handle = await ensurePlatformServer();
   if (!handle.managedOpencode) throw new Error(engineError || "AI is unavailable on this Mac");
   if (!coworker.workspaceId) throw new Error("This coworker's workspace is not ready yet.");
@@ -768,7 +802,7 @@ async function readyWorkerClient(coworker) {
     baseUrl: handle.url,
     workspaceId: coworker.workspaceId,
     token: ownerToken,
-    defaultModel: localRunModel(coworker),
+    defaultModel: await localRunModel(coworker, kind),
   });
 }
 
@@ -788,7 +822,11 @@ async function syncWorkerNote(slug, worker, finding = null) {
 async function spawnWorker(slug, input, spawnedBy) {
   const coworker = await getCoworker(coworkersDir, slug);
   if (!coworker.workspaceId) throw new Error("This coworker's workspace is not ready yet.");
-  const worker = await createWorker(coworkersDir, slug, { ...input, spawnedBy });
+  // Nobody chose a lifespan: the effort dial says how much work is welcome (6 … 20 turns; 10 at Balanced).
+  const lifespan = input.lifespan === undefined || input.lifespan === null
+    ? { kind: "turns", max: workerTurnsFor(effortStopOf(coworker.effortPreference)), used: 0 }
+    : input.lifespan;
+  const worker = await createWorker(coworkersDir, slug, { ...input, lifespan, spawnedBy });
   await appendWorkerEvent(coworkersDir, slug, worker.id, {
     kind: "status",
     text: spawnedBy === "coworker" ? `Started by ${coworker.name}` : "Started by you",
@@ -1025,7 +1063,7 @@ async function recoverInterruptedWorkers() {
 async function reviewWorkerFindings(slug, findings) {
   const coworker = await getCoworker(coworkersDir, slug);
   if (!coworker.workspaceId || !coworker.conversationThreadId || !serverHandle?.managedOpencode) return "hold";
-  const client = await readyWorkerClient(coworker);
+  const client = await readyWorkerClient(coworker, "review");
   const threadId = coworker.conversationThreadId;
   const idle = await client.waitUntilIdle(threadId, { timeoutMs: REVIEW_IDLE_WAIT_MS, pollIntervalMs: 1_000 });
   if (idle.outcome !== "settled") return "hold";

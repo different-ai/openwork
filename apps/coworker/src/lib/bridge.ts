@@ -1,6 +1,7 @@
 /** Typed access to the Open Coworker main-process bridge. */
 import type { CoworkerDocument, CoworkerDocumentSummary, DocumentRevision, DocumentStatus } from "./documents";
 import type { LocalSchedule } from "./local-schedule.ts";
+import type { EffortStop } from "./effort.ts";
 import type { ModelMode } from "./model-choice.ts";
 import type { Personality } from "./personalities";
 import type { WorkerEvent, WorkerLifespan, WorkerSummary } from "./workers";
@@ -98,6 +99,8 @@ export type CoworkerSummary = {
   modelChosenBy: ModelChosenBy;
   /** `auto`: a quick, standard, or deep model per message around `model`; `fixed`: `model` every time. */
   modelMode: ModelMode;
+  /** The effort dial (Light … All in): a preference each turn's effort is derived from, never used as is. */
+  effortPreference: EffortStop;
   automations: string[];
   createdAt: string;
 };
@@ -352,7 +355,7 @@ export const coworkerBridge = {
     get: (slug: string) => invoke<CoworkerSummary>("coworkers.get", { slug }),
     create: (input: { name: string; role: string; mission: string; avatarColor: AvatarColor; avatarGlasses: AvatarGlasses; personality: Personality; roleId?: string; firstNote?: string }) =>
       invoke<CoworkerSummary>("coworkers.create", input),
-    update: (slug: string, patch: Partial<Pick<CoworkerSummary, "workspaceId" | "conversationThreadId" | "automations" | "mission" | "role" | "model" | "modelVariant" | "modelChosenBy" | "modelMode" | "avatarColor" | "avatarGlasses" | "personality">>) =>
+    update: (slug: string, patch: Partial<Pick<CoworkerSummary, "workspaceId" | "conversationThreadId" | "automations" | "mission" | "role" | "model" | "modelVariant" | "modelChosenBy" | "modelMode" | "effortPreference" | "avatarColor" | "avatarGlasses" | "personality">>) =>
       invoke<CoworkerSummary>("coworkers.update", { slug, patch }),
     ensureWorkspace: (slug: string) => invoke<CoworkerSummary>("coworkers.ensureWorkspace", { slug }),
     /** Retire: archive the whole home under `.retired/`; nothing is deleted. */
