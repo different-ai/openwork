@@ -21,7 +21,7 @@ import {
   listLocalResponsibilities,
   updateLocalResponsibility,
 } from "./local-responsibilities.mjs";
-import { MemoryError, forgetFact, readSelf, rememberFact, updateSoul } from "./self-memory.mjs";
+import { MemoryError, forgetFact, noteProgress, readSelf, rememberFact, updateSoul } from "./self-memory.mjs";
 
 const SCHEDULE_SCHEMA = {
   type: "object",
@@ -131,6 +131,22 @@ export function selfToolCatalog() {
       inputSchema: { type: "object", properties: { target: { type: "string", description: "The line to forget, or the topic of a memory to drop." } }, required: ["target"] },
     },
     {
+      name: "memory_note",
+      description: [
+        "Keep one line in working memory saying where a piece of work stands, so the person can see what you are doing and you can pick it up again after an interruption.",
+        "Call it before you start anything longer than a quick answer (what you are doing, what done looks like, the next step) and again after each meaningful step, finding, or change of plan — not after every tool call. The same work name replaces the previous note in place; an empty text clears it when the work is done or dropped.",
+        "One or two lines per piece of work, never a log: details belong in a document, and what stays true belongs in long-term memory. Open Coworker keeps this line for each of your Workers itself.",
+      ].join(" "),
+      inputSchema: {
+        type: "object",
+        properties: {
+          work: { type: "string", description: "The piece of work, in a few words, e.g. \"Vendor comparison\". Use the same words each time." },
+          text: { type: "string", description: "Where it stands now: done so far, what you found, what comes next, what you are waiting on. Empty to clear the note." },
+        },
+        required: ["work"],
+      },
+    },
+    {
       name: "soul_update",
       description: [
         "Change how you work, inside one section of your soul: Role and Mission are one paragraph each (add a sentence, replace or remove a phrase, or rewrite); Principles and Communication are bullet lists (add a line, replace or remove the line that mentions target, or rewrite).",
@@ -200,6 +216,7 @@ const VERBS = {
   assignment_remove: "remove the assignment",
   memory_remember: "remember that",
   memory_forget: "forget that",
+  memory_note: "note where the work stands",
   soul_update: "update how I work",
   self_read: "read my own files",
 };
@@ -364,6 +381,10 @@ export function createSelfToolHandlers({ coworkersDir }) {
     },
     memory_forget: async (slug, args) => {
       const result = await forgetFact(coworkersDir, slug, { target: args.target });
+      return { text: result.output, structured: { changeId: result.change?.id ?? null } };
+    },
+    memory_note: async (slug, args) => {
+      const result = await noteProgress(coworkersDir, slug, { work: args.work, text: args.text });
       return { text: result.output, structured: { changeId: result.change?.id ?? null } };
     },
     soul_update: async (slug, args) => {
