@@ -20,6 +20,7 @@ const baseCapabilities: DenOrgCapabilities = {
   cloud: true,
   installLinks: true,
   mcpConnections: true,
+  coworkerTeams: false,
   openworkWeb: true,
   orgManagedDashboards: true,
   workflows: false,

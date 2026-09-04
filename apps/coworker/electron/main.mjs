@@ -1836,8 +1836,9 @@ const commands = {
   "templates.sync": async ({ userEmail, automatic = false, installIds = [] }) => {
     const session = denSession;
     if (!session) throw new Error("Sign in to OpenWork to get your team's coworkers.");
-    const items = await listAssignedCoworkerTemplates(session);
-    return installTemplates({ scope: templateScope(session, userEmail), items, automatic, installIds, isCurrent: () => denSession === session });
+    const catalog = await listAssignedCoworkerTemplates(session);
+    if (!catalog.enabled) return { enabled: false, items: [], created: [] };
+    return { enabled: true, ...await installTemplates({ scope: templateScope(session, userEmail), items: catalog.items, automatic, installIds, isCurrent: () => denSession === session }) };
   },
   "templates.import": async () => {
     const selection = await dialog.showOpenDialog({ title: "Import a coworker template", properties: ["openFile"], filters: [{ name: "Coworker template", extensions: ["json"] }] });

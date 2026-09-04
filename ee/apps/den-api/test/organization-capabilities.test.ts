@@ -5,7 +5,7 @@ import {
   readOrganizationCapabilityOverrides,
 } from "../src/organization-capabilities.js"
 
-const defaultCapabilities = { installLinks: false, mcpConnections: false }
+const defaultCapabilities = { installLinks: false, mcpConnections: false, coworkerTeams: false }
 
 describe("normalizeOrganizationCapabilities", () => {
   test("defaults every capability to false when metadata is empty", () => {
@@ -22,7 +22,7 @@ describe("normalizeOrganizationCapabilities", () => {
   })
 
   test("reads an explicit opt-in from JSON string metadata", () => {
-    expect(normalizeOrganizationCapabilities(JSON.stringify({ capabilities: { installLinks: true, mcpConnections: true } }))).toEqual({ installLinks: true, mcpConnections: true })
+    expect(normalizeOrganizationCapabilities(JSON.stringify({ capabilities: { installLinks: true, mcpConnections: true } }))).toEqual({ ...defaultCapabilities, installLinks: true, mcpConnections: true })
   })
 
   test("ignores retired rollout keys for features that are now always on", () => {
@@ -79,6 +79,10 @@ describe("readOrganizationCapabilityOverrides", () => {
 
 describe("organizationHasCapability", () => {
   test("is false by default and true only with an explicit opt-in", () => {
+    expect(organizationHasCapability(null, "coworkerTeams")).toBe(false)
+    expect(organizationHasCapability({ capabilities: { coworkerTeams: "true" } }, "coworkerTeams")).toBe(false)
+    expect(organizationHasCapability({ capabilities: { coworkerTeams: true } }, "coworkerTeams")).toBe(true)
+    expect(readOrganizationCapabilityOverrides({ capabilities: { coworkerTeams: false } })).toEqual({ coworkerTeams: false })
     expect(organizationHasCapability(null, "installLinks")).toBe(false)
     expect(organizationHasCapability(null, "mcpConnections")).toBe(false)
     expect(organizationHasCapability({ capabilities: {} }, "installLinks")).toBe(false)

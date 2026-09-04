@@ -97,6 +97,7 @@ const updateOrganizationCapabilitiesSchema = z.object({
   capabilities: z.object({
     installLinks: z.boolean().nullable().optional(),
     mcpConnections: z.boolean().nullable().optional(),
+    coworkerTeams: z.boolean().nullable().optional(),
   }),
 })
 
@@ -285,6 +286,7 @@ function readAdminVisibleOrganizationCapabilities(metadata: Record<string, unkno
   return {
     installLinks: organizationInstallLinksEnabled(metadata, { gatingEnabled: false }),
     mcpConnections: memberFacingMcpConnectionsEnabled(metadata, { gatingEnabled: false }),
+    coworkerTeams: normalizeOrganizationCapabilities(metadata).coworkerTeams,
   }
 }
 
@@ -323,7 +325,7 @@ function readUnmanagedCapabilityMetadata(metadata: Record<string, unknown>): Rec
     // OpenWork Web access instead), so stale stored overrides stay managed
     // (dropped on the next capabilities write) instead of passing through as
     // unmanaged metadata.
-    if (key !== "installLinks" && key !== "mcpConnections" && key !== "workflows" && key !== "codemodeScripts" && key !== "remoteMcpApps" && key !== "cloud") {
+    if (key !== "installLinks" && key !== "mcpConnections" && key !== "coworkerTeams" && key !== "workflows" && key !== "codemodeScripts" && key !== "remoteMcpApps" && key !== "cloud") {
       capabilities[key] = value
     }
   }
@@ -1827,6 +1829,15 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
           delete capabilities.mcpConnections
         } else {
           capabilities.mcpConnections = mcpConnections
+        }
+      }
+
+      const coworkerTeams = body.data.capabilities.coworkerTeams
+      if (coworkerTeams !== undefined) {
+        if (coworkerTeams === null) {
+          delete capabilities.coworkerTeams
+        } else {
+          capabilities.coworkerTeams = coworkerTeams
         }
       }
 

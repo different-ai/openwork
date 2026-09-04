@@ -8,6 +8,8 @@ import type { WorkerEvent, WorkerLifespan, WorkerSummary } from "./workers";
 import type { AssignedCoworkerTemplate } from "@openwork/types/coworker-template";
 
 export type CoworkerTemplateSync = {
+  /** Present only for organization discovery, not local file imports. */
+  enabled?: boolean;
   items: Array<AssignedCoworkerTemplate & { installed: boolean; slug: string | null; updateAvailable: boolean }>;
   created: CoworkerSummary[];
 };

@@ -16,7 +16,17 @@ import { pluginQueryKeys } from "./plugin-data";
 const emptyTemplate: CoworkerTemplate = { kind: "coworker", schemaVersion: 1, name: "", description: "", role: "", mission: "", instructions: "", avatarColor: "blue", avatarGlasses: "round", provisioning: "automatic" };
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null; }
 
-export function CoworkerTemplateEditor({ pluginId, coworkerId }: { pluginId: string; coworkerId?: string }) {
+export function CoworkerTemplateEditor(props: { pluginId: string; coworkerId?: string }) {
+  const { orgContext, orgSlug } = useOrgDashboard();
+  if (!orgContext) return <p className="p-8 text-sm text-gray-500">Loading organization…</p>;
+  if (!orgContext.capabilities.coworkerTeams) return <div className="p-8 text-sm text-gray-500">
+    <Link href={getPluginRoute(orgSlug, props.pluginId)}>← Back to plugin</Link>
+    <p className="mt-4">Prepared coworker teams are not enabled for this organization.</p>
+  </div>;
+  return <EnabledCoworkerTemplateEditor {...props} />;
+}
+
+function EnabledCoworkerTemplateEditor({ pluginId, coworkerId }: { pluginId: string; coworkerId?: string }) {
   const { orgId, orgSlug, runReauthableAction } = useOrgDashboard();
   const router = useRouter();
   const queryClient = useQueryClient();

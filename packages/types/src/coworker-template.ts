@@ -25,6 +25,8 @@ export const assignedCoworkerTemplateSchema = z.object({
   assigned: z.boolean(),
 })
 export const coworkerTemplateListSchema = z.object({
+  /** Explicit organization opt-in; older servers fail closed. */
+  enabled: z.boolean().default(false),
   items: z.array(assignedCoworkerTemplateSchema),
   nextCursor: z.string().nullable(),
 })
