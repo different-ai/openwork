@@ -160,7 +160,26 @@ test("the coworker contract decides the shape of an answer once: reply, document
   assert.match(agents, /\*\*A goal that outlives one reply\.\*\*[\s\S]*`worker_spawn` "Ticket themes"/);
   assert.match(agents, /\*\*Quick factual question\.\*\*[\s\S]*Before: a document titled "Vendor call"/);
   // The contract is versioned so every existing coworker picks the rule up on its next launch.
-  assert.equal(AGENTS_CONTRACT_VERSION, 7);
+  assert.equal(AGENTS_CONTRACT_VERSION, 8);
+});
+
+test("the coworker contract says how it decides: act when clear and reversible, ask once with options, state assumptions and confidence, confirm the irreversible", () => {
+  const agents = agentsTemplate({ name: "Nova" });
+  const section = agents.slice(agents.indexOf("## How I decide"), agents.indexOf("## Keeping track of what I'm doing"));
+  assert.ok(section.length > 0, "the section sits between the talk examples and the working notes");
+  assert.match(section, /\*\*Act when it is clear and reversible\.\*\*/);
+  assert.match(section, /I do not ask "shall I\?" for work the person already asked for/);
+  assert.match(section, /\*\*Ask when the answer changes the outcome — and ask once\.\*\*/);
+  assert.match(section, /one question with two or three concrete options, using\s+the question tool/);
+  assert.match(section, /Never a list of questions/);
+  assert.match(section, /\*\*Say my assumptions and go\.\*\*/);
+  assert.match(section, /\*\*Ask first for what cannot be undone\.\*\*/);
+  assert.match(section, /Sending, posting, paying, deleting/);
+  assert.match(section, /\*\*Say how sure I am, in plain words\.\*\*/);
+  assert.match(section, /never invent a number, a name, or a date/);
+  assert.match(section, /\*\*Take the smallest step that shows progress\.\*\*/);
+  assert.match(section, /\*\*When I can't, say what I can\.\*\*/);
+  assert.match(section, /\*\*In a group, one voice\.\*\*/);
 });
 
 test("the coworker contract says to note where work stands before starting it and to hand long work to a Worker so it stays in the conversation", () => {
@@ -335,6 +354,27 @@ test("the record says who chose the model: the app's pick may be swapped once, t
   await writeFile(configPath, (await readFile(configPath, "utf8")).replace(/^modelChosenBy: .*\n/m, "").replace(/^model: .*$/m, 'model: "openwork/claude"'), "utf8");
   assert.equal((await getCoworker(coworkersDir, "legacy")).model, "openwork/claude");
   assert.equal((await getCoworker(coworkersDir, "legacy")).modelChosenBy, "");
+});
+
+test("a coworker's model mode: new coworkers are automatic, the picker can fix a model, and records from before the field keep what the person meant", async () => {
+  const coworkersDir = await tempCoworkersDir();
+  const created = await createCoworker(coworkersDir, { name: "Ops" });
+  assert.equal(created.modelMode, "auto");
+  assert.match(await readFile(path.join(created.path, "coworker.md"), "utf8"), /^modelMode: auto$/m);
+  // The app persisting the standard model it picked leaves Automatic on; the person fixing a model turns it off.
+  assert.equal((await updateCoworker(coworkersDir, "ops", { model: "openai/gpt-5" })).modelMode, "auto");
+  const fixed = await updateCoworker(coworkersDir, "ops", { model: "openai/gpt-5", modelMode: "fixed" });
+  assert.equal(fixed.modelMode, "fixed");
+  assert.equal((await getCoworker(coworkersDir, "ops")).modelMode, "fixed");
+  assert.equal((await updateCoworker(coworkersDir, "ops", { modelMode: "nonsense" })).modelMode, "fixed", "an unknown mode changes nothing");
+  assert.equal((await updateCoworker(coworkersDir, "ops", { modelMode: "auto" })).modelMode, "auto");
+  // A coworker.md from before the field: a chosen model means fixed, a blank means automatic.
+  const configPath = path.join(created.path, "coworker.md");
+  const withoutField = (await readFile(configPath, "utf8")).replace(/^modelMode: .*\n/m, "");
+  await writeFile(configPath, withoutField, "utf8");
+  assert.equal((await getCoworker(coworkersDir, "ops")).modelMode, "fixed");
+  await writeFile(configPath, withoutField.replace(/^model: .*$/m, 'model: ""'), "utf8");
+  assert.equal((await getCoworker(coworkersDir, "ops")).modelMode, "auto");
 });
 
 test("avatar settings fall back when stored or patched values are unknown", async () => {
