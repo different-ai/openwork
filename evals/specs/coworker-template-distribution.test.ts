@@ -34,8 +34,9 @@ test.skipIf(!mysql || !redis)(title, { timeout: 300_000 }, async ({ place, evide
   const admin = den.admin;
   const teammate = den.members.teammate!;
   const outsider = den.members.outsider!;
+  let organizationId = "";
   async function request(session: DenSession, path: string, method = "GET", body?: unknown, status = 200): Promise<Record<string, unknown>> {
-    const result = await denFetch(session, path, { method, headers: { authorization: `Bearer ${session.token}` }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    const result = await denFetch(session, path, { method, headers: { authorization: `Bearer ${session.token}`, ...(organizationId ? { "x-openwork-org-id": organizationId } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     expect(result.response.status, `${method} ${path}: ${result.text}`).toBe(status);
     return record(result.body);
   }
@@ -50,6 +51,22 @@ test.skipIf(!mysql || !redis)(title, { timeout: 300_000 }, async ({ place, evide
     } while (cursor);
     return items;
   }
+  const organizations = await request(admin, "/v1/me/orgs");
+  if (!Array.isArray(organizations.orgs) || !organizations.orgs[0]) throw new Error("Expected the fixture organization.");
+  organizationId = id(organizations.orgs[0]);
+  const capabilitiesPath = `/v1/admin/organizations/${organizationId}/capabilities`;
+  const preparedInput = { schemaVersion: "openwork.coworker.v1", normalizedPayloadJson: template("Disabled template") };
+  expect(await request(admin, "/v1/me/coworkers")).toMatchObject({ enabled: false, items: [] });
+  await request(admin, "/v1/config-objects", "POST", { type: "agent", sourceMode: "cloud", input: preparedInput }, 403);
+  await request(admin, "/v1/plugins", "POST", { name: "Disabled bundle", components: [{ type: "agent", input: preparedInput }] }, 403);
+  await request(teammate, capabilitiesPath, "PUT", { capabilities: { coworkerTeams: true } }, 403);
+  const otherOrganization = id((await request(admin, "/v1/org", "POST", { name: "Unenabled organization" }, 201)).organization);
+  await request(admin, capabilitiesPath, "PUT", { capabilities: { coworkerTeams: true } });
+  expect(await request(admin, "/v1/me/coworkers")).toMatchObject({ enabled: true, items: [] });
+  const otherCatalog = await denFetch(admin, "/v1/me/coworkers", { headers: { authorization: `Bearer ${admin.token}`, "x-openwork-org-id": otherOrganization } });
+  expect(otherCatalog.response.status).toBe(200);
+  expect(otherCatalog.body).toMatchObject({ enabled: false, items: [] });
+  evidence.recordAssertionEvidence("Prepared teams require an explicit platform-admin opt-in for each organization", "New organizations defaulted off. Both direct template creation and bundle creation returned 403. A member could not enable the flag. Enabling the first organization left the second organization disabled on the same server.", true);
   const teammateId = await readCurrentOrganizationMemberId(teammate);
   const outsiderId = await readCurrentOrganizationMemberId(outsider);
   const pluginId = id((await request(admin, "/v1/plugins", "POST", { name: "Marketing team", components: [
@@ -92,6 +109,16 @@ test.skipIf(!mysql || !redis)(title, { timeout: 300_000 }, async ({ place, evide
   await request(admin, `/v1/plugins/${pluginId}/restore`, "POST");
   expect(await available(outsider)).toHaveLength(2);
   evidence.recordAssertionEvidence("Marketplace assignments and team removals govern future coworker delivery", "An individually granted marketplace supplied both coworkers; removing another member from the team revoked only that member's discovery. Archiving the plugin removed marketplace delivery and restoring it restored delivery.", true);
+
+  await request(admin, capabilitiesPath, "PUT", { capabilities: { coworkerTeams: false } });
+  expect(await request(outsider, "/v1/me/coworkers")).toMatchObject({ enabled: false, items: [] });
+  await request(admin, `/v1/config-objects/${campaign.id}/versions`, "POST", { input: preparedInput }, 403);
+  // Clearing the override must restore the default-off state, not a stored true.
+  await request(admin, capabilitiesPath, "PUT", { capabilities: { coworkerTeams: null } });
+  expect(await request(admin, "/v1/me/coworkers")).toMatchObject({ enabled: false, items: [] });
+  await request(admin, capabilitiesPath, "PUT", { capabilities: { coworkerTeams: true } });
+  expect(await available(outsider)).toHaveLength(2);
+  evidence.recordAssertionEvidence("Disabling prepared teams stops marketplace delivery and editing without deleting templates", "Turning the organization flag off immediately removed discovery and rejected version creation. Clearing the override stayed off. Re-enabling restored the same two assigned templates.", true);
 
   const revised = { ...template("Campaign partner"), instructions: "Ask for an approved brief before drafting." };
   await request(admin, `/v1/config-objects/${campaign.id}/versions`, "POST", { input: { schemaVersion: "openwork.coworker.v1", normalizedPayloadJson: revised } }, 201);

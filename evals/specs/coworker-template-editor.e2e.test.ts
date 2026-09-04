@@ -17,6 +17,27 @@ test("an administrator prepares, revises, and withdraws a coworker through Conne
     return isRecord(result.body) ? records(result.body.items) : [];
   }
   expect(await delivered()).toEqual([]);
+  await step("enable prepared teams only for the selected organization", async () => {
+    await user.see({ role: "heading", name: "Prepared marketing team" }, { timeoutMs: 90_000 });
+    await user.notSee("Add coworker");
+    await user.navigate(new URL(`/dashboard/plugins/${world.pluginId}/coworkers/new`, world.den.ref.webUrl).toString());
+    await user.see({ text: "Prepared coworker teams are not enabled for this organization." });
+    await user.notSee("Save coworker");
+    await user.navigate(new URL("/admin", world.den.ref.webUrl).toString());
+    await user.see({ testId: "admin-capability-coworkerTeams" }, { timeoutMs: 90_000 });
+    await user.click({ testId: "admin-capability-coworkerTeams" });
+    await expect.poll(async () => {
+      const result = await probe.api(world.den.admin, `/v1/admin/organizations/${world.organizationId}/capabilities`);
+      return result.body;
+    }, { timeout: 30_000 }).toMatchObject({ capabilities: { coworkerTeams: true } });
+    await user.reload();
+    const capability = await probe.api(world.den.admin, `/v1/admin/organizations/${world.organizationId}/capabilities`);
+    expect(capability.response.status).toBe(200);
+    expect(capability.body).toMatchObject({ capabilities: { coworkerTeams: true } });
+    await user.navigate(new URL(`/dashboard/plugins/${world.pluginId}`, world.den.ref.webUrl).toString());
+    await user.see("Add coworker", { timeoutMs: 90_000 });
+  });
+  evidence.recordAssertionEvidence("The organization admin toggle reveals prepared-team controls and protects direct editor links", "The plugin initially hid Add coworker, and its direct editor URL showed the organization-disabled state without Save. The platform admin enabled Prepared coworker teams in the backoffice; the saved capability was true after reload and the plugin exposed Add coworker.", true);
   await step("create the coworker using its profile form", async () => {
     await user.see("Add coworker", { timeoutMs: 90_000 });
     await user.click("Add coworker");

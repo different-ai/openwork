@@ -1,3 +1,4 @@
+import { organizationHasCapability } from "../../../organization-capabilities.js"
 import { and, asc, count, desc, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
 import {
   AuthUserTable,
@@ -642,11 +643,14 @@ function deriveSkillProjection(value: ConfigObjectInput) {
   }
 }
 
-function deriveProjection(input: { objectType: ConfigObjectRow["objectType"]; value: ConfigObjectInput }) {
+function deriveProjection(input: { objectType: ConfigObjectRow["objectType"]; value: ConfigObjectInput; coworkerTeamsEnabled?: boolean }) {
   if (input.value.schemaVersion === COWORKER_TEMPLATE_SCHEMA || input.value.normalizedPayloadJson?.kind === "coworker") {
     const parsed = coworkerTemplateSchema.safeParse(input.value.normalizedPayloadJson)
     if (input.objectType !== "agent" || !parsed.success || input.value.rawSourceText) {
       throw new PluginArchRouteFailure(400, "invalid_coworker_template", "Provide a valid coworker template with reusable instructions only. Memory, credentials, workspace files, and running work cannot be included.")
+    }
+    if (input.coworkerTeamsEnabled !== true) {
+      throw new PluginArchRouteFailure(403, "coworker_teams_disabled", "Prepared coworker teams are not enabled for this organization.")
     }
     return { title: parsed.data.name, description: parsed.data.description, searchText: `${parsed.data.name}\n${parsed.data.role}\n${parsed.data.description}` }
   }
@@ -1666,6 +1670,9 @@ export async function getConfigObjectDetail(context: PluginArchActorContext, con
 /** Coworkers reuse versioned agent assets and the same grants as skills. */
 export async function listMeCoworkerTemplates(input: { context: PluginArchActorContext; cursor?: string; limit?: number }) {
   const context = input.context
+  if (!organizationHasCapability(context.organizationContext.organization.metadata, "coworkerTeams")) {
+    return { enabled: false, items: [], nextCursor: null }
+  }
   const organizationId = context.organizationContext.organization.id
   const memberId = context.organizationContext.currentMember.id
   const teamIds = context.memberTeams.map((team) => team.id)
@@ -1675,7 +1682,7 @@ export async function listMeCoworkerTemplates(input: { context: PluginArchActorC
     eq(ConfigObjectTable.status, "active"),
     isNull(ConfigObjectTable.deletedAt),
   )).orderBy(desc(ConfigObjectTable.updatedAt), desc(ConfigObjectTable.id))
-  if (rows.length === 0) return { items: [], nextCursor: null }
+  if (rows.length === 0) return { enabled: true, items: [], nextCursor: null }
   const ids = rows.map((row) => row.id)
   const access = await listMeEffectivePluginAccessWithComponentKinds({ context, assignmentsOnly: true })
   // Administrators can browse everything; that is not an assignment. Likewise,
@@ -1713,7 +1720,7 @@ export async function listMeCoworkerTemplates(input: { context: PluginArchActorC
     const parsed = coworkerTemplateSchema.safeParse(version.normalizedPayloadJson)
     if (parsed.success) items.push({ id: row.id, versionId: version.id, template: parsed.data, assigned })
   }
-  return pageItems(items, input.cursor, input.limit)
+  return { enabled: true, ...pageItems(items, input.cursor, input.limit) }
 }
 
 export async function createConfigObject(input: {
@@ -1736,7 +1743,7 @@ export async function createConfigObject(input: {
   }
 
   const now = new Date()
-  const projection = deriveProjection({ objectType: input.objectType, value: input.value })
+  const projection = deriveProjection({ objectType: input.objectType, value: input.value, coworkerTeamsEnabled: organizationHasCapability(input.context.organizationContext.organization.metadata, "coworkerTeams") })
   const organizationId = input.context.organizationContext.organization.id
   const createdByOrgMembershipId = input.context.organizationContext.currentMember.id
   const configObjectId = createDenTypeId("configObject")
@@ -1867,7 +1874,7 @@ export async function createConfigObjectVersion(input: { context: PluginArchActo
   await requirePluginArchResourceRole({ context: input.context, requireFreshSession, resourceId: row.id, resourceKind: "config_object", role: "editor" })
 
   const now = new Date()
-  const projection = deriveProjection({ objectType: row.objectType, value: input.value })
+  const projection = deriveProjection({ objectType: row.objectType, value: input.value, coworkerTeamsEnabled: organizationHasCapability(input.context.organizationContext.organization.metadata, "coworkerTeams") })
   await db.transaction(async (tx) => {
     await tx.insert(ConfigObjectVersionTable).values({
       configObjectId: row.id,
@@ -2843,7 +2850,7 @@ export async function createPluginBundle(input: {
           description: component.value?.metadata?.description,
         },
       }
-      deriveProjection({ objectType: component.type, value })
+      deriveProjection({ objectType: component.type, value, coworkerTeamsEnabled: organizationHasCapability(input.context.organizationContext.organization.metadata, "coworkerTeams") })
       components.push({
         connectionBinding: { connection, serverName: slugifyPluginMcpName(connection.name) },
         type: component.type,
@@ -2854,7 +2861,7 @@ export async function createPluginBundle(input: {
     if (!component.value) {
       throw new PluginArchRouteFailure(400, "invalid_request", "input is required unless connectionId is provided.")
     }
-    deriveProjection({ objectType: component.type, value: component.value })
+    deriveProjection({ objectType: component.type, value: component.value, coworkerTeamsEnabled: organizationHasCapability(input.context.organizationContext.organization.metadata, "coworkerTeams") })
     if (component.connection) {
       if (!isPluginArchOrgAdmin(input.context)) {
         throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can configure plugin MCP connections.")

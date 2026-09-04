@@ -58,7 +58,7 @@ export type DenSession = {
 };
 
 /** The main process supplies its already-resolved API base, including any self-hosted proxy path. */
-export async function listAssignedCoworkerTemplates(session: Pick<DenSession, "baseUrl" | "token" | "orgId">): Promise<AssignedCoworkerTemplate[]> {
+export async function listAssignedCoworkerTemplates(session: Pick<DenSession, "baseUrl" | "token" | "orgId">): Promise<{ enabled: boolean; items: AssignedCoworkerTemplate[] }> {
   const items: AssignedCoworkerTemplate[] = [];
   const cursors = new Set<string>();
   let cursor: string | null = null;
@@ -66,6 +66,7 @@ export async function listAssignedCoworkerTemplates(session: Pick<DenSession, "b
     const query = new URLSearchParams({ limit: "100" });
     if (cursor) query.set("cursor", cursor);
     const page = coworkerTemplateListSchema.parse(await denRequest(session.baseUrl, `/v1/me/coworkers?${query}`, { token: session.token, orgId: session.orgId, resolvedApiBase: true }));
+    if (!page.enabled) return { enabled: false, items: [] };
     items.push(...page.items);
     cursor = page.nextCursor;
     if (cursor) {
@@ -73,7 +74,7 @@ export async function listAssignedCoworkerTemplates(session: Pick<DenSession, "b
       cursors.add(cursor);
     }
   } while (cursor);
-  return items;
+  return { enabled: true, items };
 }
 
 const denSessionSchema = z.object({
