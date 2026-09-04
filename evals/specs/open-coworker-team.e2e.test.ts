@@ -28,6 +28,12 @@ const SCRIPTED_MODEL = "scripted";
 const DRAFT_PROMPT = "Draft the launch announcement";
 const DRAFT_REPLY = "Editor is better suited for this — want me to pass it over?";
 const EDITOR_REPLY = "On it — a first draft of the announcement is coming.";
+const PROOFREAD_PROMPT = "Proofread the pricing page";
+const PROOFREAD_REPLY = "Editor could take this one — want me to pass it over?";
+const KEPT_REPLY = "Understood — I'll proofread it myself.";
+/** The same request again, in other letters and with a mark: the guard reads it as the same request. */
+const PROOFREAD_AGAIN_PROMPT = "proofread the pricing page!";
+const PROOFREAD_AGAIN_REPLY = "Right — I'm on it myself.";
 const INBOX_PROMPT = "Can you keep an eye on the support inbox every morning?";
 const INBOX_REPLY = "That's a job for a support coworker — want me to add one?";
 const WRITER_PROMPT = "Add a writing coworker";
@@ -43,6 +49,21 @@ type ScriptedTurn = { call: ScriptedCall | null; reply: string };
 /** First match wins: a request passed on carries the original words too, so the hand-over line comes first. */
 const SCRIPT: Array<{ match: string; turn: ScriptedTurn }> = [
   { match: "Passed from Nova", turn: { call: null, reply: EDITOR_REPLY } },
+  { match: "Go ahead, Nova", turn: { call: null, reply: KEPT_REPLY } },
+  {
+    match: PROOFREAD_AGAIN_PROMPT,
+    turn: {
+      call: { name: "coworker_team_refer", arguments: { to: "editor", message: PROOFREAD_AGAIN_PROMPT, why: "Editor edits for a living." } },
+      reply: PROOFREAD_AGAIN_REPLY,
+    },
+  },
+  {
+    match: PROOFREAD_PROMPT,
+    turn: {
+      call: { name: "coworker_team_refer", arguments: { to: "editor", message: PROOFREAD_PROMPT, why: "Editor edits for a living." } },
+      reply: PROOFREAD_REPLY,
+    },
+  },
   {
     match: DRAFT_PROMPT,
     turn: {
@@ -119,6 +140,28 @@ function toolResults(body: unknown): string[] {
     .map((message) => (typeof message.content === "string" ? message.content : JSON.stringify(message.content)));
 }
 
+/** What one request tells about the instruction stack the model received: the system prompt's size and what it carries, and the tools offered. */
+type PromptFacts = { systemChars: number; contractInPrompt: boolean; toolServerLineInPrompt: boolean; tools: number; bodyChars: number; prompt: string; reasoningEffort: string };
+
+function promptFacts(body: unknown, raw: string, prompt: string): PromptFacts {
+  const system = isRecord(body) && Array.isArray(body.messages)
+    ? body.messages
+      .filter((message): message is Record<string, unknown> => isRecord(message) && message.role === "system")
+      .map((message) => (typeof message.content === "string" ? message.content : Array.isArray(message.content) ? message.content.map((part) => (isRecord(part) && typeof part.text === "string" ? part.text : "")).join("\n") : ""))
+      .join("\n")
+    : "";
+  return {
+    systemChars: system.length,
+    contractInPrompt: system.includes("Which shape an answer takes"),
+    toolServerLineInPrompt: system.includes("Open Coworker's own tools for this coworker"),
+    tools: isRecord(body) && Array.isArray(body.tools) ? body.tools.length : 0,
+    bodyChars: raw.length,
+    prompt,
+    // The thinking effort as the provider receives it (the "high" variant declared on the scripted model).
+    reasoningEffort: isRecord(body) && typeof body.reasoning_effort === "string" ? body.reasoning_effort : "",
+  };
+}
+
 function streamChunks(response: ServerResponse, deltas: Array<Record<string, unknown>>, finish: string): void {
   response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
   const base = { id: "chatcmpl-scripted", object: "chat.completion.chunk", created: 1, model: SCRIPTED_MODEL };
@@ -128,8 +171,8 @@ function streamChunks(response: ServerResponse, deltas: Array<Record<string, unk
   response.end();
 }
 
-async function startScriptedModel(): Promise<{ baseUrl: string; seenToolResults: string[]; prompts: string[] }> {
-  const state = { baseUrl: "", seenToolResults: [] as string[], prompts: [] as string[] };
+async function startScriptedModel(): Promise<{ baseUrl: string; seenToolResults: string[]; prompts: string[]; facts: PromptFacts[] }> {
+  const state = { baseUrl: "", seenToolResults: [] as string[], prompts: [] as string[], facts: [] as PromptFacts[] };
   const server = createServer((request, response) => {
     const url = request.url ?? "";
     if (request.method === "GET" && url.startsWith("/v1/models")) {
@@ -145,7 +188,10 @@ async function startScriptedModel(): Promise<{ baseUrl: string; seenToolResults:
         const scripted = SCRIPT.find((entry) => prompt.includes(entry.match));
         const results = toolResults(body);
         state.seenToolResults.push(...results);
-        if (results.length === 0) state.prompts.push(prompt);
+        if (results.length === 0) {
+          state.prompts.push(prompt);
+          state.facts.push(promptFacts(body, raw, prompt));
+        }
         if (scripted?.turn.call && results.length === 0) {
           const call = scripted.turn.call;
           streamChunks(response, [{
@@ -433,7 +479,7 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
               npm: "@ai-sdk/openai-compatible",
               name: "Scripted model",
               options: { baseURL: scripted.baseUrl, apiKey: "eval-scripted-key" },
-              models: { [SCRIPTED_MODEL]: { name: "Scripted model", tool_call: true } },
+              models: { [SCRIPTED_MODEL]: { name: "Scripted model", tool_call: true, variants: { high: { reasoningEffort: "high" } } } },
             },
           },
         },
@@ -466,8 +512,9 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
     expect(connected, `${String(member.slug)}'s engine lists the scripted provider as connected`).toBe(true);
   }
   const scriptedId = `${SCRIPTED_PROVIDER}/${SCRIPTED_MODEL}`;
+  // Nova keeps a thinking effort of its own ("high"); Editor follows the model default. Both must reach the provider as such.
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    for (const member of team) await invokeCoworker(app, "coworkers.update", { slug: String(member.slug), patch: { model: scriptedId, modelVariant: "" } });
+    for (const member of team) await invokeCoworker(app, "coworkers.update", { slug: String(member.slug), patch: { model: scriptedId, modelVariant: member.slug === "nova" ? "high" : "" } });
     await evalIn(app, "location.reload(); true");
     await openCoworker(app, "nova", "Nova");
     const models = resultList(await invokeCoworker(app, "coworkers.list", {})).map((member) => member.model);
@@ -495,6 +542,18 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
     pills: ["Ask Editor", "Continue with Nova"],
     buttonsInside: 0,
   }]);
+  // What Nova's first turn received: the contract (the shape rule included) reaches the model through the
+  // instruction files; the size of the system prompt and the tools offered are recorded as measured.
+  const firstTurn = scripted.facts.find((facts) => facts.prompt.includes(DRAFT_PROMPT));
+  expect(firstTurn).toBeDefined();
+  expect(firstTurn?.contractInPrompt).toBe(true);
+  expect(firstTurn?.tools ?? 0).toBeGreaterThanOrEqual(23);
+  expect(firstTurn?.reasoningEffort).toBe("high");
+  evidence.recordAssertionEvidence(
+    "A coworker's first turn receives the contract once, with the shape rule, beside its tools, at the thinking effort the person chose",
+    `Nova's first request carried a system prompt of ${firstTurn?.systemChars ?? 0} characters that included the contract's "Which shape an answer takes" section, offered ${firstTurn?.tools ?? 0} tools, measured ${firstTurn?.bodyChars ?? 0} characters as a whole, and asked the provider for the person's thinking effort (reasoning_effort high); the tool server's own one-line instruction ${firstTurn?.toolServerLineInPrompt ? "was" : "was not"} part of the prompt on this engine.`,
+    true,
+  );
   await tapPill(app, "ask");
   await waitForConversation(app, "Editor");
   const passed = await waitFor(app, `(() => {
@@ -507,6 +566,7 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   await waitFor(app, `[...document.querySelectorAll('[data-message-role="assistant"]')].some((message) => (message.textContent ?? "").includes(${json(EDITOR_REPLY)}))`, { timeoutMs: 300_000, label: "Editor's reply to the passed request" });
   const editorPrompt = scripted.prompts.find((prompt) => prompt.includes("Passed from Nova"));
   expect(editorPrompt).toBeDefined();
+  expect(scripted.facts.find((facts) => facts.prompt.includes("Passed from Nova"))?.reasoningEffort).toBe("");
   expect(editorPrompt).toContain(`${DRAFT_PROMPT}\n\nPassed from Nova (Research and synthesis): Editor writes for a living.`);
   expect(editorPrompt).toContain("Take it from here as your own request; the person is now talking to you.");
   await openCoworker(app, "nova", "Nova");
@@ -518,10 +578,26 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
     true,
   );
 
+  // --- 2b. A request the person keeps with Nova is never offered again: the same request comes back as a check, not a tile.
+  const proofread = await converse(app, "Nova", PROOFREAD_PROMPT, PROOFREAD_REPLY);
+  expect(proofread.summary).toBe("Offered to pass this to Editor");
+  await waitFor(app, `(() => { const tiles = ${READ_TILES}; return tiles.length === 2 && tiles[1].state === "open" && tiles[1].pills.join(",") === "Ask Editor,Continue with Nova"; })()`, { timeoutMs: 30_000, label: "the second hand-over tile" });
+  await tapPill(app, "continue");
+  await waitFor(app, `[...document.querySelectorAll('[data-message-role="assistant"]')].some((message) => (message.textContent ?? "").includes(${json(KEPT_REPLY)}))`, { timeoutMs: 300_000, label: "Nova taking the request back" });
+  await waitFor(app, `(() => { const tiles = ${READ_TILES}; return tiles.length === 2 && tiles[1].state === "continued" && tiles[1].pills.length === 0; })()`, { timeoutMs: 30_000, label: "the kept tile settled" });
+  const keptAgain = await converse(app, "Nova", PROOFREAD_AGAIN_PROMPT, PROOFREAD_AGAIN_REPLY);
+  expect(keptAgain.summary).toBe("Checked the team · you asked to keep this here");
+  expect(await evalIn(app, `${READ_TILES}.length`)).toBe(2);
+  evidence.recordAssertionEvidence(
+    "A request the person chose to keep with the coworker is never offered to a teammate again",
+    "Asked to proofread the pricing page, Nova offered it to Editor; Continue with Nova sent Nova the person's Go ahead and settled the tile as kept. The same request a second time read Checked the team · you asked to keep this here between the bubbles and left no new tile — the team tool answered the model in one sentence instead of recording another offer.",
+    true,
+  );
+
   // --- 3. Work nobody covers: Nova proposes a teammate; Add to team creates it without leaving; Say hi opens it.
   const inbox = await converse(app, "Nova", INBOX_PROMPT, INBOX_REPLY);
   expect(inbox.summary).toBe("Suggested a teammate · Care");
-  const suggestionTiles = await waitFor(app, `(() => { const tiles = ${READ_TILES}; return tiles.length === 2 && tiles[1].state === "open" ? tiles[1] : false; })()`, { timeoutMs: 30_000, label: "the suggested teammate tile" });
+  const suggestionTiles = await waitFor(app, `(() => { const tiles = ${READ_TILES}; return tiles.length === 3 && tiles[2].state === "open" ? tiles[2] : false; })()`, { timeoutMs: 30_000, label: "the suggested teammate tile" });
   expect(suggestionTiles).toEqual({
     kind: "suggestion",
     state: "open",
@@ -563,7 +639,7 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   await openCoworker(app, "nova", "Nova");
   const covered = await converse(app, "Nova", WRITER_PROMPT, WRITER_REPLY);
   expect(covered.summary).toBe("Checked the team · Editor already covers this");
-  expect(await evalIn(app, `${READ_TILES}.length`)).toBe(2);
+  expect(await evalIn(app, `${READ_TILES}.length`)).toBe(3);
   await openCoworker(app, "editor", "Editor");
   const sales = await converse(app, "Editor", SALES_PROMPT, SALES_REPLY);
   expect(sales.summary).toBe("Suggested a teammate · Pipeline");
@@ -589,11 +665,11 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   const editorAfterReload = await waitFor(app, `(() => { const tiles = ${READ_TILES}; return tiles.length === 1 ? tiles[0] : false; })()`, { timeoutMs: 60_000, label: "Editor's tile after a reload" });
   expect(editorAfterReload).toMatchObject({ kind: "suggestion", state: "declined", name: "Pipeline", pills: [] });
   await openCoworker(app, "nova", "Nova");
-  const novaAfterReload = await waitFor(app, `(() => { const tiles = ${READ_TILES}; return tiles.length === 2 ? tiles.map((tile) => [tile.kind, tile.state, tile.pills.join(",")]) : false; })()`, { timeoutMs: 60_000, label: "Nova's tiles after a reload" });
-  expect(novaAfterReload).toEqual([["referral", "asked", ""], ["suggestion", "added", "Say hi"]]);
+  const novaAfterReload = await waitFor(app, `(() => { const tiles = ${READ_TILES}; return tiles.length === 3 ? tiles.map((tile) => [tile.kind, tile.state, tile.pills.join(",")]) : false; })()`, { timeoutMs: 60_000, label: "Nova's tiles after a reload" });
+  expect(novaAfterReload).toEqual([["referral", "asked", ""], ["referral", "continued", ""], ["suggestion", "added", "Say hi"]]);
   evidence.recordAssertionEvidence(
     "Tiles and their states survive a reload",
-    "After a reload Editor's conversation still showed the declined Pipeline tile with no pills, and Nova's showed the hand-over as Passed to Editor and the Care suggestion as added with its Say hi pill.",
+    "After a reload Editor's conversation still showed the declined Pipeline tile with no pills, and Nova's showed the first hand-over as Passed to Editor, the second as kept with Nova, and the Care suggestion as added with its Say hi pill.",
     true,
   );
 });
