@@ -375,7 +375,7 @@ function SidebarContent({ className, ...props }: React.ComponentProps<"div">) {
       data-slot="sidebar-content"
       data-sidebar="content"
       className={cn(
-        "no-scrollbar flex min-h-0 flex-1 flex-col gap-px overflow-auto [--radius:var(--radius-xl)] group-data-[collapsible=icon]:overflow-hidden",
+        "no-scrollbar flex min-h-0 flex-1 flex-col gap-px overflow-x-hidden overflow-y-auto [--radius:var(--radius-xl)] group-data-[collapsible=icon]:overflow-hidden",
         className
       )}
       {...props}
@@ -388,7 +388,9 @@ function SidebarGroup({ className, ...props }: React.ComponentProps<"div">) {
     <div
       data-slot="sidebar-group"
       data-sidebar="group"
-      className={cn("relative flex w-full min-w-0 flex-col mx-2 px-0 py-0", className)}
+      // No `w-full`: with the `mx-2` gutter it made every group 16px wider than
+      // the sidebar, which is what let the list scroll sideways.
+      className={cn("relative flex min-w-0 flex-col mx-2 px-0 py-0", className)}
       {...props}
     />
   )
