@@ -21,6 +21,7 @@ test("any desktop build can launch with an isolated blank-slate profile", async 
   assert.deepEqual(normalEnv, originalNormalEnv);
 
   const firstEnv = { OPENWORK_DESKTOP_DISTRIBUTION: "enterprise" };
+  /** @type {NodeJS.ProcessEnv} */
   const secondEnv = {};
   const firstProfile = prepareBlankSlateProfile({ argv: ["--blank-slate"], env: firstEnv });
   const secondProfile = prepareBlankSlateProfile({ argv: ["--blank-slate"], env: secondEnv });
