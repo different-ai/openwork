@@ -186,7 +186,7 @@ export function OnboardingTeam({
                     <button
                       key={role.id}
                       type="button"
-                      className="h-8 rounded-full border border-spark/30 bg-spark/6 px-3.5 text-[13px] font-medium text-snow/90 transition-colors hover:bg-spark/14 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/50"
+                      className="min-h-8 max-w-full rounded-full border border-spark/30 bg-spark/6 px-3.5 py-1.5 text-left text-[13px] [overflow-wrap:anywhere] font-medium text-snow/90 transition-colors hover:bg-spark/14 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/50"
                       data-testid="onboarding-team-add-role"
                       data-role-id={role.id}
                       onClick={() => {

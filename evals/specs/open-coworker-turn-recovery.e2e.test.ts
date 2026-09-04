@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { coworker, evalIn, fill, needs, test, waitFor } from "@openwork/testkit";
+import { coworker, evalIn, fill, needs, screenshot, test, waitFor } from "@openwork/testkit";
 import { expect, onTestFinished } from "vitest";
 
 /**
@@ -668,7 +668,16 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   await type(app, "Next two");
   const rows = () => evalIn(app, `[...document.querySelectorAll('[data-testid="coworker-next-row"]')].map((row) => row.querySelector("span.truncate")?.textContent?.trim() ?? "")`);
   expect(await rows()).toEqual(["Next one", "Next two"]);
-  expect(await evalIn(app, `document.querySelector('[data-testid="coworker-next-row"]')?.textContent ?? ""`)).toContain("Next · steers the reply that follows");
+  expect(await evalIn(app, `document.querySelector('[data-testid="coworker-next-label"]')?.textContent ?? ""`)).toBe("Up next · 2 messages · sent after this reply");
+  expect(await evalIn(app, `document.querySelectorAll('[data-testid="coworker-next-row"] button').length`)).toBe(2);
+  expect(await evalIn(app, `document.querySelectorAll('[data-testid="coworker-next"] [role="menuitem"]').length`)).toBe(0);
+  await screenshot(app);
+  await evalIn(app, `document.querySelector('[data-testid="coworker-next-row"] [aria-haspopup="menu"]').click(); true`);
+  await waitFor(app, `document.activeElement?.getAttribute("data-testid") === "coworker-next-edit"`, { label: "queue menu focuses its first action" });
+  await evalIn(app, `document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })); true`);
+  expect(await evalIn(app, `document.activeElement?.getAttribute("data-testid")`)).toBe("coworker-next-send-now");
+  await evalIn(app, `document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); true`);
+  await waitFor(app, `document.activeElement?.getAttribute("aria-haspopup") === "menu" && !document.querySelector('[data-testid="coworker-next"] [role="menu"]')`, { label: "Escape returns focus to the queue action control" });
   // The record beside the coworker carries both: the turn in flight and what waits as Next.
   const turnsFile = await waitFor(app, `window.__COWORKER__.invoke("coworkers.files.read", { slug: "nova", path: "turns.json" })
     .then((response) => response.ok && response.result.content.includes("Next two") ? JSON.parse(response.result.content) : false)
@@ -677,14 +686,20 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   const recorded = turnsFile.threads[threadId];
   expect(isRecord(recorded.pending) ? recorded.pending.prompt : null).toBe(HOLD_PROMPT);
   expect(Array.isArray(recorded.next) ? recorded.next.map((item) => (isRecord(item) ? item.text : null)) : null).toEqual(["Next one", "Next two"]);
-  await evalIn(app, `[...document.querySelectorAll('[data-testid="coworker-next-row"]')][1].querySelector('[data-testid="coworker-next-edit"]').click(); true`);
+  await evalIn(app, `[...document.querySelectorAll('[data-testid="coworker-next-row"]')][1].querySelector('[aria-haspopup="menu"]').click(); true`);
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-next-edit"]'))`, { label: "queue menu opens for edit" });
+  await evalIn(app, `document.querySelector('[data-testid="coworker-next-edit"]').click(); true`);
   expect(await evalIn(app, `document.querySelector('textarea[aria-label="Message Nova"]')?.value`)).toBe("Next two");
   expect(await rows()).toEqual(["Next one"]);
   await type(app, "Next three");
   expect(await rows()).toEqual(["Next one", "Next three"]);
-  await evalIn(app, `[...document.querySelectorAll('[data-testid="coworker-next-row"]')][1].querySelector('[data-testid="coworker-next-remove"]').click(); true`);
+  await evalIn(app, `[...document.querySelectorAll('[data-testid="coworker-next-row"]')][1].querySelector('[aria-haspopup="menu"]').click(); true`);
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-next-remove"]'))`, { label: "queue menu opens for remove" });
+  await evalIn(app, `document.querySelector('[data-testid="coworker-next-remove"]').click(); true`);
   expect(await rows()).toEqual(["Next one"]);
-  await evalIn(app, `document.querySelector('[data-testid="coworker-next-row"] [data-testid="coworker-next-send-now"]').click(); true`);
+  await evalIn(app, `[...document.querySelectorAll('[data-testid="coworker-next-row"]')][0].querySelector('[aria-haspopup="menu"]').click(); true`);
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-next-send-now"]'))`, { label: "queue menu opens for send-now" });
+  await evalIn(app, `document.querySelector('[data-testid="coworker-next-send-now"]').click(); true`);
   await waitFor(app, `[...document.querySelectorAll('[data-message-role="user"]')].some((node) => (node.textContent ?? "").trim() === "Next one")`, { timeoutMs: 30_000, label: "Send now sent the waiting message" });
   await waitForReply(app, DEFAULT_REPLY, 60_000);
   expect(await rows()).toEqual([]);
@@ -712,7 +727,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(scripted.countFor("Drain B")).toBe(1);
   evidence.recordAssertionEvidence(
     "Messages typed while the coworker works wait as Next, can be edited, removed, or sent now, and drain in order",
-    "With a reply held, two messages became two Next rows in order (the first saying it steers the reply that follows), recorded in turns.json beside the pending turn; Edit returned the second to the field, a new one took its place, Remove dropped it, and Send now stopped the held reply (one quiet Stopped. line stayed in the transcript) and sent the waiting message at once. Two more messages then drained one at a time after the held reply landed, in order, each once.",
+    "With a reply held, two messages became two numbered rows under one Up next label, each with a single action menu; ArrowDown moved between actions and Escape closed the menu and restored focus, recorded in turns.json beside the pending turn; Edit returned the second to the field, a new one took its place, Remove dropped it, and Send now stopped the held reply (one quiet Stopped. line stayed in the transcript) and sent the waiting message at once. Two more messages then drained one at a time after the held reply landed, in order, each once.",
     true,
   );
 

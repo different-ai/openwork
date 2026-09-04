@@ -36,8 +36,8 @@ const WORKING_MEMORY_FILE = path.join("memory", "working.md");
 const MEMORY_INDEX_FILE = path.join("memory", "index.md");
 const LONG_TERM_DIR = path.join("memory", "long-term");
 const WORKSPACE_DIR = "workspace";
-const AVATAR_COLORS = new Set(["blue", "violet", "mint", "orange", "rose", "slate"]);
-const AVATAR_GLASSES = new Set(["round", "square", "none"]);
+const AVATAR_COLORS = new Set(["blue", "violet", "mint", "orange", "rose", "slate", "sand"]);
+const AVATAR_GLASSES = new Set(["round", "square", "oval", "none"]);
 // Mirrors PERSONALITIES in src/lib/personalities.ts; the renderer owns the sayings, the store owns the choice.
 const PERSONALITIES = new Set([
   "none",

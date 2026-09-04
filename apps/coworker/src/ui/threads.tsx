@@ -1,3 +1,4 @@
+import { ActionMenu } from "@/ui/kit";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { coworkerBridge, type CoworkerSummary, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
@@ -2510,30 +2511,25 @@ function TurnFailureBubble({ coworkerName, outcome, onChoose }: { coworkerName: 
   );
 }
 
-/**
- * What the person said while the coworker was working, waiting between the
- * transcript and the field. Each row is the message on one line with Edit,
- * Remove, and Send now; the first says what Next means. Rows go one at a
- * time, in order, as turns settle.
- */
+/** Queued messages remain in order; secondary actions live in one menu per row. */
 function NextRows({ items, onEdit, onRemove, onSendNow }: { items: QueuedMessage[]; onEdit: (id: string) => void; onRemove: (id: string) => void; onSendNow: (id: string) => void }) {
   return (
-    <div className="bg-ink px-5 pt-1" data-testid="coworker-next">
-      <div className="mx-auto max-w-3xl space-y-1 px-12">
-        {items.map((item, index) => (
-          <div key={item.id} className="flex items-center gap-2 text-[11px] text-mist" data-testid="coworker-next-row" data-queued-id={item.id}>
-            <span className="shrink-0 font-medium text-snow/70">
-              Next
-              {index === 0 ? <span className="font-normal text-mist/70"> · steers the reply that follows</span> : null}
-            </span>
-            <span className="min-w-0 flex-1 truncate" title={item.text}>{item.text}</span>
-            <span className="flex shrink-0 items-center gap-x-3">
-              <button type="button" className="font-medium text-snow/80 underline-offset-2 hover:underline" data-testid="coworker-next-edit" onClick={() => onEdit(item.id)}>Edit</button>
-              <button type="button" className="font-medium text-snow/80 underline-offset-2 hover:underline" data-testid="coworker-next-remove" onClick={() => onRemove(item.id)}>Remove</button>
-              <button type="button" className="font-medium text-snow/80 underline-offset-2 hover:underline" data-testid="coworker-next-send-now" onClick={() => onSendNow(item.id)}>Send now</button>
-            </span>
-          </div>
-        ))}
+    <div className="bg-ink px-5 pt-2" data-testid="coworker-next">
+      <div className="mx-auto max-w-3xl pl-10 sm:pl-12">
+        <p className="mb-1 text-[10px] text-mist" data-testid="coworker-next-label">Up next · {items.length} {items.length === 1 ? "message" : "messages"} · sent after this reply</p>
+        <ol className="rounded-xl border border-line bg-panel/40 px-2 py-1" aria-label="Queued messages">
+          {items.map((item, index) => (
+            <li key={item.id} className="flex min-w-0 items-center gap-2 py-0.5 text-xs text-mist" data-testid="coworker-next-row" data-queued-id={item.id}>
+              <span className="w-4 shrink-0 text-center text-[10px] text-mist/70" aria-label={`Position ${index + 1}`}>{index + 1}</span>
+              <span className="min-w-0 flex-1 truncate text-snow/85" title={item.text}>{item.text}</span>
+              <ActionMenu label={`Actions for queued message ${index + 1}`} side="above" items={[
+                { label: "Edit message", testId: "coworker-next-edit", onSelect: () => onEdit(item.id) },
+                { label: "Send now", testId: "coworker-next-send-now", onSelect: () => onSendNow(item.id) },
+                { label: "Remove from queue", testId: "coworker-next-remove", tone: "danger", onSelect: () => onRemove(item.id) },
+              ]} />
+            </li>
+          ))}
+        </ol>
       </div>
     </div>
   );

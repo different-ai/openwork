@@ -590,6 +590,27 @@ this Mac.
 
 ## A team that grows
 
+The chooser uses full-width recommendation rows so names, roles, and missions
+remain readable beside the existing avatars. Eight optional profession presets
+(marketing, sales, founders, product and engineering, consulting, customer
+success, people, and education) suggest small teams with concrete responsibilities
+and a reviewable workflow. All roles and names remain editable; a preset grants
+no app access and starts no schedules.
+
+On **Add a coworker**, **Ask AI to shape your team** sends the person's work
+and selected profession to an existing coworker's conversation using its current
+model. The coworker can recommend a workflow and offer one missing teammate
+through the existing suggestion card. Existing duplicate, decline, and daily
+suggestion limits still apply, and only **Add to team** creates the coworker.
+The original avatar shape, gaze, and animation remain; **Sand** and **Oval** add
+one optional color and frame style, including portable template support.
+
+Messages queued during a reply appear as numbered rows under one **Up next**
+label. Each row has one action menu for editing, sending now, or removing it.
+The menu opens above the composer, supports arrow keys, and returns focus to its
+trigger on Escape. Queue persistence, order, and send-now behavior are unchanged.
+
+
 A new person never meets a blank form first, coworkers know who else is on the
 team, and the team can grow from the conversation — while only the person's
 tap ever creates a coworker.

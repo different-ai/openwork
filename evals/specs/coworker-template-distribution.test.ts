@@ -22,11 +22,11 @@ function entry(value: unknown) {
   const item = record(value);
   const profile = record(item.template);
   if (typeof item.versionId !== "string" || typeof item.assigned !== "boolean" || typeof profile.name !== "string" || typeof profile.instructions !== "string") throw new Error("Expected a versioned coworker template.");
-  return { id: id(item), versionId: item.versionId, assigned: item.assigned, template: { name: profile.name, instructions: profile.instructions } };
+  return { id: id(item), versionId: item.versionId, assigned: item.assigned, template: { name: profile.name, instructions: profile.instructions, avatarColor: profile.avatarColor, avatarGlasses: profile.avatarGlasses } };
 }
 
 function template(name: string) {
-  return { kind: "coworker", schemaVersion: 1, name, description: "A prepared marketing teammate", role: "Marketing", mission: "Help plan campaigns", instructions: "Ask for the audience before drafting.", provisioning: "automatic" };
+  return { kind: "coworker", schemaVersion: 1, name, description: "A prepared marketing teammate", role: "Marketing", mission: "Help plan campaigns", avatarColor: "sand", avatarGlasses: "oval", instructions: "Ask for the audience before drafting.", provisioning: "automatic" };
 }
 
 test.skipIf(!mysql || !redis)(title, { timeout: 300_000 }, async ({ place, evidence }) => {
@@ -88,6 +88,7 @@ test.skipIf(!mysql || !redis)(title, { timeout: 300_000 }, async ({ place, evide
   await request(admin, `/v1/teams/${teamId}`, "PATCH", { memberIds: [teammateId] });
   const inherited = await available(teammate, 1);
   expect(inherited.map((item) => item.template.name).sort()).toEqual(["Campaign partner", "Research partner"]);
+  expect(inherited.every((item) => item.template.avatarColor === "sand" && item.template.avatarGlasses === "oval")).toBe(true);
   expect(inherited.every((item) => item.assigned === true)).toBe(true);
   expect(await available(outsider)).toEqual([]);
   const campaign = inherited.find((item) => item.template.name === "Campaign partner");
