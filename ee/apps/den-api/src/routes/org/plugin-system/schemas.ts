@@ -236,14 +236,36 @@ export const pluginMcpConnectionSetupSchema = z.object({
 
 export const pluginCreateComponentSchema = z.object({
   type: configObjectTypeSchema,
-  input: configObjectInputSchema,
+  input: configObjectInputSchema.optional(),
   connection: pluginMcpConnectionSetupSchema.optional(),
+  connectionId: z.string().trim().min(1).max(160).optional(),
 }).superRefine((value, ctx) => {
   if (value.connection && value.type !== "mcp") {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: "connection is only allowed on mcp components.",
       path: ["connection"],
+    })
+  }
+  if (value.connectionId && value.type !== "mcp") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "connectionId is only allowed on mcp components.",
+      path: ["connectionId"],
+    })
+  }
+  if (value.connection && value.connectionId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Provide either connection or connectionId, not both.",
+      path: ["connectionId"],
+    })
+  }
+  if (!value.input && !value.connectionId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "input is required unless connectionId is provided.",
+      path: ["input"],
     })
   }
 })
