@@ -15,6 +15,7 @@ export type OnboardingDraft = {
   /** Stable for the whole onboarding, so a retry after a crash never creates a coworker twice. */
   draftId: string;
   intents: string[];
+  patternId?: string;
   drafts: TeamDraft[];
   /** Slugs created so far, so a retry skips them. */
   createdSlugs: string[];
@@ -45,7 +46,7 @@ export function loadOnboardingDraft(storage: DraftStorage | null): OnboardingDra
     const parsed: unknown = JSON.parse(storage.getItem(ONBOARDING_DRAFT_KEY) ?? "");
     if (!isRecord(parsed) || typeof parsed.draftId !== "string" || !parsed.draftId) return emptyOnboardingDraft();
     const drafts = Array.isArray(parsed.drafts) ? parsed.drafts.filter(isTeamDraft) : [];
-    return { draftId: parsed.draftId, intents: strings(parsed.intents), drafts, createdSlugs: strings(parsed.createdSlugs) };
+    return { draftId: parsed.draftId, intents: strings(parsed.intents), ...(typeof parsed.patternId === "string" ? { patternId: parsed.patternId } : {}), drafts, createdSlugs: strings(parsed.createdSlugs) };
   } catch {
     return emptyOnboardingDraft();
   }

@@ -115,8 +115,8 @@ export type CoworkerSummary = {
 
 export type ModelChosenBy = "app" | "person" | "";
 
-export type AvatarColor = "blue" | "violet" | "mint" | "orange" | "rose" | "slate";
-export type AvatarGlasses = "round" | "square" | "none";
+export type AvatarColor = "blue" | "violet" | "mint" | "orange" | "rose" | "slate" | "sand";
+export type AvatarGlasses = "round" | "square" | "oval" | "none";
 
 /** One role from the team catalog, as onboarding and the Add screen propose it. */
 export type TeamRole = {

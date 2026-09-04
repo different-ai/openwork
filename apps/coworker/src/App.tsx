@@ -1,3 +1,4 @@
+import { patternDrafts, workPattern } from "@/lib/work-patterns";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { coworkerBridge, type CoworkerGroupSummary, type CoworkerGroupTurn, type CoworkerSummary, type CoworkerTemplateSync, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
 import { subscribeGroupRuns } from "@/lib/group-runs";
@@ -596,13 +597,13 @@ export default function App() {
 
   const proposeTeam = useCallback(async () => {
     try {
-      const drafts = await coworkerBridge.team.recommend(onboardingDraft.intents);
+      const drafts = patternDrafts(await coworkerBridge.team.recommend(onboardingDraft.intents), onboardingDraft.patternId ?? "");
       updateOnboardingDraft((current) => ({ ...current, drafts }));
       setOnboardingStep("team");
     } catch (cause) {
       setBootError(cause instanceof Error ? cause.message : String(cause));
     }
-  }, [onboardingDraft.intents, updateOnboardingDraft]);
+  }, [onboardingDraft.intents, onboardingDraft.patternId, updateOnboardingDraft]);
 
   const updateSelectedLiveActivity = useCallback((activity: CoworkerActivity | null) => {
     if (!selectedSlug) return;
@@ -674,6 +675,8 @@ export default function App() {
         <OnboardingIntents
           catalog={teamCatalog}
           selected={onboardingDraft.intents}
+          patternId={onboardingDraft.patternId ?? ""}
+          onPattern={(patternId) => updateOnboardingDraft((current) => ({ ...current, patternId, intents: workPattern(patternId)?.jobs.map((job) => job.roleId) ?? [] }))}
           onToggle={(id) => updateOnboardingDraft((current) => ({ ...current, intents: toggleIntent(current.intents, id) }))}
           onContinue={() => void proposeTeam()}
           onOwn={addOwnCoworker}
@@ -784,6 +787,7 @@ export default function App() {
           <div key="create" className="view-enter flex min-w-0 flex-1">
             <NewCoworker
               team={coworkers}
+              onAskTeam={(slug, prompt) => { setCreating(false); visitCoworker(slug, prompt); }}
               onCancel={selected || coworkers.length > 0 ? () => setCreating(false) : null}
               onCreated={(coworker) => {
                 setCreating(false);
