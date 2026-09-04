@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "mysql2": "^3.22.0",
+    "mysql2": "^3.23.1",
     "zod": "^3.25.76"
   }
 }

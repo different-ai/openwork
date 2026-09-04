@@ -149,7 +149,7 @@ export function getSettingsTabDescription(tab: SettingsTab) {
     case "preferences":
       return "Default model, reasoning, and compaction";
     case "permissions":
-      return "Authorized folders and file access";
+      return "How agents run here, authorized folders, and file access";
     case "cloud-account":
       return t("settings.tab_description_cloud_account");
     case "connect":

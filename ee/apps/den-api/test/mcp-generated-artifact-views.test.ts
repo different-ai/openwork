@@ -146,6 +146,7 @@ test("keeps per-view render tools exposed without selection-bound aliases", asyn
     expect(tools.tools.some((tool) => tool.name === `render_artifact_${viewId}`)).toBe(true)
     expect(tools.tools.some((tool) => tool.name === `preview_artifact_${viewId}`)).toBe(true)
     expect(tools.tools.filter((tool) => /selected_program$/.test(tool.name))).toEqual([])
+    expect(tools.tools.filter((tool) => tool.name.includes("_program"))).toEqual([])
     expect(tools.tools.some((tool) => tool.name === "save_artifact_view")).toBe(true)
     const saved = await client.callTool({
       name: "save_artifact_view",

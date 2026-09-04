@@ -10,7 +10,14 @@ import { db } from "../db.js"
 import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
 import { fetchPreviewNoRedirect, fetchWithConnectRetry, previewFetch } from "../workers/preview-fetch.js"
-import { decodeProviderCredential, readProviderEnvNames, selectLegacyScalarCredentialEnvName, selectPrimaryCredentialEnvName } from "./provider-credentials.js"
+import {
+  decodeProviderCredential,
+  readProviderEnvNames,
+  runtimeProviderEnvNames,
+  selectLegacyScalarCredentialEnvName,
+  selectPrimaryCredentialEnvName,
+  toRuntimeProviderEnv,
+} from "./provider-credentials.js"
 
 type JsonRecord = Record<string, unknown>
 type OrganizationId = typeof LlmProviderTable.$inferSelect.organizationId
@@ -269,8 +276,16 @@ function readOpenWorkInferenceBaseUrl(providerConfig: JsonRecord) {
 
 function providerEnvEntries(provider: CloudProviderMaterializationProvider): EnvEntry[] {
   const entries: EnvEntry[] = []
-  const envNames = readProviderEnvNames(provider.providerConfig)
-  const credential = decodeProviderCredential(provider.apiKey)
+  const stored = decodeProviderCredential(provider.apiKey)
+  // Stored rows keep the catalog's declared names; the worker sees the
+  // provider-scoped runtime names for both the block and the multi-env map.
+  const credential = toRuntimeProviderEnv({
+    id: provider.id,
+    source: provider.source,
+    providerConfig: provider.providerConfig,
+    apiKeys: stored.apiKeys,
+  })
+  const envNames = readProviderEnvNames(credential.providerConfig)
 
   if (credential.apiKeys) {
     const keys = Object.keys(credential.apiKeys)
@@ -283,16 +298,16 @@ function providerEnvEntries(provider: CloudProviderMaterializationProvider): Env
     }
   }
 
-  if (credential.apiKey && envNames[0]) {
+  if (stored.apiKey && envNames[0]) {
     upsertEnvEntry(
       entries,
       selectLegacyScalarCredentialEnvName(envNames) ?? envNames[0],
-      credential.apiKey,
+      stored.apiKey,
     )
   }
 
   const primaryCredentialEnvName = selectPrimaryCredentialEnvName(envNames, entries.map((entry) => entry.key))
-  const primaryCredential = credential.apiKey?.trim() || entries.find((entry) => entry.key === primaryCredentialEnvName)?.value || ""
+  const primaryCredential = stored.apiKey?.trim() || entries.find((entry) => entry.key === primaryCredentialEnvName)?.value || ""
   if (provider.source === "openwork" && primaryCredential) {
     upsertEnvEntry(entries, "OPENWORK_API_KEY", primaryCredential)
     const baseUrl = readOpenWorkInferenceBaseUrl(provider.providerConfig)
@@ -330,7 +345,7 @@ function buildProviderConfig(provider: CloudProviderMaterializationProvider) {
   const config: JsonRecord = {
     id: provider.providerId,
     name: provider.name,
-    env: readProviderEnvNames(provider.providerConfig),
+    env: runtimeProviderEnvNames(provider),
   }
 
   if (Object.keys(models).length > 0 || provider.source !== "openwork") {
@@ -366,7 +381,7 @@ function buildProviderConfig(provider: CloudProviderMaterializationProvider) {
 }
 
 function providerHasRequiredCredential(provider: CloudProviderMaterializationProvider, envEntries: EnvEntry[]) {
-  const envNames = readProviderEnvNames(provider.providerConfig)
+  const envNames = runtimeProviderEnvNames(provider)
   if (envNames.length === 0) {
     return true
   }

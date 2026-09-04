@@ -14,7 +14,6 @@
     "packages/testkit/src/**/*.ts",
     "worlds/**/*.ts",
     "specs/spec-primitives.test.ts",
-    "specs/composer-draft-reload.e2e.test.ts",
-    "specs/sso-invite-sign-in.e2e.test.ts"
+    "specs/composer-draft-reload.e2e.test.ts"
   ]
 }

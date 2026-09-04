@@ -5,7 +5,6 @@ import { toast } from "@/components/ui/sonner";
 import {
   buildDenAuthUrl,
   clearDenSession,
-  createDenClient,
   DEFAULT_DEN_BASE_URL,
   DenApiError,
   ensureDenActiveOrganization,
@@ -499,11 +498,9 @@ export function useDenSession({
     setStatusMessage(t("den.signing_in"));
 
     try {
-      const exchangeClient = createDenClient({ baseUrl: nextBaseUrl });
       // The helper exchanges, persists, and dispatches the success/error session events.
       const result = await exchangeHandoffAndSignIn(parsed.grant, {
         baseUrl: nextBaseUrl,
-        client: exchangeClient,
         // Pasted one-time codes are desktop-initiated sign-ins.
         desktopInitiated: true,
         fallbackErrorMessage: t("den.error_no_token"),

@@ -3,7 +3,6 @@ import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
 import { test } from "@openwork/testkit";
 import { listSinglesTests } from "../scripts/list-singles-tests.mjs";
-import { listQuarantined } from "../scripts/quarantine.mjs";
 
 const profilePath = fileURLToPath(
   new URL("./daytona-e2e-regression-profile.json", import.meta.url),
@@ -16,14 +15,21 @@ const alertsWorkflowPath = fileURLToPath(
   new URL("../../.github/workflows/e2e-test-failure-alerts.yml", import.meta.url),
 );
 
-const SINGLES_CATEGORIES = new Set(["fresh-den-url", "fault-proxy"]);
+const SINGLES_CATEGORIES = new Set(["fresh-den-url", "fault-proxy", "fresh-desktop-profile"]);
 const DISALLOWED_CATEGORIES = new Set([
   "per-test-den-env",
   "local-bun-world",
   "raw-or-local-placement",
   "unavailable-secret-or-docker",
 ]);
-const DENIED_TEST = "capability-search-latency.e2e.test.ts";
+const FRESH_DESKTOP_PROFILE_TESTS = [
+  "compatible-release-picker.e2e.test.ts",
+  "first-run-cloud-share.e2e.test.ts",
+  "first-run-local.e2e.test.ts",
+  "reliable-app-recovery.e2e.test.ts",
+  "two-daytona-desktops.e2e.test.ts",
+  "welcome-one-field.e2e.test.ts",
+];
 
 type ProfileEntry = {
   test: string;
@@ -57,9 +63,8 @@ test("the singles selection is exactly the standalone-runnable excluded categori
   ]);
   const profile: unknown = JSON.parse(profileSource);
   const entries = profileEntries(profile);
-  const quarantined = new Set(listQuarantined());
   const expected = entries
-    .filter(({ category, test: profileTest }) => SINGLES_CATEGORIES.has(category) && profileTest !== DENIED_TEST && !quarantined.has(profileTest))
+    .filter(({ category }) => SINGLES_CATEGORIES.has(category))
     .map(({ test: profileTest }) => profileTest);
 
   expect(new Set(selected)).toEqual(new Set(expected));
@@ -70,12 +75,13 @@ test("the singles selection is exactly the standalone-runnable excluded categori
   expect(selectedEntries).toHaveLength(selected.length);
   expect(selectedEntries.every(({ category }) => SINGLES_CATEGORIES.has(category))).toBe(true);
   expect(selectedEntries.some(({ category }) => DISALLOWED_CATEGORIES.has(category))).toBe(false);
-  expect(selected.some((selectedTest) => quarantined.has(selectedTest))).toBe(false);
-  expect(selected).not.toContain(DENIED_TEST);
+  expect(entries.filter(({ category }) => category === "fresh-desktop-profile").map(({ test: profileTest }) => profileTest))
+    .toEqual(FRESH_DESKTOP_PROFILE_TESTS);
+  expect(selected).toEqual(expect.arrayContaining(FRESH_DESKTOP_PROFILE_TESTS));
 
   evidence.recordAssertionEvidence(
     "The singles selector contains exactly the standalone-runnable profile exclusions",
-    "Selection equals the non-quarantined fresh-den-url and fault-proxy profile entries after the explicit local-placement denial; every selected spec exists and no incompatible category enters the lane.",
+    "Selection equals the fresh-den-url, fault-proxy, and fresh-desktop-profile entries; every selected spec exists and no incompatible category enters the lane.",
     true,
   );
 });
@@ -85,6 +91,8 @@ test("the singles workflow runs one spec per vitest invocation on a bi-daily sch
   const vitestInvocations = workflow
     .split("\n")
     .filter((line) => line.includes("pnpm --dir evals exec vitest run"));
+  const setupBun = workflow.indexOf("- name: Setup Bun");
+  const installDependencies = workflow.indexOf("- name: Install dependencies");
 
   expect(workflow).toContain('cron: "30 6,18 * * *"');
   expect(workflow).toContain("node evals/scripts/list-singles-tests.mjs");
@@ -96,10 +104,15 @@ test("the singles workflow runs one spec per vitest invocation on a bi-daily sch
   );
   expect(workflow).toContain("environment: scheduled-e2e-singles");
   expect(workflow).not.toContain("pr-slow-specs");
+  expect(workflow).toContain(
+    "uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2",
+  );
+  expect(workflow).toContain("bun-version: 1.3.14");
+  expect(setupBun).toBeLessThan(installDependencies);
 
   evidence.recordAssertionEvidence(
     "The scheduled singles workflow preserves per-spec topology isolation",
-    "The twice-daily lane derives its matrix from the selector, invokes Vitest once with one matrix file, fails skips, uses its dedicated environment, and never reuses the batched regression environment.",
+    "The twice-daily lane derives its matrix from the selector, installs pinned Bun before dependencies, invokes Vitest once with one matrix file, fails skips, uses its dedicated environment, and never reuses the batched regression environment.",
     true,
   );
 });

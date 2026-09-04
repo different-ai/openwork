@@ -262,14 +262,16 @@ async function startManualApprovalServer(approvalTimeoutMs: number) {
     console.log("SPEC_SERVER_PORT:" + server.port);
     setInterval(() => {}, 60000);
   `;
-  const child = spawn("bun", ["-e", script], {
+  const child = spawn("bun", ["--conditions=development", "-e", script], {
     cwd: join(repoRoot, "apps", "server"),
     stdio: ["ignore", "pipe", "pipe"],
   });
   const port = await new Promise<number>((resolvePort, reject) => {
     const timer = setTimeout(() => reject(new Error("Standalone openwork-server did not report a port within 30s.")), 30_000);
     let buffered = "";
+    let stderr = "";
     child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
       buffered += chunk;
       const match = buffered.match(/SPEC_SERVER_PORT:(\d+)/);
@@ -278,9 +280,10 @@ async function startManualApprovalServer(approvalTimeoutMs: number) {
         resolvePort(Number(match[1]));
       }
     });
+    child.stderr.on("data", (chunk: string) => { stderr += chunk; });
     child.on("exit", (code) => {
       clearTimeout(timer);
-      reject(new Error(`Standalone openwork-server exited early (code ${code}): ${buffered.slice(0, 500)}`));
+      reject(new Error(`Standalone openwork-server exited early (code ${code}): ${(stderr || buffered).slice(0, 500)}`));
     });
     child.on("error", reject);
   });
@@ -295,24 +298,21 @@ export async function attachmentUpload(seed: Seed) {
   const providerId = "attachment-upload-mock";
   const modelId = "attachment-upload-model";
   const reply = "attachment upload loading proof";
-  const provider = createServer((request, response) => {
-    const url = request.url ?? "";
-    if (request.method === "GET" && url.startsWith("/v1/models")) {
-      sendJson(response, 200, { object: "list", data: [{ id: modelId, object: "model" }] });
-      return;
-    }
-    if (request.method === "POST" && (url.startsWith("/v1/chat/completions") || url.startsWith("/chat/completions"))) {
-      request.resume();
-      request.on("end", () => sendStream(response, [
-        { id: "chatcmpl-attachment-upload", object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] },
-        completionChunk("chatcmpl-attachment-upload", reply, null),
-        completionChunk("chatcmpl-attachment-upload", "", "stop"),
-      ]));
-      return;
-    }
-    sendJson(response, 404, { error: { message: "not found" } });
+  const mock = seed.mock({
+    agentWorkloads: [{
+      promptMarker: "Describe the attached image.",
+      finalReply: reply,
+      steps: [{
+        tool: "bash",
+        arguments: {
+          command: "printf '%s\\n' 'attachment-upload-ready'",
+          timeout: 30_000,
+          description: "Acknowledge the attachment upload",
+        },
+      }],
+    }],
   });
-  const providerBase = await listen(provider);
+  const den = await seed.den({ mocks: { agent: mock } });
   const approvalTimeoutMs = 3_000;
   const gateway = await startManualApprovalServer(approvalTimeoutMs);
   try {
@@ -333,14 +333,14 @@ export async function attachmentUpload(seed: Seed) {
     });
     const writeElapsedMs = Date.now() - writeStartedAt;
 
-    const app = await seed.desktop({ name: "attachment-upload-loading", model: `${providerId}/${modelId}` });
+    const app = await seed.desktop({ den, as: "admin", model: `${providerId}/${modelId}` });
     const workspace = await seed.workspace(app, seed.tmpPath("attachment-upload"));
     await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
       provider: {
         [providerId]: {
           npm: "@ai-sdk/openai-compatible",
           name: "Attachment upload mock",
-          options: { baseURL: `${providerBase}/v1`, apiKey: "sk-attachment-upload" },
+          options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-attachment-upload" },
           models: { [modelId]: { name: "Attachment upload model" } },
         },
       },
@@ -357,12 +357,10 @@ export async function attachmentUpload(seed: Seed) {
       writeElapsedMs,
       async [Symbol.asyncDispose]() {
         gateway.dispose();
-        await close(provider);
       },
     };
   } catch (error) {
     gateway.dispose();
-    await close(provider);
     throw error;
   }
 }

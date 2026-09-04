@@ -836,6 +836,7 @@ export default {
   "settings.debug_connect_url": "URL подключения: {url}",
   "settings.debug_desktop_app": "Настольное приложение: {version}",
   "settings.debug_hostname": "Имя хоста: {hostname}",
+  "settings.debug_log_file": "Журнал сервера: {path}",
   "settings.debug_lan_url": "LAN URL: {url}",
   "settings.debug_mdns_url": "mDNS URL: {url}",
   "settings.debug_opencode_version": "OpenCode: {version}",

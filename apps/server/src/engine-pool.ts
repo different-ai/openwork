@@ -47,6 +47,14 @@ export type EngineSpawnTemplate = {
   spawnTimeoutMs?: number;
 };
 
+export type EnginePoolStandby = {
+  workspace: WorkspaceInfo;
+  generationId: string;
+  baseUrl: string;
+  username: string;
+  password: string;
+};
+
 export type EnginePoolHooks = {
   /** Today's in-place dispose. Used when the engine is idle. */
   reloadInPlace: (
@@ -58,6 +66,13 @@ export type EnginePoolHooks = {
   engineBusy: (config: ServerConfig, workspace: WorkspaceInfo) => Promise<boolean>;
   /** Re-register runtime MCPs and reconcile cloud MCP against a fresh engine. */
   postRefreshSync: (config: ServerConfig, workspace: WorkspaceInfo) => Promise<void>;
+  /**
+   * Prepare a healthy standby before it becomes primary (managed provider
+   * credentials). A spawned engine receives no provider keys in its
+   * environment; without this the first sync after the flip re-delivers them,
+   * reports a credential change, and forces yet another standby.
+   */
+  prepareStandby?: (config: ServerConfig, standby: EnginePoolStandby) => Promise<void>;
   /** Rebuild the engine-visible runtime config file (workspace-independent). */
   writeRuntimeConfigFile: (config: ServerConfig) => Promise<{ path: string }>;
   registerTrusted: (config: ServerConfig, generation: { baseUrl: string; identity: string; isAlive: () => boolean }) => void;
@@ -66,6 +81,8 @@ export type EnginePoolHooks = {
   now?: () => number;
   schedule?: (operation: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   waitForHealthy?: (handle: ManagedOpencodeServer) => Promise<void>;
+  /** Called once when the pool shuts down, before its engines are retired. */
+  onDisposed?: () => void;
   logger?: EnginePoolLogger;
 };
 
@@ -714,6 +731,25 @@ export class EnginePool {
       throw error;
     }
 
+    if (this.hooks.prepareStandby) {
+      try {
+        await this.hooks.prepareStandby(this.config, {
+          workspace,
+          generationId: generation.id,
+          baseUrl: handle.url,
+          username: handle.username,
+          password: handle.password,
+        });
+      } catch (error) {
+        // The standby is healthy and the primary is still serving; a failed
+        // seed only means the next sync pass delivers credentials instead.
+        this.hooks.logger?.log("warn", "Engine standby preparation failed; flipping anyway.", {
+          "engine.rollover.reason": reason,
+          "engine.rollover.failure": error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     if (handle.pid) {
       generation.registryId = randomUUID();
       await registerEngineInstance(this.config, {
@@ -977,6 +1013,7 @@ export class EnginePool {
   /** Close every engine this pool owns. Draining generations go first. */
   async disposeAll(): Promise<void> {
     this.disposed = true;
+    this.hooks.onDisposed?.();
     this.pendingRollover = null;
     if (this.recoveryTimer) clearTimeout(this.recoveryTimer);
     this.recoveryTimer = null;

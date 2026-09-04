@@ -220,34 +220,6 @@ export const libraryAddMcpModal = shot("library-add-mcp-modal", {
   out: "packages/docs/images/library-add-mcp-modal.png",
 });
 
-export const libraryAddMcpSlack = shot("library-add-mcp-slack", {
-  use: app,
-  at: (surface) => `/workspace/${surface.workspaceId}/settings/extensions`,
-  steps: [
-    dismissOverlays,
-    showAdvancedSettings,
-    (surface) => clickButton(surface, "Add workspace MCP", { timeoutMs: 30_000 }),
-    fillForm({
-      'input[placeholder="github-copilot"]': "slack",
-      'input[placeholder="https://api.githubcopilot.com/mcp/"]': "https://mcp.slack.com/mcp",
-    }),
-    keepExpanded("OAuth on this device", "OAuth client ID"),
-  ],
-  expect: ["Add workspace MCP", "App name", "Server URL", "OAuth client ID", "Add App"],
-  viewport: { width: 1440, height: 1100, deviceScaleFactor: 2 },
-  out: "packages/docs/images/slack-mcp-advanced-oauth.png",
-});
-
-export const librarySlackConnection = shot("library-slack-connection", {
-  use: app,
-  at: (surface) => `/workspace/${surface.workspaceId}/extensions`,
-  steps: [dismissOverlays],
-  expect: ["Library", "Slack"],
-  never: ["Your library is empty."],
-  route: /\/extensions$/,
-  out: "packages/docs/images/library-slack-connection.png",
-});
-
 async function waitForMountedSkillCard(surface: DesktopShotSurface, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let lastText = "";

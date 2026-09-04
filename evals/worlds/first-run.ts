@@ -74,7 +74,7 @@ export async function appSmokeWorld(seed: Seed) {
 }
 
 export async function bareFirstRunWorld(seed: Seed, { place }: { place: Place }) {
-  const capture = process.platform === "linux" ? await captureOpenedUrls() : null;
+  const capture = process.platform === "linux" && place.kind === "local" ? await captureOpenedUrls() : null;
   const app = capture
     ? await desktop({ name: "first-run", host: place.host(), env: { PATH: `${capture.binDir}:${process.env.PATH ?? ""}` } })
     : await seed.desktop({ name: "first-run", signIn: false });

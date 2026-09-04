@@ -85,13 +85,8 @@ placement environment.
 
 See `run-tests` for environment requirements and the cold-boot verdict check.
 
-### Quarantine
-
-[`specs/quarantine.json`](./specs/quarantine.json) is the explicit list of E2E
-specs that are not trusted green. The E2E project and CI selectors exclude that
-reviewable list; naming one through `evals:e2e` fails with its quarantine reason.
-A spec enters quarantine with control-run evidence and leaves only after a green
-Daytona or local run has published test evidence.
+Every `evals/specs/*.e2e.test.ts` file on disk runs in the E2E lane. To stop a
+spec from running, delete it; history keeps the removed test available.
 
 ### Live lane
 

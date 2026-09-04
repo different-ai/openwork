@@ -53,7 +53,9 @@ even before a dedicated UI exists.
  `pnpm dev:headless-web` remains a compatibility alias with its prior foreground
  default (`--detach` still works). Read
  `tmp/dev-headless-web.json` for the owner-only runtime manifest.
- It does not use `~/.config/openwork/server.json`. Stop a running script with
+ It does not use `~/.config/openwork/server.json`, and its engine keeps its own
+ sessions database at `tmp/dev-headless-opencode.db` instead of the desktop
+ app's `~/.local/share/opencode/opencode.db`. Stop a running script with
  `pnpm world down dev-headless`; pass script options after `--`, for example
  `pnpm world up dev-headless --detach -- --replace --keep-tokens`. Cloud sign-in
  is copy/paste handoff (Den cannot redirect grants to localhost): Account → Sign

@@ -1038,6 +1038,7 @@ const IDLE_OPENWORK_SERVER_INFO = Object.freeze({
   hostToken: null,
   managedOpencodeBinPath: null,
   managedOpencodeBinSource: null,
+  logFilePath: null,
   pid: null,
   lastStdout: null,
   lastStderr: null,

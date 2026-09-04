@@ -53,4 +53,8 @@ describe("Workflow Plugin and Marketplace presentation", () => {
     expect(workflowPage).toContain("WorkflowDetailScreen");
     expect(legacyWorkflowPage).toContain("/dashboard/library/workflows/");
   });
+
+  test("does not offer the retired agent handoff on Workflow detail", () => {
+    expect(workflowDetail).not.toContain("Use with agent");
+  });
 });

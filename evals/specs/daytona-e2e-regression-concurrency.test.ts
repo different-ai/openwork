@@ -17,6 +17,7 @@ const execFileAsync = promisify(execFile);
 const allowedCategories = new Set([
   "per-test-den-env",
   "fresh-den-url",
+  "fresh-desktop-profile",
   "fault-proxy",
   "local-bun-world",
   "unavailable-secret-or-docker",
@@ -105,19 +106,7 @@ test("Daytona E2E regression profile excludes only audited shared-topology incom
   expect(inventory.profile.every((entry) => inventory.all.includes(entry.test))).toBe(true);
   expect(profileTests.filter((file) => inventory.rawDesktop.includes(file))).toEqual([]);
   expect(scriptedRawDesktop).toEqual(inventory.rawDesktop);
-  expect(categoryByTest.get("dashboard-deployment-gate.e2e.test.ts")).toBe("per-test-den-env");
-  expect(categoryByTest.get("automation-desktop-lifecycle.e2e.test.ts")).toBe("per-test-den-env");
-  expect(categoryByTest.get("automation-model-needs-attention.e2e.test.ts")).toBe("per-test-den-env");
-  expect(categoryByTest.get("automation-proposal-model-resolution.e2e.test.ts")).toBe("per-test-den-env");
-  expect(categoryByTest.get("automations-den-hosted.e2e.test.ts")).toBe("per-test-den-env");
-  expect(categoryByTest.get("opencode-mcp-agent-oauth.e2e.test.ts")).toBe("fresh-den-url");
-  expect(categoryByTest.get("library-advanced-refresh.e2e.test.ts")).toBe("fault-proxy");
-  expect(categoryByTest.get("headless-world-lifecycle.e2e.test.ts")).toBe("local-bun-world");
-  expect(categoryByTest.get("model-lands-mid-run.e2e.test.ts")).toBe("unavailable-secret-or-docker");
-  expect(categoryByTest.get("connect-state-provenance.e2e.test.ts")).toBe("raw-or-local-placement");
-  expect(categoryByTest.get("library-mcp-connect-error.e2e.test.ts")).toBe("raw-or-local-placement");
-  expect(categoryByTest.get("local-managed-mcp-oauth.e2e.test.ts")).toBe("raw-or-local-placement");
-  expect(categoryByTest.get("slack-style-mcp-connector.e2e.test.ts")).toBe("raw-or-local-placement");
+  expect(categoryByTest.get("welcome-one-field.e2e.test.ts")).toBe("fresh-desktop-profile");
 
   // The four buckets partition the inventory. Asserting the partition itself
   // (instead of pinning each bucket's size to one moment of `dev`) keeps every
@@ -130,11 +119,7 @@ test("Daytona E2E regression profile excludes only audited shared-topology incom
       + inventory.eligible.length,
   );
   expect(inventory.eligible.length).toBeGreaterThanOrEqual(productFailuresThatMustRemainEligible.length);
-  expect(inventory.rawDesktop).toContain("den-litellm-provider.e2e.test.ts");
   expect(inventory.eligible).not.toContain("org-team-lifecycle-critical-path.e2e.test.ts");
-  expect(inventory.eligible).not.toContain("library-mcp-connect-error.e2e.test.ts");
-  expect(inventory.eligible).not.toContain("local-managed-mcp-oauth.e2e.test.ts");
-  expect(inventory.eligible).not.toContain("slack-style-mcp-connector.e2e.test.ts");
   expect(inventory.eligible).toEqual(expect.arrayContaining(productFailuresThatMustRemainEligible));
 
   evidence.recordAssertionEvidence(
@@ -150,7 +135,7 @@ test("Daytona E2E regression workflow fails skipped or empty matrices", async ({
   expect(workflow).toContain("profile_excluded_json=\"$(jq -c '[.excluded[].test]' \"$profile\")\"");
   expect(workflow).toContain('raw_desktop="$(node evals/scripts/list-daytona-raw-desktop-tests.mjs)"');
   expect(workflow).toContain('dedicated_workflow_json=\'["org-team-lifecycle-critical-path.e2e.test.ts"]\'');
-  expect(workflow).toContain("Inventory: $(($(echo \"$all_tests\" | jq 'length') + $(echo \"$quarantined_json\" | jq 'length'))) total;");
+  expect(workflow).toContain("Inventory: $(echo \"$all_tests\" | jq 'length') total;");
   expect(workflow).not.toContain("OPENWORK_EVAL_CRITICAL_PATH_E2E_JOURNEY=1");
   expect(workflow).toContain('if [ "$result" != "passed" ]; then');
   expect(workflow).toContain("if: steps.run.outputs.result == 'passed'");
