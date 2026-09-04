@@ -53,6 +53,7 @@ test.skipIf(!mysqlOpen || !redisOpen)(title, { timeout: 300_000 }, async ({ evid
 
   await using den = await server({
     place,
+    web: false,
     mocks: { connector: mcpMock({ port: 3984, allowUnauthenticatedMcp: true }) },
     org: { name: organizationName, members: {} },
   });
@@ -236,4 +237,192 @@ test.skipIf(!mysqlOpen || !redisOpen)(title, { timeout: 300_000 }, async ({ evid
       && deletedKeyCount === 0 && retainedKeyCount === 1
       && cleanupResponse.ok === true && cleanupResponse.deleted === true,
   );
+});
+
+// This is the same provisioning journey extended across the org configuration,
+// not one test per endpoint. All observations cross the public HTTP boundary.
+test.skipIf(!mysqlOpen || !redisOpen)("an API-key client reapplies and changes an organization manifest without duplicating resources or changing unrelated identities", { timeout: 300_000 }, async ({ evidence, place }) => {
+  const stamp = Date.now();
+  const name = `Declarative org ${stamp}`;
+  await using den = await server({ place, web: false, org: { name, members: { reader: {} } }, env: { DEN_PLAN_GATING_ENABLED: "false" } });
+  const admin = den.admin;
+  const orgId = await organizationId(admin, name);
+  const sessionHeaders = orgHeaders(admin, orgId);
+  const minted = await denFetch(admin, "/v1/api-keys", { method: "POST", headers: sessionHeaders, body: JSON.stringify({ name: "Declarative provisioning witness" }) });
+  expect(minted.response.status, minted.text).toBe(201);
+  const headers = { "x-api-key": stringField(requireRecord(minted.body, "API key response"), "key") };
+  const providerSecret = "declarative-witness-secret";
+  const key = `config-${stamp}`;
+  const base = (resource: string) => `/v1/${resource}/by-key/${key}`;
+  async function request(path: string, method = "GET", body?: unknown, auth = headers) {
+    return denFetch(admin, path, { method, headers: auth, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(30_000) });
+  }
+  async function put(resource: string, body: unknown, status: number) {
+    const result = await request(base(resource), "PUT", body);
+    expect(result.response.status, `${resource}: ${result.text}`).toBe(status);
+    expect(result.text).not.toContain(providerSecret);
+    return requireRecord(result.body, resource);
+  }
+  function item(body: Record<string, unknown>, field: string) { return requireRecord(body[field], field); }
+  const team1 = item(await put("teams", { name: "Platform", memberIds: [] }, 201), "team");
+  const teamId = stringField(team1, "id");
+  const providerInput = {
+    name: "Inference", source: "custom", apiKey: providerSecret,
+    customConfig: { id: "declarative", name: "Declarative", npm: "@ai-sdk/openai-compatible", env: ["DECLARATIVE_API_KEY"], api: "https://inference.eval.invalid/v1", models: [{ id: "witness", name: "Witness", limit: { context: 32000, input: 32000, output: 32000 } }] },
+    teamIds: [teamId],
+  };
+  const policyInput = { policyName: "Managed desktop", policy: { allowZenModel: false }, teamIds: [teamId], priority: 10, isEnabled: true };
+  const marketInput = { name: "Internal catalog", description: "First revision" };
+  const provider1 = item(await put("llm-providers", providerInput, 201), "llmProvider");
+  const policy1 = item(await put("desktop-policies", policyInput, 201), "desktopPolicy");
+  const marketplace1 = item(await put("marketplaces", marketInput, 201), "item");
+  const resources = [
+    { resource: "teams", field: "team", input: { name: "Platform", memberIds: [] }, original: team1 },
+    { resource: "llm-providers", field: "llmProvider", input: providerInput, original: provider1 },
+    { resource: "desktop-policies", field: "desktopPolicy", input: policyInput, original: policy1 },
+    { resource: "marketplaces", field: "item", input: marketInput, original: marketplace1 },
+  ];
+  for (const entry of resources) {
+    const repeated = item(await put(entry.resource, entry.input, 200), entry.field);
+    expect(repeated.id).toBe(entry.original.id);
+    expect(repeated.externalKey).toBe(key);
+    const read = await request(base(entry.resource));
+    expect(read.response.status, read.text).toBe(200);
+    expect(read.text).not.toContain(providerSecret);
+    expect(item(requireRecord(read.body, "read"), entry.field).id).toBe(entry.original.id);
+    const direct = await request(`/v1/${entry.resource}/${entry.original.id}`);
+    expect(direct.response.status, direct.text).toBe(200);
+    expect(direct.text).not.toContain(providerSecret);
+  }
+  const lists = [
+    ["/v1/org", "teams", "name", "Platform"],
+    ["/v1/llm-providers?scope=manageable", "llmProviders", "name", "Inference"],
+    ["/v1/desktop-policies", "desktopPolicies", "policyName", "Managed desktop"],
+    ["/v1/marketplaces?limit=100", "items", "name", "Internal catalog"],
+  ];
+  for (const [path, field, nameField, label] of lists) {
+    const listing = await request(path);
+    expect(listing.response.status, listing.text).toBe(200);
+    const rows = requireRecord(listing.body, path)[field];
+    expect(Array.isArray(rows), path).toBe(true);
+    if (!Array.isArray(rows)) throw new Error(`Missing list ${path}`);
+    expect(rows.filter((row) => isRecord(row) && row[nameField] === label), path).toHaveLength(1);
+  }
+  const providerRead = await request(base("llm-providers"));
+  const access = requireRecord(item(requireRecord(providerRead.body, "provider"), "llmProvider").access, "access");
+  expect(access.teams).toEqual(expect.arrayContaining([expect.objectContaining({ teamId })]));
+  evidence.recordAssertionEvidence("A multi-resource manifest converges through API-key-only authentication", "Teams, providers, policies, and marketplaces returned 201 then 200 with the same IDs and stable keys; both keyed and ID reads succeeded without exposing the provider secret; the provider referenced the created team.", true);
+
+  // Retain an independently managed identity while changing all manifest labels.
+  const sibling = await request("/v1/teams", "POST", { name: "Unmanaged team" });
+  expect(sibling.response.status, sibling.text).toBe(201);
+  const siblingId = stringField(item(requireRecord(sibling.body, "sibling"), "team"), "id");
+  const renamed = item(await put("teams", { name: "Platform renamed" }, 200), "team");
+  expect(renamed.id).toBe(teamId);
+  expect(renamed.name).toBe("Platform renamed");
+  const withoutSecret = { ...providerInput, apiKey: undefined };
+  const provider2 = item(await put("llm-providers", { ...withoutSecret, name: "Inference renamed", teamIds: [] }, 200), "llmProvider");
+  expect(provider2.id).toBe(provider1.id);
+  expect(provider2.hasApiKey).toBe(true);
+  const policy2 = item(await put("desktop-policies", { policyName: "Desktop renamed", policy: { allowZenModel: true } }, 200), "desktopPolicy");
+  expect(policy2.id).toBe(policy1.id);
+  expect(policy2.priority).toBe(0);
+  expect(policy2.assignments).toEqual([]);
+  expect(policy2.policy).toMatchObject({ allowZenModel: true });
+  const market2 = item(await put("marketplaces", { name: "Catalog renamed" }, 200), "item");
+  expect(market2.id).toBe(marketplace1.id);
+  expect(market2.description).toBeNull();
+  const afterProvider = item(requireRecord((await request(base("llm-providers"))).body, "provider"), "llmProvider");
+  expect(requireRecord(afterProvider.access, "access").teams).toEqual([]);
+  const siblingRead = await request(`/v1/teams/${siblingId}`);
+  expect(item(requireRecord(siblingRead.body, "sibling"), "team").name).toBe("Unmanaged team");
+  evidence.recordAssertionEvidence("Changing desired state preserves identity and replaces assignments", "All four renamed resources retained their IDs, removed provider/policy team assignments disappeared, policy priority reset to zero, marketplace description cleared, omitted provider credentials remained configured, and the unmanaged team was unchanged.", true);
+
+  // Name collision does not adopt an unmanaged team or damage the keyed team.
+  const conflict = await request(base("teams"), "PUT", { name: "Unmanaged team" });
+  expect(conflict.response.status).toBe(409);
+  const stillRenamed = await request(base("teams"));
+  expect(item(requireRecord(stillRenamed.body, "team"), "team").name).toBe("Platform renamed");
+  for (const entry of resources) {
+    const denied = await request(base(entry.resource), "PUT", entry.input, orgHeaders(den.members.reader, orgId));
+    expect(denied.response.status, denied.text).toBe(403);
+    const invalid = await request(`/v1/${entry.resource}/by-key/INVALID`, "PUT", entry.input);
+    expect(invalid.response.status).toBe(400);
+    const conditional = await request(base(entry.resource), "PUT", entry.input, { ...headers, "If-Match": "stale" });
+    expect(conditional.response.status, conditional.text).toBe(400);
+    const absent = await request(`/v1/${entry.resource}/by-key/missing-${stamp}`);
+    expect(absent.response.status).toBe(404);
+  }
+  evidence.recordAssertionEvidence("Invalid or unauthorized writes cannot overwrite managed resources", "Existing-name collision returned 409 without changing the team; members were denied on all four PUT routes, invalid keys and unsupported preconditions returned 400, and unknown keyed reads returned 404.", true);
+
+  // Concurrent first applies must converge too, including under the unique-name
+  // constraint on teams. This observes persistence, not just response status.
+  for (const entry of resources) {
+    const concurrentPath = `/v1/${entry.resource}/by-key/race-${stamp}`;
+    const raceBody = { ...entry.input, name: `Concurrent ${entry.resource}`, policyName: "Concurrent desktop" };
+    const race = await Promise.all([request(concurrentPath, "PUT", raceBody), request(concurrentPath, "PUT", raceBody)]);
+    // Team name checks can see the winning row before the insert is attempted.
+    for (const result of race) expect([200, 201, 409]).toContain(result.response.status);
+    const recovered = await request(concurrentPath, "PUT", raceBody);
+    expect(recovered.response.status, recovered.text).toBe(200);
+    const raceRead = await request(concurrentPath);
+    expect(item(requireRecord(raceRead.body, "race"), entry.field).id).toBe(item(requireRecord(recovered.body, "recovered"), entry.field).id);
+    const removeRace = await request(concurrentPath, "DELETE");
+    expect(removeRace.response.status, removeRace.text).toBe(200);
+  }
+  evidence.recordAssertionEvidence("Concurrent first applies recover without a second identity", "Two concurrent creates per resource completed with success or conflict; a retry updated the persisted identity and keyed reads returned that same ID.", true);
+
+  for (const entry of resources) {
+    const legacyBody = { ...entry.input, name: `Legacy ${entry.resource}`, policyName: "Legacy desktop" };
+    const created = await request(`/v1/${entry.resource}`, "POST", legacyBody);
+    expect(created.response.status, created.text).toBe(201);
+    const legacy = item(requireRecord(created.body, "legacy create"), entry.field);
+    expect(legacy.externalKey).toBeNull();
+    const changed = await request(`/v1/${entry.resource}/${legacy.id}`, "PATCH", { ...legacyBody, name: `Legacy updated ${entry.resource}`, policyName: "Legacy updated desktop" });
+    expect(changed.response.status, changed.text).toBe(200);
+    expect(item(requireRecord(changed.body, "legacy update"), entry.field).id).toBe(legacy.id);
+    const deleted = entry.resource === "marketplaces"
+      ? await request(`/v1/marketplaces/${legacy.id}/delete`, "POST")
+      : await request(`/v1/${entry.resource}/${legacy.id}`, "DELETE");
+    expect(deleted.response.status, deleted.text).toBe(entry.resource === "marketplaces" ? 200 : 204);
+    const managed = await request(base(entry.resource));
+    expect(item(requireRecord(managed.body, "managed"), entry.field).id).toBe(entry.original.id);
+  }
+  evidence.recordAssertionEvidence("Existing unkeyed clients retain their create, update, and delete workflow", "POST created unkeyed resources, PATCH updated the same IDs, and original deletion routes succeeded for each resource while keyed resources remained intact.", true);
+
+  const otherOrg = await request("/v1/org", "POST", { name: `Other org ${stamp}` }, sessionHeaders);
+  expect(otherOrg.response.status, otherOrg.text).toBe(201);
+  const otherId = stringField(item(requireRecord(otherOrg.body, "other org"), "organization"), "id");
+  const otherMint = await request("/v1/api-keys", "POST", { name: "Other org provisioning" }, orgHeaders(admin, otherId));
+  expect(otherMint.response.status, otherMint.text).toBe(201);
+  const otherAuth = { "x-api-key": stringField(requireRecord(otherMint.body, "other key"), "key") };
+  for (const entry of resources) {
+    const missing = await request(base(entry.resource), "GET", undefined, otherAuth);
+    expect(missing.response.status).toBe(404);
+    const other = await request(base(entry.resource), "PUT", { ...entry.input, teamIds: [] }, otherAuth);
+    expect(other.response.status, other.text).toBe(201);
+    expect(item(requireRecord(other.body, "other resource"), entry.field).id).not.toBe(entry.original.id);
+    const original = await request(base(entry.resource));
+    expect(item(requireRecord(original.body, "original resource"), entry.field).id).toBe(entry.original.id);
+  }
+  const crossOrgReference = await request(base("desktop-policies"), "PUT", policyInput, otherAuth);
+  expect(crossOrgReference.response.status, crossOrgReference.text).toBe(404);
+  evidence.recordAssertionEvidence("Stable keys and references are isolated by organization", "A second API key could not read the first org's keyed resources; the same keys created distinct IDs in its own org; the first org's IDs were preserved, and assigning its team in the other org was rejected.", true);
+
+  // Reverse dependency order. A repeat deletion reports absence, and unrelated
+  // resources survive. Recreating a deleted identity is supported.
+  for (const entry of [...resources].reverse()) {
+    const removed = await request(base(entry.resource), "DELETE");
+    expect(removed.response.status, removed.text).toBe(200);
+    expect(removed.body).toMatchObject({ ok: true, deleted: true });
+    const repeat = await request(base(entry.resource), "DELETE");
+    expect(repeat.body).toMatchObject({ ok: true, deleted: false });
+    const absent = await request(base(entry.resource));
+    expect(absent.response.status).toBe(404);
+  }
+  expect((await request(`/v1/teams/${siblingId}`)).response.status).toBe(200);
+  const recreated = item(await put("desktop-policies", { policyName: "Recreated", policy: {} }, 201), "desktopPolicy");
+  expect(recreated.id).not.toBe(policy1.id);
+  await request(base("desktop-policies"), "DELETE");
+  evidence.recordAssertionEvidence("Teardown is repeatable and scoped to the manifest", "Reverse-order deletion removed each managed resource; repeated deletion reported deleted:false and reads returned 404; the unrelated team survived and a deleted policy key could be recreated with a new ID.", true);
 });

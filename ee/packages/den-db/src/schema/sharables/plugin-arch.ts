@@ -122,6 +122,7 @@ export const PluginTable = mysqlTable(
 export const MarketplaceTable = mysqlTable(
   "marketplace",
   {
+    externalKey: varchar("external_key", { length: 128 }),
     id: denTypeIdColumn("marketplace", "id").notNull().primaryKey(),
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
     name: varchar("name", { length: 255 }).notNull(),
@@ -134,6 +135,7 @@ export const MarketplaceTable = mysqlTable(
     deletedAt: timestamp("deleted_at", { fsp: 3 }),
   },
   (table) => [
+    uniqueIndex("marketplace_org_external_key").on(table.organizationId, table.externalKey),
     index("marketplace_organization_id").on(table.organizationId),
     index("marketplace_created_by_org_membership_id").on(table.createdByOrgMembershipId),
     index("marketplace_status").on(table.status),

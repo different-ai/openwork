@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "teams": {
+    "platform": { "name": "Platform", "memberIds": [] }
+  },
+  "llmProviders": {
+    "company-inference": {
+      "name": "Company inference",
+      "source": "custom",
+      "customConfig": {
+        "id": "company-inference",
+        "name": "Company inference",
+        "npm": "@ai-sdk/openai-compatible",
+        "env": ["COMPANY_INFERENCE_KEY"],
+        "api": "${INFERENCE_URL}",
+        "models": [{ "id": "company-model", "name": "Company model", "limit": { "context": 32000, "input": 32000, "output": 32000 } }]
+      },
+      "apiKey": "${COMPANY_INFERENCE_KEY}",
+      "teams": ["platform"]
+    }
+  },
+  "desktopPolicies": {
+    "managed-desktop": { "policyName": "Managed desktop", "policy": { "allowZenModel": false }, "teams": ["platform"] }
+  },
+  "marketplaces": {
+    "company-catalog": { "name": "Company catalog", "description": "Internal tools and skills" }
+  }
+}
