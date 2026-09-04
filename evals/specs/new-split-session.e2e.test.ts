@@ -90,8 +90,10 @@ async function openNewSplitFromContextMenu(app: Surface, workspaceId: string, se
     timeoutMs: 15_000,
     label: "session context menu",
   });
-  const itemExists = await evalIn(app, `Boolean(document.querySelector('[data-session-menu-new-split]'))`);
-  expect(itemExists).toBe(true);
+  await waitFor(app, `Boolean(document.querySelector('[data-session-menu-new-split]'))`, {
+    timeoutMs: 15_000,
+    label: "New split menu item",
+  });
   const clicked = await evalIn(app, `(() => {
     const item = document.querySelector('[data-session-menu-new-split]');
     if (!(item instanceof HTMLElement)) return false;
@@ -170,6 +172,11 @@ test.skipIf(!runnable)(
     if (!primary) throw new Error(`The seeded primary session was not found: ${JSON.stringify(seededSessions)}`);
 
     await openSessionRoute(app, workspaceId, primary.sessionId);
+    // New split is offered once the workbench knows its primary pane.
+    await waitFor(app, `(() => {
+      const layout = window.__openworkControl?.context?.().conversations?.layout;
+      return layout?.kind === "single" && layout?.sessionId === ${JSON.stringify(primary.sessionId)};
+    })()`, { timeoutMs: 60_000, label: "single layout on the seeded primary" });
     const before = (await listSessions(app)).map((session) => session.sessionId);
 
     await openNewSplitFromContextMenu(app, workspaceId, primary.sessionId);
