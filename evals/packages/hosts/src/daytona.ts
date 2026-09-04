@@ -24,8 +24,6 @@ export interface DaytonaHostOptions {
   reservedChromePorts?: number[];
   reservedElectronPorts?: number[];
   serverScript?: boolean;
-  /** Exact per-provision engine cache root to seed into fresh Electron profiles. */
-  engineCacheDir?: string;
   waitForCdp?: (url: string, timeoutMs: number, label: string) => Promise<void>;
 }
 
@@ -548,10 +546,6 @@ function appendExtraEnv(assignments: Map<string, string>, env: Record<string, st
 
 export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
   const exec = options.exec ?? defaultDaytonaExec;
-  const engineCacheDir = options.engineCacheDir?.trim();
-  if (options.engineCacheDir !== undefined && !engineCacheDir) {
-    throw new Error("Daytona engineCacheDir must not be empty.");
-  }
   const previewCache = new Map<number, string>();
   const electronPorts: PortAllocation = { primary: 9825, next: 9830, used: portSet(options.reservedElectronPorts) };
   const chromePorts: PortAllocation = { primary: 9222, next: 9230, used: portSet(options.reservedChromePorts) };
@@ -598,17 +592,6 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
 
     try {
       await checkedExec(exec, ["exec", sandbox, "--", "mkdir", "-p", shellQuote(userDataDir)], `mkdir Daytona Electron profile ${userDataDir}`, { timeoutMs: 30_000 });
-      if (engineCacheDir) {
-        const cachedDevData = `${engineCacheDir}/openwork-dev-data`;
-        const profileDevData = `${userDataDir}/openwork-dev-data`;
-        const seedCommand = `if [ -d ${shellQuote(cachedDevData)} ] && [ ! -e ${shellQuote(profileDevData)} ]; then cp -a ${shellQuote(cachedDevData)} ${shellQuote(userDataDir)}/; fi`;
-        await checkedExec(
-          exec,
-          ["exec", sandbox, "--", seedCommand],
-          `seed Daytona Electron engine cache ${userDataDir}`,
-          { timeoutMs: 60_000 },
-        );
-      }
       if (opts.bootstrap) {
         const bootstrapJson = `${JSON.stringify(opts.bootstrap, null, 2)}\n`;
         const encoded = Buffer.from(bootstrapJson, "utf8").toString("base64");

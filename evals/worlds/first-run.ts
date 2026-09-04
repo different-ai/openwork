@@ -376,7 +376,7 @@ export async function reliableRecoveryWorld(_seed: Seed, { place }: { place: Pla
         log: (line) => console.error(`[openwork/testkit] ${line}`),
       })
     : null;
-  const host = provisioned ? daytonaSandbox(provisioned.sandbox, provisioned.engineCacheDir ?? undefined) : localHost();
+  const host = provisioned ? daytonaSandbox(provisioned.sandbox) : localHost();
   const seeded = await desktop({ name: "recovery-profile-seed", host, profileDir });
   const names = await evalIn(seeded, `window.__OPENWORK_ELECTRON__.invokeDesktop("workspaceCreate", {
     folderPath: ${JSON.stringify(`${profileDir}/continuity-workspace`)}, name: "reliable-recovery-profile-marker"
@@ -528,7 +528,7 @@ export async function enterpriseTlsWorld(seed: Seed, { place }: { place: Place }
   let rootInstallAttempted = false;
   let rawApp: Awaited<ReturnType<typeof desktop>> | null = null;
   let trustedApp: Awaited<ReturnType<typeof startApp>> | null = null;
-  const host = daytonaSandbox(provisioned.sandbox, provisioned.engineCacheDir ?? undefined);
+  const host = daytonaSandbox(provisioned.sandbox);
 
   const dispose = async () => {
     if (trustedApp) await cleanup("dispose trusted enterprise TLS app", () => trustedApp?.[Symbol.asyncDispose]() ?? Promise.resolve());

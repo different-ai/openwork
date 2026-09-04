@@ -169,10 +169,10 @@ class DaytonaPlacementHost implements Host {
   readonly #preparedHost: Host | undefined;
   readonly #surfaces = new Map<SurfaceHandle, PlacedSurface>();
 
-  constructor(ref: string, preparedSandbox?: string, preparedEngineCacheDir?: string) {
+  constructor(ref: string, preparedSandbox?: string) {
     this.#ref = ref;
     this.#preparedSandbox = preparedSandbox;
-    this.#preparedHost = preparedSandbox ? daytonaSandbox(preparedSandbox, preparedEngineCacheDir) : undefined;
+    this.#preparedHost = preparedSandbox ? daytonaSandbox(preparedSandbox) : undefined;
   }
 
   async #provision(name: string): Promise<PlacedSurface> {
@@ -189,7 +189,7 @@ class DaytonaPlacementHost implements Host {
       log: (line) => console.error(`[openwork/testkit] ${line}`),
     });
     return {
-      host: daytonaSandbox(provisioned.sandbox, provisioned.engineCacheDir ?? undefined),
+      host: daytonaSandbox(provisioned.sandbox),
       sandbox: provisioned.sandbox,
       created: provisioned.created,
     };
@@ -244,9 +244,9 @@ class DaytonaPlace implements Place {
   readonly #ref: string;
   readonly #host: Host;
 
-  constructor(ref: string, preparedDesktopSandbox?: string, preparedEngineCacheDir?: string) {
+  constructor(ref: string, preparedDesktopSandbox?: string) {
     this.#ref = ref;
-    this.#host = new DaytonaPlacementHost(ref, preparedDesktopSandbox, preparedEngineCacheDir);
+    this.#host = new DaytonaPlacementHost(ref, preparedDesktopSandbox);
   }
 
   host(): Host {
@@ -280,7 +280,6 @@ export function resolvePlace(env: NodeJS.ProcessEnv = process.env): Place {
     return new DaytonaPlace(
       ref,
       env.OPENWORK_EVAL_DAYTONA_DESKTOP_SANDBOX?.trim(),
-      env.OPENWORK_EVAL_DAYTONA_ENGINE_CACHE_DIR?.trim(),
     );
   }
   return new LocalPlace(env.OPENWORK_EVAL_MYSQL_URL?.trim() || DEFAULT_MYSQL_URL);

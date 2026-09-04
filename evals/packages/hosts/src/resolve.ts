@@ -38,7 +38,7 @@ export function localHost(): DisposableHost {
 }
 
 /** A named Daytona sandbox, driven through the `daytona` CLI from outside it. */
-export function daytonaSandbox(sandboxId: string, engineCacheDir?: string): DisposableHost {
+export function daytonaSandbox(sandboxId: string): DisposableHost {
   const id = sandboxId.trim();
   if (!id) throw new Error("daytonaSandbox(sandboxId) requires a sandbox id.");
   if (runningInsideSandbox()) {
@@ -46,5 +46,5 @@ export function daytonaSandbox(sandboxId: string, engineCacheDir?: string): Disp
       `daytonaSandbox(${JSON.stringify(id)}) cannot be used from inside a sandbox: the daytona CLI indirection has nothing to target. Use localHost() there.`,
     );
   }
-  return createDaytonaHost({ sandboxId: id, repoRoot: REPO_ROOT, log: () => undefined, engineCacheDir });
+  return createDaytonaHost({ sandboxId: id, repoRoot: REPO_ROOT, log: () => undefined });
 }
