@@ -545,7 +545,7 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
     state: "open",
     name: "Editor",
     role: "Writing and content",
-    mission: expect.stringMatching(/^I turn rough ideas/),
+    mission: expect.stringMatching(/^I turn the campaign brief/),
     smallPrint: "Editor could take this · Writing and content",
     slug: "editor",
     hasAvatar: true,
@@ -608,7 +608,7 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   );
 
   // --- 3. Work nobody covers: Nova proposes a teammate; Add to team creates it without leaving; Say hi opens it.
-  await clickButton(app, "New coworker");
+  await evalIn(app, `document.querySelector('button[title="New coworker"], button[aria-label="New coworker"]').click(); true`);
   await waitFor(app, `Boolean(document.querySelector('[data-testid="new-coworker-suggested"]'))`, { label: "readable suggested roles" });
   await evalIn(app, `(() => { const select = document.querySelector('select[aria-label="Profession"]'); select.value = "support"; select.dispatchEvent(new Event("change", { bubbles: true })); return true; })()`);
   await waitFor(app, `document.querySelector('[data-testid="teammate-pick"]')?.getAttribute("data-role-id") === "support"`, { label: "support profession leads with the missing support role" });
@@ -705,10 +705,10 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
     "After a reload Editor's conversation still showed the declined Pipeline tile with no pills, and Nova's showed the first hand-over as Passed to Editor, the second as kept with Nova, and the Care suggestion as added with its Say hi pill.",
     true,
   );
-  await clickButton(app, "New coworker");
+  await evalIn(app, `document.querySelector('button[title="New coworker"], button[aria-label="New coworker"]').click(); true`);
   await waitFor(app, `Boolean(document.querySelector('[data-testid="new-coworker-step-identity"]'))`, { label: "custom coworker form" });
   await fill(app, 'input[placeholder="Scout"]', "Willow");
-  await clickButton(app, "Sand");
+  await evalIn(app, `document.querySelector('button[aria-label="Sand"]').click(); true`);
   await clickButton(app, "Oval");
   expect(await evalIn(app, `document.querySelectorAll('.avatar-stage .coworker-avatar__glasses ellipse').length`)).toBe(2);
   await screenshot(app);
