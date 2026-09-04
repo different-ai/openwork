@@ -394,6 +394,10 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   // --- (a) A rate limit that clears: trying again, live, then the reply — one message, held once. -------
   await beginOutcomeTrace(app);
   await type(app, TRANSIENT_PROMPT);
+  await waitFor(app, `[...document.querySelectorAll('[data-message-role="assistant"]')].some((message) => (message.textContent ?? "").includes(${json(TRANSIENT_REPLY)})) || Boolean(document.querySelector('[data-testid="coworker-turn-failed"]'))`, { timeoutMs: 180_000, label: "the transient rate limit's outcome" });
+  if (await evalIn(app, `Boolean(document.querySelector('[data-testid="coworker-turn-failed"]'))`)) {
+    throw new Error(`A transient rate limit became a failure after ${scripted.countFor("TRANSIENT")} provider requests. ${await describeThread(app, serverUrl, ownerToken, workspaceId, await threadIdOf(), scripted)}`);
+  }
   await waitForReply(app, TRANSIENT_REPLY, 180_000);
   const transientTrace = await endOutcomeTrace(app);
   expect(transientTrace.outcomes).toContain("retrying");
@@ -470,7 +474,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(resultRecord(await invokeCoworker(app, "coworkers.get", { slug: "nova" })).model).toBe(`${SCRIPTED_PROVIDER}/${SECOND_MODEL}`);
   evidence.recordAssertionEvidence(
     "A model that cannot use tools is one message in the coworker's voice with three lettered ways out, and A retries the same message on another model",
-    `The failure sat on Nova's side at the bubble's width with an amber dot and no rose, led with the headline, kept the provider's text folded and closed, and offered exactly A Use ${SECOND_MODEL_LABEL}, B Choose AI model, C Continue with OpenWork; the header, the thread status, and the rail all said the failure's own words. Choosing A switched Nova to ${SECOND_MODEL} and re-ran the same message id: the scripted model saw the prompt once per model, the engine holds one user message for it, and the conversation kept one user bubble plus a "Retried with" line.`,
+    `The failure sat on Nova's side at the bubble's width with an amber dot and no rose, led with the headline, kept the provider's text small and bounded, and offered exactly A Use ${SECOND_MODEL_LABEL}, B Choose AI model, C Continue with OpenWork; the header, the thread status, and the rail all said the failure's own words. Choosing A switched Nova to ${SECOND_MODEL} and re-ran the same message id: the scripted model saw the prompt once per model, the engine holds one user message for it, and the conversation kept one user bubble plus a "Retried with" line.`,
     true,
   );
   await useFirstModel();
@@ -499,12 +503,14 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   // Once the engine gives up: one coworker-side message that names the free model and offers C Connect an AI provider.
   const freeCard = await waitFor(app, `(() => {
     const failure = document.querySelector('[data-testid="coworker-turn-failed"]');
-    if (!failure) return false;
+    if (!failure || !failure.querySelector('[data-choice="use-model"]')) return false;
     const technical = failure.querySelector('[data-testid="coworker-turn-technical"]');
+    const plain = failure.cloneNode(true);
+    plain.querySelector('[data-testid="coworker-turn-technical"]')?.remove();
     return {
       headline: failure.querySelector('[data-testid="coworker-turn-headline"]')?.textContent?.trim() ?? "",
-      text: failure.innerText ?? "",
-      technicalOpen: technical instanceof HTMLDetailsElement ? technical.open : null,
+      text: plain.textContent ?? "",
+      technicalShown: technical instanceof HTMLElement && technical.getBoundingClientRect().height > 0 && !(technical instanceof HTMLDetailsElement),
       technicalText: technical?.textContent ?? "",
       choices: [...failure.querySelectorAll('[data-testid="coworker-turn-choice"]')].map((choice) => ({ letter: choice.getAttribute("data-letter"), choice: choice.getAttribute("data-choice"), label: choice.textContent?.trim() ?? "" })),
       header: document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() ?? "",
@@ -514,12 +520,14 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   if (!isRecord(freeCard) || !Array.isArray(freeCard.choices)) throw new Error("Free-limit card facts were unavailable.");
   const engineAttempts = scripted.countFor("FREE");
   expect(freeCard.headline).toBe("The free model is busy right now.");
-  expect(String(freeCard.text)).toContain("Too many people are using the free model at once.");
-  expect(String(freeCard.text)).toContain("connect your own AI provider so Nova can keep working");
-  expect(freeCard.technicalOpen).toBe(false);
-  // The engine's own remedy copy and the provider's raw text stay folded, never in what is read first.
+  expect(String(freeCard.text)).toContain("The free model's shared usage limit was reached.");
+  expect(String(freeCard.text)).toContain("OpenWork Models membership and your own AI providers");
+  expect(String(freeCard.text)).not.toMatch(/faster|free credits|few minutes/);
+  expect(String(freeCard.text)).toContain("Switching models is your choice.");
+  expect(freeCard.technicalShown).toBe(true);
+  // The plain explanation is separate from the bounded technical reason.
   expect(String(freeCard.text)).not.toMatch(/subscribe|OpenCode Go|FreeUsageLimitError|APIError|429/);
-  expect(String(freeCard.technicalText)).toContain("FreeUsageLimitError");
+  expect(String(freeCard.technicalText)).toMatch(/FreeUsageLimitError|free_tier_limit/);
   // Another connected model can take over, so it leads; the third way is the one that ends the limit for good.
   expect(freeCard.choices.map((choice) => (isRecord(choice) ? `${choice.letter} ${choice.choice}` : ""))).toEqual(["A use-model", "B choose-model", "C connect-provider"]);
   const freeLabels = freeCard.choices.map((choice) => (isRecord(choice) ? String(choice.label) : ""));
@@ -532,6 +540,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   await new Promise((resolve) => setTimeout(resolve, 16_000));
   expect(scripted.countFor("FREE")).toBe(engineAttempts);
   expect(engineAttempts).toBeGreaterThanOrEqual(2);
+  expect(engineAttempts).toBeLessThanOrEqual(4);
   // C opens OpenWork › AI models — where the person's own provider is connected — and closing it keeps the failure in place.
   await evalIn(app, `document.querySelector('[data-testid="coworker-turn-choice"][data-choice="connect-provider"]').click(); true`);
   const providersScreen = await waitFor(app, `(() => {
@@ -566,7 +575,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(afterFree.filter((text) => text.includes("FREE"))).toHaveLength(1);
   evidence.recordAssertionEvidence(
     "The free model's shared limit is named as such while the engine retries and once it gives up, with connecting an AI provider as the way out, and the app adds no attempts of its own",
-    `The scripted provider answered "FREE" with 429 and a FreeUsageLimitError body while held. The conversation's quiet line read "The free model is busy. Trying again…" with Stop and Connect an AI provider inline and the header said Retrying — never the engine's subscription copy. When the engine gave up after ${engineAttempts} attempts, one coworker-side message read "The free model is busy right now." with the plain explanation, exactly A Use ${SECOND_MODEL_LABEL}, B Choose AI model, C Connect an AI provider, the raw FreeUsageLimitError folded and closed, and the header and rail agreed; sixteen seconds later the provider had still seen ${engineAttempts} requests, so the app ran none of its own 2/6/15 s attempts. C opened OpenWork settings at AI models; closing it returned to the discussion with the failure in place; A handed the same message to ${SECOND_MODEL}, whose reply landed as request ${engineAttempts + 1}, and the engine holds exactly one user message for it.`,
+    `The scripted provider answered "FREE" with 429 and a FreeUsageLimitError body while held. The conversation's quiet line read "The free model is busy. Trying again…" with Stop and Connect an AI provider inline and the header said Retrying — never the engine's subscription copy. When the app bounded the exhausted free-tier loop after ${engineAttempts} attempts, one coworker-side message read "The free model is busy right now." with the plain explanation, exactly A Use ${SECOND_MODEL_LABEL}, B Choose AI model, C Connect an AI provider, the free-tier reason shown separately in bounded Technical details, and the header and rail agreed; sixteen seconds later the provider had still seen ${engineAttempts} requests, so the app ran none of its own 2/6/15 s attempts. C opened OpenWork settings at AI models; closing it returned to the discussion with the failure in place; A handed the same message to ${SECOND_MODEL}, whose reply landed as request ${engineAttempts + 1}, and the engine holds exactly one user message for it.`,
     true,
   );
   await useFirstModel();
@@ -739,6 +748,8 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(cutLine).toEqual({ text: "Stopped when the app closed before Nova replied.", choices: ["continue", "discard"], header: "Stopped", rail: "Stopped when the app closed before Nova replied.", next: ["After the cut"], failed: 0 });
   const beforeContinue = await describeThread(app, serverUrl, ownerToken, workspaceId, threadId, scripted);
   scripted.release("CUT");
+  // A hidden window can suspend paint callbacks. Work settlement must not wait for a paint.
+  await evalIn(app, `window.__savedAnimationFrame = window.requestAnimationFrame; window.requestAnimationFrame = () => 0; true`);
   await evalIn(app, `document.querySelector('[data-testid="coworker-turn-line"][data-outcome="cut-off"] [data-choice="continue"]').click(); true`);
   try {
     await waitForReply(app, CUT_REPLY, 120_000);
@@ -754,13 +765,14 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     throw new Error(`${error instanceof Error ? error.message : String(error)}\nThread after the drain wait: ${await describeThread(app, serverUrl, ownerToken, workspaceId, threadId, scripted)}`);
   }
   await waitFor(app, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready"`, { timeoutMs: 120_000, label: "settled after the cut" });
+  await evalIn(app, `window.requestAnimationFrame = window.__savedAnimationFrame; delete window.__savedAnimationFrame; true`);
   const afterCut = await engineUserMessages(serverUrl, ownerToken, workspaceId, threadId);
   expect(afterCut.filter((text) => text.includes("CUT"))).toHaveLength(1);
   expect(afterCut.at(-1)).toBe("After the cut");
   expect(await evalIn(app, `document.querySelectorAll('[data-testid="coworker-turn-line"][data-outcome="cut-off"]').length`)).toBe(0);
   evidence.recordAssertionEvidence(
     "A turn cut off before it finished reads as such after a reload, Continue finishes it under the same message id, and Next drains after",
-    "With the reply held and one message waiting as Next, the window reloaded while the engine's turn was interrupted. The returning window read the record beside the coworker and showed one quiet line — Stopped when the app closed before Nova replied. · Continue · Discard — with the header saying Stopped and the rail the same line, the Next row still there, and no failure card. Continue re-ran the message under its own id and its reply landed; the waiting message then went by itself, and the engine holds one user message for the cut turn.",
+    "With the reply held and one message waiting as Next, the window reloaded while the engine's turn was interrupted. The returning window read the record beside the coworker and showed one quiet line — Stopped when the app closed before Nova replied. · Continue · Discard — with the header saying Stopped and the rail the same line, the Next row still there, and no failure card. Continue re-ran the message under its own id and its reply landed even with animation frames suspended; the waiting message then went by itself, and the engine holds one user message for the cut turn.",
     true,
   );
 });

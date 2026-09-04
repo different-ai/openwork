@@ -31,6 +31,7 @@ extraResources:
     to: opencode-plugins
     filter:
       - "*.js"
+      - "*.wasm"
       - "!*.test.js"
 asar: true
 npmRebuild: false

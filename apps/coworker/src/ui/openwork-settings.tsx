@@ -7,7 +7,7 @@ import {
   type ProviderSyncRun,
   type RuntimeInfo,
 } from "@/lib/bridge";
-import { denApiBase, describeSkippedProvider, type DenSession } from "@/lib/den";
+import { buildDenAccountUrl, denApiBase, describeSkippedProvider, type DenSession } from "@/lib/den";
 import {
   createCoworkerThreads,
   modelSourceLabel,
@@ -18,6 +18,7 @@ import { clearAutoPicked } from "@/lib/model-choice";
 import { CoworkerMark, InlineLoader } from "@/ui/brand";
 import { Button, ErrorNote, StatusDot } from "@/ui/kit";
 import { LocalProviders } from "@/ui/local-providers";
+import { ModelsMembershipCard } from "@/ui/models-membership";
 
 export type SettingsSection = "general" | "account" | "models" | "engine";
 
@@ -374,11 +375,27 @@ export function OpenWorkSettings({
                     </div>
                   )}
                 </SettingsCard>
+                {session ? <SettingsCard>
+                  <div className="p-5">
+                    <h3 className="text-sm font-semibold text-snow">Connect the apps your work lives in</h3>
+                    <p className="mt-1 text-xs leading-5 text-mist">Connect an app in OpenWork, then use Apps & tools in your coworker's settings to discover what it can do. Connections and their permissions are managed separately from Models membership.</p>
+                    <Button className="mt-3" variant="ghost" onClick={() => {
+                      void coworkerBridge.openExternal(buildDenAccountUrl(session.baseUrl, "connections")).catch(() => setError("Couldn't open your connected apps. Try again."));
+                    }}>Manage connected apps</Button>
+                  </div>
+                </SettingsCard> : null}
               </>
             ) : null}
 
             {section === "models" ? (
               <>
+                <ModelsMembershipCard
+                  key={`${session?.baseUrl ?? runtime.denBaseUrl}:${session?.orgId ?? "signed-out"}:${session?.userEmail ?? ""}`}
+                  session={session}
+                  baseUrl={runtime.denBaseUrl}
+                  onConnect={onConnect}
+                  onRefreshModels={() => refreshConfiguration({ sync: true })}
+                />
                 <div className="flex items-start justify-between gap-5">
                   <div>
                     <h2 className="text-xl font-semibold tracking-[-0.03em] text-snow">AI models</h2>

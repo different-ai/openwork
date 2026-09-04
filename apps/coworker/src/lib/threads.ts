@@ -205,8 +205,15 @@ function retryOf(status: SessionStatus | undefined): { retry?: { next: number; m
  * backoff) is a stall: the person should hear that the model is unavailable and be able to
  * choose another one, not watch "Retrying" for hours. Returns the reason in plain words.
  */
-export function stalledRetry(retry: { next: number; message: string } | undefined, now = Date.now()): string | null {
-  if (!retry || !Number.isFinite(retry.next) || retry.next - now <= FAR_RETRY_MS) return null;
+export function stalledRetry(retry: { next: number; message: string; attempt?: number; reason?: string | null } | undefined, now = Date.now()): string | null {
+  if (!retry) return null;
+  // Some engines keep retrying an exhausted free allowance indefinitely with a
+  // short Retry-After. A few attempts may clear a transient limit; a sustained
+  // named limit needs a choice, not an endless loop that also holds Next.
+  if (retry.reason === "free_tier_limit" && (retry.attempt ?? 0) >= 3) {
+    return `${retry.message.trim() || "The free model's shared usage limit was reached."} (free_tier_limit)`;
+  }
+  if (!Number.isFinite(retry.next) || retry.next - now <= FAR_RETRY_MS) return null;
   const reason = retry.message.trim().replace(/[.\s]+$/, "");
   return reason || "The AI provider is not answering";
 }

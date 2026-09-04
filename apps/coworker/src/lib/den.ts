@@ -65,6 +65,42 @@ const denSessionSchema = z.object({
   orgName: z.string(),
 });
 
+/** The existing Models entitlement; an unreadable response is never a free account. */
+const modelsMembershipSchema = z.object({
+  inference: z.object({
+    subscribed: z.boolean(),
+    enabled: z.boolean(),
+    upstreamProviderConfigured: z.boolean(),
+    buckets: z.array(z.object({
+      windowType: z.enum(["five_hour", "weekly", "monthly"]),
+      windowStartAt: z.iso.datetime({ offset: true }),
+      windowEndAt: z.iso.datetime({ offset: true }),
+      limitAmount: z.number().finite().nonnegative(),
+      usedAmount: z.number().finite().nonnegative(),
+    })),
+  }),
+});
+export type ModelsMembership = z.infer<typeof modelsMembershipSchema>["inference"];
+
+export function buildDenAccountUrl(baseUrl: string, destination: "models" | "billing" | "connections"): string {
+  const paths = { models: "/dashboard/inference", billing: "/dashboard/billing", connections: "/dashboard/your-connections" };
+  const url = new URL(baseUrl);
+  if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("OpenWork needs a web address.");
+  url.pathname = paths[destination];
+  url.search = "";
+  url.hash = "";
+  url.username = "";
+  url.password = "";
+  url.searchParams.set("utm_source", "opencoworker");
+  url.searchParams.set("utm_medium", "desktop");
+  return url.toString();
+}
+
+export async function readModelsMembership(session: DenSession): Promise<ModelsMembership> {
+  const payload = await denRequest(session.baseUrl, "/v1/inference", { token: session.token, orgId: session.orgId });
+  return modelsMembershipSchema.parse(payload).inference;
+}
+
 export function readDenSession(): DenSession | null {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);

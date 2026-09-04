@@ -72,7 +72,10 @@ test("the free model's shared limit is named as such, however the engine says it
   ]) {
     const failure = describeTurnFailure(raw, "Scout");
     assert.equal(failure.headline, "The free model is busy right now.", raw);
-    assert.equal(failure.detail, "Too many people are using the free model at once. Wait a few minutes and try again, or connect your own AI provider so Scout can keep working.");
+    assert.match(failure.detail, /shared usage limit was reached/);
+    assert.match(failure.detail, /OpenWork Models membership and your own AI providers/);
+    assert.match(failure.detail, /Switching models is your choice/);
+    assert.doesNotMatch(failure.detail, /few minutes|slow|faster|free credits|launch offer/);
     assert.equal(failure.technical, raw);
     assert.equal(failure.modelRelated, true);
     assert.equal(failure.transient, false);
