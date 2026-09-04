@@ -99,9 +99,14 @@ Execution path inside the source:
    via a shared internal helper; do not duplicate resolution logic.
 3. Call openwork-server using the `packages/headless-threads` client (or its
    underlying HTTP shape) with the resolved worker URL + token.
-4. Map worker errors to gateway error vocabulary: no worker provisioned →
-   actionable "needs cloud worker" result (relay the human step, mirroring
-   `needs_admin_setup` / `needs_signin` conventions), never a fake success.
+4. On the first `remote-session:create`, provision the member's workspace
+   through the browser's shared `ensureCloudWorker` path. Return
+   `cloud_runtime_provisioning`, `retryable: true`, and `retryAfterMs: 30000`
+   while it starts. No task is queued at this stage: the agent retries create
+   with the same arguments after the delay. Once ready, the normal native
+   session client creates the task and submits its prompt.
+   `read` and `send` never create a missing workspace; they return
+   `needs_cloud_setup` with guidance to start a new task using create.
 
 ### 2. Async model
 
@@ -134,13 +139,23 @@ without MCP Apps get text fallback with the same URL.
   `search_capabilities` and execute reports `unknown_capability`. Execution
   re-checks Web access live (`openwork_web_access_required`) and the runtime
   re-checks hosting availability (`cloud_not_available`) as defense in depth;
-  `needs_cloud_setup` is reserved for the member-facing "open OpenWork Cloud
-  once to provision" case.
+  first-use provisioning requires a valid `create` request with `mcp:write`
+  and active Web access. Concurrent first-use requests and browser access use
+  the same member-scoped worker and creation deduplication. This deduplicates
+  workspace provisioning, not subsequent successful session creation calls.
 - Member-scoped only: capabilities operate on the caller's resolved worker.
   `sessionId` from another member's worker must 404, not 403-leak.
 - Prompts transit the gateway but are stored only on the worker (same trust
   domain as existing web chat). No prompt content in gateway logs; log
   receipts/ids only.
+
+The first-use contract is exercised by
+`pnpm evals:pr specs/remote-session-first-use.test.ts`: an isolated Den and
+database handle real MCP requests, while an HTTP witness replaces Daytona
+and the worker's native session API. The journey checks access denial,
+read/write boundaries, concurrent provisioning, first prompt delivery after
+readiness, browser reuse, and separate workspaces for two members. It does
+not launch a live Daytona VM or run a model.
 
 ### 5. Desktop side (v1: zero code)
 

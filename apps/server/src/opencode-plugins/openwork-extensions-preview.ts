@@ -498,11 +498,21 @@ async function executeOpenworkAffordance(
   }
   const result = await uiBridgeRequest("/command", {
     method: "POST",
-    body: request,
+    // Stamp the requesting conversation so UI commands act for the agent's own
+    // thread (its browser tabs, its panel) rather than whichever thread is on
+    // screen. The agent never supplies this; it comes from the tool context.
+    body: { ...request, ...affordanceOrigin(context) },
   });
   return isRecord(result) && typeof result.ok === "boolean"
     ? result
     : unavailableAffordance(request.id, "OpenWork UI command returned an invalid response.");
+}
+
+function affordanceOrigin(context: OpenCodeContext): { origin?: { sessionId: string; workspaceId?: string } } {
+  const sessionId = context.sessionID?.trim();
+  if (!sessionId) return {};
+  const workspaceId = (context.workspaceId ?? context.workspaceID)?.trim();
+  return { origin: { sessionId, ...(workspaceId ? { workspaceId } : {}) } };
 }
 
 function collapseWhitespace(value: string): string {

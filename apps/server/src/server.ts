@@ -652,9 +652,12 @@ function toUnixNano(): string {
   return (BigInt(Date.now()) * 1_000_000n).toString();
 }
 
-function isBrokenLogPipeError(error: unknown): boolean {
+function isUnavailableLogOutputError(error: unknown): boolean {
   if (!isRecord(error)) return false;
-  return error.code === "EPIPE" || error.code === "ERR_STREAM_DESTROYED";
+  // Redirected stdout can run out of space just like the optional file sink.
+  // Logging must not turn an otherwise successful request into a server crash.
+  return error.code === "EPIPE" || error.code === "ERR_STREAM_DESTROYED"
+    || error.code === "ENOSPC" || error.code === "EDQUOT";
 }
 
 let stdoutLogWritesDisabled = false;
@@ -664,7 +667,7 @@ function ensureStdoutErrorHandler() {
   if (stdoutErrorHandlerInstalled) return;
   stdoutErrorHandlerInstalled = true;
   process.stdout.on("error", (error: unknown) => {
-    if (isBrokenLogPipeError(error)) {
+    if (isUnavailableLogOutputError(error)) {
       stdoutLogWritesDisabled = true;
       return;
     }
@@ -706,7 +709,7 @@ export function createServerLogger(
     try {
       writeLine(line);
     } catch (error) {
-      if (isBrokenLogPipeError(error)) {
+      if (isUnavailableLogOutputError(error)) {
         logWritesDisabled = true;
         if (writeLine === writeStdoutLogLine) {
           stdoutLogWritesDisabled = true;

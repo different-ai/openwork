@@ -18,6 +18,12 @@ interface RowState {
   actionsOpacity: string;
 }
 
+interface ListState {
+  clientWidth: number;
+  scrollLeft: number;
+  scrollWidth: number;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -44,6 +50,27 @@ async function rowStates(probe: Probe): Promise<RowState[]> {
       || typeof row.actionsOpacity !== "string") throw new Error(`Unexpected sidebar row: ${JSON.stringify(row)}`);
     return { title: row.title, titleRight: row.titleRight, actionsLeft: row.actionsLeft, actionsOpacity: row.actionsOpacity };
   });
+}
+
+async function listState(probe: Probe): Promise<ListState> {
+  // TODO(primitive): probe.geometry should read the scroll extents of a visible target.
+  const value = await probe.eval(`(() => {
+    const list = document.querySelector('[data-sidebar="content"]');
+    if (!(list instanceof HTMLElement)) return null;
+    return { clientWidth: list.clientWidth, scrollLeft: list.scrollLeft, scrollWidth: list.scrollWidth };
+  })()`);
+  if (!isRecord(value)
+    || typeof value.clientWidth !== "number"
+    || typeof value.scrollLeft !== "number"
+    || typeof value.scrollWidth !== "number") throw new Error(`Unexpected sidebar list state: ${JSON.stringify(value)}`);
+  return { clientWidth: value.clientWidth, scrollLeft: value.scrollLeft, scrollWidth: value.scrollWidth };
+}
+
+/** Nothing in the sidebar list is hidden sideways, so there is nothing to scroll to. */
+async function expectListFits(probe: Probe): Promise<void> {
+  const list = await listState(probe);
+  expect(list.scrollWidth).toBeLessThanOrEqual(list.clientWidth);
+  expect(list.scrollLeft).toBe(0);
 }
 
 async function titleState(probe: Probe, title: string): Promise<TitleState> {
@@ -81,6 +108,10 @@ test("the sidebar title fade follows only the edges with hidden text", async ({ 
     until: (state) => state.scrollWidth > state.clientWidth && state.hiddenEdges === "end",
   });
   expect(resting.maskImage).not.toBe("none");
+
+  await step("the list fits the sidebar and does not scroll sideways", async () => {
+    await expectListFits(probe);
+  });
 
   await step("a fitting workspace row stays fully visible on hover", async () => {
     const fitting = await probe.eventually(() => titleState(probe, workspaceName), {
@@ -140,6 +171,10 @@ test("the sidebar title fade follows only the edges with hidden text", async ({ 
     expect(workspaceAfterResize.hiddenEdges).toBe("none");
     expect(workspaceAfterResize.maskImage).toBe("none");
     await user.screenshot();
+  });
+
+  await step("the widened list still fits and does not scroll sideways", async () => {
+    await expectListFits(probe);
   });
 
   await step("below the hover breakpoint, titles stop before the always-visible row actions", async () => {

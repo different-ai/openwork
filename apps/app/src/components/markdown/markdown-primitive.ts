@@ -531,6 +531,101 @@ export function renderMarkdownHtml(text: string, presentation: MarkdownPresentat
   return sanitizeMarkdownHtml(markdownParser.parse(text, { async: false }));
 }
 
+/**
+ * `dangerouslySetInnerHTML` payload for one top-level markdown block. The same
+ * object is returned for as long as that block's source is unchanged, so React
+ * leaves its DOM alone while later blocks keep streaming in.
+ */
+export type MarkdownBlockHtml = { readonly __html: string };
+
+export type StreamingMarkdownRenderer = {
+  /** Sanitized HTML for every top-level block of `text`, in document order. */
+  render: (text: string) => MarkdownBlockHtml[];
+  /** Drop the retained tokens once the message has settled. */
+  reset: () => void;
+};
+
+type StreamingMarkdownState = {
+  source: string;
+  tokens: Token[];
+  blocks: MarkdownBlockHtml[];
+};
+
+/**
+ * Blocks re-lexed on every append: the one still growing plus its predecessor,
+ * because a growing block can retroactively reshape the block before it (lazy
+ * list continuation, a setext underline, a table delimiter row).
+ */
+const STREAMING_RELEX_TAIL = 2;
+
+function hasReferenceDefinition(tokens: Token[]) {
+  return tokens.some((token) => token.type === "def");
+}
+
+/**
+ * Incremental markdown renderer for a message that is still streaming. A full
+ * `renderMarkdownHtml` re-lexes, re-parses, and re-sanitizes the whole answer
+ * for every token that arrives, so each frame costs as much as the text so far.
+ * This keeps the previous frame's top-level tokens and re-lexes only the tail
+ * of an appended source; settled blocks reuse their previous HTML payload.
+ *
+ * Reference-style link definitions resolve across blocks, so a source that
+ * contains one always takes the full lex.
+ */
+export function createStreamingMarkdownRenderer(presentation: MarkdownPresentation = "chat"): StreamingMarkdownRenderer {
+  const { markdownParser } = parsersForPresentation(presentation);
+  let state: StreamingMarkdownState | null = null;
+
+  const renderBlock = (token: Token): MarkdownBlockHtml => ({
+    __html: sanitizeMarkdownHtml(markdownParser.parser([token])),
+  });
+
+  const renderAll = (source: string, previous: StreamingMarkdownState | null): StreamingMarkdownState => {
+    const tokens = markdownParser.lexer(source);
+    const reusable = previous && !hasReferenceDefinition(tokens) && !hasReferenceDefinition(previous.tokens)
+      ? previous
+      : null;
+    const blocks = tokens.map((token, index) => {
+      const priorToken = reusable?.tokens[index];
+      const priorBlock = reusable?.blocks[index];
+      return priorToken && priorBlock && priorToken.raw === token.raw ? priorBlock : renderBlock(token);
+    });
+    return { source, tokens, blocks };
+  };
+
+  const renderAppended = (source: string, previous: StreamingMarkdownState): StreamingMarkdownState | null => {
+    const keep = previous.tokens.length - STREAMING_RELEX_TAIL;
+    if (keep <= 0 || hasReferenceDefinition(previous.tokens)) return null;
+
+    let offset = 0;
+    for (const token of previous.tokens.slice(0, keep)) offset += token.raw.length;
+    const tail = markdownParser.lexer(source.slice(offset));
+    if (hasReferenceDefinition(tail)) return null;
+
+    return {
+      source,
+      tokens: [...previous.tokens.slice(0, keep), ...tail],
+      blocks: [...previous.blocks.slice(0, keep), ...tail.map(renderBlock)],
+    };
+  };
+
+  return {
+    render(text) {
+      // Marked normalizes line endings before lexing; mirror it so token raw
+      // lengths index into `source`.
+      const source = text.replace(/\r\n|\r/g, "\n");
+      if (state?.source === source) return state.blocks;
+
+      const appended = state && source.startsWith(state.source) ? renderAppended(source, state) : null;
+      state = appended ?? renderAll(source, state);
+      return state.blocks;
+    },
+    reset() {
+      state = null;
+    },
+  };
+}
+
 export async function renderHighlightedMarkdownHtml(text: string, presentation: MarkdownPresentation = "chat") {
   const { highlightedMarkdownParser } = parsersForPresentation(presentation);
   const html = await highlightedMarkdownParser.parse(text, { async: true });

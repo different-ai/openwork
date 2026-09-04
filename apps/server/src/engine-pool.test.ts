@@ -576,7 +576,7 @@ describe("engine pool", () => {
     expect(primary.isAlive()).toBe(true);
     await fixture.setBusy(oldPort, []);
     expect(await waitUntil(() => !pool.hasDrainingGeneration(), 5_000)).toBe(true);
-    // Retirement marks the generation dead before awaiting process shutdown.
+    // Retirement removes the draining status before asynchronous process exit.
     expect(await waitUntil(() => !primary.isAlive(), 5_000)).toBe(true);
   });
 

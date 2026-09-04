@@ -13,6 +13,7 @@ import { useLocation, useNavigate } from "react-router";
 import type {
   OpenworkAffordanceDescriptor,
   OpenworkAffordanceEffects,
+  OpenworkAffordanceOrigin,
   OpenworkAffordanceRequest,
   OpenworkAffordanceResult,
 } from "@openwork/types/openwork-affordance";
@@ -59,6 +60,8 @@ export type OpenworkControlResult =
 
 export type OpenworkControlHelpers = {
   setNarration: (text: string) => void;
+  /** The conversation whose agent issued the request, when it came through the agent bridge. */
+  origin?: OpenworkAffordanceOrigin;
 };
 
 export type OpenworkControlTargetRef = {
@@ -106,7 +109,7 @@ type OpenworkControlContextValue = {
   busyActionId: string | null;
   actions: OpenworkControlActionMetadata[];
   registerAction: (actionId: string, actionRef: ControlActionRef) => () => void;
-  executeAction: (actionId: string, args?: unknown) => Promise<OpenworkControlResult>;
+  executeAction: (actionId: string, args?: unknown, origin?: OpenworkAffordanceOrigin) => Promise<OpenworkControlResult>;
   publishContext: (context: OpenworkContextSnapshot) => void;
   snapshot: () => OpenworkControlSnapshot;
 };
@@ -391,7 +394,11 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
     await wait(SPOTLIGHT_TIMING_MS.release);
   }, []);
 
-  const executeAction = useCallback(async (actionId: string, args?: unknown): Promise<OpenworkControlResult> => {
+  const executeAction = useCallback(async (
+    actionId: string,
+    args?: unknown,
+    origin?: OpenworkAffordanceOrigin,
+  ): Promise<OpenworkControlResult> => {
     const registered = actionsRef.current.get(actionId);
     const action = registered?.ref.current;
     if (!registered || !action) return { ok: false, actionId, error: `Unknown action: ${actionId}` };
@@ -418,7 +425,7 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
       await playTargetChoreography(action, runId);
       setNarration(`Running ${action.label}…`);
       const effectiveArgs = args === undefined ? action.previewArgs : args;
-      const result = await action.execute(effectiveArgs, { setNarration });
+      const result = await action.execute(effectiveArgs, { setNarration, origin });
       const resultError = returnedActionError(result);
       if (resultError) {
         setNarration(`Could not ${action.label}: ${resultError}`);
@@ -535,7 +542,7 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
       };
     }
     busyActorRef.current = request.actor ?? null;
-    const result = await executeAction(request.id, request.args);
+    const result = await executeAction(request.id, request.args, request.origin);
     if (!busyActionIdRef.current) busyActorRef.current = null;
     if (!result.ok) {
       return {
