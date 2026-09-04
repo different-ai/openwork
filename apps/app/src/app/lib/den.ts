@@ -3070,7 +3070,7 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
     },
     async saveApp(orgId: string, appId: string, input: SaveApp) {
       return generatedArtifactViewSchema.parse(await requestJson<unknown>(baseUrls, `/v1/apps/${encodeURIComponent(appId)}/save`, {
-        method: "POST", token, organizationId: orgId, body: JSON.stringify(input),
+        method: "POST", token, organizationId: orgId, body: input,
       }));
     },
 
