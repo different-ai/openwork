@@ -5,7 +5,9 @@ import type { ConnectState } from "@/lib/connect";
 import { describeCoworkerSummary, showSummaryLine, summaryRowTitle, type CoworkerSummaryLine, type SummaryKind } from "@/lib/coworker-summary";
 import { referralPrompt } from "@/lib/conversation";
 import type { DenSession } from "@/lib/den";
+import type { EffortStop } from "@/lib/effort";
 import { clearAutoPicked, markAutoPicked, peekStartingModel, takeStartingModel } from "@/lib/model-choice";
+import { EffortDial } from "@/ui/effort-dial";
 import { createCoworkerThreads, recommendModel, type CoworkerActivity, type ThreadListItem } from "@/lib/threads";
 import { AvatarControls, CoworkerAvatar } from "@/ui/coworker-avatar";
 import { PersonalityPicker } from "@/ui/personality-picker";
@@ -953,6 +955,15 @@ function CoworkerSettings({
     }
   }
 
+  async function updateEffort(stop: EffortStop) {
+    setError("");
+    try {
+      onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { effortPreference: stop }));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+
   async function updateModel(selection: ModelSelection) {
     setError("");
     try {
@@ -1048,10 +1059,14 @@ function CoworkerSettings({
           onConnect={onOpenAccount}
           compact
         />
-        <p className="mt-2 text-xs leading-relaxed text-mist" data-testid="coworker-model-note">
+        <div className="mt-4" data-testid="coworker-effort-settings">
+          <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">How hard to work</h4>
+          <EffortDial stop={coworker.effortPreference} onChange={(stop) => void updateEffort(stop)} coworkerName={coworker.name} compact={false} />
+        </div>
+        <p className="mt-3 text-xs leading-relaxed text-mist" data-testid="coworker-model-note">
           {coworker.modelMode === "auto"
-            ? `${coworker.name} reads each message and picks a quick, standard, or deep model for it; the header says which one is answering. Assignments, responsibilities, and Workers use the standard model.`
-            : `${coworker.name} uses this AI model and thinking effort for every discussion, assignment, and responsibility.`}
+            ? `${coworker.name} reads each message and picks a quick, standard, or deep model for it; the header says which one is answering. Assignments and Workers use the standard model. How hard it thinks on each turn follows the dial, unless an exact thinking effort is fixed.`
+            : `${coworker.name} uses this AI model for every discussion, assignment, and Worker. How hard it thinks on each turn follows the dial, unless an exact thinking effort is fixed.`}
         </p>
       </section>
 

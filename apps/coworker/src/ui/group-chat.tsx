@@ -5,6 +5,7 @@ import { assignmentPrompt, assignmentTitle, timeLabelBetween, type DiscussionMes
 import { combineSummaryLines, describeCoworkerSummary, type CoworkerSummaryLine } from "@/lib/coworker-summary";
 import { classifyThreads, discussionIds, loadDiscussionRegistry, registerDiscussion } from "@/lib/discussions";
 import { lastDocumentsOpened } from "@/ui/documents";
+import { effortForTurn, effortLevelFor, variantForLevel } from "@/lib/effort";
 import { ROUTING_TIMEOUT_MS, earlierSpeakerOrders, facilitatorModels, facilitatorPrompt, routeWithFacilitator, type FacilitatorAsk } from "@/lib/facilitator";
 import {
   busyGroupSpeakers,
@@ -305,10 +306,15 @@ export function GroupChat({
     if (!coworker) throw new Error("That coworker is no longer here.");
     const workspaceId = coworker.workspaceId || (await coworkerBridge.coworkers.ensureWorkspace(slug)).workspaceId;
     if (!workspaceId) throw new Error(`${coworker.name}'s workspace is not ready.`);
-    const threads = createCoworkerThreads({ serverUrl: runtime.serverUrl, workspaceId, token: runtime.ownerToken, model: coworker.model, modelVariant: coworker.modelVariant });
+    // A group reply is an ordinary reply: the effort dial decides its effort from what the model offers; an exact effort the person fixed wins.
+    const catalogThreads = createCoworkerThreads({ serverUrl: runtime.serverUrl, workspaceId, token: runtime.ownerToken });
+    const connected = (await connectedCatalog(catalogThreads)).models;
     // A saved model that is not connected fails here, by name, rather than as a provider error mid-turn.
-    const unavailable = unavailableModelReason(coworker.model, (await connectedCatalog(threads)).models);
+    const unavailable = unavailableModelReason(coworker.model, connected);
     if (unavailable) throw new Error(unavailable);
+    const offered = connected.find((model) => model.id === coworker.model)?.variants ?? [];
+    const modelVariant = effortForTurn({ kind: "reply", stop: coworker.effortPreference, fixedVariant: coworker.modelVariant, variants: offered });
+    const threads = createCoworkerThreads({ serverUrl: runtime.serverUrl, workspaceId, token: runtime.ownerToken, model: coworker.model, modelVariant });
     let threadId = groupRef.current.participantThreadIds[slug] ?? "";
     if (!threadId) {
       const created = await threads.client.createThread({ title: `Group chat: ${groupRef.current.name}`, signal });
@@ -363,7 +369,9 @@ export function GroupChat({
       onGroupChanged(updated);
     }
     const ask: FacilitatorAsk = async (text, model, askSignal) => {
-      const acceptance = await client.sendTurn(threadId, { prompt: text, model: { providerId: model.providerId, modelId: model.modelId }, messageId: newId("msg"), signal: askSignal });
+      // The facilitator thinks least: the lowest effort its model offers, whatever any dial says.
+      const variant = variantForLevel(effortLevelFor("facilitator", "balanced"), model.variants);
+      const acceptance = await client.sendTurn(threadId, { prompt: text, model: { providerId: model.providerId, modelId: model.modelId, ...(variant ? { variant } : {}) }, messageId: newId("msg"), signal: askSignal });
       return settledReplyText(client, threadId, acceptance, ROUTING_TIMEOUT_MS, askSignal, "The facilitator");
     };
     return routeWithFacilitator({
