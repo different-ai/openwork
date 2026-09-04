@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { workflowArtifactSnapshotSchema } from "@openwork/types/workflows"
 import {
   artifactDigest,
   artifactFreshness,
@@ -100,6 +101,33 @@ test("generic config-object projections omit Workflow example input", () => {
     requiredCapabilities: [],
   })
   assert.equal(JSON.stringify(projected).includes("authoring-secret"), false)
+})
+
+test("artifact snapshot projections expose tool calls", () => {
+  const projected = workflowArtifactSnapshotSchema.parse({
+    receiptId: "cmr_test",
+    pluginId: "plg_test",
+    configObjectId: "cob_test",
+    configObjectVersionId: "cov_test",
+    automationRunId: null,
+    value: { count: 1 },
+    markdown: "| count |\n| --- |\n| 1 |",
+    codeDigest: `sha256:${"a".repeat(64)}`,
+    resultDigest: `sha256:${"b".repeat(64)}`,
+    inputSchemaDigest: null,
+    outputSchemaDigest: null,
+    rendererVersion: "codemode-markdown-v1",
+    toolCalls: [{ name: "tools.reports.list" }],
+    status: "succeeded",
+    errorKind: null,
+    errorMessage: null,
+    source: "manual",
+    startedAt: "2026-08-13T12:00:00.000Z",
+    finishedAt: "2026-08-13T12:00:01.000Z",
+    contentDeletedAt: null,
+  })
+
+  assert.deepEqual(projected.toolCalls, [{ name: "tools.reports.list" }])
 })
 
 test("Markdown rendering is deterministic and never emits raw HTML", () => {

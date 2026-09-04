@@ -164,6 +164,7 @@ function serializeSnapshot(row: WorkflowRunRow, automationTrigger: AutomationRun
     rendererVersion: row.renderer_version === WORKFLOW_MARKDOWN_RENDERER_VERSION
       ? WORKFLOW_MARKDOWN_RENDERER_VERSION
       : null,
+    toolCalls: parseCodemodeToolCalls(row.tool_calls),
     status: row.status,
     errorKind: row.error_kind,
     errorMessage: row.error_message,

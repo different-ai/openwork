@@ -54,6 +54,7 @@ const validationIssueSchema = z.object({
 export const invalidRequestSchema = z.object({
   error: z.literal("invalid_request"),
   details: z.array(validationIssueSchema),
+  capability: z.string().optional(),
 }).meta({ ref: "InvalidRequestError" })
 
 export const unauthorizedSchema = z.object({
