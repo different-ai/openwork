@@ -21,7 +21,7 @@ export function classifySpec(source) {
     importsNodeFs: imports.some((specifier) => /^(?:node:)?fs(?:\/promises)?$/.test(specifier)),
     importsChildProcess: imports.some((specifier) => /^(?:node:)?child_process$/.test(specifier)),
     crossesBoundary: imports.some((specifier) => /^(?:\.\.\/)?\.\.\/worlds\/|^@openwork\/world$/.test(specifier))
-      || /(?<!\.)\b(?:app|chrome|server|inviteMember|faultProxy)\s*\(|\bspec\.world\s*\(/.test(source),
+      || /(?<!\.)\b(?:app|coworker|chrome|server|inviteMember|faultProxy)\s*\(|\bspec\.world\s*\(/.test(source),
   };
 }
 
@@ -30,7 +30,7 @@ export function violations(file, classification) {
   if (classification.importsProductSource) reasons.push(`${file}: imports product source (../../apps/...) — unit tests belong next to the module they test, not in evals/specs`);
   if (classification.importsNodeFs && !classification.crossesBoundary) reasons.push(`${file}: reads the filesystem (node:fs) — a spec observes the product, not the repository`);
   if (classification.importsChildProcess && !classification.crossesBoundary) reasons.push(`${file}: spawns processes (node:child_process) — wrapping another test runner is not evidence`);
-  if (!classification.crossesBoundary) reasons.push(`${file}: never crosses a product boundary (app()/chrome()/server()/spec.world()) — see write-a-spec`);
+  if (!classification.crossesBoundary) reasons.push(`${file}: never crosses a product boundary (app()/coworker()/chrome()/server()/spec.world()) — see write-a-spec`);
   return reasons;
 }
 

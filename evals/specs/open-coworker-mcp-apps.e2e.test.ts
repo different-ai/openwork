@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { expect, onTestFinished } from "vitest";
 import { clickButton, connect, coworker, debuggerUrlFor, evalIn, evaluate, fill, listTargets, needs, screenshot, test, validate, waitFor, waitForText } from "@openwork/testkit";
-import { buildGeneratedArtifactViewInWorker } from "../../ee/apps/den-api/src/generated-artifact-view-builder.js";
+import { buildStandardAppHtml } from "../worlds/coworker.ts";
 
 const mcpServerName = "chapter-notes";
 const toolName = "open_team_pulse";
@@ -161,7 +161,7 @@ async function withTimeout<T>(task: Promise<T>, timeoutMs: number, label: string
   }
 }
 
-const builtApp = await buildGeneratedArtifactViewInWorker({
+const builtAppHtml = await buildStandardAppHtml({
   reactSource: `export default function CoworkerApp({ data }) {
     return <main><p className="eyebrow">TEAM PULSE</p><h2>{data.title}</h2><p>{data.status}</p></main>
   }`,
@@ -174,7 +174,6 @@ const builtApp = await buildGeneratedArtifactViewInWorker({
   title: "Team pulse",
   description: "Deterministic Open Coworker MCP App fixture.",
 });
-if (!builtApp.ok) throw new Error(`Coworker MCP App build failed: ${JSON.stringify(builtApp.diagnostics)}`);
 
 function rpcResponse(message: Record<string, unknown>): Record<string, unknown> {
   if (message.method === "initialize") {
@@ -227,7 +226,7 @@ function rpcResponse(message: Record<string, unknown>): Record<string, unknown> 
         contents: [{
           uri: resourceUri,
           mimeType: "text/html;profile=mcp-app",
-          blob: Buffer.from(builtApp.html, "utf8").toString("base64"),
+          blob: Buffer.from(builtAppHtml, "utf8").toString("base64"),
           _meta: {
             ui: {
               prefersBorder: true,
