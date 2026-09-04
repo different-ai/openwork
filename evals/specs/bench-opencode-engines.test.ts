@@ -227,7 +227,7 @@ async function startWitness(lane: Lane): Promise<Witness> {
             index: 0,
             message: {
               role: "assistant",
-              content: `${nonce} ${Array.from({ length: tokenCount }, (_, index) => `token ${index + 1} `).join("")}`,
+              content: `## Objective\n${nonce} ${Array.from({ length: tokenCount }, (_, index) => `token ${index + 1} `).join("")}`,
             },
             finish_reason: "stop",
           }],
@@ -244,7 +244,7 @@ async function startWitness(lane: Lane): Promise<Witness> {
       response.write(`data: ${JSON.stringify({
         ...base,
         object: "chat.completion.chunk",
-        choices: [{ index: 0, delta: { role: "assistant", content: `${nonce} ` }, finish_reason: null }],
+        choices: [{ index: 0, delta: { role: "assistant", content: `## Objective\n${nonce} ` }, finish_reason: null }],
       })}\n\n`);
       for (let index = 1; index <= tokenCount; index += 1) {
         await sleep(pacingMs);
