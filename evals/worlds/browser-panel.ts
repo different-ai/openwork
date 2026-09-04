@@ -136,7 +136,15 @@ export async function builtinBrowserWorld(seed: Seed) {
       return seed.session(app, { title });
     },
 
-    /** Bring a conversation on screen, as the user does from the sidebar. */
+    /** Give a conversation a stable title so a spec can find it in the sidebar. */
+    async renameSession(sessionId: string, title: string): Promise<void> {
+      await control(app, "session.rename", { sessionId, title });
+    },
+
+    /**
+     * Bring a conversation on screen programmatically. Arrangement only: a
+     * claim about the user switching conversations must click the sidebar.
+     */
     async showSession(sessionId: string): Promise<void> {
       await control(app, "session.open", { sessionId });
     },

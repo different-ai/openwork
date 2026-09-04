@@ -11,14 +11,17 @@ const test = spec.world(builtinBrowserWorld);
 // able to read, click, type, and screenshot the hidden page. Switching to the
 // owning conversation shows its page already loaded.
 const tabButton = (name: string): Target => ({ role: "button", label: new RegExp(`^Select tab: .*viewport-probe=${name}$`) });
+// A conversation's row in the sidebar, found by the title the user reads there.
+const conversation = (title: string): Target => ({ text: title });
 // The desktop lays a hidden conversation's tab out at this viewport (see
 // @openwork/browser-tabs) so the agent sees a desktop-sized page.
 const BACKGROUND_TAB_VIEWPORT = { width: 1280, height: 800 };
 
 test("a background conversation's agent browses silently and its page is waiting when the user switches to it", async ({ world, user, step }) => {
-  const reading = world.session;
+  const reading = { ...world.session, title: "Reading the news" };
+  await world.renameSession(reading.sessionId, reading.title);
   const researching = await world.openSession("Background research");
-  await world.showSession(reading.sessionId);
+  await user.click(conversation(reading.title));
   const readingTab = await world.openTabAs("reading", reading.sessionId);
   await user.see(tabButton(readingTab.name), { timeoutMs: 30_000 });
   const panelViewport = await world.readViewport(readingTab);
@@ -56,7 +59,7 @@ test("a background conversation's agent browses silently and its page is waiting
   });
 
   await step("Switching to the background conversation shows its page at the panel's size", async () => {
-    await world.showSession(researching.sessionId);
+    await user.click(conversation(researching.title));
     const state = await eventually(() => world.readBrowserState(), {
       within: 30_000,
       until: (value) => value.visibleSessionId === researching.sessionId && value.activeTabId === researchTab.tabId,
@@ -74,7 +77,7 @@ test("a background conversation's agent browses silently and its page is waiting
   });
 
   await step("Returning to the first conversation brings back only its own tab", async () => {
-    await world.showSession(reading.sessionId);
+    await user.click(conversation(reading.title));
     await eventually(() => world.readBrowserState(), {
       within: 30_000,
       until: (value) => value.visibleSessionId === reading.sessionId && value.activeTabId === readingTab.tabId,
