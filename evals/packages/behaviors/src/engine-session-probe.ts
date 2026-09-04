@@ -165,7 +165,10 @@ async function requestFromSurface(
   const value = await evalIn(surface, `(async () => {
     const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
     if (!info?.running || !info.baseUrl) return { status: 0, body: { error: "local_server_unavailable" } };
-    const response = await fetch(String(info.baseUrl).replace(/\\\/+$/, "") + ${JSON.stringify(path)}, {
+    const baseUrl = String(info.baseUrl);
+    let end = baseUrl.length;
+    while (end > 0 && baseUrl[end - 1] === "/") end -= 1;
+    const response = await fetch(baseUrl.slice(0, end) + ${JSON.stringify(path)}, {
       method: ${JSON.stringify(options.method ?? "GET")},
       headers: {
         Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? ""),
@@ -192,7 +195,9 @@ async function requestFromServer(
   if (options.body !== undefined && requestBody === undefined) {
     throw new Error(`Could not serialize engine session probe body for ${path}`);
   }
-  const response = await fetch(`${serverUrl.replace(/\/+$/, "")}${path}`, {
+  let end = serverUrl.length;
+  while (end > 0 && serverUrl[end - 1] === "/") end -= 1;
+  const response = await fetch(`${serverUrl.slice(0, end)}${path}`, {
     method: options.method ?? "GET",
     headers: {
       Authorization: `Bearer ${token}`,

@@ -749,6 +749,8 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   }, [selectedWorkspaceId]);
   const handleRuntimeSessionCreated = useCallback((session: Session) => {
     if (!selectedWorkspaceId) return;
+    const workspace = workspacesRef.current.find((item) => item.id === selectedWorkspaceId);
+    if (workspace?.path && normalizeDirectoryPath(session.directory) !== normalizeDirectoryPath(workspace.path)) return;
     rememberPendingCreatedSession(selectedWorkspaceId, session.id);
     setSessionsByWorkspaceId((current) => {
       const list = current[selectedWorkspaceId] ?? [];
@@ -1008,12 +1010,14 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   const selectedWorkspaceServerToken = selectedWorkspaceEndpoint?.token ?? "";
   const defaultOpencodeBaseUrl = selectedWorkspaceEndpoint?.opencodeBaseUrl ?? "";
   const opencode2BaseUrl = selectedWorkspaceEndpoint ? `${selectedWorkspaceEndpoint.mountedBaseUrl}/opencode2` : "";
+  const routingServerUrl = selectedWorkspaceEndpoint?.baseUrl ?? "";
+  const routingServerToken = selectedWorkspaceEndpoint?.token ?? "";
   useEffect(() => {
-    const openworkClient = selectedWorkspaceEndpoint?.client;
-    if (!openworkClient) {
+    if (!routingServerUrl || !routingServerToken) {
       setEngineV2ChatRouting(false);
       return;
     }
+    const openworkClient = createOpenworkServerClient({ baseUrl: routingServerUrl, token: routingServerToken });
     let cancelled = false;
     const refresh = async () => {
       try {
@@ -1021,18 +1025,19 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         if (!cancelled) setEngineV2ChatRouting(status.enabled && status.running && status.chatRouting);
       } catch (error) {
         if (cancelled) return;
-        setEngineV2ChatRouting(false);
         console.warn("[opencode-v2] failed to read chat routing status; retaining the current engine", error);
       }
     };
     setEngineV2ChatRouting(false);
     void refresh();
+    window.addEventListener("openwork-server-settings-changed", refresh);
     const interval = window.setInterval(() => { void refresh(); }, 15_000);
     return () => {
       cancelled = true;
       window.clearInterval(interval);
+      window.removeEventListener("openwork-server-settings-changed", refresh);
     };
-  }, [selectedWorkspaceEndpoint?.baseUrl, selectedWorkspaceEndpoint?.client, selectedWorkspaceEndpoint?.workspaceId]);
+  }, [routingServerUrl, routingServerToken]);
   useEffect(() => {
     const previous = previousEngineV2ChatRoutingRef.current;
     previousEngineV2ChatRoutingRef.current = engineV2ChatRouting;
