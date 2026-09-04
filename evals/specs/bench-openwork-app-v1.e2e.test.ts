@@ -978,6 +978,10 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
           host,
           profileDir,
           env: {
+            // This benchmark measures engine and UI latency, not plugins. On a fresh isolated HOME, the engine's external-plugin dependency bootstrap
+            // (injected by apps/server/src/openwork-runtime-config.ts) can hold its install lock for minutes and block /config + /provider, so the picker
+            // reports "No models found" and the run times out. OPENCODE_PURE skips plugin loading for both the v1 and v2 lanes alike.
+            OPENCODE_PURE: "true",
             ANTHROPIC_API_KEY: "",
             OPENAI_API_KEY: "",
             OPENROUTER_API_KEY: "",

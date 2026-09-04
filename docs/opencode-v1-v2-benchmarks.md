@@ -151,6 +151,8 @@ exact payload handling, workspace isolation, and witness fidelity only.
 
 ### Reproduction
 
+Lane A runs with `OPENCODE_PURE=true` (plugins disabled) because it measures engine and UI latency rather than external-plugin dependency bootstrap time.
+
 ```sh
 OPENWORK_BENCH_ITERATIONS=5 pnpm evals:pr specs/bench-opencode-engines.test.ts
 OPENWORK_BENCH_ITERATIONS=5 OPENWORK_EVAL_E2E_TESTS=1 pnpm --dir evals exec vitest run --config vitest.config.ts --project e2e specs/bench-openwork-app-v1.e2e.test.ts
