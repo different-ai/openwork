@@ -227,6 +227,10 @@ function parseToolInput(value: unknown): Record<string, unknown> {
   }
 }
 
+function compatibleToolName(tool: string): string {
+  return tool === "shell" ? "bash" : tool;
+}
+
 function toolOutput(value: unknown, result?: unknown): string {
   if (Array.isArray(value)) {
     const text = value.flatMap((item) => {
@@ -252,10 +256,11 @@ function mapV2ToolPart(
   messageCreated: number,
 ): ToolPart | null {
   const callID = readString(value, "callID") ?? readString(value, "id");
-  const tool = readString(value, "tool") ?? readString(value, "name");
+  const sourceTool = readString(value, "tool") ?? readString(value, "name");
   const state = readRecord(value, "state");
   const status = readString(state, "status");
-  if (!callID || !tool || !state) return null;
+  if (!callID || !sourceTool || !state) return null;
+  const tool = compatibleToolName(sourceTool);
   const input = parseToolInput(state.input);
   const time = readRecord(value, "time");
   const created = readNumber(time, "created") ?? messageCreated;
@@ -771,8 +776,9 @@ export function translateV2Event(
   if (type === "session.tool.input.started" || type === "session.next.tool.input.started") {
     const messageID = readMessageID(properties);
     const callID = readToolCallID(properties);
-    const tool = readString(properties, "name") ?? readString(properties, "tool");
-    if (!sessionID || !messageID || !callID || !tool) return null;
+    const sourceTool = readString(properties, "name") ?? readString(properties, "tool");
+    if (!sessionID || !messageID || !callID || !sourceTool) return null;
+    const tool = compatibleToolName(sourceTool);
     const key = toolStreamKey(sessionID, callID);
     const existing = state.tools.get(key);
     const stream = existing ?? {

@@ -312,7 +312,7 @@ describe("OpenCode v2 event translation", () => {
     ]);
   });
 
-  test("translates the captured v2 tool lifecycle through pending, running, and completed", () => {
+  test("translates the captured v2 shell lifecycle using the bash presentation", () => {
     const state = createV2EventTranslationState();
     const translated = capturedV2ToolEvents.flatMap((event) => translateV2Event(event, state) ?? []);
     const command = { command: "printf 'TOOL_RESULT_OK\\n'", timeout: 30_000 };
@@ -338,7 +338,7 @@ describe("OpenCode v2 event translation", () => {
             sessionID: "ses_f91f18e25ffeiB1huO0Hascs8b",
             type: "tool",
             callID: "call_captured_shell",
-            tool: "shell",
+            tool: "bash",
             state: { status: "pending", input: {}, raw: "" },
           },
         },
@@ -364,7 +364,7 @@ describe("OpenCode v2 event translation", () => {
             state: {
               status: "running",
               input: command,
-              title: "shell",
+              title: "bash",
               metadata: {},
               time: { start: 1_788_552_838_052 },
             },
@@ -379,7 +379,7 @@ describe("OpenCode v2 event translation", () => {
             state: {
               status: "running",
               input: command,
-              title: "shell",
+              title: "bash",
               metadata: { shellID: "sh_06e0e7c1e0017KTSezeFHBiGRk" },
               time: { start: 1_788_552_838_052 },
             },
@@ -395,12 +395,12 @@ describe("OpenCode v2 event translation", () => {
             sessionID: "ses_f91f18e25ffeiB1huO0Hascs8b",
             type: "tool",
             callID: "call_captured_shell",
-            tool: "shell",
+            tool: "bash",
             state: {
               status: "completed",
               input: command,
               output: "TOOL_RESULT_OK\n\nCommand exited with code 0.",
-              title: "shell",
+              title: "bash",
               metadata: { status: "completed", truncated: false, exit: 0 },
               time: { start: 1_788_552_838_052, end: 1_788_552_838_184 },
             },
@@ -462,7 +462,7 @@ describe("OpenCode v2 event translation", () => {
 });
 
 describe("OpenCode v2 client compatibility", () => {
-  test("maps captured v2 message content to ordered text and completed tool parts", async () => {
+  test("maps captured v2 message content and presents shell tool parts as bash", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async (input, init) => {
       const request = input instanceof Request ? input : new Request(input, init);
@@ -497,12 +497,12 @@ describe("OpenCode v2 client compatibility", () => {
             sessionID: "ses_tool",
             type: "tool",
             callID: "call_captured_shell",
-            tool: "shell",
+            tool: "bash",
             state: {
               status: "completed",
               input: { command: "printf 'TOOL_RESULT_OK\\n'", timeout: 30_000 },
               output: "TOOL_RESULT_OK\n\nCommand exited with code 0.",
-              title: "shell",
+              title: "bash",
               metadata: { status: "completed", truncated: false, exit: 0 },
               time: { start: 1_788_552_838_052, end: 1_788_552_838_184 },
             },
