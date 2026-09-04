@@ -91,9 +91,11 @@ The chart sets `metadata.namespace` on every namespaced resource (Deployments,
 Services, ConfigMap, Secret, Ingress, migration Job) from the `namespace` value,
 which defaults to `openwork`:
 
-```yaml
+~~~yaml
 namespace: openwork
-```
+~~~
+
+To use the Helm release namespace instead, set `namespace: ""` (or `--set namespace=`).
 
 This keeps `helm template ... | kubectl apply -f -` pipelines from falling back
 to the kubectl context namespace (e.g. `kube-system`). When installing with
