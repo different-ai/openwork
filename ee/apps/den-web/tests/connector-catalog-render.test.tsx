@@ -37,6 +37,7 @@ function render(overrides: Partial<Parameters<typeof ConnectorCatalog>[0]> = {})
       filter: "",
       configuredHref: "/dashboard/mcp-connections/configured",
       configuredConnectionHref: (connectionId: string) => `/dashboard/mcp-connections/configured?connectionId=${connectionId}`,
+      connectorHref: (connectorId: string) => `/dashboard/mcp-connections/${connectorId}`,
       onAddPopular: noop,
       onAddPreset: noop,
       onAddMicrosoft365: noop,
@@ -83,5 +84,17 @@ describe("ConnectorCatalog", () => {
 
   test("a filter with no matches says so", () => {
     expect(render({ filter: "zzzz" })).toContain("No connectors match");
+  });
+
+  test("every row opens its detail page: connection id when configured, catalog id otherwise", () => {
+    const markup = render({ filter: "o" });
+
+    expect(markup).toContain('href="/dashboard/mcp-connections/conn-notion"');
+    expect(markup).toContain('data-testid="connector-open-notion"');
+    expect(markup).toContain('href="/dashboard/mcp-connections/github"');
+    expect(markup).toContain('href="/dashboard/mcp-connections/google-drive"');
+    expect(markup).toContain('href="/dashboard/mcp-connections/microsoft-365"');
+    expect(markup).toContain('href="/dashboard/mcp-connections/granola"');
+    expect(markup).not.toContain('href="/dashboard/mcp-connections/notion"');
   });
 });
