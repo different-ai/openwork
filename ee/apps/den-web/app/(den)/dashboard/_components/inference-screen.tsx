@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
+import { ModelPromotionOffers } from "../../../../components/model-promotion-offers";
 import { useRouter } from "next/navigation";
 import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference";
 import { DenButton } from "../../_components/ui/button";
@@ -426,6 +427,7 @@ export function InferenceScreen() {
 
   return (
     <div className="mx-auto grid max-w-[860px] gap-6 px-8 pb-16 pt-8">
+      {activeOrg && <ModelPromotionOffers key={activeOrg.id} organizationId={activeOrg.id} canSubscribe={canManageModels} />}
       <DenPageHeader
         title="OpenWork Models"
         description="Reliable, hand-picked models for knowledge work. No API keys to manage."

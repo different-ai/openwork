@@ -51,6 +51,8 @@ const defaultProxyDependencies: ProxyDependencies = {
     const limits = await import("./limits.js")
     return limits.ensureUsableBuckets(organizationId)
   },
+  async listPromotionModels(key) { return (await import("./model-promotions.js")).listPromotionModels(key) },
+  async proxyPromotion(request, key, requestId) { return (await import("./model-promotions.js")).proxyPromotion(request, key, requestId) },
   fetch,
 }
 
@@ -60,6 +62,8 @@ type ProxyDependencies = {
   ensureUsableBuckets: typeof ensureUsableBucketsFn
   fetch: typeof fetch
   reporter?: InferenceReporter
+  listPromotionModels?: (key: NonNullable<Awaited<ReturnType<typeof findActiveInferenceKeyFn>>>) => Promise<Array<{ id: string; displayName: string; upstreamModel: string }>>
+  proxyPromotion?: (request: Request, key: NonNullable<Awaited<ReturnType<typeof findActiveInferenceKeyFn>>>, requestId: string) => Promise<Response | null>
 }
 
 function readInferenceBearerKey(request: Request) {
@@ -513,7 +517,10 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     }
 
     if (c.req.path === modelsPath && c.req.method === "GET") {
-      return c.json(listOpenAiModels())
+      const models = listOpenAiModels()
+      const offers = await dependencies.listPromotionModels?.(inferenceKey) ?? []
+      c.header("cache-control", "no-store")
+      return c.json({ ...models, data: [...models.data, ...offers.map((offer) => ({ id: offer.id, object: "model", created: 0, owned_by: "openwork", name: offer.displayName, underlying_model: offer.upstreamModel }))] })
     }
 
     if (c.req.path !== chatCompletionsPath || c.req.method !== "POST") {
@@ -553,6 +560,9 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
       })
       return openAiError(400, "unsupported_query_parameters", "OpenWork chat completions does not accept query parameters.")
     }
+
+    const promotion = await dependencies.proxyPromotion?.(c.req.raw, inferenceKey, openworkRequestId)
+    if (promotion) return promotion
 
     const prepared = await prepareBody(c.req.raw, {
       organizationId: inferenceKey.organization_id,

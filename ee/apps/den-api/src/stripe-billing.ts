@@ -1,3 +1,4 @@
+import { handlePromotionStripeEvent } from "./model-promotions.js"
 import Stripe from "stripe"
 import { and, eq, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
@@ -39,6 +40,12 @@ export type StripeCheckoutSubscriptionType = typeof INFERENCE_SUBSCRIPTION_TYPE 
 
 let stripeClient: Stripe | null = null
 
+function stripeTestEndpoint(value: string) {
+  const url = new URL(value)
+  if (url.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(url.hostname)) throw new Error("Stripe test endpoint must be loopback HTTP")
+  return { host: url.hostname, port: Number(url.port), protocol: "http" as const }
+}
+
 function stripe() {
   if (!env.stripe.secretKey) {
     throw new Error("stripe_secret_key_missing")
@@ -46,6 +53,8 @@ function stripe() {
   if (!stripeClient) {
     stripeClient = new Stripe(env.stripe.secretKey, {
       apiVersion: STRIPE_API_VERSION as any,
+      ...(process.env.OPENWORK_DEV_MODE === "1" && process.env.STRIPE_TEST_API_URL && env.stripe.secretKey.startsWith("sk_test_")
+        ? stripeTestEndpoint(process.env.STRIPE_TEST_API_URL) : {}),
     })
   }
   return stripeClient
@@ -1392,5 +1401,8 @@ export async function handleStripeWebhook(input: { payload: string; signature: s
     }
   }
 
+  await handlePromotionStripeEvent(event)
   return { received: true, type: event.type }
 }
+
+export { stripe as stripeBillingClient }

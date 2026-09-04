@@ -31,7 +31,8 @@ type MemberId = typeof MemberTable.$inferSelect.id
 
 const OPENWORK_PROVIDER_ID = "openwork"
 const OPENROUTER_PROVIDER = "openrouter"
-const OPENROUTER_KEYS_URL = "https://openrouter.ai/api/v1/keys"
+const OPENROUTER_KEYS_URL = process.env.OPENWORK_DEV_MODE === "1" && process.env.OPENROUTER_TEST_API_URL
+  ? `${new URL(process.env.OPENROUTER_TEST_API_URL).origin}/api/v1/keys` : "https://openrouter.ai/api/v1/keys"
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)

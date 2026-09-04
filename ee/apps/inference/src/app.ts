@@ -1,3 +1,4 @@
+import { bodyLimit } from "hono/body-limit";
 import "./load-env.js";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -95,6 +96,7 @@ if (shouldServeLocalModelCatalog) {
   });
 }
 
+app.use("/api/v1/chat/completions", bodyLimit({ maxSize: 2 * 1024 * 1024 }));
 registerProxyRoutes(app);
 registerVoiceRoutes(app);
 registerWebhookRoutes(app);

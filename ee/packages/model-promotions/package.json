@@ -1,0 +1,9 @@
+{
+  "name": "@openwork-ee/model-promotions",
+  "private": true,
+  "type": "module",
+  "exports": { ".": { "types": "./src/index.ts", "development": "./src/index.ts", "default": "./dist/index.js" } },
+  "scripts": { "build": "tsup src/index.ts --format esm --platform node --target es2022 --dts", "typecheck": "tsc --noEmit" },
+  "dependencies": { "@openwork-ee/den-db": "workspace:*", "@openwork/types": "workspace:*", "drizzle-orm": "^0.45.2", "zod": "^4.3.6" },
+  "devDependencies": { "@types/node": "^20.11.30", "tsup": "^8.5.0", "typescript": "^5.5.4" }
+}

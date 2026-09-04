@@ -17,6 +17,7 @@ export default function AdminPage() {
         </Link>
       </div>
 
+      <div className="mx-auto mb-5 max-w-6xl"><Link className="text-sm font-semibold underline" href="/admin/model-promotions">Manage model promotions</Link></div>
       <DenAdminPanel />
     </main>
   );

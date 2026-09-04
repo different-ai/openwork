@@ -1,3 +1,5 @@
+import { PromotionError } from "@openwork-ee/model-promotions"
+import { registerModelPromotionRoutes } from "./routes/model-promotions.js"
 import "./load-env.js"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { swaggerUI } from "@hono/swagger-ui"
@@ -98,6 +100,7 @@ app.use("*", async (c, next) => {
 })
 app.use("*", createRequestAccessLogMiddleware())
 registerAppErrorHandler(app, (error, c, requestId) => {
+  if (error instanceof PromotionError) return c.json({ error: error.code, message: error.message }, error.status)
   if (!isOperationalErrorPath(c.req.path)) {
     return undefined
   }
@@ -222,6 +225,7 @@ registerDevRoutes(app)
 registerMeRoutes(app)
 registerAutomationRoutes(app, { enabled: env.automations.runtimeEnabled })
 registerOrgRoutes(app)
+registerModelPromotionRoutes(app)
 registerVersionRoutes(app)
 registerWebhookRoutes(app)
 registerWorkerRoutes(app)

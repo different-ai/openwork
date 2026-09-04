@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { modelPromotionWitness } from "../evals/packages/labs/src/model-promotion-witness.mjs";
 import http from "node:http";
 import { createHash, randomUUID } from "node:crypto";
 
@@ -843,10 +844,12 @@ async function handleMcp(req, res, entry) {
   json(res, 200, Array.isArray(body) ? responses : responses[0]);
 }
 
+const promotionWitness = modelPromotionWitness();
 const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url || "/", issuer);
     const entry = record(req, url);
+    if (await promotionWitness(req, res, url)) return;
 
     if (req.method === "OPTIONS") {
       json(res, 204, {});

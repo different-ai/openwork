@@ -1,3 +1,4 @@
+import { promotionModelsForMember } from "../../model-promotions.js"
 import { and, desc, eq, inArray, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import {
   AuthUserTable,
@@ -725,6 +726,8 @@ async function loadLlmProviders(input: {
     accessibleViaByProviderId.set(row.llmProviderId, existing)
   }
 
+  const promotionalModels = providers.some((provider) => provider.source === "openwork" && provider.createdByOrgMembershipId === input.currentMemberId)
+    ? await promotionModelsForMember(input.currentMemberId, input.organizationId) : []
   return providers.map((provider) => ({
     ...provider,
     ...(input.scope === "usable" ? {
@@ -740,6 +743,7 @@ async function loadLlmProviders(input: {
         config: model.modelConfig,
         createdAt: model.createdAt,
       }))
+      .concat(provider.source === "openwork" && provider.createdByOrgMembershipId === input.currentMemberId ? promotionalModels : [])
       .sort((left, right) => left.name.localeCompare(right.name)),
     access: {
       allMembers: everyoneProviderIds.has(provider.id),
@@ -1015,6 +1019,8 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       // Catalog providers leave Den under provider-scoped env names (see
       // toRuntimeProviderEnv); the stored row keeps the catalog's names.
       const runtime = toRuntimeProviderEnv({ ...provider, apiKeys: credential.apiKeys })
+      const promotionalModels = provider.source === "openwork" && provider.createdByOrgMembershipId === payload.currentMember.id
+        ? await promotionModelsForMember(payload.currentMember.id, payload.organization.id) : []
       return c.json({
         llmProvider: {
           ...runtime,
@@ -1027,6 +1033,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
               config: model.modelConfig,
               createdAt: model.createdAt,
             }))
+            .concat(promotionalModels)
             .sort((left, right) => left.name.localeCompare(right.name)),
         },
       })

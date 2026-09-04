@@ -24,17 +24,18 @@
     "@openwork/behaviors": "workspace:*",
     "@openwork/cdp": "workspace:*",
     "@openwork/env": "workspace:*",
-    "@openwork/test-artifacts": "workspace:*",
-    "@openwork/test-evidence": "workspace:*",
     "@openwork/hosts": "workspace:*",
     "@openwork/labs": "workspace:*",
     "@openwork/matchers": "workspace:*",
+    "@openwork/test-artifacts": "workspace:*",
+    "@openwork/test-evidence": "workspace:*",
     "@openwork/testkit": "workspace:*",
     "@openwork/world": "link:../packages/world"
   },
   "devDependencies": {
     "@vitest/coverage-v8": "^3.2.4",
     "dependency-cruiser": "18.1.0",
+    "mysql2": "3.23.1",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"
   },

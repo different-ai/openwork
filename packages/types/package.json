@@ -108,6 +108,11 @@
       "types": "./src/url.ts",
       "development": "./src/url.ts",
       "default": "./src/url.ts"
+    },
+    "./den/model-promotions": {
+      "types": "./src/den/model-promotions.ts",
+      "development": "./src/den/model-promotions.ts",
+      "default": "./src/den/model-promotions.ts"
     }
   },
   "files": [

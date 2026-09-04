@@ -583,6 +583,9 @@ importers:
       '@openwork-ee/den-db':
         specifier: workspace:*
         version: link:../../packages/den-db
+      '@openwork-ee/model-promotions':
+        specifier: workspace:*
+        version: link:../../packages/model-promotions
       '@openwork-ee/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry
@@ -834,6 +837,9 @@ importers:
       react-dom:
         specifier: 'catalog:'
         version: 19.2.8(react@19.2.8)
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
     devDependencies:
       '@types/node':
         specifier: 20.12.12
@@ -918,6 +924,9 @@ importers:
       '@openwork-ee/den-db':
         specifier: workspace:*
         version: link:../../packages/den-db
+      '@openwork-ee/model-promotions':
+        specifier: workspace:*
+        version: link:../../packages/model-promotions
       '@openwork-ee/utils':
         specifier: workspace:*
         version: link:../../packages/utils
@@ -1047,6 +1056,31 @@ importers:
       tsx:
         specifier: ^4.23.1
         version: 4.23.1
+      typescript:
+        specifier: ^5.5.4
+        version: 5.9.3
+
+  ee/packages/model-promotions:
+    dependencies:
+      '@openwork-ee/den-db':
+        specifier: workspace:*
+        version: link:../den-db
+      '@openwork/types':
+        specifier: workspace:*
+        version: link:../../../packages/types
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(@opentelemetry/api@1.9.1)(@planetscale/database@1.19.0)(@types/better-sqlite3@7.6.13)(better-sqlite3@13.0.2)(bun-types@1.3.14)(kysely@0.28.17)(mysql2@3.24.2(@types/node@20.12.12))
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.30
+        version: 20.12.12
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.23)(tsx@4.23.1)(typescript@5.9.3)(yaml@2.9.0)
       typescript:
         specifier: ^5.5.4
         version: 5.9.3

@@ -83,7 +83,8 @@
     "sharp": "0.35.3",
     "stripe": "^22.1.1",
     "undici": "7.29.0",
-    "zod": "^4.3.6"
+    "zod": "^4.3.6",
+    "@openwork-ee/model-promotions": "workspace:*"
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "^2.0.0",
