@@ -97,11 +97,13 @@ export async function createManagedOpencodeV2Server(
   const url = `http://${hostname}:${port}`;
   const providers = new Map<string, OpencodeV2ProviderSpec>();
   const opencodeModelsUrl = (options.env?.OPENCODE_MODELS_URL ?? process.env.OPENCODE_MODELS_URL)?.replace(/\/+$/, "");
+  // v2 runs its own plugin/catalog bootstrap; the v1 pure-mode escape hatch must not reach the sidecar.
+  const { OPENCODE_PURE: _removed, ...inherited } = process.env;
 
   await mkdir(configDir, { recursive: true });
   const child = spawn(options.bin, ["serve", "--hostname", hostname, "--port", String(port)], {
     env: {
-      ...process.env,
+      ...inherited,
       ...options.env,
       OPENCODE_PASSWORD: password,
       OPENCODE_DB: join(options.rootDir, "opencode.db"),
