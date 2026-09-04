@@ -1,11 +1,12 @@
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { access, mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import constants from "../../../constants.json" with { type: "json" };
 import {
   createManagedOpencodeV2Server,
+  installOpencodeV2Binary,
   type ManagedOpencodeV2Server,
   type OpencodeV2ProviderSpec,
 } from "./managed-opencode-v2.js";
@@ -122,15 +123,6 @@ function exec(file: string, args: string[], options: { cwd?: string; timeout?: n
   });
 }
 
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 async function resolveBinary(config: ServerConfig): Promise<ResolvedBinary> {
   const override = process.env.OPENWORK_OPENCODE2_BIN?.trim();
   if (override) return { bin: override, source: "env" };
@@ -143,24 +135,12 @@ async function resolveBinary(config: ServerConfig): Promise<ResolvedBinary> {
     pathError = errorMessage(error);
   }
 
-  const cacheDir = join(runtimeStorageDir(config), "opencode-v2", OPENCODE_V2_VERSION);
-  const binary = join(cacheDir, "node_modules", ".bin", "opencode2");
   try {
-    await mkdir(cacheDir, { recursive: true });
-    const packageJson = join(cacheDir, "package.json");
-    if (!(await pathExists(packageJson))) await writeFile(packageJson, '{"private":true}\n', "utf8");
-    if (!(await pathExists(binary))) {
-      await exec(
-        "npm",
-        ["install", "--no-fund", "--no-audit", "--no-save", `@opencode-ai/cli@${OPENCODE_V2_VERSION}`],
-        { cwd: cacheDir, timeout: 180_000 },
-      );
-    }
-    if (!(await pathExists(binary))) throw new Error(`installation did not create ${binary}`);
+    const binary = await installOpencodeV2Binary(join(runtimeStorageDir(config), "opencode-v2-verified"), OPENCODE_V2_VERSION);
     return { bin: binary, source: "cache" };
   } catch (error) {
     throw new Error(
-      `Unable to resolve OpenCode v2 (${pathError}; cache install: ${errorMessage(error)}). Set OPENWORK_OPENCODE2_BIN to a working opencode2 binary.`,
+      `Unable to resolve OpenCode v2 (${pathError}; verified download: ${errorMessage(error)}). Set OPENWORK_OPENCODE2_BIN to a working opencode2 binary.`,
     );
   }
 }

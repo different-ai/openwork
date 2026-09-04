@@ -6,6 +6,8 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { join } from "node:path";
 
+export { installOpencodeV2Binary } from "./opencode-v2-binary.js";
+
 import { loopbackFetch } from "./server-fetch.js";
 
 export interface OpencodeV2ModelSpec {
@@ -98,13 +100,17 @@ export async function createManagedOpencodeV2Server(
   const providers = new Map<string, OpencodeV2ProviderSpec>();
   const opencodeModelsUrl = (options.env?.OPENCODE_MODELS_URL ?? process.env.OPENCODE_MODELS_URL)?.replace(/\/+$/, "");
   // v2 runs its own plugin/catalog bootstrap; the v1 pure-mode escape hatch must not reach the sidecar.
-  const { OPENCODE_PURE: _removed, ...inherited } = process.env;
+  const inherited = { ...process.env, ...options.env };
+  delete inherited.OPENCODE_PURE;
+  // OpenWork control-plane credentials belong to the server, never engine tools/plugins.
+  for (const key of Object.keys(inherited)) {
+    if (key.startsWith("OPENWORK_")) delete inherited[key];
+  }
 
   await mkdir(configDir, { recursive: true });
   const child = spawn(options.bin, ["serve", "--hostname", hostname, "--port", String(port)], {
     env: {
       ...inherited,
-      ...options.env,
       OPENCODE_PASSWORD: password,
       OPENCODE_DB: join(options.rootDir, "opencode.db"),
       OPENCODE_CONFIG_DIR: configDir,

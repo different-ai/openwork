@@ -10,6 +10,7 @@ import { expect } from "vitest";
 
 import {
   createManagedOpencodeV2Server,
+  installOpencodeV2Binary,
   type ManagedOpencodeV2Server,
 } from "../../apps/server/src/managed-opencode-v2";
 import { resolveOpencodeModelsUrl } from "../../apps/server/src/opencode-models-url";
@@ -43,22 +44,7 @@ async function resolveOpencodeV2Bin(): Promise<string> {
   if (!isRecord(constants) || typeof constants.opencodeV2Version !== "string") {
     throw new Error("constants.json must define a string opencodeV2Version");
   }
-  const cache = join(tmpdir(), "openwork-opencode-v2-cache", constants.opencodeV2Version);
-  const binary = join(cache, "node_modules", ".bin", "opencode2");
-  if (!(await exists(binary))) {
-    await mkdir(cache, { recursive: true });
-    const packageJson = join(cache, "package.json");
-    if (!(await exists(packageJson))) await writeFile(packageJson, '{"private":true}\n');
-    await execFileAsync(
-      "npm",
-      ["install", "--no-fund", "--no-audit", "--no-save", `@opencode-ai/cli@${constants.opencodeV2Version}`],
-      { cwd: cache, timeout: 180_000 },
-    );
-  }
-  if (!(await exists(binary))) {
-    throw new Error(`OpenCode v2 binary was not installed at ${binary}; set OPENWORK_EVAL_OPENCODE2_BIN to a working opencode2 binary`);
-  }
-  return binary;
+  return installOpencodeV2Binary(join(tmpdir(), "openwork-opencode-v2-verified"), constants.opencodeV2Version);
 }
 
 async function readRequestBody(request: IncomingMessage): Promise<unknown> {
@@ -127,11 +113,25 @@ test("opencode v2 injects providers at runtime without an engine reload", async 
     server = await createManagedOpencodeV2Server({
       bin: binary,
       rootDir,
-      env: { OPENCODE_CONFIG: baseConfig, OPENCODE_MODELS_URL: opencodeModelsUrl },
+      env: {
+        OPENCODE_CONFIG: baseConfig, OPENCODE_MODELS_URL: opencodeModelsUrl,
+        OPENWORK_ENCRYPTION_KEY: "fixture-server-only", OPENWORK_TOKEN: "fixture-server-only",
+        OPENWORK_HOST_TOKEN: "fixture-server-only", OPENWORK_SERVER_TOKEN: "fixture-server-only",
+      },
     });
     const initialHealth = await server.health();
     const pid0 = initialHealth.pid;
     expect(initialHealth.healthy).toBe(true);
+    if (process.platform === "linux") {
+      const environment = await readFile(`/proc/${pid0}/environ`, "utf8");
+      const names = environment.split("\0").map((entry) => entry.split("=")[0]);
+      expect(names.filter((name) => name?.startsWith("OPENWORK_"))).toEqual([]);
+      evidence.recordAssertionEvidence(
+        "server credentials do not cross the sidecar process boundary",
+        "The live Linux sidecar environment contained no OPENWORK_ variables, including four synthetic server credentials supplied through spawn options.",
+        true,
+      );
+    }
 
     const baseline = await eventually(
       () => server?.fetchJson("/api/model", { directory }),

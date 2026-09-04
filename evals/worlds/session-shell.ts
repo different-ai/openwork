@@ -418,6 +418,12 @@ export async function externalSessionVisibility(seed: Seed) {
     home,
     other,
     homePath,
+    engine: resolveEvalEngine(),
+    async serverSessionIds(workspaceId: string): Promise<string[]> {
+      const response = await engineSessionProbe({ engine: resolveEvalEngine(), serverUrl: externalServerUrl, token: serverToken, workspaceId }).list();
+      if (!response.ok) throw new Error(`Session list returned HTTP ${response.status}`);
+      return response.data.map((session) => session.id);
+    },
     /** The sidebar's own per-workspace session lists and load state. */
     // TODO(primitive): probe.route should expose the sidebar's per-workspace session lists.
     async route(): Promise<SidebarRouteFacts> {

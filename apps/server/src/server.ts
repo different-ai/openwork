@@ -1417,6 +1417,27 @@ async function proxyOpencodeV2Request(input: {
     headers.set("content-type", "application/json");
   }
   const response = await loopbackFetch(target.toString(), { method, headers, body });
+  if (method === "GET" && forwardedPath === "/api/session" && response.ok) {
+    const payload: unknown = await response.json();
+    const data = isRecord(payload) && "data" in payload ? payload.data : payload;
+    const items = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.items) ? data.items : null;
+    if (!items) throw new ApiError(502, "invalid_engine_response", "Invalid session list response");
+    const expected = await realpath(input.workspace.path).catch(() => input.workspace.path);
+    const scoped = (await Promise.all(items.map(async (item: unknown) => {
+      const session = isRecord(item) && isRecord(item.info) ? item.info : item;
+      const location = isRecord(session) && isRecord(session.location) ? session.location : null;
+      const directory = location && typeof location.directory === "string" ? location.directory : null;
+      if (!directory) return null;
+      const actual = await realpath(directory).catch(() => directory);
+      return actual === expected ? item : null;
+    }))).filter((item) => item !== null);
+    const scopedData = isRecord(data) ? { ...data, items: scoped } : scoped;
+    const scopedPayload = isRecord(payload) && "data" in payload ? { ...payload, data: scopedData } : scopedData;
+    const responseHeaders = new Headers(response.headers);
+    responseHeaders.delete("content-length");
+    responseHeaders.delete("content-encoding");
+    return sanitizeProxyResponse(new Response(JSON.stringify(scopedPayload), { status: response.status, headers: responseHeaders }));
+  }
   return sanitizeProxyResponse(response);
 }
 

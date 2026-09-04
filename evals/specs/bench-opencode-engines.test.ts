@@ -14,6 +14,7 @@ import {
 } from "../../apps/server/src/managed-opencode";
 import {
   createManagedOpencodeV2Server,
+  installOpencodeV2Binary,
   type ManagedOpencodeV2Server,
 } from "../../apps/server/src/managed-opencode-v2";
 
@@ -30,6 +31,7 @@ interface WitnessRequest {
   auth: string;
   model: string;
   promptChars: number;
+  messageText: string;
   stream: boolean;
 }
 
@@ -138,6 +140,9 @@ async function provisionBinary(
   const override = process.env[overrideName];
   if (typeof override === "string" && override.trim() !== "") return override;
 
+  if (packageName === "@opencode-ai/cli") {
+    return installOpencodeV2Binary(join(tmpdir(), "openwork-opencode-v2-verified"), version);
+  }
   const cache = join(tmpdir(), cacheName, version);
   const binary = join(cache, "node_modules", ".bin", binaryName);
   if (!(await exists(binary))) {
@@ -214,6 +219,7 @@ async function startWitness(lane: Lane): Promise<Witness> {
         auth: request.headers.authorization ?? "",
         model,
         promptChars: serializedMessages.length,
+        messageText: serializedMessages,
         stream,
       });
 
@@ -565,6 +571,9 @@ async function completePrompt(
   requireStatus(accepted, engine.lane === "v1" ? [204] : [200], `${label} prompt admission`);
   const acceptedMs = Date.now() - startedAt;
   const witnessRequest = await waitForWitnessRequest(witness, witnessIndex, `${label} witness request`, within);
+  if (!witnessRequest.messageText.includes(text)) {
+    throw new Error(`${label} provider request did not contain the complete input (${text.length} characters)`);
+  }
   await waitForMessages(
     engine,
     sessionID,
@@ -742,7 +751,7 @@ async function runLane(lane: Lane, binary: string): Promise<LaneRun> {
       results.compaction.push(Date.now() - startedAt);
     }
 
-    return { results, requests: [...witness.requests] };
+    return { results, requests: witness.requests.map(({ messageText: _text, ...request }) => ({ ...request, messageText: "verified in memory" })) };
   } finally {
     for (const engine of engines) await engine.close();
     await witness.close();

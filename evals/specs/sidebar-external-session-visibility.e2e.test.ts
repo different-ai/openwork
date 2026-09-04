@@ -82,8 +82,15 @@ test("sessions created outside the window appear in a non-selected workspace's s
 
   // --- Path 1: an explicit reload request, as issued by session.create. ---
   const reloadedTitle = "External session surfaced by reload";
-  // A caller cannot redirect a workspace-mounted create into another folder.
-  const reloadedId = await world.createSessionOutsideWindow(otherId, reloadedTitle, world.homePath);
+  // Only the v2 create dialect accepts a location in its JSON body.
+  const reloadedId = await world.createSessionOutsideWindow(otherId, reloadedTitle, world.engine === "v2" ? world.homePath : undefined);
+  expect(await world.serverSessionIds(otherId)).toContain(reloadedId);
+  expect(await world.serverSessionIds(homeId)).not.toContain(reloadedId);
+  evidence.recordAssertionEvidence(
+    "workspace session list excludes another workspace's session at the server boundary",
+    `Direct authenticated ${world.engine} list responses include ${reloadedId} only through its own workspace mount${world.engine === "v2" ? "; the create request supplied a conflicting home-directory location" : ""}.`,
+    true,
+  );
   await step("the external session is not yet visible", async () => {
     await expectStillHidden(world, otherId, reloadedId);
     await user.notSee({ text: reloadedTitle });
@@ -102,7 +109,7 @@ test("sessions created outside the window appear in a non-selected workspace's s
   expect(sessionIds(afterReload, homeId)).toEqual(homeSessionsBefore);
   evidence.recordAssertionEvidence(
     "workspace.reload_sessions surfaces a session created outside the window without selecting its workspace",
-    `Session ${reloadedId} was absent for ${STALE_OBSERVATION_MS}ms, then appeared under ${otherName} with its title after the reload, despite a conflicting home-directory hint in the create request; the selection stayed on ${homeName} and its ${homeSessionsBefore.length} session(s) were unchanged.`,
+    `Session ${reloadedId} was absent for ${STALE_OBSERVATION_MS}ms, then appeared under ${otherName} with its title after the reload, the selection stayed on ${homeName} and its ${homeSessionsBefore.length} session(s) were unchanged.`,
     true,
   );
 
