@@ -31,14 +31,21 @@ extraResources:
     to: opencode-plugins
     filter:
       - "*.js"
+      - "!*.test.js"
 asar: true
 npmRebuild: false
+# Notarization runs in the after-sign hook only when a release asks for it
+# (MACOS_NOTARIZE=true with Apple API key credentials); electron-builder's own
+# notarize step stays off so local unsigned builds are unaffected.
+afterSign: scripts/electron-after-sign.cjs
 mac:
   icon: resources/icons/icon.icns
   category: public.app-category.productivity
   hardenedRuntime: true
   gatekeeperAssess: false
   notarize: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
   target:
     - dmg
     - zip
