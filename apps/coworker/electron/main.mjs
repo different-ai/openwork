@@ -20,7 +20,7 @@ import { openworkConfigDir } from "@openwork/paths";
 import { createHeadlessThreadClient, toTranscript } from "@openwork/headless-threads";
 import { cloudModelOptions, resolveCloudModel } from "../src/lib/cloud-responsibilities.ts";
 import { createDenAutomationsClient } from "../src/lib/den.ts";
-import { ASSIGNMENT_INSTRUCTIONS, assignmentToolCatalog, createAssignmentToolHandlers, createSelfToolHandlers, selfToolCatalog } from "./assignment-tools.mjs";
+import { assignmentToolCatalog, createAssignmentToolHandlers, createSelfToolHandlers, selfToolCatalog } from "./assignment-tools.mjs";
 import {
   createCoworker,
   createLongTermMemory,
@@ -42,7 +42,7 @@ import {
 } from "./coworkers.mjs";
 import { COWORKER_TOOLS_MCP_NAME, DEFAULT_INSTRUCTIONS, createCoworkerToolsServer, createToolHandlers, toolCatalog } from "./coworker-tools.mjs";
 import { readSuggestions, recommendTeam, refreshTeamRosters, setReferralState, setSuggestionState, teamCatalog, teamStates } from "./team.mjs";
-import { TEAM_INSTRUCTIONS, createTeamToolHandlers, teamToolCatalog } from "./team-tools.mjs";
+import { createTeamToolHandlers, teamToolCatalog } from "./team-tools.mjs";
 import {
   archiveDocument,
   listDocuments,
@@ -1212,7 +1212,8 @@ async function ensureToolsServer() {
       ...createTeamToolHandlers({ coworkersDir }),
     },
     tools: [...toolCatalog(), ...workerToolCatalog(), ...assignmentToolCatalog(), ...selfToolCatalog(), ...teamToolCatalog()],
-    instructions: `${DEFAULT_INSTRUCTIONS} Your Worker tools start, steer, and stop long-lived Workers for goals that outlive one reply; each finding they post wakes you to review it. ${ASSIGNMENT_INSTRUCTIONS} ${TEAM_INSTRUCTIONS}`,
+    // One line naming the server; the rules for each tool family are in the coworker's contract, said once.
+    instructions: DEFAULT_INSTRUCTIONS,
     version: app.getVersion(),
   }).then((server) => {
     toolsServer = server;

@@ -23,13 +23,6 @@ import {
 } from "./local-responsibilities.mjs";
 import { MemoryError, forgetFact, readSelf, rememberFact, updateSoul } from "./self-memory.mjs";
 
-/** What the engine shows the model about these tools, appended to the server's instructions. */
-export const ASSIGNMENT_INSTRUCTIONS = [
-  "Your assignment tools set up, change, run, and remove work you do on a schedule; use them yourself when the person asks for recurring or timed work, then confirm in one plain sentence.",
-  "Your memory and soul tools record what the person tells you about themselves, their work, or how you should behave, in the same turn they say it.",
-  "Never invent a time zone: leave it out and your own is used.",
-].join(" ");
-
 const SCHEDULE_SCHEMA = {
   type: "object",
   description: [

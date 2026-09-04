@@ -29,12 +29,6 @@ import {
   uniqueName,
 } from "./team.mjs";
 
-/** What the engine shows the model about these tools, appended to the server's instructions. */
-export const TEAM_INSTRUCTIONS = [
-  "Your team tools name your teammates, offer to pass a request to the teammate whose job it is (before you do the work), and propose a new teammate when work nobody covers keeps coming up.",
-  "A referral and a suggestion are offers: reply with one short sentence and stop; the person decides. You never create, rename, or retire a coworker.",
-].join(" ");
-
 const MESSAGE_LIMIT = 500;
 const WHY_LIMIT = 160;
 const ROLE_LIMIT = 40;
