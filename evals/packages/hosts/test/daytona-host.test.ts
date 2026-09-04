@@ -174,6 +174,7 @@ test("spawnElectron starts isolated Daytona Electron profiles and writes bootstr
     log: () => undefined,
     exec,
     repoRoot: "/repo",
+    engineCacheDir: "/tmp/openwork-engine-warm-123",
     waitForCdp: successfulPolls(polled),
   });
   const bootstrap = { baseUrl: "https://den-web.example.test", apiBaseUrl: "https://den-api.example.test", requireSignin: true };
@@ -194,7 +195,8 @@ test("spawnElectron starts isolated Daytona Electron profiles and writes bootstr
   assert(firstMkdirIndex >= 0);
   assert(firstSeedIndex > firstMkdirIndex);
   const firstSeed = argsText(calls[firstSeedIndex] ?? { args: [] });
-  assert(firstSeed.includes("/workspace/.openwork-daytona/engine-cache/openwork-dev-data"));
+  assert(firstSeed.includes("/tmp/openwork-engine-warm-123/openwork-dev-data"));
+  assert(!firstSeed.includes("engine-cache"));
   assert(firstSeed.includes("[ ! -e"));
   assert(firstSeed.includes("/electron-userdata/openwork-dev-data"));
 
