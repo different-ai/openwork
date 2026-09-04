@@ -3,6 +3,11 @@
   "lane": "daytona-ci",
   "excluded": [
     {
+      "test": "automation-den-monitor.e2e.test.ts",
+      "category": "fresh-den-url",
+      "reason": "requires a freshly booted Den Web/API origin for its browser-driven Den monitor pages"
+    },
+    {
       "test": "compatible-release-picker.e2e.test.ts",
       "category": "fresh-desktop-profile",
       "reason": "spawns a fresh-profile/second Electron; cannot reuse the shared prewarmed desktop sandbox"
