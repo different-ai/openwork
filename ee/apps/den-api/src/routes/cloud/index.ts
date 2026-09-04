@@ -758,10 +758,6 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
     orgMemberRouteMiddleware,
     async (c) => {
       const payload = c.get("organizationContext")
-      if (!cloudAvailable(payload, options)) {
-        return c.json(cloudNotFound(), 404)
-      }
-
       const user = c.get("user")
       if (!hasCloudUserId(user)) {
         return c.json({ error: "unauthorized" }, 401)
@@ -773,6 +769,10 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
       const webAccess = await getOpenWorkWebAccess(payload.organization.id)
       if (!webAccess.hasAccess) {
         return c.json(openWorkWebAccessRequiredPayload(), 403)
+      }
+
+      if (!cloudAvailable(payload, options)) {
+        return c.json(cloudNotFound(), 404)
       }
 
       const resolved = await resolveCloudInstanceForMember({
@@ -811,10 +811,6 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
     orgMemberRouteMiddleware,
     async (c) => {
       const payload = c.get("organizationContext")
-      if (!cloudAvailable(payload, options)) {
-        return c.json(cloudNotFound(), 404)
-      }
-
       const user = c.get("user")
       if (!hasCloudUserId(user)) {
         return c.json({ error: "unauthorized" }, 401)
@@ -823,6 +819,10 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
       const webAccess = await getOpenWorkWebAccess(payload.organization.id)
       if (!webAccess.hasAccess) {
         return c.json(openWorkWebAccessRequiredPayload(), 403)
+      }
+
+      if (!cloudAvailable(payload, options)) {
+        return c.json(cloudNotFound(), 404)
       }
 
       const resolved = await resolveCloudInstanceForMember({
@@ -862,10 +862,6 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
     orgMemberRouteMiddleware,
     async (c) => {
       const payload = c.get("organizationContext")
-      if (!cloudAvailable(payload, options)) {
-        return c.json(cloudNotFound(), 404)
-      }
-
       const user = c.get("user")
       if (!hasCloudUserId(user)) {
         return c.json({ error: "unauthorized" }, 401)
@@ -874,6 +870,10 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
       const webAccess = await getOpenWorkWebAccess(payload.organization.id)
       if (!webAccess.hasAccess) {
         return c.json(openWorkWebAccessRequiredPayload(), 403)
+      }
+
+      if (!cloudAvailable(payload, options)) {
+        return c.json(cloudNotFound(), 404)
       }
 
       const worker = await getCloudWorker(payload.organization.id, user.id, store)

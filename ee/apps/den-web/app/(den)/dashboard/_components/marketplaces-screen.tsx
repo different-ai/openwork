@@ -3,11 +3,11 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import { Cable, Loader2, Plus, Search, Store } from "lucide-react";
-import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
+import { Cable, Loader2, Plus, Search } from "lucide-react";
 import { DenInput } from "../../_components/ui/input";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
-import { getIntegrationsRoute, getMarketplaceRoute, getOrgAccessFlags } from "../../_lib/den-org";
+import { DenNotice } from "../../_components/ui/notice";
+import { getMarketplaceRoute, getOrgAccessFlags, getPluginSourcesRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useHasAnyIntegration } from "./integration-data";
 import {
@@ -18,6 +18,7 @@ import {
 } from "./marketplace-data";
 import { DenCatalogList, DenCatalogRow } from "../../_components/ui/catalog-row";
 import { CatalogIdentityTile } from "./catalog-identity-tile";
+import { AdvancedPageTemplate } from "./advanced-page-template";
 
 export function MarketplacesScreen() {
   const { orgContext, orgSlug } = useOrgDashboard();
@@ -49,12 +50,7 @@ export function MarketplacesScreen() {
   }, [marketplaces, normalizedQuery]);
 
   return (
-    <DashboardPageTemplate
-      icon={Store}
-      title="Collections"
-      description="Collections contain plugins. The built-in OpenWork collection and assigned collections show up inside the desktop app after sign-in."
-      colors={["#FEF3C7", "#92400E", "#F59E0B", "#FDE68A"]}
-    >
+    <AdvancedPageTemplate tab="collections">
       <div className="mb-6 flex flex-col gap-3 sm:flex-row">
         <div className="min-w-0 flex-1">
           <DenInput
@@ -73,9 +69,10 @@ export function MarketplacesScreen() {
       </div>
 
       {error ? (
-        <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700">
-          {error instanceof Error ? error.message : "Failed to load collections."}
-        </div>
+        <DenNotice
+          message={error instanceof Error ? error.message : "Failed to load collections."}
+          className="mb-6"
+        />
       ) : null}
 
       {isLoading || integrationsLoading ? (
@@ -83,7 +80,7 @@ export function MarketplacesScreen() {
           Loading collections…
         </div>
       ) : !hasAnyIntegration && marketplaces.length === 0 ? (
-        <ConnectIntegrationEmptyState integrationsHref={getIntegrationsRoute(orgSlug)} />
+        <ConnectIntegrationEmptyState integrationsHref={getPluginSourcesRoute(orgSlug)} />
       ) : filtered.length === 0 ? (
         <EmptyState
           title={marketplaces.length === 0 ? "No collections yet" : "No collections match that search"}
@@ -94,7 +91,7 @@ export function MarketplacesScreen() {
           }
           action={
             marketplaces.length === 0
-              ? { href: getIntegrationsRoute(orgSlug), label: "Open Integrations", icon: Cable }
+              ? { href: getPluginSourcesRoute(orgSlug), label: "Open Sources", icon: Cable }
               : undefined
           }
         />
@@ -131,7 +128,7 @@ export function MarketplacesScreen() {
           }}
         />
       ) : null}
-    </DashboardPageTemplate>
+    </AdvancedPageTemplate>
   );
 }
 
@@ -251,9 +248,9 @@ function EmptyState({
 function ConnectIntegrationEmptyState({ integrationsHref }: { integrationsHref: string }) {
   return (
     <EmptyState
-      title="Connect an integration to discover collections"
+      title="Connect a source to discover collections"
       description="Collections are created when OpenWork finds plugins in a connected repository. Assign them to everyone in your org or specific users and teams."
-      action={{ href: integrationsHref, label: "Open Integrations", icon: Cable }}
+      action={{ href: integrationsHref, label: "Open Sources", icon: Cable }}
     />
   );
 }

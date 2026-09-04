@@ -217,6 +217,10 @@ export async function workspaceNewTask(seed: Seed) {
   return oneWorkspace(seed, `openwork-kitchen-vercel-env-hit-target-${Date.now()}`);
 }
 
+export async function commandPaletteSearch(seed: Seed) {
+  return oneWorkspace(seed, `command-palette-search-${Date.now()}`);
+}
+
 export async function archiveSessions(seed: Seed) {
   const stamp = `${Date.now()}-${process.pid}`;
   const app = await seed.desktop({ name: "session-archive-button" });

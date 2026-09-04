@@ -112,22 +112,24 @@ registerAppErrorHandler(app, (error, c, requestId) => {
 // without a valid grant. Registered before the global CORS middleware so it
 // answers the preflight for exactly this path; every other route keeps the
 // strict allowlist below.
-app.use(
-  "/v1/auth/desktop-handoff/exchange",
-  cors({
-    origin: (origin) => origin,
-    credentials: true,
-    allowHeaders: ["Content-Type", "Authorization", "X-Request-Id"],
-    allowMethods: ["POST", "OPTIONS"],
-    maxAge: 600,
-  }),
-)
+if (!env.corsHandledByEdge) {
+  app.use(
+    "/v1/auth/desktop-handoff/exchange",
+    cors({
+      origin: (origin) => origin,
+      credentials: true,
+      allowHeaders: ["Content-Type", "Authorization", "X-Request-Id"],
+      allowMethods: ["POST", "OPTIONS"],
+      maxAge: 600,
+    }),
+  )
+}
 
 // This bearer-token-only compatibility surface must accept native/file-origin
 // preflights before the credentialed browser allowlist can intercept OPTIONS.
 registerCloudWorkerCompatibilityPreflightRoute(app)
 
-if (env.corsOrigins.length > 0) {
+if (env.corsOrigins.length > 0 && !env.corsHandledByEdge) {
   app.use(
     "*",
       cors({

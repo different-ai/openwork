@@ -332,7 +332,7 @@ pulls. Therefore:
 
 1. **Phase 1** — capability source + worker routing + text results. Proof:
    testkit spec in `evals/specs/` driving desktop engine → gateway → mock
-   worker (witness for openwork-server, per `build-a-witness`), asserting
+   worker (witness for openwork-server, per `write-a-spec` mocks), asserting
    session creation, prompt receipt, transcript read, and member-scoping
    (cross-member 404).
 2. **Phase 2** — MCP App card + built-in skill. Proof: MCP App render spec

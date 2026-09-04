@@ -10,6 +10,7 @@ import { checkedExec, defaultDaytonaExec } from "./daytona.ts";
 import { FAULT_PROXY_SCRIPT } from "./fault-proxy-script.ts";
 import type { DaytonaExec, DaytonaExecResult } from "./daytona.ts";
 
+const CHROME_DEVTOOLS_PLUGIN_VERSION = "1.0.4";
 const REPO_ROOT = fileURLToPath(new URL("../../../..", import.meta.url));
 const DESKTOP_READY_TIMEOUT_MS = 300_000;
 const INSTALL_TIMEOUT_MS = 25 * 60 * 1_000;
@@ -43,6 +44,7 @@ export interface DesktopSandboxOptions {
 export interface DesktopSandbox {
   sandbox: string;
   created: boolean;
+  engineCacheDir: string | null;
 }
 
 export interface DenSandboxOptions {
@@ -50,6 +52,8 @@ export interface DenSandboxOptions {
   reuse?: string;
   repoRoot?: string;
   bootstrapAdminEmail?: string;
+  /** Extra Den environment for a freshly provisioned sandbox; a reused Den is already running and cannot take it. */
+  env?: Record<string, string>;
   log?: (line: string) => void;
 }
 
@@ -66,6 +70,7 @@ export interface MockOnSandboxOptions {
   log?: (line: string) => void;
   fetchImpl?: typeof fetch;
   allowUnauthenticatedMcp?: boolean;
+  appToolName?: string;
 }
 
 export interface MockOnSandbox {
@@ -91,6 +96,8 @@ export interface ConnectorE2eTestEnv {
   denWebUrl: string;
   sandboxA: string;
   sandboxB: string;
+  engineCacheDirA: string | null;
+  engineCacheDirB: string | null;
   mockUrl: string;
   ref: string;
   created: string[];
@@ -221,6 +228,7 @@ export async function provisionDesktopSandbox(options: DesktopSandboxOptions & P
   const ref = assertSafeRef(options.ref);
   const reused = options.reuse?.trim() || "";
   let sandbox = reused;
+  let engineCacheDir: string | null = null;
 
   await timedStep(log, "sandbox gate", async () => {
     if (reused) {
@@ -405,6 +413,76 @@ echo detached`;
     }
   });
 
+  await timedStep(log, "engine cache warm gate", async () => {
+    // The sandbox exec transport strips double quotes, so JSON travels base64.
+    const b64 = (text: string) => Buffer.from(text, "utf8").toString("base64");
+    const pluginManifestPrefix = b64('{"dependencies":{"@opencode-ai/plugin":"');
+    const pluginManifestSuffix = b64('"}}');
+    // The engine resolves the unpinned `opencode-chrome-devtools` plugin as `latest`
+    // and keys its cache dir by that tag; the harness installs one audited version
+    // into that slot so evaluation desktops never load whatever the tag points at.
+    const devtoolsManifest = b64(`{"dependencies":{"opencode-chrome-devtools":"${CHROME_DEVTOOLS_PLUGIN_VERSION}"}}`);
+    const warmDir = `/tmp/openwork-engine-warm-${Date.now()}`;
+    const warmScript = `set -e
+W=${warmDir}
+rm -rf /workspace/.openwork-daytona/engine-cache "$W"
+D="$W/openwork-dev-data"
+mkdir -p "$D/home" "$D/xdg/config/opencode" "$D/config/opencode" "$D/xdg/cache/opencode/packages/opencode-chrome-devtools@latest"
+LOG="$W/warm.log"
+sidecars=(/workspace/apps/desktop/resources/sidecars/opencode-*)
+SIDECAR="\${sidecars[0]:-}"
+if [ ! -x "$SIDECAR" ]; then
+  echo "No executable OpenCode sidecar found" > "$LOG"
+  echo WARM_TIMEOUT
+  tail -80 "$LOG" 2>&1 || true
+  exit 0
+fi
+ENGINE_VERSION=$("$SIDECAR" --version 2>>"$LOG" | tail -1 || true)
+if [ -z "$ENGINE_VERSION" ]; then
+  echo "OpenCode sidecar did not report a version" >> "$LOG"
+  echo WARM_TIMEOUT
+  tail -80 "$LOG" 2>&1 || true
+  exit 0
+fi
+printf %s ${pluginManifestPrefix} | base64 -d > "$D/xdg/config/opencode/package.json"
+printf %s "$ENGINE_VERSION" >> "$D/xdg/config/opencode/package.json"
+printf %s ${pluginManifestSuffix} | base64 -d >> "$D/xdg/config/opencode/package.json"
+cp "$D/xdg/config/opencode/package.json" "$D/config/opencode/package.json"
+printf %s ${devtoolsManifest} | base64 -d > "$D/xdg/cache/opencode/packages/opencode-chrome-devtools@latest/package.json"
+NPM=/usr/local/share/nvm/current/bin/npm
+if [ ! -x "$NPM" ]; then
+  echo "npm is missing at $NPM" >> "$LOG"
+  echo WARM_TIMEOUT
+  tail -80 "$LOG" 2>&1 || true
+  exit 0
+fi
+install_package() {
+  directory="$1"
+  if ! (cd "$directory" && HOME="$D/home" /usr/local/share/nvm/current/bin/npm install --ignore-scripts --no-audit --no-fund --loglevel=error) >> "$LOG" 2>&1; then
+    echo WARM_TIMEOUT
+    tail -80 "$LOG" 2>&1 || true
+    return 1
+  fi
+}
+install_package "$D/xdg/config/opencode" || exit 0
+install_package "$D/config/opencode" || exit 0
+install_package "$D/xdg/cache/opencode/packages/opencode-chrome-devtools@latest" || exit 0
+echo WARM_OK`;
+    const result = await execInSandbox(exec, sandbox, warmScript, {
+      timeoutMs: 240_000,
+      context: `engine cache warm gate for ${sandbox}`,
+    }).catch((error) => {
+      log(`==> WARNING: engine cache warm gate could not complete for ${sandbox}; specs will start cold. ${messageText(error)}`);
+      return null;
+    });
+    if (result?.stdout.includes("WARM_TIMEOUT")) {
+      log(`==> WARNING: engine cache warm gate did not complete for ${sandbox}; specs will start cold. Log tail:\n${outputTail(result)}`);
+    } else if (result?.stdout.includes("WARM_OK")) {
+      engineCacheDir = warmDir;
+      log(`==> engine cache warmed for ${sandbox}`);
+    }
+  });
+
   await timedStep(log, "Vite prewarm gate", async () => {
     const detachScript = `cd /workspace; python3 - <<PYEOF
 import subprocess
@@ -454,7 +532,7 @@ echo detached`;
     throw new Error(`Vite prewarm gate timed out after ${VITE_PREWARM_TIMEOUT_MS}ms waiting for ${phase} in ${sandbox}. Last readiness error: ${last}. Log tail:\n${outputTail(viteLog)}`);
   });
 
-  return { sandbox, created: !reused };
+  return { sandbox, created: !reused, engineCacheDir };
 }
 
 interface LocalProcessResult {
@@ -483,10 +561,25 @@ function lineWriter(log: (line: string) => void): LineWriter {
   };
 }
 
-function runDenProvisionScript(ref: string, repoRoot: string, bootstrapAdminEmail: string | undefined, log: (line: string) => void, urlsFile: string): Promise<LocalProcessResult> {
+/**
+ * Extra Den env travels to the sandbox as base64 `KEY=VALUE` lines, so values
+ * are never interpolated into the `daytona exec` command line. Keys must be
+ * plain environment names; the start script exports each line verbatim.
+ */
+export function encodeDenExtraEnv(env: Record<string, string>): string {
+  const lines = Object.entries(env).map(([key, value]) => {
+    if (!/^[A-Z_][A-Z0-9_]*$/.test(key)) throw new Error(`Unsafe Den environment name ${JSON.stringify(key)}.`);
+    if (value.includes("\n")) throw new Error(`Den environment value for ${key} may not contain a newline.`);
+    return `${key}=${value}`;
+  });
+  return Buffer.from(lines.join("\n"), "utf8").toString("base64");
+}
+
+function runDenProvisionScript(ref: string, repoRoot: string, bootstrapAdminEmail: string | undefined, extraEnv: Record<string, string> | undefined, log: (line: string) => void, urlsFile: string): Promise<LocalProcessResult> {
   return new Promise((resolve, reject) => {
     const env: NodeJS.ProcessEnv = { ...process.env, OPENWORK_DEN_URLS_FILE: urlsFile };
     if (bootstrapAdminEmail) env.DEN_BOOTSTRAP_ADMIN_EMAILS = bootstrapAdminEmail;
+    if (extraEnv && Object.keys(extraEnv).length > 0) env.OPENWORK_DEN_EXTRA_ENV_B64 = encodeDenExtraEnv(extraEnv);
     const child = spawn("bash", [".devcontainer/test-server-on-daytona.sh", ref, "--seed", "--name", serverSandboxName()], {
       cwd: repoRoot,
       env,
@@ -656,6 +749,7 @@ export async function provisionDenSandbox(options: DenSandboxOptions & Provision
         ref,
         options.repoRoot ?? REPO_ROOT,
         options.bootstrapAdminEmail,
+        options.env,
         log,
         urlsFile,
       ));
@@ -701,10 +795,11 @@ export async function startMockOnSandbox(options: MockOnSandboxOptions & Provisi
 
   await timedStep(log, "mock process detach", async () => {
     const unauthenticatedMcpEnv = options.allowUnauthenticatedMcp ? " MOCK_ALLOW_UNAUTHENTICATED_MCP=1" : "";
+    const appToolEnv = options.appToolName ? ` MOCK_APP_TOOL_NAME=${assertSafeRef(options.appToolName)}` : "";
     const detachScript = `cd /workspace; python3 - <<PYEOF
 import subprocess
 log = open("/tmp/mock-mcp.log", "ab", buffering=0)
-subprocess.Popen(["bash", "-lc", "cd /workspace && env HOST=0.0.0.0 PORT=${port} ISSUER=${url} AUTO_APPROVE=1${unauthenticatedMcpEnv} node scripts/mock-oauth-mcp-server.mjs"], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
+subprocess.Popen(["bash", "-lc", "cd /workspace && env HOST=0.0.0.0 PORT=${port} ISSUER=${url} AUTO_APPROVE=1${unauthenticatedMcpEnv}${appToolEnv} node scripts/mock-oauth-mcp-server.mjs"], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
 PYEOF
 echo detached`;
     await execInSandbox(exec, options.sandbox, detachScript, { timeoutMs: 30_000, context: `mock process detach for ${options.sandbox}` });
@@ -890,6 +985,8 @@ export function renderConnectorE2eTestEnv(facts: ConnectorE2eTestEnv): string {
     `OPENWORK_EVAL_DEN_WEB_URL=${shellQuote(facts.denWebUrl)}`,
     `OPENWORK_EVAL_DAYTONA_SANDBOX_A=${shellQuote(facts.sandboxA)}`,
     `OPENWORK_EVAL_DAYTONA_SANDBOX_B=${shellQuote(facts.sandboxB)}`,
+    `OPENWORK_EVAL_DAYTONA_ENGINE_CACHE_DIR_A=${shellQuote(facts.engineCacheDirA ?? "")}`,
+    `OPENWORK_EVAL_DAYTONA_ENGINE_CACHE_DIR_B=${shellQuote(facts.engineCacheDirB ?? "")}`,
     `OPENWORK_EVAL_CONNECTOR_MOCK_PUBLIC_URL=${shellQuote(facts.mockUrl)}`,
     "OPENWORK_EVAL_MODEL=big-pickle",
     "",
@@ -927,6 +1024,8 @@ export function parseConnectorE2eTestEnv(content: string): ConnectorE2eTestEnv {
     denWebUrl: required("OPENWORK_EVAL_DEN_WEB_URL"),
     sandboxA: required("OPENWORK_EVAL_DAYTONA_SANDBOX_A"),
     sandboxB: required("OPENWORK_EVAL_DAYTONA_SANDBOX_B"),
+    engineCacheDirA: values.get("OPENWORK_EVAL_DAYTONA_ENGINE_CACHE_DIR_A")?.trim() || null,
+    engineCacheDirB: values.get("OPENWORK_EVAL_DAYTONA_ENGINE_CACHE_DIR_B")?.trim() || null,
     mockUrl: required("OPENWORK_EVAL_CONNECTOR_MOCK_PUBLIC_URL"),
     ref,
     created: createdText.split(",").map((id) => id.trim()).filter(Boolean),

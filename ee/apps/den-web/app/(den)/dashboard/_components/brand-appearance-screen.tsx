@@ -1,6 +1,6 @@
 "use client";
 
-import { ImageUp, Palette, Trash2 } from "lucide-react";
+import { ImageUp, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
 import {
@@ -9,12 +9,12 @@ import {
   parseOrganizationMetadata,
   type DenManagedBrandAsset,
 } from "../../_lib/den-org";
-import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../_components/ui/button";
 import { DenCard } from "../../_components/ui/card";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { AdvancedPageTemplate } from "./advanced-page-template";
 import { EnterprisePlanNotice } from "./enterprise-plan-notice";
 
 const BRAND_ASSET_MAX_BYTES = 2 * 1024 * 1024;
@@ -267,23 +267,18 @@ export function BrandAppearanceScreen() {
 
   return (
     <div data-testid="brand-appearance-screen">
-      <DashboardPageTemplate
-        icon={Palette}
-        title="Brand appearance"
-        description="Customize how your workspace appears across OpenWork."
-        colors={["#F5F3FF", "#4C1D95", "#8B5CF6", "#DDD6FE"]}
-      >
+      <AdvancedPageTemplate tab="brand-appearance">
         {!orgContext.entitlements.desktopPolicies ? (
           <EnterprisePlanNotice feature="White-label brand appearance" />
         ) : (
           <form className="grid gap-6" onSubmit={handleSave}>
             {pageError ? <DenNotice message={pageError} /> : null}
-            {pageSuccess ? <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-[14px] text-emerald-700">{pageSuccess}</div> : null}
+            {pageSuccess ? <DenNotice tone="neutral" message={pageSuccess} /> : null}
 
             <DenCard size="spacious" className="grid gap-6">
               <div className="grid gap-2">
                 <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-violet-500">Workspace brand</p>
-                <h2 className="text-[24px] font-semibold tracking-[-0.04em] text-gray-900">Desktop identity</h2>
+                <h2 className="text-[16px] font-semibold tracking-[-0.01em] text-gray-900">Desktop identity</h2>
                 <p className="text-[14px] text-gray-500">Set the desktop application name, wordmark, app icon, and accent color.</p>
               </div>
 
@@ -317,7 +312,7 @@ export function BrandAppearanceScreen() {
             </div>
           </form>
         )}
-      </DashboardPageTemplate>
+      </AdvancedPageTemplate>
     </div>
   );
 }

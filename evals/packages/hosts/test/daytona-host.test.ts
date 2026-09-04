@@ -174,6 +174,7 @@ test("spawnElectron starts isolated Daytona Electron profiles and writes bootstr
     log: () => undefined,
     exec,
     repoRoot: "/repo",
+    engineCacheDir: "/tmp/openwork-engine-warm-123",
     waitForCdp: successfulPolls(polled),
   });
   const bootstrap = { baseUrl: "https://den-web.example.test", apiBaseUrl: "https://den-api.example.test", requireSignin: true };
@@ -188,6 +189,16 @@ test("spawnElectron starts isolated Daytona Electron profiles and writes bootstr
   assert.equal(first.meta?.profileOwner, "host");
   assert.equal(second.meta?.profileOwner, "host");
   assert.deepEqual(polled, ["https://cdp-9825.example.test/json/list", "https://cdp-9830.example.test/json/list"]);
+
+  const firstMkdirIndex = calls.findIndex((call) => argsText(call).includes("mkdir -p") && argsText(call).includes("/profiles/owner-"));
+  const firstSeedIndex = calls.findIndex((call) => argsText(call).includes("cp -a") && argsText(call).includes("/profiles/owner-"));
+  assert(firstMkdirIndex >= 0);
+  assert(firstSeedIndex > firstMkdirIndex);
+  const firstSeed = argsText(calls[firstSeedIndex] ?? { args: [] });
+  assert(firstSeed.includes("/tmp/openwork-engine-warm-123/openwork-dev-data"));
+  assert(!firstSeed.includes("engine-cache"));
+  assert(firstSeed.includes("[ ! -e"));
+  assert(firstSeed.includes("/electron-userdata/openwork-dev-data"));
 
   const bootstrapCall = findCall(calls, "base64 -d");
   assert.equal(Buffer.from(base64AfterEcho(bootstrapCall), "base64").toString("utf8"), `${JSON.stringify(bootstrap, null, 2)}\n`);

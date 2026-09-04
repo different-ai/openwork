@@ -807,7 +807,9 @@ const MessageComponent = React.memo(
       return (
         <ErrorMessage
           error={getMessagesText([message]) || "Session failed"}
+          description={presentation?.description}
           resumePrompt={presentation?.recoveryPrompt}
+          technicalDetails={presentation?.technicalDetails}
         />
       )
     }
@@ -898,18 +900,88 @@ ReconnectingMessage.displayName = "ReconnectingMessage"
 
 interface ErrorMessageProps {
   error: string | null
+  description?: string | null
   /** Set only for interrupted runs (aborted / provider timeout) that can resume. */
   resumePrompt?: string | null
+  /** Error type, status, provider, code, response body — for bug reports and support. */
+  technicalDetails?: string | null
 }
 
-function ErrorMessage({ error, resumePrompt }: ErrorMessageProps) {
-  const { onResumeInterrupted } = useMessageList()
+/**
+ * Details are worth a disclosure only when they say more than the card
+ * already does. A bare string error yields "Message: <same text>", which
+ * would open to nothing new.
+ */
+function hasExtraTechnicalDetails(error: string | null, details: string | null | undefined): details is string {
+  const text = details?.trim()
+  if (!text) return false
+  if (text === error?.trim()) return false
+  return text.replace(/^Message:\s*/, "") !== error?.trim()
+}
+
+function SessionErrorTechnicalDetails({ details, tone }: { details: string; tone: "card" | "line" }) {
+  const [open, setOpen] = React.useState(false)
+  const [copied, setCopied] = React.useState(false)
+  const onCopy = React.useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(details)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // ignore clipboard failures
+    }
+  }, [details])
+
+  return (
+    <div className={cn("flex min-w-0 w-full flex-col", tone === "card" && "border-t border-destructive/20 pt-1.5")}>
+      <button
+        type="button"
+        data-testid="session-error-details-toggle"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="flex w-fit min-w-0 cursor-pointer items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+      >
+        <ChevronRight
+          aria-hidden="true"
+          className={cn("size-3 shrink-0 transition-transform duration-150", open && "rotate-90")}
+        />
+        <span className="shrink-0">Technical details</span>
+      </button>
+      {open ? (
+        <div
+          data-testid="session-error-details"
+          className="mt-1.5 flex min-w-0 flex-col gap-1.5 rounded-lg bg-muted p-2 text-xs"
+        >
+          <pre className="max-h-60 overflow-auto whitespace-pre-wrap wrap-break-word font-mono text-foreground/90">
+            {details}
+          </pre>
+          <button
+            type="button"
+            onClick={() => void onCopy()}
+            className="flex w-fit cursor-pointer items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+          >
+            {copied ? <Check aria-hidden="true" className="size-3" /> : <Copy aria-hidden="true" className="size-3" />}
+            {copied ? "Copied" : "Copy details"}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function ErrorMessage({ error, description, resumePrompt, technicalDetails }: ErrorMessageProps) {
+  const { onResumeInterrupted, developerMode } = useMessageList()
+  // Status codes, provider names, and response bodies are for developers,
+  // admins, and support — not the plain-language card end users see. They
+  // surface only with Developer mode (Settings → Advanced), like the
+  // session debug panel.
+  const details = developerMode && hasExtraTechnicalDetails(error, technicalDetails) ? technicalDetails : null
 
   // A resumable interruption is a pause, not a failure: it renders as a
   // quiet status line (like "Working 12s"), with Resume as the emphasis.
   if (resumePrompt && onResumeInterrupted) {
     return (
-      <Message className="not-prose mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10">
+      <Message className="not-prose mx-auto flex w-full max-w-3xl flex-col items-start gap-1 px-2 md:px-10">
         <div
           data-testid="session-error-interrupted"
           className="flex min-w-0 items-center gap-2 py-1 text-sm text-muted-foreground"
@@ -926,6 +998,7 @@ function ErrorMessage({ error, resumePrompt }: ErrorMessageProps) {
             {t("session.resume_interrupted")}
           </button>
         </div>
+        {details ? <SessionErrorTechnicalDetails details={details} tone="line" /> : null}
       </Message>
     )
   }
@@ -936,8 +1009,14 @@ function ErrorMessage({ error, resumePrompt }: ErrorMessageProps) {
         <div className="flex min-w-0 flex-1 flex-col gap-1.5 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm">
           <div className="flex flex-row items-start gap-2">
             <AlertTriangle aria-hidden="true" size={16} className="mt-0.5 shrink-0 text-destructive" />
-            <p className="whitespace-pre-wrap text-destructive">{error}</p>
+            <div className="flex flex-col gap-1">
+              <p className="whitespace-pre-wrap text-destructive">{error}</p>
+              {description && !resumePrompt ? (
+                <p className="text-sm text-destructive/80 whitespace-pre-wrap">{description}</p>
+              ) : null}
+            </div>
           </div>
+          {details ? <SessionErrorTechnicalDetails details={details} tone="card" /> : null}
         </div>
       </div>
     </Message>
@@ -948,13 +1027,13 @@ interface RetryMessageProps {
   status: RetryStatus
 }
 
-function RetryActionButton(props: { link: string; label: string }) {
+function RetryActionButton(props: { label: string; onClick: () => void }) {
   return (
     <Button
       variant="outline"
       size="sm"
       className="h-7 border-amber-500/70 bg-amber-50 text-xs text-amber-950 hover:bg-amber-100"
-      onClick={() => void openDesktopUrl(props.link)}
+      onClick={props.onClick}
     >
       {props.label}
     </Button>
@@ -962,6 +1041,7 @@ function RetryActionButton(props: { link: string; label: string }) {
 }
 
 const RetryMessage = React.memo(({ status }: RetryMessageProps) => {
+  const { dispatchAction } = useMessageList()
   const [seconds, setSeconds] = React.useState(() => retryDelaySeconds(status))
 
   React.useEffect(() => {
@@ -981,6 +1061,7 @@ const RetryMessage = React.memo(({ status }: RetryMessageProps) => {
     ? `Retrying in ${seconds}s · attempt ${status.attempt}`
     : `Retrying · attempt ${status.attempt}`
   const action = status.action
+  const freeModelLimit = action?.reason === "free_tier_limit"
 
   return (
     <Message className="not-prose mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-0 md:px-10">
@@ -989,16 +1070,29 @@ const RetryMessage = React.memo(({ status }: RetryMessageProps) => {
           <div className="flex items-start gap-2">
             <LoaderCircle size={16} className="mt-0.5 shrink-0 animate-spin text-amber-700" />
             <div className="min-w-0 space-y-1">
-              <p className="whitespace-pre-wrap text-sm font-medium text-amber-900">{status.message}</p>
+              <p className="whitespace-pre-wrap text-sm font-medium text-amber-900">
+                {freeModelLimit ? "The free starter model is busy right now" : status.message}
+              </p>
               <p className="text-xs text-amber-800">{info}</p>
             </div>
           </div>
           {action ? (
             <div className="ml-6 space-y-1 border-t border-amber-400/60 pt-2">
-              <p className="text-xs font-medium text-amber-950">{action.title}</p>
-              <p className="text-xs text-amber-900">{action.message}</p>
-              {action.link ? (
-                <RetryActionButton link={action.link} label={action.label} />
+              <p className="text-xs font-medium text-amber-950">
+                {freeModelLimit ? "Free model limit reached" : action.title}
+              </p>
+              <p className="text-xs text-amber-900">
+                {freeModelLimit
+                  ? "OpenWork will keep retrying. To keep working now, connect your own model provider."
+                  : action.message}
+              </p>
+              {freeModelLimit ? (
+                <RetryActionButton
+                  label="Connect a model provider"
+                  onClick={() => dispatchAction({ target: "settings", action: "open", section: "providers" })}
+                />
+              ) : action.link ? (
+                <RetryActionButton label={action.label} onClick={openDesktopUrl.bind(null, action.link)} />
               ) : null}
             </div>
           ) : null}

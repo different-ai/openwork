@@ -586,6 +586,7 @@ function renderHookRow(hook: PluginHook) {
 }
 
 function renderMcpRow(mcp: PluginMcp) {
+  const label = mcp.connectionId ? "Connector" : mcp.transport === "stdio" ? "Desktop only" : "Remote";
   return (
     <div
       key={mcp.id}
@@ -598,7 +599,7 @@ function renderMcpRow(mcp: PluginMcp) {
         ) : null}
       </div>
       <span className="shrink-0 rounded-full bg-gray-50 px-2 py-0.5 text-[11px] text-gray-500">
-        {mcp.transport === "stdio" ? "Desktop only" : "Remote"} · {mcp.toolCount} tool{mcp.toolCount === 1 ? "" : "s"}
+        {label}{mcp.toolCount > 0 ? ` · ${mcp.toolCount} tool${mcp.toolCount === 1 ? "" : "s"}` : ""}
       </span>
     </div>
   );

@@ -79,6 +79,8 @@ export interface StartMockMcpOptions {
   allowUnauthenticatedMcp?: boolean;
   /** Serve this many additional synthetic mock_tool_<i> tools for scale specs. */
   extraToolCount?: number;
+  /** Serve one app-visible MCP App launch tool (`_meta.ui.resourceUri`) under this name. */
+  appToolName?: string;
   /** Script deterministic OpenAI-compatible agent turns through this mock. */
   agentWorkloads?: MockAgentWorkload[];
 }
@@ -302,6 +304,7 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
         AUTO_APPROVE: "1",
         ...(options.allowUnauthenticatedMcp ? { MOCK_ALLOW_UNAUTHENTICATED_MCP: "1" } : {}),
         ...(options.extraToolCount ? { MOCK_EXTRA_TOOL_COUNT: String(options.extraToolCount) } : {}),
+        ...(options.appToolName ? { MOCK_APP_TOOL_NAME: options.appToolName } : {}),
       },
       stdio: ["ignore", "pipe", "pipe"],
     });

@@ -777,6 +777,14 @@ function safeBaseMessageFor(input: {
       ? `${message} Provider-declared message (untrusted): "${input.providerErrorMessage}".`
       : message
   }
+  if (input.code === "MCP_INVALID_PARAMS" || input.code === "MCP_PROVIDER_INVALID_PARAMS") {
+    // The provider's own rejection names the offending argument; without it a
+    // member cannot correct a launch input that omits a required field.
+    const message = "The provider rejected the tool arguments."
+    return input.providerErrorMessage
+      ? `${message} Provider-declared message (untrusted): "${input.providerErrorMessage}".`
+      : message
+  }
   if (input.code === "MCP_PROVIDER_DECLARED_ERROR") {
     const message = input.jsonRpcCode === undefined
       ? "The provider answered with a JSON-RPC error OpenWork does not recognize."

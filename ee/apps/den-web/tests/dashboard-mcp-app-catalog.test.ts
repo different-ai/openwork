@@ -8,6 +8,7 @@ import {
   connectionCanListMcpApps,
   mcpAppCatalogIsLoading,
 } from "../app/(den)/dashboard/_components/dashboard-mcp-app-catalog";
+import { missingRequiredInputKeys } from "../app/(den)/dashboard/_components/org-dashboard-detail-screen";
 
 const app: ConnectionMcpApp = {
   serverName: "reports",
@@ -18,6 +19,7 @@ const app: ConnectionMcpApp = {
   title: "Weekly report",
   description: "Shows the weekly report",
   requiresInput: false,
+  requiredInputKeys: [],
   requiresApproval: false,
 };
 
@@ -51,5 +53,15 @@ describe("dashboard MCP App catalog", () => {
   test("shows discovered Apps while another MCP is still loading", () => {
     expect(mcpAppCatalogIsLoading(0, true)).toBe(true);
     expect(mcpAppCatalogIsLoading(1, true)).toBe(false);
+  });
+
+  test("names the required launch-input keys a pasted payload omits", () => {
+    // A launch input missing a key the tool requires fails on every launch,
+    // so the add-app dialog must refuse it and say which key is missing.
+    expect(missingRequiredInputKeys(["cloudId", "pageId"], { pageId: "1122334455" })).toEqual(["cloudId"]);
+    expect(missingRequiredInputKeys(["cloudId", "jql"], { jql: "project = HELPDESK" })).toEqual(["cloudId"]);
+    expect(missingRequiredInputKeys(["cloudId", "jql"], { cloudId: "example-cloud-id", jql: "project = HELPDESK" })).toEqual([]);
+    expect(missingRequiredInputKeys(["cloudId"], { cloudId: undefined })).toEqual(["cloudId"]);
+    expect(missingRequiredInputKeys([], {})).toEqual([]);
   });
 });
