@@ -270,7 +270,7 @@ export async function pinnedSessions(seed: Seed) {
     };
   }
 
-  // TODO(primitive): probe.sidebar complements user.see("Pinned") by exposing which rows the section contains.
+  // TODO(primitive): probe.sidebar complements user.see({ text: "Pinned" }) by exposing which rows the section contains.
   async function pinnedSidebarRows(): Promise<string[] | null> {
     const value = await seed.evalIn(app, `(() => {
       const section = document.querySelector("[data-global-pinned-sessions]");

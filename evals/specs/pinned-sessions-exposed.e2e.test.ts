@@ -49,7 +49,7 @@ test("pinned sessions are exposed to agents through list_sessions, the context s
     expect(listing.find((session) => session.sessionId === neighborId)?.pinned).toBe(false);
     expect((await world.context()).pinnedSessionIds).toEqual([]);
     expect(await world.pinnedSidebarRows()).toBeNull();
-    await user.notSee("Pinned");
+    await user.notSee({ text: "Pinned" });
   });
 
   await step("pinning the candidate exposes it through agent context and the sidebar", async () => {
@@ -76,7 +76,7 @@ test("pinned sessions are exposed to agents through list_sessions, the context s
     });
     expect(pinnedRows).toContain(candidateId);
     expect(pinnedRows).not.toContain(neighborId);
-    await user.see("Pinned", { timeoutMs: 30_000 });
+    await user.see({ text: "Pinned" }, { timeoutMs: 30_000 });
     await user.screenshot();
   });
 
@@ -102,6 +102,6 @@ test("pinned sessions are exposed to agents through list_sessions, the context s
       until: (rows) => rows === null,
     });
     expect(pinnedRows).toBeNull();
-    await user.notSee("Pinned", { timeoutMs: 30_000 });
+    await user.notSee({ text: "Pinned" }, { timeoutMs: 30_000 });
   });
 });
