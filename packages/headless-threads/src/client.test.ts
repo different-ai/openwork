@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 
 import { createHeadlessThreadClient } from "./client.js";
 import { HeadlessThreadError } from "./errors.js";
-import type { HeadlessFetch, HeadlessThreadStatus } from "./types.js";
+import type { HeadlessFetch } from "./types.js";
 
 type RecordedRequest = {
   method: string;
@@ -14,8 +14,13 @@ type RecordedRequest = {
   signal: AbortSignal | undefined;
 };
 type MessageWire = { info: { id: string; role: string; parentID?: string; providerID?: string; modelID?: string; time?: { created: number; completed?: number }; error?: unknown; tokens?: unknown; cost?: number }; parts: unknown[] };
+/** The engine's status as it goes over the wire; a retry may carry the engine's reason and remedy copy. */
+type StatusWire =
+  | { type: "idle" }
+  | { type: "busy" }
+  | { type: "retry"; attempt: number; message: string; next: number; action?: { reason: string; provider: string; title: string; message: string; label: string; link?: string } };
 /** One poll's worth of thread state, consumed in order by snapshot reads. */
-type Beat = { status: HeadlessThreadStatus; messages: MessageWire[] };
+type Beat = { status: StatusWire; messages: MessageWire[] };
 
 const SESSION_ID = "ses_1";
 const BASE_URL = "http://openwork.test";
@@ -463,6 +468,69 @@ describe("getThreadSnapshot", () => {
     const snapshot = await createClient(createOpenworkDouble()).getThreadSnapshot(SESSION_ID);
 
     expect(snapshot.status).toEqual({ type: "idle" });
+  });
+
+  test("carries the engine's reason for a retry and leaves its remedy copy behind", async () => {
+    // The engine names the free model's shared limit and attaches an upsell; a client gets the reason only.
+    const double = createOpenworkDouble({
+      beats: [{
+        status: {
+          type: "retry",
+          attempt: 2,
+          message: "Free usage exceeded, subscribe to Go",
+          next: 9_000,
+          action: { reason: "free_tier_limit", provider: "opencode", title: "Free limit reached", message: "Subscribe to OpenCode Go…", label: "subscribe", link: "https://example.invalid/go" },
+        },
+        messages: [reply("msg_1", "user")],
+      }],
+    });
+
+    const snapshot = await createClient(double).getThreadSnapshot(SESSION_ID);
+
+    expect(snapshot.status).toEqual({ type: "retry", attempt: 2, message: "Free usage exceeded, subscribe to Go", next: 9_000, reason: "free_tier_limit" });
+    expect(JSON.stringify(snapshot.status)).not.toMatch(/OpenCode Go|example\.invalid|Free limit reached/);
+  });
+
+  test("reads an ordinary retry as one without a reason", async () => {
+    const double = createOpenworkDouble({
+      beats: [{ status: { type: "retry", attempt: 1, message: "rate limited", next: 5 }, messages: [reply("msg_1", "user")] }],
+    });
+
+    const snapshot = await createClient(double).getThreadSnapshot(SESSION_ID);
+
+    expect(snapshot.status).toEqual({ type: "retry", attempt: 1, message: "rate limited", next: 5, reason: null });
+  });
+
+  test("reads the engine's APIError shape: isRetryable and the provider's own error type", async () => {
+    const failed = reply("msg_failed", "assistant", undefined, "msg_1");
+    failed.info.error = {
+      name: "APIError",
+      data: {
+        message: "Error from provider (Console): Rate limit exceeded. Please try again later.",
+        statusCode: 429,
+        isRetryable: true,
+        responseBody: '{"type":"error","error":{"type":"FreeUsageLimitError","message":"Error from provider (Console): Rate limit exceeded. Please try again later."}}',
+      },
+    };
+    const openAiShaped = reply("msg_failed_2", "assistant", undefined, "msg_2");
+    openAiShaped.info.error = {
+      name: "APIError",
+      data: { message: "You exceeded your current quota.", statusCode: 429, isRetryable: false, responseBody: '{"error":{"message":"You exceeded your current quota.","type":"insufficient_quota","code":"insufficient_quota"}}' },
+    };
+    const bodyless = reply("msg_failed_3", "assistant", undefined, "msg_3");
+    bodyless.info.error = { name: "APIError", data: { message: "503 overloaded", statusCode: 503, isRetryable: true, responseBody: "<html>Bad gateway</html>" } };
+    const double = createOpenworkDouble({ messages: [reply("msg_1", "user"), failed, reply("msg_2", "user"), openAiShaped, reply("msg_3", "user"), bodyless] });
+
+    const snapshot = await createClient(double).getThreadSnapshot(SESSION_ID);
+
+    expect(snapshot.messages.map((message) => message.error)).toEqual([
+      null,
+      { name: "APIError", message: "Error from provider (Console): Rate limit exceeded. Please try again later.", retryable: true, providerError: "FreeUsageLimitError" },
+      null,
+      { name: "APIError", message: "You exceeded your current quota.", retryable: false, providerError: "insufficient_quota" },
+      null,
+      { name: "APIError", message: "503 overloaded", retryable: true, providerError: null },
+    ]);
   });
 
   test("preserves tool input, result, error, and MCP App metadata from the native wire state", async () => {
