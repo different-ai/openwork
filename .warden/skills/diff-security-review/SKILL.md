@@ -32,6 +32,14 @@ Do NOT report:
 - Test fixtures, mocks, or intentionally fake credentials that never grant
   real access.
 
+Test code is not a production attack surface merely because it uses browser
+JavaScript evaluation, direct API calls, relaxed local authentication, or
+fixture shortcuts. For tests and test harnesses, report only when the diff
+creates a concrete path to real credentials, untrusted CI input, shared or
+production services, or shipped runtime code. Explain that path; do not
+apply production hardening standards to isolated test behavior. Test files
+are not exempt when such a path exists.
+
 For each finding, report:
 
 - The exact file and changed lines that introduce the issue.
