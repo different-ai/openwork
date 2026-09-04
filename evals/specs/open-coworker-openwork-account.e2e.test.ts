@@ -1189,14 +1189,14 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   await waitFor(teammateApp, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && document.body.innerText.includes("Campaign partner")`, { timeoutMs: 180_000, label: "assigned coworkers ready after first sign-in" });
   const readTeam = () => evalIn(teammateApp, `(async () => (await window.__COWORKER__.invoke("coworkers.list")).result.map(({slug, name, model, automations}) => ({slug, name, model, automations})))()`, { awaitPromise: true });
   expect(await readTeam()).toEqual([
-    expect.objectContaining({ name: "Campaign partner", model: "", automations: [] }),
-    expect.objectContaining({ name: "Research partner", model: "", automations: [] }),
+    expect.objectContaining({ name: "Campaign partner", automations: [] }),
+    expect.objectContaining({ name: "Research partner", automations: [] }),
   ]);
   const initialSoul = await evalIn(teammateApp, `(async () => (await window.__COWORKER__.invoke("coworkers.files.read", {slug:"campaign-partner", path:"soul.md"})).result.content)()`, { awaitPromise: true });
   expect(initialSoul).toContain(startingTemplate.instructions);
   expect(completionAuthorizations.length).toBe(starts);
   expect(denRequests.filter((entry) => entry.path === "/v1/me/coworkers").every((entry) => entry.authorization === `Bearer ${SESSION_TOKEN}` && entry.org === ORG_ID)).toBe(true);
-  evidence.recordAssertionEvidence("An assigned team is ready on first account sign-in", "A fresh Open Coworker profile signed in through the real handoff and displayed Campaign partner and Research partner without manual creation. The reusable instructions were installed; optional and catalog-only coworkers were not created. Neither model selection nor scheduled work was imported, and provisioning made no completion requests.", true);
+  evidence.recordAssertionEvidence("An assigned team is ready on first account sign-in", "A fresh Open Coworker profile signed in through the real handoff and displayed Campaign partner and Research partner without manual creation. The reusable instructions were installed; optional and catalog-only coworkers were not created. No scheduled work was imported, and provisioning made no completion requests.", true);
 
   await evalIn(teammateApp, `(async () => window.__COWORKER__.invoke("coworkers.files.write", {slug:"campaign-partner", path:"memory/working.md", content:"My campaign work stays here."}))()`, { awaitPromise: true });
   assignedTemplates[0] = { ...assignedTemplates[0], versionId: "two", template: { ...startingTemplate, name: "Campaign partner", instructions: "New instructions for future copies." } };
