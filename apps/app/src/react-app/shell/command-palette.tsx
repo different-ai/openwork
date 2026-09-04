@@ -29,7 +29,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { ChevronLeftIcon } from "lucide-react";
 import type { ModelOption, ModelRef } from "@/app/types";
-import { useFeatureFlagsPreferences } from "@/react-app/domains/settings/state/feature-flags-preferences";
 import { usePlatform } from "../kernel/platform";
 import {
   resolveSessionNumberShortcutOs,
@@ -142,7 +141,6 @@ export type CommandPaletteProps = {
  */
 export function CommandPalette(props: CommandPaletteProps) {
   const platform = usePlatform();
-  const { memoryEnabled } = useFeatureFlagsPreferences();
   const [mode, setMode] = useState<CommandPaletteMode>("root");
   const [query, setQuery] = useState("");
   const [recents, setRecents] = useState(loadPaletteRecents);
@@ -367,7 +365,6 @@ export function CommandPalette(props: CommandPaletteProps) {
     () => buildCommandPaletteSettingsItems({
       developerMode: props.developerMode,
       capabilities: platform.capabilities,
-      memoryEnabled,
       onOpenSettings: (route) => {
         props.onClose();
         props.onOpenSettings(route);
@@ -378,7 +375,6 @@ export function CommandPalette(props: CommandPaletteProps) {
       },
     }),
     [
-      memoryEnabled,
       platform.capabilities,
       props.developerMode,
       props.onClose,

@@ -1,7 +1,7 @@
 import type { PlatformCapabilities } from "@/app/lib/platform-capabilities";
 import type { SettingsTab } from "@/app/types";
 import {
-  getCloudSettingsTabs,
+  CLOUD_SETTINGS_TABS,
   getGlobalSettingsTabs,
   getSettingsTabDescription,
   getSettingsTabLabel,
@@ -16,13 +16,11 @@ const SETTINGS_KEYWORDS: Partial<Record<SettingsTab, string[]>> = {
   permissions: ["authorized folders", "folder access", "file access", "allow", "permission denied", "sandbox", "approvals"],
   extensions: ["library", "skills", "plugins", "mcp", "connections", "tools", "apps", "computer use", "voice"],
   environment: ["env", "environment variables", "secrets", "tokens", "api keys"],
-  advanced: ["runtime", "developer", "connection", "server", "port"],
+  advanced: ["runtime", "developer", "connection", "server", "port", "reset", "fix", "repair", "clean up", "troubleshoot", "recovery"],
   appearance: ["theme", "dark mode", "light mode", "color", "font", "look"],
   updates: ["version", "upgrade", "check for updates", "release"],
-  recovery: ["reset", "fix", "repair", "clean up", "troubleshoot"],
   debug: ["logs", "diagnostics", "developer mode"],
   "cloud-account": ["sign in", "log in", "login", "account", "organization", "org", "den", "cloud", "openwork cloud"],
-  memory: ["remember", "memories"],
   general: ["settings", "preferences", "options", "configure"],
 };
 
@@ -37,8 +35,7 @@ const LIBRARY_SECTIONS = [
 
 export function buildCommandPaletteSettingsItems(input: {
   developerMode: boolean;
-  capabilities: Pick<PlatformCapabilities, "autoUpdate" | "localRuntimeControl">;
-  memoryEnabled: boolean;
+  capabilities: Pick<PlatformCapabilities, "autoUpdate">;
   onOpenSettings: (route: string) => void;
   onOpenExtensions: (section?: string) => void;
 }): PaletteItem[] {
@@ -46,7 +43,7 @@ export function buildCommandPaletteSettingsItems(input: {
     "general",
     ...getWorkspaceSettingsTabs(),
     ...getGlobalSettingsTabs(input.developerMode, input.capabilities),
-    ...getCloudSettingsTabs(input.memoryEnabled),
+    ...CLOUD_SETTINGS_TABS,
   ] satisfies SettingsTab[];
 
   const tabItems = tabs.map((tab): PaletteItem => ({

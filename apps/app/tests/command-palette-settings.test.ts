@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
+import { rankPaletteItems } from "../src/react-app/shell/command-palette-search";
 import { buildCommandPaletteSettingsItems } from "../src/react-app/shell/command-palette-settings";
 
 function build(developerMode: boolean, autoUpdate: boolean) {
   return buildCommandPaletteSettingsItems({
     developerMode,
-    capabilities: { autoUpdate, localRuntimeControl: true },
-    memoryEnabled: true,
+    capabilities: { autoUpdate },
     onOpenSettings: () => {},
     onOpenExtensions: () => {},
   });
@@ -34,9 +34,7 @@ describe("command palette settings", () => {
       "settings:appearance",
       "settings:environment",
       "settings:updates",
-      "settings:recovery",
       "settings:cloud-account",
-      "settings:memory",
       "settings:extensions/skills",
       "settings:extensions/mcps",
       "settings:extensions/connections",
@@ -44,5 +42,12 @@ describe("command palette settings", () => {
       "settings:extensions/agents",
       "settings:extensions/commands",
     ]);
+  });
+
+  test("finds recovery tools under Advanced", () => {
+    const items = build(false, true);
+
+    expect(items.find((item) => item.id === "settings:advanced")?.keywords).toContain("recovery");
+    expect(rankPaletteItems("reset", items, [])[0]?.items[0]?.id).toBe("settings:advanced");
   });
 });
