@@ -112,7 +112,7 @@ test("the free model's shared limit pushed hours away is that limit, named, with
   }));
   assert.equal(outcome?.kind, "failed");
   assert.equal(outcome?.line, "The free model is busy right now.");
-  assert.match(outcome?.detail ?? "", /connect your own AI provider so Nova can keep working/);
+  assert.match(outcome?.detail ?? "", /OpenWork Models membership and your own AI providers so Nova can keep working/);
   assert.match(outcome?.technical ?? "", /free_tier_limit/);
   assert.deepEqual(outcome?.choices.map((choice) => `${choice.letter} ${choice.label}`), ["A Retry", "B Choose AI model", "C Connect an AI provider"]);
 });

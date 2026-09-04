@@ -50,14 +50,14 @@ export function OnboardingWelcome({
           <OnboardingMascotStack variant={{ kind: "mark", label: "Open Coworker" }} size={96} sessionKey="onboarding-welcome" className="mx-auto" />
           <p className="mt-6 text-[10px] font-semibold uppercase tracking-[0.2em] text-spark">Welcome to Open Coworker</p>
           <h1 className="mx-auto mt-2 max-w-[620px] text-[34px] font-semibold leading-[1.08] tracking-[-0.05em] text-snow md:text-[40px]">
-            Where should your coworker keep work moving?
+            Meet the team that remembers your work.
           </h1>
           <p className="mx-auto mt-3 max-w-[510px] text-sm leading-6 text-mist">
-            Give recurring work a durable teammate. Choose where it runs now; you can change the setup later.
+            Start with one useful result. Your coworkers keep their notes, documents, and next steps ready for your return.
           </p>
 
           <div className="onboarding-launcher mt-8 overflow-hidden rounded-[24px] border border-white/10 bg-panel/75 p-2 text-left" data-testid="onboarding-launcher">
-            <p className="px-3 pb-2 pt-1.5 text-[9px] font-semibold uppercase tracking-[0.16em] text-mist/75">Choose where work runs</p>
+            <p className="px-3 pb-2 pt-1.5 text-[9px] font-semibold uppercase tracking-[0.16em] text-mist/75">Choose how to get started</p>
 
             <button
               type="button"
@@ -73,7 +73,7 @@ export function OnboardingWelcome({
                   <span className="text-[13px] font-semibold text-snow">Continue with OpenWork</span>
                   <span className="rounded-full bg-spark/15 px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-[0.08em] text-[#b8caff]">Recommended</span>
                 </span>
-                <span className="mt-0.5 block text-[11px] leading-relaxed text-mist">Keeps working when this Mac is off, with your organization's AI models.</span>
+                <span className="mt-0.5 block text-[11px] leading-relaxed text-mist">Bring your connected apps and available AI models. Cloud responsibilities are set up separately.</span>
               </span>
               <span className="flex size-8 shrink-0 items-center justify-center rounded-full border border-white/10 text-mist transition-colors group-hover:border-white/18 group-hover:text-snow">
                 <ArrowIcon />
@@ -98,6 +98,7 @@ export function OnboardingWelcome({
               </span>
             </button>
           </div>
+          <p className="mx-auto mt-4 max-w-[510px] text-xs leading-5 text-mist">Conversations and local workers run while Open Coworker is open. Only responsibilities assigned to Cloud can run while this Mac is off.</p>
         </section>
       </main>
 

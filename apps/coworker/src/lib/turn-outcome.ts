@@ -239,7 +239,7 @@ export function deriveTurnOutcome(facts: TurnFacts): TurnOutcome | null {
     if (now - engine.next > STALE_RETRY_MS) engine = { type: "idle" };
     else {
       const freeModelLimit = engine.reason === FREE_MODEL_LIMIT_REASON;
-      const stalled = stalledRetry({ next: engine.next, message: engine.message }, now);
+      const stalled = stalledRetry(engine, now);
       // A far-off retry on the free model's limit is that limit, named: the engine's reason rides along so the
       // failure reads as the free model's, whatever the engine's own line says.
       if (stalled) return failed(facts, turn, freeModelLimit ? `${stalled} (${FREE_MODEL_LIMIT_REASON})` : stalled, false);
