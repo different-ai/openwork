@@ -1746,7 +1746,10 @@ async function addCoworker(input) {
   // spawns when the registry holds at least one workspace, so the restart
   // must happen after this workspace is persisted.
   const workspaceId = await registerCoworkerWorkspace(coworker);
-  const updated = await updateCoworker(coworkersDir, coworker.slug, { workspaceId, ...(input.model ? { model: input.model, modelVariant: input.modelVariant ?? "" } : {}) });
+  const updated = await updateCoworker(coworkersDir, coworker.slug, {
+    workspaceId,
+    ...(input.model ? { model: input.model, modelVariant: input.modelVariant ?? "", modelChosenBy: input.modelChosenBy ?? "person" } : {}),
+  });
   if (!hadEngine) {
     await restartPlatformServer();
   }
@@ -1797,6 +1800,7 @@ const commands = {
       firstNote: `Joined the team on ${shortDate(Date.now())}; ${proposer.name} suggested me because ${suggestion.why.replace(/\.$/, "")}.`,
       model: proposer.model,
       modelVariant: proposer.modelVariant,
+      modelChosenBy: proposer.modelChosenBy,
     });
     await setSuggestionState(coworkersDir, slug, suggestionId, "accepted", { createdSlug: created.slug });
     return created;

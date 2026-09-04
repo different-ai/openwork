@@ -70,6 +70,11 @@ function roleIdOf(value) {
   return roleById(value) ? String(value).trim().toLowerCase() : "";
 }
 
+/** Who chose the coworker's model: the app by itself, the person, or "" when the record predates the field (read as the person's). */
+function modelChosenByOf(value) {
+  return value === "app" || value === "person" ? value : "";
+}
+
 /** Who proposed this coworker and why, or null when the person added it themselves. */
 function suggestedByOf(value) {
   if (!value || typeof value !== "object") return null;
@@ -397,6 +402,7 @@ function coworkerConfigTemplate({ name, role, mission, avatarColor: color, avata
       conversationThreadId: "",
       model: "",
       modelVariant: "",
+      modelChosenBy: "",
       automations: [],
       createdAt,
     },
@@ -457,6 +463,8 @@ async function readCoworkerRecord(coworkersDir, slug) {
     model: typeof data.model === "string" ? data.model.trim() : "",
     /** Optional reasoning/behavior variant for the preferred model. */
     modelVariant: typeof data.modelVariant === "string" ? data.modelVariant.trim() : "",
+    /** "app" when Open Coworker picked the model by itself (it may be swapped once when it fails); "person" or "" otherwise (never swapped). */
+    modelChosenBy: modelChosenByOf(data.modelChosenBy),
     automations,
     createdAt: typeof data.createdAt === "string" ? data.createdAt : "",
   };
@@ -588,8 +596,13 @@ export async function updateCoworker(coworkersDir, slug, patch) {
   }
   if (typeof patch?.mission === "string") data.mission = patch.mission.trim();
   if (typeof patch?.role === "string") data.role = patch.role.trim();
-  if (typeof patch?.model === "string") data.model = patch.model.trim();
+  if (typeof patch?.model === "string") {
+    // A model change that does not say who chose it is the person's: the app never inherits a claim on a model it did not pick.
+    if (data.model !== patch.model.trim() && typeof patch.modelChosenBy !== "string") data.modelChosenBy = "";
+    data.model = patch.model.trim();
+  }
   if (typeof patch?.modelVariant === "string") data.modelVariant = patch.modelVariant.trim();
+  if (typeof patch?.modelChosenBy === "string") data.modelChosenBy = modelChosenByOf(patch.modelChosenBy);
   if (typeof patch?.avatarColor === "string") data.avatarColor = avatarColor(patch.avatarColor);
   if (typeof patch?.avatarGlasses === "string") data.avatarGlasses = avatarGlasses(patch.avatarGlasses);
   if (typeof patch?.personality === "string") data.personality = personality(patch.personality);

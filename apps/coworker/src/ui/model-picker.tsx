@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { CoworkerSummary, ProviderSyncRun, RuntimeInfo } from "@/lib/bridge";
+import type { CoworkerSummary, ModelChosenBy, ProviderSyncRun, RuntimeInfo } from "@/lib/bridge";
 import { describeSkippedProvider, type DenSession } from "@/lib/den";
-import { carryVariant } from "@/lib/model-choice";
+import { carryVariant, describeModelChoice } from "@/lib/model-choice";
 import {
   createCoworkerThreads,
   modelSourceLabel,
@@ -44,6 +44,7 @@ export function ModelPicker({
   onSyncProviders,
   onConnect,
   compact = false,
+  chosenBy = "",
 }: {
   runtime: RuntimeInfo;
   session: DenSession | null;
@@ -56,6 +57,8 @@ export function ModelPicker({
   /** Offered in local mode so organization models can be added without leaving setup. */
   onConnect?: () => void;
   compact?: boolean;
+  /** Who chose the current model; the app's own pick gets one plain line saying so and why. */
+  chosenBy?: ModelChosenBy;
 }) {
   const threads = useMemo(
     () =>
@@ -152,6 +155,9 @@ export function ModelPicker({
         </span>
         <span className="text-xs text-mist" aria-hidden="true">{open ? "⌃" : "⌄"}</span>
       </button>
+      {chosenBy === "app" && selected ? (
+        <p className="text-[11px] leading-relaxed text-mist" data-testid="model-chosen-for-you">{describeModelChoice(selected)}</p>
+      ) : null}
 
       {open ? (
         <div className="overflow-hidden rounded-2xl border border-line bg-ink">
