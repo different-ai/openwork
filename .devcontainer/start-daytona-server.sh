@@ -84,6 +84,10 @@ esac
 # so desktop handoff links point at the den-web /api/den proxy.
 export DEN_WEB_APP_HOSTS="${DEN_WEB_APP_HOSTS:-${PREVIEW_PROXY_WILDCARD:+.${PREVIEW_PROXY_HOST#*.}}}"
 export DEN_BETTER_AUTH_TRUSTED_ORIGINS="${DEN_BETTER_AUTH_TRUSTED_ORIGINS:-$CORS_ORIGINS${PREVIEW_PROXY_WILDCARD:+,$PREVIEW_PROXY_WILDCARD}}"
+# The Daytona preview proxy answers CORS itself, reflecting the caller's
+# origin on every response. den-api's own headers would then be duplicates,
+# which browsers reject, so den-web-in-a-browser could never reach den-api.
+export DEN_CORS_HANDLED_BY_EDGE="${DEN_CORS_HANDLED_BY_EDGE:-${PREVIEW_PROXY_WILDCARD:+true}}"
 
 run_root() {
   if [ "$(id -u)" -eq 0 ]; then
