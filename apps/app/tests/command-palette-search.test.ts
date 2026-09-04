@@ -61,4 +61,31 @@ describe("command palette search", () => {
 
     expect(groups[0]?.items[0]?.id).toBe("recent");
   });
+
+  test("ranks exact title and alias phrases above fuzzy title partials", () => {
+    const items = [
+      item({
+        id: "models",
+        title: "Switch model",
+        detail: "Choose the LLM that runs your next prompts",
+        searchText: "model models llm provider openai anthropic claude gpt gemini switch pick select default",
+      }),
+      item({
+        id: "settings:appearance",
+        title: "Appearance",
+        keywords: ["theme", "dark mode", "light mode", "color", "font", "look"],
+        group: "settings",
+      }),
+      item({
+        id: "settings:preferences",
+        title: "Preferences",
+        keywords: ["default model", "reasoning", "thinking", "compaction", "effort"],
+        group: "settings",
+      }),
+    ];
+
+    expect(rankPaletteItems("dark mode", items, [])[0]?.items[0]?.id).toBe("settings:appearance");
+    expect(rankPaletteItems("theme", items, [])[0]?.items[0]?.id).toBe("settings:appearance");
+    expect(rankPaletteItems("model", items, [])[0]?.items[0]?.id).toBe("models");
+  });
 });

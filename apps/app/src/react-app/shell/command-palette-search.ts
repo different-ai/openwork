@@ -44,6 +44,10 @@ function itemSearchText(item: PaletteItem) {
     .join(" ");
 }
 
+function normalizeSearchText(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 function resultGroup(value: PaletteGroup, items: PaletteItem[]): PaletteResultGroup {
   return { value, label: GROUP_LABELS[value], items };
 }
@@ -83,7 +87,8 @@ export function rankPaletteItems(
     return candidates.length > 0 ? [resultGroup("actions", candidates.slice(0, 40))] : [];
   }
 
-  const tokens = searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
+  const normalizedQuery = normalizeSearchText(searchQuery);
+  const tokens = normalizedQuery.split(" ");
   const tokenMatchedItems = candidates.filter((item) => {
     const text = itemSearchText(item);
     return tokens.every((token) => fuzzysort.single(token, text) !== null);
@@ -105,7 +110,13 @@ export function rankPaletteItems(
         result[2].score * 0.6,
         result[3].score * 0.8,
       );
-      return recentIdSet.has(result.obj.id) ? score * 1.1 : score;
+      const tier = normalizeSearchText(result.obj.title).includes(normalizedQuery)
+        ? 3
+        : normalizeSearchText(itemKeywords(result.obj)).includes(normalizedQuery)
+          ? 2
+          : 1;
+      const boostedScore = recentIdSet.has(result.obj.id) ? score * 1.1 : score;
+      return tier * 10 + boostedScore;
     },
   }).map((result) => result.obj);
 
