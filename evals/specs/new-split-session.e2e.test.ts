@@ -7,6 +7,7 @@ const paletteInput = { placeholder: "Search actions, settings, and sessions…" 
 
 type SplitFacts = {
   layoutKind: string;
+  focusedPane: string;
   primarySessionId: string;
   secondarySessionId: string;
   primaryWorkspaceId: string;
@@ -27,6 +28,7 @@ function parseSplitFacts(value: unknown): SplitFacts {
   const text = (key: string) => typeof value[key] === "string" ? value[key] : "";
   return {
     layoutKind: text("layoutKind"),
+    focusedPane: text("focusedPane"),
     primarySessionId: text("primarySessionId"),
     secondarySessionId: text("secondarySessionId"),
     primaryWorkspaceId: text("primaryWorkspaceId"),
@@ -44,18 +46,6 @@ test("new split creates fresh same-workspace secondary sessions without moving t
   const paletteShortcut = place.kind !== "daytona" && process.platform === "darwin" ? "Meta+K" : "Control+K";
   const workspaceId = world.workspace.workspaceId;
   const primarySessionId = world.session.sessionId;
-  const runPaletteItem = async (itemId: string) => {
-    await user.press(paletteShortcut);
-    await user.see(paletteInput);
-    await user.type(paletteInput, itemId.replace("-", " "), { replace: true });
-    const selector = `[data-command-palette-item="${itemId}"]`;
-    await probe.eventually(() => probe.eval(`Boolean(document.querySelector(${JSON.stringify(selector)}))`), {
-      within: 15_000,
-      label: `${itemId} command is visible`,
-      until: (visible) => visible === true,
-    });
-    await probe.eval(`document.querySelector(${JSON.stringify(selector)})?.click()`);
-  };
 
   const { primaryHash, before } = await step("the seeded session is the single primary pane", async () => {
     await probe.eventually(() => world.splitFacts(), {
@@ -125,7 +115,11 @@ test("new split creates fresh same-workspace secondary sessions without moving t
   });
 
   await step("New split in the command palette replaces the secondary with another fresh session", async () => {
-    await runPaletteItem("new-split");
+    await user.press(paletteShortcut);
+    await user.see(paletteInput);
+    await user.type(paletteInput, "new split", { replace: true });
+    await user.see({ role: "option", label: /^New split/ });
+    await user.press("Enter");
     await user.see({ text: "Split view" });
     await user.see({ text: "New session" });
   });
@@ -179,17 +173,17 @@ test("new split creates fresh same-workspace secondary sessions without moving t
   });
 
   await step("New session replaces the focused secondary pane", async () => {
-    expect(await probe.eval(`(() => {
-      const pane = document.querySelector('[data-workbench-pane="secondary"]');
-      if (!pane) return false;
-      pane.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
-      return true;
-    })()`)).toBe(true);
-    await probe.eventually(
-      () => probe.eval(`window.__openworkControl?.context?.().conversations?.layout?.focused ?? ""`),
-      { within: 15_000, label: "secondary pane is focused", until: (focused) => focused === "secondary" },
-    );
-    await runPaletteItem("new-session");
+    await agent.run("workbench.session.focus", { sessionId: secondFacts.secondarySessionId });
+    await probe.eventually(() => world.splitFacts(), {
+      within: 15_000,
+      label: "secondary pane is focused",
+      until: (value) => parseSplitFacts(value).focusedPane === "secondary",
+    });
+    await user.press(paletteShortcut);
+    await user.see(paletteInput);
+    await user.type(paletteInput, "new task", { replace: true });
+    await user.see({ role: "option", label: /^New session/ });
+    await user.press("Enter");
   });
 
   const { focusedSecondaryFacts, afterFocusedSecondary } = await step("the focused secondary is replaced while the primary route stays put", async () => {
@@ -229,17 +223,17 @@ test("new split creates fresh same-workspace secondary sessions without moving t
   });
 
   await step("New session replaces the focused primary pane", async () => {
-    expect(await probe.eval(`(() => {
-      const pane = document.querySelector('[data-workbench-pane="primary"]');
-      if (!pane) return false;
-      pane.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
-      return true;
-    })()`)).toBe(true);
-    await probe.eventually(
-      () => probe.eval(`window.__openworkControl?.context?.().conversations?.layout?.focused ?? ""`),
-      { within: 15_000, label: "primary pane is focused", until: (focused) => focused === "primary" },
-    );
-    await runPaletteItem("new-session");
+    await agent.run("workbench.session.focus", { sessionId: primarySessionId });
+    await probe.eventually(() => world.splitFacts(), {
+      within: 15_000,
+      label: "primary pane is focused",
+      until: (value) => parseSplitFacts(value).focusedPane === "primary",
+    });
+    await user.press(paletteShortcut);
+    await user.see(paletteInput);
+    await user.type(paletteInput, "new task", { replace: true });
+    await user.see({ role: "option", label: /^New session/ });
+    await user.press("Enter");
   });
 
   await step("the focused primary is replaced without changing the secondary", async () => {

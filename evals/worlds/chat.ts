@@ -219,6 +219,7 @@ export async function newSplitPrimary(seed: Seed) {
     const secondaryPane = secondaryPanes[0];
     return {
       layoutKind: layout?.kind ?? "",
+      focusedPane: layout?.focused ?? "",
       primarySessionId: layout?.primarySessionId ?? layout?.sessionId ?? "",
       secondarySessionId: layout?.secondarySessionId ?? "",
       primaryWorkspaceId: layout?.primaryWorkspaceId ?? "",
