@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url"
 type NormalizationCounts = {
   descriptionsFilled: number
   hideKeysDropped: number
+  internalOperationsExcluded: number
 }
 
 const operationMethods = new Set<string>(["delete", "get", "head", "options", "patch", "post", "put", "trace"])
@@ -94,8 +95,38 @@ function normalizePathItems(pathItems: unknown, counts: NormalizationCounts) {
   }
 }
 
+// Operations tagged Internal (Automation runner protocol, development-only
+// email outbox) stay in the served /openapi.json for debugging but are not part
+// of the published contract.
+const excludedTags = new Set<string>(["Internal"])
+
+function hasExcludedTag(operation: Record<string, unknown>) {
+  return Array.isArray(operation.tags) && operation.tags.some((tag) => typeof tag === "string" && excludedTags.has(tag))
+}
+
+function excludeInternalOperations(document: Record<string, unknown>, counts: NormalizationCounts) {
+  const paths = document.paths
+  if (!isRecord(paths)) return
+  for (const [path, pathItem] of Object.entries(paths)) {
+    if (!isRecord(pathItem)) continue
+    for (const [method, operation] of Object.entries(pathItem)) {
+      if (operationMethods.has(method.toLowerCase()) && isRecord(operation) && hasExcludedTag(operation)) {
+        delete pathItem[method]
+        counts.internalOperationsExcluded += 1
+      }
+    }
+    if (Object.keys(pathItem).every((key) => !operationMethods.has(key.toLowerCase()))) {
+      delete paths[path]
+    }
+  }
+  if (Array.isArray(document.tags)) {
+    document.tags = document.tags.filter((tag) => !(isRecord(tag) && typeof tag.name === "string" && excludedTags.has(tag.name)))
+  }
+}
+
 function normalizeOpenApiDocument(document: Record<string, unknown>) {
-  const counts: NormalizationCounts = { descriptionsFilled: 0, hideKeysDropped: 0 }
+  const counts: NormalizationCounts = { descriptionsFilled: 0, hideKeysDropped: 0, internalOperationsExcluded: 0 }
+  excludeInternalOperations(document, counts)
   normalizePathItems(document.paths, counts)
   normalizePathItems(document.webhooks, counts)
   return counts
@@ -127,6 +158,7 @@ async function main() {
     `Wrote ${relative(repoRoot, outputPath)}`,
     `descriptionsFilled=${counts.descriptionsFilled}`,
     `hideKeysDropped=${counts.hideKeysDropped}`,
+    `internalOperationsExcluded=${counts.internalOperationsExcluded}`,
   ].join(" "))
 }
 
