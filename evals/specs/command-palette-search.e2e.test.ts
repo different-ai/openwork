@@ -170,6 +170,7 @@ test.skipIf(!runnable)(
     const emptyFacts = await readPaletteFacts(desktopApp);
     expect(emptyFacts.hasActions).toBe(true);
     expect(emptyFacts.hasRecent).toBe(false);
+    await screenshot(desktopApp);
     expect(emptyFacts.hasSettings).toBe(true);
     expect(emptyFacts.hasPermissions).toBe(true);
 
@@ -256,6 +257,7 @@ test.skipIf(!runnable)(
     expect(recentFacts.itemIds).toEqual(["settings:permissions"]);
     expect(recentFacts.itemIds).not.toContain("settings:appearance");
     expect(recentFacts.storedIds[0]).toBe("settings:permissions");
+    await screenshot(desktopApp);
 
     await setPaletteQuery(
       desktopApp,
@@ -265,6 +267,7 @@ test.skipIf(!runnable)(
     );
     const appearanceFacts = await readPaletteFacts(desktopApp);
     expect(appearanceFacts.firstItemId).toBe("settings:appearance");
+    await screenshot(desktopApp);
 
     await setPaletteQuery(
       desktopApp,
@@ -276,6 +279,7 @@ test.skipIf(!runnable)(
     const actionFacts = await readPaletteFacts(desktopApp);
     expect(actionFacts.hasSettings).toBe(false);
     expect(actionFacts.hasActions).toBe(true);
+    await screenshot(desktopApp);
 
     await evalIn(desktopApp, `(() => {
       const input = document.querySelector("input[data-command-palette-input]");
