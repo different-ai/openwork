@@ -1078,7 +1078,7 @@ export async function snapshotFailure(seed: Seed) {
     const result = await window.__openworkControl.execute("eval.session_snapshot.fail", null);
     if (!result?.ok) throw new Error(String(result?.error ?? "control action failed"));
     return JSON.stringify(result.result);
-  }`, { awaitPromise: true, timeoutMs: 120_000 });
+  }`, { args: [], awaitPromise: true, timeoutMs: 120_000 });
   const failure: unknown = typeof failureJson === "string" ? JSON.parse(failureJson) : failureJson;
   if (!isRecord(failure) || failure.isError !== true) {
     throw new Error(`Session snapshot failure was not established: ${JSON.stringify(failure)}`);
