@@ -1259,7 +1259,7 @@ export async function computerMentions(seed: Seed) {
   const mock = seed.mock({
     agentWorkloads: markers.map((promptMarker) => ({ promptMarker, finalReply: `Received ${promptMarker}`, steps: [] })),
   });
-  const den = await seed.den({ mocks: { agent: mock } });
+  const den = await seed.den({ mocks: { agent: mock }, env: { DEN_AUTOMATIONS_ENABLED: "true" } });
   const created = await seed.api(den.admin, "/v1/automations", {
     method: "POST",
     body: JSON.stringify({
@@ -1286,21 +1286,21 @@ export async function computerMentions(seed: Seed) {
   return {
     den, app, workspace, session,
     async submittedParts() {
-    // TODO(primitive): inspect submitted engine parts, including synthetic routing instructions.
-    return seed.evalIn(app, `async (workspaceId, sessionId) => {
-      const port = localStorage.getItem("openwork.server.port");
-      const token = localStorage.getItem("openwork.server.token");
-      const response = await fetch("http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId)
-        + "/opencode/session/" + encodeURIComponent(sessionId) + "/message", {
-        headers: { Authorization: "Bearer " + token },
-      });
-      if (!response.ok) throw new Error("Transcript read failed: " + response.status);
-      const messages = await response.json();
-      return messages.filter((message) => message.info.role === "user").map((message) => ({
-        visible: message.parts.filter((part) => part.type === "text" && !part.synthetic).map((part) => part.text).join(""),
-        routing: message.parts.filter((part) => part.type === "text" && part.synthetic && part.text.includes("remote-session:create")).map((part) => part.text),
-      }));
-    }`, { args: [workspace.workspaceId, session.sessionId], awaitPromise: true });
+      // TODO(primitive): inspect submitted engine parts, including synthetic routing instructions.
+      return seed.evalIn(app, `async (workspaceId, sessionId) => {
+        const port = localStorage.getItem("openwork.server.port");
+        const token = localStorage.getItem("openwork.server.token");
+        const response = await fetch("http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId)
+          + "/opencode/session/" + encodeURIComponent(sessionId) + "/message", {
+          headers: { Authorization: "Bearer " + token },
+        });
+        if (!response.ok) throw new Error("Transcript read failed: " + response.status);
+        const messages = await response.json();
+        return messages.filter((message) => message.info.role === "user").map((message) => ({
+          visible: message.parts.filter((part) => part.type === "text" && !part.synthetic).map((part) => part.text).join(""),
+          routing: message.parts.filter((part) => part.type === "text" && part.synthetic && part.text.includes("remote-session:create")).map((part) => part.text),
+        }));
+      }`, { args: [workspace.workspaceId, session.sessionId], awaitPromise: true });
     },
   };
 }
