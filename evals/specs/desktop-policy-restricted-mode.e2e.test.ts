@@ -7,7 +7,21 @@ import { defaultPolicyEditorAndMemberDesktop, readDefaultDesktopPolicy, teamAcce
 // real member desktop side by side: the editor locks every governed capability
 // and stores plain booleans, and the member's settings and Library surfaces
 // collapse to what the policy leaves reachable.
-const test = spec.world(defaultPolicyEditorAndMemberDesktop, { timeout: 900_000 });
+const defaultJourney = "an admin restricts the default policy and the member desktop enforces it";
+const teamJourney = "team access overrides overlapping grants and restores only selected desktop capabilities";
+// Register one fixture extension: Vitest 3 accumulates fixtures when the same
+// base is extended twice. Choose the setup at the test boundary, keeping the
+// worlds framework-free and each sequential journey isolated.
+const test = spec.world(async (seed) => {
+  const name = expect.getState().currentTestName;
+  if (name?.endsWith(defaultJourney)) {
+    return { defaultPolicy: await defaultPolicyEditorAndMemberDesktop(seed), team: null };
+  }
+  if (name?.endsWith(teamJourney)) {
+    return { defaultPolicy: null, team: await teamAccess(seed) };
+  }
+  throw new Error(`No desktop policy world selected for ${name}`);
+}, { timeout: 900_000 });
 
 // The capability cards as the editor labels them. Restricted locks the first
 // seven; the Welcome Page display preference stays editable in both modes.
@@ -52,7 +66,9 @@ function count(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
 }
 
-test("an admin restricts the default policy and the member desktop enforces it", async ({ world, user, agent, probe, step, evidence }) => {
+test(defaultJourney, async ({ world: selectedWorld, user, agent, probe, step, evidence }) => {
+  const world = selectedWorld.defaultPolicy;
+  if (!world) throw new Error("Expected the default-policy world");
   const member = { user: user.on(world.member), agent: agent.on(world.member), probe: probe.on(world.member) };
   const admin = { user: user.on(world.admin), probe: probe.on(world.admin) };
   const lockNotes = () => admin.probe.text().then((text) => count(text, lockNote));
@@ -261,8 +277,9 @@ test("an admin restricts the default policy and the member desktop enforces it",
 
 });
 
-const teamTest = spec.world(teamAccess, { timeout: 900_000 });
-teamTest("team access overrides overlapping grants and restores only selected desktop capabilities", async ({ world, user, agent, probe, step, evidence, seed }) => {
+test(teamJourney, async ({ world: selectedWorld, user, agent, probe, step, evidence, seed }) => {
+  const world = selectedWorld.team;
+  if (!world) throw new Error("Expected the Team Access world");
   const member = { user: user.on(world.member), agent: agent.on(world.member), probe: probe.on(world.member) };
   const admin = { user: user.on(world.admin), probe: probe.on(world.admin) };
   const effective = async (identity: typeof world.den.admin) => {
