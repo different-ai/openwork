@@ -20,7 +20,7 @@ test("an administrator prepares, revises, and withdraws a coworker through Conne
   await step("create the coworker using its profile form", async () => {
     await user.see("Add coworker", { timeoutMs: 90_000 });
     await user.click("Add coworker");
-    await user.see("Add a coworker");
+    await user.see({ text: "Add a coworker" });
     await user.type(name, "Campaign partner");
     await user.type(role, "Marketing strategist");
     await user.type({ placeholder: "Helps plan campaigns and turn a brief into next steps." }, "Plans campaigns from an approved brief.");
@@ -49,7 +49,7 @@ test("an administrator prepares, revises, and withdraws a coworker through Conne
     await user.click({ role: "checkbox" });
     await user.click("Save coworker");
     await user.see("Edit template", { timeoutMs: 60_000 });
-    await user.see("Campaign planner");
+    await user.see({ text: "Campaign planner" });
   });
   const revised = await delivered();
   expect(revised).toHaveLength(1);

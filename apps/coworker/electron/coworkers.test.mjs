@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
-import { createTemplateInstaller, exportCoworkerTemplate, templateScope } from "./templates.mjs";
+import { createTemplateInstaller, exportCoworkerTemplate, parseCoworkerTemplateFile, templateScope } from "./templates.mjs";
 import {
   AGENTS_CONTRACT_VERSION,
   agentsContractVersion,
@@ -37,6 +37,12 @@ async function tempCoworkersDir() {
   roots.push(dir);
   return path.join(dir, "coworkers");
 }
+
+test("template import gives a recoverable message for invalid JSON and private fields", () => {
+  for (const contents of ["not json", JSON.stringify({ kind: "coworker", schemaVersion: 1, name: "Invalid", memory: "private" })]) {
+    assert.throws(() => parseCoworkerTemplateFile(contents), { message: "Choose a valid coworker template. Memory, credentials, and working files are not accepted." });
+  }
+});
 
 test("assigned templates create once, preserve working copies across updates, and respect retirement", async () => {
   const dir = await tempCoworkersDir();
