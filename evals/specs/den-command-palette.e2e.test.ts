@@ -57,6 +57,7 @@ test("the Den command palette searches pages and members, navigates, and records
     });
     await user.notSee(palette);
     expect(path).toBe("/dashboard/mcp-connections");
+    await user.see({ text: /Connectors is where you can add MCP servers/ }, { timeoutMs: 30_000 });
     evidence.recordAssertionEvidence("The mcp alias opens the Connectors page and closes the palette", `path=${path}; palette closed`, path === "/dashboard/mcp-connections");
     await user.screenshot();
   });
