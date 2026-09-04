@@ -19,6 +19,7 @@ import {
 } from "../../scim-groups.js"
 import { authenticatedRoute, tokenRoute } from "../../middleware/index.js"
 import { appLogger } from "../../observability/logger.js"
+import { emptyObjectSchema, emptyResponse, scimJsonResponse } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 
 const scimErrorSchema = z.object({
@@ -55,6 +56,28 @@ const scimGroupPatchSchema = z.object({
     value: z.unknown().optional(),
   })).min(1),
 }).passthrough()
+
+// OpenAPI metadata for the RFC 7644 provisioning endpoints. SCIM resources are
+// documented as opaque objects: their shape is defined by the SCIM core schema,
+// not by this API, and identity providers consume them by protocol.
+function scimRoute(input: {
+  summary: string
+  description?: string
+  responses: Record<number, ReturnType<typeof scimJsonResponse> | ReturnType<typeof emptyResponse>>
+}) {
+  return describeRoute({
+    tags: ["SCIM"],
+    security: [{ scimBearerToken: [] }],
+    summary: input.summary,
+    description: input.description,
+    responses: {
+      ...input.responses,
+      401: scimJsonResponse("The SCIM bearer token was missing or invalid.", scimErrorSchema),
+    },
+  })
+}
+
+const scimResourceResponse = (description: string) => scimJsonResponse(description, emptyObjectSchema)
 
 function scimJson(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -348,7 +371,15 @@ export function registerScimAuthRoutes<T extends { Variables: AuthContextVariabl
     (c) => rejectManagementRoute(c),
   )
 
-  app.get("/api/auth/scim/v2/Schemas/urn:ietf:params:scim:schemas:core:2.0:Group", tokenRoute, async (c) => {
+  app.get(
+    "/api/auth/scim/v2/Schemas/urn:ietf:params:scim:schemas:core:2.0:Group",
+    scimRoute({
+      summary: "Get the SCIM Group schema",
+      description: "Returns the SCIM core Group schema definition (RFC 7643 section 4.2) so identity providers can discover supported attributes.",
+      responses: { 200: scimResourceResponse("SCIM Group schema.") },
+    }),
+    tokenRoute,
+    async (c) => {
     const provider = await resolveRequestScimProvider(c.req.raw)
     if (!provider) return scimError("Invalid SCIM token", 401)
     return scimJson({
@@ -361,9 +392,18 @@ export function registerScimAuthRoutes<T extends { Variables: AuthContextVariabl
       ],
       meta: { resourceType: "Schema", location: `${c.req.url}` },
     })
-  })
+    },
+  )
 
-  app.get("/api/auth/scim/v2/Schemas", tokenRoute, async (c) => {
+  app.get(
+    "/api/auth/scim/v2/Schemas",
+    scimRoute({
+      summary: "List SCIM schemas",
+      description: "Returns the SCIM schemas this server supports (RFC 7644 section 4), combining the Better Auth User schema with the Den Group schema.",
+      responses: { 200: scimResourceResponse("SCIM ListResponse of schemas.") },
+    }),
+    tokenRoute,
+    async (c) => {
     const provider = await resolveRequestScimProvider(c.req.raw)
     if (!provider) return scimError("Invalid SCIM token", 401)
     return appendScimMetadataResource(c.req.raw, {
@@ -372,9 +412,17 @@ export function registerScimAuthRoutes<T extends { Variables: AuthContextVariabl
       description: "Group",
       meta: { resourceType: "Schema", location: `${c.req.url}/${SCIM_GROUP_SCHEMA}` },
     })
-  })
+    },
+  )
 
-  app.get("/api/auth/scim/v2/ResourceTypes/Group", tokenRoute, async (c) => {
+  app.get(
+    "/api/auth/scim/v2/ResourceTypes/Group",
+    scimRoute({
+      summary: "Get the SCIM Group resource type",
+      responses: { 200: scimResourceResponse("SCIM Group ResourceType.") },
+    }),
+    tokenRoute,
+    async (c) => {
     const provider = await resolveRequestScimProvider(c.req.raw)
     if (!provider) return scimError("Invalid SCIM token", 401)
     return scimJson({
@@ -385,9 +433,18 @@ export function registerScimAuthRoutes<T extends { Variables: AuthContextVariabl
       schema: SCIM_GROUP_SCHEMA,
       schemaExtensions: [],
     })
-  })
+    },
+  )
 
-  app.get("/api/auth/scim/v2/ResourceTypes", tokenRoute, async (c) => {
+  app.get(
+    "/api/auth/scim/v2/ResourceTypes",
+    scimRoute({
+      summary: "List SCIM resource types",
+      description: "Returns the SCIM resource types this server supports (RFC 7644 section 4), combining the Better Auth User type with the Den Group type.",
+      responses: { 200: scimResourceResponse("SCIM ListResponse of resource types.") },
+    }),
+    tokenRoute,
+    async (c) => {
     const provider = await resolveRequestScimProvider(c.req.raw)
     if (!provider) return scimError("Invalid SCIM token", 401)
     return appendScimMetadataResource(c.req.raw, {
@@ -398,9 +455,18 @@ export function registerScimAuthRoutes<T extends { Variables: AuthContextVariabl
       schema: SCIM_GROUP_SCHEMA,
       schemaExtensions: [],
     })
-  })
+    },
+  )
 
-  app.get("/api/auth/scim/v2/Groups", tokenRoute, async (c) => {
+  app.get(
+    "/api/auth/scim/v2/Groups",
+    scimRoute({
+      summary: "List SCIM groups",
+      description: "Lists the organization's SCIM-managed groups. Supports the `filter` (displayName or externalId equality), `startIndex` and `count` query parameters from RFC 7644 section 3.4.2.",
+      responses: { 200: scimResourceResponse("SCIM ListResponse of Group resources.") },
+    }),
+    tokenRoute,
+    async (c) => {
     const provider = await resolveRequestScimProvider(c.req.raw)
     if (!provider) return scimError("Invalid SCIM token", 401)
 
@@ -428,9 +494,21 @@ export function registerScimAuthRoutes<T extends { Variables: AuthContextVariabl
       itemsPerPage: page.length,
       Resources: page,
     })
-  })
+    },
+  )
 
-  app.post("/api/auth/scim/v2/Groups", tokenRoute, async (c) => {
+  app.post(
+    "/api/auth/scim/v2/Groups",
+    scimRoute({
+      summary: "Create a SCIM group",
+      responses: {
+        201: scimResourceResponse("The created SCIM Group resource."),
+        400: scimJsonResponse("The request body was not a valid SCIM Group resource.", scimErrorSchema),
+        409: scimJsonResponse("A group with the same displayName or externalId already exists.", scimErrorSchema),
+      },
+    }),
+    tokenRoute,
+    async (c) => {
     const provider = await resolveRequestScimProvider(c.req.raw)
     if (!provider) return scimError("Invalid SCIM token", 401)
     const parsed = scimGroupInputSchema.safeParse(await c.req.json().catch(() => null))
@@ -439,18 +517,42 @@ export function registerScimAuthRoutes<T extends { Variables: AuthContextVariabl
     if (!result.ok) return scimError(result.detail, result.status)
     const baseUrl = c.req.url.replace(/\/Groups$/, "")
     return scimJson(await serializeScimGroup(result.group, baseUrl), 201)
-  })
+    },
+  )
 
-  app.get("/api/auth/scim/v2/Groups/:groupId", tokenRoute, async (c) => {
+  app.get(
+    "/api/auth/scim/v2/Groups/:groupId",
+    scimRoute({
+      summary: "Get a SCIM group",
+      responses: {
+        200: scimResourceResponse("The SCIM Group resource."),
+        404: scimJsonResponse("The group does not exist.", scimErrorSchema),
+      },
+    }),
+    tokenRoute,
+    async (c) => {
     const provider = await resolveRequestScimProvider(c.req.raw)
     if (!provider) return scimError("Invalid SCIM token", 401)
     const group = await getScimGroup({ provider, groupId: c.req.param("groupId") })
     if (!group) return scimError("Group not found", 404)
     const baseUrl = c.req.url.replace(/\/Groups\/[^/]+$/, "")
     return scimJson(await serializeScimGroup(group, baseUrl))
-  })
+    },
+  )
 
-  app.put("/api/auth/scim/v2/Groups/:groupId", tokenRoute, async (c) => {
+  app.put(
+    "/api/auth/scim/v2/Groups/:groupId",
+    scimRoute({
+      summary: "Replace a SCIM group",
+      responses: {
+        200: scimResourceResponse("The replaced SCIM Group resource."),
+        400: scimJsonResponse("The request body was not a valid SCIM Group resource.", scimErrorSchema),
+        404: scimJsonResponse("The group does not exist.", scimErrorSchema),
+        409: scimJsonResponse("Another group already uses the requested displayName or externalId.", scimErrorSchema),
+      },
+    }),
+    tokenRoute,
+    async (c) => {
     const provider = await resolveRequestScimProvider(c.req.raw)
     if (!provider) return scimError("Invalid SCIM token", 401)
     const parsed = scimGroupInputSchema.safeParse(await c.req.json().catch(() => null))
@@ -459,9 +561,23 @@ export function registerScimAuthRoutes<T extends { Variables: AuthContextVariabl
     if (!result.ok) return scimError(result.detail, result.status)
     const baseUrl = c.req.url.replace(/\/Groups\/[^/]+$/, "")
     return scimJson(await serializeScimGroup(result.group, baseUrl))
-  })
+    },
+  )
 
-  app.patch("/api/auth/scim/v2/Groups/:groupId", tokenRoute, async (c) => {
+  app.patch(
+    "/api/auth/scim/v2/Groups/:groupId",
+    scimRoute({
+      summary: "Patch a SCIM group",
+      description: "Applies an RFC 7644 section 3.5.2 PatchOp (add, remove, replace) to the group and returns the updated resource.",
+      responses: {
+        200: scimResourceResponse("The patched SCIM Group resource."),
+        400: scimJsonResponse("The request body was not a valid SCIM PatchOp.", scimErrorSchema),
+        404: scimJsonResponse("The group does not exist.", scimErrorSchema),
+        409: scimJsonResponse("Another group already uses the requested displayName or externalId.", scimErrorSchema),
+      },
+    }),
+    tokenRoute,
+    async (c) => {
     const provider = await resolveRequestScimProvider(c.req.raw)
     if (!provider) return scimError("Invalid SCIM token", 401)
     const parsed = scimGroupPatchSchema.safeParse(await c.req.json().catch(() => null))
@@ -476,15 +592,27 @@ export function registerScimAuthRoutes<T extends { Variables: AuthContextVariabl
     const result = await updateScimGroup({ provider, groupId: group.id, value })
     if (!result.ok) return scimError(result.detail, result.status)
     return scimJson(await serializeScimGroup(result.group, baseUrl))
-  })
+    },
+  )
 
-  app.delete("/api/auth/scim/v2/Groups/:groupId", tokenRoute, async (c) => {
+  app.delete(
+    "/api/auth/scim/v2/Groups/:groupId",
+    scimRoute({
+      summary: "Delete a SCIM group",
+      responses: {
+        204: emptyResponse("The group was deleted."),
+        404: scimJsonResponse("The group does not exist.", scimErrorSchema),
+      },
+    }),
+    tokenRoute,
+    async (c) => {
     const provider = await resolveRequestScimProvider(c.req.raw)
     if (!provider) return scimError("Invalid SCIM token", 401)
     const result = await deleteScimGroup({ provider, groupId: c.req.param("groupId") })
     if (!result.ok) return scimError(result.detail, result.status)
     return new Response(null, { status: 204 })
-  })
+    },
+  )
 
   app.delete(
     "/api/auth/scim/v2/Users/:userId",
@@ -645,7 +773,49 @@ export function registerScimAuthRoutes<T extends { Variables: AuthContextVariabl
     return response
   }
 
-  app.post("/api/auth/scim/v2/Users", tokenRoute, async (c) => handleScimMutation(c))
-  app.put("/api/auth/scim/v2/Users/:userId", tokenRoute, async (c) => handleScimMutation(c))
-  app.patch("/api/auth/scim/v2/Users/:userId", tokenRoute, async (c) => handleScimMutation(c))
+  const scimUserMutationDescription = "Forwarded to the Better Auth SCIM server after the bearer token is validated; the resulting user is then synchronized into the organization's membership."
+  app.post(
+    "/api/auth/scim/v2/Users",
+    scimRoute({
+      summary: "Create a SCIM user",
+      description: scimUserMutationDescription,
+      responses: {
+        201: scimResourceResponse("The created SCIM User resource."),
+        400: scimJsonResponse("The request body was not a valid SCIM User resource.", scimErrorSchema),
+        409: scimJsonResponse("A user with the same userName already exists.", scimErrorSchema),
+      },
+    }),
+    tokenRoute,
+    async (c) => handleScimMutation(c),
+  )
+  app.put(
+    "/api/auth/scim/v2/Users/:userId",
+    scimRoute({
+      summary: "Replace a SCIM user",
+      description: scimUserMutationDescription,
+      responses: {
+        200: scimResourceResponse("The replaced SCIM User resource."),
+        204: emptyResponse("The user was deactivated and their organization access removed."),
+        400: scimJsonResponse("The request body was not a valid SCIM User resource.", scimErrorSchema),
+        404: scimJsonResponse("The user does not exist.", scimErrorSchema),
+      },
+    }),
+    tokenRoute,
+    async (c) => handleScimMutation(c),
+  )
+  app.patch(
+    "/api/auth/scim/v2/Users/:userId",
+    scimRoute({
+      summary: "Patch a SCIM user",
+      description: scimUserMutationDescription,
+      responses: {
+        200: scimResourceResponse("The patched SCIM User resource."),
+        204: emptyResponse("The user was deactivated and their organization access removed."),
+        400: scimJsonResponse("The request body was not a valid SCIM PatchOp.", scimErrorSchema),
+        404: scimJsonResponse("The user does not exist.", scimErrorSchema),
+      },
+    }),
+    tokenRoute,
+    async (c) => handleScimMutation(c),
+  )
 }

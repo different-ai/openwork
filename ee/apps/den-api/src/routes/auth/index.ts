@@ -34,7 +34,7 @@ import { normalizeMcpOAuthClientScope } from "../../mcp/scopes.js"
 import { publicRoute, queryValidator, tokenRoute } from "../../middleware/index.js"
 import { checkOAuthTokenRateLimit, recordOAuthTokenFailure } from "../../oauth-token-rate-limit.js"
 import { getOAuthTokenRateLimitLogFields, readBasicAuthClientId } from "../../oauth-token-rate-limit-observability.js"
-import { emptyResponse, jsonResponse } from "../../openapi.js"
+import { emptyObjectSchema, emptyResponse, jsonResponse } from "../../openapi.js"
 import { getSingletonSsoStatus } from "../../orgs.js"
 import { cache } from "../../cache.js"
 import { appLogger } from "../../observability/logger.js"
@@ -775,22 +775,64 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
   // Better Auth uses this configured base URL for the callback `iss` value.
   // Keep discovery on that same canonical issuer even when these routes are
   // reached through a separate API or reverse-proxy origin.
-  app.get("/api/auth/.well-known/oauth-authorization-server", publicRoute, (c) => getOAuthAuthorizationServerMetadata(c.req.raw))
-  app.get("/api/auth/.well-known/openid-configuration", publicRoute, (c) => getOAuthOpenIdConfiguration(c.req.raw))
-  app.get("/.well-known/oauth-authorization-server/api/auth", publicRoute, (c) => getOAuthAuthorizationServerMetadata(c.req.raw))
-  app.get("/.well-known/openid-configuration/api/auth", publicRoute, (c) => getOAuthOpenIdConfiguration(c.req.raw))
-  app.get("/.well-known/oauth-authorization-server", publicRoute, (c) => getOAuthAuthorizationServerMetadata(rewriteAuthRequest(c.req.raw, "/api/auth/.well-known/oauth-authorization-server")))
-  app.get("/.well-known/openid-configuration", publicRoute, (c) => getOAuthOpenIdConfiguration(rewriteAuthRequest(c.req.raw, "/api/auth/.well-known/openid-configuration")))
-  app.post("/register", publicRoute, async (c) => handleMcpClientRegistrationRequest(c.req.raw, "/api/auth/oauth2/register"))
-  app.post("/api/auth/oauth2/register", publicRoute, async (c) => handleMcpClientRegistrationRequest(c.req.raw, "/api/auth/oauth2/register"))
-  app.get("/api/auth/oauth2/authorize", tokenRoute, async (c) => {
-    const authRequest = await normalizeMcpOAuthRequest(c.req.raw)
-    if (authRequest instanceof Response) {
-      return authRequest
-    }
-    const response = await auth.handler(authRequest)
-    return normalizeOAuthAuthorizeRedirect(response)
+  // OAuth 2.0 / OIDC discovery documents (RFC 8414, OpenID Connect Discovery
+  // 1.0) are served at every path an MCP client may probe. Their bodies follow
+  // the RFCs verbatim, so they are documented as opaque objects.
+  const oauthAuthorizationServerMetadataRoute = describeRoute({
+    tags: ["OAuth"],
+    security: [],
+    summary: "Get OAuth authorization server metadata",
+    description: "Returns the RFC 8414 authorization server metadata for the Den OAuth issuer used by MCP clients.",
+    responses: { 200: jsonResponse("Authorization server metadata (RFC 8414).", emptyObjectSchema) },
   })
+  const openIdConfigurationRoute = describeRoute({
+    tags: ["OAuth"],
+    security: [],
+    summary: "Get OpenID Connect discovery document",
+    description: "Returns the OpenID Connect Discovery 1.0 configuration for the Den OAuth issuer used by MCP clients.",
+    responses: { 200: jsonResponse("OpenID Connect discovery document.", emptyObjectSchema) },
+  })
+  const dynamicClientRegistrationRoute = describeRoute({
+    tags: ["OAuth"],
+    security: [],
+    summary: "Register an OAuth client dynamically",
+    description: "RFC 7591 dynamic client registration for MCP clients. The Den registration policy validates redirect URIs and grant types before the request reaches the authorization server.",
+    responses: {
+      201: jsonResponse("Client information response (RFC 7591 section 3.2.1).", emptyObjectSchema),
+      400: jsonResponse("Client registration error response (RFC 7591 section 3.2.2).", emptyObjectSchema),
+    },
+  })
+
+  app.get("/api/auth/.well-known/oauth-authorization-server", oauthAuthorizationServerMetadataRoute, publicRoute, (c) => getOAuthAuthorizationServerMetadata(c.req.raw))
+  app.get("/api/auth/.well-known/openid-configuration", openIdConfigurationRoute, publicRoute, (c) => getOAuthOpenIdConfiguration(c.req.raw))
+  app.get("/.well-known/oauth-authorization-server/api/auth", oauthAuthorizationServerMetadataRoute, publicRoute, (c) => getOAuthAuthorizationServerMetadata(c.req.raw))
+  app.get("/.well-known/openid-configuration/api/auth", openIdConfigurationRoute, publicRoute, (c) => getOAuthOpenIdConfiguration(c.req.raw))
+  app.get("/.well-known/oauth-authorization-server", oauthAuthorizationServerMetadataRoute, publicRoute, (c) => getOAuthAuthorizationServerMetadata(rewriteAuthRequest(c.req.raw, "/api/auth/.well-known/oauth-authorization-server")))
+  app.get("/.well-known/openid-configuration", openIdConfigurationRoute, publicRoute, (c) => getOAuthOpenIdConfiguration(rewriteAuthRequest(c.req.raw, "/api/auth/.well-known/openid-configuration")))
+  app.post("/register", dynamicClientRegistrationRoute, publicRoute, async (c) => handleMcpClientRegistrationRequest(c.req.raw, "/api/auth/oauth2/register"))
+  app.post("/api/auth/oauth2/register", dynamicClientRegistrationRoute, publicRoute, async (c) => handleMcpClientRegistrationRequest(c.req.raw, "/api/auth/oauth2/register"))
+  app.get(
+    "/api/auth/oauth2/authorize",
+    describeRoute({
+      tags: ["OAuth"],
+      security: [],
+      summary: "Start an OAuth authorization request",
+      description: "RFC 6749 authorization endpoint. The Den request policy normalizes the MCP client's request, then the user signs in and consents through the Better Auth authorization server; the browser is redirected back to the client's redirect URI.",
+      responses: {
+        302: emptyResponse("Redirect to the sign-in flow or to the client's redirect URI with an authorization code or error."),
+        400: jsonResponse("The authorization request was malformed or referenced an unknown client.", emptyObjectSchema),
+      },
+    }),
+    tokenRoute,
+    async (c) => {
+      const authRequest = await normalizeMcpOAuthRequest(c.req.raw)
+      if (authRequest instanceof Response) {
+        return authRequest
+      }
+      const response = await auth.handler(authRequest)
+      return normalizeOAuthAuthorizeRedirect(response)
+    },
+  )
 
   app.get(
     "/v1/auth/bootstrap/status",

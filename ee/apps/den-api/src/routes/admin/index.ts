@@ -35,7 +35,7 @@ import { cache } from "../../cache.js"
 import { db } from "../../db.js"
 import { parseOrganizationPlan, type PlanTier } from "../../entitlements.js"
 import { adminRoute, queryValidator } from "../../middleware/index.js"
-import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
+import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { appLogger } from "../../observability/logger.js"
 import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
 import { organizationInstallLinksEnabled } from "../../capability-sources/install-links-rollout.js"
@@ -1251,9 +1251,39 @@ export async function loadAdminInitialOverviewPayload(user: AdminOverviewViewer,
 }
 
 
+// Admin mutation routes parse their JSON bodies in the handler with the schemas
+// above, so their descriptions spell out the accepted fields.
+const adminRequestErrorSchema = z.object({
+  error: z.literal("invalid_request"),
+  message: z.string(),
+})
+const adminConflictErrorSchema = z.object({
+  error: z.string(),
+  message: z.string(),
+})
+const adminOkSchema = z.object({ ok: z.literal(true) })
+const adminRouteErrors = {
+  401: jsonResponse("The caller must be authenticated.", unauthorizedSchema),
+  403: jsonResponse("The authenticated user is not an admin.", forbiddenSchema),
+}
+
 export function registerAdminRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
   app.post(
     "/v1/admin/admins",
+    describeRoute({
+      tags: ["Admin"],
+      summary: "Add a platform admin",
+      description: "Adds an email address to the platform admin allowlist. Body: { email: string, note?: string | null }.",
+      responses: {
+        200: jsonResponse("The admin was added.", z.object({
+          ok: z.literal(true),
+          admin: z.object({ id: z.string(), email: z.string(), note: z.string().nullable(), createdAt: z.string().datetime() }),
+        })),
+        400: jsonResponse("The request body was invalid.", adminRequestErrorSchema),
+        ...adminRouteErrors,
+        409: jsonResponse("An admin with that email already exists.", adminConflictErrorSchema),
+      },
+    }),
     adminRoute(),
     async (c) => {
       const body = createAdminSchema.safeParse(await c.req.json().catch(() => null))
@@ -1286,6 +1316,17 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
 
   app.delete(
     "/v1/admin/admins/:adminId",
+    describeRoute({
+      tags: ["Admin"],
+      summary: "Remove a platform admin",
+      description: "Removes an email address from the platform admin allowlist. Admins cannot remove themselves or the final remaining admin.",
+      responses: {
+        200: jsonResponse("The admin was removed.", adminOkSchema),
+        400: jsonResponse("The admin id was invalid, or the removal would delete the caller or the final admin.", adminRequestErrorSchema),
+        ...adminRouteErrors,
+        404: jsonResponse("The admin does not exist.", notFoundSchema),
+      },
+    }),
     adminRoute(),
     async (c) => {
       const adminId = c.req.param("adminId")
@@ -1328,6 +1369,20 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
 
   app.get(
     "/v1/admin/users/:userId/inference-usage",
+    describeRoute({
+      tags: ["Admin"],
+      summary: "Get a user's inference usage",
+      description: "Returns the user's inference usage per organization and limit window, alongside the organization-wide usage of the same windows.",
+      responses: {
+        200: jsonResponse("Inference usage returned.", z.object({
+          user: z.object({ id: z.string(), email: z.string() }),
+          organizations: z.array(z.object({}).passthrough()),
+        })),
+        400: jsonResponse("The user id was invalid.", adminRequestErrorSchema),
+        ...adminRouteErrors,
+        404: jsonResponse("The user does not exist.", notFoundSchema),
+      },
+    }),
     adminRoute(),
     async (c) => {
       const userId = c.req.param("userId")
@@ -1423,6 +1478,17 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
 
   app.post(
     "/v1/admin/users/:userId/inference-usage/reset",
+    describeRoute({
+      tags: ["Admin"],
+      summary: "Reset a user's inference usage",
+      description: "Removes the user's charges from the current inference limit windows of every organization they belong to and returns the total amount released.",
+      responses: {
+        200: jsonResponse("Inference usage was reset.", z.object({ ok: z.literal(true), resetAmount: z.number() })),
+        400: jsonResponse("The user id was invalid.", adminRequestErrorSchema),
+        ...adminRouteErrors,
+        404: jsonResponse("The user does not exist.", notFoundSchema),
+      },
+    }),
     adminRoute(),
     async (c) => {
       const userId = c.req.param("userId")
@@ -1483,6 +1549,17 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
 
   app.delete(
     "/v1/admin/users/:userId",
+    describeRoute({
+      tags: ["Admin"],
+      summary: "Delete a user",
+      description: "Deletes the user account, revokes its sessions, API keys, OAuth grants and connected accounts, and soft-removes its organization memberships. Admins cannot delete their own user.",
+      responses: {
+        200: jsonResponse("The user was deleted.", z.object({ ok: z.literal(true), user: z.object({ id: z.string(), email: z.string() }) })),
+        400: jsonResponse("The user id was invalid or refers to the caller.", adminRequestErrorSchema),
+        ...adminRouteErrors,
+        404: jsonResponse("The user does not exist.", notFoundSchema),
+      },
+    }),
     adminRoute(),
     async (c) => {
       const currentUser = c.get("user")
@@ -1574,6 +1651,17 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
 
   app.patch(
     "/v1/admin/organizations/:organizationId/plan",
+    describeRoute({
+      tags: ["Admin"],
+      summary: "Set an organization's plan",
+      description: "Assigns a manual plan tier and seat limit to the organization. Body: { tier: \"free\" | \"team\" | \"enterprise\", seatLimit: integer }.",
+      responses: {
+        200: jsonResponse("The plan was updated.", z.object({ ok: z.literal(true), organization: z.object({}).passthrough() })),
+        400: jsonResponse("The request body or organization id was invalid.", adminRequestErrorSchema),
+        ...adminRouteErrors,
+        404: jsonResponse("The organization does not exist.", notFoundSchema),
+      },
+    }),
     adminRoute(),
     async (c) => {
       const body = updateOrganizationPlanSchema.safeParse(await c.req.json().catch(() => null))
@@ -1617,6 +1705,17 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
 
   app.patch(
     "/v1/admin/organizations/:organizationId/free-seats",
+    describeRoute({
+      tags: ["Admin"],
+      summary: "Set an organization's free seats",
+      description: "Sets the total number of free seats for the organization and resynchronizes its seat subscription quantity. Body: { totalFreeSeats: integer }.",
+      responses: {
+        200: jsonResponse("Free seats were updated.", z.object({ ok: z.literal(true), organization: z.object({}).passthrough() })),
+        400: jsonResponse("The request body or organization id was invalid.", adminRequestErrorSchema),
+        ...adminRouteErrors,
+        404: jsonResponse("The organization does not exist.", notFoundSchema),
+      },
+    }),
     adminRoute(),
     async (c) => {
       const body = updateOrganizationFreeSeatsSchema.safeParse(await c.req.json().catch(() => null))
@@ -1669,6 +1768,18 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
 
   app.put(
     "/v1/admin/organizations/:organizationId/openwork-web-access",
+    describeRoute({
+      tags: ["Admin"],
+      summary: "Grant or revoke complimentary OpenWork Web access",
+      description: "Toggles complimentary OpenWork Web access for the organization and records an audit event. Access cannot be granted while a paid OpenWork Web subscription is ongoing. Body: { enabled: boolean, reason: string }.",
+      responses: {
+        200: jsonResponse("OpenWork Web access was updated.", z.object({ ok: z.literal(true), organization: z.object({}).passthrough() })),
+        400: jsonResponse("The request body or organization id was invalid.", adminRequestErrorSchema),
+        ...adminRouteErrors,
+        404: jsonResponse("The organization does not exist.", notFoundSchema),
+        409: jsonResponse("The organization has an ongoing paid OpenWork Web subscription.", adminConflictErrorSchema),
+      },
+    }),
     adminRoute(),
     async (c) => {
       const body = updateOrganizationOpenWorkWebAccessSchema.safeParse(await c.req.json().catch(() => null))
@@ -1765,6 +1876,17 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
 
   app.get(
     "/v1/admin/organizations/:organizationId/capabilities",
+    describeRoute({
+      tags: ["Admin"],
+      summary: "Get an organization's capability overrides",
+      description: "Returns the admin-visible capability flags (install links, MCP connections) for the organization.",
+      responses: {
+        200: jsonResponse("Capability overrides returned.", z.object({ capabilities: z.object({}).passthrough() })),
+        400: jsonResponse("The organization id was invalid.", adminRequestErrorSchema),
+        ...adminRouteErrors,
+        404: jsonResponse("The organization does not exist.", notFoundSchema),
+      },
+    }),
     adminRoute(),
     async (c) => {
       const organizationId = c.req.param("organizationId")
@@ -1789,6 +1911,17 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
 
   app.put(
     "/v1/admin/organizations/:organizationId/capabilities",
+    describeRoute({
+      tags: ["Admin"],
+      summary: "Set an organization's capability overrides",
+      description: "Enables, disables or clears (null) the install-links and MCP-connections capability overrides for the organization. Body: { capabilities: { installLinks?: boolean | null, mcpConnections?: boolean | null } }.",
+      responses: {
+        200: jsonResponse("Capability overrides were updated.", z.object({ ok: z.literal(true), organization: z.object({ id: z.string() }), capabilities: z.object({}).passthrough() })),
+        400: jsonResponse("The request body or organization id was invalid.", adminRequestErrorSchema),
+        ...adminRouteErrors,
+        404: jsonResponse("The organization does not exist.", notFoundSchema),
+      },
+    }),
     adminRoute(),
     async (c) => {
       const body = updateOrganizationCapabilitiesSchema.safeParse(await c.req.json().catch(() => null))

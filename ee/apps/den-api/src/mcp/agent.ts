@@ -17,7 +17,7 @@ import { publicRoute, tokenRoute } from "../middleware/index.js"
 import { db } from "../db.js"
 import { getMcpResourceContext, verifyMcpRequest } from "./auth.js"
 import { DEN_MCP_APP_HOST_SCOPE, DEN_MCP_WRITE_SCOPE } from "./scopes.js"
-import { getCatalog, protectedResourceMetadata } from "./index.js"
+import { getCatalog, protectedResourceMetadata, protectedResourceMetadataRoute } from "./index.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
 import { createScopedAgentMcpHttpHandlers } from "./agent-http.js"
 import { rejectStandaloneSseResponse } from "./standalone-sse.js"
@@ -372,9 +372,9 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     (error) => agentMcpLogger.warn("Agent MCP transport error", { error }),
   )
 
-  app.get("/.well-known/oauth-protected-resource/mcp/agent", publicRoute, (c) =>
+  app.get("/.well-known/oauth-protected-resource/mcp/agent", protectedResourceMetadataRoute("agent"), publicRoute, (c) =>
     c.json(protectedResourceMetadata(c.req.raw, "agent")))
-  app.get("/mcp/agent/.well-known/oauth-protected-resource", publicRoute, (c) =>
+  app.get("/mcp/agent/.well-known/oauth-protected-resource", protectedResourceMetadataRoute("agent"), publicRoute, (c) =>
     c.json(protectedResourceMetadata(c.req.raw, "agent")))
 
   app.all("/mcp/agent", tokenRoute, async (c) => {

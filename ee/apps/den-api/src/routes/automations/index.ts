@@ -34,7 +34,7 @@ import {
   queryValidator,
   type OrganizationContextVariables,
 } from "../../middleware/index.js"
-import { invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { invalidRequestSchema, jsonResponse, notFoundSchema, textResponse, unauthorizedSchema } from "../../openapi.js"
 import { automationService, type AutomationService } from "../../automations/service.js"
 import { automationRunnerAudienceFromRequest, automationRunnerAuth } from "../../automations/runner-auth.js"
 import { env } from "../../env.js"
@@ -187,7 +187,30 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     return (await service.isActiveRunnerOwner(identity)) ? identity : null
   }
 
-  app.get("/v1/automation-runners/events", async (c) => {
+  // Runner protocol routes are spoken only by the signed-in desktop runner.
+  // They are tagged Internal so the published snapshot excludes them while the
+  // served document keeps them for debugging.
+  const runnerErrorSchema = z.object({ error: z.string() })
+  const runnerRoute = (input: { summary: string; description?: string; responses: DescribeRouteOptions["responses"] }) => describeRoute({
+    tags: ["Internal"],
+    security: [{ automationRunnerToken: [] }],
+    summary: input.summary,
+    description: input.description,
+    responses: {
+      ...input.responses,
+      401: jsonResponse("The runner token was missing, expired, or its owner is no longer an active member.", runnerErrorSchema),
+    },
+  })
+  const runnerConflictResponse = jsonResponse("The run lease was lost or the request conflicts with the run's current state.", runnerErrorSchema)
+
+  app.get(
+    "/v1/automation-runners/events",
+    runnerRoute({
+      summary: "Stream Automation runner notifications",
+      description: "Server-sent events stream that tells a desktop runner when work or cancellations are available. Send Last-Event-ID to resume from a cursor.",
+      responses: { 200: textResponse("Server-sent event stream (text/event-stream).") },
+    }),
+    async (c) => {
     const identity = await authenticateRunner(c)
     if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
     const requestedCursor = Number(c.req.header("Last-Event-ID") ?? "0")
@@ -235,9 +258,17 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
         ))
       }
     })
-  })
+    },
+  )
 
-  app.get("/v1/automation-runner/work", async (c) => {
+  app.get(
+    "/v1/automation-runner/work",
+    runnerRoute({
+      summary: "Discover Automation runner work",
+      description: "Returns the runs and remote-session commands currently assignable to this runner.",
+      responses: { 200: jsonResponse("Available work items.", automationRunnerWorkResponseSchema) },
+    }),
+    async (c) => {
     const identity = await authenticateRunner(c)
     if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
     // Automation run items keep their long-standing wire shape untouched;
@@ -260,9 +291,21 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
       }
     }
     return c.json(automationRunnerWorkResponseSchema.parse({ items }))
-  })
+    },
+  )
 
-  app.post("/v1/remote-session-commands/:id/claim", paramValidator(idParamsSchema), async (c) => {
+  app.post(
+    "/v1/remote-session-commands/:id/claim",
+    runnerRoute({
+      summary: "Claim a remote-session command",
+      responses: {
+        200: jsonResponse("The claimed command assignment.", remoteSessionCommandClaimResponseSchema),
+        403: jsonResponse("The runner did not register the remote-session capability.", runnerErrorSchema),
+        409: runnerConflictResponse,
+      },
+    }),
+    paramValidator(idParamsSchema),
+    async (c) => {
     const identity = await authenticateRunner(c)
     if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
     if (!identity.capabilities.includes(REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY)) {
@@ -286,10 +329,19 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
         expiresAt: command.expiresAt,
       },
     }))
-  })
+    },
+  )
 
   app.post(
     "/v1/remote-session-commands/:id/complete",
+    runnerRoute({
+      summary: "Complete a remote-session command",
+      responses: {
+        200: jsonResponse("The completed command.", remoteSessionCommandCompleteResponseSchema),
+        403: jsonResponse("The runner did not register the remote-session capability.", runnerErrorSchema),
+        409: runnerConflictResponse,
+      },
+    }),
     paramValidator(idParamsSchema), jsonValidator(remoteSessionCommandCompleteRequestSchema),
     async (c) => {
       const identity = await authenticateRunner(c)
@@ -314,24 +366,52 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     },
   )
 
-  app.post("/v1/automation-runs/:id/claim", paramValidator(automationRunParamsSchema), async (c) => {
+  app.post(
+    "/v1/automation-runs/:id/claim",
+    runnerRoute({
+      summary: "Claim an Automation run",
+      responses: { 200: jsonResponse("The claimed run assignment, or null when the run is no longer claimable.", runnerClaimResponseSchema) },
+    }),
+    paramValidator(automationRunParamsSchema),
+    async (c) => {
     const identity = await authenticateRunner(c)
     if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
     const assignment = await service.claimDesktopRunner(identity, c.req.valid("param").id)
     return c.json(runnerClaimResponseSchema.parse({ assignment }))
-  })
+    },
+  )
 
-  app.post("/v1/automation-runs/:id/heartbeat", paramValidator(automationRunParamsSchema), jsonValidator(automationRunnerHeartbeatRequestSchema), async (c) => {
+  app.post(
+    "/v1/automation-runs/:id/heartbeat",
+    runnerRoute({
+      summary: "Extend an Automation run lease",
+      responses: {
+        200: jsonResponse("The lease was extended.", z.object({ ok: z.literal(true) })),
+        409: runnerConflictResponse,
+      },
+    }),
+    paramValidator(automationRunParamsSchema),
+    jsonValidator(automationRunnerHeartbeatRequestSchema),
+    async (c) => {
     const identity = await authenticateRunner(c)
     if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
     const heartbeat = await service.heartbeatDesktopRunner(identity, c.req.valid("param").id, c.req.valid("json").attempt)
     return heartbeat
       ? c.json(automationRunnerHeartbeatResponseSchema.parse(heartbeat))
       : c.json({ error: "runner_lease_lost" }, 409)
-  })
+    },
+  )
 
   app.post(
     "/v1/automation-runs/:id/events",
+    runnerRoute({
+      summary: "Append an Automation run event",
+      responses: {
+        200: jsonResponse("The recorded event.", z.object({ event: z.object({}).passthrough() })),
+        409: runnerConflictResponse,
+        500: jsonResponse("The event could not be recorded.", runnerErrorSchema),
+      },
+    }),
     paramValidator(automationRunParamsSchema), jsonValidator(automationRunnerEventRequestSchema),
     async (c) => {
       const identity = await authenticateRunner(c)
@@ -356,6 +436,14 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
 
   app.post(
     "/v1/automation-runs/:id/complete",
+    runnerRoute({
+      summary: "Complete an Automation run",
+      responses: {
+        200: jsonResponse("The completed run.", runResponseSchema),
+        409: runnerConflictResponse,
+        500: jsonResponse("The completion could not be recorded; the runner should retry.", runnerErrorSchema),
+      },
+    }),
     paramValidator(automationRunParamsSchema), jsonValidator(automationDesktopRunnerResultSchema),
     async (c) => {
       const identity = await authenticateRunner(c)
