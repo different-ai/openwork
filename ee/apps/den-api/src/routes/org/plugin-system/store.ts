@@ -28,6 +28,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { hasSkillFrontmatterName, parseSkillMarkdown } from "@openwork-ee/utils"
+import { COWORKER_TEMPLATE_SCHEMA, coworkerTemplateSchema, type AssignedCoworkerTemplate } from "@openwork/types/coworker-template"
 import type { PluginArchActorContext, PluginArchResourceKind, PluginArchRole } from "./access.js"
 import { isPluginArchOrgAdmin, PluginArchAuthorizationError, pluginArchResourceHasExpandedAudience, requirePluginArchResourceRole, resolvePluginArchGrantRole, resolvePluginArchResourceRole } from "./access.js"
 import { clampCodePoints, clampUtf8Bytes, PROJECTION_TEXT_MAX_BYTES, PROJECTION_TITLE_MAX_CHARS } from "./projection-text.js"
@@ -642,6 +643,13 @@ function deriveSkillProjection(value: ConfigObjectInput) {
 }
 
 function deriveProjection(input: { objectType: ConfigObjectRow["objectType"]; value: ConfigObjectInput }) {
+  if (input.value.schemaVersion === COWORKER_TEMPLATE_SCHEMA || input.value.normalizedPayloadJson?.kind === "coworker") {
+    const parsed = coworkerTemplateSchema.safeParse(input.value.normalizedPayloadJson)
+    if (input.objectType !== "agent" || !parsed.success || input.value.rawSourceText) {
+      throw new PluginArchRouteFailure(400, "invalid_coworker_template", "Provide a valid coworker template with reusable instructions only. Memory, credentials, workspace files, and running work cannot be included.")
+    }
+    return { title: parsed.data.name, description: parsed.data.description, searchText: `${parsed.data.name}\n${parsed.data.role}\n${parsed.data.description}` }
+  }
   if (input.objectType === "skill") {
     return deriveSkillProjection(input.value)
   }
@@ -1655,6 +1663,47 @@ export async function getConfigObjectDetail(context: PluginArchActorContext, con
   return serializeConfigObject(row, latest.get(row.id) ?? null)
 }
 
+/** Coworkers reuse versioned agent assets and the same grants as skills. */
+export async function listMeCoworkerTemplates(input: { context: PluginArchActorContext; cursor?: string; limit?: number }) {
+  const context = input.context
+  const organizationId = context.organizationContext.organization.id
+  const memberId = context.organizationContext.currentMember.id
+  const teamIds = context.memberTeams.map((team) => team.id)
+  const page = await listConfigObjects({ ...input, type: "agent", status: "active" })
+  const parsedItems = page.items.flatMap((item) => {
+    if (!item.latestVersion || item.latestVersion.isDeletedVersion) return []
+    const parsed = coworkerTemplateSchema.safeParse(item.latestVersion.normalizedPayloadJson)
+    return parsed.success ? [{ id: item.id, versionId: item.latestVersion.id, template: parsed.data }] : []
+  })
+  if (parsedItems.length === 0) return { items: [], nextCursor: page.nextCursor }
+  const ids = parsedItems.map((item) => item.id)
+  const access = await listMeEffectivePluginAccessWithComponentKinds({ context, assignmentsOnly: true })
+  // Administrators can browse everything; that is not an assignment. Likewise,
+  // creating a template must not automatically install every template they author.
+  const assignedPlugins = access.items.filter((item) => item.edges.some((edge) => edge.kind !== "mine")).map((item) => item.plugin.id)
+  const [memberships, grants] = await Promise.all([
+    assignedPlugins.length === 0 ? Promise.resolve([]) : db.select({ configObjectId: PluginConfigObjectTable.configObjectId })
+      .from(PluginConfigObjectTable).where(and(
+        eq(PluginConfigObjectTable.organizationId, organizationId),
+        inArray(PluginConfigObjectTable.pluginId, assignedPlugins),
+        inArray(PluginConfigObjectTable.configObjectId, ids),
+        isNull(PluginConfigObjectTable.removedAt),
+      )),
+    db.select().from(ConfigObjectAccessGrantTable).where(and(
+      eq(ConfigObjectAccessGrantTable.organizationId, organizationId),
+      inArray(ConfigObjectAccessGrantTable.configObjectId, ids),
+      isNull(ConfigObjectAccessGrantTable.removedAt),
+    )),
+  ])
+  const assignedIds = new Set(memberships.map((row) => row.configObjectId))
+  for (const grant of grants) {
+    if (grant.orgWide || (grant.teamId && teamIds.includes(grant.teamId))
+      || (grant.orgMembershipId === memberId && grant.createdByOrgMembershipId !== memberId)) assignedIds.add(grant.configObjectId)
+  }
+  const items: AssignedCoworkerTemplate[] = parsedItems.map((item) => ({ ...item, assigned: assignedIds.has(item.id) }))
+  return { items, nextCursor: page.nextCursor }
+}
+
 export async function createConfigObject(input: {
   context: PluginArchActorContext
   objectType: ConfigObjectRow["objectType"]
@@ -2200,7 +2249,7 @@ const mePluginAccessEdgeOrder: Record<MePluginAccessEdge["kind"], number> = {
   catalog: 5,
 }
 
-async function listMeEffectivePluginAccessWithComponentKinds(input: { context: PluginArchActorContext }) {
+async function listMeEffectivePluginAccessWithComponentKinds(input: { context: PluginArchActorContext; assignmentsOnly?: boolean }) {
   const organizationId = input.context.organizationContext.organization.id
   const memberId = input.context.organizationContext.currentMember.id
   const teamIds = input.context.memberTeams.map((team) => team.id)
@@ -2330,6 +2379,7 @@ async function listMeEffectivePluginAccessWithComponentKinds(input: { context: P
   }
 
   for (const grant of pluginGrants) {
+    if (input.assignmentsOnly && grant.orgMembershipId === memberId && grant.createdByOrgMembershipId === memberId) continue
     if (!pluginsById.has(grant.pluginId)) continue
     if (grant.orgMembershipId === memberId) {
       const creatorName = grantCreatorNames.get(grant.createdByOrgMembershipId)
@@ -2359,6 +2409,7 @@ async function listMeEffectivePluginAccessWithComponentKinds(input: { context: P
   }
 
   for (const grant of marketplaceGrants) {
+    if (input.assignmentsOnly && grant.orgMembershipId === memberId && grant.createdByOrgMembershipId === memberId) continue
     const existing = marketplaceGrantsById.get(grant.marketplaceId) ?? []
     existing.push(grant)
     marketplaceGrantsById.set(grant.marketplaceId, existing)
