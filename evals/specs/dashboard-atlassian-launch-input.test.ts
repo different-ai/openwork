@@ -27,7 +27,6 @@
  *    surface.
  * 5. Control: the identical launch succeeds once `cloudId` is supplied.
  */
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -45,6 +44,16 @@ import {
   writeOpenWorkConnectMcpAppHostCatalog,
 } from "../../apps/server/src/connect-mcp-server-catalog.js";
 import type { ServerConfig } from "../../apps/server/src/types.js";
+import {
+  confluenceResourceUri as CONFLUENCE_RESOURCE,
+  createAtlassianWitness,
+  expectedJql as EXPECTED_JQL,
+  isRecord,
+  jiraResourceUri as JIRA_RESOURCE,
+  pastedConfluenceJson as PASTED_CONFLUENCE_JSON,
+  pastedJqlJson as PASTED_JQL_JSON,
+} from "../worlds/dashboard-launch-input.ts";
+import type { WitnessCall } from "../worlds/dashboard-launch-input.ts";
 
 // The Atlassian witness is an inline loopback MCP server, so Den must run in
 // the same place — the same local-placement constraint remote-mcp-apps uses.
@@ -60,18 +69,7 @@ const title = !localPlacement
       ? "dashboard Atlassian launch input skipped — needs Redis on 127.0.0.1:6379"
       : "dashboard tiles forward pasted Atlassian launch JSON intact and surface the provider's rejection when a required argument is missing";
 
-const CONFLUENCE_RESOURCE = "ui://atlassian/confluence-page/view.html";
-const JIRA_RESOURCE = "ui://atlassian/jql-search/view.html";
 const APP_HTML = "<!doctype html><html><head></head><body>Atlassian</body></html>";
-
-/** JSON shaped exactly like the launch input pasted into the dashboard add-app dialog. */
-const PASTED_CONFLUENCE_JSON = `{"pageId": "1122334455"}`;
-const PASTED_JQL_JSON = `{ "jql": "project = HELPDESK AND status NOT IN (\\"Closed\\", \\"Resolved\\", \\"Duplicate\\", \\"Declined\\", \\"Spam\\") AND assignee = currentUser() ORDER BY updated ASC" }`;
-const EXPECTED_JQL = 'project = HELPDESK AND status NOT IN ("Closed", "Resolved", "Duplicate", "Declined", "Spam") AND assignee = currentUser() ORDER BY updated ASC';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function requireRecord(value: unknown, label: string): Record<string, unknown> {
   if (!isRecord(value)) throw new Error(`${label} was not an object: ${JSON.stringify(value)}`);
@@ -83,126 +81,6 @@ function parsedLaunchInput(pasted: string): Record<string, unknown> {
   // the dialog only checks JSON.parse succeeds and the value is an object.
   const parsed: unknown = JSON.parse(pasted);
   return requireRecord(parsed, "pasted launch input");
-}
-
-function readBody(request: IncomingMessage): Promise<string> {
-  request.setEncoding("utf8");
-  return new Promise((resolve, reject) => {
-    let body = "";
-    request.on("data", (chunk: string) => {
-      body += chunk;
-    });
-    request.on("end", () => resolve(body));
-    request.on("error", reject);
-  });
-}
-
-function sendJson(response: ServerResponse, status: number, body: unknown): void {
-  response.writeHead(status, { "cache-control": "no-store", "content-type": "application/json" });
-  response.end(JSON.stringify(body));
-}
-
-type WitnessCall = { name: string; args: Record<string, unknown> };
-
-/** Deterministic Atlassian-remote-MCP-shaped witness: getConfluencePage and
- * searchJiraIssuesUsingJql both require cloudId and reject a call without it
- * using a JSON-RPC invalid-params error, the shape an SDK zod server emits. */
-function atlassianWitnessRpc(
-  message: Record<string, unknown>,
-  receivedCalls: WitnessCall[],
-): Record<string, unknown> | null {
-  if (message.method === "initialize") {
-    return {
-      jsonrpc: "2.0",
-      id: message.id,
-      result: {
-        protocolVersion: "2025-06-18",
-        capabilities: {
-          tools: { listChanged: false },
-          resources: { listChanged: false, subscribe: false },
-          extensions: { "io.modelcontextprotocol/ui": { mimeTypes: ["text/html;profile=mcp-app"] } },
-        },
-        serverInfo: { name: "atlassian-remote-mcp-witness", version: "1.0.0" },
-      },
-    };
-  }
-  if (message.id === undefined) return null;
-  if (message.method === "tools/list") {
-    return {
-      jsonrpc: "2.0",
-      id: message.id,
-      result: {
-        tools: [
-          {
-            name: "getConfluencePage",
-            title: "Get Confluence page",
-            description: "Get a Confluence page by id.",
-            inputSchema: {
-              type: "object",
-              properties: { cloudId: { type: "string" }, pageId: { type: "string" } },
-              required: ["cloudId", "pageId"],
-            },
-            annotations: { readOnlyHint: true, destructiveHint: false },
-            _meta: { ui: { resourceUri: CONFLUENCE_RESOURCE, visibility: ["model", "app"] } },
-          },
-          {
-            name: "searchJiraIssuesUsingJql",
-            title: "Search Jira issues using JQL",
-            description: "Search Jira issues with a JQL query.",
-            inputSchema: {
-              type: "object",
-              properties: { cloudId: { type: "string" }, jql: { type: "string" } },
-              required: ["cloudId", "jql"],
-            },
-            annotations: { readOnlyHint: true, destructiveHint: false },
-            _meta: { ui: { resourceUri: JIRA_RESOURCE, visibility: ["model", "app"] } },
-          },
-        ],
-      },
-    };
-  }
-  if (message.method === "resources/read") {
-    const params = isRecord(message.params) ? message.params : {};
-    return {
-      jsonrpc: "2.0",
-      id: message.id,
-      result: {
-        contents: [{
-          uri: params.uri,
-          mimeType: "text/html;profile=mcp-app",
-          text: APP_HTML,
-          _meta: {
-            ui: {
-              csp: { connectDomains: [], resourceDomains: [], frameDomains: [], baseUriDomains: [] },
-              prefersBorder: true,
-            },
-          },
-        }],
-      },
-    };
-  }
-  if (message.method === "tools/call") {
-    const params = isRecord(message.params) ? message.params : {};
-    const name = typeof params.name === "string" ? params.name : "";
-    const args = isRecord(params.arguments) ? params.arguments : {};
-    receivedCalls.push({ name, args });
-    if (typeof args.cloudId !== "string" || !args.cloudId) {
-      return {
-        jsonrpc: "2.0",
-        id: message.id,
-        error: {
-          code: -32602,
-          message: `Invalid arguments for tool ${name}: [{"code":"invalid_type","expected":"string","received":"undefined","path":["cloudId"],"message":"Required"}]`,
-        },
-      };
-    }
-    return {
-      jsonrpc: "2.0",
-      id: message.id,
-      result: { content: [{ type: "text", text: `ok:${name}` }], structuredContent: { ok: true } },
-    };
-  }
-  return { jsonrpc: "2.0", id: message.id, result: {} };
 }
 
 const WORKSPACE_ID = "ws_dashboard_atlassian_repro";
@@ -278,31 +156,7 @@ async function agentRpc(
 
 test.skipIf(!localPlacement || !mysqlOpen || !redisOpen)(title, { timeout: 300_000 }, async ({ evidence, place }) => {
   const receivedCalls: WitnessCall[] = [];
-  const witness = createServer((request, response) => {
-    void (async () => {
-      if (request.method !== "POST") {
-        sendJson(response, 405, { error: "method_not_allowed" });
-        return;
-      }
-      const raw = await readBody(request);
-      const parsed: unknown = raw.trim() ? JSON.parse(raw) : {};
-      const messages = Array.isArray(parsed) ? parsed : [parsed];
-      const replies = messages.flatMap((entry) => {
-        if (!isRecord(entry)) return [];
-        const reply = atlassianWitnessRpc(entry, receivedCalls);
-        return reply ? [reply] : [];
-      });
-      if (replies.length === 0) {
-        response.writeHead(202);
-        response.end();
-        return;
-      }
-      sendJson(response, 200, Array.isArray(parsed) ? replies : replies[0]);
-    })().catch((error: unknown) => {
-      if (!response.headersSent) sendJson(response, 500, { error: String(error) });
-      else response.destroy(error instanceof Error ? error : undefined);
-    });
-  });
+  const witness = createAtlassianWitness(receivedCalls);
   await new Promise<void>((resolve, reject) => {
     witness.once("error", reject);
     witness.listen(0, "127.0.0.1", resolve);
