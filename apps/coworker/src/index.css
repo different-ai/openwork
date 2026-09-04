@@ -903,6 +903,15 @@ body.is-resizing-panel * {
   100% { transform: translate(0, var(--avatar-idle-head-y)) rotate(var(--avatar-idle-turn)); }
 }
 
+/*
+ * The live row's place at the end of the transcript: always one row tall
+ * (the row is 34px), so the bottom-anchored transcript keeps its height when
+ * the row comes and goes.
+ */
+.live-row-slot {
+  min-height: 34px;
+}
+
 @keyframes loading-line {
   0% { transform: translateX(-115%); }
   52% { transform: translateX(105%); }
