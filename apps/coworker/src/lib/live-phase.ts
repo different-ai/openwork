@@ -70,6 +70,16 @@ export function thinkingAvailability(input: { stream: LiveStream | null; reply: 
   return input.wordsArrived ? "none" : "not-yet";
 }
 
+/**
+ * Markdown that is still arriving must not flash: a code fence that has opened
+ * and not closed yet would swallow everything after it as code. For the live
+ * render only, close an unbalanced fence; the landed text renders as it is.
+ */
+export function safeLiveMarkdown(text: string): string {
+  const fences = text.match(/^\s{0,3}(`{3,}|~{3,})/gm)?.length ?? 0;
+  return fences % 2 === 1 ? `${text}\n\`\`\`` : text;
+}
+
 /** "4 s", "48 s", "1 min 12 s" — whole seconds, minutes past sixty. */
 export function sinceMoment(from: number, now: number): string {
   const seconds = Math.max(0, Math.floor((now - from) / 1000));

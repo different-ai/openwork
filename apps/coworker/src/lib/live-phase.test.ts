@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { LiveStream } from "./live-stream.ts";
-import { isUnsettledToolStatus, livePhase, phaseWord, sinceMoment, thinkingAvailability, thinkingText, writingText } from "./live-phase.ts";
+import { isUnsettledToolStatus, livePhase, phaseWord, safeLiveMarkdown, sinceMoment, thinkingAvailability, thinkingText, writingText } from "./live-phase.ts";
 
 function stream(type: string, text: string, ended = false): LiveStream {
   return { messageId: "msg_reply", partId: `prt_${type}`, type, text, ended };
@@ -41,6 +41,14 @@ test("whether a model shared its thinking is decided per turn, once words arrive
   assert.equal(thinkingAvailability({ stream: null, reply: { text: "", reasoning: "" }, wordsArrived: false }), "not-yet");
   assert.equal(thinkingAvailability({ stream: stream("text", "Because"), reply: { text: "", reasoning: "" }, wordsArrived: true }), "none");
   assert.equal(thinkingAvailability({ stream: stream("text", "Because"), reply: { text: "", reasoning: "earlier thought" }, wordsArrived: true }), "available");
+});
+
+test("live Markdown never leaves a code fence open", () => {
+  assert.equal(safeLiveMarkdown("Plain words"), "Plain words");
+  assert.equal(safeLiveMarkdown("Try:\n```sh\nls -la"), "Try:\n```sh\nls -la\n```");
+  assert.equal(safeLiveMarkdown("Try:\n```sh\nls -la\n```\nDone."), "Try:\n```sh\nls -la\n```\nDone.");
+  assert.equal(safeLiveMarkdown("~~~\ncode"), "~~~\ncode\n```");
+  assert.equal(safeLiveMarkdown("inline `code` is fine"), "inline `code` is fine");
 });
 
 test("moments and words", () => {
