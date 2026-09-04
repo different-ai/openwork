@@ -17,16 +17,16 @@ test("computer mentions steer tasks through Connect and Automations names the co
     await user.click({ role: "button", label: /@cloud/ });
     await user.type("composer", "COMPUTER-CLOUD-TASK Summarize the project notes.");
     await user.press("Enter");
-    await user.see({ text: "Received COMPUTER-CLOUD-TASK" }, { timeoutMs: 90_000 });
+    await user.see({ text: "Received computer task.", nth: 0 }, { timeoutMs: 90_000 });
   });
 
   await step("typing desktop directly works without selecting the menu", async () => {
     await user.type("composer", "@desktop COMPUTER-DESKTOP-TASK Summarize my local project notes.");
     await user.press("Enter");
-    await user.see({ text: "Received COMPUTER-DESKTOP-TASK" }, { timeoutMs: 90_000 });
+    await user.see({ text: "Received computer task.", nth: 1 }, { timeoutMs: 90_000 });
     await user.type("composer", "COMPUTER-PLAIN-TASK Explain the address person@cloud and the word desktop.");
     await user.press("Enter");
-    await user.see({ text: "Received COMPUTER-PLAIN-TASK" }, { timeoutMs: 90_000 });
+    await user.see({ text: "Received computer task.", nth: 2 }, { timeoutMs: 90_000 });
   });
 
   await step("the engine receives the chosen target, while ordinary text is not routed", async () => {

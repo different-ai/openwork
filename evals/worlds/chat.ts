@@ -1255,9 +1255,8 @@ export async function suspendedTurn(seed: Seed, { place }: { place: import("@ope
 export async function computerMentions(seed: Seed) {
   const providerId = "computer-mentions-mock";
   const modelId = "computer-mentions-model";
-  const markers = ["COMPUTER-CLOUD-TASK", "COMPUTER-DESKTOP-TASK", "COMPUTER-PLAIN-TASK"];
   const mock = seed.mock({
-    agentWorkloads: markers.map((promptMarker) => ({ promptMarker, finalReply: `Received ${promptMarker}`, steps: [] })),
+    agentWorkloads: [{ promptMarker: "COMPUTER-", finalReply: "Received computer task.", steps: [] }],
   });
   const den = await seed.den({ mocks: { agent: mock }, env: { DEN_AUTOMATIONS_ENABLED: "true" } });
   const created = await seed.api(den.admin, "/v1/automations", {
