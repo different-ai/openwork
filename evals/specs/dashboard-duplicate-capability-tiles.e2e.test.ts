@@ -12,7 +12,8 @@ const test = spec.world(emptyDashboardWithOneApp, { timeout: 420_000 });
 
 const firstArguments = { jql: "project = ALPHA ORDER BY created DESC" };
 const secondArguments = { jql: "project = BETA AND status = Open" };
-const launchInput = { placeholder: '{ "example": "value" }' };
+// The picker's placeholder names the tool's required input keys.
+const launchInput = { placeholder: '{ "jql": "…" }' };
 const duplicateRefusal = "This app is already on the dashboard with the same launch input.";
 
 type PersistedElement = { toolName: string; jql: string | null };
