@@ -23,6 +23,19 @@ export type StreamEvent =
 
 const WORD_PARTS = new Set(["text", "reasoning"]);
 
+/** Enough of the answer to be worth showing; a lone word or a stray space is not. */
+export const ANSWER_STREAMING_MIN_CHARS = 12;
+
+/**
+ * Whether the words arriving right now are the answer itself — not thinking,
+ * not a tool step — so the live row can show them without a tap. The part
+ * must be named `text` by the engine, still open, and carry a few words.
+ */
+export function answerStreaming(stream: LiveStream | null | undefined): boolean {
+  if (!stream || stream.ended || stream.type !== "text") return false;
+  return stream.text.trim().length >= ANSWER_STREAMING_MIN_CHARS;
+}
+
 /** Fold one engine event into the stream for one thread; events for other threads or for tool parts change nothing. */
 export function applyStreamEvent(current: LiveStream | null, event: StreamEvent, threadId: string): LiveStream | null {
   if (event.threadId !== threadId) return current;

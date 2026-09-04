@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { applyStreamEvent, type LiveStream } from "./live-stream.ts";
+import { ANSWER_STREAMING_MIN_CHARS, answerStreaming, applyStreamEvent, type LiveStream } from "./live-stream.ts";
 
 const THREAD = "ses_1";
 
@@ -33,4 +33,19 @@ test("a new part supersedes the one before it; other threads, tool parts, and st
   // The earlier reasoning part ending late does not take the live words away.
   assert.equal(applyStreamEvent(writing, { kind: "part", threadId: THREAD, messageId: "msg_a", partId: "prt_1", type: "reasoning", text: "thinking more", ended: true }, THREAD), writing);
   assert.equal(applyStreamEvent(writing, { kind: "delta", threadId: THREAD, messageId: "msg_a", partId: "prt_2", delta: "" }, THREAD), writing);
+});
+
+test("the answer's words show without a tap only while the engine streams the text part itself with a few words in it", () => {
+  const base: LiveStream = { messageId: "msg_a", partId: "prt_1", type: "text", text: "Short version: an API wins", ended: false };
+  assert.equal(answerStreaming(base), true);
+  // Thinking and unnamed parts stay behind a tap; a closed part belongs to the transcript now.
+  assert.equal(answerStreaming({ ...base, type: "reasoning" }), false);
+  assert.equal(answerStreaming({ ...base, type: "" }), false);
+  assert.equal(answerStreaming({ ...base, ended: true }), false);
+  // A lone word or whitespace is not worth a line.
+  assert.equal(answerStreaming({ ...base, text: "Short" }), false);
+  assert.equal(answerStreaming({ ...base, text: "   \n  " }), false);
+  assert.equal(answerStreaming({ ...base, text: "x".repeat(ANSWER_STREAMING_MIN_CHARS) }), true);
+  assert.equal(answerStreaming(null), false);
+  assert.equal(answerStreaming(undefined), false);
 });

@@ -19,12 +19,14 @@ import { workerToolCatalog } from "./workers.mjs";
 
 /**
  * The whole fixed stack for a fresh coworker with one teammate, in characters
- * (about four characters per token). Raised from 30,000 when the contract
- * gained "Keeping track of what I'm doing" and the tools gained memory_note.
+ * (about four characters per token). 30,000 held the shape rule; the working
+ * notes ("Keeping track of what I'm doing", the memory_note tool) and "How I
+ * decide" together added about 5,500 — the two sections are the first place to
+ * tighten when the budget is next revisited.
  */
-export const FIXED_STACK_BUDGET_CHARS = 32_000;
+export const FIXED_STACK_BUDGET_CHARS = 34_000;
 /** The same coworker with five documents in play and ten long-term memories. */
-export const BUSY_STACK_BUDGET_CHARS = 34_000;
+export const BUSY_STACK_BUDGET_CHARS = 36_000;
 
 const roots = [];
 after(async () => {
@@ -65,7 +67,7 @@ test("the fixed instruction stack stays within its budget, and the variable part
   const catalog = fresh.find(([name]) => name === "tool catalog")[1];
   assert.equal(fullCatalog().length, 24);
   assert.ok(catalog.length < 18_000, `the tool catalog is ${catalog.length} chars`);
-  assert.ok(fresh.find(([name]) => name === "AGENTS.md")[1].length < 12_500);
+  assert.ok(fresh.find(([name]) => name === "AGENTS.md")[1].length < 15_000);
 
   for (let index = 1; index <= 5; index += 1) {
     await createDocument(dir, nova.slug, {

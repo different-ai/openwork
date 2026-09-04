@@ -65,6 +65,17 @@ function personality(value) {
   return PERSONALITIES.has(value) ? value : "neutral";
 }
 
+/**
+ * How the coworker's AI model is chosen: `auto` picks a quick, standard, or
+ * deep model per message around the stored standard model; `fixed` uses the
+ * stored model every time. A record without the field means what the person
+ * did before the field existed: a chosen model is fixed, a blank is automatic.
+ */
+function modelModeOf(value, model) {
+  if (value === "auto" || value === "fixed") return value;
+  return String(model ?? "").trim() ? "fixed" : "auto";
+}
+
 /** The catalog role a coworker was created from, or "" for one the person shaped by hand. */
 function roleIdOf(value) {
   return roleById(value) ? String(value).trim().toLowerCase() : "";
@@ -152,7 +163,7 @@ ${mission || "Help with the work I am given, and own it over time."}
  * regenerate on the next launch (`repairCoworkerContract`); soul and memory are
  * never touched by that repair.
  */
-export const AGENTS_CONTRACT_VERSION = 7;
+export const AGENTS_CONTRACT_VERSION = 8;
 const AGENTS_CONTRACT_MARKER = /<!-- open-coworker-contract: (\d+) -->/;
 
 export function agentsTemplate({ name }) {
@@ -254,6 +265,41 @@ Before: a reply that covers the first ten and asks whether to continue.
 After: \`worker_spawn\` "Ticket themes" with a goal that says what done looks
 like (every ticket read, themes named, one example each, in a document), then:
 "Started a Ticket themes Worker — I'll bring you the themes as they take shape."
+
+## How I decide
+
+I match the effort to the ask and I move. A clear request that I can undo, I
+just do. Momentum beats permission for the small stuff; care beats speed for
+the things that cannot be taken back.
+
+- **Act when it is clear and reversible.** Reading, searching, drafting,
+  organizing, writing a document, taking a note: I do it and show the result.
+  I do not ask "shall I?" for work the person already asked for.
+- **Ask when the answer changes the outcome — and ask once.** When two
+  readings of the request lead to different work, or a fact I need is one only
+  the person has, I ask one question with two or three concrete options, using
+  the question tool so they can tap an answer. Never a list of questions.
+  Never "let me know if you'd like me to…" at the end of a reply.
+- **Say my assumptions and go.** When the ambiguity is small, I choose the
+  most likely reading, say it in one clause ("Assuming you mean the Q4 plan —"),
+  and continue. The person can steer me in one word.
+- **Ask first for what cannot be undone.** Sending, posting, paying, deleting,
+  changing something outside my workspace, or contacting someone on the
+  person's behalf: I stop and confirm, in one sentence, with what exactly will
+  happen. This is the one place I always ask.
+- **Say how sure I am, in plain words.** "I checked" when I did; "I'm fairly
+  sure" when I reason from memory; "I couldn't verify" when I could not. I
+  never dress a guess as a fact, and I never invent a number, a name, or a date.
+- **Take the smallest step that shows progress.** When the work is large, I
+  deliver a first useful piece (an outline, the first section, the two options
+  that matter) and keep going, rather than disappearing for a long time. The
+  person sees where I am in my working-memory note.
+- **When I can't, say what I can.** A missing connection, permission, or
+  capability gets one sentence naming it and one offer of the next best thing —
+  never a paragraph of apology.
+- **In a group, one voice.** If a teammate already covers the request, I say
+  who should take it and stop; if I disagree with a teammate, I say so once,
+  briefly, with the reason.
 
 ## Keeping track of what I'm doing
 
@@ -434,6 +480,7 @@ function coworkerConfigTemplate({ name, role, mission, avatarColor: color, avata
       model: "",
       modelVariant: "",
       modelChosenBy: "",
+      modelMode: "auto",
       automations: [],
       createdAt,
     },
@@ -496,6 +543,8 @@ async function readCoworkerRecord(coworkersDir, slug) {
     modelVariant: typeof data.modelVariant === "string" ? data.modelVariant.trim() : "",
     /** "app" when Open Coworker picked the model by itself (it may be swapped once when it fails); "person" or "" otherwise (never swapped). */
     modelChosenBy: modelChosenByOf(data.modelChosenBy),
+    /** `auto`: a quick, standard, or deep model per message around `model`; `fixed`: `model` every time. */
+    modelMode: modelModeOf(data.modelMode, data.model),
     automations,
     createdAt: typeof data.createdAt === "string" ? data.createdAt : "",
   };
@@ -634,6 +683,7 @@ export async function updateCoworker(coworkersDir, slug, patch) {
   }
   if (typeof patch?.modelVariant === "string") data.modelVariant = patch.modelVariant.trim();
   if (typeof patch?.modelChosenBy === "string") data.modelChosenBy = modelChosenByOf(patch.modelChosenBy);
+  if (patch?.modelMode === "auto" || patch?.modelMode === "fixed") data.modelMode = patch.modelMode;
   if (typeof patch?.avatarColor === "string") data.avatarColor = avatarColor(patch.avatarColor);
   if (typeof patch?.avatarGlasses === "string") data.avatarGlasses = avatarGlasses(patch.avatarGlasses);
   if (typeof patch?.personality === "string") data.personality = personality(patch.personality);
