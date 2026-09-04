@@ -573,7 +573,12 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
       tags: ["SSO"],
       summary: "Cancel an organization SSO authentication test",
       security: [{ bearerAuth: [] }],
-      responses: { 204: { description: "SSO test cancelled" } },
+      responses: {
+        204: { description: "SSO test cancelled" },
+        401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
+        403: { description: "Only workspace owners and super-admins can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
+        404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
+      },
     }),
     orgMemberRoute(),
     async (c) => {
@@ -625,7 +630,12 @@ export function registerOrgSsoRoutes<T extends { Variables: OrgRouteVariables }>
       tags: ["SSO"],
       summary: "Disable organization SSO",
       security: [{ bearerAuth: [] }],
-      responses: { 204: { description: "SSO disabled" } },
+      responses: {
+        204: { description: "SSO disabled" },
+        401: { description: "Unauthorized", content: { "application/json": { schema: resolver(unauthorizedSchema) } } },
+        403: { description: "Only workspace owners and super-admins can manage SSO.", content: { "application/json": { schema: resolver(forbiddenSchema) } } },
+        404: { description: "Organization not found", content: { "application/json": { schema: resolver(organizationNotFoundSchema) } } },
+      },
     }),
     orgMemberRoute(),
     async (c) => {

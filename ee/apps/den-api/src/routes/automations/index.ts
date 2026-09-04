@@ -172,7 +172,11 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
       summary: "Report whether a desktop runner is connected",
       description: "Desktop Automations only run while one of the owner's desktops is connected. "
         + "Management surfaces read this to warn before an occurrence is due rather than after it was missed.",
-      responses: { 200: jsonResponse("Desktop runner presence.", automationDesktopRunnerPresenceSchema) },
+      responses: {
+        200: jsonResponse("Desktop runner presence.", automationDesktopRunnerPresenceSchema),
+        401: jsonResponse("Sign-in required.", unauthorizedSchema),
+        404: jsonResponse("Organization not found.", notFoundSchema),
+      },
     }),
     orgMemberRoute(),
     async (c) => c.json(await service.desktopRunnerPresence(scope(c))),
@@ -637,7 +641,12 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     describeMcpRoute({
       tags: ["Automations"], operationId: "listAutomationRuns", "x-mcp": true,
       summary: "List Automation runs", description: routeDescription,
-      responses: { 200: jsonResponse("Run history returned.", runListSchema) },
+      responses: {
+        200: jsonResponse("Run history returned.", runListSchema),
+        400: jsonResponse("Invalid request.", invalidRequestSchema),
+        401: jsonResponse("Sign-in required.", unauthorizedSchema),
+        404: jsonResponse("Organization not found.", notFoundSchema),
+      },
     }),
     orgMemberRoute(), paramValidator(idParamsSchema), queryValidator(paginationSchema),
     async (c) => c.json(await service.listRuns(scope(c), c.req.valid("param").id, c.req.valid("query"))),

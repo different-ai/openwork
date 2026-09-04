@@ -297,7 +297,12 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     "/v1/workflows/:configObjectId/views",
     describeRoute({
       tags: ["Workflows"], summary: "List generated Artifact views for a Workflow",
-      responses: { 200: jsonResponse("Artifact views returned.", artifactViewsResponseSchema) },
+      responses: {
+        200: jsonResponse("Artifact views returned.", artifactViewsResponseSchema),
+        400: jsonResponse("Invalid Workflow id.", invalidRequestSchema),
+        401: jsonResponse("Sign-in required.", unauthorizedSchema),
+        404: jsonResponse("Workflow not found.", notFoundSchema),
+      },
     }),
     orgMemberRoute(),
     async (c) => {
@@ -318,7 +323,12 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     "/v1/artifact-views/:artifactViewId/revisions/:revisionId/activate",
     describeRoute({
       tags: ["Codemode Runs"], summary: "Activate or roll back an immutable Artifact view revision",
-      responses: { 200: jsonResponse("Artifact view activated.", generatedArtifactViewSchema) },
+      responses: {
+        200: jsonResponse("Artifact view activated.", generatedArtifactViewSchema),
+        400: jsonResponse("Invalid view revision.", invalidRequestSchema),
+        401: jsonResponse("Sign-in required.", unauthorizedSchema),
+        404: jsonResponse("Artifact view or revision not found, or generated Artifact views are disabled.", notFoundSchema),
+      },
     }),
     orgMemberRoute(),
     async (c) => {
@@ -339,7 +349,12 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     "/v1/artifact-views/:artifactViewId/retire",
     describeRoute({
       tags: ["Codemode Runs"], summary: "Retire a generated Artifact view",
-      responses: { 200: jsonResponse("Artifact view retired.", generatedArtifactViewSchema) },
+      responses: {
+        200: jsonResponse("Artifact view retired.", generatedArtifactViewSchema),
+        400: jsonResponse("Invalid view.", invalidRequestSchema),
+        401: jsonResponse("Sign-in required.", unauthorizedSchema),
+        404: jsonResponse("Artifact view not found, or generated Artifact views are disabled.", notFoundSchema),
+      },
     }),
     orgMemberRoute(),
     async (c) => {
@@ -360,7 +375,12 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     "/v1/workflows/:configObjectId/versions",
     describeRoute({
       tags: ["Workflows"], summary: "List immutable Workflow versions",
-      responses: { 200: jsonResponse("Workflow versions returned.", versionsResponseSchema) },
+      responses: {
+        200: jsonResponse("Workflow versions returned.", versionsResponseSchema),
+        400: jsonResponse("Invalid Workflow id.", invalidRequestSchema),
+        401: jsonResponse("Sign-in required.", unauthorizedSchema),
+        404: jsonResponse("Workflow not found.", notFoundSchema),
+      },
     }),
     orgMemberRoute(),
     async (c) => {
@@ -380,7 +400,12 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     "/v1/workflows/:configObjectId/snapshots",
     describeRoute({
       tags: ["Workflows"], summary: "List Workflow artifact snapshots",
-      responses: { 200: jsonResponse("Artifact snapshots returned.", snapshotsResponseSchema) },
+      responses: {
+        200: jsonResponse("Artifact snapshots returned.", snapshotsResponseSchema),
+        400: jsonResponse("Invalid Workflow id or query.", invalidRequestSchema),
+        401: jsonResponse("Sign-in required.", unauthorizedSchema),
+        404: jsonResponse("Workflow not found.", notFoundSchema),
+      },
     }),
     orgMemberRoute(), queryValidator(snapshotsQuerySchema),
     async (c) => {
@@ -536,7 +561,12 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     "/v1/workflows/:configObjectId/snapshots/:receiptId/content",
     describeRoute({
       tags: ["Workflows"], summary: "Delete artifact content while retaining its audit receipt",
-      responses: { 200: jsonResponse("Artifact content deleted.", workflowArtifactSnapshotSchema) },
+      responses: {
+        200: jsonResponse("Artifact content deleted.", workflowArtifactSnapshotSchema),
+        400: jsonResponse("Invalid snapshot id.", invalidRequestSchema),
+        401: jsonResponse("Sign-in required.", unauthorizedSchema),
+        404: jsonResponse("Workflow or snapshot not found.", notFoundSchema),
+      },
     }),
     orgMemberRoute(),
     async (c) => {

@@ -190,6 +190,7 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
       description: "Lists the organizations visible to the current user and marks which organization is currently active.",
       responses: {
         200: jsonResponse("Current user organizations returned successfully.", meOrganizationsResponseSchema),
+        401: jsonResponse("The caller must be authenticated.", unauthorizedSchema),
       },
     }),
     orgMemberRoute({ useUserOrganizations: true }),
