@@ -293,7 +293,7 @@ export function PluginsScreen() {
             title: mcp.name,
             description: mcp.description,
             pluginName: mcp.pluginName,
-            meta: `${mcp.transport} · ${mcp.toolCount} tool${mcp.toolCount === 1 ? "" : "s"}`,
+            meta: `${mcp.transport}${mcp.toolCount > 0 ? ` · ${mcp.toolCount} tool${mcp.toolCount === 1 ? "" : "s"}` : ""}`,
             href: getPluginRoute(orgSlug, mcp.pluginId),
           }))}
         />

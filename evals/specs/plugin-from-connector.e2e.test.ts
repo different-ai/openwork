@@ -107,6 +107,8 @@ test("an admin creates a collection-ready plugin by picking an existing connecto
     await user.see({ text: world.pluginName }, { timeoutMs: 90_000 });
     await user.see({ text: "MCP Servers" });
     await user.see({ text: world.connection.name });
+    await user.see({ text: "Connector" });
+    await user.notSee({ text: "Imported from a connected repository." });
     await user.screenshot();
   });
 
@@ -130,7 +132,7 @@ test("an admin creates a collection-ready plugin by picking an existing connecto
   expect(resolved.plugin?.connectionIds[0]).toBe(world.connection.id);
   evidence.recordAssertionEvidence(
     "The created plugin is immediately ready in its selected collection with the existing connector",
-    `Collection=${JSON.stringify({ id: world.marketplaceId, name: world.marketplaceName })}; resolved plugin=${JSON.stringify(resolved.plugin)}`,
+    `Detail page listed the server under MCP Servers with a "Connector" badge and no "Imported from a connected repository." fallback copy. Collection=${JSON.stringify({ id: world.marketplaceId, name: world.marketplaceName })}; resolved plugin=${JSON.stringify(resolved.plugin)}`,
     resolved.responseStatus === 200
       && resolved.plugin?.name === world.pluginName
       && resolved.plugin.state === "ready"
