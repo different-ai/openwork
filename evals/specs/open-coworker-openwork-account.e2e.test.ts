@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { clickButton, coworker, evalIn, fill, needs, test, waitFor, waitForText } from "@openwork/testkit";
 import { expect, onTestFinished } from "vitest";
-import { buildGeneratedArtifactViewInWorker } from "../../ee/apps/den-api/src/generated-artifact-view-builder.js";
+import { buildStandardAppHtml } from "../worlds/coworker.ts";
 
 /**
  * Continue with OpenWork, end to end, without a real account: a deterministic
@@ -46,7 +46,7 @@ const RELEASE_SKILL_ID = "cob_eval_release";
  * skill behind them, and one standard MCP App so the coworker's Apps & tools
  * surface has something real to render.
  */
-const skillApp = await buildGeneratedArtifactViewInWorker({
+const skillAppHtml = await buildStandardAppHtml({
   reactSource: `export default function SkillStudio({ data }) {
     return <main><p className="eyebrow">SKILL STUDIO</p><h2>{data.title}</h2><p>{data.status}</p></main>
   }`,
@@ -59,8 +59,6 @@ const skillApp = await buildGeneratedArtifactViewInWorker({
   title: "Skill studio",
   description: "Deterministic OpenWork Connect App fixture.",
 });
-if (!skillApp.ok) throw new Error(`Connect App build failed: ${JSON.stringify(skillApp.diagnostics)}`);
-const skillAppHtml = skillApp.html;
 
 type GatewayCall = { endpoint: "gateway" | "connection"; method: string; tool: string; authorization: string };
 
