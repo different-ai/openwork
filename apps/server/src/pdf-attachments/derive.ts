@@ -68,6 +68,13 @@ export type PdfPageImage = {
 };
 
 export type DerivedPdf = {
+  /**
+   * The workspace root this derivation belongs to ("" when there is none).
+   * Results are cached per scope: the workspace copy and the paths in the note
+   * exist only in the workspace that produced them, so another workspace
+   * attaching the same bytes derives its own.
+   */
+  scope: string;
   sha256: string;
   filename: string;
   bytes: number;
@@ -106,6 +113,19 @@ type EncodedPage = {
 };
 
 const memory = new Map<string, MemoryEntry>();
+
+/** Cache key: one entry per workspace root and content digest. */
+function scopeOf(root: string | null): string {
+  return root ?? "";
+}
+
+function cacheKey(scope: string, digest: string): string {
+  return `${scope}\n${digest}`;
+}
+
+function keyOf(derived: DerivedPdf): string {
+  return cacheKey(derived.scope, derived.sha256);
+}
 const pending = new Map<string, Promise<MemoryEntry>>();
 
 export function sha256(bytes: Uint8Array): string {
@@ -468,14 +488,14 @@ function imageBytesOf(entry: MemoryEntry): number {
 
 /** Keeps the entry most recently used and drops the least recently used past the entry and image-byte budgets. */
 function remember(entry: MemoryEntry): MemoryEntry {
-  memory.delete(entry.derived.sha256);
-  memory.set(entry.derived.sha256, entry);
+  memory.delete(keyOf(entry.derived));
+  memory.set(keyOf(entry.derived), entry);
   let imageBytes = 0;
   for (const item of memory.values()) imageBytes += imageBytesOf(item);
-  for (const [digest, item] of memory) {
+  for (const [key, item] of memory) {
     if (memory.size <= MEMORY_ENTRY_LIMIT && imageBytes <= MEMORY_IMAGE_BUDGET_BYTES) break;
-    if (digest === entry.derived.sha256) continue;
-    memory.delete(digest);
+    if (key === keyOf(entry.derived)) continue;
+    memory.delete(key);
     imageBytes -= imageBytesOf(item);
   }
   return entry;
@@ -508,6 +528,7 @@ async function build(root: string | null, filename: string, bytes: Uint8Array, o
     const extracted = await extract(bytes);
     const pdfPath = root ? await materializePdf(root, safeFilename, digest, bytes) : null;
     const base: Omit<DerivedPdf, "text"> = {
+      scope: scopeOf(root),
       sha256: digest,
       filename: safeFilename,
       bytes: bytes.byteLength,
@@ -563,25 +584,25 @@ function satisfies(entry: MemoryEntry, options: DeriveOptions): boolean {
 }
 
 /**
- * Returns an already-derived result by content hash when it covers `options`,
- * so repeat steps skip decoding the attachment altogether.
+ * Returns an already-derived result for this workspace by content hash when it
+ * covers `options`, so repeat steps skip decoding the attachment altogether.
  */
-export function cachedDerivedPdf(digest: string, options: DeriveOptions): DerivedPdf | null {
-  const cached = memory.get(digest);
+export function cachedDerivedPdf(root: string | null, digest: string, options: DeriveOptions): DerivedPdf | null {
+  const cached = memory.get(cacheKey(scopeOf(root), digest));
   return cached && satisfies(cached, options) ? remember(cached).derived : null;
 }
 
 /**
  * Derives (or reuses) the model-facing representation of a PDF. Results live
- * in memory by content hash; a workspace copy is written under
- * `.opencode/openwork/inbox/pdf-pages/` for tools and people.
+ * in memory per workspace root and content hash; a workspace copy is written
+ * under `.opencode/openwork/inbox/pdf-pages/` for tools and people.
  */
 export async function derivePdf(root: string | null, filename: string, bytes: Uint8Array, options: DeriveOptions): Promise<DerivedPdf> {
   const digest = sha256(bytes);
-  const cached = memory.get(digest) ?? null;
+  const cached = memory.get(cacheKey(scopeOf(root), digest)) ?? null;
   if (cached && satisfies(cached, options)) return remember(cached).derived;
 
-  const key = `${digest}:${options.renderPages ? "pages" : "text"}`;
+  const key = `${cacheKey(scopeOf(root), digest)}:${options.renderPages ? "pages" : "text"}`;
   const inFlight = pending.get(key);
   if (inFlight) return (await inFlight).derived;
   const task = build(root, filename, bytes, options, cached)
@@ -598,7 +619,7 @@ export async function derivePdf(root: string | null, filename: string, bytes: Ui
  */
 export async function renderPdfPages(root: string | null, derived: DerivedPdf, bytes: Uint8Array, pages: number[]): Promise<DerivedPdf> {
   if (derived.loadError || derived.pageCount === 0) return derived;
-  const entry = memory.get(derived.sha256) ?? { derived, pageImages: new Map<number, Uint8Array>() };
+  const entry = memory.get(keyOf(derived)) ?? { derived, pageImages: new Map<number, Uint8Array>() };
   const have = new Set(entry.derived.renderedPages.filter((page) => entry.pageImages.has(page.page)).map((page) => page.page));
   const wanted = [...new Set(pages)]
     .filter((page) => Number.isInteger(page) && page >= 1 && page <= derived.pageCount && !have.has(page))
@@ -626,7 +647,7 @@ export async function renderPdfPages(root: string | null, derived: DerivedPdf, b
 
 /** Returns a rendered page image from memory; null when it was never rendered here or has been evicted. */
 export function pageImageOf(derived: DerivedPdf, page: PdfPageImage): Uint8Array | null {
-  return memory.get(derived.sha256)?.pageImages.get(page.page) ?? null;
+  return memory.get(keyOf(derived))?.pageImages.get(page.page) ?? null;
 }
 
 /** Test hook: forgets in-memory results so cold-start behaviour can be exercised. */

@@ -171,8 +171,19 @@ function pdfSourceFromFilePart(value: unknown): PdfSource | null {
   const filename = optionalStringProperty(value, "filename") ?? optionalStringProperty(value, "name") ?? "attachment.pdf";
   const mime = normalizedMime(value.mediaType ?? value.mime ?? value.mimeType);
   if (!isPdfLike(mime, filename, url)) return null;
-  const id = value.id;
-  return { filename, url, key: typeof id === "string" && id ? `${id}:${url.length}` : null, ids: basePartIds(value) };
+  return { filename, url, key: memoKey(value.sessionID, value.id, url), ids: basePartIds(value) };
+}
+
+/**
+ * Identity under which a later step may reuse this part's content digest
+ * without decoding it again. Only an inline data URL is immutable content; a
+ * workspace file can change between steps and is always re-read. The key is
+ * scoped to the session so one session's persisted part can never stand in
+ * for another's, and the caller scopes it to the workspace as well.
+ */
+function memoKey(sessionID: unknown, id: unknown, url: string, index?: number): string | null {
+  if (!url.startsWith("data:") || typeof id !== "string" || !id || typeof sessionID !== "string" || !sessionID) return null;
+  return `${sessionID}:${id}:${index ?? ""}:${url.length}`;
 }
 
 function pdfSourceFromToolAttachment(toolPart: Record<string, unknown>, attachment: unknown, index: number): PdfSource | null {
@@ -185,8 +196,7 @@ function pdfSourceFromToolAttachment(toolPart: Record<string, unknown>, attachme
   const filename = optionalStringProperty(attachment, "filename") ?? (inputPath ? basename(inputPath) : "document.pdf");
   const mime = normalizedMime(attachment.mime ?? attachment.mediaType ?? attachment.mimeType);
   if (!isPdfLike(mime, filename, url)) return null;
-  const id = toolPart.id ?? toolPart.callID;
-  return { filename, url, key: typeof id === "string" && id ? `${id}:${index}:${url.length}` : null, ids: {} };
+  return { filename, url, key: memoKey(toolPart.sessionID, toolPart.id ?? toolPart.callID, url, index), ids: {} };
 }
 
 function isWithin(root: string, candidate: string): boolean {
@@ -348,15 +358,19 @@ function failureNote(source: PdfSource, message: string, derived: DerivedPdf | n
 }
 
 const inspectionByDigest = new Map<string, Inspection>();
-/** Content hash per persisted part, so later steps never re-decode a data URL they have already seen. */
+/** Content hash per persisted part (scoped to workspace and session), so later steps never re-decode a data URL they have already seen. */
 const digestByKey = new Map<string, string>();
+
+function scopedMemoKey(root: string | null, key: string): string {
+  return `${root ?? ""}\n${key}`;
+}
 /** What the current model of each session can take, recorded by the last transform for the page tool. */
 const supportBySession = new Map<string, ModelInputSupport>();
 
-function rememberDigest(source: PdfSource, digest: string): void {
+function rememberDigest(root: string | null, source: PdfSource, digest: string): void {
   if (!source.key) return;
   if (digestByKey.size > 512) digestByKey.clear();
-  digestByKey.set(source.key, digest);
+  digestByKey.set(scopedMemoKey(root, source.key), digest);
 }
 
 async function inspect(bytes: Buffer, digest: string): Promise<Inspection> {
@@ -411,19 +425,19 @@ function claimNative(inspection: Inspection, budget: NativeBudget): { ok: true }
 
 async function routePdf(source: PdfSource, root: string | null, support: ModelInputSupport, budget: NativeBudget | null): Promise<Routed> {
   try {
-    const seen = source.key ? digestByKey.get(source.key) : undefined;
+    const seen = source.key ? digestByKey.get(scopedMemoKey(root, source.key)) : undefined;
     if (seen) {
       const inspection = inspectionByDigest.get(seen);
       if (budget && inspection && claimNative(inspection, budget).ok) return { kind: "native" };
       if (!budget) {
-        const derived = cachedDerivedPdf(seen, { renderPages: support.image });
+        const derived = cachedDerivedPdf(root, seen, { renderPages: support.image });
         if (derived) return { kind: "derived", derived, reason: { kind: "unsupported" } };
       }
     }
 
     const bytes = await bytesFromSource(source, root);
     const digest = sha256(bytes);
-    rememberDigest(source, digest);
+    rememberDigest(root, source, digest);
     let reason: Reason = { kind: "unsupported" };
     if (budget) {
       const verdict = claimNative(await inspect(bytes, digest), budget);

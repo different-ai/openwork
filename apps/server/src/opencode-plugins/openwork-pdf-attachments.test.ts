@@ -234,6 +234,27 @@ describe("OpenWork PDF attachments plugin", () => {
       const nativeSecond = await transform(root, [userMessage(NATIVE, [pdfPart(undecodable, { id: "n1" }), question])]);
       expect(partsOf(nativeFirst[0])[0]).toEqual(pdfPart(url, { id: "n1" }));
       expect(partsOf(nativeSecond[0])[0]).toEqual(pdfPart(undecodable, { id: "n1" }));
+
+      // The memo is scoped: the same part id and payload length in another session is not this part,
+      // so its bytes are read and, being undecodable, produce a failure note instead of Alpha/Beta's text.
+      const otherSession = await transform(root, [{ ...userMessage(VISION, [pdfPart(undecodable, { sessionID: "ses-2" }), question]), info: { ...userMessage(VISION, []).info, sessionID: "ses-2" } }]);
+      const otherText = partsOf(otherSession[0]).filter((part) => part.type === "text").map((part) => String(part.text)).join("\n");
+      expect(otherText).toContain("could not prepare the PDF");
+      expect(otherText).not.toContain("Alpha");
+    });
+  });
+
+  test("a second workspace attaching the same bytes derives its own copy instead of borrowing paths from the first", async () => {
+    await withWorkspace(async (first) => {
+      await withWorkspace(async (second) => {
+        const url = pdfDataUrl(buildTestPdf(["Shared document"]));
+        await transform(first, [userMessage(TEXT, [pdfPart(url), question])]);
+        const result = await transform(second, [userMessage(TEXT, [pdfPart(url), question])]);
+        const note = partsOf(result[0]).map((part) => String(part.text)).find((text) => text.startsWith("OpenWork prepared the PDF")) ?? "";
+        const textPath = /full_text_path: (\S+)/.exec(note)?.[1] ?? "";
+        expect(textPath).not.toBe("");
+        expect(await readFile(join(second, textPath), "utf8")).toContain("Shared document");
+      });
     });
   });
 
