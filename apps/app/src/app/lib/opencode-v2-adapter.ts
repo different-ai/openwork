@@ -1,5 +1,7 @@
 import type {
   Model,
+  PermissionRequest,
+  PermissionV2Request,
   Provider,
   ProviderListResponse,
   Session,
@@ -54,6 +56,27 @@ type SessionCreateParameters = DirectoryParameters & {
 type SessionUpdateParameters = SessionParameters & {
   title?: string;
   time?: { archived?: number };
+};
+
+type PermissionReply = "once" | "always" | "reject";
+
+type PermissionReplyParameters = DirectoryParameters & {
+  requestID: string;
+  reply?: PermissionReply;
+  message?: string;
+};
+
+type PermissionRespondParameters = DirectoryParameters & {
+  sessionID: string;
+  permissionID: string;
+  response?: PermissionReply;
+};
+
+type V2PermissionReplyParameters = {
+  sessionID: string;
+  requestID: string;
+  reply?: PermissionReply;
+  message?: string;
 };
 
 type V2MessageRole = "user" | "assistant" | "system";
@@ -220,6 +243,49 @@ function mapV2Message(value: unknown, sessionID: string): V2MappedMessage | null
   };
 }
 
+function mapV2Permission(value: unknown): PermissionV2Request | null {
+  if (!isRecord(value)) return null;
+  const id = readString(value, "id");
+  const sessionID = readSessionID(value);
+  const action = readString(value, "action");
+  if (!id || !sessionID || !action || !Array.isArray(value.resources)) return null;
+  const save = Array.isArray(value.save) ? stringArray(value.save) : undefined;
+  const rawMetadata = readRecord(value, "metadata");
+  const message = readString(value, "message");
+  const metadata = rawMetadata || message
+    ? { ...(rawMetadata ?? {}), ...(message ? { message } : {}) }
+    : undefined;
+  const rawSource = readRecord(value, "source");
+  const sourceMessageID = readString(rawSource, "messageID");
+  const sourceCallID = readString(rawSource, "callID") ?? readString(rawSource, "id");
+  const source: PermissionV2Request["source"] = readString(rawSource, "type") === "tool" && sourceMessageID && sourceCallID
+    ? { type: "tool", messageID: sourceMessageID, callID: sourceCallID }
+    : undefined;
+  return {
+    id,
+    sessionID,
+    action,
+    resources: stringArray(value.resources),
+    ...(save ? { save } : {}),
+    ...(metadata ? { metadata } : {}),
+    ...(source ? { source } : {}),
+  };
+}
+
+function mapV2PermissionToLegacy(permission: PermissionV2Request): PermissionRequest {
+  return {
+    id: permission.id,
+    sessionID: permission.sessionID,
+    permission: permission.action,
+    patterns: permission.resources,
+    metadata: { ...(permission.metadata ?? {}), action: permission.action },
+    always: permission.save ?? [],
+    ...(permission.source
+      ? { tool: { messageID: permission.source.messageID, callID: permission.source.callID } }
+      : {}),
+  };
+}
+
 function modelStatus(value: unknown): Model["status"] {
   return value === "alpha" || value === "beta" || value === "deprecated" || value === "active"
     ? value
@@ -360,17 +426,18 @@ function resolveTextStream(
   return null;
 }
 
+function sessionErrorEvent(sessionID: string, error: unknown): OpencodeEvent {
+  return {
+    type: "session.error",
+    properties: {
+      sessionID,
+      error: { name: "UnknownError", data: { message: errorMessage(error) } },
+    },
+  };
+}
+
 function terminalEvents(sessionID: string, error?: unknown): OpencodeEvent[] {
-  const events: OpencodeEvent[] = [];
-  if (error !== undefined) {
-    events.push({
-      type: "session.error",
-      properties: {
-        sessionID,
-        error: { name: "UnknownError", data: { message: errorMessage(error) } },
-      },
-    });
-  }
+  const events: OpencodeEvent[] = error === undefined ? [] : [sessionErrorEvent(sessionID, error)];
   events.push(
     { type: "session.status", properties: { sessionID, status: { type: "idle" } } },
     { type: "session.idle", properties: { sessionID } },
@@ -487,6 +554,18 @@ export function translateV2Event(
     return sessionID ? terminalEvents(sessionID, properties.error ?? properties) : null;
   }
 
+  if (type === "permission.asked" || type === "permission.v2.asked") {
+    const permission = mapV2Permission(properties);
+    return permission ? [{ type: "permission.asked", properties: permission }] : null;
+  }
+
+  if (type === "permission.replied" || type === "permission.v2.replied") {
+    const requestID = readString(properties, "requestID");
+    const reply = readString(properties, "reply");
+    if (!sessionID || !requestID || (reply !== "once" && reply !== "always" && reply !== "reject")) return null;
+    return [{ type: "permission.replied", properties: { sessionID, requestID, reply } }];
+  }
+
   if (type === "session.status") {
     if (!sessionID || !isRecord(properties.status)) return null;
     return [{ type: "session.status", properties: { sessionID, status: properties.status } }];
@@ -545,6 +624,7 @@ async function* translateV2Events(
         let event: unknown;
         try {
           event = JSON.parse(text);
+          if (typeof event === "string") event = JSON.parse(event);
         } catch {
           continue;
         }
@@ -555,6 +635,84 @@ async function* translateV2Events(
     }
   } finally {
     reader.releaseLock();
+  }
+}
+
+type InjectedEventQueue = {
+  events: OpencodeEvent[];
+  push: (event: OpencodeEvent) => void;
+  wait: () => Promise<void>;
+  close: () => void;
+};
+
+function createInjectedEventQueue(): InjectedEventQueue {
+  const events: OpencodeEvent[] = [];
+  let wake: (() => void) | undefined;
+  let closed = false;
+  return {
+    events,
+    push: (event) => {
+      if (closed) return;
+      events.push(event);
+      wake?.();
+      wake = undefined;
+    },
+    wait: () => {
+      if (events.length > 0 || closed) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        wake = resolve;
+      });
+    },
+    close: () => {
+      closed = true;
+      wake?.();
+      wake = undefined;
+    },
+  };
+}
+
+type MergedEventResult =
+  | { source: IteratorResult<OpencodeEvent> }
+  | { injected: true };
+
+async function waitForSource(
+  source: Promise<IteratorResult<OpencodeEvent>>,
+): Promise<MergedEventResult> {
+  return { source: await source };
+}
+
+async function waitForInjected(queue: InjectedEventQueue): Promise<MergedEventResult> {
+  await queue.wait();
+  return { injected: true };
+}
+
+async function* mergeV2Events(
+  response: Response,
+  signal: AbortSignal | undefined,
+  queue: InjectedEventQueue,
+  close: () => void,
+): AsyncGenerator<OpencodeEvent> {
+  const source = translateV2Events(response, signal);
+  let sourceNext = source.next();
+  try {
+    while (!signal?.aborted) {
+      const injected = queue.events.shift();
+      if (injected) {
+        yield injected;
+        continue;
+      }
+      const result = await Promise.race([
+        waitForSource(sourceNext),
+        waitForInjected(queue),
+      ]);
+      if ("injected" in result) continue;
+      if (result.source.done) return;
+      yield result.source.value;
+      sourceNext = source.next();
+    }
+  } finally {
+    close();
+    void source.return(undefined);
   }
 }
 
@@ -632,6 +790,12 @@ export function createClientV2(
   const baseUrl = opencode2BaseUrl.replace(/\/+$/, "");
   const fetchImpl = createV2Fetch(auth);
   const compatibilityClient = createClient(baseUrl, directory, { mode: "openwork", token: auth.token });
+  const injectedEventListeners = new Set<(event: OpencodeEvent) => void>();
+  const permissionSessionByRequestID = new Map<string, string>();
+
+  const emitInjectedEvent = (event: OpencodeEvent) => {
+    for (const listener of injectedEventListeners) listener(event);
+  };
 
   const request = async (
     method: string,
@@ -650,6 +814,104 @@ export function createClientV2(
     });
     const response = await fetchImpl(transportRequest);
     return { payload: await readPayload(response), request: transportRequest, response };
+  };
+
+  const listSessionPermissions = async (
+    parameters: SessionParameters,
+    options?: RequestOptions,
+  ): Promise<FieldsResult<{ data: PermissionV2Request[] }>> => {
+    const result = await request(
+      "GET",
+      `/api/session/${encodeURIComponent(parameters.sessionID)}/permission`,
+      undefined,
+      options?.signal,
+    );
+    if (!result.response.ok) return failedResult(result);
+    const data = responseItems(result.payload).flatMap((item) => {
+      const permission = mapV2Permission(item);
+      if (!permission) return [];
+      permissionSessionByRequestID.set(permission.id, permission.sessionID);
+      return [permission];
+    });
+    return successfulResult(result, { data });
+  };
+
+  const replySessionPermission = async (
+    parameters: V2PermissionReplyParameters,
+    options?: RequestOptions,
+  ): Promise<FieldsResult<void>> => {
+    const result = await request(
+      "POST",
+      `/api/session/${encodeURIComponent(parameters.sessionID)}/permission/${encodeURIComponent(parameters.requestID)}/reply`,
+      {
+        reply: parameters.reply ?? "once",
+        ...(parameters.message ? { message: parameters.message } : {}),
+      },
+      options?.signal,
+    );
+    if (!result.response.ok) return failedResult(result);
+    permissionSessionByRequestID.delete(parameters.requestID);
+    return successfulResult(result, undefined);
+  };
+
+  const listPermissions = async (
+    _parameters: DirectoryParameters = {},
+    options?: RequestOptions,
+  ): Promise<FieldsResult<PermissionRequest[]>> => {
+    const sessionsResult = await request("GET", "/api/session", undefined, options?.signal);
+    if (!sessionsResult.response.ok) return failedResult(sessionsResult);
+    const sessionIDs = responseItems(sessionsResult.payload).flatMap((item) => {
+      const sessionID = readString(item, "id") ?? readString(item, "sessionID");
+      return sessionID ? [sessionID] : [];
+    });
+    const permissions: PermissionRequest[] = [];
+    for (const sessionID of sessionIDs) {
+      const result = await listSessionPermissions({ sessionID }, options);
+      if (result.data === undefined) {
+        return { error: result.error, request: result.request, response: result.response };
+      }
+      permissions.push(...result.data.data.map(mapV2PermissionToLegacy));
+    }
+    return successfulResult(sessionsResult, permissions);
+  };
+
+  const replyPermission = async (
+    parameters: PermissionReplyParameters,
+    options?: RequestOptions,
+  ): Promise<FieldsResult<boolean>> => {
+    const sessionID = permissionSessionByRequestID.get(parameters.requestID);
+    if (!sessionID) {
+      return {
+        error: { name: "PermissionSessionUnknown", requestID: parameters.requestID },
+        request: new Request(`${baseUrl}/api/session/permission/${encodeURIComponent(parameters.requestID)}/reply`),
+        response: new Response(null, { status: 404 }),
+      };
+    }
+    const result = await replySessionPermission({
+      sessionID,
+      requestID: parameters.requestID,
+      reply: parameters.reply,
+      message: parameters.message,
+    }, options);
+    if (result.error !== undefined) {
+      return { error: result.error, request: result.request, response: result.response };
+    }
+    return { data: true, request: result.request, response: result.response };
+  };
+
+  const respondPermission = async (
+    parameters: PermissionRespondParameters,
+    options?: RequestOptions,
+  ): Promise<FieldsResult<boolean>> => {
+    const result = await replySessionPermission({
+      sessionID: parameters.sessionID,
+      requestID: parameters.permissionID,
+      reply: parameters.response,
+    }, options);
+    if (result.error !== undefined) {
+      return { error: result.error, request: result.request, response: result.response };
+    }
+    return { data: true, request: result.request, response: result.response };
   };
 
   const getSession = async (
@@ -749,14 +1011,34 @@ export function createClientV2(
         .filter((part) => part.type === "text" && typeof part.text === "string")
         .map((part) => typeof part.text === "string" ? part.text : "")
         .join("");
-      const promptResult = await request(
+      const promptPath = `/api/session/${encodeURIComponent(parameters.sessionID)}/prompt`;
+      const promptBody = { text };
+      const promptResult = request(
         "POST",
-        `/api/session/${encodeURIComponent(parameters.sessionID)}/prompt`,
-        { text },
+        promptPath,
+        promptBody,
         options?.signal,
       );
-      if (!promptResult.response.ok) return failedResult(promptResult);
-      return successfulResult(promptResult, {});
+      void promptResult.then(
+        (result) => {
+          if (result.response.ok) return;
+          emitInjectedEvent(sessionErrorEvent(parameters.sessionID, result.payload));
+        },
+        (error: unknown) => {
+          emitInjectedEvent(sessionErrorEvent(parameters.sessionID, error));
+        },
+      );
+      const headers = new Headers({ "Content-Type": "application/json" });
+      if (auth.token) headers.set("Authorization", `Bearer ${auth.token}`);
+      return successfulResult({
+        payload: null,
+        request: new Request(`${baseUrl}${promptPath}`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(promptBody),
+        }),
+        response: new Response(null, { status: 202 }),
+      }, {});
     },
     abort: async (
       parameters: SessionParameters,
@@ -864,7 +1146,9 @@ export function createClientV2(
       list: async (): Promise<FieldsResult<never[]>> => localResult(baseUrl, "/api/command", []),
     },
     permission: {
-      list: async (): Promise<FieldsResult<never[]>> => localResult(baseUrl, "/api/permission", []),
+      list: listPermissions,
+      reply: replyPermission,
+      respond: respondPermission,
     },
     question: {
       list: async (): Promise<FieldsResult<never[]>> => localResult(baseUrl, "/api/question", []),
@@ -872,8 +1156,8 @@ export function createClientV2(
     v2: {
       session: {
         permission: {
-          list: async (): Promise<FieldsResult<{ data: never[] }>> =>
-            localResult(baseUrl, "/api/session/permission", { data: [] }),
+          list: listSessionPermissions,
+          reply: replySessionPermission,
         },
       },
     },
@@ -900,7 +1184,15 @@ export function createClientV2(
           Object.assign(error, { status: response.status, response });
           throw error;
         }
-        return { stream: translateV2Events(response, options?.signal) };
+        const queue = createInjectedEventQueue();
+        const listener = (event: OpencodeEvent) => queue.push(event);
+        injectedEventListeners.add(listener);
+        return {
+          stream: mergeV2Events(response, options?.signal, queue, () => {
+            injectedEventListeners.delete(listener);
+            queue.close();
+          }),
+        };
       },
     },
   };
