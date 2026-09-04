@@ -39,3 +39,13 @@ Because the effective policy is a union of grants, apply `Restricted` to the def
 6. Save the policy, then have members reload, refresh their Cloud account, switch the active organization, or wait for the hourly desktop-config refresh.
 
 The desktop app explains blocked capabilities as organization-controlled. For example, a built-in extension disabled by policy is hidden from the normal catalog and can appear in hidden views with a `Disabled by organization` explanation, and the Cloud account page shows an `Organization policies active` notice.
+
+## Team access
+
+Open **Members → your team → Access** to choose **Locked** or **Custom** and save permissions. Owners and super-admins can change these controls; other administrators can review them.
+
+Locked blocks app customization, including adding tools and MCP servers, changing settings, adding providers and workspaces, using built-in extensions and OpenCode models, and opting into experimental updates. Members can still chat and use available connections. Existing installed tools are not removed, Cloud authoring still follows member roles, and this does not suspend accounts.
+
+Custom lets you block individual app capabilities. Switching to Locked and back preserves the Custom choices. A block applies even when the default policy or another team grants that capability. Allowing a capability does not override another restriction. Existing policies without explicit access limits retain their grant behavior.
+
+The desktop account page explains the resulting permissions under **What can I do?** The Library explains how to ask an administrator for an MCP server when local tool management is blocked. Updates arrive when the app refreshes, including on reload or its periodic configuration refresh.
