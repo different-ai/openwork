@@ -26,7 +26,7 @@ test("an administrator prepares, revises, and withdraws a coworker through Conne
     await user.type({ placeholder: "Helps plan campaigns and turn a brief into next steps." }, "Plans campaigns from an approved brief.");
     await user.type(mission, "Turn an approved campaign brief into a useful plan.");
     await user.type(instructions, "Ask about the audience before drafting.");
-    await user.see({ text: "Existing working copies are never overwritten." });
+    await user.see({ text: /Existing working copies are never overwritten\./ });
     await user.screenshot();
     await user.click("Save coworker");
     await user.see("Edit template", { timeoutMs: 60_000 });
