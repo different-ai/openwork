@@ -30,7 +30,8 @@ escalate any leak instead of rewriting history.
 
 ## Verification (every change)
 
-- Proof is `evals/specs/**/*.test.ts` with `test` from `@openwork/testkit`; app-driving tests use `.e2e.test.ts`.
+- Proof is a journey spec in `evals/specs/**` (`*.e2e.test.ts` drives the app/Den; `*.test.ts` hits a server or gateway boundary). Unit tests are not proof and never live in `evals/specs`; the boundary ratchet rejects new ones that import product source, read the repo, or spawn test runners.
+- Default is zero new test files: run the journey spec that covers the change; extend it for a gap; new file only for a new user journey.
 - Run `pnpm evals:e2e <slug>` or `pnpm evals:pr specs/<name>.test.ts`; report the printed placement and verdict.
 - `Passed` requires an observable assertion for every claim; skips are never passed.
 - Docs/comments, types-only, and inert agent config may skip runtime proof — say so.

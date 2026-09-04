@@ -547,6 +547,7 @@ async function bootDaytonaMocks(
       sandbox,
       port: definition.daytonaPort,
       allowUnauthenticatedMcp: definition.allowUnauthenticatedMcp,
+      appToolName: definition.appToolName,
     });
     const booted: BootedMock = await definition.connect(remote.url);
     handles[name] = booted.handle;
@@ -666,7 +667,16 @@ export async function server(options: ServerOptions): Promise<Den> {
     }
     const base = options.place.denBase();
     if (base.kind !== "daytona") throw new Error("Daytona place returned a local Den base.");
-    const preparedSandbox = process.env.OPENWORK_EVAL_DAYTONA_DEN_SANDBOX?.trim();
+    const denEnv = Object.fromEntries(
+      Object.entries(options.env ?? {}).flatMap(([key, value]) => (value === undefined ? [] : [[key, value]])),
+    );
+    const needsOwnDen = Object.keys(denEnv).length > 0;
+    // A prewarmed Den is already running with its own env, so a test that
+    // needs Den env gets a dedicated sandbox rather than a silently wrong Den.
+    const preparedSandbox = needsOwnDen ? undefined : process.env.OPENWORK_EVAL_DAYTONA_DEN_SANDBOX?.trim();
+    if (needsOwnDen && process.env.OPENWORK_EVAL_DAYTONA_DEN_SANDBOX?.trim()) {
+      console.error(`[openwork/testkit] server({ env: ${Object.keys(denEnv).join(", ")} }) provisions its own Den sandbox instead of the prewarmed one.`);
+    }
     const orgShape = options.org ?? {};
     const isolatePreparedTest = Boolean(preparedSandbox && options.provision !== false);
     const bootstrapAdmin = personDefaults("admin", orgShape.admin, runId);
@@ -674,6 +684,7 @@ export async function server(options: ServerOptions): Promise<Den> {
       ref: base.ref,
       reuse: preparedSandbox,
       bootstrapAdminEmail: bootstrapAdmin.email,
+      env: denEnv,
       log: (line) => console.error(`[openwork/testkit] ${line}`),
     });
     let bootedMocks: { handles: Record<string, MockHandle>; env: Record<string, string> } = { handles: {}, env: {} };

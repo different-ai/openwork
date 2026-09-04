@@ -1,5 +1,10 @@
+import { Suspense } from "react";
 import { PluginsScreen } from "../../_components/plugins-screen";
 
 export default function PluginsPage() {
-  return <PluginsScreen />;
+  return (
+    <Suspense fallback={null}>
+      <PluginsScreen />
+    </Suspense>
+  );
 }

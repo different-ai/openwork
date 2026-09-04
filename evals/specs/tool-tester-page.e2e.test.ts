@@ -14,29 +14,16 @@ test("an admin reaches the Tool Tester from Connectors and can test and govern a
   await user.click("Connect");
   await world.connector.authorizeRequestSince(connectedAt, { timeoutMs: 120_000 });
   await user.click({ testId: `mcp-connection-more-${world.connection.id}` });
-  // TODO(primitive): read a visible link destination by test id.
-  const testToolsHref = await probe.eval(`(connectionId) => document.querySelector('[data-testid="test-mcp-tools-' + connectionId + '"]')?.getAttribute("href") ?? ""`, {
-    args: [world.connection.id],
-  });
+  const testToolsHref = await world.testToolsHref();
   expect(testToolsHref).toContain(`/dashboard/tool-tester?connectionId=${encodeURIComponent(world.connection.id)}`);
   await user.notSee({ text: "View tools" });
-  // TODO(primitive): identify a nav item's containing sidebar group.
-  expect(await probe.eval(`(() => {
-    const sidebar = document.querySelector('[data-testid="den-org-sidebar"]');
-    const links = sidebar ? [...sidebar.querySelectorAll('a')] : [];
-    const toolTester = links.find((link) => link.textContent?.trim() === "Tool Tester");
-    const settings = links.find((link) => link.textContent?.trim() === "Settings");
-    return {
-      inManage: toolTester?.closest('[data-sidebar-section="manage"]') != null,
-      inSettings: settings?.parentElement?.contains(toolTester ?? null) ?? false,
-    };
-  })()`)).toEqual({ inManage: true, inSettings: false });
+  expect(await world.toolTesterSidebarPlacement()).toEqual({ inManage: true, inSettings: false });
   await user.click({ testId: `test-mcp-tools-${world.connection.id}` });
   // The sidebar also reads "Tool Tester", so wait on the route and the page description instead of the title.
-  const testerHref = await probe.eventually(() => probe.eval(`location.href`), {
+  const testerHref = await probe.eventually(() => world.location(), {
     timeoutMs: 60_000,
     label: "tool tester route",
-    until: (href) => typeof href === "string" && href.includes("/dashboard/tool-tester?connectionId="),
+    until: (href) => href.includes("/dashboard/tool-tester?connectionId="),
   });
   expect(testerHref).toContain(`connectionId=${encodeURIComponent(world.connection.id)}`);
   await user.see({ text: /Run any tool your connections expose/ }, { timeoutMs: 60_000 });
@@ -50,12 +37,7 @@ test("an admin reaches the Tool Tester from Connectors and can test and govern a
     await user.see("Form");
     await user.see("JSON");
     await user.type({ label: /^text\s*\*?$/i }, marker);
-    // TODO(primitive): assert selected and unselected radio state.
-    expect(await probe.eval(`(() => {
-      const editor = document.querySelector('[role="radiogroup"][aria-label="Arguments editor mode"]');
-      const radios = editor ? [...editor.querySelectorAll('[role="radio"]')] : [];
-      return Object.fromEntries(radios.map((radio) => [(radio.textContent ?? "").trim(), radio.getAttribute("aria-checked")]));
-    })()`)).toMatchObject({ Form: "true", JSON: "false" });
+    expect(await world.argumentsEditorModes()).toMatchObject({ Form: "true", JSON: "false" });
     const runStartedAt = new Date().toISOString();
     await user.click("Run tool");
     await user.see({ text: /Tool completed/ }, { timeoutMs: 120_000 });
@@ -66,15 +48,13 @@ test("an admin reaches the Tool Tester from Connectors and can test and govern a
     await user.see("Result");
     await user.see("Request");
     await user.see("Response");
-    // TODO(primitive): assert the selected result tab state.
-    expect(await probe.eval(`document.querySelector('[aria-label="Tool call inspection"] [role="tab"][aria-selected="true"]')?.textContent?.trim() ?? ""`)).toBe("Result");
+    expect(await world.selectedInspectionTab()).toBe("Result");
     const calls = await probe.toolCalls(world.connector, { name: "mock_echo", atLeast: 1, timeoutMs: 120_000, sinceIso: runStartedAt });
     expect(calls.some((call) => call.args.text === marker)).toBe(true);
     expect(await probe.toolCalls(world.connector, { name: "mock_batch", sinceIso: runStartedAt })).toHaveLength(0);
     await user.see({ text: /Kept in this browser for this session only.*never stores run results/i });
     await user.see({ label: "Tools enabled for your organization" });
-    // TODO(primitive): assert a visible switch's checked state.
-    expect(await probe.eval(`document.querySelector('[role="switch"][aria-label="Tools enabled for your organization"]')?.getAttribute("aria-checked")`)).toBe("true");
+    expect(await world.orgToolsSwitchChecked()).toBe("true");
     await user.looks([
       "The dedicated Tool Tester page shows a completed mock_echo run",
       "A clear trace reads OpenWork, HTTP 200, and Tool result",
@@ -88,14 +68,7 @@ test("an admin reaches the Tool Tester from Connectors and can test and govern a
     await user.click({ text: /mock_batch/ });
     await user.see({ text: /schema can't be shown as a form/i });
     await user.see({ role: "textbox", nth: 1 });
-    // TODO(primitive): assert disabled and selected radio state.
-    expect(await probe.eval(`(() => {
-      const editor = document.querySelector('[role="radiogroup"][aria-label="Arguments editor mode"]');
-      const radios = editor ? [...editor.querySelectorAll('[role="radio"]')] : [];
-      const form = radios.find((radio) => (radio.textContent ?? "").trim() === "Form");
-      const json = radios.find((radio) => (radio.textContent ?? "").trim() === "JSON");
-      return { formDisabled: form?.hasAttribute("disabled") ?? false, jsonChecked: json?.getAttribute("aria-checked") ?? "" };
-    })()`)).toEqual({ formDisabled: true, jsonChecked: "true" });
+    expect(await world.argumentsEditorFallback()).toEqual({ formDisabled: true, jsonChecked: "true" });
   });
 
   const capabilityName = `mcp:${world.connection.id}:mock_echo`;
@@ -111,8 +84,7 @@ test("an admin reaches the Tool Tester from Connectors and can test and govern a
     await user.click({ text: /mock_echo/ });
     await user.see({ text: /Disabled for your organization by Sarah/ });
     await user.see("Enable tool");
-    // TODO(primitive): assert a visible button's disabled state.
-    expect(await probe.eval(`[...document.querySelectorAll("button")].some((button) => button.textContent?.trim() === "Run tool" && button.disabled)`)).toBe(true);
+    expect(await world.runToolDisabled()).toBe(true);
     const after = await world.search();
     expect(after.some((entry) => entry.name === capabilityName)).toBe(false);
     const blockedAt = new Date().toISOString();

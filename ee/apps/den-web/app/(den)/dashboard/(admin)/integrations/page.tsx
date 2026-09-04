@@ -1,5 +1,5 @@
-import { IntegrationsScreen } from "../../_components/integrations-screen";
+import { redirect } from "next/navigation";
 
 export default function IntegrationsPage() {
-  return <IntegrationsScreen />;
+  redirect("/dashboard/plugins?view=sources");
 }

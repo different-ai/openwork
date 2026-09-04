@@ -32,6 +32,9 @@ const errorToolMode = (process.env.MOCK_ERROR_TOOL_MODE || "result").trim();
 const errorToolConnectUrl = (process.env.MOCK_ERROR_TOOL_CONNECT_URL || "https://connect.example.test/salesforce/start").trim();
 const errorToolProvider = (process.env.MOCK_ERROR_TOOL_PROVIDER || "salesforce").trim();
 const allowUnauthenticatedMcp = process.env.MOCK_ALLOW_UNAUTHENTICATED_MCP === "1";
+// An app-visible MCP App launch tool (`_meta.ui.resourceUri`), so dashboard
+// and MCP App specs can witness App catalogs without a real provider.
+const appToolName = (process.env.MOCK_APP_TOOL_NAME || "").trim();
 const syntheticTools = Array.from({ length: extraToolCount }, (_, index) => {
   const i = index + 1;
   return {
@@ -629,6 +632,23 @@ function mcpResult(message) {
             },
           },
           ...syntheticTools,
+          ...(appToolName ? [{
+            name: appToolName,
+            title: "Search issues (JQL)",
+            description: "Runs a JQL search and renders the results as an MCP App view.",
+            inputSchema: {
+              type: "object",
+              properties: { jql: { type: "string" } },
+              required: ["jql"],
+            },
+            annotations: {
+              readOnlyHint: true,
+              destructiveHint: false,
+            },
+            _meta: {
+              ui: { resourceUri: `ui://mock/${appToolName}/view.html` },
+            },
+          }] : []),
           ...(extraToolName ? [{
             name: extraToolName,
             title: extraToolTitle || extraToolName,

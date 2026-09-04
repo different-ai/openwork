@@ -10,7 +10,6 @@ import {
   type ReactNode,
 } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { isDesktopRuntime } from "@/app/utils";
 import type {
   OpenworkAffordanceDescriptor,
   OpenworkAffordanceEffects,
@@ -823,9 +822,7 @@ export function OpenworkRouteControlActions() {
           { id: "code", label: "Write and run code", description: "Generate, edit, and execute code with full tool access." },
           { id: "computer-use", label: "Computer use", description: "Control your computer with screenshots and mouse/keyboard actions." },
           { id: "skills", label: "Skills", description: "Install specialized skill packs for specific workflows." },
-          ...(isDesktopRuntime()
-            ? [{ id: "automations", label: "Automations", description: "Schedule recurring tasks and background agents." }]
-            : []),
+          { id: "automations", label: "Automations", description: "Schedule recurring tasks and background agents." },
           { id: "sharing", label: "Share sessions", description: "Share workspace sessions with collaborators via OpenWork Cloud." },
         ],
         hint: "Use settings.panel.open for settings such as AI providers, and route.extensions.skills to browse Library.",

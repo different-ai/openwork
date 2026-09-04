@@ -807,6 +807,7 @@ const MessageComponent = React.memo(
       return (
         <ErrorMessage
           error={getMessagesText([message]) || "Session failed"}
+          description={presentation?.description}
           resumePrompt={presentation?.recoveryPrompt}
           technicalDetails={presentation?.technicalDetails}
         />
@@ -899,6 +900,7 @@ ReconnectingMessage.displayName = "ReconnectingMessage"
 
 interface ErrorMessageProps {
   error: string | null
+  description?: string | null
   /** Set only for interrupted runs (aborted / provider timeout) that can resume. */
   resumePrompt?: string | null
   /** Error type, status, provider, code, response body — for bug reports and support. */
@@ -967,7 +969,7 @@ function SessionErrorTechnicalDetails({ details, tone }: { details: string; tone
   )
 }
 
-function ErrorMessage({ error, resumePrompt, technicalDetails }: ErrorMessageProps) {
+function ErrorMessage({ error, description, resumePrompt, technicalDetails }: ErrorMessageProps) {
   const { onResumeInterrupted, developerMode } = useMessageList()
   // Status codes, provider names, and response bodies are for developers,
   // admins, and support — not the plain-language card end users see. They
@@ -1007,7 +1009,12 @@ function ErrorMessage({ error, resumePrompt, technicalDetails }: ErrorMessagePro
         <div className="flex min-w-0 flex-1 flex-col gap-1.5 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm">
           <div className="flex flex-row items-start gap-2">
             <AlertTriangle aria-hidden="true" size={16} className="mt-0.5 shrink-0 text-destructive" />
-            <p className="whitespace-pre-wrap text-destructive">{error}</p>
+            <div className="flex flex-col gap-1">
+              <p className="whitespace-pre-wrap text-destructive">{error}</p>
+              {description && !resumePrompt ? (
+                <p className="text-sm text-destructive/80 whitespace-pre-wrap">{description}</p>
+              ) : null}
+            </div>
           </div>
           {details ? <SessionErrorTechnicalDetails details={details} tone="card" /> : null}
         </div>
@@ -1020,13 +1027,13 @@ interface RetryMessageProps {
   status: RetryStatus
 }
 
-function RetryActionButton(props: { link: string; label: string }) {
+function RetryActionButton(props: { label: string; onClick: () => void }) {
   return (
     <Button
       variant="outline"
       size="sm"
       className="h-7 border-amber-500/70 bg-amber-50 text-xs text-amber-950 hover:bg-amber-100"
-      onClick={() => void openDesktopUrl(props.link)}
+      onClick={props.onClick}
     >
       {props.label}
     </Button>
@@ -1034,6 +1041,7 @@ function RetryActionButton(props: { link: string; label: string }) {
 }
 
 const RetryMessage = React.memo(({ status }: RetryMessageProps) => {
+  const { dispatchAction } = useMessageList()
   const [seconds, setSeconds] = React.useState(() => retryDelaySeconds(status))
 
   React.useEffect(() => {
@@ -1053,6 +1061,7 @@ const RetryMessage = React.memo(({ status }: RetryMessageProps) => {
     ? `Retrying in ${seconds}s · attempt ${status.attempt}`
     : `Retrying · attempt ${status.attempt}`
   const action = status.action
+  const freeModelLimit = action?.reason === "free_tier_limit"
 
   return (
     <Message className="not-prose mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-0 md:px-10">
@@ -1061,16 +1070,29 @@ const RetryMessage = React.memo(({ status }: RetryMessageProps) => {
           <div className="flex items-start gap-2">
             <LoaderCircle size={16} className="mt-0.5 shrink-0 animate-spin text-amber-700" />
             <div className="min-w-0 space-y-1">
-              <p className="whitespace-pre-wrap text-sm font-medium text-amber-900">{status.message}</p>
+              <p className="whitespace-pre-wrap text-sm font-medium text-amber-900">
+                {freeModelLimit ? "The free starter model is busy right now" : status.message}
+              </p>
               <p className="text-xs text-amber-800">{info}</p>
             </div>
           </div>
           {action ? (
             <div className="ml-6 space-y-1 border-t border-amber-400/60 pt-2">
-              <p className="text-xs font-medium text-amber-950">{action.title}</p>
-              <p className="text-xs text-amber-900">{action.message}</p>
-              {action.link ? (
-                <RetryActionButton link={action.link} label={action.label} />
+              <p className="text-xs font-medium text-amber-950">
+                {freeModelLimit ? "Free model limit reached" : action.title}
+              </p>
+              <p className="text-xs text-amber-900">
+                {freeModelLimit
+                  ? "OpenWork will keep retrying. To keep working now, connect your own model provider."
+                  : action.message}
+              </p>
+              {freeModelLimit ? (
+                <RetryActionButton
+                  label="Connect a model provider"
+                  onClick={() => dispatchAction({ target: "settings", action: "open", section: "providers" })}
+                />
+              ) : action.link ? (
+                <RetryActionButton label={action.label} onClick={openDesktopUrl.bind(null, action.link)} />
               ) : null}
             </div>
           ) : null}

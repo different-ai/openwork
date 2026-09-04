@@ -72,6 +72,8 @@ async function provisionSpecEnv(options: {
       denWebUrl: den.webUrl,
       sandboxA: desktopA.sandbox,
       sandboxB: desktopB.sandbox,
+      engineCacheDirA: desktopA.engineCacheDir,
+      engineCacheDirB: desktopB.engineCacheDir,
       mockUrl: mock.url,
       ref: options.ref,
       created,

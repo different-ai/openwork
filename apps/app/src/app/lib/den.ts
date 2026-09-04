@@ -15,8 +15,10 @@ import type {
   AutomationRunReceipt,
   AutomationRunnerTokenResponse,
   CreateAutomation,
+  CreateCloudAutomation,
   UpdateAutomation,
 } from "@openwork/types/automations";
+import type { WorkflowDetail } from "@openwork/types/workflows";
 
 // Re-export the shared schema under the local alias so React consumers
 // (e.g. the cloud domain's desktop-config provider) can import it alongside
@@ -292,25 +294,6 @@ export type DenCloudStartupFailure = {
 export type DenCloudInstanceUpdateResult =
   | { ok: true; status: "update_requested" }
   | { ok: false; error: "already_current" | "flush_failed" };
-
-export type DenMemoryContext = {
-  id: string;
-  snippet: string;
-  citation: Record<string, unknown> | null;
-  origin: string | null;
-  createdAt: string;
-};
-
-export type DenMemory = {
-  id: string;
-  content: string;
-  tags: string[] | null;
-  source: string;
-  scope: string;
-  createdAt: string;
-  updatedAt: string;
-  contexts: DenMemoryContext[];
-};
 
 export type DenMcpToken = {
   token: string;
@@ -1950,45 +1933,6 @@ function getWorkers(payload: unknown): DenWorkerSummary[] {
   });
 }
 
-function getMemoryContexts(value: unknown): DenMemoryContext[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((entry) => {
-    if (!isRecord(entry) || typeof entry.id !== "string" || typeof entry.snippet !== "string") return [];
-    return [
-      {
-        id: entry.id,
-        snippet: entry.snippet,
-        citation: isRecord(entry.citation) ? entry.citation : null,
-        origin: typeof entry.origin === "string" ? entry.origin : null,
-        createdAt: typeof entry.createdAt === "string" ? entry.createdAt : "",
-      } satisfies DenMemoryContext,
-    ];
-  });
-}
-
-function getMemories(payload: unknown): DenMemory[] {
-  if (!isRecord(payload) || !Array.isArray(payload.memories)) {
-    return [];
-  }
-  return payload.memories.flatMap((entry) => {
-    if (!isRecord(entry) || typeof entry.id !== "string" || typeof entry.content !== "string") {
-      return [];
-    }
-    return [
-      {
-        id: entry.id,
-        content: entry.content,
-        tags: Array.isArray(entry.tags) ? entry.tags.filter((tag): tag is string => typeof tag === "string") : null,
-        source: typeof entry.source === "string" ? entry.source : "",
-        scope: typeof entry.scope === "string" ? entry.scope : "user",
-        createdAt: typeof entry.createdAt === "string" ? entry.createdAt : "",
-        updatedAt: typeof entry.updatedAt === "string" ? entry.updatedAt : "",
-        contexts: getMemoryContexts(entry.contexts),
-      } satisfies DenMemory,
-    ];
-  });
-}
-
 function getWorkerTokens(payload: unknown): DenWorkerTokens | null {
   if (!isRecord(payload) || !isRecord(payload.tokens)) {
     return null;
@@ -3140,29 +3084,6 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       return getWorkers(payload);
     },
 
-    async listMemory(orgId: string): Promise<DenMemory[]> {
-      const payload = await requestJson<unknown>(baseUrls, "/v1/memory", {
-        method: "GET",
-        token,
-        organizationId: orgId,
-      });
-      return getMemories(payload);
-    },
-
-    async deleteMemory(orgId: string, memoryId: string): Promise<void> {
-      const result = await requestJsonRaw<unknown>(baseUrls, `/v1/memory/${encodeURIComponent(memoryId)}`, {
-        method: "DELETE",
-        token,
-        organizationId: orgId,
-      });
-      // 404 means the memory is already gone (or not owned) — idempotent from the caller's view.
-      if (!result.ok && result.status !== 404) {
-        const payload = result.json;
-        const code = isRecord(payload) && typeof payload.error === "string" ? payload.error : "request_failed";
-        throw new DenApiError(result.status, code, getErrorMessage(payload, `Delete failed with ${result.status}.`));
-      }
-    },
-
     async mintMcpToken(orgId: string): Promise<DenMcpToken> {
       const payload = await requestJson<unknown>(baseUrls, "/v1/mcp/token", {
         method: "POST",
@@ -3335,6 +3256,26 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         body: input,
         automationModelAttentionCapable: true,
       });
+    },
+
+    /** Web creation surface: placement is fixed to OpenWork Cloud by the route. */
+    async createCloudAutomation(orgId: string, input: CreateCloudAutomation): Promise<AutomationDetail> {
+      return requestJson<AutomationDetail>(baseUrls, "/v1/cloud-automations", {
+        method: "POST",
+        token,
+        organizationId: orgId,
+        body: input,
+        automationModelAttentionCapable: true,
+      });
+    },
+
+    async getWorkflow(orgId: string, configObjectId: string): Promise<WorkflowDetail> {
+      const payload = await requestJson<{ script: WorkflowDetail }>(
+        baseUrls,
+        `/v1/workflows/${encodeURIComponent(configObjectId)}?maxAgeMs=86400000`,
+        { method: "GET", token, organizationId: orgId },
+      );
+      return payload.script;
     },
 
     async getAutomation(orgId: string, automationId: string): Promise<AutomationDetail> {

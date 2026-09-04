@@ -29,29 +29,34 @@ Only the current `owner` can transfer ownership. The target must be an active `s
 
 For cloud organization admins (`owner`, `super-admin`, and `admin`), the Den Web sidebar order is:
 
-- Dashboard
-- Your Connections, when enabled
-- Extensions
-  - Marketplace
-  - Sources
-  - Plugins
+- Work
+  - Dashboard
+  - My Library
+  - My Automations, when enabled
+  - OpenWork Web, when enabled
+- Manage
+  - Plugin Directory, with Plugins, Agents, Commands, Hooks, MCPs, and Sources tabs
   - Connectors
-- Models
-  - OpenWork Models
-  - LLM Providers
-- Members
-- Analytics
-- Settings
-  - General
-  - Diagnostics
-  - Brand appearance
-  - Desktop Policies
-  - Stripe
-  - API Keys
-  - SSO
-  - SCIM
+  - Dashboards, when enabled
+  - Models
+    - OpenWork Models, on hosted deployments only
+    - Bring your Own Keys
+  - Advanced, with Collections, Desktop policies, and Brand appearance tabs
+- Observability
+  - Workflow Runs, when enabled
+  - Analytics
+- Team
+  - Members
+  - Settings
+    - General
+    - Diagnostics
+    - Billing
+    - API Keys
+    - SSO
+    - SCIM
+    - Tool Tester, when connectors are enabled
 
-Plain members have member access only: Dashboard, plus Your Connections when that capability is enabled.
+Plain members have member access only: Dashboard, My Library, and My Automations / OpenWork Web when enabled.
 
 ## Role matrix
 

@@ -2717,7 +2717,7 @@ async function rollbackPluginMcpConnectionSetup(input: { context: PluginArchActo
 }
 
 export async function createPluginBundle(input: {
-  components?: { connection?: PluginMcpConnectionSetup; type: ConfigObjectRow["objectType"]; value: ConfigObjectInput }[]
+  components?: { connection?: PluginMcpConnectionSetup; connectionId?: string; type: ConfigObjectRow["objectType"]; value?: ConfigObjectInput }[]
   context: PluginArchActorContext
   description?: string | null
   marketplaceId?: MarketplaceId
@@ -2729,13 +2729,67 @@ export async function createPluginBundle(input: {
     throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can create org-wide plugins.")
   }
 
+  const components: Array<{
+    connection?: PluginMcpConnectionSetup
+    connectionBinding?: { connection: ExternalMcpConnectionRow; serverName: string }
+    type: ConfigObjectRow["objectType"]
+    value: ConfigObjectInput
+  }> = []
   for (const component of input.components ?? []) {
-    deriveProjection({ objectType: component.type, value: component.value })
-    if (!component.connection) continue
-    if (!isPluginArchOrgAdmin(input.context)) {
-      throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can configure plugin MCP connections.")
+    if (component.connectionId !== undefined) {
+      if (!isPluginArchOrgAdmin(input.context)) {
+        throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can bind plugin MCP servers to organization connections.")
+      }
+      if (component.type !== "mcp") {
+        throw new PluginArchRouteFailure(400, "invalid_request", "connectionId is only allowed on mcp components.")
+      }
+      if (component.connection) {
+        throw new PluginArchRouteFailure(400, "invalid_request", "Provide either connection or connectionId, not both.")
+      }
+      let connectionId: ExternalMcpConnectionRow["id"]
+      try {
+        connectionId = normalizeDenTypeId("externalMcpConnection", component.connectionId)
+      } catch {
+        throw new PluginArchRouteFailure(404, "mcp_connection_not_found", "That connector was not found in this organization.")
+      }
+      const connection = await getExternalMcpConnection({
+        connectionId,
+        organizationId: input.context.organizationContext.organization.id,
+      })
+      if (!connection || connection.kind !== "external_mcp") {
+        throw new PluginArchRouteFailure(404, "mcp_connection_not_found", "That connector was not found in this organization.")
+      }
+      const value: ConfigObjectInput = {
+        normalizedPayloadJson: connectionBackedMcpPayload({
+          authType: connection.authType,
+          connectionId: connection.id,
+          ownedByPlugin: false,
+          server: { name: connection.name, url: connection.url },
+        }),
+        metadata: {
+          name: component.value?.metadata?.name ?? connection.name,
+          description: component.value?.metadata?.description,
+        },
+      }
+      deriveProjection({ objectType: component.type, value })
+      components.push({
+        connectionBinding: { connection, serverName: slugifyPluginMcpName(connection.name) },
+        type: component.type,
+        value,
+      })
+      continue
     }
-    validatePluginMcpRequirementAuth(pluginMcpConnectionSetupInput(component.connection))
+    if (!component.value) {
+      throw new PluginArchRouteFailure(400, "invalid_request", "input is required unless connectionId is provided.")
+    }
+    deriveProjection({ objectType: component.type, value: component.value })
+    if (component.connection) {
+      if (!isPluginArchOrgAdmin(input.context)) {
+        throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can configure plugin MCP connections.")
+      }
+      validatePluginMcpRequirementAuth(pluginMcpConnectionSetupInput(component.connection))
+    }
+    components.push({ connection: component.connection, type: component.type, value: component.value })
   }
 
   if (input.marketplaceId) {
@@ -2746,7 +2800,8 @@ export async function createPluginBundle(input: {
   const plugin = await createPlugin({ context: input.context, description: input.description, name: input.name, sourceRepositoryUrl: input.sourceRepositoryUrl })
 
   const pendingConnections: Array<{ configObjectId: ConfigObjectId; connection: PluginMcpConnectionSetup; serverNames: string[] }> = []
-  for (const component of input.components ?? []) {
+  const pendingConnectionBindings: Array<{ configObjectId: ConfigObjectId; connection: ExternalMcpConnectionRow; serverName: string }> = []
+  for (const component of components) {
     const configObject = await createConfigObject({
       context: input.context,
       objectType: component.type,
@@ -2769,6 +2824,9 @@ export async function createPluginBundle(input: {
         connection: component.connection,
         serverNames: marketplaceMcpServerEntries(parseConfigObjectInputSpec(component.value), configObject.title).map((entry) => entry.name),
       })
+    }
+    if (component.connectionBinding) {
+      pendingConnectionBindings.push({ configObjectId: configObject.id, ...component.connectionBinding })
     }
   }
 
@@ -2798,6 +2856,19 @@ export async function createPluginBundle(input: {
           serverName,
         })
       }
+    }
+    for (const pending of pendingConnectionBindings) {
+      const binding = await upsertPluginMcpRequirementBinding({
+        configObjectId: pending.configObjectId,
+        createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
+        externalMcpConnectionId: pending.connection.id,
+        organizationId: input.context.organizationContext.organization.id,
+        pluginId: plugin.id,
+        serverName: pending.serverName,
+        requiredAuthType: pending.connection.authType,
+        connectionOwnedByPlugin: false,
+      })
+      await syncPluginMcpRequirementBindingAccess(binding)
     }
   } catch (error) {
     await rollbackPluginMcpConnectionSetup({ context: input.context, pluginId: plugin.id })
@@ -5423,11 +5494,11 @@ async function markImportedExternalMcpConnectionConnected(connectionId: typeof E
     .where(eq(ExternalMcpConnectionTable.id, connectionId))
 }
 
-function importedConnectionBackedMcpPayload(input: {
+function connectionBackedMcpPayload(input: {
   authType: PluginMcpAuthType
   connectionId: string
-  ownedByImportedPlugin: boolean
-  server: GithubPluginMcpImportServer
+  ownedByPlugin: boolean
+  server: { name: string; url: string | null }
 }) {
   const serverName = slugifyPluginMcpName(input.server.name)
   return {
@@ -5437,16 +5508,30 @@ function importedConnectionBackedMcpPayload(input: {
         url: input.server.url,
         openworkManaged: "den_external_mcp",
         externalMcpConnectionId: input.connectionId,
-        externalMcpConnectionOwnedByPlugin: input.ownedByImportedPlugin,
+        externalMcpConnectionOwnedByPlugin: input.ownedByPlugin,
         requiredAuthType: input.authType,
         ...(input.authType === "oauth" ? { oauth: true } : {}),
       },
     },
     openworkManaged: "den_external_mcp",
     externalMcpConnectionId: input.connectionId,
-    externalMcpConnectionOwnedByPlugin: input.ownedByImportedPlugin,
+    externalMcpConnectionOwnedByPlugin: input.ownedByPlugin,
     requiredAuthType: input.authType,
   }
+}
+
+function importedConnectionBackedMcpPayload(input: {
+  authType: PluginMcpAuthType
+  connectionId: string
+  ownedByImportedPlugin: boolean
+  server: GithubPluginMcpImportServer
+}) {
+  return connectionBackedMcpPayload({
+    authType: input.authType,
+    connectionId: input.connectionId,
+    ownedByPlugin: input.ownedByImportedPlugin,
+    server: input.server,
+  })
 }
 
 function importedPluginName(plan: GithubPluginMcpImportPlan) {

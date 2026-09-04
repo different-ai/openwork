@@ -990,12 +990,14 @@ async function requiredByForConnections(input: {
       grouped.set(row.connectionId, plugins)
     }
     plugins.set(row.pluginId, row.pluginName)
-    let identityPlugins = identityManaged.get(row.connectionId)
-    if (!identityPlugins) {
-      identityPlugins = new Map()
-      identityManaged.set(row.connectionId, identityPlugins)
+    if (row.connectionOwnedByPlugin) {
+      let identityPlugins = identityManaged.get(row.connectionId)
+      if (!identityPlugins) {
+        identityPlugins = new Map()
+        identityManaged.set(row.connectionId, identityPlugins)
+      }
+      identityPlugins.set(row.pluginId, row.pluginName)
     }
-    identityPlugins.set(row.pluginId, row.pluginName)
     if (row.requiredAuthType) {
       const values = requiredAuthTypes.get(row.connectionId) ?? new Set()
       values.add(row.requiredAuthType)

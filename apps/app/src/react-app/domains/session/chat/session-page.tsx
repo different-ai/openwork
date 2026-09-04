@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import type { CSSProperties } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
 import { ArrowLeft, Cloud, FileText, Globe, Mic2, MoreHorizontal, PanelRight, TextSearch, X, Zap } from "lucide-react";
 
@@ -70,6 +70,11 @@ import { useShellConfig } from "../../../shell/shell-config";
 import { type SidePanelItem, useUiStateStore } from "../../../shell/ui-state-store";
 import type { SessionNumberShortcutsState } from "../../../shell/session-number-shortcuts";
 import { useBootOverlayVisible } from "../../../shell/boot-state";
+import { CommandPaletteSearchBar } from "../../../shell/command-palette-search-bar";
+import {
+  OPEN_RENAME_SESSION_EVENT,
+  renameSessionIdFromEvent,
+} from "../../../shell/session-actions-bus";
 
 import { isElectronRuntime } from "../../../../app/utils";
 import { isCollectibleArtifactTarget, isLocalhostBrowserTarget, isOpenableFileTarget, type OpenTarget } from "../artifacts/open-target";
@@ -153,6 +158,7 @@ export type SessionPageSidebarProps = {
   onOpenSession: (workspaceId: string, sessionId: string) => void;
   onPrefetchSession?: (workspaceId: string, sessionId: string) => void;
   onCreateTaskInWorkspace: (workspaceId: string, groupId?: string) => void;
+  onCreateSplitTaskInWorkspace: (workspaceId: string) => void;
   onCreateTaskWithPrompt?: (workspaceId: string, prompt: string, attachments?: ComposerAttachment[]) => void;
   onOpenRenameWorkspace: (workspaceId: string) => void;
   onShareWorkspace: (workspaceId: string) => void;
@@ -1281,6 +1287,19 @@ export function SessionPage(props: SessionPageProps) {
     setRenameOpen(true);
   };
 
+  const handleRenameSessionRequest = useEffectEvent((event: Event) => {
+    if (!props.onRenameSession) return;
+    const sessionId = renameSessionIdFromEvent(event);
+    if (sessionId) openRenameModal(sessionId);
+  });
+
+  useEffect(() => {
+    if (!props.onRenameSession) return;
+    const handler = (event: Event) => handleRenameSessionRequest(event);
+    window.addEventListener(OPEN_RENAME_SESSION_EVENT, handler);
+    return () => window.removeEventListener(OPEN_RENAME_SESSION_EVENT, handler);
+  }, [props.onRenameSession]);
+
   const submitRename = async () => {
     const sessionId = sessionActionId;
     const nextTitle = renameTitle.trim();
@@ -1359,6 +1378,7 @@ export function SessionPage(props: SessionPageProps) {
           onOpenSession={openSessionTab}
           onPrefetchSession={props.sidebar.onPrefetchSession}
           onCreateTaskInWorkspace={props.sidebar.onCreateTaskInWorkspace}
+          onCreateSplitTaskInWorkspace={props.sidebar.onCreateSplitTaskInWorkspace}
           onOpenRenameSession={props.onRenameSession ? openRenameModal : undefined}
           onOpenDeleteSession={props.onDeleteSession ? (sessionId) => {
             setSessionActionId(sessionId);
@@ -1481,7 +1501,13 @@ export function SessionPage(props: SessionPageProps) {
               ) : null}
             </div>
 
-            <div className="flex items-center gap-1.5 text-gray-10 mac:titlebar-no-drag">
+            {!props.primarySlot ? (
+              <div className="flex shrink-0 justify-end px-1 md:min-w-0 md:flex-1 md:justify-center md:px-4">
+                <CommandPaletteSearchBar />
+              </div>
+            ) : null}
+
+            <div className="flex min-w-0 items-center gap-1.5 text-gray-10 mac:titlebar-no-drag">
               {!props.primarySlot && findButtonSessionId && !hasMainContentTakeover ? (
                 <Tooltip>
                   <TooltipTrigger
