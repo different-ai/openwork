@@ -403,13 +403,18 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   expect(novaRoster).toContain("- Editor (`editor`) — Writing and content — I turn rough ideas into clear drafts");
   expect(resultText(await invokeCoworker(app, "coworkers.files.read", { slug: "editor", path: "team/roster.md" }))).toContain("- Nova (`nova`) — Research and synthesis");
   const agents = resultText(await invokeCoworker(app, "coworkers.files.read", { slug: "nova", path: "AGENTS.md" }));
-  expect(agents).toContain("<!-- open-coworker-contract: 5 -->");
+  expect(agents).toContain("<!-- open-coworker-contract: 6 -->");
   expect(agents).toContain("## My team");
+  // The shape rule is one section with an example per shape; the roster carries facts only, the rule is not said twice.
+  expect(agents).toContain("### Which shape an answer takes");
+  expect(agents).toContain("**Work on a clock.**");
+  expect(agents).toContain("**A goal that outlives one reply.**");
+  expect(novaRoster).not.toContain("coworker_team_refer");
   expect(resultText(await invokeCoworker(app, "coworkers.files.read", { slug: "nova", path: "memory/working.md" }))).toMatch(/- Joined the team on [A-Z][a-z]{2} \d{1,2} to help with research and writing\./);
   expect(JSON.parse(resultText(await invokeCoworker(app, "coworkers.files.read", { slug: "nova", path: "opencode.json" }))).instructions).toContain("team/roster.md");
   evidence.recordAssertionEvidence(
     "Onboarding proposes a team from what the person picks and creates it in one step",
-    "After Use this Mac, the six intents appeared with Continue disabled until one was picked; research and writing proposed Scout and Editor as live cards with no select on screen; Scout was renamed Nova in place; Create my team made both coworkers, opened Nova's empty conversation with its composer, wrote each one's team description naming the other, a contract at version 5 with the team section, and a first memory line saying when it joined and what for.",
+    "After Use this Mac, the six intents appeared with Continue disabled until one was picked; research and writing proposed Scout and Editor as live cards with no select on screen; Scout was renamed Nova in place; Create my team made both coworkers, opened Nova's empty conversation with its composer, wrote each one's team description naming the other (facts only, no repeated rule), a contract at version 6 with the team section and the one shape rule with an example per shape, and a first memory line saying when it joined and what for.",
     true,
   );
 

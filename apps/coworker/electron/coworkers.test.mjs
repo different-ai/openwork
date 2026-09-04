@@ -130,13 +130,35 @@ test("the coworker contract says how to talk: short replies, depth in a document
   assert.match(agents, /about five/);
   assert.match(agents, /never archive\s+on my own; the person does that/);
   assert.match(agents, /ask before rewriting it/);
-  // Three before/after pairs: research, a plan, and a quick question that needs no document.
-  assert.equal(agents.match(/^Before: /gm)?.length, 3);
-  assert.equal(agents.match(/^After: /gm)?.length, 3);
+  // Five before/after pairs: research, a plan, a quick question that needs no document, work on a clock, and a goal for a Worker.
+  assert.equal(agents.match(/^Before: /gm)?.length, 5);
+  assert.equal(agents.match(/^After: /gm)?.length, 5);
   assert.match(agents, /\*\*Research question\.\*\*/);
   assert.match(agents, /\*\*Plan request\.\*\*/);
   assert.match(agents, /\*\*Quick factual question\.\*\*/);
+  assert.match(agents, /\*\*Work on a clock\.\*\*/);
+  assert.match(agents, /\*\*A goal that outlives one reply\.\*\*/);
   assert.match(agents, /documents\/index\.md/);
+});
+
+test("the coworker contract decides the shape of an answer once: reply, document, assignment, or Worker, with a tie-break and one example each", () => {
+  const agents = agentsTemplate({ name: "Nova" });
+  const shapes = agents.slice(agents.indexOf("### Which shape an answer takes"), agents.indexOf("- When the person asks for something substantial"));
+  assert.match(shapes, /\*\*A reply\*\*/);
+  assert.match(shapes, /\*\*A document beside the reply\*\*/);
+  assert.match(shapes, /\*\*An assignment\*\* — the person named a schedule/);
+  assert.match(shapes, /\*\*A Worker\*\* — one goal with an end that outlives this reply and is not on a\s+clock/);
+  assert.match(shapes, /Work on a clock is always an assignment, never a\s+Worker/);
+  assert.match(shapes, /a schedule wins over a Worker, and a document beside a\s+short reply wins over a long reply/);
+  // The four rules agree with each other: the Workers and Scheduling sections repeat the boundary, not a different one.
+  assert.match(agents, /## Workers[\s\S]*not on a clock[\s\S]*ten when I say nothing[\s\S]*not for a check that should repeat\s+on a clock/);
+  assert.match(agents, /## Scheduling[\s\S]*recurring or timed work/);
+  // Each shape has one example the model can pattern on.
+  assert.match(agents, /\*\*Work on a clock\.\*\* "Every weekday at 9 remind me to move the car\."[\s\S]*`coworker_assignment_create` "Move the car"/);
+  assert.match(agents, /\*\*A goal that outlives one reply\.\*\*[\s\S]*`worker_spawn` "Ticket themes"/);
+  assert.match(agents, /\*\*Quick factual question\.\*\*[\s\S]*Before: a document titled "Vendor call"/);
+  // The contract is versioned so every existing coworker picks the rule up on its next launch.
+  assert.equal(AGENTS_CONTRACT_VERSION, 6);
 });
 
 test("the coworker contract says how to work with the team: refer before doing a teammate's job, suggest sparingly, never create", () => {
