@@ -178,7 +178,7 @@ for (const code of ["ENOSPC", "EDQUOT"]) {
         OPENWORK_SERVER_LOG_FILE: logFile,
         OPENWORK_TEST_STDOUT_ERROR: code,
         OPENWORK_TEST_STDOUT_MODE: mode,
-      }, root, "storage-fault-test-token", join(repoRoot, "evals/packages/labs/src/fixtures/stdout-storage-fault.ts"));
+      }, root, "storage-fault-test-token", join(repoRoot, "evals/packages/labs/src/fixtures/stdout-storage-fault.mjs"));
       try {
         const port = await eventually(() => listeningPort(server.output()), { within: 60_000, intervalMs: 250 });
         const url = `http://127.0.0.1:${port}/health`;
