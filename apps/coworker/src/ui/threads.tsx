@@ -2018,7 +2018,7 @@ function ThreadView({
           working={composerWorking}
           onStop={() => void stop()}
           offerStartingPoints={freshDiscussion}
-              coworkerName={coworker.name}
+          coworkerName={coworker.name}
           summary={summary}
           onOpenSummary={onOpenSummary}
           effortStop={coworker.effortPreference}
