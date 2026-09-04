@@ -601,8 +601,11 @@ Verified against the bundled engine (OpenCode 1.18.18) before building:
   installer after the files are on disk: it stalls for as long as its caller
   waits (20 s in the warm-up), and only an engine restart gets past it. Open
   Coworker seeds both directories with the same pinned package before the
-  engine starts (`electron/engine-sdk.mjs`: `bun` or `npm` from PATH or the
-  usual install locations, once per launch, bounded, best effort), so the
+  engine starts (`electron/engine-sdk.mjs`: `npm`, else `bun`, from PATH or
+  the usual install locations, once per launch, bounded, best effort; the
+  engine's own install finishes at once over an npm-written directory but
+  stalls over a bun-written one, so any `bun.lock` is removed after seeding),
+  so the
   first read answers in about half a second and the restart never happens; a
   profile that already has the SDK is untouched. The warm-up itself reads
   `GET /config/providers`, not the full provider list.

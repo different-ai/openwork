@@ -15,7 +15,7 @@
  */
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -72,9 +72,16 @@ function candidatePaths(name, env, platform) {
   return [...fromPath, ...usual];
 }
 
-/** `bun` first (what the engine itself uses), then `npm`; null when neither is on this Mac. */
+/**
+ * `npm` first, then `bun`; null when neither is on this Mac. The order matters:
+ * the engine runs its own `bun install` over the seeded directory on its first
+ * request, and that install finishes at once over an npm-written directory but
+ * stalls over a bun-written one (its `bun.lock`) — the very stall this seeding
+ * is there to avoid. Seeding with bun is kept as the fallback with its lockfile
+ * removed, which is what made the difference in testing.
+ */
 export function findInstaller({ env = process.env, platform = process.platform, fileExists = existsSync } = {}) {
-  for (const name of ["bun", "npm"]) {
+  for (const name of ["npm", "bun"]) {
     const binary = platform === "win32" ? `${name}.cmd` : name;
     const found = candidatePaths(binary, env, platform).find((candidate) => fileExists(candidate));
     if (found) return { name, path: found };
@@ -138,6 +145,9 @@ export async function prepareEngineSdk({
       const dependencies = manifest.dependencies && typeof manifest.dependencies === "object" ? manifest.dependencies : {};
       await writeFile(manifestPath, `${JSON.stringify({ ...manifest, dependencies: { ...dependencies, [PLUGIN_PACKAGE]: version } }, null, 2)}\n`, "utf8");
       await install(installer, directory, env, timeoutMs);
+      // The engine's own install over a `bun.lock` is the stall this is meant to avoid; leave none behind.
+      await rm(path.join(directory, "bun.lock"), { force: true });
+      await rm(path.join(directory, "bun.lockb"), { force: true });
       results.push({ directory, outcome: (await sdkPresent(directory, version)) ? "seeded" : "skipped", reason: "" });
     } catch (error) {
       results.push({ directory, outcome: "skipped", reason: error instanceof Error ? error.message : String(error) });
