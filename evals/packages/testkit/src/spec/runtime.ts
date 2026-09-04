@@ -466,6 +466,10 @@ export class SeedChannel implements Seed {
       });
       if (options.signedInAs !== undefined) {
         const session = sessionFromWebOptions(options);
+        // The token lives in Den Web's origin storage, so the tab must have
+        // finished loading a Den Web document before it is written; the surface
+        // can attach while Chrome is still on its opaque-origin start page.
+        await navigate(web.client, options.den.ref.webUrl);
         await callFunctionOnSurface(web, `(token) => {
           localStorage.setItem("openwork:web:auth-token", token);
           return true;
