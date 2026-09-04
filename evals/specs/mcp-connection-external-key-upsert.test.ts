@@ -293,6 +293,7 @@ test.skipIf(!mysqlOpen || !redisOpen)("an API-key client reapplies and changes a
     const direct = await request(`/v1/${entry.resource}/${entry.original.id}`);
     expect(direct.response.status, direct.text).toBe(200);
     expect(direct.text).not.toContain(providerSecret);
+    expect(item(requireRecord(direct.body, "direct read"), entry.field).id).toBe(entry.original.id);
   }
   const lists = [
     ["/v1/org", "teams", "name", "Platform"],
@@ -363,14 +364,21 @@ test.skipIf(!mysqlOpen || !redisOpen)("an API-key client reapplies and changes a
     const race = await Promise.all([request(concurrentPath, "PUT", raceBody), request(concurrentPath, "PUT", raceBody)]);
     // Team name checks can see the winning row before the insert is attempted.
     for (const result of race) expect([200, 201, 409]).toContain(result.response.status);
+    const created = race.filter((result) => result.response.status === 201);
+    expect(created).toHaveLength(1);
+    const winnerId = item(requireRecord(created[0].body, "race winner"), entry.field).id;
+    for (const result of race.filter((result) => result.response.ok)) {
+      expect(item(requireRecord(result.body, "successful race response"), entry.field).id).toBe(winnerId);
+    }
     const recovered = await request(concurrentPath, "PUT", raceBody);
     expect(recovered.response.status, recovered.text).toBe(200);
+    expect(item(requireRecord(recovered.body, "recovered"), entry.field).id).toBe(winnerId);
     const raceRead = await request(concurrentPath);
-    expect(item(requireRecord(raceRead.body, "race"), entry.field).id).toBe(item(requireRecord(recovered.body, "recovered"), entry.field).id);
+    expect(item(requireRecord(raceRead.body, "race"), entry.field).id).toBe(winnerId);
     const removeRace = await request(concurrentPath, "DELETE");
     expect(removeRace.response.status, removeRace.text).toBe(200);
   }
-  evidence.recordAssertionEvidence("Concurrent first applies recover without a second identity", "Two concurrent creates per resource completed with success or conflict; a retry updated the persisted identity and keyed reads returned that same ID.", true);
+  evidence.recordAssertionEvidence("Concurrent first applies recover without a second identity", "Each concurrent race produced exactly one 201 creator; all successful responses, the later update, and the keyed read returned that creator's ID.", true);
 
   for (const entry of resources) {
     const legacyBody = { ...entry.input, name: `Legacy ${entry.resource}`, policyName: "Legacy desktop" };
