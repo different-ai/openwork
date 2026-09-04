@@ -232,28 +232,7 @@ export async function newSplitPrimary(seed: Seed) {
       locationHash: window.location.hash,
     };
   })()`);
-  const openSessionMenu = async (sessionId: string, workspaceId: string): Promise<boolean> => {
-    const rowSelector = `[data-sidebar-session-id="${sessionId}"][data-sidebar-session-workspace-id="${workspaceId}"]`;
-    const tabSelector = `[data-session-tab-id="${sessionId}"]`;
-    return await evalIn(app, `(() => {
-      const row = document.querySelector(${JSON.stringify(rowSelector)});
-      if (!(row instanceof HTMLElement)) return false;
-      row.scrollIntoView({ block: "center" });
-      const target = row.querySelector(${JSON.stringify(tabSelector)}) ?? row;
-      if (!(target instanceof HTMLElement)) return false;
-      const rect = target.getBoundingClientRect();
-      target.dispatchEvent(new MouseEvent("contextmenu", {
-        bubbles: true,
-        cancelable: true,
-        button: 2,
-        buttons: 2,
-        clientX: rect.left + Math.min(24, Math.max(1, rect.width / 2)),
-        clientY: rect.top + Math.min(12, Math.max(1, rect.height / 2)),
-      }));
-      return true;
-    })()`) === true;
-  };
-  return { app, workspace, session, splitFacts, openSessionMenu };
+  return { app, workspace, session, splitFacts };
 }
 
 export async function shimmerChat(seed: Seed) {

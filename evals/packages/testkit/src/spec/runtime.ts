@@ -596,6 +596,16 @@ export class UserChannel implements User {
     return this.#click(target, 1, "click", options);
   }
 
+  rightClick(target: Target, options: ClickOptions = {}): Promise<void> {
+    const surface = requireSurface(this.#surface);
+    const hitTestDetail = options.hitTest === false ? ", hitTest=false" : "";
+    return this.#runtime.call("user", "rightClick", `rightClick(${targetDetail(target)}${hitTestDetail})`, surface, async () => {
+      if (this.#runtime.adapters.user?.click) return this.#runtime.adapters.user.click(surface, target, 1);
+      const found = await waitForLocated(surface, target, { mustHitTest: options.hitTest !== false });
+      await clickAt(surface, found.center, { button: "right" });
+    });
+  }
+
   dblclick(target: Target): Promise<void> {
     return this.#click(target, 2, "dblclick");
   }

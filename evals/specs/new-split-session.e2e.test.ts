@@ -22,6 +22,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function regexEscape(value: string): string {
+  return value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+}
+
 function parseSplitFacts(value: unknown): SplitFacts {
   if (!isRecord(value)) throw new Error(`Invalid split facts: ${JSON.stringify(value)}`);
   const text = (key: string) => typeof value[key] === "string" ? value[key] : "";
@@ -59,10 +63,11 @@ test("new split creates fresh same-workspace secondary sessions without moving t
   const beforeIds = before.map((session) => session.sessionId);
 
   await step("New split in the session context menu opens a fresh secondary", async () => {
-    const opened = await world.openSessionMenu(primarySessionId, workspaceId);
-    expect(opened).toBe(true);
+    await user.rightClick({ role: "button", label: new RegExp(`^${regexEscape(world.session.title)}(?:,| —|$)`) });
     await user.see({ role: "menuitem", label: "New split" });
     await user.click({ role: "menuitem", label: "New split" });
+    await user.see({ text: "Split view" });
+    await user.see({ text: "New session" });
   });
 
   const { firstFacts, afterContextMenu } = await step("the context menu creates one same-workspace split session", async () => {
@@ -116,6 +121,8 @@ test("new split creates fresh same-workspace secondary sessions without moving t
     await user.type(paletteInput, "new split", { replace: true });
     await user.see({ role: "option", label: /^New split/ });
     await user.press("Enter");
+    await user.see({ text: "Split view" });
+    await user.see({ text: "New session" });
   });
 
   await step("the palette creates one more session while preserving the primary route", async () => {
