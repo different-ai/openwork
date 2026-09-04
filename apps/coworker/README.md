@@ -403,15 +403,28 @@ line, Activity's Now card, and the journeys read the same value.
   model when the app itself had picked the failing one. A retry the engine
   pushes hours away (the free tier's daily usage) is a failure with the
   provider's words, not endless Retrying.
+- **The free model's shared limit** is named as such, never as a hiccup and
+  never in the engine's own words. The engine marks that retry with its reason
+  (`free_tier_limit`, carried by `@openwork/headless-threads` as
+  `status.reason`) and its terminal error with the provider's type
+  (`FreeUsageLimitError`, carried as `error.providerError`); the app reads
+  either and says "The free model is busy. Trying again in 6 s…" with *Stop*
+  and *Connect an AI provider* inline, or, once the engine gives up, "The free
+  model is busy right now." with "Too many people are using the free model at
+  once. Wait a few minutes and try again, or connect your own AI provider so
+  Nova can keep working." The engine's subscription copy stays behind
+  *Technical details*. The app never runs its own 2/6/15 s attempts on it.
 - **A failure** is one message on the coworker's side at the bubble's width: a
   headline in its voice ("Nova couldn't reach the AI model.", "Nova's AI model
   cannot use the tools enabled for this coworker."), one line of explanation,
   then lettered choices — `A Use <model>` when another connected model can take
   over, else `A Retry`; `B Choose AI model`; and `C Continue with OpenWork`
   (signed out) or `C Refresh providers` (signed in) when the model is the
-  likely cause. Never more than three. An amber dot says it needs you; the raw
-  text waits behind a closed *Technical details*. When the retry replies the
-  bubble goes and, if the model changed, one line stays: "Retried with Claude".
+  likely cause, or `C Connect an AI provider` (OpenWork › AI models) when the
+  free model's limit is. Never more than three. An amber dot says it needs you;
+  the raw text waits behind a closed *Technical details*. When the retry
+  replies the bubble goes and, if the model changed, one line stays: "Retried
+  with Claude".
 - **Stopped.** The round send control becomes a stop control while a reply runs
   and the field is empty; the live row's *Stop* and the header's *Stop* do the
   same. Stopping leaves one quiet line — "Stopped." · *Retry* — and Retry runs

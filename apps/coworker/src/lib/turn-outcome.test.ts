@@ -3,10 +3,13 @@ import { test } from "node:test";
 import {
   NO_REPLY,
   WAIT_BUDGET_MS,
+  choiceNavigates,
   cutOffLine,
   deriveTurnOutcome,
   failureChoices,
   retryLine,
+  retrySummary,
+  type TurnChoiceId,
   type TurnFacts,
 } from "./turn-outcome.ts";
 
@@ -66,30 +69,73 @@ test("a reply that landed is replied", () => {
 });
 
 test("the engine's own retry is trying again, live, with the count in the line", () => {
-  const outcome = deriveTurnOutcome(facts({ engine: { type: "retry", attempt: 2, message: "429 rate limited", next: NOW + 5_400 } }));
+  const outcome = deriveTurnOutcome(facts({ engine: { type: "retry", attempt: 2, message: "429 rate limited", next: NOW + 5_400, reason: null } }));
   assert.equal(outcome?.kind, "retrying");
   assert.equal(outcome?.label, "Retrying");
   assert.equal(outcome?.tone, "amber");
   assert.equal(outcome?.line, "Couldn't reach the AI model. Trying again in 6 s…");
-  assert.deepEqual(outcome?.retry, { attempt: 2, nextAt: NOW + 5_400, by: "engine" });
+  assert.deepEqual(outcome?.retry, { attempt: 2, nextAt: NOW + 5_400, by: "engine", reason: null });
   assert.deepEqual(outcome?.choices.map((choice) => choice.id), ["stop"]);
   assert.equal(retryLine(NOW + 200, NOW), "Couldn't reach the AI model. Trying again…");
 });
 
 test("a retry the engine pushed hours away is a failure with the provider's words, not endless Retrying", () => {
-  const outcome = deriveTurnOutcome(facts({ engine: { type: "retry", attempt: 1, message: "Free usage exceeded, subscribe to Go.", next: NOW + 9 * 3_600_000 } }));
+  const outcome = deriveTurnOutcome(facts({ engine: { type: "retry", attempt: 1, message: "Provider is over capacity, retrying tomorrow.", next: NOW + 9 * 3_600_000, reason: null } }));
   assert.equal(outcome?.kind, "failed");
   assert.equal(outcome?.label, "Reply failed");
   assert.equal(outcome?.line, "Nova's AI model could not answer.");
-  assert.equal(outcome?.technical, "Free usage exceeded, subscribe to Go");
+  assert.equal(outcome?.technical, "Provider is over capacity, retrying tomorrow");
   assert.equal(outcome?.modelRelated, true);
+});
+
+test("the free model's shared limit, while the engine retries, is named in the app's words with the way out inline", () => {
+  const outcome = deriveTurnOutcome(facts({
+    engine: { type: "retry", attempt: 2, message: "Free usage exceeded, subscribe to Go", next: NOW + 5_400, reason: "free_tier_limit" },
+  }));
+  assert.equal(outcome?.kind, "retrying");
+  assert.equal(outcome?.label, "Retrying");
+  assert.equal(outcome?.line, "The free model is busy. Trying again in 6 s…");
+  assert.equal(outcome?.modelRelated, true);
+  assert.deepEqual(outcome?.choices.map((choice) => choice.id), ["stop", "connect-provider"]);
+  assert.doesNotMatch(JSON.stringify(outcome), /subscribe|Go\b/);
+  assert.deepEqual(outcome?.retry, { attempt: 2, nextAt: NOW + 5_400, by: "engine", reason: "free_tier_limit" });
+  assert.equal(retryLine(NOW + 200, NOW, "free_tier_limit"), "The free model is busy. Trying again…");
+  assert.equal(retryLine(NOW + 200, NOW, "account_rate_limit"), "Couldn't reach the AI model. Trying again…");
+  assert.equal(retrySummary("free_tier_limit"), "The free model is busy. Trying again…");
+  assert.equal(retrySummary(null), "Couldn't reach the AI model. Trying again…");
+});
+
+test("the free model's shared limit pushed hours away is that limit, named, with connecting a provider as the way out", () => {
+  const outcome = deriveTurnOutcome(facts({
+    engine: { type: "retry", attempt: 1, message: "Free usage exceeded, subscribe to Go", next: NOW + 9 * 3_600_000, reason: "free_tier_limit" },
+    signedIn: true,
+  }));
+  assert.equal(outcome?.kind, "failed");
+  assert.equal(outcome?.line, "The free model is busy right now.");
+  assert.match(outcome?.detail ?? "", /connect your own AI provider so Nova can keep working/);
+  assert.match(outcome?.technical ?? "", /free_tier_limit/);
+  assert.deepEqual(outcome?.choices.map((choice) => `${choice.letter} ${choice.label}`), ["A Retry", "B Choose AI model", "C Connect an AI provider"]);
+});
+
+test("the free model's limit as the engine's terminal error reads the same, and a connected model takes the first letter", () => {
+  const raw = "APIError · FreeUsageLimitError: Error from provider (Console): Rate limit exceeded. Please try again later.";
+  const outcome = deriveTurnOutcome(facts({
+    engine: { type: "idle" },
+    reply: { state: "error", error: raw, retryable: true, aborted: false },
+    recommendedModel: "GPT-5 mini",
+    signedIn: false,
+  }));
+  assert.equal(outcome?.kind, "failed");
+  assert.equal(outcome?.line, "The free model is busy right now.");
+  assert.equal(outcome?.technical, raw);
+  assert.deepEqual(outcome?.choices.map((choice) => `${choice.letter} ${choice.label}`), ["A Use GPT-5 mini", "B Choose AI model", "C Connect an AI provider"]);
 });
 
 test("a retry whose moment is long past is over: the engine reads idle", () => {
   // Recovered after a quit: idle with no reply is cut off.
   const outcome = deriveTurnOutcome(facts({
     turn: { messageId: "msg_1", prompt: "Draft the note.", startedAt: NOW - 400_000, stoppedAt: null, recovered: true },
-    engine: { type: "retry", attempt: 3, message: "rate limited", next: NOW - 90_000 },
+    engine: { type: "retry", attempt: 3, message: "rate limited", next: NOW - 90_000, reason: null },
   }));
   assert.equal(outcome?.kind, "cut-off");
 });
@@ -98,7 +144,7 @@ test("an automatic attempt the app scheduled reads the same as the engine's, and
   const outcome = deriveTurnOutcome(facts({ engine: { type: "idle" }, reply: { state: "error", error: "ECONNRESET", retryable: null, aborted: false }, appRetry: { attempt: 1, nextAt: NOW + 2_000 } }));
   assert.equal(outcome?.kind, "retrying");
   assert.equal(outcome?.line, "Couldn't reach the AI model. Trying again in 2 s…");
-  assert.deepEqual(outcome?.retry, { attempt: 1, nextAt: NOW + 2_000, by: "app" });
+  assert.deepEqual(outcome?.retry, { attempt: 1, nextAt: NOW + 2_000, by: "app", reason: null });
 });
 
 test("an attempt being classified never flashes its raw engine error as a failure", () => {
@@ -168,8 +214,12 @@ test("a failure the app met before sending (a model that is not connected) is fa
 test("a failure that is not about the model offers Retry and another model, nothing else", () => {
   assert.deepEqual(failureChoices({ modelRelated: false, recommendedModel: "Claude Sonnet", signedIn: true }).map((choice) => `${choice.letter} ${choice.label}`), ["A Retry", "B Choose AI model"]);
   assert.deepEqual(failureChoices({ modelRelated: true, recommendedModel: "", signedIn: true }).map((choice) => `${choice.letter} ${choice.label}`), ["A Retry", "B Choose AI model", "C Refresh providers"]);
-  for (const input of [{ modelRelated: true, recommendedModel: "X", signedIn: false }, { modelRelated: false, recommendedModel: "", signedIn: false }]) {
+  for (const input of [{ modelRelated: true, recommendedModel: "X", signedIn: false }, { modelRelated: false, recommendedModel: "", signedIn: false }, { modelRelated: true, recommendedModel: "X", signedIn: true, freeModelLimit: true }]) {
     assert.ok(failureChoices(input).length <= 3);
+  }
+  // The free model's limit: connecting a provider is the third way, signed in or not.
+  for (const signedIn of [true, false]) {
+    assert.deepEqual(failureChoices({ modelRelated: true, recommendedModel: "", signedIn, freeModelLimit: true }).map((choice) => `${choice.letter} ${choice.label}`), ["A Retry", "B Choose AI model", "C Connect an AI provider"]);
   }
 });
 
@@ -192,4 +242,11 @@ test("a failure keeps one steady moment, so its card does not re-open on every t
   const first = deriveTurnOutcome(facts({ turn, engine: { type: "idle" }, reply: { state: "error", error: "ECONNRESET", retryable: null, aborted: false } }));
   const later = deriveTurnOutcome(facts({ turn, now: NOW + 3_000, engine: { type: "idle" }, reply: { state: "error", error: "ECONNRESET", retryable: null, aborted: false } }));
   assert.equal(first?.since, later?.since);
+});
+
+test("only the choices that open another screen leave the failure's card ready for the person's return", () => {
+  const navigates: TurnChoiceId[] = ["choose-model", "connect-provider", "continue-with-openwork"];
+  const acts: TurnChoiceId[] = ["retry", "use-model", "refresh-providers", "stop", "continue", "discard"];
+  for (const id of navigates) assert.equal(choiceNavigates(id), true, id);
+  for (const id of acts) assert.equal(choiceNavigates(id), false, id);
 });

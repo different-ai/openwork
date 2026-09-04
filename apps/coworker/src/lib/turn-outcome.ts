@@ -22,7 +22,7 @@ import { STALE_RETRY_MS, stalledRetry } from "./threads.ts";
 
 export type TurnOutcomeKind = "working" | "slow" | "retrying" | "waiting-on-you" | "stopped-by-you" | "cut-off" | "failed" | "replied";
 
-export type TurnChoiceId = "retry" | "use-model" | "choose-model" | "continue-with-openwork" | "refresh-providers" | "stop" | "continue" | "discard";
+export type TurnChoiceId = "retry" | "use-model" | "choose-model" | "connect-provider" | "continue-with-openwork" | "refresh-providers" | "stop" | "continue" | "discard";
 
 export type TurnChoice = {
   id: TurnChoiceId;
@@ -30,6 +30,17 @@ export type TurnChoice = {
   /** Set on a failure's lettered choices; quiet lines carry plain inline actions. */
   letter?: "A" | "B" | "C";
 };
+
+/**
+ * A choice that opens another screen — Coworker settings, OpenWork's account
+ * or AI models — rather than acting on the turn. The failure's card stays
+ * ready for when the person comes back; only a choice that acts on the turn
+ * (retry, another model, a refresh, continue, discard) holds it busy until
+ * the outcome moves on.
+ */
+export function choiceNavigates(id: TurnChoiceId): boolean {
+  return id === "choose-model" || id === "connect-provider" || id === "continue-with-openwork";
+}
 
 export type TurnOutcome = {
   kind: TurnOutcomeKind;
@@ -49,8 +60,8 @@ export type TurnOutcome = {
   tone: "spark" | "amber" | "mist";
   /** What the person can do, primary first. Failures letter theirs; there are never more than three. */
   choices: TurnChoice[];
-  /** While retrying: the attempt that is coming, when, and whose retry it is. */
-  retry: { attempt: number; nextAt: number; by: "engine" | "app" } | null;
+  /** While retrying: the attempt that is coming, when, whose retry it is, and the engine's reason when it gave one. */
+  retry: { attempt: number; nextAt: number; by: "engine" | "app"; reason: string | null } | null;
   /** Whether a different AI model is the likely way out. */
   modelRelated: boolean;
 };
@@ -58,8 +69,12 @@ export type TurnOutcome = {
 export type TurnEngineStatus =
   | { type: "idle" }
   | { type: "busy" }
-  | { type: "retry"; attempt: number; message: string; next: number }
+  /** `reason` is the engine's own word for why, when it gives one: `free_tier_limit` for the free model's shared limit. */
+  | { type: "retry"; attempt: number; message: string; next: number; reason: string | null }
   | { type: "unknown" };
+
+/** The engine's reason for a retry that means the free model's shared limit, not a hiccup. */
+export const FREE_MODEL_LIMIT_REASON = "free_tier_limit";
 
 export type TurnReplyState = {
   /** `none`: no reply yet; `writing`: the engine has not closed it; `complete`: it finished; `error`: it carries an error. */
@@ -99,8 +114,10 @@ export const NO_REPLY: TurnReplyState = { state: "none", error: "", retryable: n
 
 const STOP: TurnChoice = { id: "stop", label: "Stop" };
 const RETRY: TurnChoice = { id: "retry", label: "Retry" };
+const CONNECT_PROVIDER: TurnChoice = { id: "connect-provider", label: "Connect an AI provider" };
 
 export const RETRY_LINE = "Couldn't reach the AI model.";
+export const FREE_MODEL_RETRY_LINE = "The free model is busy.";
 export const STOPPED_LINE = "Stopped.";
 
 export function cutOffLine(coworkerName: string): string {
@@ -111,24 +128,42 @@ export function stillWorkingLine(coworkerName: string): string {
   return `${coworkerName} is still working on it…`;
 }
 
-/** "Couldn't reach the AI model. Trying again in 6 s…" — the count is live, so the caller re-derives each second. */
-export function retryLine(nextAt: number, now: number): string {
+/**
+ * "Couldn't reach the AI model. Trying again in 6 s…" — the count is live, so the caller re-derives each
+ * second. When the engine says the free model's shared limit is the reason, the line says that instead,
+ * in the app's words, never the engine's own remedy copy.
+ */
+export function retryLine(nextAt: number, now: number, reason: string | null = null): string {
   const wait = nextAt - now;
-  return wait > 500 ? `${RETRY_LINE} Trying again in ${describeWait(wait)}…` : `${RETRY_LINE} Trying again…`;
+  return wait > 500 ? `${retryCause(reason)} Trying again in ${describeWait(wait)}…` : retrySummary(reason);
+}
+
+/** The cause a retry line opens with: the free model's limit when the engine says so, else the model out of reach. */
+export function retryCause(reason: string | null): string {
+  return reason === FREE_MODEL_LIMIT_REASON ? FREE_MODEL_RETRY_LINE : RETRY_LINE;
+}
+
+/** The retry line without its live count — for the rail and Activity, which do not tick. */
+export function retrySummary(reason: string | null): string {
+  return `${retryCause(reason)} Trying again…`;
 }
 
 /**
  * The lettered ways out of a failure, at most three: the primary first — a
  * connected model that can take over, otherwise Retry — then another AI
  * model, then the account step that fits (signed out: Continue with OpenWork;
- * signed in with a model problem: Refresh providers).
+ * signed in with a model problem: Refresh providers). When the free model's
+ * shared limit is the cause, the third way is the one that actually helps:
+ * connecting the person's own AI provider.
  */
-export function failureChoices(input: { modelRelated: boolean; recommendedModel: string; signedIn: boolean }): TurnChoice[] {
+export function failureChoices(input: { modelRelated: boolean; recommendedModel: string; signedIn: boolean; freeModelLimit?: boolean }): TurnChoice[] {
   const primary: TurnChoice = input.modelRelated && input.recommendedModel
     ? { id: "use-model", label: `Use ${input.recommendedModel}`, letter: "A" }
     : { ...RETRY, letter: "A" };
   const choices: TurnChoice[] = [primary, { id: "choose-model", label: "Choose AI model", letter: "B" }];
-  if (input.modelRelated) {
+  if (input.freeModelLimit) {
+    choices.push({ ...CONNECT_PROVIDER, letter: "C" });
+  } else if (input.modelRelated) {
     choices.push(input.signedIn
       ? { id: "refresh-providers", label: "Refresh providers", letter: "C" }
       : { id: "continue-with-openwork", label: "Continue with OpenWork", letter: "C" });
@@ -148,7 +183,7 @@ function failed(facts: TurnFacts, turn: NonNullable<TurnFacts["turn"]>, raw: str
     technical: failure.technical,
     label: "Reply failed",
     tone: "amber",
-    choices: failureChoices({ modelRelated: failure.modelRelated, recommendedModel: facts.recommendedModel, signedIn: facts.signedIn }),
+    choices: failureChoices({ modelRelated: failure.modelRelated, recommendedModel: facts.recommendedModel, signedIn: facts.signedIn, freeModelLimit: failure.freeModelLimit }),
     retry: null,
     modelRelated: failure.modelRelated,
   };
@@ -188,7 +223,7 @@ export function deriveTurnOutcome(facts: TurnFacts): TurnOutcome | null {
       label: "Retrying",
       tone: "amber",
       choices: [STOP],
-      retry: { attempt: facts.appRetry.attempt, nextAt: facts.appRetry.nextAt, by: "app" },
+      retry: { attempt: facts.appRetry.attempt, nextAt: facts.appRetry.nextAt, by: "app", reason: null },
     };
   }
   // The person's stop outranks whatever the wait itself reported on the way out.
@@ -203,17 +238,21 @@ export function deriveTurnOutcome(facts: TurnFacts): TurnOutcome | null {
   if (engine.type === "retry") {
     if (now - engine.next > STALE_RETRY_MS) engine = { type: "idle" };
     else {
+      const freeModelLimit = engine.reason === FREE_MODEL_LIMIT_REASON;
       const stalled = stalledRetry({ next: engine.next, message: engine.message }, now);
-      if (stalled) return failed(facts, turn, stalled, false);
+      // A far-off retry on the free model's limit is that limit, named: the engine's reason rides along so the
+      // failure reads as the free model's, whatever the engine's own line says.
+      if (stalled) return failed(facts, turn, freeModelLimit ? `${stalled} (${FREE_MODEL_LIMIT_REASON})` : stalled, false);
       return {
         ...base,
         kind: "retrying",
         since: turn.startedAt,
-        line: retryLine(engine.next, now),
+        line: retryLine(engine.next, now, engine.reason),
         label: "Retrying",
         tone: "amber",
-        choices: [STOP],
-        retry: { attempt: engine.attempt, nextAt: engine.next, by: "engine" },
+        choices: freeModelLimit ? [STOP, CONNECT_PROVIDER] : [STOP],
+        retry: { attempt: engine.attempt, nextAt: engine.next, by: "engine", reason: engine.reason },
+        modelRelated: freeModelLimit,
       };
     }
   }

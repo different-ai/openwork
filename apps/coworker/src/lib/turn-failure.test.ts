@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { describeTurnFailure } from "./turn-failure.ts";
+import { describeTurnFailure, failureText } from "./turn-failure.ts";
 
 test("a tool-support refusal becomes one plain headline with the raw text kept as technical detail", () => {
   const raw = 'APIError: No endpoints found that support tool use. Try disabling "bash".';
@@ -64,8 +64,31 @@ test("a workspace with no tool-capable model gets a plain headline that points a
   assert.equal(failure.modelRelated, true);
 });
 
-test("the free tier's usage message reads as a model problem with a way out", () => {
-  const failure = describeTurnFailure("Free usage exceeded, subscribe to Go", "Scout");
-  assert.equal(failure.modelRelated, true);
-  assert.equal(failure.headline, "Scout's AI model could not answer.");
+test("the free model's shared limit is named as such, however the engine says it, with the person's own provider as the way out", () => {
+  for (const raw of [
+    "Free usage exceeded, subscribe to Go",
+    "APIError · FreeUsageLimitError: Error from provider (Console): Rate limit exceeded. Please try again later.",
+    "Free usage exceeded, subscribe to Go (free_tier_limit)",
+  ]) {
+    const failure = describeTurnFailure(raw, "Scout");
+    assert.equal(failure.headline, "The free model is busy right now.", raw);
+    assert.equal(failure.detail, "Too many people are using the free model at once. Wait a few minutes and try again, or connect your own AI provider so Scout can keep working.");
+    assert.equal(failure.technical, raw);
+    assert.equal(failure.modelRelated, true);
+    assert.equal(failure.transient, false);
+    assert.equal(failure.freeModelLimit, true);
+    // The engine's remedy copy stays in the technical fold, never in what the person reads first.
+    assert.doesNotMatch(`${failure.headline} ${failure.detail}`, /subscribe|Go\b/);
+  }
+  // An ordinary rate limit is still the provider not answering, not the free model's limit.
+  const ordinary = describeTurnFailure("APIError: 429 rate limited", "Scout");
+  assert.equal(ordinary.freeModelLimit, false);
+  assert.equal(ordinary.headline, "Scout couldn't reach the AI model.");
+});
+
+test("the raw failure line names the provider's own error type beside the engine's, and not twice", () => {
+  assert.equal(failureText({ name: "APIError", message: "Rate limit exceeded.", providerError: "FreeUsageLimitError" }), "APIError · FreeUsageLimitError: Rate limit exceeded.");
+  assert.equal(failureText({ name: "APIError", message: "503 overloaded", providerError: null }), "APIError: 503 overloaded");
+  assert.equal(failureText({ name: "ProviderAuthError", message: "Reconnect.", providerError: "ProviderAuthError" }), "ProviderAuthError: Reconnect.");
+  assert.equal(describeTurnFailure(failureText({ name: "APIError", message: "Rate limit exceeded.", providerError: "FreeUsageLimitError" }), "Scout").freeModelLimit, true);
 });
