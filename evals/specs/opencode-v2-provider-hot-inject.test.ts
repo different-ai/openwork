@@ -110,8 +110,10 @@ test("opencode v2 injects providers at runtime without an engine reload", async 
   if (witnessAddress === null || typeof witnessAddress === "string") throw new Error("Witness failed to bind a TCP port");
   const witnessUrl = `http://127.0.0.1:${witnessAddress.port}`;
   const rootDir = await mkdtemp(join(tmpdir(), "oc2-hot-inject-"));
-  // A fresh cache proves the model catalog does not remain stuck behind the cold-cache 503.
-  const cacheDir = await mkdtemp(join(tmpdir(), "oc2-model-cache-"));
+  // The engine shares this machine's package cache on purpose: a cold cache makes
+  // the first prompt install the provider SDK from the registry (minutes, network-
+  // bound, and the v2 prompt call blocks for all of it). Cold-cache catalog
+  // readiness is proven by engine-v2-preview-flag.e2e.test.ts from a fresh sandbox.
   const directory = join(rootDir, "workspace");
   await mkdir(directory);
   const baseConfig = join(rootDir, "opencode.json");
@@ -124,7 +126,7 @@ test("opencode v2 injects providers at runtime without an engine reload", async 
     server = await createManagedOpencodeV2Server({
       bin: binary,
       rootDir,
-      env: { XDG_CACHE_HOME: cacheDir, OPENCODE_CONFIG: baseConfig, OPENCODE_MODELS_URL: opencodeModelsUrl },
+      env: { OPENCODE_CONFIG: baseConfig, OPENCODE_MODELS_URL: opencodeModelsUrl },
     });
     const initialHealth = await server.health();
     const pid0 = initialHealth.pid;
@@ -271,6 +273,5 @@ test("opencode v2 injects providers at runtime without an engine reload", async 
     if (server !== undefined) await server.close();
     await new Promise<void>((resolve, reject) => witness.close((error) => error ? reject(error) : resolve()));
     await rm(rootDir, { recursive: true, force: true });
-    await rm(cacheDir, { recursive: true, force: true });
   }
 }, 240_000);
