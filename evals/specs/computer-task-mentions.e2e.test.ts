@@ -30,21 +30,7 @@ test("computer mentions steer tasks through Connect and Automations names the co
   });
 
   await step("the engine receives the chosen target, while ordinary text is not routed", async () => {
-    // TODO(primitive): inspect submitted engine parts, including synthetic routing instructions.
-    const messages = await probe.eval(`async (workspaceId, sessionId) => {
-      const port = localStorage.getItem("openwork.server.port");
-      const token = localStorage.getItem("openwork.server.token");
-      const response = await fetch("http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId)
-        + "/opencode/session/" + encodeURIComponent(sessionId) + "/message", {
-        headers: { Authorization: "Bearer " + token },
-      });
-      if (!response.ok) throw new Error("Transcript read failed: " + response.status);
-      const messages = await response.json();
-      return messages.filter((message) => message.info.role === "user").map((message) => ({
-        visible: message.parts.filter((part) => part.type === "text" && !part.synthetic).map((part) => part.text).join(""),
-        routing: message.parts.filter((part) => part.type === "text" && part.synthetic && part.text.includes("remote-session:create")).map((part) => part.text),
-      }));
-    }`, { args: [world.workspace.workspaceId, world.session.sessionId], awaitPromise: true });
+    const messages = await world.submittedParts();
     expect(messages).toEqual([
       { visible: expect.stringContaining("@cloud COMPUTER-CLOUD-TASK"), routing: [expect.stringContaining('target "cloud"')] },
       { visible: expect.stringContaining("@desktop COMPUTER-DESKTOP-TASK"), routing: [expect.stringContaining('target "desktop"')] },
@@ -55,10 +41,10 @@ test("computer mentions steer tasks through Connect and Automations names the co
   });
 
   await step("Automations shows where the task runs and explains desktop availability", async () => {
-    await user.click({ role: "button", label: "Automations", exact: true });
+    await user.click({ role: "button", label: /^Automations$/ });
     await user.see({ text: "Schedule tasks on your desktop or cloud computer. See where each task runs and how it went." });
     await user.see({ text: "Daily project summary" });
-    await user.see({ text: "Desktop computer", exact: true });
+    await user.see({ text: /^Desktop computer$/ });
     await user.notSee({ text: /Scheduled durably|headlessly|fixed Desktop/ });
     await user.screenshot();
     await user.click({ role: "button", label: /Daily project summary/ });

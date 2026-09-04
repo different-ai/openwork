@@ -1756,7 +1756,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       if (segment.startsWith("@")) {
         const value = decodeComposerMentionValue(segment.slice(1));
         const kind = mentions[value];
-        if (isComputerTarget(value) && (!kind || kind === "computer") && (index === 0 || /\s$/.test(segments[index - 1] ?? ""))) {
+        if (isComputerTarget(value) && (!kind || kind === "computer") && (index <= 1 && !segments[0] || /\s$/.test(segments[index - 1] ?? ""))) {
           return [{ type: "computer", target: value } satisfies ComposerDraft["parts"][number]];
         }
         if (kind === "agent") return [{ type: "agent", name: value } satisfies ComposerDraft["parts"][number]];
