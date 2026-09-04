@@ -10,7 +10,7 @@ const repoRoot = resolve(import.meta.dirname, "../..");
 // Retry, even though the engine was alive and merely stalled behind a
 // rollover or an overloaded event loop. People learned to reload the app.
 
-test("creating a task rides out a stalled engine and names the stall when retries run out", ({ evidence }) => {
+test("task creation retry policy is bounded and classifies an exhausted engine stall", ({ evidence }) => {
   const result = spawnSync("pnpm", [
     "--filter",
     "@openwork/app",
