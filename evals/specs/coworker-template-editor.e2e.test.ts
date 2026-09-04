@@ -18,7 +18,7 @@ test("an administrator prepares, revises, and withdraws a coworker through Conne
   }
   expect(await delivered()).toEqual([]);
   await step("enable prepared teams only for the selected organization", async () => {
-    await user.see({ role: "heading", name: "Prepared marketing team" }, { timeoutMs: 90_000 });
+    await user.see({ text: "Prepared marketing team" }, { timeoutMs: 90_000 });
     await user.notSee("Add coworker");
     await user.navigate(new URL(`/dashboard/plugins/${world.pluginId}/coworkers/new`, world.den.ref.webUrl).toString());
     await user.see({ text: "Prepared coworker teams are not enabled for this organization." });
