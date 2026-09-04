@@ -490,6 +490,90 @@ export async function renderCycle(seed: Seed) {
   }
 }
 
+export const streamedMarkdownMarker = "STREAM_MARKDOWN_ANSWER";
+export const streamedMarkdownTitle = "Streamed markdown proof";
+/** A multi-block answer: heading, prose, list, table, fenced code, closing prose. */
+export const streamedMarkdownAnswer = [
+  "## Streamed answer heading",
+  "",
+  "Opening paragraph with **bold emphasis** and `inline-code.ts` in it.",
+  "",
+  "- alpha list item",
+  "- beta list item",
+  "",
+  "| Column | Value |",
+  "| --- | --- |",
+  "| gamma row | 42 |",
+  "",
+  "```ts",
+  "const streamed = \"delta\";",
+  "```",
+  "",
+  "Closing paragraph epsilon.",
+].join("\n");
+const streamedMarkdownChunkSize = 5;
+const streamedMarkdownChunkIntervalMs = 60;
+
+export async function streamedMarkdown(seed: Seed) {
+  const providerId = "streamed-markdown-mock";
+  const modelId = "streamed-markdown-model";
+  let completionIndex = 0;
+  const provider = createServer((request, response) => {
+    const url = request.url ?? "";
+    if (request.method === "GET" && url.startsWith("/v1/models")) {
+      sendJson(response, 200, { object: "list", data: [{ id: modelId, object: "model" }] });
+      return;
+    }
+    if (request.method !== "POST" || (url !== "/v1/chat/completions" && url !== "/chat/completions")) {
+      sendJson(response, 404, { error: { message: "not found" } });
+      return;
+    }
+    void readBody(request).then((body) => {
+      const streaming = body.includes(streamedMarkdownMarker);
+      completionIndex += 1;
+      const id = `chatcmpl-streamed-markdown-${completionIndex}`;
+      const contents: string[] = [];
+      if (streaming) {
+        for (let offset = 0; offset < streamedMarkdownAnswer.length; offset += streamedMarkdownChunkSize) {
+          contents.push(streamedMarkdownAnswer.slice(offset, offset + streamedMarkdownChunkSize));
+        }
+      } else {
+        contents.push(streamedMarkdownTitle);
+      }
+      sendStream(response, [
+        { id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] },
+        ...contents.map((content) => completionChunk(id, content, null)),
+        completionChunk(id, "", "stop"),
+      ], streaming ? streamedMarkdownChunkIntervalMs : 0);
+    });
+  });
+  const baseUrl = await listen(provider);
+  try {
+    const app = await seed.desktop({ name: "streamed-markdown-answer", model: `${providerId}/${modelId}` });
+    const workspace = await seed.workspace(app, seed.tmpPath("streamed-markdown-answer"));
+    await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+      provider: {
+        [providerId]: {
+          npm: "@ai-sdk/openai-compatible",
+          name: "Streamed markdown mock",
+          options: { baseURL: `${baseUrl}/v1`, apiKey: "sk-streamed-markdown" },
+          models: { [modelId]: { name: "Streamed markdown model" } },
+        },
+      },
+    });
+    const session = await seedSessionRetry(seed, app);
+    return {
+      app,
+      workspace,
+      session,
+      async [Symbol.asyncDispose]() { await close(provider); },
+    };
+  } catch (error) {
+    await close(provider);
+    throw error;
+  }
+}
+
 const htmlToolName = "explode_html";
 export const htmlClosingReply = "The session recovered after the failed upstream call.";
 export const htmlSummary = "Upstream returned an HTML error page (502 Bad Gateway)";
