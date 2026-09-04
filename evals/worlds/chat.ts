@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join, resolve } from "node:path";
+import { evalIn } from "@openwork/behaviors";
 import type { Seed } from "@openwork/env";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
@@ -210,7 +211,49 @@ export async function newSplitPrimary(seed: Seed) {
   const app = await seed.desktop({ name: "new-split-session" });
   const workspace = await seed.workspace(app, seed.tmpPath("new-split-session"));
   const session = await seedSessionRetry(seed, app, { title: "New split primary" });
-  return { app, workspace, session };
+  const splitFacts = () => evalIn(app, `(() => {
+    const context = window.__openworkControl?.context?.();
+    const layout = context?.conversations?.layout;
+    const primaryPane = document.querySelector('[data-workbench-pane="primary"]');
+    const secondaryPanes = [...document.querySelectorAll('[data-workbench-pane="secondary"]')];
+    const secondaryPane = secondaryPanes[0];
+    return {
+      layoutKind: layout?.kind ?? "",
+      primarySessionId: layout?.primarySessionId ?? layout?.sessionId ?? "",
+      secondarySessionId: layout?.secondarySessionId ?? "",
+      primaryWorkspaceId: layout?.primaryWorkspaceId ?? "",
+      secondaryWorkspaceId: layout?.secondaryWorkspaceId ?? "",
+      primarySurfaceSessionId: primaryPane?.querySelector('[data-session-surface-id]')
+        ?.getAttribute('data-session-surface-id') ?? "",
+      secondarySurfaceSessionId: secondaryPane?.querySelector('[data-session-surface-id]')
+        ?.getAttribute('data-session-surface-id') ?? "",
+      secondaryPaneWorkspaceId: secondaryPane?.getAttribute('data-workbench-workspace-id') ?? "",
+      secondaryPaneCount: secondaryPanes.length,
+      locationHash: window.location.hash,
+    };
+  })()`);
+  const openSessionMenu = async (sessionId: string, workspaceId: string): Promise<boolean> => {
+    const rowSelector = `[data-sidebar-session-id="${sessionId}"][data-sidebar-session-workspace-id="${workspaceId}"]`;
+    const tabSelector = `[data-session-tab-id="${sessionId}"]`;
+    return await evalIn(app, `(() => {
+      const row = document.querySelector(${JSON.stringify(rowSelector)});
+      if (!(row instanceof HTMLElement)) return false;
+      row.scrollIntoView({ block: "center" });
+      const target = row.querySelector(${JSON.stringify(tabSelector)}) ?? row;
+      if (!(target instanceof HTMLElement)) return false;
+      const rect = target.getBoundingClientRect();
+      target.dispatchEvent(new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        button: 2,
+        buttons: 2,
+        clientX: rect.left + Math.min(24, Math.max(1, rect.width / 2)),
+        clientY: rect.top + Math.min(12, Math.max(1, rect.height / 2)),
+      }));
+      return true;
+    })()`) === true;
+  };
+  return { app, workspace, session, splitFacts, openSessionMenu };
 }
 
 export async function shimmerChat(seed: Seed) {

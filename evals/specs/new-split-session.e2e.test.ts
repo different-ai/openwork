@@ -39,28 +39,6 @@ function parseSplitFacts(value: unknown): SplitFacts {
   };
 }
 
-const splitFactsExpression = `(() => {
-    const context = window.__openworkControl?.context?.();
-    const layout = context?.conversations?.layout;
-    const primaryPane = document.querySelector('[data-workbench-pane="primary"]');
-    const secondaryPanes = [...document.querySelectorAll('[data-workbench-pane="secondary"]')];
-    const secondaryPane = secondaryPanes[0];
-    return {
-      layoutKind: layout?.kind ?? "",
-      primarySessionId: layout?.primarySessionId ?? layout?.sessionId ?? "",
-      secondarySessionId: layout?.secondarySessionId ?? "",
-      primaryWorkspaceId: layout?.primaryWorkspaceId ?? "",
-      secondaryWorkspaceId: layout?.secondaryWorkspaceId ?? "",
-      primarySurfaceSessionId: primaryPane?.querySelector('[data-session-surface-id]')
-        ?.getAttribute('data-session-surface-id') ?? "",
-      secondarySurfaceSessionId: secondaryPane?.querySelector('[data-session-surface-id]')
-        ?.getAttribute('data-session-surface-id') ?? "",
-      secondaryPaneWorkspaceId: secondaryPane?.getAttribute('data-workbench-workspace-id') ?? "",
-      secondaryPaneCount: secondaryPanes.length,
-      locationHash: window.location.hash,
-    };
-  })()`;
-
 test("new split creates fresh same-workspace secondary sessions without moving the primary", async ({ world, user, agent, probe, step, place }) => {
   // The key chord belongs to the machine running the app, not the one running the spec.
   const paletteShortcut = place.kind !== "daytona" && process.platform === "darwin" ? "Meta+K" : "Control+K";
@@ -68,45 +46,27 @@ test("new split creates fresh same-workspace secondary sessions without moving t
   const primarySessionId = world.session.sessionId;
 
   const { primaryHash, before } = await step("the seeded session is the single primary pane", async () => {
-    await probe.eventually(() => probe.eval(`(() => {
-      const layout = window.__openworkControl?.context?.().conversations?.layout;
-      return layout?.kind === "single" && layout?.sessionId === ${JSON.stringify(primarySessionId)};
-    })()`), {
+    await probe.eventually(() => world.splitFacts(), {
       within: 60_000,
       label: "single layout on the seeded primary",
-      until: (ready) => ready === true,
+      until: (value) => {
+        const facts = parseSplitFacts(value);
+        return facts.layoutKind === "single" && facts.primarySessionId === primarySessionId;
+      },
     });
     return { primaryHash: await probe.hash(), before: await agent.list() };
   });
   const beforeIds = before.map((session) => session.sessionId);
 
   await step("New split in the session context menu opens a fresh secondary", async () => {
-    const opened = await probe.eval(`(() => {
-      const row = document.querySelector(
-        '[data-sidebar-session-id="${primarySessionId}"][data-sidebar-session-workspace-id="${workspaceId}"]'
-      );
-      if (!(row instanceof HTMLElement)) return false;
-      row.scrollIntoView({ block: "center" });
-      const target = row.querySelector('[data-session-tab-id="${primarySessionId}"]') ?? row;
-      if (!(target instanceof HTMLElement)) return false;
-      const rect = target.getBoundingClientRect();
-      target.dispatchEvent(new MouseEvent("contextmenu", {
-        bubbles: true,
-        cancelable: true,
-        button: 2,
-        buttons: 2,
-        clientX: rect.left + Math.min(24, Math.max(1, rect.width / 2)),
-        clientY: rect.top + Math.min(12, Math.max(1, rect.height / 2)),
-      }));
-      return true;
-    })()`);
+    const opened = await world.openSessionMenu(primarySessionId, workspaceId);
     expect(opened).toBe(true);
     await user.see({ role: "menuitem", label: "New split" });
     await user.click({ role: "menuitem", label: "New split" });
   });
 
   const { firstFacts, afterContextMenu } = await step("the context menu creates one same-workspace split session", async () => {
-    const firstValue = await probe.eventually(() => probe.eval(splitFactsExpression), {
+    const firstValue = await probe.eventually(() => world.splitFacts(), {
       within: 60_000,
       label: "context-menu new split layout",
       until: (value) => {
@@ -160,7 +120,7 @@ test("new split creates fresh same-workspace secondary sessions without moving t
 
   await step("the palette creates one more session while preserving the primary route", async () => {
     const afterContextMenuIds = afterContextMenu.map((session) => session.sessionId);
-    const secondValue = await probe.eventually(() => probe.eval(splitFactsExpression), {
+    const secondValue = await probe.eventually(() => world.splitFacts(), {
       within: 60_000,
       label: "palette new split replaces the secondary session",
       until: (value) => {
