@@ -1927,8 +1927,13 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   });
   if (!isRecord(chatScheduling) || typeof chatScheduling.collapsedText !== "string") throw new Error("Action line facts were unavailable.");
   expect(chatScheduling.collapsedText).not.toMatch(/coworker_|assignment_create|"kind"|\{/);
-  // The tool's name waits behind Technical details, never in the line itself.
-  await evalIn(app, `[...document.querySelectorAll('[data-testid="coworker-work-summary"]')].find((button) => (button.textContent ?? "").includes("Created assignment"))?.click(); true`);
+  // The tool's name waits behind Technical details, never in the line itself. The receipt stays
+  // open on its own until the person writes again, so open it only if it is closed.
+  await evalIn(app, `(() => {
+    const summary = [...document.querySelectorAll('[data-testid="coworker-work-summary"]')].find((button) => (button.textContent ?? "").includes("Created assignment"));
+    if (summary instanceof HTMLElement && summary.getAttribute("aria-expanded") !== "true") summary.click();
+    return true;
+  })()`);
   const technical = String(await waitFor(app, `(() => {
     const step = [...document.querySelectorAll('[data-testid="coworker-work-step"]')].find((candidate) => (candidate.textContent ?? "").includes("Created assignment"));
     const details = step?.querySelector('[data-testid="coworker-work-technical"]');
