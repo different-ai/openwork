@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { describeWorkStep, summarizeWork, technicalSections, workStepState } from "./work-receipt.ts";
+import { describeWorkLine, describeWorkProgress, describeWorkStep, summarizeWork, technicalSections, workStepState } from "./work-receipt.ts";
 
 test("tool calls become steps a person can read, with the tool name kept for details", () => {
   const edit = describeWorkStep({ tool: "edit", status: "completed", input: { filePath: "/Users/me/coworkers/yo/memory/index.md" } });
@@ -30,6 +30,22 @@ test("the collapsed line sums the work up and never hides a failure or a running
   assert.equal(summarizeWork([edited, searched]), "Worked with your files and OpenWork Connect · 2 steps");
   assert.equal(summarizeWork([edited, searched, failed]), "Worked with your files and OpenWork Connect and 1 more · 3 steps · 1 step didn't finish");
   assert.equal(summarizeWork([edited, running]), "Worked with your files and the terminal · 2 steps · still working");
+});
+
+test("the transcript line says what is happening now while a step runs, and sums the work up once it has settled", () => {
+  const edited = describeWorkStep({ tool: "edit", status: "completed", input: { filePath: "index.md" } });
+  const running = describeWorkStep({ tool: "bash", status: "running", input: {} });
+  const failed = describeWorkStep({ tool: "skill-studio_create_skill", status: "failed", input: {} });
+  assert.equal(describeWorkLine([]), "");
+  assert.equal(describeWorkLine([running]), "Running a command");
+  assert.equal(describeWorkLine([edited, running]), "Running a command · 2 of 2");
+  assert.equal(describeWorkLine([edited, running, describeWorkStep({ tool: "read", status: "pending", input: { filePath: "notes.md" } })]), "Reading notes.md · 3 of 3");
+  assert.equal(describeWorkLine([edited]), "Edited index.md");
+  assert.equal(describeWorkLine([edited, failed]), "Worked with your files and Skill Studio · 2 steps · 1 step didn't finish");
+  assert.equal(describeWorkProgress([edited, running]), "1 of 2 done");
+  assert.equal(describeWorkProgress([edited]), "1 step");
+  assert.equal(describeWorkProgress([edited, edited]), "2 steps");
+  assert.equal(describeWorkProgress([edited, failed]), "2 steps · 1 didn't finish");
 });
 
 test("technical details show a shell command on its own, other input as tidy JSON, then result and error, all clipped", () => {
