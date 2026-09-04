@@ -615,7 +615,8 @@ export function McpAppFrame({ part }: { part: DynamicToolUIPart }) {
   if (app && typeof viewId === "string" && typeof revisionId === "string" && app.resourceUri === `ui://openwork/artifacts/${viewId}/views/${revisionId}/index.html`) {
     const artifact = result?.structuredContent?.artifact
     const title = typeof result?._meta?.appTitle === "string" ? result._meta.appTitle : isRecord(artifact) && typeof artifact.title === "string" ? artifact.title : "App preview"
-    return <AppChatArtifact key={`${viewId}:${revisionId}`} appId={viewId} revisionId={revisionId} title={title} receiptId={isRecord(artifact) && typeof artifact.receiptId === "string" ? artifact.receiptId : undefined} />
+    const receiptId = isRecord(artifact) && typeof artifact.receiptId === "string" ? artifact.receiptId : undefined
+    return <AppChatArtifact key={`${viewId}:${revisionId}:${receiptId}`} appId={viewId} revisionId={revisionId} title={title} receiptId={receiptId} />
   }
   if (!result || (!app && !error)) return null
   if (error) return <McpAppDiagnosticNotice error={error} notice={CHAT_MCP_APP_UNAVAILABLE_NOTICE} />

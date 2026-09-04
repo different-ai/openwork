@@ -12,7 +12,7 @@ export function AppChatArtifact({ appId, revisionId, receiptId, title }: AppRefe
   const opened = useRef(false);
   const open = () => {
     usePanelTabStore.getState().openTab(sessionId, {
-      type: "app", id: `app:${appId}:${revisionId}`, label: title, appId, revisionId, receiptId,
+      type: "app", id: `app:${appId}:${revisionId}:${receiptId ?? "latest"}`, label: title, appId, revisionId, receiptId,
     });
     useUiStateStore.getState().setSidePanelState(sessionId, "panel");
   };
@@ -20,7 +20,7 @@ export function AppChatArtifact({ appId, revisionId, receiptId, title }: AppRefe
     // Replaying history must not take over the user's current panel.
     const activity = useSessionActivityStore.getState().getStatus(workspaceId, sessionId);
     if (!opened.current && (activity === "thinking" || activity === "responding")) { opened.current = true; open(); }
-  }, [appId, revisionId, sessionId, workspaceId]);
+  }, [appId, revisionId, receiptId, sessionId, workspaceId]);
   return <div className="mt-3 overflow-hidden rounded-xl border">
     <div className="flex items-center justify-between gap-3 border-b px-3 py-2"><span className="flex items-center gap-2 text-sm"><Blocks className="size-4" />{title}</span><Button size="sm" variant="ghost" onClick={open}>Open preview</Button></div>
     <p className="px-3 py-3 text-sm text-muted-foreground">Try this app in the preview, ask for changes here, then choose Save app to use it again.</p>

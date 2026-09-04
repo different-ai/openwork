@@ -77,7 +77,6 @@ export async function savedAppCreation(seed: Seed) {
       if (!Array.isArray(strings) || !Array.isArray(documents)) return "";
       return documents.flatMap((document) => {
         const item = record(document);
-        if (strings[Number(item.documentURL)] !== "about:srcdoc") return [];
         const nodes = record(item.nodes);
         const names = nodes.nodeName;
         const parents = nodes.parentIndex;

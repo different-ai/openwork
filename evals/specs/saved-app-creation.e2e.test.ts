@@ -21,8 +21,12 @@ test("create, preview, save and reopen an app without changing already-open resu
     await world.open(originalPath);
     await user.see("Save app", { timeoutMs: 60_000 });
     await user.see({ text: "App draft" });
-    const preview = await probe.eventually(() => world.previewText(), { within: 30_000, label: "generated preview rendered", until: (text) => text.includes("Weekly overview") && text.includes("Launch briefing") });
-    expect(preview).not.toContain("could not render");
+    try {
+      const preview = await probe.eventually(() => world.previewText(), { within: 30_000, label: "generated preview rendered", until: (text) => text.includes("Weekly overview") && text.includes("Launch briefing") });
+      expect(preview).not.toContain("could not render");
+    } finally {
+      await user.screenshot();
+    }
     await user.click("Save app");
     await user.see("Save to Apps");
     await user.see({ label: "App name" }, { value: "Briefing app" });
