@@ -71,9 +71,11 @@ function personality(value) {
  * stored model every time. A record without the field means what the person
  * did before the field existed: a chosen model is fixed, a blank is automatic.
  */
-function modelModeOf(value, model) {
+function modelModeOf(value) {
   if (value === "auto" || value === "fixed") return value;
-  return String(model ?? "").trim() ? "fixed" : "auto";
+  // One model every time until the person chooses Automatic in the picker: on the free provider a lane
+  // pick has to be proven not to leave the free models before Automatic can be the default.
+  return "fixed";
 }
 
 /** The catalog role a coworker was created from, or "" for one the person shaped by hand. */
@@ -480,7 +482,7 @@ function coworkerConfigTemplate({ name, role, mission, avatarColor: color, avata
       model: "",
       modelVariant: "",
       modelChosenBy: "",
-      modelMode: "auto",
+      modelMode: "fixed",
       automations: [],
       createdAt,
     },
@@ -544,7 +546,7 @@ async function readCoworkerRecord(coworkersDir, slug) {
     /** "app" when Open Coworker picked the model by itself (it may be swapped once when it fails); "person" or "" otherwise (never swapped). */
     modelChosenBy: modelChosenByOf(data.modelChosenBy),
     /** `auto`: a quick, standard, or deep model per message around `model`; `fixed`: `model` every time. */
-    modelMode: modelModeOf(data.modelMode, data.model),
+    modelMode: modelModeOf(data.modelMode),
     automations,
     createdAt: typeof data.createdAt === "string" ? data.createdAt : "",
   };

@@ -356,25 +356,26 @@ test("the record says who chose the model: the app's pick may be swapped once, t
   assert.equal((await getCoworker(coworkersDir, "legacy")).modelChosenBy, "");
 });
 
-test("a coworker's model mode: new coworkers are automatic, the picker can fix a model, and records from before the field keep what the person meant", async () => {
+test("a coworker's model mode: one model every time until the picker chooses Automatic, and records from before the field mean the same", async () => {
   const coworkersDir = await tempCoworkersDir();
   const created = await createCoworker(coworkersDir, { name: "Ops" });
-  assert.equal(created.modelMode, "auto");
-  assert.match(await readFile(path.join(created.path, "coworker.md"), "utf8"), /^modelMode: auto$/m);
-  // The app persisting the standard model it picked leaves Automatic on; the person fixing a model turns it off.
+  assert.equal(created.modelMode, "fixed", "Automatic is chosen, not assumed: on the free provider a lane pick must be proven to stay among the free models first");
+  assert.match(await readFile(path.join(created.path, "coworker.md"), "utf8"), /^modelMode: fixed$/m);
+  assert.equal((await updateCoworker(coworkersDir, "ops", { model: "openai/gpt-5", modelMode: "auto" })).modelMode, "auto");
+  // The app persisting the standard model it picked leaves the mode alone; the person fixing a model turns Automatic off.
   assert.equal((await updateCoworker(coworkersDir, "ops", { model: "openai/gpt-5" })).modelMode, "auto");
   const fixed = await updateCoworker(coworkersDir, "ops", { model: "openai/gpt-5", modelMode: "fixed" });
   assert.equal(fixed.modelMode, "fixed");
   assert.equal((await getCoworker(coworkersDir, "ops")).modelMode, "fixed");
   assert.equal((await updateCoworker(coworkersDir, "ops", { modelMode: "nonsense" })).modelMode, "fixed", "an unknown mode changes nothing");
   assert.equal((await updateCoworker(coworkersDir, "ops", { modelMode: "auto" })).modelMode, "auto");
-  // A coworker.md from before the field: a chosen model means fixed, a blank means automatic.
+  // A coworker.md from before the field means one model every time, whether or not a model is saved.
   const configPath = path.join(created.path, "coworker.md");
   const withoutField = (await readFile(configPath, "utf8")).replace(/^modelMode: .*\n/m, "");
   await writeFile(configPath, withoutField, "utf8");
   assert.equal((await getCoworker(coworkersDir, "ops")).modelMode, "fixed");
   await writeFile(configPath, withoutField.replace(/^model: .*$/m, 'model: ""'), "utf8");
-  assert.equal((await getCoworker(coworkersDir, "ops")).modelMode, "auto");
+  assert.equal((await getCoworker(coworkersDir, "ops")).modelMode, "fixed");
 });
 
 test("avatar settings fall back when stored or patched values are unknown", async () => {
