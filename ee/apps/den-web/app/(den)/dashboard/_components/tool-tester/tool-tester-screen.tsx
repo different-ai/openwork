@@ -20,7 +20,7 @@ import { DenNotice } from "../../../_components/ui/notice";
 import { DenSelect } from "../../../_components/ui/select";
 import { DenToggleRow } from "../../../_components/ui/toggle-row";
 import { DenRequestTimeoutError } from "../../../_lib/den-flow";
-import { getOrgAccessFlags, getYourConnectionsRoute } from "../../../_lib/den-org";
+import { getMcpConnectionsRoute, getOrgAccessFlags } from "../../../_lib/den-org";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { marketplaceConnectionNeedsAdminSetup } from "../mcp-connection-setup";
 import {
@@ -90,7 +90,7 @@ function testableConnection(
 ): boolean {
   return isAdmin
     && !isNativeProviderConnectionId(connection.id, connection.nativeProviderKey)
-    && connection.connectedForMe
+    && (connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe)
     && connection.needsReconnect !== true
     && !needsAdminSetup;
 }
@@ -106,7 +106,7 @@ export function ToolTesterScreen() {
     orgContext?.currentMember.isOwner ?? false,
     orgContext?.roles,
   );
-  const connectionsQuery = useMcpConnections("usable");
+  const connectionsQuery = useMcpConnections("manageable");
   const presetsQuery = useMcpConnectionPresets();
   const testableConnections = useMemo(() => (
     (connectionsQuery.data ?? []).filter((connection) => testableConnection(
@@ -417,7 +417,7 @@ export function ToolTesterScreen() {
       ) : testableConnections.length === 0 ? (
         <DenNotice
           tone="neutral"
-          message={<span>No connected, testable MCP connections are available. <Link className="font-medium text-gray-900 underline" href={getYourConnectionsRoute(orgSlug)}>Open Your Connections</Link> to connect one.</span>}
+          message={<span>No connected, testable MCP connections are available. <Link className="font-medium text-gray-900 underline" href={getMcpConnectionsRoute(orgSlug)}>Add or connect a connector first.</Link></span>}
         />
       ) : selectedConnection ? (
         <div className="space-y-5">

@@ -1059,7 +1059,7 @@ test("a work poll left hanging by a suspended machine times out and retries", as
 
 test("desktop Automation execution creates a normal visible local OpenWork thread", async () => {
   const requests = []
-  let snapshots = 0
+  const snapshotReads = new Map()
   const sessionPaths = opencodeSessionPaths("workspace-1", "session-1")
   const fetchImpl = async (url, options = {}) => {
     const parsed = new URL(url)
@@ -1073,7 +1073,11 @@ test("desktop Automation execution creates a normal visible local OpenWork threa
     }
     if (parsed.pathname === sessionPaths.prompt) return new Response(null, { status: 204 })
     if ([sessionPaths.get, sessionPaths.messages, sessionPaths.todo, sessionPaths.status].includes(parsed.pathname)) {
-      if (parsed.pathname === sessionPaths.get) snapshots += 1
+      // Force the session route to finish last, as it can on either CI runner.
+      if (parsed.pathname === sessionPaths.get) await new Promise((resolve) => setImmediate(resolve))
+      // Snapshot routes run concurrently; each route advances its own fixture.
+      const snapshots = (snapshotReads.get(parsed.pathname) ?? 0) + 1
+      snapshotReads.set(parsed.pathname, snapshots)
       return respondToSnapshotRequest(parsed, sessionPaths, {
         status: { type: snapshots <= 1 ? "busy" : "idle" },
         messages: snapshots <= 1 ? [] : [{
@@ -1747,7 +1751,10 @@ test("consecutive heartbeat misses abort the run and still deliver terminal and 
   assert.equal(events.find((entry) => entry.type === "terminal")?.payload.status, "failed")
 })
 
-test("a snapshot poll left hanging by a suspended machine still honors the assignment timeout", async () => {
+test("a snapshot poll left hanging by a suspended machine still honors the assignment timeout", async (t) => {
+  // The timer can fire before the wall clock reaches the computed deadline.
+  // Hold that clock still to exercise the abort source deterministically.
+  t.mock.method(Date, "now", () => 1_000)
   const snapshotSignals = []
   const sessionPaths = opencodeSessionPaths("workspace-1", "session-1")
   const local = localExecutionRoutes(sessionPaths, (parsed, options) => {

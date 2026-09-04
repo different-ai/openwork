@@ -19,7 +19,6 @@ import {
 } from "@/components/ui/sidebar";
 import { t } from "../../../../i18n";
 import { NotificationBell } from "../../../shell/notification-center";
-import { CommandPaletteSearchBar } from "../../../shell/command-palette-search-bar";
 import { usePlatform } from "../../../kernel/platform";
 import type { SettingsTab } from "../../../../app/types";
 import {
@@ -71,9 +70,6 @@ export function SettingsShell(props: SettingsShellProps) {
               workspaces={props.workspaces}
               onSelectWorkspace={props.onSelectWorkspace}
             />
-          </div>
-          <div className="flex shrink-0 justify-end px-1 md:min-w-0 md:flex-1 md:justify-center md:px-4">
-            <CommandPaletteSearchBar />
           </div>
           <div className="flex shrink-0 items-center gap-1 mac:titlebar-no-drag">
             <Button
@@ -137,10 +133,7 @@ export function SettingsShell(props: SettingsShellProps) {
                   </span>
                 ) : null}
               </div>
-              <div className="flex shrink-0 justify-end px-1 md:min-w-0 md:flex-1 md:justify-center md:px-4">
-                <CommandPaletteSearchBar />
-              </div>
-              <div className="flex min-w-0 items-center gap-1.5 text-gray-10 mac:titlebar-no-drag">
+              <div className="flex items-center gap-1.5 text-gray-10 mac:titlebar-no-drag">
                 <NotificationBell />
                 <Button
                   variant="ghost"

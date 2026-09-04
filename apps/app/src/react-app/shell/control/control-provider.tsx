@@ -306,7 +306,7 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
       revision,
       capturedAt: new Date().toISOString(),
       screen: { kind: "other", route },
-      conversations: { tabs: [], layout: { kind: "empty" } },
+      conversations: { tabs: [], layout: { kind: "empty" }, pinnedSessionIds: [] },
       chrome: {
         sidebarOpen: true,
         applicationMenuVisible: false,

@@ -39,6 +39,14 @@ On `Your Connections`, an unconnected One org account connection shows
 `Waiting for an admin to connect` to members. Workspace owners and admins get a
 `Connect` button on that row so they can finish the org account sign-in there.
 
+## Test tools
+
+Admins open **Manage → Connectors**, then use the row **⋯ → Test tools**, or go
+directly to **Manage → Tool Tester**. Select a connector to list its tools, run
+one with form or JSON arguments, and inspect the request and response. The tool
+policy controls on this page choose which tools the organization can use.
+**Your Connections** also shows admins a wrench shortcut to the same tester.
+
 ## OAuth redirect URL
 
 An OAuth redirect URL, also called a callback URL, is the exact address where
@@ -185,7 +193,7 @@ What stays the same:
 - Sign-in still happens in OpenWork Cloud. The desktop app never receives the
   provider's URL or token; it talks to Den's per-connection endpoint with the
   member's own OpenWork credential.
-- Access grants and the connection's tool policy are enforced on every call.
+- Access grants and the connection's tool policy, edited in **Manage → Tool Tester**, are enforced on every call.
 - Turning the option off, revoking a member's access, or removing the
   connection removes the server from every desktop on the next sync.
 - Member-added local MCP servers are never touched.

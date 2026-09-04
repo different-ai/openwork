@@ -32,15 +32,13 @@ export async function oauthDenWorld(seed: Seed) {
 export async function twoDaytonaDesktopsWorld(seed: Seed) {
   const requestedA = process.env.OPENWORK_EVAL_DAYTONA_SANDBOX_A?.trim();
   const requestedB = process.env.OPENWORK_EVAL_DAYTONA_SANDBOX_B?.trim();
-  const engineCacheDirA = process.env.OPENWORK_EVAL_DAYTONA_ENGINE_CACHE_DIR_A?.trim();
-  const engineCacheDirB = process.env.OPENWORK_EVAL_DAYTONA_ENGINE_CACHE_DIR_B?.trim();
   if (Boolean(requestedA) !== Boolean(requestedB)) throw new Error("Set both Daytona sandbox ids or neither.");
   if (requestedA && requestedA === requestedB) throw new Error("The two Daytona sandbox ids must differ.");
   const appA = requestedA
-    ? await desktop({ host: daytonaSandbox(requestedA, engineCacheDirA), name: "a" })
+    ? await desktop({ host: daytonaSandbox(requestedA), name: "a" })
     : await seed.desktop({ name: "a" });
   const appB = requestedB
-    ? await desktop({ host: daytonaSandbox(requestedB, engineCacheDirB), name: "b" })
+    ? await desktop({ host: daytonaSandbox(requestedB), name: "b" })
     : await seed.desktop({ name: "b" });
   const sandboxA = appA.handle.sandboxId;
   const sandboxB = appB.handle.sandboxId;

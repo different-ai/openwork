@@ -219,6 +219,7 @@ export async function newSplitPrimary(seed: Seed) {
     const secondaryPane = secondaryPanes[0];
     return {
       layoutKind: layout?.kind ?? "",
+      focusedPane: layout?.focused ?? "",
       primarySessionId: layout?.primarySessionId ?? layout?.sessionId ?? "",
       secondarySessionId: layout?.secondarySessionId ?? "",
       primaryWorkspaceId: layout?.primaryWorkspaceId ?? "",
@@ -1115,6 +1116,30 @@ export async function sessionErrorCard(seed: Seed) {
   return { app, workspace, session };
 }
 
+export async function snapshotFailure(seed: Seed) {
+  const app = await seed.desktop({ name: "composer-snapshot-failure" });
+  const workspace = await seed.workspace(app, seed.tmpPath("composer-snapshot-failure"));
+  const session = await seedSessionRetry(seed, app, { title: "Composer snapshot failure proof" });
+  await arrangeControl(seed, app, "eval.chat_transcript.seed");
+  const failureJson = await seed.evalIn(app, `async () => {
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
+      const available = window.__openworkControl?.listActions()
+        .find((candidate) => candidate.id === "eval.session_snapshot.fail" && !candidate.disabled);
+      if (available) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    const result = await window.__openworkControl.execute("eval.session_snapshot.fail", null);
+    if (!result?.ok) throw new Error(String(result?.error ?? "control action failed"));
+    return JSON.stringify(result.result);
+  }`, { args: [], awaitPromise: true, timeoutMs: 120_000 });
+  const failure: unknown = typeof failureJson === "string" ? JSON.parse(failureJson) : failureJson;
+  if (!isRecord(failure) || failure.isError !== true) {
+    throw new Error(`Session snapshot failure was not established: ${JSON.stringify(failure)}`);
+  }
+  return { app, workspace, session };
+}
+
 export async function taskActivity(seed: Seed) {
   const app = await seed.desktop({ name: "task-activity-shimmer" });
   const workspace = await seed.workspace(app, seed.tmpPath("task-activity-shimmer"));
@@ -1129,4 +1154,96 @@ export async function unfinishedTools(seed: Seed) {
   const session = await seedSessionRetry(seed, app);
   await arrangeControl(seed, app, "eval.session_lifecycle.seed_unfinished_tools", { lifecycle: "active" });
   return { app, workspace, session };
+}
+
+export const suspendedTurnPrompt = "Continue the deterministic task that spans a laptop sleep.";
+export const suspendedTurnReply = "The task finished after the computer resumed.";
+
+/**
+ * A model whose first answer goes quiet after its opening chunk and never
+ * ends — what a half-open socket looks like after the machine slept — and
+ * whose later answers complete. The witness records every completion so a
+ * spec can prove the engine re-asked once rather than duplicating work.
+ */
+export async function suspendedTurn(seed: Seed, { place }: { place: import("@openwork/env").Place }) {
+  const providerId = "suspended-turn-mock";
+  const modelId = "suspended-turn-model";
+  const agent = seed.mock({
+    agentWorkloads: [{
+      promptMarker: suspendedTurnPrompt,
+      finalReply: suspendedTurnReply,
+      quietCompletions: 1,
+      steps: [{
+        tool: "bash",
+        arguments: {
+          command: "printf '%s\\n' 'suspended-turn-resumed'",
+          timeout: 30_000,
+          description: "Acknowledge the resumed turn",
+        },
+      }],
+    }],
+  });
+  const den = await seed.den({ mocks: { agent } });
+  const app = await seed.desktop({ den, as: "admin", model: `${providerId}/${modelId}` });
+  const workspace = await seed.workspace(app, seed.tmpPath("suspended-turn"));
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    provider: {
+      [providerId]: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "Suspended turn mock",
+        options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-suspended-turn" },
+        models: { [modelId]: { name: "Suspended turn model" } },
+      },
+    },
+  });
+  const session = await seedSessionRetry(seed, app, { title: "Suspended turn" });
+  const startedAt = new Date().toISOString();
+  return {
+    app,
+    workspace,
+    session,
+    /** Kinds of every main completion for this turn, in order. */
+    async completionKinds(): Promise<string[]> {
+      const requests = await den.mocks.agent.agentRequests({ promptMarker: suspendedTurnPrompt, sinceIso: startedAt });
+      return requests.filter((request) => request.kind !== "utility").map((request) => request.kind);
+    },
+    /**
+     * Stop the engine process for `ms` and let it continue: from the engine's
+     * point of view this is the lid closing and opening again.
+     */
+    async suspendEngine(ms: number): Promise<void> {
+      // TODO(primitive): read the managed engine process id from the desktop runtime.
+      const info = await seed.evalIn(app, `window.__OPENWORK_ELECTRON__.invokeDesktop("engineInfo")`, { awaitPromise: true, timeoutMs: 30_000 });
+      const pid = recordValue(info, "pid");
+      if (typeof pid !== "number") throw new Error(`Engine pid unavailable: ${JSON.stringify(info)}`);
+      const host = place.host();
+      const signal = host
+        ? (kind: "SIGSTOP" | "SIGCONT") => host.signal(app.handle, pid, kind)
+        : async (kind: "SIGSTOP" | "SIGCONT") => { process.kill(pid, kind); };
+      await signal("SIGSTOP");
+      try {
+        await new Promise((resolveWait) => setTimeout(resolveWait, ms));
+      } finally {
+        await signal("SIGCONT");
+      }
+    },
+    async transcriptFacts(): Promise<{ prompts: number; replies: number; interruptedCards: number }> {
+      // TODO(primitive): count transcript occurrences and interrupted-run cards.
+      const facts = await seed.evalIn(app, `(prompt, reply) => {
+        const text = document.body.innerText;
+        return {
+          prompts: text.split(prompt).length - 1,
+          replies: text.split(reply).length - 1,
+          interruptedCards: document.querySelectorAll('[data-testid="session-error-interrupted"]').length,
+        };
+      }`, { args: [suspendedTurnPrompt, suspendedTurnReply] });
+      const prompts = recordValue(facts, "prompts");
+      const replies = recordValue(facts, "replies");
+      const interruptedCards = recordValue(facts, "interruptedCards");
+      if (typeof prompts !== "number" || typeof replies !== "number" || typeof interruptedCards !== "number") {
+        throw new Error(`Transcript facts were invalid: ${JSON.stringify(facts)}`);
+      }
+      return { prompts, replies, interruptedCards };
+    },
+  };
 }

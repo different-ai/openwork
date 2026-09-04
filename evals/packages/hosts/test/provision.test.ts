@@ -42,7 +42,6 @@ function desktopFake(diskUse = "40%"):
     if (script.includes("pgrep -f Xvfb")) return { stdout: "XVFB_OK\n", stderr: "", code: 0 };
     if (script.includes("xdg-open-proof")) return { stdout: "XDG_OPEN_WORKS\n", stderr: "", code: 0 };
     if (script.includes("json/version")) return { stdout: '{"Browser":"Chrome/144"}', stderr: "", code: 0 };
-    if (script.includes("install_package")) return { stdout: "WARM_OK\n", stderr: "", code: 0 };
     if (script.includes("%{http_code}")) return { stdout: "200", stderr: "", code: 0 };
     return { stdout: "", stderr: "", code: 0 };
   };
@@ -62,8 +61,6 @@ test("connector E2E test env rendering and parsing round-trip the provision cont
     denWebUrl: "https://den-web.example.test",
     sandboxA: "desktop-a",
     sandboxB: "desktop-b",
-    engineCacheDirA: "/tmp/openwork-engine-warm-a",
-    engineCacheDirB: null,
     mockUrl: "https://mock.example.test",
     ref: "feat/eval-connector-two-members",
     created: ["den", "desktop-a"],
@@ -73,8 +70,6 @@ test("connector E2E test env rendering and parsing round-trip the provision cont
   assert.deepEqual(parseConnectorE2eTestEnv(content), facts);
   assert.match(content, /^# provisioned for org-connector-two-members — generated .*; ref=feat\/eval-connector-two-members$/m);
   assert.match(content, /^# provision-created=den,desktop-a$/m);
-  assert.match(content, /^OPENWORK_EVAL_DAYTONA_ENGINE_CACHE_DIR_A='\/tmp\/openwork-engine-warm-a'$/m);
-  assert.match(content, /^OPENWORK_EVAL_DAYTONA_ENGINE_CACHE_DIR_B=''$/m);
   assert.match(content, /OPENWORK_EVAL_MODEL=big-pickle/);
   const missingApi = content.split("\n").filter((line) => !line.startsWith("OPENWORK_EVAL_DEN_API_URL=")).join("\n");
   assert.throws(() => parseConnectorE2eTestEnv(missingApi), /OPENWORK_EVAL_DEN_API_URL/);
@@ -115,22 +110,11 @@ test("provisionDesktopSandbox reuses a sandbox and keeps every remote command in
 
   assert.equal(result.sandbox, "existing-a");
   assert.equal(result.created, false);
-  assert.match(result.engineCacheDir ?? "", /^\/tmp\/openwork-engine-warm-\d+$/);
   assert.deepEqual(calls[0]?.args, ["sandbox", "start", "existing-a"]);
   assert.equal(calls.filter((call) => call.args[0] === "create").length, 0);
   assert.equal(calls.filter((call) => call.args[0] === "snapshot").length, 0);
   const lastFirstBootCall = calls.findLastIndex((call) => call.args[3]?.includes("/tmp/warmup-profile"));
-  const engineWarmCall = calls.findIndex((call) => call.args[3]?.includes("install_package"));
   assert(lastFirstBootCall >= 0);
-  assert(engineWarmCall > lastFirstBootCall);
-  const engineWarmScript = calls[engineWarmCall]?.args[3] ?? "";
-  assert(engineWarmScript.includes("npm install"));
-  assert(engineWarmScript.includes("npm install --ignore-scripts --no-audit --no-fund --loglevel=error"));
-  assert(engineWarmScript.includes("opencode-chrome-devtools@latest"));
-  assert(!engineWarmScript.includes(Buffer.from('"opencode-chrome-devtools":"latest"').toString("base64").slice(0, 24)));
-  assert(!engineWarmScript.includes("WARM_PRESENT"));
-  assert(!engineWarmScript.includes("W=/workspace/.openwork-daytona/engine-cache"));
-  assert(engineWarmScript.includes("rm -rf /workspace/.openwork-daytona/engine-cache"));
   assertRemoteCommandsAreSingleArgument(calls);
 });
 
@@ -157,8 +141,6 @@ test("rendered values are shell-quoted, because the env file is meant to be sour
     denWebUrl: "https://w",
     sandboxA: nasty,
     sandboxB: "b",
-    engineCacheDirA: null,
-    engineCacheDirB: null,
     mockUrl: "https://m",
     ref: "dev",
     created: [],
@@ -181,8 +163,6 @@ test("an unsafe ref is refused before it can reach a remote shell or a sourced f
       denWebUrl: "https://w",
       sandboxA: "a",
       sandboxB: "b",
-      engineCacheDirA: null,
-      engineCacheDirB: null,
       mockUrl: "https://m",
       ref,
       created: [],

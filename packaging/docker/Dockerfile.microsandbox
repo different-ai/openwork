@@ -56,6 +56,7 @@ RUN test -f /opt/openwork/opencode-plugins/openwork-extensions-preview.js \
   && test -f /opt/openwork/opencode-plugins/openwork-office-attachments.js \
   && test -f /opt/openwork/opencode-plugins/openwork-anthropic-adaptive-thinking.js \
   && test -f /opt/openwork/opencode-plugins/openwork-anthropic-tool-schema.js \
+  && test -f /opt/openwork/opencode-plugins/openwork-provider-connection.js \
   && test "$(openwork-server --version)" = "$OPENWORK_SERVER_VERSION" \
   && opencode --version
 

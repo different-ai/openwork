@@ -90,8 +90,8 @@ import { QueuedMessagesPanel } from "@/react-app/domains/session/modals/queued-m
 import { deriveOpenTargets, sameOpenTargets, selectAutoOpenTarget, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { usePanelTabStore } from "@/react-app/domains/session/panel/panel-tab-store";
 import {
+  deriveRunSyncHealth,
   markSessionSnapshotFetchStart,
-  reconcileFailureDegradedThreshold,
   seedSessionState,
   snapshotKey as reactSnapshotKey,
   statusKey as reactStatusKey,
@@ -666,6 +666,19 @@ function resolveFindOwnerSessionId() {
   return firstMountedSessionSurfaceId();
 }
 
+function subscribeNetworkOnline(onChange: () => void) {
+  window.addEventListener("online", onChange);
+  window.addEventListener("offline", onChange);
+  return () => {
+    window.removeEventListener("online", onChange);
+    window.removeEventListener("offline", onChange);
+  };
+}
+
+function readNetworkOnline() {
+  return window.navigator.onLine !== false;
+}
+
 function statusLabel(snapshot: OpenworkSessionSnapshot | undefined, busy: boolean) {
   if (busy) return "Running...";
   if (snapshot?.status.type === "busy") return "Running...";
@@ -1108,6 +1121,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [cloudQueueRetryVersion, setCloudQueueRetryVersion] = useState(0);
   const sending = props.cloudMcpSubmissionState.status === "sending";
   const cloudQueueBlockedRef = useRef(false);
+  const evalSnapshotFailureRef = useRef(false);
   // Shared with promote-to-send so a manual send-now cannot race the idle drain.
   const drainingQueueRef = useRef(false);
   // Admission-aware drain state. It lives in a module-level per-session store
@@ -1144,6 +1158,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const snapshotQuery = useQuery<OpenworkSessionSnapshot>({
     queryKey: snapshotQueryKey,
     queryFn: async ({ signal }) => {
+      if (evalSnapshotFailureRef.current) {
+        throw new Error("eval: forced session snapshot failure");
+      }
       const startedAt = Date.now();
       const item = await composeNativeSessionSnapshot(
         { opencodeBaseUrl: props.opencodeBaseUrl, token: props.openworkToken },
@@ -1154,6 +1171,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       return item;
     },
     staleTime: 500,
+    retry: (failureCount) => !evalSnapshotFailureRef.current && failureCount < 3,
   });
 
   const currentSnapshot = snapshotQuery.data?.session.id === props.sessionId ? snapshotQuery.data : null;
@@ -1177,6 +1195,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [props.sessionId, currentSnapshot]);
 
   useEffect(() => {
+    evalSnapshotFailureRef.current = false;
     hydratedKeyRef.current = null;
     setSteering(false);
     setError(null);
@@ -1273,15 +1292,19 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // A busy status is a claim that decays: the sync layer revalidates it
   // continuously against /session/status, and once that validation keeps
   // failing (network drop, sleep, dead engine) the transcript must present
-  // "reconnecting" instead of a confidently ticking Working row.
+  // "reconnecting" instead of a confidently ticking Working row. A local
+  // engine keeps answering that poll while the machine itself is offline, so
+  // the browser's own connectivity is part of the same judgement: its model
+  // request cannot progress without a network either.
   const syncStreamKey = workspaceSyncStreamKey({ workspaceId: props.workspaceId, baseUrl: props.opencodeBaseUrl });
   const syncReconcileHealth = useWorkspaceSyncStreamStore(
     (state) => state.reconcileHealthByKey[syncStreamKey],
   );
-  const runSyncHealth = useMemo(() => ({
-    degraded: (syncReconcileHealth?.consecutiveFailures ?? 0) >= reconcileFailureDegradedThreshold,
-    lastConfirmedAt: syncReconcileHealth?.lastSuccessAt ?? null,
-  }), [syncReconcileHealth]);
+  const networkOnline = useSyncExternalStore(subscribeNetworkOnline, readNetworkOnline, () => true);
+  const runSyncHealth = useMemo(
+    () => deriveRunSyncHealth({ networkOnline, health: syncReconcileHealth }),
+    [networkOnline, syncReconcileHealth],
+  );
 
   useEffect(() => {
     if (!chatStreaming) setSteering(false);
@@ -1670,6 +1693,22 @@ export function SessionSurface(props: SessionSurfaceProps) {
     isFetching: snapshotQuery.isFetching,
     isError: snapshotQuery.isError || Boolean(error),
   });
+  const failSessionSnapshotControlAction = useMemo<OpenworkControlAction | null>(() => {
+    if (!import.meta.env.DEV) return null;
+
+    return {
+      id: "eval.session_snapshot.fail",
+      label: "Force the session snapshot query to fail",
+      sideEffect: "mutation",
+      disabled: !props.sessionId,
+      execute: async () => {
+        evalSnapshotFailureRef.current = true;
+        const result = await snapshotQuery.refetch();
+        return { ok: true, isError: result.isError };
+      },
+    };
+  }, [props.sessionId, snapshotQuery.refetch]);
+  useControlAction(props.isControlTarget ? failSessionSnapshotControlAction : null);
 
   const buildDraft = useCallback((text: string, nextAttachments: ComposerAttachment[]): ComposerDraft => {
     const parts: ComposerPart[] = text.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|@[^\s@]+)/).flatMap((segment) => {

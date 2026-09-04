@@ -1050,7 +1050,12 @@ jobs:
   dispatch-changelog:
     name: Dispatch changelog
     needs: [resolve-release, publish-release]
-    if: needs.publish-release.outputs.published_stable == 'true'
+    # always() is required: resolve-benchmark is a skipped ancestor on every
+    # production release, and the implicit success() would skip this job.
+    if: |
+      always() &&
+      needs.publish-release.result == 'success' &&
+      needs.publish-release.outputs.published_stable == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     # This job deliberately checks out nothing and runs no repository code, so
     # actions: write is never available to code executed from the release tag.
