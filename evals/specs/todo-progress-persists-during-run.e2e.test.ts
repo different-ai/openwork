@@ -58,6 +58,8 @@ interface SessionFacts {
   sessionId: string;
   runningBash: boolean;
   todoCount: number;
+  finalReplyVisible: boolean;
+  idle: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -84,6 +86,8 @@ function parseSessionFacts(value: unknown): SessionFacts {
     sessionId: value.sessionId,
     runningBash: value.runningBash === true,
     todoCount: typeof value.todoCount === "number" ? value.todoCount : 0,
+    finalReplyVisible: value.finalReplyVisible === true,
+    idle: value.idle === true,
   };
 }
 
@@ -195,30 +199,46 @@ async function approvePendingPermission(appSurface: App, workspaceId: string, se
   return value.length;
 }
 
-async function readSessionFacts(appSurface: App, workspaceId: string, sessionId: string, command: string): Promise<SessionFacts> {
+async function readSessionFacts(
+  appSurface: App,
+  workspaceId: string,
+  sessionId: string,
+  command: string,
+  completionMarker: string,
+): Promise<SessionFacts> {
   const value = await evalIn(appSurface, `(async () => {
+    const empty = { sessionId: "", runningBash: false, todoCount: 0, finalReplyVisible: false, idle: false };
     const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
-    if (!info?.running || !info.baseUrl) return { sessionId: "", runningBash: false, todoCount: 0 };
-    const base = String(info.baseUrl).replace(/\\/+$/, "") + "/workspace/" + encodeURIComponent(${JSON.stringify(workspaceId)})
-      + "/opencode/session/" + encodeURIComponent(${JSON.stringify(sessionId)});
+    if (!info?.running || !info.baseUrl) return empty;
+    const root = String(info.baseUrl).replace(/\\/+$/, "") + "/workspace/" + encodeURIComponent(${JSON.stringify(workspaceId)})
+      + "/opencode/session";
+    const base = root + "/" + encodeURIComponent(${JSON.stringify(sessionId)});
     const options = {
       headers: { Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? "") },
       signal: AbortSignal.timeout(15000),
     };
-    const [messagesResponse, todosResponse] = await Promise.all([
+    const [messagesResponse, todosResponse, statusResponse] = await Promise.all([
       fetch(base + "/message?limit=50", options),
       fetch(base + "/todo", options),
+      fetch(root + "/status", options),
     ]);
-    if (!messagesResponse.ok || !todosResponse.ok) return { sessionId: "", runningBash: false, todoCount: 0 };
-    const [messages, todos] = await Promise.all([messagesResponse.json(), todosResponse.json()]);
-    const parts = (Array.isArray(messages) ? messages : []).flatMap((message) => Array.isArray(message?.parts) ? message.parts : []);
+    if (!messagesResponse.ok || !todosResponse.ok || !statusResponse.ok) return empty;
+    const [messages, todos, statuses] = await Promise.all([messagesResponse.json(), todosResponse.json(), statusResponse.json()]);
+    const list = Array.isArray(messages) ? messages : [];
+    const parts = list.flatMap((message) => Array.isArray(message?.parts) ? message.parts : []);
     const runningBash = parts.some((part) => part?.tool === "bash"
       && part?.state?.status === "running"
       && part?.state?.input?.command === ${JSON.stringify(command)});
+    const finalReplyVisible = list.some((message) => message?.info?.role === "assistant"
+      && (Array.isArray(message.parts) ? message.parts : []).some((part) => part?.type === "text"
+        && typeof part.text === "string" && part.text.includes(${JSON.stringify(completionMarker)})));
+    const status = statuses?.[${JSON.stringify(sessionId)}];
     return {
       sessionId: ${JSON.stringify(sessionId)},
       runningBash,
       todoCount: Array.isArray(todos) ? todos.length : 0,
+      finalReplyVisible,
+      idle: !status || status.type === "idle",
     };
   })()`, { awaitPromise: true, timeoutMs: 20_000 });
   return parseSessionFacts(value);
@@ -322,7 +342,7 @@ test.skipIf(!runnable)(
     const appeared = await eventually(async () => {
       await approvePendingPermission(desktopApp, workspace.workspaceId, chat);
       const panel = await readTodoPanel(desktopApp, chat);
-      const facts = await readSessionFacts(desktopApp, workspace.workspaceId, chat, command);
+      const facts = await readSessionFacts(desktopApp, workspace.workspaceId, chat, command, completionMarker);
       return { panel, facts };
     }, {
       within: 120_000,
@@ -361,7 +381,7 @@ test.skipIf(!runnable)(
       samples.push({ elapsedMs: Date.now() - startedAt, panel });
       await new Promise((resolve) => setTimeout(resolve, sampleIntervalMs));
     }
-    const stillHolding = await readSessionFacts(desktopApp, workspace.workspaceId, chat, command);
+    const stillHolding = await readSessionFacts(desktopApp, workspace.workspaceId, chat, command, completionMarker);
     expect(stillHolding.runningBash, "the held bash tool must still be running after the observation window").toBe(true);
 
     const missing = samples.filter(({ panel }) => !(panel.found && panel.visible && panel.completed === 1 && panel.total === todos.length));
@@ -375,18 +395,22 @@ test.skipIf(!runnable)(
     );
 
     const completed = await eventually(async () => {
-      const facts = await readSessionFacts(desktopApp, workspace.workspaceId, chat, command);
+      const facts = await readSessionFacts(desktopApp, workspace.workspaceId, chat, command, completionMarker);
       const panel = await readTodoPanel(desktopApp, chat);
       return { facts, panel };
     }, {
       within: 120_000,
       intervalMs: 500,
-      label: "held bash tool completes with the todo panel still shown",
-      until: ({ facts }) => !facts.runningBash,
+      label: "agent finishes with its final reply and the todo panel still shown",
+      until: ({ facts }) => !facts.runningBash && facts.finalReplyVisible && facts.idle,
     });
     expect(completed.panel.found, "todo panel remains after the run finishes").toBe(true);
     expect(completed.panel.visible).toBe(true);
     expect(completed.panel.total).toBe(todos.length);
+    await waitFor(desktopApp, `(() => {
+      const surface = document.querySelector(${JSON.stringify(`[data-session-surface-id="${chat}"]`)});
+      return surface instanceof HTMLElement && !surface.innerText.includes("Running command");
+    })()`, { timeoutMs: 30_000, label: "no tool still rendered as running after the final reply" });
     const afterRunShot = await screenshot(desktopApp);
     const afterRunValidation = await validate(afterRunShot, [
       "A Progress panel above the composer still lists three todo items after the agent finished",
