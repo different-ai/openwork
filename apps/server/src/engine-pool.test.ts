@@ -576,7 +576,8 @@ describe("engine pool", () => {
     expect(primary.isAlive()).toBe(true);
     await fixture.setBusy(oldPort, []);
     expect(await waitUntil(() => !pool.hasDrainingGeneration(), 5_000)).toBe(true);
-    expect(primary.isAlive()).toBe(false);
+    // Retirement removes the draining status before asynchronous process exit.
+    expect(await waitUntil(() => !primary.isAlive(), 5_000)).toBe(true);
   });
 
   test("seeds the healthy standby before flipping and flips anyway when seeding fails", async () => {

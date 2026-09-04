@@ -364,7 +364,8 @@ async function enhanceMermaidElement(element: HTMLElement, theme: ResolvedThemeM
 
 export function useMermaidEnhancer(
   rootRef: RefObject<HTMLElement | null>,
-  html: string,
+  /** Identity of the rendered content; diagrams are re-enhanced when it changes. */
+  content: unknown,
   enabled = true,
 ) {
   const theme = useSyncExternalStore(subscribeToTheme, getResolvedThemeMode, getResolvedThemeMode);
@@ -413,5 +414,5 @@ export function useMermaidEnhancer(
       controller.abort();
       root.removeEventListener("click", handleClick);
     };
-  }, [enabled, html, rootRef, theme]);
+  }, [content, enabled, rootRef, theme]);
 }

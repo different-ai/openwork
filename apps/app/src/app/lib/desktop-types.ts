@@ -54,15 +54,7 @@ export type {
 // Single source of truth: packages/types/src/workspace.ts.
 export type WorkspaceInfo = WorkspaceWire;
 
-// Browser tab state mirrored across the desktop IPC bridge. Owned here (the
-// framework-agnostic layer); the session panel store re-exports it.
-export type BrowserPanelTab = {
-  id: string;
-  type: "browser";
-  label: string;
-  url: string;
-  favicon: string | null;
-  status: "loading" | "ready";
-  canGoBack: boolean;
-  canGoForward: boolean;
-};
+// Browser tab state mirrored across the desktop IPC bridge. The shape is owned
+// by @openwork/browser-tabs (shared with the Electron main process); the
+// session panel store re-exports it from here.
+export type { BrowserPanelTab } from "@openwork/browser-tabs";
