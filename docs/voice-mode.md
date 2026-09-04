@@ -50,7 +50,7 @@ The base review covered current `dev`, all-author open PR metadata, relevant dif
 | [#4358](https://github.com/different-ai/openwork/pull/4358), inference gateway | Open, separate provider routing/credentials/usage work; no dependency |
 | [#4111](https://github.com/different-ai/openwork/pull/4111) and current browser-task work | WebMCP/browser internals remain separate. Voice enters through the normal sender; no browser/native transport changes |
 | [#4459](https://github.com/different-ai/openwork/pull/4459), UI control through server | Merged into the current base, separate control mailbox transport. Voice no longer depends on general UI-control tools |
-| [#4461](https://github.com/different-ai/openwork/pull/4461), computer task mentions | Open, owns composer encoding and routing hints. Plain spoken requests use the existing capabilities; no copying of the mention implementation |
+| [#4461](https://github.com/different-ai/openwork/pull/4461), computer task mentions | Merged into the current base; owns composer encoding and routing hints. Plain spoken requests use the existing capabilities; no copying of the mention implementation |
 | [#4463](https://github.com/different-ai/openwork/pull/4463), scoped native computer sessions | Open, owns native consent, app/window scope, and its cancellation client. No dependency: voice uses the normal executor and its existing tool contract. The shared extension catalog changes separate Voice Mode and Computer Use entries |
 
 No unrelated open branch is imported. The only conversation-shell wiring passes its existing sender and immutable owner into the voice panel.

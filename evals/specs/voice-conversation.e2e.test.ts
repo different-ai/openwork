@@ -12,7 +12,7 @@ function users(value: unknown) {
   return value.filter((message) => object(message).role === "user").map((message) => object(message).text);
 }
 
-test("voice sends and steers real conversation work, interrupts speech, cancels, reconnects without replay, and isolates conversations", async ({ world, user, agent, probe, step }) => {
+test("voice sends and steers real conversation work, interrupts speech, cancels, reconnects without replay, and isolates conversations", async ({ world, user, agent, probe, step, evidence }) => {
   const waitForUsers = (count: number) => probe.eventually(() => world.messages(world.a.sessionId).then(users), { within: 45_000, intervalMs: 500, until: (messages) => messages.length === count, label: `${count} accepted user turns in conversation A` });
   const capture = (count: number) => probe.eventually(() => world.facts(), { within: 10_000, until: (facts) => object(facts).activeTracks === count, label: `${count} active microphone tracks` });
   await step("start with acknowledged controls and capture a spoken request through real execution", async () => {
@@ -25,6 +25,7 @@ test("voice sends and steers real conversation work, interrupts speech, cancels,
     expect(await world.messages(world.b.sessionId)).toEqual([]);
     expect(await world.providerFacts()).toEqual(expect.arrayContaining([expect.objectContaining({ model: "voice-task-model", tools: expect.arrayContaining(["bash"]) })]));
     await user.see({ text: "Reading the conversation’s response…" });
+    evidence.recordAssertionEvidence("A spoken request uses the selected model and real engine; the other conversation stays empty", JSON.stringify({ userTurns: await waitForUsers(1), file: await world.file("voice-note.txt"), otherConversation: await world.messages(world.b.sessionId), model: await world.providerFacts() }), true);
     await user.screenshot();
   });
   await step("barge-in stops only speech and a follow-up updates the same task", async () => {
@@ -37,6 +38,7 @@ test("voice sends and steers real conversation work, interrupts speech, cancels,
     await world.fixture("malicious");
     expect(users(await world.messages(world.a.sessionId))).toHaveLength(2);
     expect(await world.messages(world.b.sessionId)).toEqual([]);
+    evidence.recordAssertionEvidence("Interruption clears playback and the follow-up changes the same workspace without duplicating its user turn", JSON.stringify({ userTurns: users(await world.messages(world.a.sessionId)), file: await world.file("voice-note.txt"), audioCleared: true, otherConversation: await world.messages(world.b.sessionId) }), true);
   });
   await step("uncertain and muted audio cannot send or approve a request", async () => {
     await world.fixture("say", ["Uncertain words", "unclear", -3]);
@@ -48,6 +50,7 @@ test("voice sends and steers real conversation work, interrupts speech, cancels,
     expect(users(await world.messages(world.a.sessionId))).toHaveLength(2);
     await user.click({ role: "button", text: /^Unmute$/ });
     await capture(1);
+    evidence.recordAssertionEvidence("Uncertain and muted audio stay unsubmitted; unmute reacquires capture", "Reviewed textarea value was Uncertain words; mute left zero live tracks; muted approval produced no turn; user count stayed 2; unmute restored one active track.", true);
   });
   await step("cancellation reaches the running engine and does not claim to undo completed work", async () => {
     await world.fixture("say", ["Start a slow operation.", "slow"]);
@@ -62,6 +65,7 @@ test("voice sends and steers real conversation work, interrupts speech, cancels,
     expect(object(await world.file("voice-slow.txt")).status).toBe(404);
     expect(String(object(await world.file("voice-note.txt")).body)).toContain("updated by follow-up");
     expect(users(await world.messages(world.a.sessionId))).toHaveLength(4);
+    evidence.recordAssertionEvidence("A follow-up enters the running conversation; cancellation stops the real tool without undoing completed work", JSON.stringify({ messages: await world.messages(world.a.sessionId), cancelledFile: await world.file("voice-slow.txt"), completedFile: await world.file("voice-note.txt") }), true);
     await user.screenshot();
   });
   await step("a lost connection releases audio and reconnect never resubmits accepted requests", async () => {
@@ -73,6 +77,7 @@ test("voice sends and steers real conversation work, interrupts speech, cancels,
     await world.fixture("say", ["Old connection callback must not run", "late", -0.05, 0]);
     expect(users(await world.messages(world.a.sessionId))).toHaveLength(4);
     expect(await world.messages(world.b.sessionId)).toEqual([]);
+    evidence.recordAssertionEvidence("Reconnect releases prior capture and ignores old callbacks without replay", "Disconnect left zero live tracks; reconnect restored one; a delayed transcript from peer 0 left conversation A at 4 user turns and B empty.", true);
   });
   await step("switching conversations ends the call and discards delayed callbacks", async () => {
     await agent.run("session.open", { sessionId: world.b.sessionId });
@@ -84,6 +89,7 @@ test("voice sends and steers real conversation work, interrupts speech, cancels,
     await agent.run("voice.panel.open");
     await user.notSee({ text: "Uncertain words" });
     await user.see({ label: "Voice request" }, { value: "" });
+    evidence.recordAssertionEvidence("Switching conversations releases audio and isolates pending input", "Zero live tracks after navigation; the old peer's transcript created no turn in B; A retained 4 turns; B's voice textarea was empty.", true);
   });
   await step("denied permission and a late capture grant recover without a live microphone", async () => {
     await world.fixture("deny", [true]);
@@ -98,6 +104,7 @@ test("voice sends and steers real conversation work, interrupts speech, cancels,
     await capture(0);
     expect(object(await world.facts()).liveTracks).toBe(0);
     await user.screenshot();
+    evidence.recordAssertionEvidence("Denied permission and capture granted after End leave no microphone live", "Denied access showed recovery; after a delayed permission grant and End, both active and live track counts were zero.", true);
   });
   await step("typed interaction remains usable after voice ends", async () => {
     await user.type({ label: "Voice request" }, "Create a note in this workspace.", { replace: true });
@@ -105,5 +112,6 @@ test("voice sends and steers real conversation work, interrupts speech, cancels,
     expect(await probe.eventually(() => world.messages(world.b.sessionId).then(users), { within: 45_000, until: (messages) => messages.length === 1, label: "typed fallback submitted to conversation B" })).toEqual(["Create a note in this workspace."]);
     expect(users(await world.messages(world.a.sessionId))).toHaveLength(4);
     expect(object(await world.facts()).liveTracks).toBe(0);
+    evidence.recordAssertionEvidence("Typed fallback remains in the new conversation after voice ends", JSON.stringify({ originalConversationUsers: users(await world.messages(world.a.sessionId)), newConversationUsers: users(await world.messages(world.b.sessionId)), liveTracks: 0 }), true);
   });
 });
