@@ -81,7 +81,8 @@ export function HeaderStatusWord({ activity, engineManaged }: { activity: Cowork
         data-testid="coworker-top-status"
         data-tone={status.tone}
         tabIndex={detail ? 0 : undefined}
-        className={`window-no-drag shrink-0 rounded-md text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60 ${STATUS_TEXT_TONE[status.tone]}`}
+        // A fixed minimum width, right-aligned: "Ready" ↔ "Working" ↔ "Needs you" swap in place instead of sliding what sits beside them.
+        className={`window-no-drag min-w-[4.5rem] shrink-0 rounded-md text-right text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60 ${STATUS_TEXT_TONE[status.tone]}`}
       >
         {status.word}
       </span>
