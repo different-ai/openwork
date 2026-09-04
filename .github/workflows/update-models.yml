@@ -1,3 +1,7 @@
+# github-actions[bot] pushes the snapshot and authors the pull request.
+# The diff-warden GitHub App approves as a distinct identity for last-push approval.
+# GITHUB_TOKEN-created PRs do not trigger the downstream Warden Clearance workflow_run,
+# so this workflow mints the App token and grants the narrowly scoped approval directly.
 name: Update Models
 
 on:
@@ -27,6 +31,7 @@ jobs:
   update-models:
     if: github.repository == 'different-ai/openwork'
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    environment: warden-clearance
 
     steps:
       - name: Checkout
@@ -178,6 +183,7 @@ jobs:
 
       - name: Open pull request
         if: steps.changes.outputs.changed == 'true'
+        id: pr
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -189,7 +195,58 @@ jobs:
             --head "$BRANCH_NAME" \
             --title "chore: update models snapshot" \
             --body "Updates \`$MODELS_PATH\` from \`$MODELS_URL\`.\n\nThe workflow validated the response before replacing the file and wrote the snapshot as minified JSON.")"
-          gh pr merge "$pr_url" --auto --squash --delete-branch
+          {
+            echo "pr_url=$pr_url"
+            echo "pr_number=$(gh pr view "$pr_url" --json number --jq .number)"
+            echo "head_sha=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Mint approval token
+        if: steps.changes.outputs.changed == 'true'
+        id: app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ secrets.WARDEN_APP_ID }}
+          private-key: ${{ secrets.WARDEN_PRIVATE_KEY }}
+
+      - name: Approve snapshot update
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ steps.pr.outputs.pr_number }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+
+          changed_files="$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename')"
+          if [ "$changed_files" != "$MODELS_PATH" ]; then
+            echo "Refusing to approve PR #$PR: changed files must be exactly $MODELS_PATH; found:"
+            echo "$changed_files"
+            exit 1
+          fi
+
+          current_head="$(gh api "repos/$REPO/pulls/$PR" --jq '.head.sha')"
+          if [ "$current_head" != "$HEAD_SHA" ]; then
+            echo "Refusing to approve PR #$PR: head moved from $HEAD_SHA to $current_head."
+            exit 1
+          fi
+
+          BODY="Machine-generated snapshot of \`ee/apps/inference/src/models/base.json\` from https://models.dev/api.json, schema-validated by the Update Models workflow before commit. Auto-approval satisfies the required-review gate only; \`openwork-tests-required\` still gates the merge."
+          gh api "repos/$REPO/pulls/$PR/reviews" \
+            -f event=APPROVE \
+            -f commit_id="$HEAD_SHA" \
+            -f body="$BODY"
+
+      - name: Enable auto-merge
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_URL: ${{ steps.pr.outputs.pr_url }}
+        run: |
+          set -euo pipefail
+
+          gh pr merge "$PR_URL" --auto --squash --delete-branch
 
       - name: No model changes
         if: steps.changes.outputs.changed == 'false'
