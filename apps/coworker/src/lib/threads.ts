@@ -157,6 +157,8 @@ export type EngineModelOption = {
   status: string;
   /** ISO date when known; newer models are preferred among equals. */
   releaseDate: string;
+  /** What the provider charges per million tokens; 0/0 for a free model. A lane pick never costs more than the standard model. */
+  cost: { input: number; output: number };
 };
 
 export type EngineModelCatalog = {
@@ -258,6 +260,7 @@ export function connectedModelCatalog(
         reasoning: model.capabilities?.reasoning ?? false,
         status: model.status ?? "active",
         releaseDate: model.release_date ?? "",
+        cost: { input: model.cost?.input ?? 0, output: model.cost?.output ?? 0 },
       };
     }),
   );

@@ -101,10 +101,10 @@ export type ModelMode = "auto" | "fixed";
 
 export const MODEL_MODES: readonly ModelMode[] = ["auto", "fixed"];
 
-/** The mode a stored coworker record means: an explicit value wins; otherwise a chosen model means fixed, a blank means automatic. */
+/** The mode a stored coworker record means: an explicit value wins; otherwise one model every time — Automatic is chosen in the picker. */
 export function modelModeOf(record: { modelMode?: string | null; model?: string | null }): ModelMode {
   if (record.modelMode === "auto" || record.modelMode === "fixed") return record.modelMode;
-  return String(record.model ?? "").trim() ? "fixed" : "auto";
+  return "fixed";
 }
 
 /** How much thinking a message deserves. */
@@ -172,6 +172,15 @@ function usable(model: EngineModelOption, excluded: ReadonlySet<string>): boolea
   return model.toolCall && model.status !== "deprecated" && !excluded.has(model.id);
 }
 
+/**
+ * A lane pick never costs more than the standard model. One provider can mix
+ * free and paid models (the free provider does: a free standard model beside
+ * dozens of paid ones), so "same provider" alone is no promise about the bill.
+ */
+export function costsNoMoreThan(candidate: Pick<EngineModelOption, "cost">, standard: Pick<EngineModelOption, "cost">): boolean {
+  return candidate.cost.input <= standard.cost.input && candidate.cost.output <= standard.cost.output;
+}
+
 function newestFirst(left: EngineModelOption, right: EngineModelOption): number {
   return right.releaseDate.localeCompare(left.releaseDate) || Number(right.isProviderDefault) - Number(left.isProviderDefault) || left.label.localeCompare(right.label);
 }
@@ -183,8 +192,9 @@ function nameOf(model: EngineModelOption): string {
 /**
  * The model for one lane. The coworker's standard model anchors the choice:
  * the standard lane is that model; the quick and deep lanes look only among
- * the same provider's models (one account, one bill, no surprises) and fall
- * back to the standard model when nothing better exists there. Every
+ * the same provider's models that cost no more than it (one account, and never
+ * a bigger bill than the person already accepted) and fall back to the
+ * standard model when nothing better exists there. Every
  * candidate can use tools and is not deprecated. Null only when no connected
  * model can do the job at all.
  */
@@ -201,7 +211,7 @@ export function chooseModelForLane(
     recommendModel({ models: candidates });
   if (!standard || lane === "standard") return standard;
 
-  const siblings = candidates.filter((model) => model.providerId === standard.providerId && model.id !== standard.id);
+  const siblings = candidates.filter((model) => model.providerId === standard.providerId && model.id !== standard.id && costsNoMoreThan(model, standard));
   const standardIsFast = !standard.reasoning && FAST_NAMES.test(nameOf(standard));
   const standardIsDeep = standard.reasoning && DEEP_NAMES.test(nameOf(standard));
 
