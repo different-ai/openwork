@@ -296,7 +296,8 @@ test("an admin controls default and team access while members can understand the
   await step("the admin locks the team from its Access page", async () => {
     await admin.user.navigate(teamPath);
     await admin.user.see({ text: "What this team can do" }, { timeoutMs: 90_000 });
-    await admin.user.click({ role: "radio", label: /^Locked/ });
+    await admin.user.looks(["The team Access page shows Locked and Custom modes above a list of individual app capabilities"]);
+    await admin.user.click({ text: "Locked" });
     await admin.user.click("Save permissions");
     await admin.probe.eventually(async () => (await effective(world.den.members.jordan)).allowManageExtensions, {
       within: 30_000, label: "team lock overrides the default grant", until: (value) => value === false,
@@ -329,7 +330,7 @@ test("an admin controls default and team access while members can understand the
   evidence.recordAssertionEvidence("Members can inspect app permissions and find instructions for requesting an MCP server", "Library MCP guidance and expanded account permission list visible", true);
 
   await step("the admin grants selected capabilities while keeping tool installation blocked", async () => {
-    await admin.user.click({ role: "radio", label: /^Custom/ });
+    await admin.user.click({ text: "Custom" });
     await admin.user.click({ role: "checkbox", label: "Add and manage local tools, skills & MCP servers" });
     await admin.user.click("Save permissions");
     await admin.probe.eventually(async () => (await effective(world.den.members.jordan)).allowControlSettings, {

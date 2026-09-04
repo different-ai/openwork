@@ -1335,7 +1335,7 @@ export function McpView(props: McpViewProps) {
         </div>
       ) : null}
 
-      {props.builtInExtensionsDisabled ? (
+      {props.builtInExtensionsDisabled && props.allowManageExtensions ? (
         <div className="mb-5 rounded-xl border border-amber-6 bg-amber-2 px-4 py-3 text-xs text-amber-11">
           Built-in OpenWork extensions are disabled by your organization. Use Show hidden to review blocked built-ins.
         </div>
@@ -1344,11 +1344,12 @@ export function McpView(props: McpViewProps) {
       {props.allowManageExtensions ? null : (
         <div
           data-testid="manage-extensions-policy-notice"
-          className="mb-5 rounded-xl border border-amber-6 bg-amber-2 px-4 py-3 text-xs text-amber-11"
+          className="mb-5 rounded-xl border border-dls-border bg-dls-hover px-4 py-4 text-xs leading-5 text-dls-secondary"
         >
-          <p className="font-medium">Adding tools is managed by your organization</p>
+          <p className="text-sm font-medium text-foreground">Your team’s tool access</p>
           <p className="mt-1">{manageExtensionsDisabledReason()}</p>
-          <p className="mt-2">Need an MCP server or skill? Ask your organization admin to add it for your team or enable “Add and manage local tools, skills &amp; MCP servers” in Team → Access. You can still sign in to available connections below.</p>
+          <p className="mt-2">Need an MCP server or skill? Ask your admin to share it with your team or allow local tools in Team → Access. You can still sign in to available connections below.</p>
+          {props.builtInExtensionsDisabled ? <p className="mt-2">Built-in OpenWork extensions are disabled by your organization. Use Show hidden to review blocked built-ins.</p> : null}
         </div>
       )}
 
