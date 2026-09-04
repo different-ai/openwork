@@ -53,6 +53,11 @@
       "reason": "requires a freshly booted Den Web/API origin for its browser-side connector flow"
     },
     {
+      "test": "dashboard-duplicate-capability-tiles.e2e.test.ts",
+      "category": "per-test-den-env",
+      "reason": "requires DEN_DASHBOARDS_ENABLED=true before Den starts"
+    },
+    {
       "test": "den-intermittent-outage-recovery.e2e.test.ts",
       "category": "fault-proxy",
       "reason": "requires all desktop Den traffic to traverse a per-test 503 fault proxy"
