@@ -9,6 +9,7 @@ import {
   type ManagedOpencodeV2Server,
   type OpencodeV2ProviderSpec,
 } from "./managed-opencode-v2.js";
+import { resolveOpencodeModelsUrl } from "./opencode-models-url.js";
 import { runtimeStorageDir } from "./runtime-db.js";
 import {
   isEngineGlobalRuntimeConfigId,
@@ -333,7 +334,12 @@ export function createEngineV2Preview(options: { config: ServerConfig }): Engine
     binSource = resolved.source;
     if (!enabled || !allowRunning) return;
     await mkdir(workspaceDir, { recursive: true });
-    const managed = await createManagedOpencodeV2Server({ bin: resolved.bin, rootDir });
+    const opencodeModelsUrl = await resolveOpencodeModelsUrl();
+    const managed = await createManagedOpencodeV2Server({
+      bin: resolved.bin,
+      rootDir,
+      env: { OPENCODE_MODELS_URL: opencodeModelsUrl },
+    });
     sidecar = managed;
     if (!enabled || !allowRunning) {
       await closeSidecar();

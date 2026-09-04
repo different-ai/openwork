@@ -12,6 +12,7 @@ import {
   createManagedOpencodeV2Server,
   type ManagedOpencodeV2Server,
 } from "../../apps/server/src/managed-opencode-v2";
+import { resolveOpencodeModelsUrl } from "../../apps/server/src/opencode-models-url";
 
 const execFileAsync = promisify(execFile);
 
@@ -109,24 +110,44 @@ test("opencode v2 injects providers at runtime without an engine reload", async 
   if (witnessAddress === null || typeof witnessAddress === "string") throw new Error("Witness failed to bind a TCP port");
   const witnessUrl = `http://127.0.0.1:${witnessAddress.port}`;
   const rootDir = await mkdtemp(join(tmpdir(), "oc2-hot-inject-"));
+  // A fresh cache proves the model catalog does not remain stuck behind the cold-cache 503.
+  const cacheDir = await mkdtemp(join(tmpdir(), "oc2-model-cache-"));
   const directory = join(rootDir, "workspace");
   await mkdir(directory);
+  const baseConfig = join(rootDir, "opencode.json");
+  await writeFile(baseConfig, `${JSON.stringify({ agent: { openwork: { mode: "primary" } }, default_agent: "openwork" })}\n`);
   let server: ManagedOpencodeV2Server | undefined;
 
   try {
-    server = await createManagedOpencodeV2Server({ bin: binary, rootDir });
+    const opencodeModelsUrl = await resolveOpencodeModelsUrl();
+    const catalogStartedAt = Date.now();
+    server = await createManagedOpencodeV2Server({
+      bin: binary,
+      rootDir,
+      env: { XDG_CACHE_HOME: cacheDir, OPENCODE_CONFIG: baseConfig, OPENCODE_MODELS_URL: opencodeModelsUrl },
+    });
     const initialHealth = await server.health();
     const pid0 = initialHealth.pid;
     expect(initialHealth.healthy).toBe(true);
 
-    const baseline = await server.fetchJson("/api/model", { directory });
+    const baseline = await eventually(
+      () => server?.fetchJson("/api/model", { directory }),
+      {
+        within: 60_000,
+        intervalMs: 250,
+        label: "cold model catalog to initialize",
+        until: (result) => result?.status === 200,
+      },
+    );
+    const catalogReadinessMs = Date.now() - catalogStartedAt;
     const baselineText = JSON.stringify(baseline.json);
     expect(baseline.status).toBe(200);
     expect(baselineText).not.toContain("openwork-witness-a");
     expect(baselineText).not.toContain("openwork-witness-b");
+    console.info(`[opencode-v2-spec] cold catalog readiness: ${catalogReadinessMs}ms`);
     evidence.recordAssertionEvidence(
       "C1 positive baseline and negative provider absence",
-      "The healthy v2 engine listed models while containing neither witness A nor witness B before injection.",
+      `The cold-cache v2 engine listed models after ${catalogReadinessMs}ms while containing neither witness A nor witness B before injection.`,
       true,
     );
 
@@ -250,5 +271,6 @@ test("opencode v2 injects providers at runtime without an engine reload", async 
     if (server !== undefined) await server.close();
     await new Promise<void>((resolve, reject) => witness.close((error) => error ? reject(error) : resolve()));
     await rm(rootDir, { recursive: true, force: true });
+    await rm(cacheDir, { recursive: true, force: true });
   }
 }, 240_000);
