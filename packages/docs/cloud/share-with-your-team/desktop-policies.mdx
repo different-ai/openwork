@@ -18,7 +18,7 @@ Current desktop policy keys map to concrete product capabilities:
 - `Alpha updates`: allow or block opting into experimental Alpha desktop updates.
 - `Welcome Page`: show or hide the getting-started page for new users.
 
-A member's effective policy is the union of the default policy and every policy assigned to them: a capability is allowed when any applicable policy allows it. Restrict members by turning capabilities off in the default policy, then grant more to specific members or teams with assigned policies.
+Legacy desktop policies combine grants from the default policy and every assigned policy: any grant can allow a capability. Explicit Team Access blocks are applied afterward and take precedence over those grants. Restrict members by turning capabilities off in the default policy, then grant more to specific members or teams with assigned policies.
 
 ## Restricted mode
 
