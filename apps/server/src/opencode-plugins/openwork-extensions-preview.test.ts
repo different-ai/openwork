@@ -702,6 +702,26 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     expect(bridge.commands).toEqual([]);
   });
 
+  test("stamps the requesting conversation on UI commands so the app acts for that thread, not the one on screen", async () => {
+    const bridge = await startFakeUiBridge();
+    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
+
+    await plugin.tool.openwork_execute.execute({
+      id: "browser.open_url",
+      args: { url: "https://example.com" },
+      // An agent cannot claim to be another conversation.
+      origin: { sessionId: "ses_spoofed" },
+    }, { sessionID: "ses_origin", workspaceId: "ws_2" });
+
+    expect(bridge.commands.map((command) => command.body)).toEqual([
+      {
+        id: "browser.open_url",
+        args: { url: "https://example.com" },
+        origin: { sessionId: "ses_origin", workspaceId: "ws_2" },
+      },
+    ]);
+  });
+
   test("reports a created session as failed when its native prompt does not start", async () => {
     const fake = startFakeOpenWorkServer({ failPromptText: "Fail this prompt." });
     const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });

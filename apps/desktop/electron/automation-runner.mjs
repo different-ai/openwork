@@ -181,14 +181,15 @@ export async function executeDesktopAutomation(assignment, options) {
       // suspends mid-request can leave this socket half-open with no error,
       // which would make the assignment timeout unreachable: bound each poll
       // by the remaining execution budget so the deadline always fires.
+      const timeoutSignal = AbortSignal.timeout(Math.max(1, deadlineAt - Date.now()))
       let snapshot
       try {
         snapshot = await client.getThreadSnapshot(sessionId, {
-          signal: AbortSignal.any([options.signal, AbortSignal.timeout(Math.max(1, deadlineAt - Date.now()))]),
+          signal: AbortSignal.any([options.signal, timeoutSignal]),
           limit: 200,
         })
       } catch (error) {
-        if (!options.signal.aborted && Date.now() >= deadlineAt) throw new Error("Desktop Automation execution timed out")
+        if (!options.signal.aborted && (timeoutSignal.aborted || Date.now() >= deadlineAt)) throw new Error("Desktop Automation execution timed out")
         throw error
       }
       const output = assistantResult(snapshot)

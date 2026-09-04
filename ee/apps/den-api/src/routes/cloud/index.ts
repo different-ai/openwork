@@ -492,6 +492,16 @@ async function ensureCloudWorker(input: {
   return promise
 }
 
+/** Share the browser's member-scoped creation and race handling with MCP. */
+export function ensureMemberCloudWorker(input: { orgId: OrgId; createdByUserId: UserId }) {
+  return ensureCloudWorker({
+    ...input,
+    name: CLOUD_INSTANCE_NAME,
+    continueProvisioning: continueCloudProvisioning,
+    store: databaseCloudWorkerStore,
+  })
+}
+
 function workerNeedsUserRequestedUpdate(worker: CloudWorker) {
   const snapshot = env.daytona.snapshot
   return Boolean(snapshot && (worker.image_version ?? null) !== snapshot)

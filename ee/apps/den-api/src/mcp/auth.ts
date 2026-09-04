@@ -268,12 +268,15 @@ export async function hasActiveMcpMembership(input: { userId: string; organizati
   return await cache.org.membership(principal) !== null
 }
 
+class McpSigningKeysUnavailable extends Error {}
+
 async function getJwks() {
-  const response = await auth.handler(new Request(`${env.betterAuthUrl}/api/auth/jwks`))
-  if (!response.ok) {
-    throw new Error("Unable to load auth JWKS")
+  try {
+    // Internal verification must not consume the public auth HTTP rate limit.
+    return await auth.api.getJwks()
+  } catch (cause) {
+    throw new McpSigningKeysUnavailable("Unable to load auth JWKS", { cause })
   }
-  return response.json()
 }
 
 async function verifyJwtMcpToken(token: string) {
@@ -331,8 +334,19 @@ export async function verifyMcpRequest(headers: Headers, optionsInput?: string |
 
   let verifiedToken: VerifiedMcpToken | null
   if (token.includes(".")) {
-    const payload = await verifyJwtMcpToken(token).catch(() => null)
-    verifiedToken = payload ? { payload, source: "jwt" } : null
+    try {
+      const payload = await verifyJwtMcpToken(token)
+      verifiedToken = payload ? { payload, source: "jwt" } : null
+    } catch (error) {
+      if (error instanceof McpSigningKeysUnavailable) {
+        return mcpJsonResponse(503, {
+          error: "mcp_signing_keys_unavailable",
+          message: "OpenWork could not verify the token signing key. Retry shortly.",
+          referenceId,
+        }, undefined, { "retry-after": "10" })
+      }
+      verifiedToken = null
+    }
   } else {
     const payload = await verifyOpaqueMcpToken(token)
     verifiedToken = payload ? { payload, source: "opaque" } : null

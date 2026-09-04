@@ -26,6 +26,7 @@ const EnvSchema = z.object({
   DEN_MCP_ADDITIONAL_RESOURCES: z.string().optional(),
   DEN_BETTER_AUTH_COOKIE_DOMAIN: z.string().optional(),
   DEN_BETTER_AUTH_TRUSTED_ORIGINS: z.string().optional(),
+  DEN_TRUSTED_PROXIES: z.string().optional(),
   DEN_WEB_APP_HOSTS: z.string().optional(),
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
@@ -647,6 +648,7 @@ export const env = {
   betterAuthSecret: parsed.BETTER_AUTH_SECRET,
   betterAuthUrl,
   betterAuthCookieDomain,
+  trustedProxies: splitCsv(parsed.DEN_TRUSTED_PROXIES),
   webUrl: normalizePublicWebOrigin(betterAuthUrl),
   // SECURITY: `redis://` carries cached auth-session material in plaintext.
   // Non-local redis:// is rejected by default. Hosted platforms such as Render

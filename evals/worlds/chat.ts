@@ -491,6 +491,59 @@ export async function renderCycle(seed: Seed) {
   }
 }
 
+export const streamedMarkdownMarker = "STREAM_MARKDOWN_ANSWER";
+/** A multi-block answer: heading, prose, list, table, fenced code, closing prose. */
+export const streamedMarkdownAnswer = [
+  "## Streamed answer heading",
+  "",
+  "Opening paragraph with **bold emphasis** and `inline-code.ts` in it.",
+  "",
+  "- alpha list item",
+  "- beta list item",
+  "",
+  "| Column | Value |",
+  "| --- | --- |",
+  "| gamma row | 42 |",
+  "",
+  "```ts",
+  "const streamed = \"delta\";",
+  "```",
+  "",
+  "Closing paragraph epsilon.",
+].join("\n");
+
+/**
+ * The answer arrives in small content deltas from the shared agent mock, which
+ * the placement boots next to Den so the engine can reach it on Daytona too.
+ */
+export async function streamedMarkdown(seed: Seed) {
+  const providerId = "streamed-markdown-mock";
+  const modelId = "streamed-markdown-model";
+  const mock = seed.mock({
+    agentWorkloads: [{
+      promptMarker: streamedMarkdownMarker,
+      finalReply: streamedMarkdownAnswer,
+      finalReplyChunkSize: 8,
+      steps: [],
+    }],
+  });
+  const den = await seed.den({ mocks: { agent: mock } });
+  const app = await seed.desktop({ den, as: "admin", model: `${providerId}/${modelId}` });
+  const workspace = await seed.workspace(app, seed.tmpPath("streamed-markdown-answer"));
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    provider: {
+      [providerId]: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "Streamed markdown mock",
+        options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-streamed-markdown" },
+        models: { [modelId]: { name: "Streamed markdown model" } },
+      },
+    },
+  });
+  const session = await seedSessionRetry(seed, app);
+  return { app, den, workspace, session };
+}
+
 const htmlToolName = "explode_html";
 export const htmlClosingReply = "The session recovered after the failed upstream call.";
 export const htmlSummary = "Upstream returned an HTML error page (502 Bad Gateway)";
@@ -1060,7 +1113,10 @@ export async function sessionErrorCard(seed: Seed) {
   const workspace = await seed.workspace(app, seed.tmpPath("session-error-details"));
   const session = await seedSessionRetry(seed, app, { title: "Session error proof" });
   await arrangeControl(seed, app, "eval.session_error.seed");
-  return { app, workspace, session };
+  return {
+    app, workspace, session,
+    seedStorageError: (kind: "disk-full" | "database-error", surface: "transcript" | "banner" = "transcript") => arrangeControl(seed, app, "eval.session_error.seed", { kind, surface }),
+  };
 }
 
 export async function snapshotFailure(seed: Seed) {

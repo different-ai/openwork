@@ -929,6 +929,7 @@ export const auth = betterAuth({
       : {}),
     ipAddress: {
       ipAddressHeaders: ["x-forwarded-for", "x-real-ip", "cf-connecting-ip"],
+      trustedProxies: env.trustedProxies,
       ipv6Subnet: 64,
     },
     database: {

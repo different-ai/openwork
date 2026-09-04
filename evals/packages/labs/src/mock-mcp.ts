@@ -30,6 +30,9 @@ export interface MockAgentToolStep {
 export interface MockAgentWorkload {
   promptMarker: string;
   finalReply: string;
+  /** Stream the final reply as consecutive content deltas of this many characters instead of one. */
+  finalReplyChunkSize?: number;
+  /** Tool calls the agent makes before its final reply; empty answers directly. */
   steps: MockAgentToolStep[];
   /**
    * Declared fault: the first N main completions stream their opening chunk
