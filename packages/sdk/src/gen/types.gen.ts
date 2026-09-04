@@ -791,15 +791,6 @@ export type MeDashboardListResponse = {
   items: Array<MeDashboard>;
 };
 
-export type DesktopPolicyListResponse = {
-  definitions: Array<{
-    [key: string]: unknown;
-  }>;
-  desktopPolicies: Array<{
-    [key: string]: unknown;
-  }>;
-};
-
 export type DesktopPolicyResponse = {
   desktopPolicy: {
     [key: string]: unknown;
@@ -817,6 +808,15 @@ export type DenDesktopPolicyDocumentWrite = {
   showWelcomePage?: boolean;
   onboardingPrompts?: Array<string> | null;
   onboardingPromptDescriptions?: Array<string> | null;
+};
+
+export type DesktopPolicyListResponse = {
+  definitions: Array<{
+    [key: string]: unknown;
+  }>;
+  desktopPolicies: Array<{
+    [key: string]: unknown;
+  }>;
 };
 
 export type InferenceStatus = {
@@ -1129,6 +1129,20 @@ export type DesktopConnectGrantResponse = {
   claims: ConnectLinkClaims;
 };
 
+export type LlmProviderResponse = {
+  llmProvider: {
+    memberCredential?: {
+      state: "missing" | "active" | "blocked" | "stale" | "error";
+    };
+    [key: string]:
+      | unknown
+      | {
+          state: "missing" | "active" | "blocked" | "stale" | "error";
+        }
+      | undefined;
+  };
+};
+
 export type LlmProviderTestConnectionResponse = {
   result: {
     ok: boolean;
@@ -1170,20 +1184,6 @@ export type LlmProviderListResponse = {
   llmProviders: Array<{
     [key: string]: unknown;
   }>;
-};
-
-export type LlmProviderResponse = {
-  llmProvider: {
-    memberCredential?: {
-      state: "missing" | "active" | "blocked" | "stale" | "error";
-    };
-    [key: string]:
-      | unknown
-      | {
-          state: "missing" | "active" | "blocked" | "stale" | "error";
-        }
-      | undefined;
-  };
 };
 
 export type LlmProviderMemberCredentialSummary = {
@@ -3060,6 +3060,7 @@ export type PluginArchTeamPluginAccess = {
 };
 
 export type PluginArchMarketplace = {
+  externalKey: string | null;
   /**
    * Den TypeID with 'mkt_' prefix and a 26-character base32 suffix.
    */
@@ -3082,9 +3083,8 @@ export type PluginArchMarketplace = {
   pluginCount?: number;
 };
 
-export type PluginArchMarketplaceListResponse = {
-  items: Array<PluginArchMarketplace>;
-  nextCursor: string | null;
+export type PluginArchMarketplaceDetailResponse = {
+  item: PluginArchMarketplace;
 };
 
 export type PluginArchMarketplaceMutationResponse = {
@@ -3092,8 +3092,9 @@ export type PluginArchMarketplaceMutationResponse = {
   item: PluginArchMarketplace;
 };
 
-export type PluginArchMarketplaceDetailResponse = {
-  item: PluginArchMarketplace;
+export type PluginArchMarketplaceListResponse = {
+  items: Array<PluginArchMarketplace>;
+  nextCursor: string | null;
 };
 
 export type PluginArchMarketplaceConflictError = {
@@ -3152,6 +3153,7 @@ export type PluginArchMarketplaceResolvedResponse = {
   ok: true;
   item: {
     marketplace: {
+      externalKey: string | null;
       /**
        * Den TypeID with 'mkt_' prefix and a 26-character base32 suffix.
        */
@@ -3694,6 +3696,7 @@ export type TeamResponse = {
      */
     organizationId: string;
     name: string;
+    externalKey: string | null;
     createdAt: string;
     updatedAt: string;
     memberIds: Array<string>;
@@ -9476,6 +9479,245 @@ export type GetV1MeDashboardsResponses = {
 
 export type GetV1MeDashboardsResponse = GetV1MeDashboardsResponses[keyof GetV1MeDashboardsResponses];
 
+export type DeleteV1DesktopPoliciesByKeyByExternalKeyData = {
+  body?: never;
+  path: {
+    externalKey: string;
+  };
+  query?: never;
+  url: "/v1/desktop-policies/by-key/{externalKey}";
+};
+
+export type DeleteV1DesktopPoliciesByKeyByExternalKeyResponses = {
+  /**
+   * Idempotent deletion result.
+   */
+  200: {
+    ok: true;
+    deleted: boolean;
+  };
+};
+
+export type DeleteV1DesktopPoliciesByKeyByExternalKeyResponse =
+  DeleteV1DesktopPoliciesByKeyByExternalKeyResponses[keyof DeleteV1DesktopPoliciesByKeyByExternalKeyResponses];
+
+export type GetV1DesktopPoliciesByKeyByExternalKeyData = {
+  body?: never;
+  path: {
+    externalKey: string;
+  };
+  query?: never;
+  url: "/v1/desktop-policies/by-key/{externalKey}";
+};
+
+export type GetV1DesktopPoliciesByKeyByExternalKeyErrors = {
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+};
+
+export type GetV1DesktopPoliciesByKeyByExternalKeyError =
+  GetV1DesktopPoliciesByKeyByExternalKeyErrors[keyof GetV1DesktopPoliciesByKeyByExternalKeyErrors];
+
+export type GetV1DesktopPoliciesByKeyByExternalKeyResponses = {
+  /**
+   * Resource configuration.
+   */
+  200: DesktopPolicyResponse;
+};
+
+export type GetV1DesktopPoliciesByKeyByExternalKeyResponse =
+  GetV1DesktopPoliciesByKeyByExternalKeyResponses[keyof GetV1DesktopPoliciesByKeyByExternalKeyResponses];
+
+export type PutV1DesktopPoliciesByKeyByExternalKeyData = {
+  body: {
+    policyName: string;
+    policy: DenDesktopPolicyDocumentWrite;
+    priority?: number;
+    isEnabled?: boolean;
+    memberIds?: Array<string>;
+    teamIds?: Array<string>;
+    roles?: Array<"owner" | "admin" | "member">;
+  };
+  path: {
+    externalKey: string;
+  };
+  query?: never;
+  url: "/v1/desktop-policies/by-key/{externalKey}";
+};
+
+export type PutV1DesktopPoliciesByKeyByExternalKeyErrors = {
+  /**
+   * Invalid declarative request.
+   */
+  400: InvalidRequestError;
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Resource management permission required.
+   */
+  403: ForbiddenError;
+  /**
+   * A referenced resource was not found.
+   */
+  404: NotFoundError;
+  /**
+   * A name or identity conflict requires reconciliation.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PutV1DesktopPoliciesByKeyByExternalKeyError =
+  PutV1DesktopPoliciesByKeyByExternalKeyErrors[keyof PutV1DesktopPoliciesByKeyByExternalKeyErrors];
+
+export type PutV1DesktopPoliciesByKeyByExternalKeyResponses = {
+  /**
+   * The existing resource was replaced.
+   */
+  200: DesktopPolicyResponse;
+  /**
+   * The resource was created.
+   */
+  201: DesktopPolicyResponse;
+};
+
+export type PutV1DesktopPoliciesByKeyByExternalKeyResponse =
+  PutV1DesktopPoliciesByKeyByExternalKeyResponses[keyof PutV1DesktopPoliciesByKeyByExternalKeyResponses];
+
+export type DeleteV1DesktopPoliciesByDesktopPolicyIdData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'dpo_' prefix and a 26-character base32 suffix.
+     */
+    desktopPolicyId: string;
+  };
+  query?: never;
+  url: "/v1/desktop-policies/{desktopPolicyId}";
+};
+
+export type DeleteV1DesktopPoliciesByDesktopPolicyIdErrors = {
+  /**
+   * The caller must be signed in to delete desktop policies.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only workspace owners and super-admins can delete desktop policies.
+   */
+  403: ForbiddenError;
+  /**
+   * The policy was not found.
+   */
+  404: NotFoundError;
+};
+
+export type DeleteV1DesktopPoliciesByDesktopPolicyIdError =
+  DeleteV1DesktopPoliciesByDesktopPolicyIdErrors[keyof DeleteV1DesktopPoliciesByDesktopPolicyIdErrors];
+
+export type DeleteV1DesktopPoliciesByDesktopPolicyIdResponses = {
+  /**
+   * Desktop policy deleted successfully.
+   */
+  204: void;
+};
+
+export type DeleteV1DesktopPoliciesByDesktopPolicyIdResponse =
+  DeleteV1DesktopPoliciesByDesktopPolicyIdResponses[keyof DeleteV1DesktopPoliciesByDesktopPolicyIdResponses];
+
+export type GetV1DesktopPoliciesByDesktopPolicyIdData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'dpo_' prefix and a 26-character base32 suffix.
+     */
+    desktopPolicyId: string;
+  };
+  query?: never;
+  url: "/v1/desktop-policies/{desktopPolicyId}";
+};
+
+export type GetV1DesktopPoliciesByDesktopPolicyIdErrors = {
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+};
+
+export type GetV1DesktopPoliciesByDesktopPolicyIdError =
+  GetV1DesktopPoliciesByDesktopPolicyIdErrors[keyof GetV1DesktopPoliciesByDesktopPolicyIdErrors];
+
+export type GetV1DesktopPoliciesByDesktopPolicyIdResponses = {
+  /**
+   * Resource configuration.
+   */
+  200: DesktopPolicyResponse;
+};
+
+export type GetV1DesktopPoliciesByDesktopPolicyIdResponse =
+  GetV1DesktopPoliciesByDesktopPolicyIdResponses[keyof GetV1DesktopPoliciesByDesktopPolicyIdResponses];
+
+export type PatchV1DesktopPoliciesByDesktopPolicyIdData = {
+  body: {
+    policyName: string;
+    policy: DenDesktopPolicyDocumentWrite;
+    priority?: number;
+    isEnabled?: boolean;
+    memberIds?: Array<string>;
+    teamIds?: Array<string>;
+    roles?: Array<"owner" | "admin" | "member">;
+  };
+  path: {
+    /**
+     * Den TypeID with 'dpo_' prefix and a 26-character base32 suffix.
+     */
+    desktopPolicyId: string;
+  };
+  query?: never;
+  url: "/v1/desktop-policies/{desktopPolicyId}";
+};
+
+export type PatchV1DesktopPoliciesByDesktopPolicyIdErrors = {
+  /**
+   * The desktop policy request was invalid.
+   */
+  400: InvalidRequestError;
+  /**
+   * The caller must be signed in to update desktop policies.
+   */
+  401: UnauthorizedError;
+  /**
+   * Desktop policy management requires an Enterprise plan.
+   */
+  402: EnterprisePlanRequiredError;
+  /**
+   * Only workspace owners and super-admins can update desktop policies.
+   */
+  403: ForbiddenError;
+  /**
+   * The policy or a referenced resource was not found.
+   */
+  404: NotFoundError;
+};
+
+export type PatchV1DesktopPoliciesByDesktopPolicyIdError =
+  PatchV1DesktopPoliciesByDesktopPolicyIdErrors[keyof PatchV1DesktopPoliciesByDesktopPolicyIdErrors];
+
+export type PatchV1DesktopPoliciesByDesktopPolicyIdResponses = {
+  /**
+   * Desktop policy updated successfully.
+   */
+  200: DesktopPolicyResponse;
+};
+
+export type PatchV1DesktopPoliciesByDesktopPolicyIdResponse =
+  PatchV1DesktopPoliciesByDesktopPolicyIdResponses[keyof PatchV1DesktopPoliciesByDesktopPolicyIdResponses];
+
 export type GetV1DesktopPoliciesData = {
   body?: never;
   path?: never;
@@ -9553,102 +9795,6 @@ export type PostV1DesktopPoliciesResponses = {
 };
 
 export type PostV1DesktopPoliciesResponse = PostV1DesktopPoliciesResponses[keyof PostV1DesktopPoliciesResponses];
-
-export type DeleteV1DesktopPoliciesByDesktopPolicyIdData = {
-  body?: never;
-  path: {
-    /**
-     * Den TypeID with 'dpo_' prefix and a 26-character base32 suffix.
-     */
-    desktopPolicyId: string;
-  };
-  query?: never;
-  url: "/v1/desktop-policies/{desktopPolicyId}";
-};
-
-export type DeleteV1DesktopPoliciesByDesktopPolicyIdErrors = {
-  /**
-   * The caller must be signed in to delete desktop policies.
-   */
-  401: UnauthorizedError;
-  /**
-   * Only workspace owners and super-admins can delete desktop policies.
-   */
-  403: ForbiddenError;
-  /**
-   * The policy was not found.
-   */
-  404: NotFoundError;
-};
-
-export type DeleteV1DesktopPoliciesByDesktopPolicyIdError =
-  DeleteV1DesktopPoliciesByDesktopPolicyIdErrors[keyof DeleteV1DesktopPoliciesByDesktopPolicyIdErrors];
-
-export type DeleteV1DesktopPoliciesByDesktopPolicyIdResponses = {
-  /**
-   * Desktop policy deleted successfully.
-   */
-  204: void;
-};
-
-export type DeleteV1DesktopPoliciesByDesktopPolicyIdResponse =
-  DeleteV1DesktopPoliciesByDesktopPolicyIdResponses[keyof DeleteV1DesktopPoliciesByDesktopPolicyIdResponses];
-
-export type PatchV1DesktopPoliciesByDesktopPolicyIdData = {
-  body: {
-    policyName: string;
-    policy: DenDesktopPolicyDocumentWrite;
-    priority?: number;
-    isEnabled?: boolean;
-    memberIds?: Array<string>;
-    teamIds?: Array<string>;
-    roles?: Array<"owner" | "admin" | "member">;
-  };
-  path: {
-    /**
-     * Den TypeID with 'dpo_' prefix and a 26-character base32 suffix.
-     */
-    desktopPolicyId: string;
-  };
-  query?: never;
-  url: "/v1/desktop-policies/{desktopPolicyId}";
-};
-
-export type PatchV1DesktopPoliciesByDesktopPolicyIdErrors = {
-  /**
-   * The desktop policy request was invalid.
-   */
-  400: InvalidRequestError;
-  /**
-   * The caller must be signed in to update desktop policies.
-   */
-  401: UnauthorizedError;
-  /**
-   * Desktop policy management requires an Enterprise plan.
-   */
-  402: EnterprisePlanRequiredError;
-  /**
-   * Only workspace owners and super-admins can update desktop policies.
-   */
-  403: ForbiddenError;
-  /**
-   * The policy or a referenced resource was not found.
-   */
-  404: NotFoundError;
-};
-
-export type PatchV1DesktopPoliciesByDesktopPolicyIdError =
-  PatchV1DesktopPoliciesByDesktopPolicyIdErrors[keyof PatchV1DesktopPoliciesByDesktopPolicyIdErrors];
-
-export type PatchV1DesktopPoliciesByDesktopPolicyIdResponses = {
-  /**
-   * Desktop policy updated successfully.
-   */
-  200: DesktopPolicyResponse;
-};
-
-export type PatchV1DesktopPoliciesByDesktopPolicyIdResponse =
-  PatchV1DesktopPoliciesByDesktopPolicyIdResponses[keyof PatchV1DesktopPoliciesByDesktopPolicyIdResponses];
 
 export type GetV1DiagnosticsEgressData = {
   body?: never;
@@ -10920,6 +11066,259 @@ export type GetV1InstallByPlatformResponses = {
 
 export type GetV1InstallByPlatformResponse = GetV1InstallByPlatformResponses[keyof GetV1InstallByPlatformResponses];
 
+export type DeleteV1LlmProvidersByKeyByExternalKeyData = {
+  body?: never;
+  path: {
+    externalKey: string;
+  };
+  query?: never;
+  url: "/v1/llm-providers/by-key/{externalKey}";
+};
+
+export type DeleteV1LlmProvidersByKeyByExternalKeyResponses = {
+  /**
+   * Idempotent deletion result.
+   */
+  200: {
+    ok: true;
+    deleted: boolean;
+  };
+};
+
+export type DeleteV1LlmProvidersByKeyByExternalKeyResponse =
+  DeleteV1LlmProvidersByKeyByExternalKeyResponses[keyof DeleteV1LlmProvidersByKeyByExternalKeyResponses];
+
+export type GetV1LlmProvidersByKeyByExternalKeyData = {
+  body?: never;
+  path: {
+    externalKey: string;
+  };
+  query?: never;
+  url: "/v1/llm-providers/by-key/{externalKey}";
+};
+
+export type GetV1LlmProvidersByKeyByExternalKeyErrors = {
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+};
+
+export type GetV1LlmProvidersByKeyByExternalKeyError =
+  GetV1LlmProvidersByKeyByExternalKeyErrors[keyof GetV1LlmProvidersByKeyByExternalKeyErrors];
+
+export type GetV1LlmProvidersByKeyByExternalKeyResponses = {
+  /**
+   * Resource configuration.
+   */
+  200: LlmProviderResponse;
+};
+
+export type GetV1LlmProvidersByKeyByExternalKeyResponse =
+  GetV1LlmProvidersByKeyByExternalKeyResponses[keyof GetV1LlmProvidersByKeyByExternalKeyResponses];
+
+export type PutV1LlmProvidersByKeyByExternalKeyData = {
+  body: {
+    name: string;
+    source: "models_dev" | "custom";
+    providerId?: string;
+    modelIds?: Array<string>;
+    customConfigText?: string;
+    customConfig?: unknown;
+    credentialMode?: "shared" | "per_member";
+    apiKey?: string;
+    apiKeys?: {
+      [key: string]: string;
+    };
+    memberIds?: Array<string>;
+    teamIds?: Array<string>;
+    allMembers?: boolean;
+  };
+  path: {
+    externalKey: string;
+  };
+  query?: never;
+  url: "/v1/llm-providers/by-key/{externalKey}";
+};
+
+export type PutV1LlmProvidersByKeyByExternalKeyErrors = {
+  /**
+   * Invalid declarative request.
+   */
+  400: InvalidRequestError;
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Resource management permission required.
+   */
+  403: ForbiddenError;
+  /**
+   * A referenced resource was not found.
+   */
+  404: NotFoundError;
+  /**
+   * A name or identity conflict requires reconciliation.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PutV1LlmProvidersByKeyByExternalKeyError =
+  PutV1LlmProvidersByKeyByExternalKeyErrors[keyof PutV1LlmProvidersByKeyByExternalKeyErrors];
+
+export type PutV1LlmProvidersByKeyByExternalKeyResponses = {
+  /**
+   * The existing resource was replaced.
+   */
+  200: LlmProviderResponse;
+  /**
+   * The resource was created.
+   */
+  201: LlmProviderResponse;
+};
+
+export type PutV1LlmProvidersByKeyByExternalKeyResponse =
+  PutV1LlmProvidersByKeyByExternalKeyResponses[keyof PutV1LlmProvidersByKeyByExternalKeyResponses];
+
+export type DeleteV1LlmProvidersByLlmProviderIdData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'lpr_' prefix and a 26-character base32 suffix.
+     */
+    llmProviderId: string;
+  };
+  query?: never;
+  url: "/v1/llm-providers/{llmProviderId}";
+};
+
+export type DeleteV1LlmProvidersByLlmProviderIdErrors = {
+  /**
+   * The provider deletion path parameters were invalid.
+   */
+  400: InvalidRequestError;
+  /**
+   * The caller must be signed in to delete organization LLM providers.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only the provider creator or a workspace admin can delete providers.
+   */
+  403: ForbiddenError;
+  /**
+   * The provider could not be found.
+   */
+  404: NotFoundError;
+};
+
+export type DeleteV1LlmProvidersByLlmProviderIdError =
+  DeleteV1LlmProvidersByLlmProviderIdErrors[keyof DeleteV1LlmProvidersByLlmProviderIdErrors];
+
+export type DeleteV1LlmProvidersByLlmProviderIdResponses = {
+  /**
+   * Organization LLM provider deleted successfully.
+   */
+  204: void;
+};
+
+export type DeleteV1LlmProvidersByLlmProviderIdResponse =
+  DeleteV1LlmProvidersByLlmProviderIdResponses[keyof DeleteV1LlmProvidersByLlmProviderIdResponses];
+
+export type GetV1LlmProvidersByLlmProviderIdData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'lpr_' prefix and a 26-character base32 suffix.
+     */
+    llmProviderId: string;
+  };
+  query?: never;
+  url: "/v1/llm-providers/{llmProviderId}";
+};
+
+export type GetV1LlmProvidersByLlmProviderIdErrors = {
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+};
+
+export type GetV1LlmProvidersByLlmProviderIdError =
+  GetV1LlmProvidersByLlmProviderIdErrors[keyof GetV1LlmProvidersByLlmProviderIdErrors];
+
+export type GetV1LlmProvidersByLlmProviderIdResponses = {
+  /**
+   * Resource configuration.
+   */
+  200: LlmProviderResponse;
+};
+
+export type GetV1LlmProvidersByLlmProviderIdResponse =
+  GetV1LlmProvidersByLlmProviderIdResponses[keyof GetV1LlmProvidersByLlmProviderIdResponses];
+
+export type PatchV1LlmProvidersByLlmProviderIdData = {
+  body: {
+    name: string;
+    source: "models_dev" | "custom";
+    providerId?: string;
+    modelIds?: Array<string>;
+    customConfigText?: string;
+    customConfig?: unknown;
+    credentialMode?: "shared" | "per_member";
+    apiKey?: string;
+    apiKeys?: {
+      [key: string]: string;
+    };
+    memberIds?: Array<string>;
+    teamIds?: Array<string>;
+    allMembers?: boolean;
+  };
+  path: {
+    /**
+     * Den TypeID with 'lpr_' prefix and a 26-character base32 suffix.
+     */
+    llmProviderId: string;
+  };
+  query?: never;
+  url: "/v1/llm-providers/{llmProviderId}";
+};
+
+export type PatchV1LlmProvidersByLlmProviderIdErrors = {
+  /**
+   * The provider update request was invalid.
+   */
+  400: InvalidRequestError;
+  /**
+   * The caller must be signed in to update organization LLM providers.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only the provider creator or a workspace admin can update providers.
+   */
+  403: ForbiddenError;
+  /**
+   * The provider or a referenced resource could not be found.
+   */
+  404: NotFoundError;
+};
+
+export type PatchV1LlmProvidersByLlmProviderIdError =
+  PatchV1LlmProvidersByLlmProviderIdErrors[keyof PatchV1LlmProvidersByLlmProviderIdErrors];
+
+export type PatchV1LlmProvidersByLlmProviderIdResponses = {
+  /**
+   * Organization LLM provider updated successfully.
+   */
+  200: LlmProviderResponse;
+};
+
+export type PatchV1LlmProvidersByLlmProviderIdResponse =
+  PatchV1LlmProvidersByLlmProviderIdResponses[keyof PatchV1LlmProvidersByLlmProviderIdResponses];
+
 export type PostV1LlmProvidersTestConnectionData = {
   body: {
     api: string;
@@ -11416,109 +11815,6 @@ export type PostV1LlmProvidersByLlmProviderIdMemberCredentialsByOrgMembershipIdB
 
 export type PostV1LlmProvidersByLlmProviderIdMemberCredentialsByOrgMembershipIdBlockResponse =
   PostV1LlmProvidersByLlmProviderIdMemberCredentialsByOrgMembershipIdBlockResponses[keyof PostV1LlmProvidersByLlmProviderIdMemberCredentialsByOrgMembershipIdBlockResponses];
-
-export type DeleteV1LlmProvidersByLlmProviderIdData = {
-  body?: never;
-  path: {
-    /**
-     * Den TypeID with 'lpr_' prefix and a 26-character base32 suffix.
-     */
-    llmProviderId: string;
-  };
-  query?: never;
-  url: "/v1/llm-providers/{llmProviderId}";
-};
-
-export type DeleteV1LlmProvidersByLlmProviderIdErrors = {
-  /**
-   * The provider deletion path parameters were invalid.
-   */
-  400: InvalidRequestError;
-  /**
-   * The caller must be signed in to delete organization LLM providers.
-   */
-  401: UnauthorizedError;
-  /**
-   * Only the provider creator or a workspace admin can delete providers.
-   */
-  403: ForbiddenError;
-  /**
-   * The provider could not be found.
-   */
-  404: NotFoundError;
-};
-
-export type DeleteV1LlmProvidersByLlmProviderIdError =
-  DeleteV1LlmProvidersByLlmProviderIdErrors[keyof DeleteV1LlmProvidersByLlmProviderIdErrors];
-
-export type DeleteV1LlmProvidersByLlmProviderIdResponses = {
-  /**
-   * Organization LLM provider deleted successfully.
-   */
-  204: void;
-};
-
-export type DeleteV1LlmProvidersByLlmProviderIdResponse =
-  DeleteV1LlmProvidersByLlmProviderIdResponses[keyof DeleteV1LlmProvidersByLlmProviderIdResponses];
-
-export type PatchV1LlmProvidersByLlmProviderIdData = {
-  body: {
-    name: string;
-    source: "models_dev" | "custom";
-    providerId?: string;
-    modelIds?: Array<string>;
-    customConfigText?: string;
-    customConfig?: unknown;
-    credentialMode?: "shared" | "per_member";
-    apiKey?: string;
-    apiKeys?: {
-      [key: string]: string;
-    };
-    memberIds?: Array<string>;
-    teamIds?: Array<string>;
-    allMembers?: boolean;
-  };
-  path: {
-    /**
-     * Den TypeID with 'lpr_' prefix and a 26-character base32 suffix.
-     */
-    llmProviderId: string;
-  };
-  query?: never;
-  url: "/v1/llm-providers/{llmProviderId}";
-};
-
-export type PatchV1LlmProvidersByLlmProviderIdErrors = {
-  /**
-   * The provider update request was invalid.
-   */
-  400: InvalidRequestError;
-  /**
-   * The caller must be signed in to update organization LLM providers.
-   */
-  401: UnauthorizedError;
-  /**
-   * Only the provider creator or a workspace admin can update providers.
-   */
-  403: ForbiddenError;
-  /**
-   * The provider or a referenced resource could not be found.
-   */
-  404: NotFoundError;
-};
-
-export type PatchV1LlmProvidersByLlmProviderIdError =
-  PatchV1LlmProvidersByLlmProviderIdErrors[keyof PatchV1LlmProvidersByLlmProviderIdErrors];
-
-export type PatchV1LlmProvidersByLlmProviderIdResponses = {
-  /**
-   * Organization LLM provider updated successfully.
-   */
-  200: LlmProviderResponse;
-};
-
-export type PatchV1LlmProvidersByLlmProviderIdResponse =
-  PatchV1LlmProvidersByLlmProviderIdResponses[keyof PatchV1LlmProvidersByLlmProviderIdResponses];
 
 export type DeleteV1LlmProvidersByLlmProviderIdAccessByAccessIdData = {
   body?: never;
@@ -15588,6 +15884,113 @@ export type DeleteV1PluginsByPluginIdAccessByGrantIdResponses = {
 export type DeleteV1PluginsByPluginIdAccessByGrantIdResponse =
   DeleteV1PluginsByPluginIdAccessByGrantIdResponses[keyof DeleteV1PluginsByPluginIdAccessByGrantIdResponses];
 
+export type DeleteV1MarketplacesByKeyByExternalKeyData = {
+  body?: never;
+  path: {
+    externalKey: string;
+  };
+  query?: never;
+  url: "/v1/marketplaces/by-key/{externalKey}";
+};
+
+export type DeleteV1MarketplacesByKeyByExternalKeyResponses = {
+  /**
+   * Idempotent deletion result.
+   */
+  200: {
+    ok: true;
+    deleted: boolean;
+  };
+};
+
+export type DeleteV1MarketplacesByKeyByExternalKeyResponse =
+  DeleteV1MarketplacesByKeyByExternalKeyResponses[keyof DeleteV1MarketplacesByKeyByExternalKeyResponses];
+
+export type GetV1MarketplacesByKeyByExternalKeyData = {
+  body?: never;
+  path: {
+    externalKey: string;
+  };
+  query?: never;
+  url: "/v1/marketplaces/by-key/{externalKey}";
+};
+
+export type GetV1MarketplacesByKeyByExternalKeyErrors = {
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+};
+
+export type GetV1MarketplacesByKeyByExternalKeyError =
+  GetV1MarketplacesByKeyByExternalKeyErrors[keyof GetV1MarketplacesByKeyByExternalKeyErrors];
+
+export type GetV1MarketplacesByKeyByExternalKeyResponses = {
+  /**
+   * Marketplace configuration.
+   */
+  200: PluginArchMarketplaceDetailResponse;
+};
+
+export type GetV1MarketplacesByKeyByExternalKeyResponse =
+  GetV1MarketplacesByKeyByExternalKeyResponses[keyof GetV1MarketplacesByKeyByExternalKeyResponses];
+
+export type PutV1MarketplacesByKeyByExternalKeyData = {
+  body: {
+    name: string;
+    description?: string | null;
+    logoUrl?: string | null;
+  };
+  path: {
+    externalKey: string;
+  };
+  query?: never;
+  url: "/v1/marketplaces/by-key/{externalKey}";
+};
+
+export type PutV1MarketplacesByKeyByExternalKeyErrors = {
+  /**
+   * Invalid declarative request.
+   */
+  400: InvalidRequestError;
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Resource management permission required.
+   */
+  403: ForbiddenError;
+  /**
+   * A referenced resource was not found.
+   */
+  404: NotFoundError;
+  /**
+   * A name or identity conflict requires reconciliation.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PutV1MarketplacesByKeyByExternalKeyError =
+  PutV1MarketplacesByKeyByExternalKeyErrors[keyof PutV1MarketplacesByKeyByExternalKeyErrors];
+
+export type PutV1MarketplacesByKeyByExternalKeyResponses = {
+  /**
+   * The existing resource was replaced.
+   */
+  200: PluginArchMarketplaceMutationResponse;
+  /**
+   * The resource was created.
+   */
+  201: PluginArchMarketplaceMutationResponse;
+};
+
+export type PutV1MarketplacesByKeyByExternalKeyResponse =
+  PutV1MarketplacesByKeyByExternalKeyResponses[keyof PutV1MarketplacesByKeyByExternalKeyResponses];
+
 export type GetV1MarketplacesData = {
   body?: never;
   path?: never;
@@ -18099,45 +18502,111 @@ export type GetV1ResourcesResponses = {
 
 export type GetV1ResourcesResponse = GetV1ResourcesResponses[keyof GetV1ResourcesResponses];
 
-export type PostV1TeamsData = {
-  body: {
-    name: string;
-    memberIds?: Array<string>;
+export type DeleteV1TeamsByKeyByExternalKeyData = {
+  body?: never;
+  path: {
+    externalKey: string;
   };
-  path?: never;
   query?: never;
-  url: "/v1/teams";
+  url: "/v1/teams/by-key/{externalKey}";
 };
 
-export type PostV1TeamsErrors = {
+export type DeleteV1TeamsByKeyByExternalKeyResponses = {
   /**
-   * The team creation request was invalid.
+   * Idempotent deletion result.
    */
-  400: InvalidRequestError;
+  200: {
+    ok: true;
+    deleted: boolean;
+  };
+};
+
+export type DeleteV1TeamsByKeyByExternalKeyResponse =
+  DeleteV1TeamsByKeyByExternalKeyResponses[keyof DeleteV1TeamsByKeyByExternalKeyResponses];
+
+export type GetV1TeamsByKeyByExternalKeyData = {
+  body?: never;
+  path: {
+    externalKey: string;
+  };
+  query?: never;
+  url: "/v1/teams/by-key/{externalKey}";
+};
+
+export type GetV1TeamsByKeyByExternalKeyErrors = {
   /**
-   * The caller must be signed in to create teams.
-   */
-  401: UnauthorizedError;
-  /**
-   * Only workspace owners and admins can create teams.
-   */
-  403: ForbiddenError;
-  /**
-   * The organization or a referenced member could not be found.
+   * Resource not found.
    */
   404: NotFoundError;
 };
 
-export type PostV1TeamsError = PostV1TeamsErrors[keyof PostV1TeamsErrors];
+export type GetV1TeamsByKeyByExternalKeyError =
+  GetV1TeamsByKeyByExternalKeyErrors[keyof GetV1TeamsByKeyByExternalKeyErrors];
 
-export type PostV1TeamsResponses = {
+export type GetV1TeamsByKeyByExternalKeyResponses = {
   /**
-   * Team created successfully.
+   * Resource configuration.
+   */
+  200: TeamResponse;
+};
+
+export type GetV1TeamsByKeyByExternalKeyResponse =
+  GetV1TeamsByKeyByExternalKeyResponses[keyof GetV1TeamsByKeyByExternalKeyResponses];
+
+export type PutV1TeamsByKeyByExternalKeyData = {
+  body: {
+    name: string;
+    memberIds?: Array<string>;
+  };
+  path: {
+    externalKey: string;
+  };
+  query?: never;
+  url: "/v1/teams/by-key/{externalKey}";
+};
+
+export type PutV1TeamsByKeyByExternalKeyErrors = {
+  /**
+   * Invalid declarative request.
+   */
+  400: InvalidRequestError;
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Resource management permission required.
+   */
+  403: ForbiddenError;
+  /**
+   * A referenced resource was not found.
+   */
+  404: NotFoundError;
+  /**
+   * A name or identity conflict requires reconciliation.
+   */
+  409: {
+    error: string;
+    message?: string;
+  };
+};
+
+export type PutV1TeamsByKeyByExternalKeyError =
+  PutV1TeamsByKeyByExternalKeyErrors[keyof PutV1TeamsByKeyByExternalKeyErrors];
+
+export type PutV1TeamsByKeyByExternalKeyResponses = {
+  /**
+   * The existing resource was replaced.
+   */
+  200: TeamResponse;
+  /**
+   * The resource was created.
    */
   201: TeamResponse;
 };
 
-export type PostV1TeamsResponse = PostV1TeamsResponses[keyof PostV1TeamsResponses];
+export type PutV1TeamsByKeyByExternalKeyResponse =
+  PutV1TeamsByKeyByExternalKeyResponses[keyof PutV1TeamsByKeyByExternalKeyResponses];
 
 export type DeleteV1TeamsByTeamIdData = {
   body?: never;
@@ -18180,6 +18649,36 @@ export type DeleteV1TeamsByTeamIdResponses = {
 };
 
 export type DeleteV1TeamsByTeamIdResponse = DeleteV1TeamsByTeamIdResponses[keyof DeleteV1TeamsByTeamIdResponses];
+
+export type GetV1TeamsByTeamIdData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'tem_' prefix and a 26-character base32 suffix.
+     */
+    teamId: string;
+  };
+  query?: never;
+  url: "/v1/teams/{teamId}";
+};
+
+export type GetV1TeamsByTeamIdErrors = {
+  /**
+   * Resource not found.
+   */
+  404: NotFoundError;
+};
+
+export type GetV1TeamsByTeamIdError = GetV1TeamsByTeamIdErrors[keyof GetV1TeamsByTeamIdErrors];
+
+export type GetV1TeamsByTeamIdResponses = {
+  /**
+   * Resource configuration.
+   */
+  200: TeamResponse;
+};
+
+export type GetV1TeamsByTeamIdResponse = GetV1TeamsByTeamIdResponses[keyof GetV1TeamsByTeamIdResponses];
 
 export type PatchV1TeamsByTeamIdData = {
   body: {
@@ -18225,6 +18724,46 @@ export type PatchV1TeamsByTeamIdResponses = {
 };
 
 export type PatchV1TeamsByTeamIdResponse = PatchV1TeamsByTeamIdResponses[keyof PatchV1TeamsByTeamIdResponses];
+
+export type PostV1TeamsData = {
+  body: {
+    name: string;
+    memberIds?: Array<string>;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/teams";
+};
+
+export type PostV1TeamsErrors = {
+  /**
+   * The team creation request was invalid.
+   */
+  400: InvalidRequestError;
+  /**
+   * The caller must be signed in to create teams.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only workspace owners and admins can create teams.
+   */
+  403: ForbiddenError;
+  /**
+   * The organization or a referenced member could not be found.
+   */
+  404: NotFoundError;
+};
+
+export type PostV1TeamsError = PostV1TeamsErrors[keyof PostV1TeamsErrors];
+
+export type PostV1TeamsResponses = {
+  /**
+   * Team created successfully.
+   */
+  201: TeamResponse;
+};
+
+export type PostV1TeamsResponse = PostV1TeamsResponses[keyof PostV1TeamsResponses];
 
 export type GetV1AppVersionData = {
   body?: never;

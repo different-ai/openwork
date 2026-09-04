@@ -733,6 +733,7 @@ export const marketplacePluginSchema = z.object({
 }).meta({ ref: "PluginArchMarketplacePluginMembership" })
 
 export const marketplaceSchema = z.object({
+  externalKey: z.string().nullable(),
   id: marketplaceIdSchema,
   organizationId: denTypeIdSchema("organization"),
   name: z.string().trim().min(1).max(255),

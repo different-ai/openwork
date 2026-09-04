@@ -37,7 +37,9 @@ default; pass `{ throwOnError: true }` to an operation to reject on HTTP errors.
 
 ## Generation
 
-From the repository root, after `pnpm install`:
+From the repository root, after `pnpm install`, use a local development MySQL
+database with the current Den schema (`DATABASE_URL` selects it). The SDK CI job
+creates its own empty database and applies the schema before generation.
 
 ```sh
 pnpm sdk:generate  # export live Den OpenAPI and regenerate src/gen
@@ -54,8 +56,9 @@ with pinned Prettier, then compile. A small handwritten factory wraps the genera
 
 The source of truth is Den's route metadata and Zod schemas, exported by
 `ee/apps/den-api/scripts/generate-openapi-snapshot.ts`. Generation builds the MCP
-app assets required by Den's module imports, but does not start an HTTP server or
-require a database. The temporary OpenAPI file is removed afterward; the docs
+app assets required by Den's module imports. It does not start an HTTP server,
+but loading the app initializes OAuth's resource registry, which requires the
+development database. The temporary OpenAPI file is removed afterward; the docs
 snapshot is left untouched. `src/gen` is committed and must never be edited by
 hand. CI rejects drift after schema changes. Add or improve the route's OpenAPI
 metadata before regenerating to change SDK methods or types.
@@ -66,5 +69,6 @@ schemas retain `unknown` fields rather than inventing contracts. Better Auth
 wildcard routes and endpoints absent from Den's OpenAPI are not added manually.
 
 The journey test needs MySQL and Redis for an isolated Den. It checks public and
-authenticated calls, session and API-key identity, organization context, typed
-team mutations, per-request credential overrides, and failure responses.
+authenticated calls, session and API-key identity, session organization selection
+across two organizations, typed team mutations, per-request organization and
+credential overrides, and failure responses.

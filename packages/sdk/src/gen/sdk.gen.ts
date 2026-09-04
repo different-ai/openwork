@@ -35,12 +35,15 @@ import type {
   DeleteV1DashboardsByDashboardIdResponses,
   DeleteV1DesktopPoliciesByDesktopPolicyIdErrors,
   DeleteV1DesktopPoliciesByDesktopPolicyIdResponses,
+  DeleteV1DesktopPoliciesByKeyByExternalKeyResponses,
+  DeleteV1LlmProvidersByKeyByExternalKeyResponses,
   DeleteV1LlmProvidersByLlmProviderIdAccessByAccessIdErrors,
   DeleteV1LlmProvidersByLlmProviderIdAccessByAccessIdResponses,
   DeleteV1LlmProvidersByLlmProviderIdErrors,
   DeleteV1LlmProvidersByLlmProviderIdMyCredentialErrors,
   DeleteV1LlmProvidersByLlmProviderIdMyCredentialResponses,
   DeleteV1LlmProvidersByLlmProviderIdResponses,
+  DeleteV1MarketplacesByKeyByExternalKeyResponses,
   DeleteV1MarketplacesByMarketplaceIdAccessByGrantIdErrors,
   DeleteV1MarketplacesByMarketplaceIdAccessByGrantIdResponses,
   DeleteV1MarketplacesByMarketplaceIdPluginsByPluginIdErrors,
@@ -67,6 +70,7 @@ import type {
   DeleteV1SkillHubsBySkillHubIdSkillsBySkillIdErrors,
   DeleteV1SsoErrors,
   DeleteV1SsoResponses,
+  DeleteV1TeamsByKeyByExternalKeyResponses,
   DeleteV1TeamsByTeamIdErrors,
   DeleteV1TeamsByTeamIdResponses,
   DeleteV1WorkersByIdErrors,
@@ -197,6 +201,10 @@ import type {
   GetV1DashboardsByDashboardIdResponses,
   GetV1DashboardsErrors,
   GetV1DashboardsResponses,
+  GetV1DesktopPoliciesByDesktopPolicyIdErrors,
+  GetV1DesktopPoliciesByDesktopPolicyIdResponses,
+  GetV1DesktopPoliciesByKeyByExternalKeyErrors,
+  GetV1DesktopPoliciesByKeyByExternalKeyResponses,
   GetV1DesktopPoliciesErrors,
   GetV1DesktopPoliciesResponses,
   GetV1DevEmailsLastResponses,
@@ -213,12 +221,18 @@ import type {
   GetV1LlmProviderCatalogByProviderIdResponses,
   GetV1LlmProviderCatalogErrors,
   GetV1LlmProviderCatalogResponses,
+  GetV1LlmProvidersByKeyByExternalKeyErrors,
+  GetV1LlmProvidersByKeyByExternalKeyResponses,
   GetV1LlmProvidersByLlmProviderIdConnectErrors,
   GetV1LlmProvidersByLlmProviderIdConnectResponses,
+  GetV1LlmProvidersByLlmProviderIdErrors,
   GetV1LlmProvidersByLlmProviderIdMemberCredentialsErrors,
   GetV1LlmProvidersByLlmProviderIdMemberCredentialsResponses,
+  GetV1LlmProvidersByLlmProviderIdResponses,
   GetV1LlmProvidersErrors,
   GetV1LlmProvidersResponses,
+  GetV1MarketplacesByKeyByExternalKeyErrors,
+  GetV1MarketplacesByKeyByExternalKeyResponses,
   GetV1MarketplacesByMarketplaceIdAccessErrors,
   GetV1MarketplacesByMarketplaceIdAccessResponses,
   GetV1MarketplacesByMarketplaceIdErrors,
@@ -303,8 +317,12 @@ import type {
   GetV1SsoMetadataErrors,
   GetV1SsoMetadataResponses,
   GetV1SsoResponses,
+  GetV1TeamsByKeyByExternalKeyErrors,
+  GetV1TeamsByKeyByExternalKeyResponses,
+  GetV1TeamsByTeamIdErrors,
   GetV1TeamsByTeamIdPluginAccessErrors,
   GetV1TeamsByTeamIdPluginAccessResponses,
+  GetV1TeamsByTeamIdResponses,
   GetV1TelemetryAdoptionErrors,
   GetV1TelemetryAdoptionResponses,
   GetV1TelemetryAnalyticsErrors,
@@ -617,12 +635,18 @@ import type {
   PutV1AdminOrganizationsByOrganizationIdOpenworkWebAccessResponses,
   PutV1CapabilitiesMicrosoft365DriveFilesErrors,
   PutV1CapabilitiesMicrosoft365DriveFilesResponses,
+  PutV1DesktopPoliciesByKeyByExternalKeyErrors,
+  PutV1DesktopPoliciesByKeyByExternalKeyResponses,
   PutV1DiagnosticsEgressTokenErrors,
   PutV1DiagnosticsEgressTokenResponses,
+  PutV1LlmProvidersByKeyByExternalKeyErrors,
+  PutV1LlmProvidersByKeyByExternalKeyResponses,
   PutV1LlmProvidersByLlmProviderIdMemberCredentialsByOrgMembershipIdErrors,
   PutV1LlmProvidersByLlmProviderIdMemberCredentialsByOrgMembershipIdResponses,
   PutV1LlmProvidersByLlmProviderIdMyCredentialErrors,
   PutV1LlmProvidersByLlmProviderIdMyCredentialResponses,
+  PutV1MarketplacesByKeyByExternalKeyErrors,
+  PutV1MarketplacesByKeyByExternalKeyResponses,
   PutV1McpConnectionsByConnectionIdAccessErrors,
   PutV1McpConnectionsByConnectionIdAccessResponses,
   PutV1McpConnectionsByConnectionIdErrors,
@@ -631,6 +655,8 @@ import type {
   PutV1McpConnectionsByConnectionIdToolPolicyResponses,
   PutV1McpConnectionsByKeyByExternalKeyErrors,
   PutV1McpConnectionsByKeyByExternalKeyResponses,
+  PutV1TeamsByKeyByExternalKeyErrors,
+  PutV1TeamsByKeyByExternalKeyResponses,
   RunAutomationNowErrors,
   RunAutomationNowResponses,
   SaveWorkflowErrors,
@@ -3353,21 +3379,55 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
-   * List desktop policies
+   * Delete desktop-policies by stable key
    */
-  public getV1DesktopPolicies<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).get<
-      GetV1DesktopPoliciesResponses,
-      GetV1DesktopPoliciesErrors,
+  public deleteV1DesktopPoliciesByKeyByExternalKey<ThrowOnError extends boolean = false>(
+    parameters: {
+      externalKey: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "externalKey" }] }]);
+    return (options?.client ?? this.client).delete<
+      DeleteV1DesktopPoliciesByKeyByExternalKeyResponses,
+      unknown,
       ThrowOnError
-    >({ url: "/v1/desktop-policies", ...options });
+    >({
+      url: "/v1/desktop-policies/by-key/{externalKey}",
+      ...options,
+      ...params,
+    });
   }
 
   /**
-   * Create desktop policy
+   * Read desktop-policies by stable key
    */
-  public postV1DesktopPolicies<ThrowOnError extends boolean = false>(
-    parameters?: {
+  public getV1DesktopPoliciesByKeyByExternalKey<ThrowOnError extends boolean = false>(
+    parameters: {
+      externalKey: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "externalKey" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1DesktopPoliciesByKeyByExternalKeyResponses,
+      GetV1DesktopPoliciesByKeyByExternalKeyErrors,
+      ThrowOnError
+    >({
+      url: "/v1/desktop-policies/by-key/{externalKey}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Apply desktop-policies by stable key
+   *
+   * Creates or replaces an organization-scoped resource. Names do not identify resources; existing unkeyed resources are never adopted automatically. Assignments are replaced. Omitted write-only secrets are preserved. Concurrent writes are last-write-wins; conditional headers are not supported on this route.
+   */
+  public putV1DesktopPoliciesByKeyByExternalKey<ThrowOnError extends boolean = false>(
+    parameters: {
+      externalKey: string;
       policyName?: string;
       policy?: DenDesktopPolicyDocumentWrite;
       priority?: number;
@@ -3383,6 +3443,7 @@ export class DenClient extends HeyApiClient {
       [
         {
           args: [
+            { in: "path", key: "externalKey" },
             { in: "body", key: "policyName" },
             { in: "body", key: "policy" },
             { in: "body", key: "priority" },
@@ -3394,12 +3455,12 @@ export class DenClient extends HeyApiClient {
         },
       ],
     );
-    return (options?.client ?? this.client).post<
-      PostV1DesktopPoliciesResponses,
-      PostV1DesktopPoliciesErrors,
+    return (options?.client ?? this.client).put<
+      PutV1DesktopPoliciesByKeyByExternalKeyResponses,
+      PutV1DesktopPoliciesByKeyByExternalKeyErrors,
       ThrowOnError
     >({
-      url: "/v1/desktop-policies",
+      url: "/v1/desktop-policies/by-key/{externalKey}",
       ...options,
       ...params,
       headers: {
@@ -3423,6 +3484,27 @@ export class DenClient extends HeyApiClient {
     return (options?.client ?? this.client).delete<
       DeleteV1DesktopPoliciesByDesktopPolicyIdResponses,
       DeleteV1DesktopPoliciesByDesktopPolicyIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/desktop-policies/{desktopPolicyId}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Read desktop-policies by id
+   */
+  public getV1DesktopPoliciesByDesktopPolicyId<ThrowOnError extends boolean = false>(
+    parameters: {
+      desktopPolicyId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "desktopPolicyId" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1DesktopPoliciesByDesktopPolicyIdResponses,
+      GetV1DesktopPoliciesByDesktopPolicyIdErrors,
       ThrowOnError
     >({
       url: "/v1/desktop-policies/{desktopPolicyId}",
@@ -3470,6 +3552,64 @@ export class DenClient extends HeyApiClient {
       ThrowOnError
     >({
       url: "/v1/desktop-policies/{desktopPolicyId}",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * List desktop policies
+   */
+  public getV1DesktopPolicies<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<
+      GetV1DesktopPoliciesResponses,
+      GetV1DesktopPoliciesErrors,
+      ThrowOnError
+    >({ url: "/v1/desktop-policies", ...options });
+  }
+
+  /**
+   * Create desktop policy
+   */
+  public postV1DesktopPolicies<ThrowOnError extends boolean = false>(
+    parameters?: {
+      policyName?: string;
+      policy?: DenDesktopPolicyDocumentWrite;
+      priority?: number;
+      isEnabled?: boolean;
+      memberIds?: Array<string>;
+      teamIds?: Array<string>;
+      roles?: Array<"owner" | "admin" | "member">;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "policyName" },
+            { in: "body", key: "policy" },
+            { in: "body", key: "priority" },
+            { in: "body", key: "isEnabled" },
+            { in: "body", key: "memberIds" },
+            { in: "body", key: "teamIds" },
+            { in: "body", key: "roles" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PostV1DesktopPoliciesResponses,
+      PostV1DesktopPoliciesErrors,
+      ThrowOnError
+    >({
+      url: "/v1/desktop-policies",
       ...options,
       ...params,
       headers: {
@@ -4068,6 +4208,218 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
+   * Delete llm-providers by stable key
+   */
+  public deleteV1LlmProvidersByKeyByExternalKey<ThrowOnError extends boolean = false>(
+    parameters: {
+      externalKey: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "externalKey" }] }]);
+    return (options?.client ?? this.client).delete<
+      DeleteV1LlmProvidersByKeyByExternalKeyResponses,
+      unknown,
+      ThrowOnError
+    >({
+      url: "/v1/llm-providers/by-key/{externalKey}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Read llm-providers by stable key
+   */
+  public getV1LlmProvidersByKeyByExternalKey<ThrowOnError extends boolean = false>(
+    parameters: {
+      externalKey: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "externalKey" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1LlmProvidersByKeyByExternalKeyResponses,
+      GetV1LlmProvidersByKeyByExternalKeyErrors,
+      ThrowOnError
+    >({
+      url: "/v1/llm-providers/by-key/{externalKey}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Apply llm-providers by stable key
+   *
+   * Creates or replaces an organization-scoped resource. Names do not identify resources; existing unkeyed resources are never adopted automatically. Assignments are replaced. Omitted write-only secrets are preserved. Concurrent writes are last-write-wins; conditional headers are not supported on this route.
+   */
+  public putV1LlmProvidersByKeyByExternalKey<ThrowOnError extends boolean = false>(
+    parameters: {
+      externalKey: string;
+      name?: string;
+      source?: "models_dev" | "custom";
+      providerId?: string;
+      modelIds?: Array<string>;
+      customConfigText?: string;
+      customConfig?: unknown;
+      credentialMode?: "shared" | "per_member";
+      apiKey?: string;
+      apiKeys?: {
+        [key: string]: string;
+      };
+      memberIds?: Array<string>;
+      teamIds?: Array<string>;
+      allMembers?: boolean;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "externalKey" },
+            { in: "body", key: "name" },
+            { in: "body", key: "source" },
+            { in: "body", key: "providerId" },
+            { in: "body", key: "modelIds" },
+            { in: "body", key: "customConfigText" },
+            { in: "body", key: "customConfig" },
+            { in: "body", key: "credentialMode" },
+            { in: "body", key: "apiKey" },
+            { in: "body", key: "apiKeys" },
+            { in: "body", key: "memberIds" },
+            { in: "body", key: "teamIds" },
+            { in: "body", key: "allMembers" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).put<
+      PutV1LlmProvidersByKeyByExternalKeyResponses,
+      PutV1LlmProvidersByKeyByExternalKeyErrors,
+      ThrowOnError
+    >({
+      url: "/v1/llm-providers/by-key/{externalKey}",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Delete organization LLM provider
+   *
+   * Deletes an organization LLM provider and removes its models and access rules.
+   */
+  public deleteV1LlmProvidersByLlmProviderId<ThrowOnError extends boolean = false>(
+    parameters: {
+      llmProviderId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "llmProviderId" }] }]);
+    return (options?.client ?? this.client).delete<
+      DeleteV1LlmProvidersByLlmProviderIdResponses,
+      DeleteV1LlmProvidersByLlmProviderIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/llm-providers/{llmProviderId}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Read llm-providers by id
+   */
+  public getV1LlmProvidersByLlmProviderId<ThrowOnError extends boolean = false>(
+    parameters: {
+      llmProviderId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "llmProviderId" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1LlmProvidersByLlmProviderIdResponses,
+      GetV1LlmProvidersByLlmProviderIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/llm-providers/{llmProviderId}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Update organization LLM provider
+   *
+   * Updates an existing organization LLM provider, including its provider config, selected models, secret, and access grants. Custom providers accept JSON/JSONC text or an MCP-supplied customConfig object.
+   */
+  public patchV1LlmProvidersByLlmProviderId<ThrowOnError extends boolean = false>(
+    parameters: {
+      llmProviderId: string;
+      name?: string;
+      source?: "models_dev" | "custom";
+      providerId?: string;
+      modelIds?: Array<string>;
+      customConfigText?: string;
+      customConfig?: unknown;
+      credentialMode?: "shared" | "per_member";
+      apiKey?: string;
+      apiKeys?: {
+        [key: string]: string;
+      };
+      memberIds?: Array<string>;
+      teamIds?: Array<string>;
+      allMembers?: boolean;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "llmProviderId" },
+            { in: "body", key: "name" },
+            { in: "body", key: "source" },
+            { in: "body", key: "providerId" },
+            { in: "body", key: "modelIds" },
+            { in: "body", key: "customConfigText" },
+            { in: "body", key: "customConfig" },
+            { in: "body", key: "credentialMode" },
+            { in: "body", key: "apiKey" },
+            { in: "body", key: "apiKeys" },
+            { in: "body", key: "memberIds" },
+            { in: "body", key: "teamIds" },
+            { in: "body", key: "allMembers" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).patch<
+      PatchV1LlmProvidersByLlmProviderIdResponses,
+      PatchV1LlmProvidersByLlmProviderIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/llm-providers/{llmProviderId}",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
    * Test a custom LLM provider endpoint
    *
    * Probes an OpenAI-compatible endpoint (Azure AI Foundry, LiteLLM, vLLM, gateways) with the given credential: normalizes common base-URL mistakes, calls GET /models, and returns the model ids the endpoint actually serves — on Azure these are the deployment names. Nothing is stored.
@@ -4410,92 +4762,6 @@ export class DenClient extends HeyApiClient {
       url: "/v1/llm-providers/{llmProviderId}/member-credentials/{orgMembershipId}/block",
       ...options,
       ...params,
-    });
-  }
-
-  /**
-   * Delete organization LLM provider
-   *
-   * Deletes an organization LLM provider and removes its models and access rules.
-   */
-  public deleteV1LlmProvidersByLlmProviderId<ThrowOnError extends boolean = false>(
-    parameters: {
-      llmProviderId: string;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "llmProviderId" }] }]);
-    return (options?.client ?? this.client).delete<
-      DeleteV1LlmProvidersByLlmProviderIdResponses,
-      DeleteV1LlmProvidersByLlmProviderIdErrors,
-      ThrowOnError
-    >({
-      url: "/v1/llm-providers/{llmProviderId}",
-      ...options,
-      ...params,
-    });
-  }
-
-  /**
-   * Update organization LLM provider
-   *
-   * Updates an existing organization LLM provider, including its provider config, selected models, secret, and access grants. Custom providers accept JSON/JSONC text or an MCP-supplied customConfig object.
-   */
-  public patchV1LlmProvidersByLlmProviderId<ThrowOnError extends boolean = false>(
-    parameters: {
-      llmProviderId: string;
-      name?: string;
-      source?: "models_dev" | "custom";
-      providerId?: string;
-      modelIds?: Array<string>;
-      customConfigText?: string;
-      customConfig?: unknown;
-      credentialMode?: "shared" | "per_member";
-      apiKey?: string;
-      apiKeys?: {
-        [key: string]: string;
-      };
-      memberIds?: Array<string>;
-      teamIds?: Array<string>;
-      allMembers?: boolean;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "path", key: "llmProviderId" },
-            { in: "body", key: "name" },
-            { in: "body", key: "source" },
-            { in: "body", key: "providerId" },
-            { in: "body", key: "modelIds" },
-            { in: "body", key: "customConfigText" },
-            { in: "body", key: "customConfig" },
-            { in: "body", key: "credentialMode" },
-            { in: "body", key: "apiKey" },
-            { in: "body", key: "apiKeys" },
-            { in: "body", key: "memberIds" },
-            { in: "body", key: "teamIds" },
-            { in: "body", key: "allMembers" },
-          ],
-        },
-      ],
-    );
-    return (options?.client ?? this.client).patch<
-      PatchV1LlmProvidersByLlmProviderIdResponses,
-      PatchV1LlmProvidersByLlmProviderIdErrors,
-      ThrowOnError
-    >({
-      url: "/v1/llm-providers/{llmProviderId}",
-      ...options,
-      ...params,
-      headers: {
-        "Content-Type": "application/json",
-        ...options?.headers,
-        ...params.headers,
-      },
     });
   }
 
@@ -7413,6 +7679,91 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
+   * Delete marketplace by stable key
+   */
+  public deleteV1MarketplacesByKeyByExternalKey<ThrowOnError extends boolean = false>(
+    parameters: {
+      externalKey: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "externalKey" }] }]);
+    return (options?.client ?? this.client).delete<
+      DeleteV1MarketplacesByKeyByExternalKeyResponses,
+      unknown,
+      ThrowOnError
+    >({
+      url: "/v1/marketplaces/by-key/{externalKey}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Read marketplace by stable key
+   */
+  public getV1MarketplacesByKeyByExternalKey<ThrowOnError extends boolean = false>(
+    parameters: {
+      externalKey: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "externalKey" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1MarketplacesByKeyByExternalKeyResponses,
+      GetV1MarketplacesByKeyByExternalKeyErrors,
+      ThrowOnError
+    >({
+      url: "/v1/marketplaces/by-key/{externalKey}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Apply marketplace by stable key
+   *
+   * Creates or replaces marketplace metadata. Omitted description and logo are cleared. Memberships and access grants are managed separately. Archived marketplaces must be explicitly restored before applying.
+   */
+  public putV1MarketplacesByKeyByExternalKey<ThrowOnError extends boolean = false>(
+    parameters: {
+      externalKey: string;
+      name?: string;
+      description?: string | null;
+      logoUrl?: string | null;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "externalKey" },
+            { in: "body", key: "name" },
+            { in: "body", key: "description" },
+            { in: "body", key: "logoUrl" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).put<
+      PutV1MarketplacesByKeyByExternalKeyResponses,
+      PutV1MarketplacesByKeyByExternalKeyErrors,
+      ThrowOnError
+    >({
+      url: "/v1/marketplaces/by-key/{externalKey}",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
    * List marketplaces
    *
    * Lists marketplaces visible to the current organization member.
@@ -9330,12 +9681,51 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
-   * Create team
-   *
-   * Creates a team inside an organization and can optionally attach existing organization members to it.
+   * Delete teams by stable key
    */
-  public postV1Teams<ThrowOnError extends boolean = false>(
-    parameters?: {
+  public deleteV1TeamsByKeyByExternalKey<ThrowOnError extends boolean = false>(
+    parameters: {
+      externalKey: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "externalKey" }] }]);
+    return (options?.client ?? this.client).delete<DeleteV1TeamsByKeyByExternalKeyResponses, unknown, ThrowOnError>({
+      url: "/v1/teams/by-key/{externalKey}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Read teams by stable key
+   */
+  public getV1TeamsByKeyByExternalKey<ThrowOnError extends boolean = false>(
+    parameters: {
+      externalKey: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "externalKey" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1TeamsByKeyByExternalKeyResponses,
+      GetV1TeamsByKeyByExternalKeyErrors,
+      ThrowOnError
+    >({
+      url: "/v1/teams/by-key/{externalKey}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Apply teams by stable key
+   *
+   * Creates or replaces an organization-scoped resource. Names do not identify resources; existing unkeyed resources are never adopted automatically. Assignments are replaced. Omitted write-only secrets are preserved. Concurrent writes are last-write-wins; conditional headers are not supported on this route.
+   */
+  public putV1TeamsByKeyByExternalKey<ThrowOnError extends boolean = false>(
+    parameters: {
+      externalKey: string;
       name?: string;
       memberIds?: Array<string>;
     },
@@ -9346,14 +9736,19 @@ export class DenClient extends HeyApiClient {
       [
         {
           args: [
+            { in: "path", key: "externalKey" },
             { in: "body", key: "name" },
             { in: "body", key: "memberIds" },
           ],
         },
       ],
     );
-    return (options?.client ?? this.client).post<PostV1TeamsResponses, PostV1TeamsErrors, ThrowOnError>({
-      url: "/v1/teams",
+    return (options?.client ?? this.client).put<
+      PutV1TeamsByKeyByExternalKeyResponses,
+      PutV1TeamsByKeyByExternalKeyErrors,
+      ThrowOnError
+    >({
+      url: "/v1/teams/by-key/{externalKey}",
       ...options,
       ...params,
       headers: {
@@ -9381,6 +9776,23 @@ export class DenClient extends HeyApiClient {
       DeleteV1TeamsByTeamIdErrors,
       ThrowOnError
     >({
+      url: "/v1/teams/{teamId}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Read teams by id
+   */
+  public getV1TeamsByTeamId<ThrowOnError extends boolean = false>(
+    parameters: {
+      teamId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "teamId" }] }]);
+    return (options?.client ?? this.client).get<GetV1TeamsByTeamIdResponses, GetV1TeamsByTeamIdErrors, ThrowOnError>({
       url: "/v1/teams/{teamId}",
       ...options,
       ...params,
@@ -9418,6 +9830,41 @@ export class DenClient extends HeyApiClient {
       ThrowOnError
     >({
       url: "/v1/teams/{teamId}",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Create team
+   *
+   * Creates a team inside an organization and can optionally attach existing organization members to it.
+   */
+  public postV1Teams<ThrowOnError extends boolean = false>(
+    parameters?: {
+      name?: string;
+      memberIds?: Array<string>;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "name" },
+            { in: "body", key: "memberIds" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<PostV1TeamsResponses, PostV1TeamsErrors, ThrowOnError>({
+      url: "/v1/teams",
       ...options,
       ...params,
       headers: {

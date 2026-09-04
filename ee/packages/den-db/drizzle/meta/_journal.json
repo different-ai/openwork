@@ -617,6 +617,13 @@
       "when": 1788551105619,
       "tag": "0088_external_mcp_connection_external_key",
       "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "5",
+      "when": 1788553679500,
+      "tag": "0089_declarative_org_resources",
+      "breakpoints": true
     }
   ]
 }

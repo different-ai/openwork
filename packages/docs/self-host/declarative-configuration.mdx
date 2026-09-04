@@ -1,0 +1,132 @@
+---
+title: "Provision organization configuration"
+description: "Apply teams, providers, MCP connections, desktop policies, and marketplace metadata from a repeatable script."
+---
+
+Use stable keys when a script owns a resource across repeated deployments. A key
+identifies the resource within its organization and resource type; its display
+name can change without creating another resource.
+
+The API also supports clients that retain server-assigned IDs and update resources
+by ID. Repeating a create request is not a reconciliation strategy: resources that
+allow duplicate display names will create another object. Keyed writes remove the
+need for a separate ID mapping for newly provisioned resources.
+
+## Apply by key
+
+```http
+PUT /v1/teams/by-key/platform
+x-api-key: den_...
+Content-Type: application/json
+
+{"name":"Platform engineering","memberIds":[]}
+```
+
+The first apply returns `201`. A subsequent apply returns `200` with the same
+resource ID, including after a rename. `externalKey` is returned with the resource.
+Keys match `^[a-z0-9][a-z0-9._-]{0,127}$` and are immutable while the resource exists.
+Choose keys independently from display names and keep them in version control.
+
+| Resource | Keyed write | Read response | Apply behavior |
+| --- | --- | --- | --- |
+| Teams | `PUT /v1/teams/by-key/{key}` | `{team: ...}` | Replaces name and membership; omitted members become an empty list. |
+| LLM providers | `PUT /v1/llm-providers/by-key/{key}` | `{llmProvider: ...}` | Replaces provider configuration, selected models, and access assignments. Omitted write-only credentials are preserved. The creator retains direct access. |
+| MCP connections | `PUT /v1/mcp-connections/by-key/{key}` | Resource object | Uses the existing MCP configuration and credential rules, including live connection validation. |
+| Desktop policies | `PUT /v1/desktop-policies/by-key/{key}` | `{desktopPolicy: ...}` | Replaces public policy settings and assignments; omitted priority becomes zero, enabled becomes true, and assignment lists become empty. |
+| Marketplaces | `PUT /v1/marketplaces/by-key/{key}` | `{item: ...}` | Replaces metadata; omitted description and logo become null. Memberships and grants use their existing APIs. |
+
+Teams, providers, policies, and marketplaces support `GET` at the same keyed URL
+and at `/v1/{resource}/{id}`. For MCP connections, read the returned ID at
+`GET /v1/mcp-connections/{id}`. Provider credentials are not returned by these reads.
+
+The new team, provider, and marketplace writes require an organization admin;
+policy writes require an owner or super-admin and the applicable plan entitlement.
+Existing resource permissions still apply. SCIM-managed teams must be managed by
+the identity provider. MCP routes retain their existing permission and credential
+restrictions. API keys are bound to their organization and the issuing member's
+permissions; they do not grant extra privileges.
+
+## A complete example
+
+The repository includes
+[an executable example](https://github.com/different-ai/openwork/tree/dev/examples/declarative-org)
+with teams, an inference provider, desktop policy assignments, and a marketplace.
+It also supports an optional `mcpConnections` section using the MCP request shape.
+Use Node.js 24 or later; no additional packages are needed.
+
+```sh
+export DEN_API_URL=https://your-den.example
+export DEN_API_KEY=den_...
+export INFERENCE_URL=https://your-inference.example/v1
+export COMPANY_INFERENCE_KEY=...
+node examples/declarative-org/apply.mjs examples/declarative-org/organization.json
+```
+
+Adjust the provider endpoint, model ID, and context limits to match your deployment.
+The sample domain and model are placeholders. The script expands environment
+variables in JSON values without inserting secrets into the file or its logs.
+
+The manifest's object keys are stable identities. A provider or policy can use
+`"teams": ["platform"]` to refer to a team in the manifest. The example creates
+teams first and uses their returned IDs for dependent assignments. Other resource
+fields follow the API reference. Put MCP access rules in its `access` object;
+marketplace access and plugin attachments use separate endpoints.
+
+Run the same command twice. The second run should update the existing resources.
+Rename a display label and remove an assignment, then run again: the ID stays the
+same and the assignment is removed. Resources absent from the file are untouched.
+This is resource-level convergence, not a transaction across the entire manifest.
+If a later resource fails, earlier writes remain; correct the request and rerun.
+
+## Existing resources and conflicts
+
+The API never adopts an existing resource by matching its display name. Existing
+unkeyed resources remain managed by their IDs. Moving them into keyed management
+requires a separate, deliberate migration; this API does not bind a key to an
+existing ID.
+
+Teams retain their existing unique-name rule. If a keyed team would use another
+team's name, the API returns `409`; it does not overwrite that team. Providers,
+policies, and marketplaces retain their existing duplicate-name behavior. An
+archived marketplace retains its key and must be explicitly restored through its
+lifecycle endpoint before applying metadata.
+
+A concurrent first apply can return `409`; retry the keyed request. The database
+prevents two resources from owning the same key. Serialize deployments that write
+the same resource: the new four-resource writes use last-write-wins and reject
+`If-Match` and `If-None-Match` on PUT rather than silently ignoring them. MCP's
+existing optional `If-Match` behavior remains available. This release does not
+provide a universal compare-and-swap contract or guarantee that a no-op apply
+leaves timestamps and assignment-row IDs unchanged.
+
+## Remove managed resources
+
+`DELETE /v1/{resource}/by-key/{key}` returns
+`{"ok":true,"deleted":true}` for a removal and
+`{"ok":true,"deleted":false}` if it is already absent. Delete dependents before
+teams. Deleting a marketplace removes the marketplace and its relationships,
+not the underlying plugins. A policy deletion retains its normal soft-delete
+behavior and releases the key. A later apply of a deleted key creates a new ID.
+
+To remove exactly the resources listed in the example manifest:
+
+```sh
+node examples/declarative-org/apply.mjs examples/declarative-org/organization.json --delete
+```
+
+The example does not infer deletions from missing entries. It validates team
+references and key syntax before writing, bounds retries, and stops on a failure.
+It is a small provisioning client, not a general infrastructure state manager.
+
+## Scope and compatibility
+
+Existing create, update-by-ID, and delete-by-ID routes keep their request behavior.
+Responses add the nullable `externalKey` field. Existing rows remain unkeyed; the
+release does not enforce new display-name uniqueness or rename existing resources.
+
+This workflow covers configuration of five resource types, not every organization
+setting. Bootstrap still requires an authenticated administrator to create the
+organization and issue an API key. Invitations, access grants, versioned skills,
+plugins, automations, member credentials, and organization settings retain their
+existing APIs and lifecycle rules. Use their current endpoints alongside this
+manifest when required; the script does not claim to provision those resources.
