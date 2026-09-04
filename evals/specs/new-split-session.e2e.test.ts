@@ -22,10 +22,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function regexEscape(value: string): string {
-  return value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
-}
-
 function parseSplitFacts(value: unknown): SplitFacts {
   if (!isRecord(value)) throw new Error(`Invalid split facts: ${JSON.stringify(value)}`);
   const text = (key: string) => typeof value[key] === "string" ? value[key] : "";
@@ -63,7 +59,8 @@ test("new split creates fresh same-workspace secondary sessions without moving t
   const beforeIds = before.map((session) => session.sessionId);
 
   await step("New split in the session context menu opens a fresh secondary", async () => {
-    await user.rightClick({ role: "button", label: new RegExp(`^${regexEscape(world.session.title)}(?:,| —|$)`) });
+    // The sidebar row is the first place the title renders; the pane header comes later in DOM order.
+    await user.rightClick({ text: world.session.title });
     await user.see({ role: "menuitem", label: "New split" });
     await user.click({ role: "menuitem", label: "New split" });
     await user.see({ text: "Split view" });
