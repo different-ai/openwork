@@ -15,6 +15,7 @@ export type CloudWorkspacePillVariant =
   | "waking"
   | "provisioning"
   | "updating"
+  | "access-required"
   | "unavailable"
   | "failed";
 
@@ -30,7 +31,7 @@ export type CloudWorkspaceViewModel = {
   updateAvailable: boolean;
   showUpdate: boolean;
   showRetry: boolean;
-  pollMs: number;
+  pollMs: number | null;
 };
 
 export type CloudWorkspaceMainContentDecision = "takeover" | "error" | "content";
@@ -96,6 +97,12 @@ export function cloudWorkspaceTakeoverCopy(input: {
   variant: CloudWorkspacePillVariant;
   slow: boolean;
 }): { title: string; body: string } {
+  if (input.variant === "access-required") {
+    return {
+      title: "OpenWork Web needs an active plan",
+      body: "Your organization does not have an active OpenWork Web subscription or complimentary access. Get OpenWork Web in Den to start your cloud workspace.",
+    };
+  }
   if (input.variant === "failed") {
     return {
       title: "Workspace needs attention",
@@ -205,7 +212,7 @@ export function mapCloudWorkspaceMainContentDecision(input: {
   gatewayMode: boolean;
 }): CloudWorkspaceMainContentDecision {
   if (!input.gatewayMode) return "content";
-  if (input.status === "failed") return "takeover";
+  if (input.status === "failed" || input.status === "access-required") return "takeover";
   if (!cloudWorkspaceStatusHasReadyContent(input.status)) {
     return input.hasWorkspaces ? "content" : "takeover";
   }
@@ -253,10 +260,25 @@ function baseLines(instance: DenCloudInstance | null, updateAvailable: boolean) 
 export function mapCloudWorkspaceState(input: {
   instance: DenCloudInstance | null;
   updating: boolean;
+  accessRequired: boolean;
   requestFailed?: boolean;
 }): CloudWorkspaceViewModel {
   const updateAvailable = cloudWorkspaceUpdateAvailable(input.instance);
   const lines = baseLines(input.instance, updateAvailable);
+
+  if (input.accessRequired) {
+    return {
+      variant: "access-required",
+      label: "OpenWork Web plan required",
+      tone: "amber",
+      statusLine: "OpenWork Web plan required",
+      ...lines,
+      updateAvailable,
+      showUpdate: false,
+      showRetry: true,
+      pollMs: null,
+    };
+  }
 
   if (input.requestFailed) {
     return {
