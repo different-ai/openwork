@@ -84,5 +84,12 @@ test("owners purchase plans and SSO; only verified current payments grant access
   expect((await stripe.webhook(den.ref.apiUrl, "invoice.paid", { ...invoice, status: "paid" })).status).toBe(200);
   expect(await billing()).toMatchObject({ billing: { stripe: { plans: { tier: "free" } } } });
   expect(await entitlements()).toMatchObject({ entitlements: { sso: false, desktopPolicies: false, analytics: false } });
+  invoice.status = "paid";
+  expect((await stripe.webhook(den.ref.apiUrl, "invoice.paid", invoice)).status).toBe(200);
+  expect(await billing()).toMatchObject({ billing: { stripe: { plans: { tier: "enterprise" } } } });
+  stripe.disabledPrices.add("price_enterprise");
+  expect((await stripe.webhook(den.ref.apiUrl, "customer.subscription.updated", teamSubscription)).status).toBe(200);
+  expect(await billing()).toMatchObject({ billing: { stripe: { plans: { tier: "free" } } } });
+  evidence.recordAssertionEvidence("Retired prices revoke access instead of preventing webhook reconciliation", "Archiving the configured Enterprise price removes the paid tier", true);
   evidence.recordAssertionEvidence("Cancellation and failed renewal revoke access; stale success cannot restore it", "SSO canceled; Enterprise confirmed; latest unpaid invoice overrides stale invoice.paid", true);
 });

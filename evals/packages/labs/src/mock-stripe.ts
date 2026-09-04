@@ -13,6 +13,7 @@ function price(id: string) {
 }
 
 export async function mockStripe() {
+  const disabledPrices = new Set<string>();
   const customers = new Map<string, { id: string; metadata: Record<string, string> }>();
   const subscriptions = new Map<string, Subscription>();
   const sessions = new Map<string, { id: string; object: string; customer: string; metadata: Record<string, string>; mode: string; client_reference_id: string; status: string; url: string; subscription?: string; payment_status?: string; price: string; quantity: number }>();
@@ -26,7 +27,10 @@ export async function mockStripe() {
     const url = new URL(req.url ?? "/", "http://localhost");
     calls.push({ path: url.pathname, method: req.method ?? "GET", body });
     let result: unknown;
-    if (url.pathname.startsWith("/v1/prices/")) result = price(url.pathname.split("/").at(-1) ?? "");
+    if (url.pathname.startsWith("/v1/prices/")) {
+      const id = url.pathname.split("/").at(-1) ?? "";
+      result = { ...price(id), active: !disabledPrices.has(id) };
+    }
     else if (url.pathname === "/v1/customers/search") result = { ...list([...customers.values()].filter((c) => url.searchParams.get("query")?.includes(c.metadata.org_id))), object: "search_result" };
     else if (url.pathname === "/v1/customers" && req.method === "POST") {
       const customer = { id: `cus_${customers.size + 1}`, metadata: { org_id: body.get("metadata[org_id]") ?? "" } };
@@ -58,7 +62,7 @@ export async function mockStripe() {
   if (!address || typeof address === "string") throw new Error("Mock Stripe did not bind");
   let eventNumber = 0;
   return {
-    port: address.port, calls, subscriptions, sessions, invoices,
+    port: address.port, calls, subscriptions, sessions, invoices, disabledPrices,
     complete(sessionId: string, paid = true) {
       const session = sessions.get(sessionId);
       if (!session) throw new Error("Unknown checkout");

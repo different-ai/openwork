@@ -1565,13 +1565,16 @@ export async function reconcileSelfServeSubscription(subscriptionId: string, eve
   if (!await stripeCustomerBelongsToOrganization(customerIdFromSubscription(subscription), organizationId)) {
     throw new Error("self_serve_customer_mismatch")
   }
-  if (product) await validateSelfServePrice(product)
+  const validPrice = product ? await validateSelfServePrice(product).then(() => true).catch((error: unknown) => {
+    if (error instanceof Error && error.message === "self_serve_price_contract_invalid") return false
+    throw error
+  }) : false
   const type = product?.id === "sso" || existing?.type === "sso" ? "sso" : "seat"
   const current = await findOrgSubscriptionByType(organizationId, type)
   if (current && current.stripe_subscription_id !== subscriptionId && ONGOING_STATUSES.has(current.status)) return true
   const invoiceId = stripeResourceId(subscription.latest_invoice)
   const invoice = invoiceId ? await stripe().invoices.retrieve(invoiceId) : null
-  const paid = Boolean(product && subscription.items.data.length === 1
+  const paid = Boolean(validPrice && product && subscription.items.data.length === 1
     && (product.id !== "sso" || item?.quantity === 1)
     && ACTIVE_STATUSES.has(subscriptionStatus(subscription.status))
     && invoice?.status === "paid")
