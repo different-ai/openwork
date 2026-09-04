@@ -206,6 +206,13 @@ export async function paletteSessionActions(seed: Seed) {
   return { app, workspace, session };
 }
 
+export async function newSplitPrimary(seed: Seed) {
+  const app = await seed.desktop({ name: "new-split-session" });
+  const workspace = await seed.workspace(app, seed.tmpPath("new-split-session"));
+  const session = await seedSessionRetry(seed, app, { title: "New split primary" });
+  return { app, workspace, session };
+}
+
 export async function shimmerChat(seed: Seed) {
   const base = await emptyChat(seed);
   await seedControls(seed, base.app, [{ action: "eval.chat_loading.seed" }]);
