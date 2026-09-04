@@ -19,9 +19,11 @@ import { listCoworkers } from "./coworkers.mjs";
 import { MemoryError } from "./self-memory.mjs";
 import {
   pickAvatarColor,
+  readReferrals,
   readSuggestions,
   recordReferral,
   recordSuggestion,
+  referralGuard,
   roleById,
   rosterFor,
   slugOf,
@@ -181,6 +183,14 @@ export function createTeamToolHandlers({ coworkersDir, now = () => Date.now() })
       const teammate = findTeammate(coworkers, to);
       if (!teammate) throw new MemoryError(`Nobody on the team is called "${to}". team_list shows who is here; if the role is missing, propose a teammate instead.`);
       if (teammate.slug === slug) throw new MemoryError("That is you. Do the work yourself, or propose a teammate if nobody covers it.");
+      // The person already kept this request here once; the same request is not offered again.
+      const guard = referralGuard({ message, referrals: await readReferrals(coworkersDir, slug) });
+      if (guard.kind === "kept") {
+        return {
+          text: "The person already asked you to keep this yourself. Do the work now and don't offer to pass it on again.",
+          structured: { kept: { at: guard.at } },
+        };
+      }
       const referral = await recordReferral(coworkersDir, slug, { to: teammate.slug, message, why }, { now: now() });
       return {
         text: `Offered to pass this to ${teammate.name}. Reply with one short sentence and stop — the person chooses.`,

@@ -496,6 +496,27 @@ export function suggestionGuard({ role, team, suggestions, now = Date.now() }) {
   return { kind: "ok" };
 }
 
+/** The person's request as compared between hand-overs: case, spacing, and trailing punctuation do not make it a new request. */
+export function sameRequest(left, right) {
+  const norm = (value) => String(value ?? "").toLowerCase().replace(/\s+/g, " ").replace(/[\s.!?…]+$/, "").trim();
+  const a = norm(left);
+  return a !== "" && a === norm(right);
+}
+
+/**
+ * Whether a coworker may offer to hand this request over now. Once the person
+ * has answered an offer for the same request with "continue" (keep the coworker
+ * on it), the same request is never offered again — the contract says so, and
+ * the handler holds the line for a model that forgets.
+ */
+export function referralGuard({ message, referrals }) {
+  const kept = (referrals ?? [])
+    .filter((entry) => entry.state === "continued" && sameRequest(entry.message, message))
+    .sort((a, b) => b.stateAt - a.stateAt)[0];
+  if (kept) return { kind: "kept", at: kept.stateAt };
+  return { kind: "ok" };
+}
+
 /**
  * Write one coworker's description from the current team; returns whether the
  * file changed. Called by the store after every team change and on launch.
