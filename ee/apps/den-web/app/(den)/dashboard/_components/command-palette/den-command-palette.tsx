@@ -6,7 +6,6 @@ import {
   CalendarClock,
   FileText,
   MessageSquare,
-  User,
   type LucideIcon,
 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
@@ -15,7 +14,6 @@ import { buildDenFeedbackUrl } from "../../../_lib/feedback";
 import {
   type DenOrgCapabilities,
   getAutomationsRoute,
-  getMembersRoute,
   getOrgAccessFlags,
   getPluginRoute,
 } from "../../../_lib/den-org";
@@ -167,19 +165,6 @@ export function DenCommandPalette({ open, onOpenChange }: DenCommandPaletteProps
     runtimeConfigLoaded,
   ]);
 
-  const memberEntries = useMemo<PaletteEntry[]>(() => {
-    if (!access.isAdmin || !activeOrg) return [];
-    return (orgContext?.members ?? []).map((member) => ({
-      id: `member:${member.id}`,
-      label: member.user.name,
-      href: getMembersRoute(activeOrg.slug),
-      icon: User,
-      // Names only: email addresses stay on the Members page itself.
-      hint: member.role,
-      keywords: [member.role, "member"],
-    }));
-  }, [access.isAdmin, activeOrg, orgContext?.members]);
-
   const pluginEntries = useMemo<PaletteEntry[]>(() => {
     if (!access.isAdmin || !activeOrg) return [];
     return (pluginsQuery.data ?? []).map((plugin) => ({
@@ -228,8 +213,8 @@ export function DenCommandPalette({ open, onOpenChange }: DenCommandPaletteProps
   ], [activeOrg?.slug, pathname, runtimeConfig.orgMode, runtimeConfigLoaded]);
 
   const allEntries = useMemo(
-    () => [...pageEntries, ...memberEntries, ...pluginEntries, ...automationEntries, ...actionEntries],
-    [actionEntries, automationEntries, memberEntries, pageEntries, pluginEntries],
+    () => [...pageEntries, ...pluginEntries, ...automationEntries, ...actionEntries],
+    [actionEntries, automationEntries, pageEntries, pluginEntries],
   );
   const entriesById = useMemo(
     () => new Map(allEntries.map((entry) => [entry.id, entry])),
@@ -289,11 +274,6 @@ export function DenCommandPalette({ open, onOpenChange }: DenCommandPaletteProps
             </Command.Empty>
             <PaletteGroup heading="Recent" entries={recentEntries} onSelect={selectEntry} />
             <PaletteGroup heading="Pages" entries={pageEntries} onSelect={selectEntry} />
-            <PaletteGroup
-              heading="Members"
-              entries={visibleDataEntries(memberEntries, query)}
-              onSelect={selectEntry}
-            />
             <PaletteGroup
               heading="Plugins"
               entries={visibleDataEntries(pluginEntries, query)}

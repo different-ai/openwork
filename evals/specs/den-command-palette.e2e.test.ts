@@ -15,7 +15,7 @@ function stringArray(value: unknown): string[] {
     : [];
 }
 
-test("the Den command palette searches pages and members, navigates, and records recents", async ({ world, user, probe, evidence, step }) => {
+test("the Den command palette searches pages, navigates, and records recents", async ({ world, user, probe, evidence, step }) => {
   await user.see({ testId: "den-org-sidebar" }, { timeoutMs: 90_000 });
   await user.see({ text: /Download for this workspace/ }, { timeoutMs: 90_000 });
   // The dashboard shell remounts while its data loads; let that transition settle before interacting.
@@ -73,10 +73,10 @@ test("the Den command palette searches pages and members, navigates, and records
     await user.screenshot();
   });
 
-  await step("members are searchable and Escape closes", async () => {
-    await user.type(paletteInput, "Navigation Admin", { replace: true });
-    await user.see({ role: "option", label: /^Navigation Admin/ });
-    await user.see({ text: "MEMBERS" });
+  await step("the Members page is one keystroke away and Escape closes", async () => {
+    await user.type(paletteInput, "members", { replace: true });
+    await user.see({ role: "option", label: /^Members/ });
+    await user.see({ text: "PAGES" });
     await user.press("Escape");
     await probe.eventually(() => probe.has("↵ open"), {
       within: 15_000,
@@ -86,7 +86,7 @@ test("the Den command palette searches pages and members, navigates, and records
     await user.notSee(palette);
     const path = await world.location();
     expect(path).toBe("/dashboard/mcp-connections");
-    evidence.recordAssertionEvidence("Escape closes member search without leaving Connectors", `path=${path}; palette closed`, path === "/dashboard/mcp-connections");
+    evidence.recordAssertionEvidence("Escape closes Members page search without leaving Connectors", `path=${path}; palette closed`, path === "/dashboard/mcp-connections");
     await user.screenshot();
   });
 });
