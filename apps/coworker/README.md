@@ -567,6 +567,18 @@ Verified against the bundled engine (OpenCode 1.18.18) before building:
   coordinator workspace, so the local mode screen has a live catalog during
   onboarding; registering the first workspace restarts the platform, which may
   move its port — `localProviders.prepare` returns the live address.
+- The engine keeps an SDK directory beside its configuration
+  (`@opencode-ai/plugin` pinned to its own version, in `$XDG_CONFIG_HOME/opencode`
+  and in `OPENCODE_CONFIG_DIR`) and installs it in the background on the first
+  project request. In a fresh profile that first request stays attached to the
+  installer after the files are on disk: it stalls for as long as its caller
+  waits (20 s in the warm-up), and only an engine restart gets past it. Open
+  Coworker seeds both directories with the same pinned package before the
+  engine starts (`electron/engine-sdk.mjs`: `bun` or `npm` from PATH or the
+  usual install locations, once per launch, bounded, best effort), so the
+  first read answers in about half a second and the restart never happens; a
+  profile that already has the SDK is untouched. The warm-up itself reads
+  `GET /config/providers`, not the full provider list.
 - `GET /config/providers` returns only the connected providers (the same
   `Provider` shape and defaults as `GET /provider`, which also carries every
   provider the engine knows: 5.7 MB and 7,400 models against about 5 KB). The
