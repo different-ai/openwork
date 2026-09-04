@@ -92,7 +92,7 @@ async function replaceOrganizationMetadata(metadata: Record<string, unknown>) {
     .where(drizzle.eq(schema.OrganizationTable.id, organizationId))
 }
 
-async function putCapabilities(capabilities: { installLinks?: boolean | null; mcpConnections?: boolean | null; cloud?: boolean | null }) {
+async function putCapabilities(capabilities: { installLinks?: boolean | null; mcpConnections?: boolean | null }) {
   return routeApp().request(`http://den.local/v1/admin/organizations/${organizationId}/capabilities`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
@@ -197,12 +197,12 @@ test("admin capability routes show effective defaults while preserving raw overr
 
   const getAbsent = await routeApp().request(`http://den.local/v1/admin/organizations/${organizationId}/capabilities`)
   expect(getAbsent.status).toBe(200)
-  await expect(getAbsent.json()).resolves.toMatchObject({ capabilities: { installLinks: true, mcpConnections: true, cloud: false } })
+  await expect(getAbsent.json()).resolves.toMatchObject({ capabilities: { installLinks: true, mcpConnections: true } })
 
   const listAbsent = await routeApp().request(`http://den.local/v1/admin/organizations?search=${organizationId}`)
   expect(listAbsent.status).toBe(200)
   await expect(listAbsent.json()).resolves.toMatchObject({
-    organizations: [{ id: organizationId, capabilities: { installLinks: true, mcpConnections: true, cloud: false } }],
+    organizations: [{ id: organizationId, capabilities: { installLinks: true, mcpConnections: true } }],
   })
 
   const enableInstallLinks = await putCapabilities({ installLinks: true })
@@ -221,24 +221,27 @@ test("admin capability routes show effective defaults while preserving raw overr
   await expect(clearConnect.json()).resolves.toMatchObject({ capabilities: { installLinks: true, mcpConnections: true } })
   expect("mcpConnections" in readCapabilityMetadata(await readOrganizationMetadata())).toBe(false)
 
-  const enableCloud = await putCapabilities({ cloud: true })
-  expect(enableCloud.status).toBe(200)
-  await expect(enableCloud.json()).resolves.toMatchObject({ capabilities: { cloud: true } })
-  expect(readCapabilityMetadata(await readOrganizationMetadata())).toMatchObject({ installLinks: true, cloud: true })
+  // The retired Cloud alpha flag is no longer accepted or reported: Cloud is
+  // entitled by OpenWork Web access instead.
+  const rejectCloud = await routeApp().request(`http://den.local/v1/admin/organizations/${organizationId}/capabilities`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ capabilities: { cloud: true } }),
+  })
+  expect(rejectCloud.status).toBe(200)
+  const rejectCloudPayload = await rejectCloud.json() as { capabilities: Record<string, unknown> }
+  expect("cloud" in rejectCloudPayload.capabilities).toBe(false)
+  expect("cloud" in readCapabilityMetadata(await readOrganizationMetadata())).toBe(false)
 
-  const disableCloud = await putCapabilities({ cloud: false })
-  expect(disableCloud.status).toBe(200)
-  await expect(disableCloud.json()).resolves.toMatchObject({ capabilities: { cloud: false } })
-  expect(readCapabilityMetadata(await readOrganizationMetadata())).toMatchObject({ installLinks: true, cloud: false })
-
-  await replaceOrganizationMetadata({ capabilities: { installLinks: true, workflows: false, codemodeScripts: true, remoteMcpApps: true } })
-  const dropRetired = await putCapabilities({ cloud: true })
+  await replaceOrganizationMetadata({ capabilities: { installLinks: true, workflows: false, codemodeScripts: true, remoteMcpApps: true, cloud: true } })
+  const dropRetired = await putCapabilities({ installLinks: true })
   expect(dropRetired.status).toBe(200)
   const retiredMetadata = readCapabilityMetadata(await readOrganizationMetadata())
   expect("workflows" in retiredMetadata).toBe(false)
   expect("codemodeScripts" in retiredMetadata).toBe(false)
   expect("remoteMcpApps" in retiredMetadata).toBe(false)
-  expect(retiredMetadata).toMatchObject({ installLinks: true, cloud: true })
+  expect("cloud" in retiredMetadata).toBe(false)
+  expect(retiredMetadata).toMatchObject({ installLinks: true })
 
   await replaceOrganizationMetadata({ connectEnabled: true, capabilities: { installLinks: true } })
   const disableFlatEnabledConnect = await putCapabilities({ mcpConnections: false })

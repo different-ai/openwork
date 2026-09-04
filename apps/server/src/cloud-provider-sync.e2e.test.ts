@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { EnvService } from "./env-file.js";
 import { CloudProviderSync } from "./cloud-provider-sync.js";
+import { clearEnginePoolForConfig, setEnginePoolForConfig, type EnginePool } from "./engine-pool.js";
 import { readOpenworkWorkspaceConfig, writeOpenworkWorkspaceConfig } from "./openwork-workspace-config-store.js";
 import {
   readGlobalRuntimeOpencodeConfig,
@@ -340,6 +341,80 @@ describe("cloud provider sync gateway", () => {
     expect(sync.status().providers).toEqual([]);
     expect(sync.status().lastRun?.message).toBe("den_request_failed_404");
     expect(reloads).toBe(2);
+  });
+
+  test("re-seeding an unchanged credential to a replaced engine generation does not reload again", async () => {
+    // Regression: after every rollover the next sync pass found a new
+    // generation scope, re-delivered the same key, counted it as a credential
+    // change and forced another standby — a loop bounded only by the sync
+    // cadence. Only a rotated value may reload.
+    const root = await createRoot();
+    const provider = buildProvider([{ id: "model-a", name: "Model A", config: {} }]);
+    const config = serverConfig(root, "http://127.0.0.1:39999");
+    let generationId = "generation-one";
+    const pool = {
+      connections: () => [{
+        generationId,
+        role: "primary",
+        baseUrl: "http://127.0.0.1:39999",
+        username: "engine-user",
+        password: "engine-pass",
+      }],
+    } as unknown as EnginePool;
+    setEnginePoolForConfig(config, pool);
+    stops.push(() => clearEnginePoolForConfig(config));
+    let reloads = 0;
+    const authPuts: string[] = [];
+    const fetchImpl = Object.assign(async (
+      input: Parameters<typeof globalThis.fetch>[0],
+      init?: Parameters<typeof globalThis.fetch>[1],
+    ) => {
+      const url = new URL(String(input));
+      if (url.hostname === "den.example.test") {
+        if (url.pathname === "/v1/llm-providers") return Response.json({ llmProviders: [provider] });
+        if (url.pathname === `/v1/llm-providers/${provider.id}/connect`) return Response.json({ llmProvider: provider });
+      }
+      if (url.host === "127.0.0.1:39999" && url.pathname === `/auth/${provider.id}` && init?.method === "PUT") {
+        authPuts.push(generationId);
+        return Response.json(true);
+      }
+      return Response.json({ error: "not_found" }, { status: 404 });
+    }, { preconnect: globalThis.fetch.preconnect });
+    const env = new EnvService({ path: process.env.OPENWORK_ENV_STORE });
+    const sync = new CloudProviderSync({
+      config,
+      env,
+      fetchImpl,
+      engineBusy: async () => false,
+      reloadEngine: async () => {
+        reloads += 1;
+        // A reload flips the pool onto a fresh generation.
+        generationId = `generation-${reloads + 1}`;
+      },
+      intervalMs: 3_600_000,
+    });
+    stops.push(() => sync.stop());
+    await sync.setSession({ baseUrl: "https://den.example.test", token: "token-a", orgId: "org_a" });
+
+    // First materialization: provider config is new, so one reload is right.
+    expect((await sync.run("sign_in")).status).toBe("applied");
+    expect(reloads).toBe(1);
+    expect(authPuts).toEqual(["generation-one"]);
+
+    // The new generation has no applied auth yet: the key is re-delivered but
+    // its value did not change, so nothing may reload.
+    expect((await sync.run("new_chat")).status).toBe("noop");
+    expect(authPuts).toEqual(["generation-one", "generation-2"]);
+    expect(reloads).toBe(1);
+    expect((await sync.run("interval")).status).toBe("noop");
+    expect(reloads).toBe(1);
+    expect(authPuts).toHaveLength(2);
+
+    // A genuinely rotated credential still reloads exactly once.
+    provider.apiKey = "sk-test-provider-rotated";
+    expect((await sync.run("interval")).status).toBe("applied");
+    expect(reloads).toBe(2);
+    expect(authPuts).toEqual(["generation-one", "generation-2", "generation-2"]);
   });
 
   test("materializes providers before the first workspace exists and finishes setup later", async () => {

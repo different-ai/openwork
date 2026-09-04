@@ -403,11 +403,15 @@ test("a live provisioning claim heartbeats its fence while an orphaned claim is 
   };
   await shared.continueCloudProvisioning({
     workerId: createDenTypeId("worker"),
+    orgId: createDenTypeId("organization"),
     name: "Cloud",
     hostToken: "host-token",
     clientToken: "client-token",
     activityToken: "activity-token",
   }, {
+    // Provisioning requires OpenWork Web access for the owning organization;
+    // this spec proves heartbeat fencing, so the entitlement is granted inline.
+    getOpenWorkWebAccess: async () => ({ hasAccess: true }),
     store: provisioningStore,
     heartbeatIntervalMs: 5,
     provisionWorker: async () => {

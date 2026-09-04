@@ -704,17 +704,17 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       );
     }, ROUTE_WORKSPACE_ACTIVATION_SETTLE_MS);
     // On navigation only the routed workspace needs a load: boot already
-    // scheduled background loads for every other unloaded workspace.
-    const workspaceIdsToLoad = planRouteWorkspaceLoads(
-      workspacesRef.current.map((workspace) => workspace.id),
-      routeWorkspaceId,
-      loadedWorkspaceIdsRef.current,
-    );
-    const workspace = workspaceIdsToLoad.includes(routeWorkspaceId)
-      ? workspacesRef.current.find((item) => item.id === routeWorkspaceId)
-      : undefined;
+    // scheduled background loads for every other unloaded workspace. The
+    // routed one is refetched even when it loaded before — a non-selected
+    // workspace receives no engine events, so sessions created outside this
+    // window (agents, other clients) only reach its list through a refetch.
+    // A first load shows the loading indicator; a refresh stays silent so the
+    // existing rows and the New task control never flicker.
+    const workspace = workspacesRef.current.find((item) => item.id === routeWorkspaceId);
     if (workspace) {
-      setRetryingWorkspaceIds((current) => Array.from(new Set([...current, workspace.id])));
+      if (!loadedWorkspaceIdsRef.current.has(workspace.id)) {
+        setRetryingWorkspaceIds((current) => Array.from(new Set([...current, workspace.id])));
+      }
       void loadWorkspaceSessionsInBackground([workspace]);
     }
     return () => {

@@ -187,6 +187,10 @@ beforeAll(async () => {
     hostToken: HOST_TOKEN,
   };
   deps = {
+    ...DEFAULT_REMOTE_SESSION_DEPS,
+    // Remote sessions require OpenWork Web access for the organization; this
+    // spec proves the wire and guardrails, so the entitlement is granted inline.
+    getOpenWorkWebAccess: async () => ({ hasAccess: true }),
     resolveRuntime: async () => ({ ok: true, runtime }),
     createClient: DEFAULT_REMOTE_SESSION_DEPS.createClient,
   };
@@ -289,6 +293,7 @@ test("remote-session capabilities drive a real openwork-server wire with scoped 
   // Guardrail: no cloud runtime resolved for the member.
   const requestsBeforeNoRuntime = witness.requests.length;
   const noRuntime = await executeRemoteSessionCapability(input("create", { title: "no runtime" }), {
+    ...deps,
     resolveRuntime: async () => ({
       ok: false,
       error: "needs_cloud_setup",

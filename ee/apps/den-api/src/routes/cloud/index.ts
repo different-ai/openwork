@@ -5,13 +5,17 @@ import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono, MiddlewareHandler } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import { organizationCloudEnabled } from "../../capability-sources/cloud-rollout.js"
+import { cloudHostingAvailable } from "../../capability-sources/cloud-hosting.js"
 import { db } from "../../db.js"
 import { env, type DenOrgMode } from "../../env.js"
 import { orgMemberRoute } from "../../middleware/index.js"
 import { jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { materializeCloudWorkerProviders } from "../../llm/cloud-provider-materialization.js"
-import { getOpenWorkWebBillingSummary } from "../../stripe-billing.js"
+import {
+  getOpenWorkWebRuntimeAccess,
+  openWorkWebAccessRequiredPayload,
+  type OpenWorkWebRuntimeAccessResolver,
+} from "../../openwork-web-runtime-access.js"
 import { currentDaytonaSandboxName, flushWorkerCheckpointOnDaytona, getDaytonaSandboxRecord, inspectDaytonaSandbox, refreshDaytonaSignedPreview, stopWorkerOnDaytona } from "../../workers/daytona.js"
 import { CLOUD_INSTANCE_BACKEND, CLOUD_INSTANCE_NAME } from "../../workers/cloud-constants.js"
 import { recoverClaimedCloudWorker as defaultRecoverCloudWorker, wakeCloudWorker as defaultWakeCloudWorker } from "../../workers/cloud-lifecycle.js"
@@ -53,7 +57,7 @@ type CloudRouteOptions = {
   flushWorkerCheckpoint?: FlushWorkerCheckpoint
   stopCloudWorker?: StopCloudWorker
   materializeProviders?: typeof materializeCloudWorkerProviders
-  getOpenWorkWebAccess?: (organizationId: OrgId) => Promise<{ hasAccess: boolean }>
+  getOpenWorkWebAccess?: OpenWorkWebRuntimeAccessResolver
   now?: () => number
 }
 
@@ -169,13 +173,6 @@ const openWorkWebAccessRequiredSchema = z.object({
 
 function cloudNotFound() {
   return { error: "cloud_not_found" }
-}
-
-function openWorkWebAccessRequired() {
-  return {
-    error: "openwork_web_access_required" as const,
-    message: "OpenWork Web access is not active for this organization.",
-  }
 }
 
 const logger = appLogger.child({ component: "cloud_routes" })
@@ -356,8 +353,12 @@ function hasDaytonaProvisioner(options: CloudRouteOptions) {
   return (options.provisionerMode ?? env.provisionerMode) === "daytona" && Boolean(apiKey?.trim())
 }
 
+// Deployment-level availability only. The single-org and no-provisioner 404s
+// are unchanged from the retired per-organization rollout gate, which also
+// returned false outside multi_org; organization entitlement is the separate
+// Web access check on each execution route.
 function cloudAvailable(payload: NonNullable<OrgRouteVariables["organizationContext"]>, options: CloudRouteOptions) {
-  return organizationCloudEnabled(payload.organization.metadata, { orgMode: options.orgMode ?? env.orgMode }) && hasDaytonaProvisioner(options)
+  return cloudHostingAvailable({ orgMode: options.orgMode ?? env.orgMode }) && hasDaytonaProvisioner(options)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -702,7 +703,7 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
 ) {
   const orgMemberRouteMiddleware = options.memberRoute ?? orgMemberRoute()
   const materializeProviders = options.materializeProviders ?? materializeCloudWorkerProviders
-  const getOpenWorkWebAccess = options.getOpenWorkWebAccess ?? getOpenWorkWebBillingSummary
+  const getOpenWorkWebAccess = options.getOpenWorkWebAccess ?? getOpenWorkWebRuntimeAccess
   const continueProvisioning: typeof continueCloudProvisioning = options.continueProvisioning
     ?? ((input, continueOptions = {}) => continueCloudProvisioning(input, { ...continueOptions, materializeProviders }))
   const refreshSignedPreview = options.refreshSignedPreview ?? refreshDaytonaSignedPreview
@@ -750,19 +751,28 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
       responses: {
         200: jsonResponse("Cloud instance status returned successfully.", cloudInstanceResponseSchema),
         401: jsonResponse("The caller must be signed in to open Cloud.", unauthorizedSchema),
+        403: jsonResponse("OpenWork Web access is not active for the organization.", openWorkWebAccessRequiredSchema),
         404: jsonResponse("Cloud is not available for this organization.", notFoundSchema),
       },
     }),
     orgMemberRouteMiddleware,
     async (c) => {
       const payload = c.get("organizationContext")
-      if (!cloudAvailable(payload, options)) {
-        return c.json(cloudNotFound(), 404)
-      }
-
       const user = c.get("user")
       if (!hasCloudUserId(user)) {
         return c.json({ error: "unauthorized" }, 401)
+      }
+
+      // Published desktops reach this route only from inside the gateway
+      // runtime, after OpenWorkWebAccessGate (v0.18.42+) has already resolved
+      // Web access for the organization; see openwork-web-runtime-access.ts.
+      const webAccess = await getOpenWorkWebAccess(payload.organization.id)
+      if (!webAccess.hasAccess) {
+        return c.json(openWorkWebAccessRequiredPayload(), 403)
+      }
+
+      if (!cloudAvailable(payload, options)) {
+        return c.json(cloudNotFound(), 404)
       }
 
       const resolved = await resolveCloudInstanceForMember({
@@ -794,19 +804,25 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
       responses: {
         200: jsonResponse("Cloud instance recovery was requested.", cloudInstanceResponseSchema),
         401: jsonResponse("The caller must be signed in to retry Cloud.", unauthorizedSchema),
+        403: jsonResponse("OpenWork Web access is not active for the organization.", openWorkWebAccessRequiredSchema),
         404: jsonResponse("Cloud is not available for this organization.", notFoundSchema),
       },
     }),
     orgMemberRouteMiddleware,
     async (c) => {
       const payload = c.get("organizationContext")
-      if (!cloudAvailable(payload, options)) {
-        return c.json(cloudNotFound(), 404)
-      }
-
       const user = c.get("user")
       if (!hasCloudUserId(user)) {
         return c.json({ error: "unauthorized" }, 401)
+      }
+
+      const webAccess = await getOpenWorkWebAccess(payload.organization.id)
+      if (!webAccess.hasAccess) {
+        return c.json(openWorkWebAccessRequiredPayload(), 403)
+      }
+
+      if (!cloudAvailable(payload, options)) {
+        return c.json(cloudNotFound(), 404)
       }
 
       const resolved = await resolveCloudInstanceForMember({
@@ -839,19 +855,25 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
       responses: {
         200: jsonResponse("Cloud instance update request handled.", cloudInstanceUpdateResponseSchema),
         401: jsonResponse("The caller must be signed in to update Cloud.", unauthorizedSchema),
+        403: jsonResponse("OpenWork Web access is not active for the organization.", openWorkWebAccessRequiredSchema),
         404: jsonResponse("Cloud is not available for this organization.", notFoundSchema),
       },
     }),
     orgMemberRouteMiddleware,
     async (c) => {
       const payload = c.get("organizationContext")
-      if (!cloudAvailable(payload, options)) {
-        return c.json(cloudNotFound(), 404)
-      }
-
       const user = c.get("user")
       if (!hasCloudUserId(user)) {
         return c.json({ error: "unauthorized" }, 401)
+      }
+
+      const webAccess = await getOpenWorkWebAccess(payload.organization.id)
+      if (!webAccess.hasAccess) {
+        return c.json(openWorkWebAccessRequiredPayload(), 403)
+      }
+
+      if (!cloudAvailable(payload, options)) {
+        return c.json(cloudNotFound(), 404)
       }
 
       const worker = await getCloudWorker(payload.organization.id, user.id, store)
@@ -901,7 +923,7 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
 
       const webAccess = await getOpenWorkWebAccess(payload.organization.id)
       if (!webAccess.hasAccess) {
-        return c.json(openWorkWebAccessRequired(), 403)
+        return c.json(openWorkWebAccessRequiredPayload(), 403)
       }
 
       const instance = await resolveCloudInstanceForGateway({

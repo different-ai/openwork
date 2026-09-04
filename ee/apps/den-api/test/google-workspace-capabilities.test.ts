@@ -674,6 +674,21 @@ test("calendar list returns mapped events and sends the member token", async () 
   })
 })
 
+test("calendar events list accepts RFC 3339 offsets and forwards them verbatim", async () => {
+  const response = await request("/v1/capabilities/google-workspace/calendar-events?timeMin=2026-09-03T00%3A00%3A00%2B02%3A00&timeMax=2026-09-04T00%3A00%3A00%2B02%3A00")
+  expect(response.status).toBe(200)
+  const url = new URL(expectString(lastCalendarUrl, "calendar list URL"))
+  expect(url.searchParams.get("timeMin")).toBe("2026-09-03T00:00:00+02:00")
+  expect(url.searchParams.get("timeMax")).toBe("2026-09-04T00:00:00+02:00")
+
+  resetFakeGoogle()
+  const invalidResponse = await request("/v1/capabilities/google-workspace/calendar-events?timeMin=2026-09-03%2000%3A00&timeMax=2026-09-04%2000%3A00")
+  expect(invalidResponse.status).toBe(400)
+  const invalidBody = expectRecord(await invalidResponse.json(), "invalid calendar list response")
+  expect(invalidBody.error).toBe("invalid_request")
+  expect(googleCallCount).toBe(0)
+})
+
 test("calendar create requests a Google Meet link when asked", async () => {
   const response = await request("/v1/capabilities/google-workspace/calendar-events", {
     method: "POST",
@@ -717,6 +732,35 @@ test("calendar create requests a Google Meet link when asked", async () => {
     end: "2026-07-08T12:30:00Z",
     meetLink: "https://meet.google.com/created-meet",
   })
+})
+
+test("calendar event create accepts RFC 3339 offsets and forwards them verbatim", async () => {
+  const response = await request("/v1/capabilities/google-workspace/calendar-events", {
+    method: "POST",
+    body: {
+      summary: "Offset event",
+      start: "2026-09-03T17:00:00+02:00",
+      end: "2026-09-03T17:30:00+02:00",
+    },
+  })
+  expect(response.status).toBe(200)
+  const payload = expectRecord(lastCalendarEventPayload, "offset calendar create payload")
+  expect(expectRecord(payload.start, "offset calendar start").dateTime).toBe("2026-09-03T17:00:00+02:00")
+  expect(expectRecord(payload.end, "offset calendar end").dateTime).toBe("2026-09-03T17:30:00+02:00")
+
+  resetFakeGoogle()
+  const invalidResponse = await request("/v1/capabilities/google-workspace/calendar-events", {
+    method: "POST",
+    body: {
+      summary: "Invalid offset event",
+      start: "2026-09-03T17:00",
+      end: "2026-09-03T17:30",
+    },
+  })
+  expect(invalidResponse.status).toBe(400)
+  const invalidBody = expectRecord(await invalidResponse.json(), "invalid calendar create response")
+  expect(invalidBody.error).toBe("invalid_request")
+  expect(googleCallCount).toBe(0)
 })
 
 test("calendar patch adds a Google Meet link without creating a duplicate", async () => {
@@ -1555,4 +1599,55 @@ test("Google Workspace capability tools are discoverable and keep readable names
     expect(name.length).toBeLessThanOrEqual(49)
     expect(name).not.toMatch(/_[a-z0-9]{7}/)
   }
+})
+
+test("search_capabilities exposes query parameter constraints as JSON schema instead of leaked validator internals", async () => {
+  const gmailSearch = await mcpToolCall("search_capabilities", { query: "gmail search read messages", limit: 10 })
+  const gmailStructuredContent = expectRecord(gmailSearch.structuredContent, "Gmail capability search structured content")
+  if (!Array.isArray(gmailStructuredContent.matches)) {
+    throw new Error("Expected Gmail capability search matches to be an array")
+  }
+  const gmailMatches = gmailStructuredContent.matches.map((match, index) => expectRecord(match, `Gmail capability search match ${index}`))
+  const gmailMatch = expectRecord(
+    gmailMatches.find((match) => match.name === "native:google-workspace:getCapabilitiesGoogleWorkspaceGmailMessages"),
+    "Gmail messages capability match",
+  )
+  const gmailQuerySchema = expectRecord(gmailMatch.querySchema, "Gmail messages query schema")
+  const gmailProperties = expectRecord(gmailQuerySchema.properties, "Gmail messages query properties")
+  const maxResultsSchema = expectRecord(gmailProperties.maxResults, "Gmail maxResults query schema")
+  expect(maxResultsSchema).toMatchObject({ type: "integer", minimum: 1, maximum: 25, default: 10 })
+  expect(expectString(maxResultsSchema.description, "Gmail maxResults description")).toContain("capped at 25")
+  expect("inputSchema" in gmailMatch).toBe(false)
+  expect(JSON.stringify(gmailMatch)).not.toContain('"checks":')
+  expect(JSON.stringify(gmailMatch)).not.toContain('"def":')
+  expect(mcpText(gmailSearch)).not.toContain('"checks":')
+
+  const calendarSearch = await mcpToolCall("search_capabilities", { query: "calendar events list", limit: 10 })
+  const calendarStructuredContent = expectRecord(calendarSearch.structuredContent, "calendar capability search structured content")
+  if (!Array.isArray(calendarStructuredContent.matches)) {
+    throw new Error("Expected calendar capability search matches to be an array")
+  }
+  const calendarMatches = calendarStructuredContent.matches.map((match, index) => expectRecord(match, `calendar capability search match ${index}`))
+  const calendarMatch = expectRecord(
+    calendarMatches.find((match) => match.name === "native:google-workspace:getCapabilitiesGoogleWorkspaceCalendarEvents"),
+    "calendar events capability match",
+  )
+  const calendarQuerySchema = expectRecord(calendarMatch.querySchema, "calendar events query schema")
+  expect(calendarQuerySchema.required).toEqual(["timeMin", "timeMax"])
+  const calendarProperties = expectRecord(calendarQuerySchema.properties, "calendar events query properties")
+  const timeMinSchema = expectRecord(calendarProperties.timeMin, "calendar timeMin query schema")
+  expect(timeMinSchema.format).toBe("date-time")
+  expect(expectString(timeMinSchema.description, "calendar timeMin description")).toContain("+02:00")
+
+  const draftSearch = await mcpToolCall("search_capabilities", { query: "gmail draft without attachments", limit: 10 })
+  const draftStructuredContent = expectRecord(draftSearch.structuredContent, "Gmail draft capability search structured content")
+  if (!Array.isArray(draftStructuredContent.matches)) {
+    throw new Error("Expected Gmail draft capability search matches to be an array")
+  }
+  const draftMatches = draftStructuredContent.matches.map((match, index) => expectRecord(match, `Gmail draft capability search match ${index}`))
+  const draftMatch = expectRecord(
+    draftMatches.find((match) => match.name === "native:google-workspace:postCapabilitiesGoogleWorkspaceGmailDrafts"),
+    "Gmail draft capability match",
+  )
+  expect(draftMatch).not.toHaveProperty("querySchema")
 })

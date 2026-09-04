@@ -35,6 +35,7 @@ import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { WorkspaceInfo } from "../../../../app/lib/desktop";
 import { OpenWorkDenHelpLink } from "../../workspace/openwork-den-help-link";
 import { NotificationBell } from "../../../shell/notification-center";
+import { useUiStateStore } from "../../../shell/ui-state-store";
 import type {
   WorkspaceConnectionState,
   WorkspaceSessionGroup,
@@ -933,8 +934,15 @@ function isSessionActivityStatus(status: string | undefined): status is SessionA
 }
 
 export function AppSidebar(props: AppSidebarProps) {
-  const [expandedWorkspaceIds, setExpandedWorkspaceIds] = React.useState<Set<string>>(
-    () => new Set(),
+  // Lives in the UI store (not component state) so the open/closed state of
+  // each workspace group survives this sidebar unmounting, e.g. while the
+  // user is in Settings.
+  const expandedWorkspaceIdList = useUiStateStore((state) => state.expandedWorkspaceIds);
+  const expandWorkspace = useUiStateStore((state) => state.expandWorkspace);
+  const toggleWorkspaceExpanded = useUiStateStore((state) => state.toggleWorkspaceExpanded);
+  const expandedWorkspaceIds = React.useMemo(
+    () => new Set(expandedWorkspaceIdList),
+    [expandedWorkspaceIdList],
   );
   const [previewCountByWorkspaceId, setPreviewCountByWorkspaceId] = React.useState<Record<string, number>>({});
   const previousSessionStatusRef = React.useRef<Record<string, string>>({});
@@ -967,31 +975,6 @@ export function AppSidebar(props: AppSidebarProps) {
     if (selectedId) store.clearUnread(selectedId);
     previousSessionStatusRef.current = statuses;
   }, [props.selectedSessionId, props.sessionStatusById]);
-
-  const expandWorkspace = React.useCallback((workspaceId: string) => {
-    const id = workspaceId.trim();
-    if (!id) return;
-    setExpandedWorkspaceIds((previous) => {
-      if (previous.has(id)) return previous;
-      const next = new Set(previous);
-      next.add(id);
-      return next;
-    });
-  }, []);
-
-  const toggleWorkspaceExpanded = React.useCallback((workspaceId: string) => {
-    const id = workspaceId.trim();
-    if (!id) return;
-    setExpandedWorkspaceIds((previous) => {
-      const next = new Set(previous);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-  }, []);
 
   React.useEffect(() => {
     const id = props.selectedWorkspaceId.trim();

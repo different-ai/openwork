@@ -1,8 +1,37 @@
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import { beforeAll, describe, expect, test } from "bun:test"
+import { beforeAll, describe, expect, mock, test } from "bun:test"
 import { Hono, type MiddlewareHandler } from "hono"
 import type { OrganizationContext } from "../src/orgs.js"
 import type { OrgRouteVariables } from "../src/routes/org/shared.js"
+
+mock.module("../src/openwork-web-runtime-access.js", () => {
+  const code = "openwork_web_access_required" as const
+  const message = "An active OpenWork Web subscription or complimentary access is required to use OpenWork Cloud."
+  class OpenWorkWebAccessRequiredError extends Error {
+    readonly code = code
+
+    constructor() {
+      super(message)
+      this.name = "OpenWorkWebAccessRequiredError"
+    }
+  }
+  const getOpenWorkWebRuntimeAccess = async () => ({ hasAccess: true })
+  return {
+    OPENWORK_WEB_ACCESS_REQUIRED_CODE: code,
+    OPENWORK_WEB_ACCESS_REQUIRED_MESSAGE: message,
+    OpenWorkWebAccessRequiredError,
+    getOpenWorkWebRuntimeAccess,
+    requireOpenWorkWebRuntimeAccess: async (
+      organizationId: string,
+      resolveAccess = getOpenWorkWebRuntimeAccess,
+    ) => {
+      const access = await resolveAccess(organizationId)
+      if (!access.hasAccess) throw new OpenWorkWebAccessRequiredError()
+      return access
+    },
+    openWorkWebAccessRequiredPayload: () => ({ error: code, message }),
+  }
+})
 
 type CloudWorkerStatus = "provisioning" | "healthy" | "failed" | "stopped"
 type CloudInstanceStatus = "provisioning" | "waking" | "ready" | "failed"
@@ -309,19 +338,46 @@ function storedWorker(input: {
 }
 
 describe("Cloud instance route gate", () => {
-  test("returns 404 when the Cloud capability is off", async () => {
+  test("opens Cloud for an organization with Web access and no per-organization Cloud flag", async () => {
+    // Regression: a paying organization must not depend on a separate
+    // platform-admin Cloud opt-in. Web access is the only entitlement.
+    const provisioningWorker = fakeWorker("provisioning")
     const app = new Hono<{ Variables: OrgRouteVariables }>()
     routes.registerCloudRoutes(app, {
       memberRoute: contextMiddleware(organizationContext(null)),
       orgMode: "multi_org",
       provisionerMode: "daytona",
       daytonaApiKey: "daytona-test-key",
+      getOpenWorkWebAccess: async () => ({ hasAccess: true }),
+      ensureCloudWorker: async () => provisioningWorker,
+      getSandboxRecord: async () => null,
     })
 
     const response = await app.request("http://den.local/v1/cloud/instance")
 
-    expect(response.status).toBe(404)
-    await expect(response.json()).resolves.toEqual({ error: "cloud_not_found" })
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({ status: "provisioning" })
+  })
+
+  test("ignores a stale literal Cloud opt-in when Web access is not active", async () => {
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+    let ensureCalls = 0
+    routes.registerCloudRoutes(app, {
+      memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }))),
+      orgMode: "multi_org",
+      provisionerMode: "stub",
+      getOpenWorkWebAccess: async () => ({ hasAccess: false }),
+      ensureCloudWorker: async () => {
+        ensureCalls += 1
+        return fakeWorker("provisioning")
+      },
+    })
+
+    const response = await app.request("http://den.local/v1/cloud/instance")
+
+    expect(response.status).toBe(403)
+    await expect(response.json()).resolves.toMatchObject({ error: "openwork_web_access_required" })
+    expect(ensureCalls).toBe(0)
   })
 
   test("returns 404 in single-org mode even with a literal Cloud opt-in", async () => {
@@ -351,6 +407,63 @@ describe("Cloud instance route gate", () => {
 
     expect(response.status).toBe(404)
     await expect(response.json()).resolves.toEqual({ error: "cloud_not_found" })
+  })
+
+  test("denies member resolution before provisioning when Web access is not active", async () => {
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+    let ensureCalls = 0
+    routes.registerCloudRoutes(app, {
+      memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }))),
+      orgMode: "multi_org",
+      provisionerMode: "daytona",
+      daytonaApiKey: "daytona-test-key",
+      getOpenWorkWebAccess: async () => ({ hasAccess: false }),
+      ensureCloudWorker: async () => {
+        ensureCalls += 1
+        return fakeWorker("provisioning")
+      },
+    })
+
+    const response = await app.request("http://den.local/v1/cloud/instance")
+
+    expect(response.status).toBe(403)
+    await expect(response.json()).resolves.toEqual({
+      error: "openwork_web_access_required",
+      message: "An active OpenWork Web subscription or complimentary access is required to use OpenWork Cloud.",
+    })
+    expect(ensureCalls).toBe(0)
+  })
+
+  test("denies explicit retry before recovering or waking a worker when Web access is not active", async () => {
+    // The retry route must not become a side door: without Web access it may
+    // neither claim a worker nor trigger recovery, so no signed runtime URL
+    // can ever be returned to a member of an unentitled organization.
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+    let ensureCalls = 0
+    let recoveryCalls = 0
+    routes.registerCloudRoutes(app, {
+      memberRoute: contextMiddleware(organizationContext(null)),
+      orgMode: "multi_org",
+      provisionerMode: "stub",
+      getOpenWorkWebAccess: async () => ({ hasAccess: false }),
+      ensureCloudWorker: async () => {
+        ensureCalls += 1
+        return fakeWorker("failed")
+      },
+      recoverCloudWorker: async () => {
+        recoveryCalls += 1
+      },
+    })
+
+    const response = await app.request("http://den.local/v1/cloud/instance/retry", { method: "POST" })
+
+    expect(response.status).toBe(403)
+    await expect(response.json()).resolves.toEqual({
+      error: "openwork_web_access_required",
+      message: "An active OpenWork Web subscription or complimentary access is required to use OpenWork Cloud.",
+    })
+    expect(ensureCalls).toBe(0)
+    expect(recoveryCalls).toBe(0)
   })
 })
 
@@ -409,7 +522,10 @@ describe("Cloud gateway resolve route", () => {
     await expect(response.json()).resolves.toEqual({ error: "cloud_not_found" })
   })
 
-  test("returns 404 when the Cloud capability is off", async () => {
+  test("resolves the Web gateway for an organization with Web access and no per-organization Cloud flag", async () => {
+    // Regression: the hosted Web origin used to return cloud_not_found for a
+    // paying organization that had never been opted into the Cloud alpha.
+    const provisioningWorker = fakeWorker("provisioning")
     const app = new Hono<{ Variables: OrgRouteVariables }>()
     routes.registerCloudRoutes(app, {
       memberRoute: contextMiddleware(organizationContext(null)),
@@ -417,17 +533,20 @@ describe("Cloud gateway resolve route", () => {
       provisionerMode: "daytona",
       daytonaApiKey: "daytona-test-key",
       gatewayKey: "gateway-secret",
+      getOpenWorkWebAccess: async () => ({ hasAccess: true }),
+      ensureCloudWorker: async () => provisioningWorker,
+      getSandboxRecord: async () => null,
     })
 
     const response = await app.request("http://den.local/v1/cloud/gateway/resolve", {
       headers: { "X-OpenWork-Gateway-Key": "gateway-secret" },
     })
 
-    expect(response.status).toBe(404)
-    await expect(response.json()).resolves.toEqual({ error: "cloud_not_found" })
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({ status: "provisioning", url: null, clientToken: null, hostToken: null, expiresAt: null })
   })
 
-  test("denies Web gateway resolution before provisioning when Den has not granted access", async () => {
+  test("denies Web gateway resolution before provisioning when access is not active", async () => {
     const app = new Hono<{ Variables: OrgRouteVariables }>()
     let ensureCalls = 0
     routes.registerCloudRoutes(app, {
@@ -450,7 +569,7 @@ describe("Cloud gateway resolve route", () => {
     expect(response.status).toBe(403)
     await expect(response.json()).resolves.toEqual({
       error: "openwork_web_access_required",
-      message: "OpenWork Web access is not active for this organization.",
+      message: "An active OpenWork Web subscription or complimentary access is required to use OpenWork Cloud.",
     })
     expect(ensureCalls).toBe(0)
   })
@@ -879,6 +998,43 @@ describe("Cloud instance route lifecycle states", () => {
 })
 
 describe("Cloud instance update route", () => {
+  test("denies an update request before touching the sandbox when Web access is not active", async () => {
+    const orgId = createDenTypeId("organization")
+    const userId = createDenTypeId("user")
+    const worker = { ...storedWorker({ orgId, userId, status: "healthy" }), image_version: "openwork-0.18.7" }
+    const store = makeCloudWorkerStore({ initialWorkers: [worker] })
+    const app = new Hono<{ Variables: OrgRouteVariables }>()
+    let flushCalls = 0
+    let stopCalls = 0
+
+    routes.registerCloudRoutes(app, {
+      memberRoute: contextMiddleware(organizationContext(null, { orgId, userId })),
+      orgMode: "multi_org",
+      provisionerMode: "stub",
+      getOpenWorkWebAccess: async () => ({ hasAccess: false }),
+      cloudWorkerStore: store.store,
+      getSandboxRecord: async () => fakeSandbox(),
+      inspectSandbox: async () => ({ state: "running" }),
+      flushWorkerCheckpoint: async () => {
+        flushCalls += 1
+        return true
+      },
+      stopCloudWorker: async () => {
+        stopCalls += 1
+      },
+    })
+
+    const response = await app.request("http://den.local/v1/cloud/instance/update", { method: "POST" })
+
+    expect(response.status).toBe(403)
+    await expect(response.json()).resolves.toEqual({
+      error: "openwork_web_access_required",
+      message: "An active OpenWork Web subscription or complimentary access is required to use OpenWork Cloud.",
+    })
+    expect(flushCalls).toBe(0)
+    expect(stopCalls).toBe(0)
+  })
+
   test("flushes and stops a running stale sandbox", async () => {
     const orgId = createDenTypeId("organization")
     const userId = createDenTypeId("user")

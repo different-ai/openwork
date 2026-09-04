@@ -379,11 +379,23 @@ export function snapshotEngineState(state) {
   };
 }
 
+/**
+ * Where the in-process openwork-server persists its structured log. Packaged
+ * apps have no visible stdout, so without this file every engine rollover
+ * reason and reload trigger is lost. An explicit OPENWORK_SERVER_LOG_FILE wins.
+ */
+export function resolveOpenworkServerLogFile(userDataDir, env = process.env) {
+  const explicit = String(env.OPENWORK_SERVER_LOG_FILE ?? "").trim();
+  if (explicit) return explicit;
+  return path.join(userDataDir, "logs", "openwork-server.log");
+}
+
 function createOpenworkServerState() {
   return {
     child: null,
     childExited: true,
     inProcess: false,
+    logFilePath: null,
     // Monotonic per-start identity assigned by startOpenworkServerInner.
     // Sticky ports and persisted tokens make the connection details identical
     // across restarts, so clients need this to observe a new server lifetime.
@@ -424,6 +436,7 @@ export function snapshotOpenworkServerState(state) {
     hostToken: state.hostToken,
     managedOpencodeBinPath: state.managedOpencodeBinPath,
     managedOpencodeBinSource: state.managedOpencodeBinSource,
+    logFilePath: state.logFilePath ?? null,
     pid: child?.pid ?? null,
     lastStdout: state.lastStdout,
     lastStderr: state.lastStderr,
@@ -1937,6 +1950,11 @@ export function createRuntimeManager({
     if (!embeddedPath) {
       throw new Error(`Cannot find OpenWork embedded server bundle. Checked: ${candidates.join(", ")}`);
     }
+    // Must be set before the bundle loads: the server memoizes its file sink
+    // from process.env the first time it creates a logger.
+    const logFilePath = resolveOpenworkServerLogFile(userDataDir);
+    process.env.OPENWORK_SERVER_LOG_FILE = logFilePath;
+    openworkServerState.logFilePath = logFilePath;
     const { startEmbeddedServer } = await import(embeddedServerImportUrl(embeddedPath));
     // startEmbeddedServer falls back to an OS-assigned port if `port` races
     // into EADDRINUSE (see apps/server/src/serve-node.ts), so the bound port

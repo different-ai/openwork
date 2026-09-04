@@ -22,6 +22,12 @@ The app consumes OpenWork server surfaces (self-hosted or hosted) rather than
 inventing parallel behavior. Anything OpenCode can do is available in OpenWork,
 even before a dedicated UI exists.
 
+## Confidentiality (hard rule — this repo is public)
+
+Never let a branch name, commit, PR text, comment, fixture, or evidence identify
+a customer, prospect, partner, or outside person; use internal ticket IDs, and
+escalate any leak instead of rewriting history.
+
 ## Verification (every change)
 
 - The only proof path is `evals/specs/**/*.test.ts` with `test` from

@@ -1,18 +1,24 @@
 import { createHeadlessThreadClient, toTranscript, type AgentSessionClient, type HeadlessThreadModel } from "@openwork/headless-threads"
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
-import { MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema/org"
+import { MemberTable } from "@openwork-ee/den-db/schema/org"
 import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
 import { desktopRunnerConnected } from "@openwork/automations"
 import { REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY } from "@openwork/types/automations"
 import { db } from "../db.js"
 import { env } from "../env.js"
+import {
+  getOpenWorkWebRuntimeAccess,
+  OPENWORK_WEB_ACCESS_REQUIRED_CODE,
+  OPENWORK_WEB_ACCESS_REQUIRED_MESSAGE,
+  type OpenWorkWebRuntimeAccessResolver,
+} from "../openwork-web-runtime-access.js"
 // The automation repository is the presence source of truth. Importing the
 // automation service instead would pull the codemode execution graph (and
 // its `effect` dependency) into every spec that imports this module, which
 // the evals layer rules forbid.
 import { automationRepository } from "../automations/repository.js"
-import { organizationCloudEnabled } from "../capability-sources/cloud-rollout.js"
+import { cloudHostingAvailable } from "../capability-sources/cloud-hosting.js"
 import {
   databaseRemoteSessionCommandStore,
   DEFAULT_TTL_MS,
@@ -101,13 +107,13 @@ const REMOTE_SESSION_DEFINITIONS: RemoteSessionDefinition[] = [
   {
     action: "create",
     summary:
-      "Create a chat session on your OpenWork Cloud workspace or queue one for your connected OpenWork desktop. Optionally start it with a first prompt.",
+      "Start a remote session: a native OpenWork chat on your OpenWork Web instance (runs in the cloud, visible in the browser). Give it the task to run as prompt. target \"desktop\" runs it on your connected OpenWork desktop instead.",
     searchExtraTokens:
-      "remote session sessions chat thread cloud web desktop create start new handoff continue browser workspace",
+      "remote session sessions chat thread cloud web instance browser openwork desktop create start new open run do task work delegate hand off handoff background continue workspace",
     argumentsSchema: {
       type: "object",
       properties: {
-        target: { type: "string", enum: ["cloud", "desktop"], description: "Execution target. Defaults to \"cloud\"." },
+        target: { type: "string", enum: ["cloud", "desktop"], description: "Where the session runs. Defaults to \"cloud\" (your OpenWork Web instance)." },
         title: { type: "string", maxLength: 120, description: "Session title shown in OpenWork." },
         prompt: { type: "string", description: "Optional first prompt. When present the session starts working immediately." },
         model: MODEL_ARGUMENT_SCHEMA,
@@ -117,9 +123,9 @@ const REMOTE_SESSION_DEFINITIONS: RemoteSessionDefinition[] = [
   {
     action: "send",
     summary:
-      "Send a prompt to an existing remote session on your OpenWork Cloud workspace. Returns an acceptance receipt; poll remote-session:read for the reply.",
+      "Send a follow-up prompt to an existing remote session on your OpenWork Web instance. Returns an acceptance receipt; poll remote-session:read for the reply.",
     searchExtraTokens:
-      "remote session sessions chat thread cloud web send prompt message turn continue",
+      "remote session sessions chat thread cloud web instance send prompt message turn continue follow up reply ask tell",
     argumentsSchema: {
       type: "object",
       properties: {
@@ -133,9 +139,9 @@ const REMOTE_SESSION_DEFINITIONS: RemoteSessionDefinition[] = [
   {
     action: "read",
     summary:
-      "Read the status of a queued desktop command or the recent transcript of a remote session on your OpenWork Cloud workspace.",
+      "Read a remote session's recent transcript and status from your OpenWork Web instance, or the status of a queued desktop command.",
     searchExtraTokens:
-      "remote session sessions chat thread cloud web read transcript status reply answer poll result",
+      "remote session sessions chat thread cloud web instance read transcript status reply answer poll result output check progress desktop command",
     argumentsSchema: {
       type: "object",
       properties: {
@@ -204,6 +210,7 @@ export type RemoteSessionRuntimeResult =
 export type RemoteSessionThreadClient = Pick<AgentSessionClient, "createThread" | "sendTurn" | "getThreadSnapshot">
 
 export type RemoteSessionExecuteDeps = {
+  getOpenWorkWebAccess: OpenWorkWebRuntimeAccessResolver
   resolveRuntime: (scope: { organizationId: DenTypeId<"organization">; userId: string }) => Promise<RemoteSessionRuntimeResult>
   createClient: (runtime: RemoteSessionRuntime) => RemoteSessionThreadClient
   commandStore: RemoteSessionCommandStore
@@ -230,20 +237,20 @@ const NEEDS_SETUP_MESSAGE =
   "No OpenWork Cloud workspace is available for your account yet. Open OpenWork Cloud in the browser once (the Web tab in OpenWork, or your organization's OpenWork Web URL) so it can be provisioned, then retry this capability."
 
 const CLOUD_NOT_AVAILABLE_MESSAGE =
-  "OpenWork Cloud is not enabled for this organization, so remote sessions are unavailable. An organization administrator can enable OpenWork Cloud; members cannot self-enable it."
+  "OpenWork Cloud is not available on this deployment, so remote sessions are unavailable."
 
 /**
- * Whether the remote-session capabilities exist for an organization at all.
- * Mirrors the external-MCP rollout pattern: when the org's Cloud capability
- * flag is off (or this deployment cannot host Cloud), the capabilities are
- * hidden from search and execute reports them as unknown — members of a
- * flag-off org never see an action they cannot take.
+ * Whether the remote-session capabilities exist on this deployment at all.
+ * When Den cannot host Cloud (self-hosted single-org mode or no Daytona
+ * provisioner), the capabilities are hidden from search and execute reports
+ * them as unknown. Organization entitlement is enforced at execution time by
+ * the OpenWork Web access check, which returns a clear access-required error.
  */
 export function remoteSessionCapabilitiesEnabled(
-  organizationMetadata: Record<string, unknown> | string | null | undefined,
+  _organizationMetadata?: Record<string, unknown> | string | null | undefined,
 ): boolean {
   if (env.provisionerMode !== "daytona" || !env.daytona.apiKey) return false
-  return organizationCloudEnabled(organizationMetadata, { orgMode: env.orgMode })
+  return cloudHostingAvailable({ orgMode: env.orgMode })
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -297,14 +304,10 @@ async function defaultResolveRuntime(
   scope: { organizationId: DenTypeId<"organization">; userId: string },
 ): Promise<RemoteSessionRuntimeResult> {
   // Defense in depth: the registry already hides these capabilities when the
-  // org's Cloud flag is off, but the runtime re-checks with a live read so a
-  // mid-session flag flip cannot keep executing against stale visibility.
-  const organizations = await db
-    .select({ metadata: OrganizationTable.metadata })
-    .from(OrganizationTable)
-    .where(eq(OrganizationTable.id, scope.organizationId))
-    .limit(1)
-  if (!remoteSessionCapabilitiesEnabled(organizations[0]?.metadata)) {
+  // deployment cannot host Cloud, but the runtime re-checks so the runtime
+  // cannot execute against stale visibility. Organization entitlement was
+  // already confirmed by the OpenWork Web access check in executeRemoteSessionCapability.
+  if (!remoteSessionCapabilitiesEnabled()) {
     return { ok: false, error: "cloud_not_available", message: CLOUD_NOT_AVAILABLE_MESSAGE, retryable: false }
   }
 
@@ -397,6 +400,7 @@ async function defaultDesktopPresence(scope: {
 }
 
 export const DEFAULT_REMOTE_SESSION_DEPS: RemoteSessionExecuteDeps = {
+  getOpenWorkWebAccess: getOpenWorkWebRuntimeAccess,
   resolveRuntime: defaultResolveRuntime,
   createClient: defaultCreateClient,
   commandStore: databaseRemoteSessionCommandStore,
@@ -479,6 +483,41 @@ export async function executeRemoteSessionCapability(
     })
   }
 
+  if (input.action === "read") {
+    const body = readBodySchema.parse(parsedBody.data)
+    if (body.commandId) {
+      const command = await deps.commandStore.get({
+        commandId: body.commandId,
+        organizationId: input.organizationId,
+        createdByUserId: input.userId,
+      })
+      if (!command) return errorResult({ error: "unknown_command" })
+      return jsonResult({
+        commandId: command.id,
+        target: "desktop",
+        state: command.status,
+        sessionId: command.sessionId,
+        workspaceId: command.workspaceId,
+        resultSummary: command.resultSummary,
+        error: command.error,
+        expiresAt: command.expiresAt,
+      })
+    }
+  }
+
+  // Entitlement precedes every execution branch. Queuing a remote session for a
+  // connected desktop is remote control of that machine, so it is gated like
+  // Cloud execution; only the status read of an already queued command above
+  // stays available without Web access.
+  const webAccess = await deps.getOpenWorkWebAccess(input.organizationId)
+  if (!webAccess.hasAccess) {
+    return errorResult({
+      error: OPENWORK_WEB_ACCESS_REQUIRED_CODE,
+      message: OPENWORK_WEB_ACCESS_REQUIRED_MESSAGE,
+      retryable: false,
+    })
+  }
+
   if (input.action === "create") {
     const body = createBodySchema.parse(parsedBody.data)
     if (body.target === "desktop") {
@@ -503,28 +542,6 @@ export async function executeRemoteSessionCapability(
         target: "desktop",
         state: "queued",
         commandId: command.id,
-        expiresAt: command.expiresAt,
-      })
-    }
-  }
-
-  if (input.action === "read") {
-    const body = readBodySchema.parse(parsedBody.data)
-    if (body.commandId) {
-      const command = await deps.commandStore.get({
-        commandId: body.commandId,
-        organizationId: input.organizationId,
-        createdByUserId: input.userId,
-      })
-      if (!command) return errorResult({ error: "unknown_command" })
-      return jsonResult({
-        commandId: command.id,
-        target: "desktop",
-        state: command.status,
-        sessionId: command.sessionId,
-        workspaceId: command.workspaceId,
-        resultSummary: command.resultSummary,
-        error: command.error,
         expiresAt: command.expiresAt,
       })
     }
@@ -556,7 +573,7 @@ export async function executeRemoteSessionCapability(
         workerId: runtime.runtime.workerId,
         title: thread.title,
         started: thread.started,
-        note: "This is a native OpenWork session on your Cloud workspace; it appears in OpenWork Web. Use remote-session:send to prompt it and remote-session:read to read replies.",
+        note: "This is a native OpenWork session on your OpenWork Web instance; it is visible in OpenWork Web. Use remote-session:send for follow-ups and remote-session:read to read replies.",
       })
     } catch (error) {
       return threadErrorResult("create", null, error)

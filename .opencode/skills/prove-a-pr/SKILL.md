@@ -7,6 +7,8 @@ description: Prove a PR, prepare merge verification, publish all evidence, check
 
 ## Verify the tree that will land
 
+- Before the first push, check branch name, commits, added lines, and PR text
+  for any customer, partner, or outside person (AGENTS.md); warden sees only the diff.
 - Run every check on the PR head after its final rebase or cherry-pick. Re-run
   and re-publish after any history rewrite; test runs are bound to a commit SHA.
 - Before merging a stacked PR, inspect

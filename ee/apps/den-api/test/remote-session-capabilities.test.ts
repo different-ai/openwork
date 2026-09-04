@@ -65,6 +65,7 @@ function readyDeps(client: Partial<RemoteSessionThreadClient>): RemoteSessionExe
   }
   return {
     ...inactiveDesktopDeps,
+    getOpenWorkWebAccess: async () => ({ hasAccess: true }),
     resolveRuntime: async () => ({ ok: true, runtime: RUNTIME }),
     createClient: () => ({
       createThread: client.createThread ?? failing,
@@ -118,6 +119,16 @@ test("search finds the capabilities with executable shape metadata", () => {
   expect(searchRemoteSessionCapabilities("unrelated zebra taxonomy", 10)).toEqual([])
 })
 
+test("task phrasings route to remote-session:create first", () => {
+  for (const query of [
+    "run slack search for messages on the remote session",
+    "do this in the web",
+    "hand this task off to the cloud",
+  ]) {
+    expect(searchRemoteSessionCapabilities(query, 10)[0]?.name).toBe("remote-session:create")
+  }
+})
+
 test("create returns the native session identifiers", async () => {
   const result = await executeRemoteSessionCapability(
     executeInput("create", { title: "Handoff", prompt: "Summarize the repo" }),
@@ -152,6 +163,64 @@ test("create reports an offline desktop target with an actionable error", async 
   )
   expect(result.isError).toBe(true)
   expect(payload(result).error).toBe("desktop_offline")
+})
+
+test("cloud thread creation requires Web access before the runtime is resolved", async () => {
+  let runtimeResolutions = 0
+  const result = await executeRemoteSessionCapability(
+    executeInput("create", { title: "Paid boundary" }),
+    {
+      ...inactiveDesktopDeps,
+      getOpenWorkWebAccess: async () => ({ hasAccess: false }),
+      resolveRuntime: async () => {
+        runtimeResolutions += 1
+        return { ok: true, runtime: RUNTIME }
+      },
+      createClient: () => {
+        throw new Error("the Cloud client must not be created without Web access")
+      },
+    },
+  )
+
+  expect(result.isError).toBe(true)
+  expect(payload(result)).toMatchObject({
+    error: "openwork_web_access_required",
+    retryable: false,
+  })
+  expect(runtimeResolutions).toBe(0)
+})
+
+test("desktop session queuing requires Web access before presence is probed or a command is queued", async () => {
+  // Remote control of a connected desktop is an execution boundary, not a
+  // read; without Web access it must neither observe presence nor enqueue.
+  let presenceProbes = 0
+  let enqueued = 0
+  const result = await executeRemoteSessionCapability(
+    executeInput("create", { target: "desktop", title: "Paid boundary" }),
+    {
+      ...readyDeps({}),
+      getOpenWorkWebAccess: async () => ({ hasAccess: false }),
+      desktopPresence: async () => {
+        presenceProbes += 1
+        return { connected: true, ownerMemberId: "member_fixture" }
+      },
+      commandStore: {
+        ...unavailableCommandStore,
+        enqueue: async () => {
+          enqueued += 1
+          throw new Error("a desktop command must not be queued without Web access")
+        },
+      },
+    },
+  )
+
+  expect(result.isError).toBe(true)
+  expect(payload(result)).toMatchObject({
+    error: "openwork_web_access_required",
+    retryable: false,
+  })
+  expect(presenceProbes).toBe(0)
+  expect(enqueued).toBe(0)
 })
 
 test("create rejects titles longer than the desktop assignment limit", async () => {
@@ -273,6 +342,7 @@ test("a waking runtime is reported as retryable without touching the client", as
     executeInput("create", {}),
     {
       ...inactiveDesktopDeps,
+      getOpenWorkWebAccess: async () => ({ hasAccess: true }),
       resolveRuntime: async () => ({
         ok: false,
         error: "cloud_runtime_waking",
@@ -321,6 +391,7 @@ test("an unreachable healthy runtime is retryable and is not mislabeled as wakin
     executeInput("create", {}),
     {
       ...inactiveDesktopDeps,
+      getOpenWorkWebAccess: async () => ({ hasAccess: true }),
       resolveRuntime: async () => ({
         ok: false,
         error: "cloud_runtime_unreachable",
@@ -343,6 +414,7 @@ test("a member without a cloud workspace gets the needs-setup action", async () 
     executeInput("create", {}),
     {
       ...inactiveDesktopDeps,
+      getOpenWorkWebAccess: async () => ({ hasAccess: true }),
       resolveRuntime: async () => ({
         ok: false,
         error: "needs_cloud_setup",
@@ -420,7 +492,7 @@ async function registryContext(input: { remoteSessionsEnabled: boolean }) {
   return { registry, context }
 }
 
-test("an org without the cloud capability flag never discovers remote-session capabilities", async () => {
+test("a deployment that cannot host Cloud never discovers remote-session capabilities", async () => {
   const { registry, context } = await registryContext({ remoteSessionsEnabled: false })
   const source = registry.CAPABILITY_SOURCES.remoteSession
   const matches = await source.search(context, "remote session cloud web", 10)
@@ -436,7 +508,7 @@ test("an org without the cloud capability flag never discovers remote-session ca
   expect(text?.type === "text" ? text.text : "").toContain("unknown_capability")
 })
 
-test("an org with the cloud capability flag discovers remote-session capabilities", async () => {
+test("a hosted Cloud deployment discovers remote-session capabilities for every organization", async () => {
   const { registry, context } = await registryContext({ remoteSessionsEnabled: true })
   const source = registry.CAPABILITY_SOURCES.remoteSession
   const matches = await source.search(context, "remote session cloud web", 10)

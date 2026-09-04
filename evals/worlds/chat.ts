@@ -1018,6 +1018,14 @@ export async function safeEdit(seed: Seed) {
   }
 }
 
+export async function sessionErrorCard(seed: Seed) {
+  const app = await seed.desktop({ name: "session-error-technical-details" });
+  const workspace = await seed.workspace(app, seed.tmpPath("session-error-details"));
+  const session = await seedSessionRetry(seed, app, { title: "Session error proof" });
+  await arrangeControl(seed, app, "eval.session_error.seed");
+  return { app, workspace, session };
+}
+
 export async function taskActivity(seed: Seed) {
   const app = await seed.desktop({ name: "task-activity-shimmer" });
   const workspace = await seed.workspace(app, seed.tmpPath("task-activity-shimmer"));

@@ -151,15 +151,18 @@ export function classifyRouteSessionReadError(error: unknown): "not-found" | "re
 }
 
 /**
- * Runtime-backed session reads can briefly land between the desktop server
- * accepting requests and the selected workspace engine becoming ready. Keep
- * that startup gap inside a bounded retry instead of turning it into a route
- * error. Terminal authorization and workspace errors still fail immediately.
+ * Engine calls can briefly fail while the desktop server is up but the
+ * workspace engine is not answering: startup, a blue/green rollover, or an
+ * overloaded event loop that misses the 10 s request timeout. Keep that gap
+ * inside a bounded retry instead of a dead-end error. Terminal authorization
+ * and workspace errors still fail immediately. `onRetry` fires before each
+ * wait with the 1-based attempt that just failed.
  */
-export async function readRouteSessionsWithRetry<T>(input: {
+export async function withTransientEngineRetry<T>(input: {
   load: () => Promise<T>;
   retryDelaysMs?: readonly number[];
   wait?: (delayMs: number) => Promise<void>;
+  onRetry?: (attempt: number, error: unknown) => void;
 }): Promise<T> {
   const retryDelaysMs = input.retryDelaysMs ?? [];
   const wait = input.wait ?? ((delayMs: number) => new Promise<void>((resolve) => {
@@ -174,9 +177,39 @@ export async function readRouteSessionsWithRetry<T>(input: {
       if (retryDelayMs === undefined || classifyRouteSessionReadError(error) !== "retryable") {
         throw error;
       }
+      input.onRetry?.(attempt + 1, error);
       await wait(retryDelayMs);
     }
   }
+}
+
+export const readRouteSessionsWithRetry = withTransientEngineRetry;
+
+/** Waits between task-creation attempts; each attempt itself may take the 10 s request timeout. */
+export const TASK_CREATE_RETRY_DELAYS_MS: readonly number[] = [1_000, 2_000, 4_000];
+
+export type TaskCreateFailure = {
+  kind: "not_responding" | "unavailable";
+  title: string;
+  description: string;
+};
+
+/**
+ * A stalled engine (timeouts, connection blips, 5xx from the proxy) is a
+ * different situation from a misconfigured or missing one: it usually comes
+ * back on its own or after a reload, and the person should not have to reload
+ * the whole app to find out.
+ */
+export function describeTaskCreateFailure(error: unknown, attempts: number): TaskCreateFailure {
+  const message = describeRouteError(error);
+  if (classifyRouteSessionReadError(error) === "retryable") {
+    return {
+      kind: "not_responding",
+      title: t("session.engine_not_responding_title"),
+      description: t("session.engine_not_responding_detail", { attempts: String(attempts) }),
+    };
+  }
+  return { kind: "unavailable", title: t("session.engine_unavailable_title"), description: message };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

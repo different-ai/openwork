@@ -359,6 +359,15 @@ test("connect start keeps the shared callback for a pre-registered confidential 
   let expectedRedirectUri = ""
   let initializeRequests = 0
   let toolsListRequests = 0
+  let validationMode: "hold" | "succeed" | "fail" = "hold"
+  let markValidationStarted = () => {}
+  let releaseValidation = () => {}
+  const validationStarted = new Promise<void>((resolve) => {
+    markValidationStarted = resolve
+  })
+  const validationReleased = new Promise<void>((resolve) => {
+    releaseValidation = resolve
+  })
   const server = Bun.serve({
     port: 0,
     async fetch(incoming) {
@@ -403,6 +412,14 @@ test("connect start keeps the shared callback for a pre-registered confidential 
       }
       if (url.pathname === "/mcp") {
         if (incoming.headers.get("authorization") === "Bearer shared-access-token") {
+          if (validationMode === "hold") {
+            markValidationStarted()
+            await validationReleased
+            validationMode = "succeed"
+          }
+          if (validationMode === "fail") {
+            return Response.json({ error: "post_authorization_validation_failed" }, { status: 500 })
+          }
           if (incoming.method !== "POST") return new Response(null, { status: 405 })
           const rpc: unknown = await incoming.json()
           if (!isRecord(rpc)) return Response.json({ error: "invalid_request" }, { status: 400 })
@@ -516,7 +533,20 @@ test("connect start keeps the shared callback for a pre-registered confidential 
     )
     callbackUrl.searchParams.set("code", "shared-authorization-code")
     callbackUrl.searchParams.set("state", signedState)
-    const callbackResponse = await app.fetch(new Request(callbackUrl))
+    const callbackPending = app.fetch(new Request(callbackUrl))
+    await validationStarted
+
+    const pendingListResponse = await request("/v1/mcp-connections?scope=manageable")
+    expect(pendingListResponse.status).toBe(200)
+    const pendingList: unknown = await pendingListResponse.json()
+    if (!isRecord(pendingList) || !Array.isArray(pendingList.connections)) {
+      throw new Error("Expected manageable connections during callback validation.")
+    }
+    const pendingConnection = pendingList.connections.find((entry) => isRecord(entry) && entry.id === connection.id)
+    expect(pendingConnection).toMatchObject({ connected: false, connectedForMe: false })
+
+    releaseValidation()
+    const callbackResponse = await callbackPending
     expect(callbackResponse.status).toBe(200)
     expect(await callbackResponse.text()).toContain("You're connected")
 
@@ -530,6 +560,53 @@ test("connect start keeps the shared callback for a pre-registered confidential 
     expect(connectedRows[0]?.scope).toBe("mcp_server")
     expect(initializeRequests).toBeGreaterThan(0)
     expect(toolsListRequests).toBeGreaterThan(0)
+
+    const connectedListResponse = await request("/v1/mcp-connections?scope=manageable")
+    expect(connectedListResponse.status).toBe(200)
+    const connectedList: unknown = await connectedListResponse.json()
+    if (!isRecord(connectedList) || !Array.isArray(connectedList.connections)) {
+      throw new Error("Expected manageable connections after callback validation.")
+    }
+    expect(connectedList.connections.find((entry) => isRecord(entry) && entry.id === connection.id))
+      .toMatchObject({ connected: true, connectedForMe: true, credentialHealth: "ready" })
+
+    const disconnectResponse = await principalRequest(
+      userId,
+      `/v1/mcp-connections/${connection.id}/disconnect`,
+      "POST",
+    )
+    expect(disconnectResponse.status).toBe(200)
+    validationMode = "fail"
+
+    const restarted = await request(`/v1/mcp-connections/${connection.id}/connect/start`)
+    expect(restarted.status).toBe(200)
+    const restartedBody: unknown = await restarted.json()
+    if (!isRecord(restartedBody) || typeof restartedBody.authorizeUrl !== "string") {
+      throw new Error("Expected a fresh OAuth authorize URL after disconnect.")
+    }
+    const restartedAuthorizeUrl = new URL(restartedBody.authorizeUrl)
+    expectedCodeChallenge = restartedAuthorizeUrl.searchParams.get("code_challenge") ?? ""
+    const failedCallbackUrl = new URL(
+      "/v1/mcp-connections/oauth/callback",
+      process.env.DEN_API_PUBLIC_URL ?? "http://127.0.0.1:8790",
+    )
+    failedCallbackUrl.searchParams.set("code", "shared-authorization-code")
+    failedCallbackUrl.searchParams.set("state", restartedAuthorizeUrl.searchParams.get("state") ?? "")
+    const failedCallbackResponse = await app.fetch(new Request(failedCallbackUrl))
+    expect(failedCallbackResponse.status).toBe(400)
+
+    const failedListResponse = await request("/v1/mcp-connections?scope=manageable")
+    expect(failedListResponse.status).toBe(200)
+    const failedList: unknown = await failedListResponse.json()
+    if (!isRecord(failedList) || !Array.isArray(failedList.connections)) {
+      throw new Error("Expected manageable connections after callback validation failed.")
+    }
+    expect(failedList.connections.find((entry) => isRecord(entry) && entry.id === connection.id)).toMatchObject({
+      connected: false,
+      connectedForMe: false,
+      credentialHealth: "reconnect_required",
+      credentialHealthReason: "post_authorization_validation_failed",
+    })
   } finally {
     server.stop(true)
   }

@@ -40,18 +40,15 @@ test("the regression suite runs the full eligible suite bi-daily without manual 
 
 test("PR-triggered selection intersects matched tests as basenames", async ({ evidence }) => {
   const workflow = await readFile(workflowPath, "utf8");
-  const rawMatchedAssignment =
-    'matched_tests="$(node evals/scripts/spec-impact.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --matched-tests)"';
+  const matchedAssignment = String.raw`matched_tests="$(git diff --name-only --diff-filter=ACMR "$BASE_SHA...$HEAD_SHA" | { grep -E '^evals/specs/[^/]+\.e2e\.test\.ts$' || true; } | sed 's#^evals/specs/##' | jq -Rsc 'split("\n") | map(select(length > 0))')"`;
 
-  expect(workflow).toContain(
-    'matched_tests="$(node evals/scripts/spec-impact.mjs --base "$BASE_SHA" --head "$HEAD_SHA" --matched-tests | jq -c \'map(sub("^evals/specs/"; ""))\')"',
-  );
+  expect(workflow).toContain(matchedAssignment);
   expect(workflow).toContain("| sed 's#^evals/specs/##' \\");
-  expect(workflow).not.toContain(rawMatchedAssignment);
+  expect(workflow).not.toContain(["spec", "impact.mjs"].join("-"));
 
   evidence.recordAssertionEvidence(
     "PR-triggered Daytona E2E selection compares matched and eligible test basenames",
-    "The workflow strips the evals/specs/ prefix from spec-impact output before intersecting it with the basename inventory, and the former raw assignment is absent.",
+    "The workflow selects changed top-level E2E files with git diff and strips the evals/specs/ prefix before intersecting them with the basename inventory.",
     true,
   );
 });

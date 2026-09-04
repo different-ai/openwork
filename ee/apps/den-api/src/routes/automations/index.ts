@@ -38,6 +38,7 @@ import { invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema 
 import { automationService, type AutomationService } from "../../automations/service.js"
 import { automationRunnerAudienceFromRequest, automationRunnerAuth } from "../../automations/runner-auth.js"
 import { env } from "../../env.js"
+import { OpenWorkWebAccessRequiredError } from "../../openwork-web-runtime-access.js"
 import { databaseRemoteSessionCommandStore } from "../../remote-sessions/commands.js"
 import {
   RUNNER_KEEPALIVE_INTERVAL_MS,
@@ -55,6 +56,10 @@ const paginationSchema = z.object({
 const runListSchema = z.object({ items: z.array(automationRunSchema), nextCursor: z.string().nullable() })
 const runResponseSchema = z.object({ run: automationRunSchema })
 const runnerClaimResponseSchema = z.object({ assignment: automationDesktopRunnerAssignmentSchema.nullable() })
+const openWorkWebAccessRequiredSchema = z.object({
+  error: z.literal("openwork_web_access_required"),
+  message: z.string(),
+}).meta({ ref: "AutomationOpenWorkWebAccessRequiredError" })
 type McpDescribeRouteOptions = DescribeRouteOptions & { "x-mcp": true }
 const describeMcpRoute = (options: McpDescribeRouteOptions) => describeRoute(options)
 // Runner-credential routes must never surface as MCP tools; an MCP caller with
@@ -78,6 +83,9 @@ function scope(c: {
 }
 
 function failure(error: unknown): { status: 400 | 403 | 404 | 409; body: { error: string; message?: string } } | null {
+  if (error instanceof OpenWorkWebAccessRequiredError) {
+    return { status: 403, body: { error: error.code, message: error.message } }
+  }
   if (!(error instanceof Error)) return null
   if (error.message === "automation_runner_identity_conflict") {
     return { status: 409, body: { error: error.message, message: "This desktop runner identity is already registered to a different organization member." } }
@@ -394,6 +402,7 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
         201: jsonResponse("Active Automation created.", automationDetailSchema),
         400: jsonResponse("Invalid request.", invalidRequestSchema),
         401: jsonResponse("Sign-in required.", unauthorizedSchema),
+        403: jsonResponse("OpenWork Web access is required.", openWorkWebAccessRequiredSchema),
         409: jsonResponse("Cloud runtime or model access is unavailable.", invalidRequestSchema),
       },
     }),
@@ -419,6 +428,7 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
         201: jsonResponse("Active Cloud Automation created.", automationDetailSchema),
         400: jsonResponse("Invalid request.", invalidRequestSchema),
         401: jsonResponse("Sign-in required.", unauthorizedSchema),
+        403: jsonResponse("OpenWork Web access is required.", openWorkWebAccessRequiredSchema),
         409: jsonResponse("Cloud runtime or model access is unavailable.", invalidRequestSchema),
       },
     }),
@@ -454,7 +464,11 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
       tags: ["Automations"], operationId: "updateAutomation", "x-mcp": true,
       summary: "Update an Automation",
       description: `${routeDescription} Every behavior-changing edit creates an immutable revision and applies it to future runs immediately.`,
-      responses: { 200: jsonResponse("Automation updated.", automationDetailSchema), 400: jsonResponse("Invalid request.", invalidRequestSchema) },
+      responses: {
+        200: jsonResponse("Automation updated.", automationDetailSchema),
+        400: jsonResponse("Invalid request.", invalidRequestSchema),
+        403: jsonResponse("OpenWork Web access is required for Cloud Automations.", openWorkWebAccessRequiredSchema),
+      },
     }),
     orgMemberRoute(), paramValidator(idParamsSchema), jsonValidator(updateAutomationSchema),
     async (c) => {
@@ -479,7 +493,13 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
       tags: ["Automations"], operationId, "x-mcp": true,
       summary: action === "activate" ? "Activate an Automation" : "Deactivate an Automation",
       description: routeDescription,
-      responses: { 200: jsonResponse("Automation state returned.", automationDetailSchema), 404: jsonResponse("Not found.", notFoundSchema) },
+      responses: {
+        200: jsonResponse("Automation state returned.", automationDetailSchema),
+        ...(action === "activate" ? {
+          403: jsonResponse("OpenWork Web access is required to activate a Cloud Automation.", openWorkWebAccessRequiredSchema),
+        } : {}),
+        404: jsonResponse("Not found.", notFoundSchema),
+      },
     }),
     orgMemberRoute(), paramValidator(idParamsSchema),
     async (c) => {
@@ -502,7 +522,11 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     describeMcpRoute({
       tags: ["Automations"], operationId: "runAutomationNow", "x-mcp": true,
       summary: "Run an Automation now", description: routeDescription,
-      responses: { 202: jsonResponse("Run queued.", runResponseSchema), 404: jsonResponse("Not found.", notFoundSchema) },
+      responses: {
+        202: jsonResponse("Run queued.", runResponseSchema),
+        403: jsonResponse("OpenWork Web access is required to run a Cloud Automation.", openWorkWebAccessRequiredSchema),
+        404: jsonResponse("Not found.", notFoundSchema),
+      },
     }),
     orgMemberRoute(), paramValidator(idParamsSchema),
     async (c) => {

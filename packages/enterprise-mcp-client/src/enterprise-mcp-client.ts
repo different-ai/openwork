@@ -550,6 +550,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
             if (session.client.getServerCapabilities()?.tools) {
               await session.client.listTools(undefined, session.requestOptions)
             }
+            await session.oauthProvider?.commitPendingAuthorizationCodeCredential()
           } catch (error) {
             operationFailed = true
             let credentialCleanupError: unknown = null

@@ -5,7 +5,6 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
-  type ReactNode,
 } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 
@@ -25,9 +24,8 @@ import {
   CommandShortcut,
 } from "@/components/ui/command";
 import { Button } from "@/components/ui/button";
-import { BrainCircuit, Check, ChevronLeftIcon, Columns2, FileText, FolderInput, Globe, Zap } from "lucide-react";
+import { ChevronLeftIcon } from "lucide-react";
 import type { ModelOption, ModelRef } from "@/app/types";
-import { ProviderIcon } from "@/react-app/design-system/provider-icon";
 import { usePlatform } from "../kernel/platform";
 import {
   resolveSessionNumberShortcutOs,
@@ -46,7 +44,6 @@ export type PaletteItem = {
   title: string;
   detail?: string;
   meta?: string;
-  icon?: ReactNode;
   searchText?: string;
   disabled?: boolean;
   action: () => void;
@@ -84,25 +81,6 @@ export type SessionGroupOption = {
   id: string;
   label: string;
 };
-
-function targetIcon(target: AccessibleTargetOption) {
-  if (target.kind === "url") return <Globe className="size-4 text-primary" />;
-  if (target.preview === "sheet") {
-    return (
-      <span className="inline-flex h-4 min-w-6 shrink-0 items-center justify-center rounded-[4px] border border-emerald-500/30 bg-emerald-500/10 px-0.5 text-[7px] font-bold leading-none text-emerald-700">
-        XLS
-      </span>
-    );
-  }
-  if (target.preview === "markdown") {
-    return (
-      <span className="inline-flex size-4 shrink-0 items-center justify-center rounded-[4px] border border-primary/25 bg-primary/10 text-[8px] font-bold leading-none text-primary">
-        MD
-      </span>
-    );
-  }
-  return <FileText className="size-4 text-primary" />;
-}
 
 export type CommandPaletteProps = {
   open: boolean;
@@ -239,7 +217,6 @@ export function CommandPalette(props: CommandPaletteProps) {
           title: "Open in split view…",
           detail: "Choose any session, including one from another workspace",
           meta: "Workbench",
-          icon: <Columns2 className="text-primary" />,
           searchText: "split view side by side session workspace",
           action: () => {
             setMode("split-sessions");
@@ -259,7 +236,6 @@ export function CommandPalette(props: CommandPaletteProps) {
           title: "Switch model",
           detail: "Choose the LLM that runs your next prompts",
           meta: props.selectedModelLabel ?? t("session.default_model"),
-          icon: <BrainCircuit className="size-4 text-primary" />,
           searchText: "model models llm provider openai anthropic claude gpt gemini switch pick select default",
           action: () => {
             if (hasNestedModelPicker) {
@@ -294,7 +270,6 @@ export function CommandPalette(props: CommandPaletteProps) {
             ? `Add ${props.currentSessionForGroupMove.title} to an existing group`
             : "Add the selected task to an existing group",
           meta: sessionGroupCount > 0 ? `${sessionGroupCount.toLocaleString()} groups` : "No groups",
-          icon: <FolderInput className="size-4 text-primary" />,
           searchText: "move to group add task session folder organize",
           action: () => {
             setMode("groups");
@@ -324,7 +299,7 @@ export function CommandPalette(props: CommandPaletteProps) {
       },
     },
     // Top-bar shortcuts — these used to be selectable via Cmd+K and were
-    // missing after the React port. Each one mirrors one of the icons at
+    // missing after the React port. Each one mirrors one of the controls at
     // the bottom-right of the session surface (documentation / feedback)
     // plus every settings tab the user is likely to reach for.
     {
@@ -411,7 +386,6 @@ export function CommandPalette(props: CommandPaletteProps) {
       title: item.title,
       detail: item.workspaceTitle,
       meta: item.isActive ? t("session.cmd_current_workspace") : "Other workspace",
-      icon: <Columns2 className="text-muted-foreground" />,
       searchText: `${item.searchText} split side by side`,
       action: () => {
         props.onOpenSessionInSplit?.(item.workspaceId, item.sessionId);
@@ -429,7 +403,6 @@ export function CommandPalette(props: CommandPaletteProps) {
         title: target.name || target.value,
         detail: target.value,
         meta: target.kind === "url" ? "Server" : "Artifact",
-        icon: targetIcon(target),
         searchText: `${target.name} ${target.value} ${target.preview}`.toLowerCase(),
         action: () => {
           props.onClose();
@@ -441,7 +414,6 @@ export function CommandPalette(props: CommandPaletteProps) {
         title: `Stop tracking ${target.name || target.value}`,
         detail: target.value,
         meta: "Hide",
-        icon: targetIcon(target),
         searchText: `stop tracking hide ${target.name} ${target.value} ${target.preview}`.toLowerCase(),
         action: () => {
           props.onClose();
@@ -462,9 +434,6 @@ export function CommandPalette(props: CommandPaletteProps) {
         title: t("session.default_agent"),
         detail: t("session.cmd_agent_default_detail"),
         meta: props.selectedAgent == null ? t("session.cmd_agent_active") : undefined,
-        icon: props.selectedAgent == null
-          ? <Check className="size-4 text-primary" />
-          : <Zap className="size-4 text-muted-foreground" />,
         action: () => selectAgent(null),
       },
       ...agents.map((agent) => ({
@@ -472,9 +441,6 @@ export function CommandPalette(props: CommandPaletteProps) {
         title: agent.name.charAt(0).toUpperCase() + agent.name.slice(1),
         detail: agent.description,
         meta: props.selectedAgent === agent.name ? t("session.cmd_agent_active") : undefined,
-        icon: props.selectedAgent === agent.name
-          ? <Check className="size-4 text-primary" />
-          : <Zap className="size-4 text-muted-foreground" />,
         searchText: `agent ${agent.name} ${agent.description ?? ""}`.toLowerCase(),
         action: () => selectAgent(agent.name),
       })),
@@ -486,9 +452,6 @@ export function CommandPalette(props: CommandPaletteProps) {
       id: `group:${group.id}`,
       title: group.label,
       meta: props.currentSessionGroupId === group.id ? "Current" : undefined,
-      icon: props.currentSessionGroupId === group.id
-        ? <Check className="size-4 text-primary" />
-        : <FolderInput className="size-4 text-muted-foreground" />,
       searchText: `group ${group.label}`.toLowerCase(),
       action: () => {
         props.onClose();
@@ -503,7 +466,6 @@ export function CommandPalette(props: CommandPaletteProps) {
       title: item.title,
       detail: item.detail,
       meta: item.meta,
-      icon: <ProviderIcon providerId={item.option.providerID} providerName={item.option.description} size={16} />,
       searchText: item.searchText,
       disabled: item.option.disabled,
       action: () => {
@@ -532,7 +494,6 @@ export function CommandPalette(props: CommandPaletteProps) {
       title: item.title,
       detail: item.detail,
       meta: item.meta,
-      icon: item.meta ? <Check className="size-4 text-primary" /> : <BrainCircuit className="size-4 text-muted-foreground" />,
       searchText: item.searchText,
       action: () => {
         props.onSelectModel?.(
@@ -663,7 +624,6 @@ export function CommandPalette(props: CommandPaletteProps) {
                   disabled={item.disabled}
                   onClick={item.action}
                 >
-                  {item.icon ? <span className="mr-2 shrink-0">{item.icon}</span> : null}
                   <div className="min-w-0 flex-1">
                     <div className="truncate font-medium">{item.title}</div>
                     {item.detail ? (

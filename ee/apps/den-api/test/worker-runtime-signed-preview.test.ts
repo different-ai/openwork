@@ -75,6 +75,7 @@ test("generic Daytona runtime routes refresh expiry and request only the fresh p
     worker: runtimeWorker,
     path: "/runtime/versions",
   }, {
+    getOpenWorkWebAccess: async () => ({ hasAccess: true }),
     resolveCloudAccess: (ownership) => access.resolveCloudRuntimeAccess(ownership, {
       loadWorker: async () => runtimeWorker,
       store: runtimeStore(),
@@ -142,6 +143,7 @@ test("cloud worker tokens expose expiring URLs only by explicit opt-in", async (
     { scope: "client" as const, token: "client-token" },
   ]
   const legacy = await shared.getWorkerTokensAndConnect(runtimeWorker, {
+    getOpenWorkWebAccess: async () => ({ hasAccess: true }),
     apiPublicUrl: "https://den.example.test/api/den",
     resolveCloudAccess,
     loadActiveTokens,
@@ -152,6 +154,7 @@ test("cloud worker tokens expose expiring URLs only by explicit opt-in", async (
     },
   })
   const resolved = await shared.getWorkerTokensAndConnect(runtimeWorker, {
+    getOpenWorkWebAccess: async () => ({ hasAccess: true }),
     includeExpiringOpenworkUrl: true,
     apiPublicUrl: "https://den.example.test/api/den",
     loadActiveTokens,
@@ -201,6 +204,7 @@ test("cloud worker tokens expose expiring URLs only by explicit opt-in", async (
 test("cloud worker tokens retain the stable route while provisioning", async () => {
   const runtimeWorker = { ...worker(), status: "provisioning" as const }
   const resolved = await shared.getWorkerTokensAndConnect(runtimeWorker, {
+    getOpenWorkWebAccess: async () => ({ hasAccess: true }),
     apiPublicUrl: "https://den.example.test/api/den",
     includeExpiringOpenworkUrl: true,
     loadActiveTokens: async () => [
@@ -226,11 +230,14 @@ function registerCompatibilityTestApp(input: {
   requests: Array<{ url: string; init: RequestInit }>
   response?: (url: string, init: RequestInit) => Response | Promise<Response>
   maxActiveRequestsPerWorker?: number
+  hasWebAccess?: boolean
+  onResolve?: () => void
 }) {
   const app = new Hono<{ Variables: WorkerRouteVariables }>()
   const organizationId = createDenTypeId("organization")
   let resolveIndex = 0
   compatibility.registerCloudWorkerCompatibilityRoutes(app, {
+    getOpenWorkWebAccess: async () => ({ hasAccess: input.hasWebAccess ?? true }),
     authenticate: async ({ request, workerId }) => {
       if (workerId !== input.workerId) return null
       const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? ""
@@ -240,6 +247,7 @@ function registerCompatibilityTestApp(input: {
       return null
     },
     resolveCloudAccess: async () => {
+      input.onResolve?.()
       const urls = input.runtimeUrls ?? ["https://fresh.preview.example.test"]
       const url = urls[Math.min(resolveIndex, urls.length - 1)]
       resolveIndex += 1
@@ -317,6 +325,33 @@ test("stable cloud worker route refreshes the preview on every request", async (
     "https://preview-a.example.test/health?probe=1",
     "https://preview-b.example.test/health?probe=1",
   ])
+})
+
+test("stable cloud worker route requires Web access before resolving or calling the VM", async () => {
+  const workerId = createDenTypeId("worker")
+  const requests: Array<{ url: string; init: RequestInit }> = []
+  let resolutions = 0
+  const app = registerCompatibilityTestApp({
+    workerId,
+    requests,
+    hasWebAccess: false,
+    onResolve: () => {
+      resolutions += 1
+    },
+  })
+
+  const response = await app.request(
+    `https://den.example.test/v1/cloud/workers/${workerId}/workspace/demo/sessions`,
+    { method: "POST", headers: { "X-OpenWork-Host-Token": "host-token" } },
+  )
+
+  expect(response.status).toBe(403)
+  expect(await response.json()).toEqual({
+    error: "openwork_web_access_required",
+    message: "An active OpenWork Web subscription or complimentary access is required to use OpenWork Cloud.",
+  })
+  expect(resolutions).toBe(0)
+  expect(requests).toHaveLength(0)
 })
 
 test("stable cloud worker route enforces worker token and method scope", async () => {

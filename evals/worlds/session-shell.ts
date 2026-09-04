@@ -1,6 +1,6 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { mkdir, rm } from "node:fs/promises";
-import { desktop as launchDesktop } from "@openwork/hosts";
+import { daytonaSandbox, desktop as launchDesktop } from "@openwork/hosts";
 import type { Seed } from "@openwork/env";
 
 const stormProviderId = "active-session-storm-mock";
@@ -248,6 +248,162 @@ export async function responsiveSessions(seed: Seed) {
     mobile: false,
   });
   return { ...world, primary, secondary };
+}
+
+export type SidebarRouteWorkspace = { id: string; name: string; loading: boolean; error: string | null };
+export type SidebarRouteSession = { id: string; title: string };
+export type SidebarRouteFacts = {
+  selectedWorkspaceId: string;
+  workspaces: SidebarRouteWorkspace[];
+  sessionsByWorkspaceId: Record<string, SidebarRouteSession[]>;
+};
+
+function parseSidebarRouteFacts(value: unknown): SidebarRouteFacts {
+  if (!isRecord(value) || typeof value.selectedWorkspaceId !== "string" || !Array.isArray(value.workspaces) || !isRecord(value.sessionsByWorkspaceId)) {
+    throw new Error(`Route inspector slice was unavailable: ${JSON.stringify(value)}`);
+  }
+  const workspaces: SidebarRouteWorkspace[] = [];
+  for (const workspace of value.workspaces) {
+    if (!isRecord(workspace) || typeof workspace.id !== "string" || typeof workspace.name !== "string" || typeof workspace.loading !== "boolean") {
+      throw new Error(`Route inspector workspace was invalid: ${JSON.stringify(workspace)}`);
+    }
+    workspaces.push({
+      id: workspace.id,
+      name: workspace.name,
+      loading: workspace.loading,
+      error: typeof workspace.error === "string" ? workspace.error : null,
+    });
+  }
+  const sessionsByWorkspaceId: Record<string, SidebarRouteSession[]> = {};
+  for (const [workspaceId, sessions] of Object.entries(value.sessionsByWorkspaceId)) {
+    if (!Array.isArray(sessions)) throw new Error(`Route inspector sessions for ${workspaceId} were invalid: ${JSON.stringify(sessions)}`);
+    sessionsByWorkspaceId[workspaceId] = sessions.map((session) => {
+      if (!isRecord(session) || typeof session.id !== "string" || typeof session.title !== "string") {
+        throw new Error(`Route inspector session was invalid: ${JSON.stringify(session)}`);
+      }
+      return { id: session.id, title: session.title };
+    });
+  }
+  return { selectedWorkspaceId: value.selectedWorkspaceId, workspaces, sessionsByWorkspaceId };
+}
+
+/**
+ * Two empty workspaces on one desktop. `other` is created last, which selects
+ * it and expands its sidebar group; the group stays expanded after the spec
+ * returns to `home`, so `other`'s rows keep rendering while it is not selected.
+ */
+export async function externalSessionVisibility(seed: Seed) {
+  const app = await seed.desktop({ name: "sidebar-external-session-visibility" });
+  const repoRoot = app.workspaceRoot;
+  if (!repoRoot) throw new Error("External session visibility needs a spawned desktop with a known workspace root.");
+  // Real checkout directories avoid conflating session-list freshness with a
+  // missing-directory cold start in OpenCode.
+  const home = await seed.workspace(app, `${repoRoot}/apps/app`);
+  const other = await additionalWorkspace(seed, app, `${repoRoot}/apps/server`);
+  // TODO(primitive): seed.desktop should accept an initial viewport for Electron surfaces.
+  // The sidebar renders its workspace rows only on a desktop-width viewport.
+  await app.client.send("Emulation.setDeviceMetricsOverride", {
+    width: 1_400,
+    height: 900,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  const rawServerInfo = await seed.evalIn(app, `window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo")`, {
+    awaitPromise: true,
+    timeoutMs: 30_000,
+  });
+  if (!isRecord(rawServerInfo) || typeof rawServerInfo.baseUrl !== "string") {
+    throw new Error(`OpenWork server info was unavailable: ${JSON.stringify(rawServerInfo)}`);
+  }
+  const serverUrl = new URL(rawServerInfo.baseUrl);
+  const serverToken = typeof rawServerInfo.ownerToken === "string"
+    ? rawServerInfo.ownerToken
+    : typeof rawServerInfo.clientToken === "string"
+      ? rawServerInfo.clientToken
+      : "";
+  if (!serverToken) throw new Error("OpenWork server info did not include a token.");
+  let externalServerUrl = serverUrl.origin;
+  if (app.handle.hostKind === "daytona") {
+    const sandboxId = app.handle.sandboxId?.trim();
+    if (!sandboxId) throw new Error("Daytona desktop did not expose its sandbox id.");
+    await using previewHost = daytonaSandbox(sandboxId);
+    if (!previewHost.previewUrl) throw new Error("Daytona host cannot expose the OpenWork server port.");
+    externalServerUrl = await previewHost.previewUrl(Number(serverUrl.port));
+  }
+  return {
+    app,
+    home,
+    other,
+    /** The sidebar's own per-workspace session lists and load state. */
+    // TODO(primitive): probe.route should expose the sidebar's per-workspace session lists.
+    async route(): Promise<SidebarRouteFacts> {
+      return parseSidebarRouteFacts(await seed.evalIn(app, `(() => {
+        const route = window.__openwork?.slice?.("route");
+        if (!route) return null;
+        return {
+          selectedWorkspaceId: String(route.selectedWorkspaceId ?? ""),
+          workspaces: (route.workspaces ?? []).map((workspace) => ({
+            id: String(workspace.id),
+            name: String(workspace.displayNameResolved ?? ""),
+            loading: Boolean(workspace.loading),
+            error: typeof workspace.error === "string" ? workspace.error : null,
+          })),
+          sessionsByWorkspaceId: Object.fromEntries(Object.entries(route.sessionsByWorkspaceId ?? {}).map(([workspaceId, sessions]) => [
+            workspaceId,
+            (sessions ?? []).map((session) => ({ id: String(session?.id ?? ""), title: String(session?.title ?? "") })),
+          ])),
+        };
+      })()`));
+    },
+    /**
+     * Creates a session the way another client would: straight against the
+     * OpenWork server's workspace mount, never through the desktop's UI state.
+     */
+    // TODO(primitive): seed.externalSession should create a session on the server without touching the renderer.
+    async createSessionOutsideWindow(workspaceId: string, title: string): Promise<string> {
+      const url = `${externalServerUrl.replace(/\/+$/, "")}/workspace/${encodeURIComponent(workspaceId)}/opencode/session`;
+      const headers = {
+        Authorization: `Bearer ${serverToken}`,
+        "Content-Type": "application/json",
+      };
+      const findCreatedSession = async (): Promise<string | null> => {
+        try {
+          const response = await fetch(`${url}?limit=200`, { headers, signal: AbortSignal.timeout(15_000) });
+          const value: unknown = await response.json().catch(() => null);
+          if (!response.ok || !Array.isArray(value)) return null;
+          const match = value.find((session) => isRecord(session) && session.title === title && typeof session.id === "string");
+          return isRecord(match) && typeof match.id === "string" ? match.id : null;
+        } catch {
+          return null;
+        }
+      };
+
+      let lastError = "no response";
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        const existing = await findCreatedSession();
+        if (existing) return existing;
+        try {
+          const response = await fetch(url, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ title }),
+            signal: AbortSignal.timeout(30_000),
+          });
+          const value: unknown = await response.json().catch(() => null);
+          if (response.ok && isRecord(value) && typeof value.id === "string") return value.id;
+          lastError = `HTTP ${response.status}: ${JSON.stringify(value)}`;
+        } catch (error) {
+          lastError = error instanceof Error ? error.message : String(error);
+        }
+        // A timed-out POST may have committed before its response was lost.
+        // Check by unique title before the next non-idempotent attempt.
+        const created = await findCreatedSession();
+        if (created) return created;
+        await new Promise((resolve) => setTimeout(resolve, Math.pow(2, attempt) * 1_000));
+      }
+      throw new Error(`Creating a session outside the window failed after 4 attempts: ${lastError}`);
+    },
+  };
 }
 
 export async function crossWorkspaceSessions(seed: Seed) {

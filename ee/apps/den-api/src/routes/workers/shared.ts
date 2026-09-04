@@ -32,6 +32,12 @@ import { customDomainForWorker } from "../../workers/vanity-domain.js"
 import { resolveCloudRuntimeAccess } from "../../workers/worker-access.js"
 import { CLOUD_INSTANCE_BACKEND } from "../../workers/cloud-constants.js"
 import { fetchPreviewNoRedirect } from "../../workers/preview-fetch.js"
+import {
+  getOpenWorkWebRuntimeAccess,
+  openWorkWebAccessRequiredPayload,
+  requireOpenWorkWebRuntimeAccess,
+  type OpenWorkWebRuntimeAccessResolver,
+} from "../../openwork-web-runtime-access.js"
 
 const logger = appLogger.child({ component: "worker_routes" })
 
@@ -91,6 +97,7 @@ type CloudProvisioningStore = {
   touchProvisioningWorker: (workerId: WorkerId) => Promise<void>
 }
 type ContinueCloudProvisioningOptions = {
+  getOpenWorkWebAccess?: OpenWorkWebRuntimeAccessResolver
   provisionWorker?: ProvisionWorker
   store?: CloudProvisioningStore
   materializeProviders?: typeof materializeCloudWorkerProviders
@@ -320,9 +327,23 @@ export async function fetchWorkerRuntimeJson(input: {
   method?: "GET" | "POST"
   body?: unknown
 }, options: {
+  getOpenWorkWebAccess?: OpenWorkWebRuntimeAccessResolver
   resolveCloudAccess?: ResolveCloudRuntimeAccess
   fetchImpl?: typeof fetch
 } = {}) {
+  // Published desktops hold cloud worker tokens only after OpenWorkWebAccessGate
+  // (v0.18.42+) granted Web access; this recheck covers lapsed entitlement and
+  // callers that bypass the gate. See openwork-web-runtime-access.ts.
+  if (input.worker.destination === "cloud") {
+    const webAccess = await (options.getOpenWorkWebAccess ?? getOpenWorkWebRuntimeAccess)(input.worker.org_id)
+    if (!webAccess.hasAccess) {
+      return {
+        ok: false as const,
+        status: 403,
+        payload: openWorkWebAccessRequiredPayload(),
+      }
+    }
+  }
   const access = await getWorkerRuntimeAccess(input.worker, options.resolveCloudAccess ?? resolveCloudRuntimeAccess)
   if (!access) {
     return {
@@ -447,6 +468,14 @@ async function runCloudProvisioning(input: {
   const deadlineMs = options.deadlineMs ?? env.cloudProvisionDeadlineMs
 
   try {
+    if (!input.orgId) throw new Error("cloud_worker_organization_required")
+    // Entitlement can lapse between claim and provisioning; a lapse is recorded
+    // as the dedicated web_access_required failure (cloud-failure.ts), which the
+    // published desktop renders through its existing failed-instance state.
+    await requireOpenWorkWebRuntimeAccess(
+      input.orgId,
+      options.getOpenWorkWebAccess ?? getOpenWorkWebRuntimeAccess,
+    )
     await withProvisioningHeartbeat({
       workerId: input.workerId,
       touch: store.touchProvisioningWorker,
@@ -547,12 +576,26 @@ export async function requireCloudAccessOrPayment(input: {
 }
 
 export async function getWorkerTokensAndConnect(worker: WorkerRow, options: {
+  getOpenWorkWebAccess?: OpenWorkWebRuntimeAccessResolver
   resolveCloudAccess?: ResolveCloudRuntimeAccess
   loadActiveTokens?: LoadActiveWorkerTokens
   fetchImpl?: typeof fetch
   includeExpiringOpenworkUrl?: boolean
   apiPublicUrl?: string
 } = {}) {
+  // Same rollout note as fetchWorkerRuntimeJson: the desktop gate already ran
+  // before a published client asks for cloud worker tokens.
+  if (worker.destination === "cloud") {
+    const webAccess = await (options.getOpenWorkWebAccess ?? getOpenWorkWebRuntimeAccess)(worker.org_id)
+    if (!webAccess.hasAccess) {
+      return {
+        error: {
+          status: 403,
+          body: openWorkWebAccessRequiredPayload(),
+        },
+      }
+    }
+  }
   if (worker.destination === "cloud" && worker.sandbox_backend === CLOUD_INSTANCE_BACKEND) {
     const tokenRows = await (options.loadActiveTokens ?? loadActiveWorkerTokens)(worker.id)
     const hostToken = tokenRows.find((entry) => entry.scope === "host")?.token ?? null

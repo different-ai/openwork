@@ -46,6 +46,9 @@ test.skipIf(!mysqlOpen)("Google Workspace retrieval enforces Drive access and bo
     expect(report).toContain('name="existing MCP search and execute path enforces Drive scope and bounds model-visible content"')
     expect(report).toContain('name="drive text retains the existing retrieval limit before MCP serialization"')
     expect(report).toContain('name="gmail message body retains the existing retrieval limit before MCP serialization"')
+    expect(report).toContain('name="calendar events list accepts RFC 3339 offsets and forwards them verbatim"')
+    expect(report).toContain('name="calendar event create accepts RFC 3339 offsets and forwards them verbatim"')
+    expect(report).toContain('name="search_capabilities exposes query parameter constraints as JSON schema instead of leaked validator internals"')
     expect(report).not.toContain("<failure")
     expect(report).not.toContain("<skipped")
   } finally {
@@ -65,6 +68,11 @@ test.skipIf(!mysqlOpen)("Google Workspace retrieval enforces Drive access and bo
   evidence.recordAssertionEvidence(
     "The existing MCP path keeps model-visible connector output bounded",
     "A real search_capabilities and execute_capability journey omits oversized non-image base64 before download where metadata permits, preserves existing small attachment bytes, compacts large JSON, and applies model-visible text limits to Drive and Gmail content without reducing their retrieval-layer limits.",
+    true,
+  )
+  evidence.recordAssertionEvidence(
+    "Calendar datetimes accept RFC 3339 offsets and search hints expose real query constraints",
+    "Calendar list and create accept RFC 3339 UTC offsets, forward them unchanged, and reject malformed local datetimes without calling Google. MCP search returns plain JSON Schema constraints and descriptions for Gmail and Calendar query parameters without leaking validator internals or adding query schemas to operations without query parameters.",
     true,
   )
 })

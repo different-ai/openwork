@@ -15,6 +15,7 @@ import {
   resetRuntimeStatesAfterFailedServerStart,
   resolveEvalLocalServerDelayMs,
   resolveOpenworkServerConfigPath,
+  resolveOpenworkServerLogFile,
   resolveOpenworkServerReuse,
   seedWorkspacePathsForEmbeddedServer,
   selectStickyOpenworkPortWorkspace,
@@ -99,6 +100,38 @@ describe("openwork server snapshot", () => {
       inProcess: true,
     });
     assert.equal(snapshot.running, true);
+  });
+
+  it("exposes the server log file so Settings > Debug can point at it", () => {
+    const withLog = snapshotOpenworkServerState({
+      child: null,
+      childExited: true,
+      inProcess: true,
+      logFilePath: "/tmp/userData/logs/openwork-server.log",
+    });
+    assert.equal(withLog.logFilePath, "/tmp/userData/logs/openwork-server.log");
+    const withoutLog = snapshotOpenworkServerState({ child: null, childExited: true, inProcess: false });
+    assert.equal(withoutLog.logFilePath, null);
+  });
+});
+
+describe("resolveOpenworkServerLogFile", () => {
+  it("defaults to logs/openwork-server.log under the user data dir", () => {
+    assert.equal(
+      resolveOpenworkServerLogFile("/tmp/userData", {}),
+      path.join("/tmp/userData", "logs", "openwork-server.log"),
+    );
+  });
+
+  it("prefers an explicit OPENWORK_SERVER_LOG_FILE", () => {
+    assert.equal(
+      resolveOpenworkServerLogFile("/tmp/userData", { OPENWORK_SERVER_LOG_FILE: "  /var/log/ow.log " }),
+      "/var/log/ow.log",
+    );
+    assert.equal(
+      resolveOpenworkServerLogFile("/tmp/userData", { OPENWORK_SERVER_LOG_FILE: "   " }),
+      path.join("/tmp/userData", "logs", "openwork-server.log"),
+    );
   });
 });
 

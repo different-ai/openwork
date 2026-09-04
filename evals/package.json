@@ -7,7 +7,6 @@
     "test:pr:coverage": "vitest run --config vitest.config.ts --project pr --coverage.enabled=true --coverage.provider=v8 --coverage.reporter=text-summary --coverage.reporter=lcov --coverage.reportsDirectory=./coverage",
     "flake:collect": "node scripts/flake-report.mjs collect",
     "flake:report": "node scripts/flake-report.mjs report",
-    "coverage:matrix": "node scripts/spec-coverage-matrix.mjs",
     "test:e2e": "vitest run --config vitest.config.ts --project e2e",
     "artifacts:index": "node packages/test-artifacts/bin/artifact-index.mjs",
     "artifacts:publish": "node packages/test-artifacts/bin/publish-pr.mjs",

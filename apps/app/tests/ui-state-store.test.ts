@@ -68,7 +68,7 @@ Object.defineProperty(globalThis, "localStorage", {
   value: storage,
 });
 
-const { persistUiState, toggleSidePanelState, useUiStateStore } = await import(
+const { expandWorkspace, persistUiState, toggleSidePanelState, toggleWorkspaceExpanded, useUiStateStore } = await import(
   "../src/react-app/shell/ui-state-store"
 );
 const { usePanelTabStore } = await import("../src/react-app/domains/session/panel/panel-tab-store");
@@ -92,6 +92,7 @@ describe("ui state store", () => {
     const state: UiState = {
       sidebarOpen: true,
       sidePanelState: { ses_1: "extensions" },
+      expandedWorkspaceIds: ["ws_1"],
       applicationMenuVisible: false,
       workspaceLeftSidebarWidth: 260,
       workspaceLeftSidebarResizing: false,
@@ -103,6 +104,7 @@ describe("ui state store", () => {
 
     const parsed = requireJsonObject(storage.getItem(PERSISTED_UI_STATE_KEY));
     expect("sidePanelState" in parsed).toBe(false);
+    expect("expandedWorkspaceIds" in parsed).toBe(false);
     expect(objectValue(parsed, "workspaceRightSidebarExpanded")).toBe(true);
     expect(objectValue(parsed, "workspaceRightSidebarExpandedWidth")).toBe(520);
   });
@@ -116,6 +118,7 @@ describe("ui state store", () => {
     const state: UiState = {
       sidebarOpen: true,
       sidePanelState: {},
+      expandedWorkspaceIds: [],
       applicationMenuVisible: false,
       workspaceLeftSidebarWidth: 260,
       workspaceLeftSidebarResizing: false,
@@ -128,6 +131,37 @@ describe("ui state store", () => {
 
     const closed = toggleSidePanelState(opened, "ses_1", "extensions");
     expect(closed.sidePanelState).toEqual({ ses_1: null });
+  });
+
+  test("keeps sidebar workspace expansion in the store so it survives the sidebar unmounting", () => {
+    // Opening Settings unmounts the session sidebar. Expansion state must
+    // outlive that, so it lives in the store rather than component state.
+    const base: UiState = {
+      sidebarOpen: true,
+      sidePanelState: {},
+      expandedWorkspaceIds: [],
+      applicationMenuVisible: false,
+      workspaceLeftSidebarWidth: 260,
+      workspaceLeftSidebarResizing: false,
+      workspaceRightSidebarExpanded: false,
+      workspaceRightSidebarExpandedWidth: 520,
+    };
+
+    const one = expandWorkspace(base, " ws_1 ");
+    expect(one.expandedWorkspaceIds).toEqual(["ws_1"]);
+    expect(expandWorkspace(one, "ws_1")).toBe(one);
+    expect(expandWorkspace(one, "  ")).toBe(one);
+
+    const two = toggleWorkspaceExpanded(one, "ws_2");
+    expect(two.expandedWorkspaceIds).toEqual(["ws_1", "ws_2"]);
+    const collapsed = toggleWorkspaceExpanded(two, "ws_1");
+    expect(collapsed.expandedWorkspaceIds).toEqual(["ws_2"]);
+
+    useUiStateStore.getState().expandWorkspace("ws_store");
+    useUiStateStore.getState().toggleWorkspaceExpanded("ws_toggle");
+    expect(useUiStateStore.getState().expandedWorkspaceIds).toEqual(["ws_store", "ws_toggle"]);
+    useUiStateStore.getState().toggleWorkspaceExpanded("ws_toggle");
+    expect(useUiStateStore.getState().expandedWorkspaceIds).toEqual(["ws_store"]);
   });
 
   test("preserves active panel content while the panel closes and reopens", () => {

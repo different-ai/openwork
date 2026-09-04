@@ -27,6 +27,18 @@ async function probe(url: string): Promise<number | "rejected"> {
   }
 }
 
+// A live stage must answer; a single 2s attempt on a loaded CI runner is not
+// proof that it does not. Rejection is asserted single-shot only after
+// `eventually` has already observed the process gone.
+async function probeUntilOk(url: string, label: string): Promise<number | "rejected"> {
+  return eventually(() => probe(url), {
+    within: 10_000,
+    intervalMs: 250,
+    label,
+    until: (status) => status === 200,
+  });
+}
+
 test("staged worlds run side by side without touching each other", async ({ evidence }) => {
   const root = await mkdtemp(join(tmpdir(), "openwork-world-stage-isolation-"));
   const worldsDirectory = join(root, "worlds");
@@ -108,8 +120,8 @@ if (import.meta.main) await runRecipe(world);
     assert.equal(isProcessAlive(stageA.pid), true);
     assert.equal(isProcessAlive(stageB.pid), true);
     assert.notEqual(stageA.outputs.url, stageB.outputs.url);
-    assert.equal(await probe(stageA.outputs.url), 200);
-    assert.equal(await probe(stageB.outputs.url), 200);
+    assert.equal(await probeUntilOk(stageA.outputs.url, "stage a answers"), 200);
+    assert.equal(await probeUntilOk(stageB.outputs.url, "stage b answers"), 200);
     const stageAAfterBoth = await readScriptWorldSnapshot(stageAPath);
     const stageBAfterBoth = await readScriptWorldSnapshot(stageBPath);
     assert.ok(stageAAfterBoth);
@@ -131,7 +143,7 @@ if (import.meta.main) await runRecipe(world);
       label: "stage a stops while stage b remains available",
     });
     assert.equal(await probe(stageA.outputs.url), "rejected");
-    assert.equal(await probe(stageB.outputs.url), 200);
+    assert.equal(await probeUntilOk(stageB.outputs.url, "stage b still answers after stage a is down"), 200);
     assert.equal(await exists(stageAPath), false);
     const stageBAfterDownA = await readScriptWorldSnapshot(stageBPath);
     assert.ok(stageBAfterDownA);

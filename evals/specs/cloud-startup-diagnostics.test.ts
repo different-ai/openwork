@@ -125,6 +125,7 @@ test("Cloud startup failures are diagnosable and explicitly retryable without le
   const unavailable = workspaceStatusModule.mapCloudWorkspaceState({
     instance: null,
     updating: false,
+    accessRequired: false,
     requestFailed: true,
   });
   const sandboxFailed = workspaceStatusModule.mapCloudWorkspaceState({
@@ -135,6 +136,7 @@ test("Cloud startup failures are diagnosable and explicitly retryable without le
       latestVersion: "openwork-test-snapshot",
     },
     updating: false,
+    accessRequired: false,
     requestFailed: false,
   });
   expect(unavailable.variant).toBe("unavailable");

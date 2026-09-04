@@ -8,7 +8,7 @@ import {
 test("complimentary Web access is an explicit metadata grant that preserves unrelated settings", () => {
   const original = {
     brandAppName: "OpenWork Internal",
-    capabilities: { cloud: true },
+    capabilities: { installLinks: true },
     complimentaryAccess: { futureProduct: true },
   }
   const granted = setOpenWorkWebComplimentaryAccess(original, true)
@@ -16,7 +16,7 @@ test("complimentary Web access is an explicit metadata grant that preserves unre
   expect(hasOpenWorkWebComplimentaryAccess(granted)).toBe(true)
   expect(granted).toMatchObject({
     brandAppName: "OpenWork Internal",
-    capabilities: { cloud: true },
+    capabilities: { installLinks: true },
     complimentaryAccess: { futureProduct: true, openworkWeb: true },
   })
   expect(original.complimentaryAccess).toEqual({ futureProduct: true })
@@ -25,7 +25,7 @@ test("complimentary Web access is an explicit metadata grant that preserves unre
   expect(hasOpenWorkWebComplimentaryAccess(revoked)).toBe(false)
   expect(revoked).toMatchObject({
     brandAppName: "OpenWork Internal",
-    capabilities: { cloud: true },
+    capabilities: { installLinks: true },
     complimentaryAccess: { futureProduct: true },
   })
 })

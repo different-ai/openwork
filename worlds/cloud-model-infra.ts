@@ -21,12 +21,14 @@ export interface CloudModelInfraWorld {
   org: DenOrgHandle;
 }
 
-async function enableCloudCapability(admin: DenSession, organizationId: string): Promise<void> {
-  const route = `/v1/admin/organizations/${organizationId}/capabilities`;
+async function grantOpenWorkWebAccess(admin: DenSession, organizationId: string): Promise<void> {
+  // Cloud is entitled by OpenWork Web access (paid subscription or the
+  // platform-admin complimentary grant); there is no per-organization Cloud flag.
+  const route = `/v1/admin/organizations/${organizationId}/openwork-web-access`;
   const result = await denFetch(admin, route, {
     method: "PUT",
     headers: { authorization: `Bearer ${admin.token}` },
-    body: JSON.stringify({ capabilities: { cloud: true } }),
+    body: JSON.stringify({ enabled: true, reason: "cloud-model-infra world: complimentary OpenWork Web access for Cloud" }),
   });
   if (!result.response.ok) {
     throw new Error(`PUT ${route} failed: HTTP ${result.response.status} ${result.text.slice(0, 500)}`);
@@ -35,7 +37,7 @@ async function enableCloudCapability(admin: DenSession, organizationId: string):
 
 /**
  * Cloud model-infrastructure world: a fresh self-hosted Den whose only
- * organization is Cloud-enabled (`capabilities.cloud`) and whose Daytona
+ * organization holds complimentary OpenWork Web access (the Cloud entitlement) and whose Daytona
  * provisioner gate is satisfied without any real Daytona account.
  *
  * `DAYTONA_API_URL` deliberately points at an unroutable local address: the
@@ -75,7 +77,7 @@ export async function bootCloudModelInfra(
     email: CLOUD_MODEL_INFRA_ADMIN_EMAIL,
   });
   const org = stack.use(await createOrg(den, CLOUD_MODEL_INFRA_ORG));
-  await enableCloudCapability(admin, org.id);
+  await grantOpenWorkWebAccess(admin, org.id);
   return { den, admin, org };
 }
 

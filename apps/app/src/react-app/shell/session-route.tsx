@@ -74,6 +74,7 @@ import {
   type RouteWorkspace,
   type RouteSession,
   describeRouteError,
+  describeTaskCreateFailure,
   describeWorkspaceCreateError,
   downloadWorkspaceJson,
   folderNameFromPath,
@@ -83,10 +84,13 @@ import {
   mapDesktopWorkspace,
   mergeRouteWorkspaces,
   orderRouteWorkspaces,
+  TASK_CREATE_RETRY_DELAYS_MS,
   toSessionGroups,
+  withTransientEngineRetry,
   workspaceExportFilename,
   workspaceLabel,
 } from "@/react-app/shell/route-workspaces";
+import { reloadEngineWithDesktopFallback } from "@/react-app/shell/engine-reload-escalation";
 import { useLocal } from "@/react-app/kernel/local-provider";
 import { usePlatform } from "@/react-app/kernel/platform";
 import {
@@ -1235,7 +1239,7 @@ export function SessionRoute() {
     return {
       workspaceRoot: selectedWorkspaceRoot,
       draftScope: sessionDraftScope,
-      developerMode: false,
+      developerMode,
       modelLabel,
       onModelClick: (sessionId?: string) => {
         setModelPickerSessionId(sessionId ?? null);
@@ -1514,6 +1518,7 @@ export function SessionRoute() {
     listSlashCommands,
     modelBehaviorOptions,
     cloudMcpSubmissionState,
+    developerMode,
     modelLabel,
     modelUnavailableMessage,
     organizationModelsEmpty,
@@ -2068,12 +2073,27 @@ export function SessionRoute() {
       workspace.path?.trim() || undefined,
       { token: endpoint.token, mode: "openwork" },
     );
+    const toastId = taskCreateUnavailableToastId(workspaceId);
+    const attempts = TASK_CREATE_RETRY_DELAYS_MS.length + 1;
     try {
       setErrorsByWorkspaceId((current) => ({ ...current, [workspaceId]: null }));
       setRouteError(null);
-      const session = unwrap(
-        await workspaceClient.session.create({ directory: workspace.path?.trim() || undefined }),
-      );
+      // A stalled engine (rollover, overload) misses the 10 s request timeout
+      // and used to surface as a dead-end "unavailable" toast that only Cmd+R
+      // seemed to fix. Retry transient failures with a visible countdown first.
+      const session = await withTransientEngineRetry({
+        load: async () => unwrap(
+          await workspaceClient.session.create({ directory: workspace.path?.trim() || undefined }),
+        ),
+        retryDelaysMs: TASK_CREATE_RETRY_DELAYS_MS,
+        onRetry: (attempt) => {
+          toast.info(t("session.engine_catching_up_title"), {
+            id: toastId,
+            description: t("session.engine_catching_up_detail", { attempt: String(attempt), total: String(attempts) }),
+            duration: Infinity,
+          });
+        },
+      });
       if (workspaceId === selectedWorkspaceId) {
         void refreshCloudProviderSync("new_chat");
       }
@@ -2104,13 +2124,28 @@ export function SessionRoute() {
       const message = describeTaskCreateError(error);
       setRouteError(message);
       setErrorsByWorkspaceId((current) => ({ ...current, [workspaceId]: message }));
-      toast.error("OpenCode unavailable", {
-        id: taskCreateUnavailableToastId(workspaceId),
-        description: message,
+      const failure = describeTaskCreateFailure(error, attempts);
+      toast.error(failure.title, {
+        id: toastId,
+        description: failure.description,
         action: {
           label: "Retry",
           onClick: () => void handleCreateTaskInWorkspace(workspaceId),
         },
+        // A blue/green reload brings up a fresh engine without killing live
+        // sessions; the full desktop restart stays a last resort elsewhere.
+        ...(failure.kind === "not_responding"
+          ? {
+              cancel: {
+                label: t("session.engine_reload_action"),
+                onClick: () => {
+                  void reloadEngineWithDesktopFallback(endpoint.client, endpoint.workspaceId)
+                    .then(() => handleCreateTaskInWorkspace(workspaceId))
+                    .catch(() => undefined);
+                },
+              },
+            }
+          : {}),
         duration: Infinity,
       });
       if (isTransientStartupError(message)) {
@@ -2971,6 +3006,31 @@ export function SessionRoute() {
     },
   }), [handleCreateWorkspace]);
   useControlAction(createWorkspaceControlAction);
+
+  // Sessions created outside this window (server-side session.create, other
+  // clients) never reach a non-selected workspace's cached list, so callers
+  // that create them ask the sidebar to refetch that one workspace.
+  const reloadWorkspaceSessionsControlAction = useMemo<OpenworkControlAction>(() => ({
+    id: "workspace.reload_sessions",
+    label: "Reload a workspace's sessions",
+    description: "Refetch the session list of one workspace so sessions created outside this window appear in the sidebar.",
+    sideEffect: "mutation",
+    requiresArgs: true,
+    args: [
+      { name: "workspaceId", type: "string", required: true, description: "Workspace id whose session list should be refetched." },
+    ],
+    execute: async (args) => {
+      const candidate = typeof args === "object" && args !== null && "workspaceId" in args ? args.workspaceId : undefined;
+      const workspaceId = typeof candidate === "string" ? candidate.trim() : "";
+      if (!workspaceId) return { ok: false, error: "workspaceId is required" };
+      if (!workspaces.some((workspace) => workspace.id === workspaceId)) {
+        return { ok: false, error: `No workspace matched ${workspaceId}` };
+      }
+      await reloadWorkspaceSessions(workspaceId);
+      return { workspaceId };
+    },
+  }), [reloadWorkspaceSessions, workspaces]);
+  useControlAction(reloadWorkspaceSessionsControlAction);
 
   const handleCreateRemoteWorkspace = useCallback(async (input: {
     openworkHostUrl?: string | null;

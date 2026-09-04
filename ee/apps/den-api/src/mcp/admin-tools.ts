@@ -2,11 +2,9 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { eq, or, sql, type SQL } from "@openwork-ee/den-db/drizzle"
 import { OrganizationTable } from "@openwork-ee/den-db/schema"
 import { z } from "zod"
-import { organizationCloudEnabled } from "../capability-sources/cloud-rollout.js"
 import { db } from "../db.js"
 import { getDesktopReleaseMetadata } from "../desktop-releases.js"
 import { parseOrganizationPlan, type PlanTier } from "../entitlements.js"
-import { env } from "../env.js"
 import { normalizeOrganizationMetadata } from "../organization-limits.js"
 
 /**
@@ -23,7 +21,7 @@ import { normalizeOrganizationMetadata } from "../organization-limits.js"
  * timeout so one expensive SELECT cannot pin an API worker indefinitely.
  */
 
-export const DEN_ADMIN_MCP_VERSION = "0.5.0"
+export const DEN_ADMIN_MCP_VERSION = "0.6.0"
 
 const QUERY_TIMEOUT_MS = 15_000
 const DEFAULT_ROW_LIMIT = 200
@@ -33,7 +31,6 @@ const SERVER_STARTED_AT = new Date().toISOString()
 
 type Row = Record<string, unknown>
 type OrganizationId = typeof OrganizationTable.$inferSelect.id
-type OrganizationCapability = "cloud"
 
 type OrganizationRecord = {
   id: typeof OrganizationTable.$inferSelect.id
@@ -48,12 +45,6 @@ const organizationSelect = {
   slug: OrganizationTable.slug,
   metadata: OrganizationTable.metadata,
 }
-
-const setOrgCapabilityInputSchema = z.object({
-  org: z.string().min(1).describe("Organization slug, name, or id"),
-  capability: z.enum(["cloud"]).describe("Organization capability to grant or revoke"),
-  enabled: z.boolean().describe("Whether to grant the capability"),
-})
 
 /**
  * `db` is drizzle over either mysql2 (returns `[rows, fields]`) or
@@ -108,61 +99,6 @@ function idList(ids: string[]): SQL {
 
 function isOrganizationId(value: string): value is OrganizationId {
   return value.startsWith("org_")
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-}
-
-function parseMetadata(input: Record<string, unknown> | string | null | undefined): Record<string, unknown> {
-  if (!input) {
-    return {}
-  }
-
-  if (typeof input === "string") {
-    try {
-      const parsed: unknown = JSON.parse(input)
-      return isRecord(parsed) ? parsed : {}
-    } catch {
-      return {}
-    }
-  }
-
-  return isRecord(input) ? input : {}
-}
-
-function capabilityEffectiveValue(metadata: Record<string, unknown> | string | null | undefined, capability: OrganizationCapability): boolean {
-  switch (capability) {
-    case "cloud":
-      return organizationCloudEnabled(metadata, { orgMode: env.orgMode })
-    default:
-      return false
-  }
-}
-
-function setOrganizationCapabilityMetadata(
-  input: Record<string, unknown> | string | null | undefined,
-  capability: OrganizationCapability,
-  enabled: boolean,
-): Record<string, unknown> {
-  const metadata = parseMetadata(input)
-  const rawCapabilities = isRecord(metadata.capabilities) ? metadata.capabilities : {}
-  const capabilities = { ...rawCapabilities }
-
-  if (enabled) {
-    capabilities[capability] = true
-  } else {
-    delete capabilities[capability]
-  }
-
-  const nextMetadata = { ...metadata }
-  if (Object.keys(capabilities).length > 0) {
-    nextMetadata.capabilities = capabilities
-  } else {
-    delete nextMetadata.capabilities
-  }
-
-  return nextMetadata
 }
 
 function organizationCandidate(organization: OrganizationRecord) {
@@ -542,48 +478,6 @@ export function registerAdminMcpTools(server: McpServer) {
             plan: parseOrganizationPlan(metadata),
             seatLimit,
           },
-        }
-      }),
-  )
-
-  server.registerTool(
-    "den_set_org_capability",
-    {
-      description:
-        "Admin write tool: grant or revoke a per-organization capability. Currently supports capability='cloud'.",
-      inputSchema: setOrgCapabilityInputSchema,
-    },
-    async ({ org, capability, enabled }) =>
-      run(async () => {
-        const resolved = await resolveOrganization(org)
-        if ("error" in resolved) {
-          return {
-            ok: false,
-            error: resolved.error,
-            message: `Multiple organizations match "${org}". Pass an exact slug or id.`,
-            candidates: resolved.candidates,
-          }
-        }
-
-        const organization = resolved.organization
-        const previousEffectiveValue = capabilityEffectiveValue(organization.metadata, capability)
-        const previousMetadata = parseMetadata(organization.metadata)
-        const metadata = setOrganizationCapabilityMetadata(previousMetadata, capability, enabled)
-        const changed = JSON.stringify(previousMetadata) !== JSON.stringify(metadata)
-        if (changed) {
-          await db
-            .update(OrganizationTable)
-            .set({ metadata })
-            .where(eq(OrganizationTable.id, organization.id))
-        }
-
-        return {
-          ok: true,
-          noOp: !changed,
-          organization: organizationCandidate(organization),
-          capability,
-          previousEffectiveValue,
-          newEffectiveValue: capabilityEffectiveValue(metadata, capability),
         }
       }),
   )

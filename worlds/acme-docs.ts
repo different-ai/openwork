@@ -91,10 +91,21 @@ async function enableDocsCapabilities(admin: DenSession, organizationId: string)
   const result = await denFetch(admin, route, {
     method: "PUT",
     headers: auth(admin),
-    body: JSON.stringify({ capabilities: { mcpConnections: true, cloud: true } }),
+    body: JSON.stringify({ capabilities: { mcpConnections: true } }),
   });
   if (!result.response.ok) {
     throw new Error(`PUT ${route} failed: HTTP ${result.response.status} ${result.text.slice(0, 500)}`);
+  }
+
+  // Cloud is entitled by OpenWork Web access, not a per-organization flag.
+  const webRoute = `/v1/admin/organizations/${organizationId}/openwork-web-access`;
+  const webResult = await denFetch(admin, webRoute, {
+    method: "PUT",
+    headers: auth(admin),
+    body: JSON.stringify({ enabled: true, reason: "acme-docs world: complimentary OpenWork Web access for Cloud" }),
+  });
+  if (!webResult.response.ok) {
+    throw new Error(`PUT ${webRoute} failed: HTTP ${webResult.response.status} ${webResult.text.slice(0, 500)}`);
   }
 }
 

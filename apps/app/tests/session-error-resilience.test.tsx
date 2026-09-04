@@ -225,3 +225,67 @@ describe("session error resilience", () => {
     expect(html).not.toContain(">Resume<")
   })
 })
+
+describe("session error technical details", () => {
+  const providerFailure = {
+    name: "APIError",
+    data: {
+      message: "Rate limit reached for claude-sonnet-4-5 on requests per minute (RPM).",
+      statusCode: 429,
+      providerID: "anthropic",
+      code: "rate_limit_error",
+      retries: 3,
+      responseBody: JSON.stringify({ type: "error", request_id: "req_01JZK4W9N7X2Q8M3V5T6B1C0DE" }),
+    },
+  }
+
+  const renderErrorTranscript = (error: unknown, developerMode: boolean) => {
+    const message = createSessionErrorUIMessage("assistant-turn", presentOpencodeSessionError(error))
+    return renderToStaticMarkup(
+      <MessageListProvider
+        workspaceId="workspace-1"
+        sessionId="session-1"
+        showThinking={false}
+        developerMode={developerMode}
+        displaySuggestions={false}
+        providerConnectedCount={1}
+        dispatchAction={() => undefined}
+        setPrompt={() => undefined}
+        onRevertToUserMessage={() => undefined}
+        onForkAtMessage={() => undefined}
+        onEditUserMessage={() => undefined}
+        onMcpReconnect={async () => "connected"}
+        onMcpReopenAuthorization={async () => undefined}
+        onMcpRetry={() => undefined}
+      >
+        <MessageList messages={[message]} status="ready" />
+      </MessageListProvider>,
+    )
+  }
+
+  test("end users see only the plain error card", () => {
+    const html = renderErrorTranscript(providerFailure, false)
+
+    expect(html).toContain("Rate limit reached")
+    expect(html).not.toContain('data-testid="session-error-details-toggle"')
+    expect(html).not.toContain("Status: 429")
+    expect(html).not.toContain("req_01JZK4W9N7X2Q8M3V5T6B1C0DE")
+  })
+
+  test("developer mode adds a collapsed Technical details disclosure holding the full diagnostic payload", () => {
+    const html = renderErrorTranscript(providerFailure, true)
+
+    expect(html).toContain('data-testid="session-error-details-toggle"')
+    expect(html).toContain('aria-expanded="false"')
+    // Collapsed by default: the payload is not in the DOM until opened.
+    expect(html).not.toContain('data-testid="session-error-details"')
+    expect(html).not.toContain("Status: 429")
+  })
+
+  test("a bare error whose details only repeat the message gets no disclosure even in developer mode", () => {
+    const html = renderErrorTranscript("Session failed", true)
+
+    expect(html).toContain("Session failed")
+    expect(html).not.toContain('data-testid="session-error-details-toggle"')
+  })
+})

@@ -121,8 +121,12 @@ test("Cloud runtime access refreshes signed previews behind stable legacy routin
     { scope: "host" as const, token: "host-token" },
     { scope: "client" as const, token: "client-token" },
   ];
+  // Cloud worker tokens require OpenWork Web access for the owning organization;
+  // this spec proves signed-preview routing, so the entitlement is granted inline.
+  const getOpenWorkWebAccess = async () => ({ hasAccess: true });
   const legacyTokens = await getWorkerTokensAndConnect(legacyWorker, {
     apiPublicUrl: "https://api.example.test/api/den",
+    getOpenWorkWebAccess,
     resolveCloudAccess: resolveTokenAccess,
     loadActiveTokens,
     fetchImpl: async () => Response.json({ activeId: "workspace", items: [] }),
@@ -130,6 +134,7 @@ test("Cloud runtime access refreshes signed previews behind stable legacy routin
   const webTokens = await getWorkerTokensAndConnect(legacyWorker, {
     apiPublicUrl: "https://api.example.test/api/den",
     includeExpiringOpenworkUrl: true,
+    getOpenWorkWebAccess,
     resolveCloudAccess: resolveTokenAccess,
     loadActiveTokens,
     fetchImpl: async () => Response.json({ activeId: "workspace", items: [] }),
@@ -156,6 +161,7 @@ test("Cloud runtime access refreshes signed previews behind stable legacy routin
     workerId: runtimeWorker.id,
   }, {
     authenticate: authenticateStableRequest,
+    getOpenWorkWebAccess,
     resolveCloudAccess: async () => ({
       ...result,
       status: "ready",
@@ -176,7 +182,7 @@ test("Cloud runtime access refreshes signed previews behind stable legacy routin
       body: "{}",
     }),
     workerId: runtimeWorker.id,
-  }, { authenticate: authenticateStableRequest, resolveCloudAccess: resolveTokenAccess });
+  }, { authenticate: authenticateStableRequest, getOpenWorkWebAccess, resolveCloudAccess: resolveTokenAccess });
   expect(clientWrite.status).toBe(401);
   const handoffWriteRequests: RequestInit[] = [];
   const handoffWriteBodies: string[] = [];
@@ -189,6 +195,7 @@ test("Cloud runtime access refreshes signed previews behind stable legacy routin
     workerId: runtimeWorker.id,
   }, {
     authenticate: authenticateStableRequest,
+    getOpenWorkWebAccess,
     resolveCloudAccess: resolveTokenAccess,
     fetchImpl: async (_url, init = {}) => {
       handoffWriteRequests.push(init);
