@@ -14,6 +14,8 @@ const DEBUG_PANEL_TITLE = /react session debug/i;
 
 const detailsToggle = { testId: "session-error-details-toggle" };
 const detailsPanel = { testId: "session-error-details" };
+const statusLine = { text: /Status: 429/ };
+const requestId = { text: new RegExp(REQUEST_ID) };
 
 test("session error cards expose provider diagnostics only in Developer mode", async ({ user, probe, step }) => {
   // Toggle Developer mode the way a person does: command palette → "Enable/Disable Developer Mode".
@@ -32,8 +34,8 @@ test("session error cards expose provider diagnostics only in Developer mode", a
     await user.see({ text: new RegExp(CARD_TEXT) });
     expect(String(await probe.storage("openwork.developerMode"))).not.toBe("1");
     await user.notSee(detailsToggle);
-    expect(await probe.has("Status: 429")).toBe(false);
-    expect(await probe.has(REQUEST_ID)).toBe(false);
+    await user.notSee(statusLine);
+    await user.notSee(requestId);
     await user.notSee({ text: DEBUG_PANEL_TITLE });
   });
 
@@ -44,7 +46,7 @@ test("session error cards expose provider diagnostics only in Developer mode", a
     await user.see({ text: DEBUG_PANEL_TITLE });
     // The disclosure starts collapsed: the toggle is present, the panel is not.
     await user.notSee(detailsPanel);
-    expect(await probe.has("Status: 429")).toBe(false);
+    await user.notSee(statusLine);
   });
 
   await step("opening Technical details shows the full provider diagnostic payload with a copy action", async () => {
@@ -52,7 +54,7 @@ test("session error cards expose provider diagnostics only in Developer mode", a
     await user.see(detailsPanel);
     for (const line of DIAGNOSTIC_LINES) await user.see({ text: new RegExp(line.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) });
     // The request id sits inside the raw response-body block, so match it within that block's text.
-    await user.see({ text: new RegExp(REQUEST_ID) });
+    await user.see(requestId);
     await user.see({ role: "button", label: /copy details/i });
   });
 
@@ -61,8 +63,8 @@ test("session error cards expose provider diagnostics only in Developer mode", a
     await user.notSee(detailsToggle, { timeoutMs: 10_000 });
     await user.see({ text: new RegExp(CARD_TEXT) });
     await user.notSee(detailsPanel);
-    expect(await probe.has("Status: 429")).toBe(false);
-    expect(await probe.has(REQUEST_ID)).toBe(false);
+    await user.notSee(statusLine);
+    await user.notSee(requestId);
     await user.notSee({ text: DEBUG_PANEL_TITLE });
   });
 });
