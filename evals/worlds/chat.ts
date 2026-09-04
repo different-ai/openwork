@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { join, resolve } from "node:path";
 import { evalIn } from "@openwork/behaviors";
 import type { Seed } from "@openwork/env";
+import type { MockAgentWorkload } from "@openwork/labs";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
 
@@ -1272,16 +1273,13 @@ export async function computerMentions(seed: Seed) {
       },
     ],
     agentWorkloads: [
-      ...[
-        { target: "cloud", prompt: "COMPUTER-CLOUD-TASK Summarize the project notes." },
-        { target: "desktop", prompt: "COMPUTER-DESKTOP-TASK Summarize my local project notes." },
-      ].map(({ target, prompt }) => ({
+      ...["cloud", "desktop"].map((target): MockAgentWorkload => ({
         // Only the app's synthetic instruction contains this marker. Without routing, the model refuses the task.
         promptMarker: `[The user selected @${target}:`,
         finalReply: "Received computer task.",
         steps: [
           { tool: "computer_witness_search_capabilities", arguments: { query: "remote-session:create" } },
-          { tool: "computer_witness_execute_capability", arguments: { name: "remote-session:create", body: { target, prompt } } },
+          { tool: "computer_witness_execute_capability", arguments: {}, argumentsFrom: "computer-mention" },
         ],
       })),
       { promptMarker: "COMPUTER-PLAIN-TASK", finalReply: "Received computer task.", steps: [] },

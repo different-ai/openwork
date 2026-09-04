@@ -126,6 +126,36 @@ test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeo
     { name: "execute_capability", args: { target: "desktop" } },
   ]);
 
+  const workload = await fetch(`${origin}/admin/agent-workloads`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workloads: [{
+      promptMarker: "[The user selected @",
+      finalReply: "Handoff received",
+      steps: [{ tool: "execute_capability", arguments: { ignored: true }, argumentsFrom: "computer-mention" }],
+    }] }),
+  });
+  assert.equal(workload.status, 200);
+  for (const [target, task] of [["cloud", "Summarize today's notes."], ["desktop", "Review the changed draft."]]) {
+    const completion = await fetch(`${origin}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "handoff-model",
+        messages: [{ role: "user", content: [
+          { type: "text", text: `@${target} ${task}` },
+          { type: "text", text: `[The user selected @${target}: execute it with target "${target}" and the user's task as prompt.]` },
+        ] }],
+        tools: [{ type: "function", function: { name: "execute_capability" } }],
+      }),
+    });
+    assert.equal(completion.status, 200);
+    const frames = (await completion.text()).split("\n")
+      .filter((line) => line.startsWith("data: {")).map((line) => JSON.parse(line.slice(6)));
+    const call = frames.flatMap((frame) => frame.choices[0].delta.tool_calls ?? [])[0];
+    assert.deepEqual(JSON.parse(call.function.arguments), { name: "remote-session:create", body: { target, prompt: task } });
+  }
+
   const failedResponse = await fetch(`${origin}/admin/agent-workloads`, {
     method: "POST",
     headers: { "content-type": "application/json" },
