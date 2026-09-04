@@ -1,7 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { expect } from "vitest";
-import { server, test } from "@openwork/testkit";
-import { requestDenLoopback } from "@openwork/labs";
+import { requestDenLoopback, server, test } from "@openwork/testkit";
 
 function stringField(value: unknown, key: string): string {
   if (typeof value !== "object" || value === null || !(key in value)) throw new Error(`Missing ${key}`);
