@@ -32,6 +32,6 @@ This implementation is for hosted Den. Self-hosted deployments still require an 
 
 ## Verification
 
-`pnpm evals:pr specs/self-serve-billing.test.ts` boots a real isolated Den with a local Stripe HTTP simulator, signs webhook payloads, and asserts checkout, price/quantity validation, payment state, organization isolation, Enterprise features, and SSO cancellation. Requires local MySQL/Redis and built workspace dependencies. The simulator is available only with `OPENWORK_DEV_MODE=1` and a loopback `OPENWORK_TEST_STRIPE_PORT`; production uses Stripe's normal endpoint.
+`OPENWORK_EVAL_MYSQL_URL=mysql://root:password@127.0.0.1:3306 pnpm evals:pr specs/self-serve-billing.test.ts` boots a real isolated Den with a local Stripe HTTP simulator, signs webhook payloads, and asserts checkout, price/quantity validation, payment state, organization isolation, Enterprise features, and SSO cancellation. Requires local MySQL/Redis and built workspace dependencies. The ordinary CI unit lane skips this service-dependent journey when `OPENWORK_EVAL_MYSQL_URL` is absent; publish the explicit journey run as PR evidence. The simulator is available only with `OPENWORK_DEV_MODE=1` and a loopback `OPENWORK_TEST_STRIPE_PORT`; production uses Stripe's normal endpoint.
 
 Before live rollout, exercise a purchase, plan change, renewal, and cancellation using Stripe test mode with the actual price IDs, Tax, and portal configuration. The local simulator proves application behavior; it does not configure the production Stripe account.

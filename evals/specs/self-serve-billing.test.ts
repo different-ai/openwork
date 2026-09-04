@@ -1,10 +1,10 @@
 import { expect } from "vitest";
 import { denFetch, provisionOrg } from "@openwork/behaviors";
 import { mockStripe } from "@openwork/labs";
-import { needs, server, test } from "@openwork/testkit";
+import { inviteMember, needs, server, test } from "@openwork/testkit";
 
 test("owners purchase plans and SSO; only verified current payments grant access", { timeout: 300_000 }, async ({ evidence, place }) => {
-  needs({ placement: "local" });
+  needs({ placement: "local", env: ["OPENWORK_EVAL_MYSQL_URL"] });
   await using stripe = await mockStripe();
   await using den = await server({ place, web: false, env: {
     OPENWORK_TEST_STRIPE_PORT: String(stripe.port), STRIPE_SECRET_KEY: "sk_test_plan", STRIPE_WEBHOOK_SECRET: "whsec_plan_test",
@@ -49,6 +49,9 @@ test("owners purchase plans and SSO; only verified current payments grant access
   expect((await request("/v1/billing/plans/checkout", "POST", { product: "team" })).response.status).toBe(409);
   evidence.recordAssertionEvidence("Checkout is idempotent and unpaid or forged events cannot enable Team", "One checkout; invalid payload 400; unpaid Free; signed paid Team", true);
   expect(await entitlements()).toMatchObject({ entitlements: { sso: false, desktopPolicies: false, analytics: false } });
+  await inviteMember(den, "additional");
+  expect(stripe.calls.some((call) => call.path === `/v1/subscription_items/${teamSubscription.items.data[0].id}` && call.body.get("quantity") === "3")).toBe(true);
+  evidence.recordAssertionEvidence("Paid plans bill all members after invitations", "Adding a third member updates the subscription quantity to 3, without subtracting free seats", true);
   const addon = await request("/v1/billing/plans/checkout", "POST", { product: "sso" });
   expect(addon.response.status, addon.text).toBe(200);
   expect(stripe.sessions.get("cs_2")).toMatchObject({ price: "price_sso", quantity: 1 });
