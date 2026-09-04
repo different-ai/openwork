@@ -1496,6 +1496,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     "/oauth/client-metadata.json",
     describeRoute({
       tags: ["Authentication"],
+      security: [],
       summary: "OpenWork external MCP OAuth client metadata",
       description: "Public client metadata document for URL-based OAuth client registration. It contains no deployment secrets.",
       responses: {
@@ -3072,6 +3073,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     "/v1/mcp-connections/oauth/callback",
     describeRoute({
       tags: ["Authentication"],
+      security: [],
       summary: "Shared OAuth callback for External MCP Connections",
       description: "Deployment-wide callback. Organization, member, and connection routing are derived exclusively from signed state.",
       responses: {
@@ -3090,6 +3092,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     "/v1/mcp-connections/:connectionId/connect/callback",
     describeRoute({
       tags: ["Authentication"],
+      security: [],
       summary: "OAuth callback for an External MCP Connection",
       description: "The external MCP server redirects here with code+state after the admin consents. Serves a small static HTML page — the admin's Den tab in the background polls connection status and never needs this response body.",
       responses: {

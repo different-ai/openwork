@@ -77,6 +77,13 @@ const openApiDocumentSchema = z.object({
 const app = new Hono<{ Variables: AppVariables }>()
 const strictTransportSecurityHeader = "max-age=31536000; includeSubDomains"
 
+// Deny-by-default, mirroring the route guards: every operation requires a
+// session token or an organization API key unless its describeRoute declares
+// its own `security` (an empty array marks a public route). Declared both at
+// document level and, through defaultOptions, on every described operation so
+// tools that ignore document-level security still see it.
+const defaultOperationSecurity: Array<Record<string, string[]>> = [{ bearerAuth: [] }, { denApiKey: [] }]
+
 registerObservabilityMiddleware(app)
 app.use("*", requestId({
   headerName: "",
@@ -149,6 +156,7 @@ app.get(
   "/",
   describeRoute({
     tags: ["System"],
+    security: [],
     hide: true,
     summary: "Redirect API root",
     description: "Redirects the API root when DEN_MARKETING_URL is configured; otherwise returns a lightweight service payload.",
@@ -170,6 +178,7 @@ app.get(
   "/health",
   describeRoute({
     tags: ["System"],
+    security: [],
     summary: "Check den-api health",
     description: "Returns a lightweight health payload for den-api.",
     responses: {
@@ -193,6 +202,7 @@ app.get(
   "/ready",
   describeRoute({
     tags: ["System"],
+    security: [],
     summary: "Check den-api readiness",
     description: "Verifies den-api can reach its database dependency.",
     responses: {
@@ -299,6 +309,7 @@ app.get(
   "/openapi.json",
   describeRoute({
     tags: ["System"],
+    security: [],
     summary: "Get OpenAPI document",
     description: "Returns the machine-readable OpenAPI 3.1 document for the Den API so humans and tools can inspect the API surface.",
     responses: {
@@ -335,6 +346,7 @@ app.get(
         ].join("\n"),
       },
       servers: env.apiPublicUrl ? [{ url: env.apiPublicUrl }] : [],
+      security: defaultOperationSecurity,
       tags: [
         { name: "System", description: "Service health and operational routes." },
         { name: "Organizations", description: "Top-level organization creation and context routes." },
@@ -369,6 +381,27 @@ app.get(
             name: "x-api-key",
             description: "Organization API key passed as the `x-api-key` header. The raw key is the header value; do not prefix it with `Bearer`.",
           },
+          mcpAccessToken: {
+            type: "http",
+            scheme: "bearer",
+            bearerFormat: "JWT",
+            description: "MCP access token issued by the Den OAuth authorization server, passed as `Authorization: Bearer <token>`. Used by MCP transports and the direct-upload routes they call.",
+          },
+          scimBearerToken: {
+            type: "http",
+            scheme: "bearer",
+            description: "SCIM provisioning token issued from `POST /v1/scim/token`, passed by the identity provider as `Authorization: Bearer <token>`.",
+          },
+          automationRunnerToken: {
+            type: "http",
+            scheme: "bearer",
+            description: "Short-lived Automation runner token issued when a desktop runner registers, passed as `Authorization: Bearer <token>`.",
+          },
+          workerHeartbeatToken: {
+            type: "http",
+            scheme: "bearer",
+            description: "Per-worker heartbeat token passed as `Authorization: Bearer <token>` (or the `x-den-worker-heartbeat-token` header).",
+          },
         },
       },
     },
@@ -379,6 +412,11 @@ app.get(
       ALL: {
         operationId: (route) => buildOperationId(route.method, route.path),
       },
+      GET: { security: defaultOperationSecurity },
+      POST: { security: defaultOperationSecurity },
+      PUT: { security: defaultOperationSecurity },
+      PATCH: { security: defaultOperationSecurity },
+      DELETE: { security: defaultOperationSecurity },
     },
   }),
 )
@@ -387,6 +425,7 @@ app.get(
   "/docs",
   describeRoute({
     tags: ["System"],
+    security: [],
     summary: "Serve Swagger UI",
     description: "Serves Swagger UI so developers can browse and try the Den API from a browser.",
     responses: {

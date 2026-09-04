@@ -30,6 +30,7 @@ export function registerWorkerActivityRoutes<T extends { Variables: WorkerRouteV
     "/v1/workers/:id/activity-heartbeat",
     describeRoute({
       tags: ["Workers", "Worker Activity"],
+      security: [{ workerHeartbeatToken: [] }],
       summary: "Record worker heartbeat",
       description: "Accepts signed heartbeat and recent-activity updates from a worker so Den can track worker health and recent usage.",
       responses: {

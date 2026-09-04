@@ -401,6 +401,7 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
     describeRoute({
       hide: true,
       tags: ["Authentication"],
+      security: [{ bearerAuth: [] }],
       summary: "Create desktop handoff grant",
       description: "Creates a short-lived handoff grant for a signed-in web user. Desktop clients receive an OpenWork deep link; approved Cloud web clients also receive a validated return URL.",
       responses: {
@@ -463,6 +464,7 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
     describeRoute({
       hide: true,
       tags: ["Authentication"],
+      security: [],
       summary: "Check desktop handoff grant status",
       description: "Returns whether a short-lived desktop handoff grant is still pending, has been consumed, or is no longer valid. It never returns session tokens or user details.",
       responses: {
@@ -504,6 +506,7 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
     describeRoute({
       hide: true,
       tags: ["Authentication"],
+      security: [],
       summary: "Exchange desktop handoff grant",
       description: "Exchanges a one-time desktop handoff grant for the user's session token and basic profile so the desktop app can sign the user in.",
       responses: {

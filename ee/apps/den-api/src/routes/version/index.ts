@@ -18,6 +18,7 @@ export function registerVersionRoutes<T extends Env>(app: Hono<T>) {
     "/v1/app-version",
     describeRoute({
       tags: ["System"],
+      security: [],
       summary: "Get desktop app version metadata",
       description:
         "Returns the supported desktop app range, stable published desktop releases from GitHub, and, when available, this deployment's web app base URL so desktop clients only need to be configured with the API URL.",

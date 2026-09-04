@@ -491,6 +491,7 @@ export function registerScimAuthRoutes<T extends { Variables: AuthContextVariabl
     describeRoute({
       hide: true,
       tags: ["Authentication"],
+      security: [{ scimBearerToken: [] }],
       summary: "Delete SCIM provisioned org access",
       description: "Tombstones the organization member and deletes the global user only when no other active organization membership remains.",
       responses: {

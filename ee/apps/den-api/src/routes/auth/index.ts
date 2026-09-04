@@ -796,6 +796,7 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
     "/v1/auth/bootstrap/status",
     describeRoute({
       tags: ["Authentication"],
+      security: [],
       summary: "Check initial administrator bootstrap availability",
       description: "Returns whether the private-deployment initial-administrator setup flow is available without exposing configured administrator emails.",
       responses: {
@@ -813,6 +814,7 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
     "/v1/auth/bootstrap/verify",
     describeRoute({
       tags: ["Authentication"],
+      security: [],
       summary: "Verify an initial administrator setup code",
       description: "Validates a configured administrator email and one-time operator code, then returns a short-lived setup grant for Better Auth account creation.",
       responses: {
@@ -852,6 +854,7 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
     "/v1/auth/login-options",
     describeRoute({
       tags: ["Authentication"],
+      security: [],
       summary: "Resolve deterministic login option",
       description: "Returns the deterministic next authentication step for an email address. SSO is preferred before Google, password, GitHub compatibility, and new account creation.",
       responses: {
@@ -931,6 +934,7 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
     describeRoute({
       hide: true,
       tags: ["Authentication"],
+      security: [],
       summary: "Handle Better Auth flow",
       description: "Proxies Better Auth sign-in, sign-out, session, and verification flows under the Den API auth namespace.",
       responses: {

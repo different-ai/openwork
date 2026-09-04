@@ -306,6 +306,7 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
     "/v1/me/active-organization",
     describeRoute({
       tags: ["Users"],
+      security: [{ bearerAuth: [] }],
       hide: true,
       summary: "Set active organization for current session",
       description: "Updates the current database-backed session's active organization. This is used by desktop bearer-token sessions that cannot call Better Auth's cookie-backed organization endpoint.",
