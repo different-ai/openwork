@@ -3,7 +3,6 @@ import { spec } from "@openwork/testkit";
 import { newSplitPrimary } from "../worlds/chat.ts";
 
 const test = spec.world(newSplitPrimary);
-const paletteShortcut = process.platform === "darwin" ? "Meta+K" : "Control+K";
 const paletteInput = { placeholder: "Search actions, settings, and sessions…" };
 
 type SplitFacts = {
@@ -62,7 +61,9 @@ const splitFactsExpression = `(() => {
     };
   })()`;
 
-test("new split creates fresh same-workspace secondary sessions without moving the primary", async ({ world, user, agent, probe, step }) => {
+test("new split creates fresh same-workspace secondary sessions without moving the primary", async ({ world, user, agent, probe, step, place }) => {
+  // The key chord belongs to the machine running the app, not the one running the spec.
+  const paletteShortcut = place.kind !== "daytona" && process.platform === "darwin" ? "Meta+K" : "Control+K";
   const workspaceId = world.workspace.workspaceId;
   const primarySessionId = world.session.sessionId;
 
