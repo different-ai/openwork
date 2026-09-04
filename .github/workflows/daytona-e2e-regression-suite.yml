@@ -172,7 +172,8 @@ jobs:
           )"
 
           if [ "$EVENT_NAME" = "workflow_run" ]; then
-            matched_tests="$(git diff --name-only --diff-filter=ACMR "$BASE_SHA...$HEAD_SHA" | { grep -E '^evals/specs/[^/]+\.e2e\.test\.ts$' || true; } | sed 's#^evals/specs/##' | jq -Rsc 'split("\n") | map(select(length > 0))')"
+            changed_tests="$(git diff --name-only --diff-filter=ACMR "$BASE_SHA...$HEAD_SHA" | { grep -E '^evals/specs/[^/]+\.e2e\.test\.ts$' || true; } | sed 's#^evals/specs/##' | jq -Rsc 'split("\n") | map(select(length > 0))')"
+            matched_tests="$(echo "$eligible_tests" | jq -c --argjson changed "$changed_tests" 'map(select(. as $test | ($changed | index($test)) != null))')"
             only_filter=""
           else
             matched_tests='[]'
@@ -214,8 +215,8 @@ jobs:
             echo "- Dedicated-workflow exclusions: $(echo "$dedicated_workflow_json" | jq 'length')"
             echo
             echo "Matrix tests: $(echo "$tests" | jq 'length') across $(echo "$batches" | jq 'length') batches"
-            if [ "$EVENT_NAME" = "workflow_run" ] && [ "$(echo "$tests" | jq 'length')" -eq 0 ]; then
-              echo "Warden suggestion: add or update an evals/specs/<feature>.e2e.test.ts test for this PR."
+            if [ "$EVENT_NAME" = "workflow_run" ] && [ "$(echo "$matched_tests" | jq 'length')" -eq 0 ]; then
+              echo "No changed eligible E2E spec in this PR; running the full eligible set."
             fi
             echo "$batches" | jq -r '.[] | "- `\(.name)`: \(.tests | length) E2E tests"'
             echo
