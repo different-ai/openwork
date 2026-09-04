@@ -19,7 +19,18 @@ export interface HeadlessThreadModel {
 export type HeadlessThreadStatus =
   | { type: "idle" }
   | { type: "busy" }
-  | { type: "retry"; attempt: number; message: string; next: number };
+  | {
+      type: "retry";
+      attempt: number;
+      message: string;
+      next: number;
+      /**
+       * Why the engine is retrying, in its own vocabulary, when it says so:
+       * `free_tier_limit` for the free model's shared limit, `account_rate_limit`
+       * for an account's. Null for an ordinary provider hiccup.
+       */
+      reason: string | null;
+    };
 
 export interface HeadlessThreadTodo {
   content: string;
@@ -73,6 +84,13 @@ export interface HeadlessThreadMessageError {
   name: string;
   message: string;
   retryable: boolean | null;
+  /**
+   * The provider's own error type when the engine relayed its response body,
+   * e.g. `FreeUsageLimitError` or `insufficient_quota`; null when the body
+   * carried none. The engine's `name` (`APIError`) says how the call failed,
+   * this says why the provider refused it.
+   */
+  providerError: string | null;
 }
 
 export interface HeadlessThreadUsage {

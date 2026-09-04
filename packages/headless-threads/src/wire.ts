@@ -27,7 +27,15 @@ const timeSchema = z
 export const threadStatusSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("idle") }),
   z.object({ type: z.literal("busy") }),
-  z.object({ type: z.literal("retry"), attempt: z.number(), message: z.string(), next: z.number() }),
+  z.object({
+    type: z.literal("retry"),
+    attempt: z.number(),
+    message: z.string(),
+    next: z.number(),
+    // The engine names the cause of some retries (a free-tier or account limit) and attaches its own
+    // remedy copy; only the reason is carried, the copy is the engine's to show, not a client's.
+    action: z.object({ reason: z.string() }).passthrough().optional(),
+  }),
 ]);
 
 export const sessionSchema = z
@@ -105,9 +113,9 @@ export const threadSnapshotSchema = z.object({
   session: sessionSchema,
   messages: threadMessagesSchema,
   todos: threadTodosSchema,
-  status: threadStatusSchema,
 });
 
+type StatusWire = z.infer<typeof threadStatusSchema>;
 type SessionWire = z.infer<typeof sessionSchema>;
 type MessageWire = z.infer<typeof messageSchema>;
 type PartWire = z.infer<typeof partSchema>;
@@ -115,6 +123,11 @@ type TodoWire = z.infer<typeof todoSchema>;
 
 function optionalString(value: string | null | undefined): string | null {
   return typeof value === "string" ? value : null;
+}
+
+export function toStatus(status: StatusWire): HeadlessThreadStatus {
+  if (status.type !== "retry") return { type: status.type };
+  return { type: "retry", attempt: status.attempt, message: status.message, next: status.next, reason: status.action?.reason ?? null };
 }
 
 function toPart(part: PartWire): HeadlessThreadMessagePart {
@@ -148,6 +161,33 @@ function stringField(records: Array<Record<string, unknown> | null>, keys: strin
   return null;
 }
 
+function booleanField(records: Array<Record<string, unknown> | null>, keys: string[]): boolean | null {
+  for (const item of records) {
+    if (!item) continue;
+    for (const key of keys) {
+      const value = item[key];
+      if (typeof value === "boolean") return value;
+    }
+  }
+  return null;
+}
+
+/**
+ * The provider's own error type from the response body the engine relayed:
+ * `{"error":{"type":"FreeUsageLimitError",…}}` (Anthropic-style, also the free
+ * model's) or `{"error":{"code":"insufficient_quota",…}}` (OpenAI-style). Null
+ * when the body is missing, not JSON, or names no type.
+ */
+function providerErrorOf(responseBody: unknown): string | null {
+  if (typeof responseBody !== "string" || !responseBody.trim()) return null;
+  try {
+    const error = record(record(JSON.parse(responseBody))?.error);
+    return stringField([error], ["type", "code"]);
+  } catch {
+    return null;
+  }
+}
+
 function toMessageError(value: unknown): HeadlessThreadMessage["error"] {
   const outer = record(value);
   if (!outer) return null;
@@ -156,9 +196,9 @@ function toMessageError(value: unknown): HeadlessThreadMessage["error"] {
   return {
     name: stringField([outer, data, cause], ["name", "code", "type"]) ?? "ExecutionError",
     message: stringField([outer, data, cause], ["message", "error", "detail"]) ?? "The agent turn failed.",
-    retryable: typeof outer.retryable === "boolean"
-      ? outer.retryable
-      : typeof data?.retryable === "boolean" ? data.retryable : null,
+    // The engine's `APIError` says `isRetryable`; other shapes say `retryable`.
+    retryable: booleanField([outer, data], ["retryable", "isRetryable"]),
+    providerError: providerErrorOf(data?.responseBody),
   };
 }
 
@@ -205,12 +245,12 @@ export function toThread(session: SessionWire, workspaceId: string, started: boo
   };
 }
 
-export function toSnapshot(item: z.infer<typeof threadSnapshotSchema>): HeadlessThreadSnapshot {
+export function toSnapshot(item: z.infer<typeof threadSnapshotSchema>, status: HeadlessThreadStatus): HeadlessThreadSnapshot {
   return {
     threadId: item.session.id,
     title: optionalString(item.session.title),
     directory: optionalString(item.session.directory),
-    status: item.status,
+    status,
     messages: item.messages.map(toThreadMessage),
     todos: item.todos.map(toTodo),
   };
