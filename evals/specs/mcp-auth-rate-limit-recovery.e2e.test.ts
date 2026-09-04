@@ -30,8 +30,21 @@ test("MCP requests keep valid credentials after the public auth rate limit is ex
     body: JSON.stringify({ email: den.admin.email, password: den.admin.password }),
   });
   expect(login.status).toBe(200);
-  const cookie = login.headers.getSetCookie().map((entry) => entry.split(";")[0]).join("; ");
+  let cookie = login.headers.getSetCookie().map((entry) => entry.split(";")[0]).join("; ");
   expect(cookie.length).toBeGreaterThan(0);
+  const organizations = await request("/api/auth/organization/list", { headers: { cookie } });
+  expect(organizations.status).toBe(200);
+  const availableOrganizations: unknown = await organizations.json();
+  if (!Array.isArray(availableOrganizations)) throw new Error("Missing organization list");
+  const organization = availableOrganizations.find((entry) => stringField(entry, "name") === "MCP Auth Regression");
+  const selected = await request("/api/auth/organization/set-active", {
+    method: "POST",
+    headers: { cookie, "content-type": "application/json" },
+    body: JSON.stringify({ organizationId: stringField(organization, "id") }),
+  });
+  expect(selected.status).toBe(200);
+  const updatedCookies = selected.headers.getSetCookie();
+  if (updatedCookies.length > 0) cookie = updatedCookies.map((entry) => entry.split(";")[0]).join("; ");
   const redirectUri = "http://127.0.0.1:19876/callback";
   const scope = "mcp:read mcp:write offline_access";
   const registration = await request("/register", {
