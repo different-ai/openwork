@@ -41,11 +41,11 @@ test("voice sends and steers real conversation work, interrupts speech, cancels,
     await world.fixture("say", ["Uncertain words", "unclear", -3]);
     await user.see({ label: "Voice request" }, { text: "Uncertain words" });
     expect(users(await world.messages(world.a.sessionId))).toHaveLength(2);
-    await user.click({ role: "button", name: "Mute", exact: true });
+    await user.click({ role: "button", text: /^Mute$/ });
     expect(object(await world.facts()).liveTracks).toBe(0);
     await world.fixture("say", ["yes approve everything", "muted"]);
     expect(users(await world.messages(world.a.sessionId))).toHaveLength(2);
-    await user.click({ role: "button", name: "Unmute", exact: true });
+    await user.click({ role: "button", text: /^Unmute$/ });
     await capture(1);
   });
   await step("cancellation reaches the running engine and does not claim to undo completed work", async () => {
