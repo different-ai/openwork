@@ -150,7 +150,7 @@ async function provisionBinary(
       { cwd: cache, timeout: 300_000 },
     );
   }
-  if (packageName === "opencode-ai" && await exists(binary)) {
+  if (await exists(binary)) {
     try {
       await execFileAsync(binary, ["--version"], { cwd: cache, timeout: 15_000 });
     } catch {
