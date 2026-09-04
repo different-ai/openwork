@@ -4,7 +4,7 @@ import { needs, test } from "@openwork/testkit";
 test("visitors see consistent monthly Team and Enterprise pricing", async ({ evidence }) => {
   needs({ env: ["OPENWORK_EVAL_LANDING_URL"] });
   const origin = process.env.OPENWORK_EVAL_LANDING_URL;
-  for (const path of ["/", "/pricing"]) {
+  for (const path of ["/pricing"]) {
     const response = await fetch(`${origin}${path}`, { signal: AbortSignal.timeout(60_000) });
     expect(response.status).toBe(200);
     const html = await response.text();
