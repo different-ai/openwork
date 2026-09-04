@@ -12,10 +12,10 @@ const value = {
       emailMatchCount: 3,
       end: "2026-08-19T16:30:00+02:00",
       start: "2026-08-19T16:00:00+02:00",
-      title: "Enterprise (Guillaume Loret)",
-      matchTerms: ['"Guillaume Loret"'],
+      title: "Enterprise (Jordan Example)",
+      matchTerms: ['"Jordan Example"'],
       evidence: [
-        { date: "Tue, 18 Aug 2026 14:45:55 +0200", matchedOn: '"Guillaume Loret"', snippet: "Hey! Je suis a Berlin jusqu&#39;a Lundi.", subject: "Re: Catch-up" },
+        { date: "Tue, 18 Aug 2026 14:45:55 +0200", matchedOn: '"Jordan Example"', snippet: "Hey! I&#39;m in town until Monday.", subject: "Re: Intro call" },
         { date: "x", matchedOn: "y", snippet: "z", subject: "w" },
         { date: "x2", matchedOn: "y2", snippet: "z2", subject: "w2" },
       ],
@@ -24,8 +24,8 @@ const value = {
       emailMatchCount: 0,
       end: "2026-08-20T07:30:00+02:00",
       start: "2026-08-20T07:00:00+02:00",
-      title: "Enterprise (omkar khadake)",
-      matchTerms: ['"Parabola"'],
+      title: "Enterprise (Sam Placeholder)",
+      matchTerms: ['"Acme Robotics"'],
       evidence: [],
     },
   ],
@@ -62,11 +62,11 @@ describe("Workflow friendly result", () => {
     expect(markup).toContain('data-testid="den-workflow-friendly-value"');
     expect(markup).toContain("Calendar event count");
     expect(markup).toContain(">4<");
-    expect(markup).toContain("Enterprise (Guillaume Loret)");
+    expect(markup).toContain("Enterprise (Jordan Example)");
     expect(markup).toContain("Aug 19");
     expect(markup).toContain("Evidence");
     expect(markup).toContain("3 items");
-    expect(markup).toContain("Je suis a Berlin jusqu&#x27;a Lundi");
+    expect(markup).toContain("I&#x27;m in town until Monday");
     expect(markup).not.toContain("{&quot;");
     expect(markup).not.toContain("calendarEventCount");
   });
