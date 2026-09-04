@@ -1,8 +1,8 @@
 import { expect } from "vitest";
 import {
   control,
-  createAndSelectWorkspace,
   evalIn,
+  seedSessions,
   waitFor,
 } from "@openwork/behaviors";
 import { screenshot } from "@openwork/test-evidence";
@@ -10,16 +10,12 @@ import {
   app,
   localMysqlIsRunning,
   localRedisIsRunning,
-  mcpMock,
   needs,
   server,
   test,
 } from "@openwork/testkit";
 import type { App } from "@openwork/testkit";
 
-const providerId = "command-palette-search-mock";
-const modelId = "command-palette-search-model";
-const modelName = "Command palette search model";
 const e2eTestsEnabled = process.env.OPENWORK_EVAL_E2E_TESTS === "1";
 const daytonaEnabled = process.env.OPENWORK_EVAL_DAYTONA === "1";
 const configuredDen = Boolean(process.env.OPENWORK_EVAL_DEN_API_URL?.trim());
@@ -74,82 +70,6 @@ function parseRecentFacts(value: unknown): RecentFacts {
     ? value.storedIds.filter((item): item is string => typeof item === "string")
     : [];
   return { itemIds, storedIds };
-}
-
-async function configureWorkspaces(appSurface: App, workspaceIds: string[], baseUrl: string): Promise<void> {
-  const result = await evalIn(appSurface, `(async () => {
-    const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
-    if (!info?.running || !info.baseUrl) return "local_server_unavailable";
-    const root = String(info.baseUrl).replace(/\\/+$/, "");
-    const headers = {
-      Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? ""),
-      "Content-Type": "application/json",
-    };
-    for (const workspaceId of ${JSON.stringify(workspaceIds)}) {
-      const configured = await fetch(root + "/workspace/" + encodeURIComponent(workspaceId) + "/config", {
-        method: "PATCH",
-        headers,
-        body: JSON.stringify({
-          opencode: {
-            permission: { bash: "allow" },
-            provider: {
-              [${JSON.stringify(providerId)}]: {
-                npm: "@ai-sdk/openai-compatible",
-                name: ${JSON.stringify(modelName)},
-                options: { baseURL: ${JSON.stringify(`${baseUrl}/v1`)}, apiKey: "sk-command-palette-search" },
-                models: {
-                  [${JSON.stringify(modelId)}]: { name: ${JSON.stringify(modelName)}, tool_call: true },
-                },
-              },
-            },
-          },
-        }),
-        signal: AbortSignal.timeout(30000),
-      });
-      if (!configured.ok) return "config:" + configured.status + ":" + (await configured.text()).slice(0, 300);
-      const reloaded = await fetch(root + "/workspace/" + encodeURIComponent(workspaceId) + "/engine/reload", {
-        method: "POST",
-        headers,
-        signal: AbortSignal.timeout(60000),
-      });
-      if (!reloaded.ok) return "reload:" + reloaded.status + ":" + (await reloaded.text()).slice(0, 300);
-    }
-    const raw = localStorage.getItem("openwork.preferences");
-    let preferences = {};
-    try { preferences = raw ? JSON.parse(raw) : {}; } catch { preferences = {}; }
-    if (!preferences || typeof preferences !== "object" || Array.isArray(preferences)) preferences = {};
-    localStorage.setItem("openwork.preferences", JSON.stringify({
-      ...preferences,
-      defaultModel: { providerID: ${JSON.stringify(providerId)}, modelID: ${JSON.stringify(modelId)} },
-      modelVariant: null,
-      providerStepCompleted: true,
-    }));
-    localStorage.setItem("openwork.defaultModel", ${JSON.stringify(`${providerId}/${modelId}`)});
-    return "ok";
-  })()`, { awaitPromise: true, timeoutMs: 120_000 });
-  expect(result).toBe("ok");
-
-  await evalIn(appSurface, "location.reload(); true");
-  await waitFor(appSurface, "Boolean(window.__openworkControl)", {
-    timeoutMs: 60_000,
-    label: "desktop restored after mock provider configuration",
-  });
-}
-
-async function createSession(appSurface: App): Promise<string> {
-  const deadline = Date.now() + 60_000;
-  let lastError: unknown = null;
-  while (Date.now() < deadline) {
-    try {
-      const created = await control(appSurface, "session.create_task", undefined, { timeoutMs: 30_000 });
-      if (typeof created === "string" && created.startsWith("ses_")) return created;
-      lastError = new Error(`session.create_task returned ${JSON.stringify(created)}`);
-    } catch (error) {
-      lastError = error;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-  throw new Error(`session.create_task did not return a session id: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
 }
 
 async function setPaletteQuery(
@@ -216,37 +136,24 @@ test.skipIf(!runnable)(
 
     await using den = await server({
       place,
-      mocks: {
-        agent: mcpMock({
-          agentWorkloads: [{
-            promptMarker: `UNUSED-PALETTE-${runId}`,
-            finalReply: "unused",
-            // The mock requires one step; this spec never sends a prompt.
-            steps: [{ tool: "bash", arguments: { command: "true", timeout: 1_000, description: "unused" } }],
-          }],
-        }),
-      },
       org: {
         name: "Command Palette Search",
         admin: { name: "Palette Admin" },
         members: { member: { name: "Palette Member" } },
       },
     });
-    await using desktopApp = await app({ den, as: "member", place });
+    await using desktopApp = await app({ den, as: "admin", place });
 
-    const workspace = await createAndSelectWorkspace(desktopApp, {
-      path: `/tmp/openwork-palette-${runId}`,
-    });
-    await configureWorkspaces(desktopApp, [workspace.workspaceId], den.mocks.agent.url);
-    const sessionId = await createSession(desktopApp);
-    await control(desktopApp, "session.rename", { sessionId, title: `Palette Probe ${runId}` });
+    const [seeded] = await seedSessions(desktopApp, [`Palette Probe ${runId}`]);
+    const workspaceId = desktopApp.workspaceId;
+    if (!workspaceId) throw new Error("The command palette search world did not resolve a workspace.");
 
     const sessionHashValue = await evalIn(desktopApp, "window.location.hash");
     if (typeof sessionHashValue !== "string") {
       throw new Error(`Invalid session hash: ${JSON.stringify(sessionHashValue)}`);
     }
     const sessionHash = sessionHashValue;
-    expect(sessionHash).toContain(workspace.workspaceId);
+    expect(sessionHash).toContain(workspaceId);
 
     await control(desktopApp, "command_palette.open");
     await waitFor(desktopApp, `Boolean(document.querySelector("input[data-command-palette-input]"))`, {
@@ -258,7 +165,7 @@ test.skipIf(!runnable)(
     expect(emptyFacts.hasActions).toBe(true);
     expect(emptyFacts.hasRecent).toBe(false);
 
-    const sessionItemId = `session:${workspace.workspaceId}:${sessionId}`;
+    const sessionItemId = `session:${workspaceId}:${seeded.sessionId}`;
     await setPaletteQuery(
       desktopApp,
       "Palette Probe",
@@ -304,7 +211,7 @@ test.skipIf(!runnable)(
     if (typeof permissionsHashValue !== "string") {
       throw new Error(`Invalid permissions hash: ${JSON.stringify(permissionsHashValue)}`);
     }
-    expect(permissionsHashValue).toContain(workspace.workspaceId);
+    expect(permissionsHashValue).toContain(workspaceId);
     expect(permissionsHashValue).toMatch(/\/settings\/permissions$/);
     expect(permissionsHashValue).not.toMatch(/\/settings\/general$/);
 
@@ -383,6 +290,6 @@ test.skipIf(!runnable)(
       throw new Error(`Invalid final hash: ${JSON.stringify(finalHashValue)}`);
     }
     expect(finalHashValue).toMatch(/\/settings\/permissions$/);
-    expect(finalHashValue).toContain(workspace.workspaceId);
+    expect(finalHashValue).toContain(workspaceId);
   },
 );
