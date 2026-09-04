@@ -66,6 +66,7 @@ export interface MockOnSandboxOptions {
   log?: (line: string) => void;
   fetchImpl?: typeof fetch;
   allowUnauthenticatedMcp?: boolean;
+  appToolName?: string;
 }
 
 export interface MockOnSandbox {
@@ -701,10 +702,11 @@ export async function startMockOnSandbox(options: MockOnSandboxOptions & Provisi
 
   await timedStep(log, "mock process detach", async () => {
     const unauthenticatedMcpEnv = options.allowUnauthenticatedMcp ? " MOCK_ALLOW_UNAUTHENTICATED_MCP=1" : "";
+    const appToolEnv = options.appToolName ? ` MOCK_APP_TOOL_NAME=${assertSafeRef(options.appToolName)}` : "";
     const detachScript = `cd /workspace; python3 - <<PYEOF
 import subprocess
 log = open("/tmp/mock-mcp.log", "ab", buffering=0)
-subprocess.Popen(["bash", "-lc", "cd /workspace && env HOST=0.0.0.0 PORT=${port} ISSUER=${url} AUTO_APPROVE=1${unauthenticatedMcpEnv} node scripts/mock-oauth-mcp-server.mjs"], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
+subprocess.Popen(["bash", "-lc", "cd /workspace && env HOST=0.0.0.0 PORT=${port} ISSUER=${url} AUTO_APPROVE=1${unauthenticatedMcpEnv}${appToolEnv} node scripts/mock-oauth-mcp-server.mjs"], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
 PYEOF
 echo detached`;
     await execInSandbox(exec, options.sandbox, detachScript, { timeoutMs: 30_000, context: `mock process detach for ${options.sandbox}` });

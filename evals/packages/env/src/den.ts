@@ -547,6 +547,7 @@ async function bootDaytonaMocks(
       sandbox,
       port: definition.daytonaPort,
       allowUnauthenticatedMcp: definition.allowUnauthenticatedMcp,
+      appToolName: definition.appToolName,
     });
     const booted: BootedMock = await definition.connect(remote.url);
     handles[name] = booted.handle;
