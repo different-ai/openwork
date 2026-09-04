@@ -7,6 +7,7 @@ import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { WorkflowArtifactResult, WorkflowMarkdownPreview } from "./workflow-artifact-result";
+import { WorkflowFlowDiagram } from "./workflow-flow-diagram";
 import {
   type WorkflowDraft,
   useDeleteWorkflowSnapshot,
@@ -114,6 +115,12 @@ export function WorkflowDetailPanel({ configObjectId, onClose }: { configObjectI
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(21rem,0.8fr)]">
         <div className="space-y-5">
+          {detail.currentVersion.graph ? <section className="rounded-2xl border border-gray-100 bg-white p-5">
+            <h2 className="text-[14px] font-semibold text-gray-900">Flow</h2>
+            <p className="mt-1 text-[12px] text-gray-400">Each step is a tool call in the saved version. Branches and parallel work are shown as a structural preview.</p>
+            <WorkflowFlowDiagram graph={detail.currentVersion.graph} />
+          </section> : null}
+
           {detail.canManage ? <section className="rounded-2xl border border-gray-100 bg-white p-5">
             <div className="mb-4"><h2 className="text-[14px] font-semibold text-gray-900">Script editor</h2><p className="mt-1 text-[12px] text-gray-400">A matching successful test is required before a new immutable version can be saved.</p></div>
             <div className="space-y-4">

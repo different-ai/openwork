@@ -1,0 +1,37 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, test } from "bun:test";
+import type { WorkflowGraph } from "@openwork/types/workflows";
+import { WorkflowFlowDiagram } from "../app/(den)/dashboard/_components/workflow-flow-diagram";
+
+const graph: WorkflowGraph = {
+  nodes: [
+    { id: "input", kind: "input", label: "Input", fields: ["query"] },
+    { id: "slack", kind: "tool", label: "slack.search", namespace: "slack", tool: "search", scriptPath: "tools.slack.search", assignsTo: "channels", parallelGroup: "p1" },
+    { id: "gmail", kind: "tool", label: "gmail.search", namespace: "gmail", tool: "search", scriptPath: "tools.gmail.search", assignsTo: "messages", parallelGroup: "p1" },
+    { id: "branch", kind: "branch", label: "channels.length > 0" },
+    { id: "return", kind: "return", label: "{ channels, messages }" },
+  ],
+  edges: [
+    { from: "input", to: "slack", label: null, kind: "flow" },
+    { from: "input", to: "gmail", label: null, kind: "flow" },
+    { from: "input", to: "slack", label: "input.query", kind: "data" },
+    { from: "slack", to: "branch", label: null, kind: "flow" },
+    { from: "gmail", to: "branch", label: null, kind: "flow" },
+    { from: "branch", to: "return", label: "yes", kind: "flow" },
+  ],
+  parseError: null,
+};
+
+describe("Workflow flow diagram", () => {
+  test("renders parallel tools in one row with branch labels", () => {
+    const markup = renderToStaticMarkup(createElement(WorkflowFlowDiagram, { graph }));
+
+    expect(markup).toContain('data-testid="den-workflow-flow-diagram"');
+    expect(markup).toContain('data-node-ids="slack,gmail"');
+    expect(markup).toContain('data-parallel-group="p1"');
+    expect(markup).toContain('data-node-kind="branch"');
+    expect(markup).toContain("channels.length &gt; 0");
+    expect(markup).toContain(">yes<");
+  });
+});

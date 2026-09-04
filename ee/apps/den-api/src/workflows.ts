@@ -6,6 +6,7 @@ import type {
   WorkflowDetail,
   WorkflowVersion,
 } from "@openwork/types/workflows"
+import { WorkflowGraph } from "@openwork/codemode"
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import {
   AutomationRevisionTable,
@@ -214,6 +215,7 @@ async function workflowVersions(
     const version: WorkflowVersion = {
       id: row.id,
       code,
+      graph: WorkflowGraph.analyze(code),
       inputSchema: parsed.payload.inputSchema ?? null,
       outputSchema: parsed.payload.outputSchema ?? null,
       exampleInput: parsed.payload.exampleInput ?? null,
@@ -588,7 +590,13 @@ export async function saveWorkflow(input: {
   workflow: SaveWorkflowInput
   buildTools: () => Promise<BuiltCodemodeTools>
   context?: PluginArchActorContext
-}): Promise<{ pluginId: string; configObjectId: string; configObjectVersionId: string }> {
+}): Promise<{
+  pluginId: string
+  configObjectId: string
+  configObjectVersionId: string
+  graph: WorkflowGraph.WorkflowGraph
+  mermaid: string
+}> {
   const organizationId = normalizeDenTypeId("organization", input.organizationId)
   const ownerMemberId = normalizeDenTypeId("member", input.ownerMemberId)
   const requestedPluginId = input.workflow.pluginId
@@ -649,6 +657,7 @@ export async function saveWorkflow(input: {
     const validation = validateCodemodeScriptInput(parsed.payload.inputSchema, input.workflow.currentInput)
     if (!validation.ok) throw new Error("workflow_current_input_invalid")
   }
+  const graph = WorkflowGraph.analyze(input.workflow.code)
 
   return db.transaction(async (tx) => {
     const plugins = requestedPluginId
@@ -771,6 +780,12 @@ export async function saveWorkflow(input: {
       sourceRevisionRef: receipt.code_digest,
       isDeletedVersion: false,
     })
-    return { pluginId, configObjectId, configObjectVersionId }
+    return {
+      pluginId,
+      configObjectId,
+      configObjectVersionId,
+      graph,
+      mermaid: WorkflowGraph.toMermaid(graph),
+    }
   })
 }

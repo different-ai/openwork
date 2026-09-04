@@ -5,6 +5,7 @@ import {
   workflowArtifactSnapshotSchema,
   workflowCapabilitySchema,
   workflowDetailSchema,
+  workflowGraphSchema,
   workflowTestResultSchema,
   workflowVersionSchema,
   generatedArtifactViewSchema,
@@ -33,6 +34,7 @@ import { PluginArchAuthorizationError } from "./plugin-system/access.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { codemodeCodeDigest } from "../../workflow-runs.js"
 import { getWorkflowLibraryDetail } from "../../workflow-library.js"
+import { normalizeToolBody } from "../../mcp/invoke.js"
 import {
   activateArtifactViewRevision,
   listArtifactViewsForScript,
@@ -60,7 +62,13 @@ const saveSchema = z.object({
   inputSchema: z.unknown().optional(),
   outputSchema: z.unknown().optional().describe("Optional JSON Schema for the value returned by this Workflow."),
 })
-const savedSchema = z.object({ pluginId: z.string(), configObjectId: z.string(), configObjectVersionId: z.string() })
+const savedSchema = z.object({
+  pluginId: z.string(),
+  configObjectId: z.string(),
+  configObjectVersionId: z.string(),
+  graph: workflowGraphSchema,
+  mermaid: z.string(),
+})
 const runParamsSchema = z.object({ configObjectId: z.string().min(1).max(160) })
 const runSchema = z.object({
   pluginId: z.string().min(1).max(160),
@@ -212,10 +220,14 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     async (c) => {
       try {
         const { context, actorContext, buildTools } = await contextFor(c)
+        const body = c.req.valid("json")
         const saved = await saveWorkflow({
           organizationId: context.organization.id,
           ownerMemberId: context.currentMember.id,
-          workflow: c.req.valid("json"),
+          workflow: {
+            ...body,
+            ...(body.currentInput === undefined ? {} : { currentInput: normalizeToolBody(body.currentInput) }),
+          },
           buildTools,
           context: actorContext,
         })

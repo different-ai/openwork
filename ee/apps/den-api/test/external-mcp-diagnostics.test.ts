@@ -5,6 +5,7 @@ import {
   EnterpriseMcpClientError,
   EnterpriseMcpLifecycleDeadlineError,
   EnterpriseMcpOAuthContractError,
+  EnterpriseMcpToolInputError,
 } from "@openwork/enterprise-mcp-client"
 import {
   ExternalMcpDiagnosticTracker,
@@ -502,6 +503,18 @@ describe("external MCP diagnostics", () => {
       providerErrorMessage: "Provider rejected private argument detail",
     })
     expect(error.diagnostic.operatorAction).toContain("do not retry the same arguments")
+  })
+
+  test("explains locally rejected non-JSON tool arguments", () => {
+    const tracker = new ExternalMcpDiagnosticTracker("req_invalid_json_arguments")
+    const error = tracker.error(new EnterpriseMcpToolInputError("MCP_TOOL_ARGUMENT_INVALID_JSON"))
+
+    expect(error.diagnostic).toMatchObject({
+      category: "mcp_tool_input_invalid",
+      code: "MCP_TOOL_ARGUMENT_INVALID_JSON",
+    })
+    expect(error.diagnostic.message).toContain("not valid JSON data")
+    expect(error.diagnostic.message).not.toContain("protocol lifecycle")
   })
 
   test("classifies downstream provider authorization links without treating -32001 as a timeout", () => {

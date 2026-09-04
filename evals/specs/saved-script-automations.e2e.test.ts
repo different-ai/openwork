@@ -293,6 +293,32 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
   })
   expect(interactiveExternalCalls.filter((call) => call.args.text === externalMarker)).toHaveLength(1)
 
+  const stringInputMarker = `launch-string-input-${stamp}`
+  const stringInputStartedAt = new Date().toISOString()
+  const stringInputExecuted = await agentRpc(den.ref.apiUrl, mcpToken, "tools/call", {
+    name: "execute_capability_script",
+    arguments: { code: externalCode, input: JSON.stringify({ topic: stringInputMarker }) },
+  })
+  expect(stringInputExecuted.isError).not.toBe(true)
+  expect(JSON.stringify(stringInputExecuted.content)).toContain(stringInputMarker)
+  const stringInputCalls = await den.mocks.reports.toolCalls({
+    name: "mock_echo",
+    atLeast: 1,
+    sinceIso: stringInputStartedAt,
+    timeoutMs: 60_000,
+  })
+  const matchingStringInputCalls = stringInputCalls.filter((call) => call.args.text === stringInputMarker)
+  const stringInputCallsHaveText = stringInputCalls.every(
+    (call) => typeof call.args.text === "string" && call.args.text.length > 0,
+  )
+  expect(matchingStringInputCalls).toHaveLength(1)
+  expect(stringInputCallsHaveText).toBe(true)
+  evidence.recordAssertionEvidence(
+    "Script parameters survive JSON-string encoding from MCP clients",
+    "A JSON-encoded `input` string is bound as an object, so `input.topic` reaches the provider instead of undefined.",
+    matchingStringInputCalls.length === 1 && stringInputCallsHaveText,
+  )
+
   const externalSavedResponse = await denFetch(den.admin, "/v1/workflows", {
     method: "POST",
     headers: { authorization: `Bearer ${den.admin.token}` },
@@ -313,6 +339,27 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
   expect(externalPluginId).not.toBe("")
   expect(externalConfigObjectId).not.toBe("")
   expect(externalConfigObjectVersionId).not.toBe("")
+  const graph = requireRecord(externalSaved.graph, "saved Workflow graph")
+  const graphNodes = records(graph.nodes)
+  expect(graph.parseError).toBeNull()
+  expect(graphNodes.some((node) => node.kind === "tool" && node.scriptPath === "tools.report_source.mock_echo")).toBe(true)
+  expect(graphNodes.find((node) => node.kind === "input")?.fields).toEqual(["topic"])
+  expect(graphNodes.some((node) => node.kind === "return")).toBe(true)
+  expect(String(externalSaved.mermaid ?? "")).toMatch(/^flowchart TD\n/)
+  expect(String(externalSaved.mermaid ?? "")).toContain("report_source.mock_echo")
+
+  const detail = await denFetch(den.admin, `/v1/workflows/${externalConfigObjectId}`, {
+    headers: { authorization: `Bearer ${den.admin.token}` },
+  })
+  expect(detail.response.ok, detail.text).toBe(true)
+  const script = requireRecord(requireRecord(detail.body, "Workflow detail").script, "Workflow script")
+  const currentVersion = requireRecord(script.currentVersion, "current version")
+  expect(currentVersion.graph).toEqual(graph)
+  evidence.recordAssertionEvidence(
+    "A saved Workflow exposes a structural step graph for visual rendering",
+    "The save response and the Workflow detail carry the same tool/input/return graph plus a Mermaid flowchart.",
+    true,
+  )
 
   const externalAutomation = await denFetch(den.admin, `/v1/automations/${automationId}`, {
     method: "PATCH",

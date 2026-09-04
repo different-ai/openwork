@@ -11,6 +11,7 @@ export function redactWorkflowVersionAuthoringDetails(
   version: WorkflowVersion,
 ): WorkflowVersion {
   return {
+    // Keep the source-free structural graph visible to Workflow viewers.
     ...version,
     code: null,
     exampleInput: null,

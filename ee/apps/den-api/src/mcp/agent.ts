@@ -57,6 +57,7 @@ import {
   type ExecuteCapabilityToolResult,
 } from "./capability-registry.js"
 import { runCodemodeScript } from "./codemode-run.js"
+import { normalizeToolBody } from "./invoke.js"
 import { recordWorkflowResult } from "../workflow-runs.js"
 import {
   activateArtifactViewRevision,
@@ -898,11 +899,12 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           "Not available: import/require, classes, generators, .then/.catch chaining, timers, fetch, process, and other host globals — call tools for all external work.",
           "Send plain source only (no markdown fences). End with `return <json-safe value>`; use console.log for progress logs.",
           "Run independent tool calls in parallel with Promise.all and return only the fields needed.",
+          "Parameters go in `input` (a JSON object) and are read inside the script as `input.<field>`; never hardcode values that should be parameters.",
         ].join(" "),
         annotations: EXECUTE_CAPABILITY_ANNOTATIONS,
         inputSchema: z.object({
           code: z.string().min(1),
-          input: z.unknown().optional(),
+          input: z.unknown().optional().describe("Optional parameters for the script, bound read-only as `input`. Pass a JSON object (not a JSON string). It becomes the Workflow's example input when the run is saved with saveWorkflow."),
         }),
       },
       async ({ code, input }) => executeCapabilityWithBudget({
@@ -912,7 +914,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           const startedAt = new Date()
           const result = await runCodemodeScript({
             code,
-            scriptInput: input,
+            scriptInput: normalizeToolBody(input),
             tools,
             timeoutMs: 170_000,
           })

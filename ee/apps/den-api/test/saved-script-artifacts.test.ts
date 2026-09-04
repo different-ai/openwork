@@ -54,6 +54,11 @@ test("viewer and editor projections omit manager-only Workflow authoring data", 
   const projected = redactWorkflowVersionAuthoringDetails({
     id: "cov_test",
     code: "return input.token",
+    graph: {
+      nodes: [{ id: "input", kind: "input", label: "Input", fields: ["token"] }],
+      edges: [],
+      parseError: null,
+    },
     inputSchema: { type: "object" },
     outputSchema: { type: "string" },
     exampleInput: { token: "authoring-secret" },
@@ -72,6 +77,7 @@ test("viewer and editor projections omit manager-only Workflow authoring data", 
   })
 
   assert.equal(projected.code, null)
+  assert.deepEqual(projected.graph?.nodes, [{ id: "input", kind: "input", label: "Input", fields: ["token"] }])
   assert.equal(projected.exampleInput, null)
   assert.equal("input" in projected.automationReferences[0]!, false)
   assert.equal(JSON.stringify(projected).includes("authoring-secret"), false)
