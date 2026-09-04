@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { AssignedCoworkers } from "@/ui/assigned-coworkers";
 import {
   coworkerBridge,
   type CoworkerSettings,
@@ -97,6 +98,10 @@ export function OpenWorkSettings({
   runtime,
   session,
   providerSync,
+  templateSync,
+  templateError,
+  onSyncTemplates,
+  onImportedTemplates,
   coworkers,
   selectedCoworker,
   initialSection = "general",
@@ -113,6 +118,10 @@ export function OpenWorkSettings({
   session: DenSession | null;
   /** Outcome of the most recent account provider sync this session, if any. */
   providerSync: ProviderSyncRun | null;
+  templateSync: import("@/lib/bridge").CoworkerTemplateSync | null;
+  templateError: string;
+  onSyncTemplates: (installIds?: string[]) => Promise<void>;
+  onImportedTemplates: (result: import("@/lib/bridge").CoworkerTemplateSync) => void;
   coworkers: CoworkerSummary[];
   selectedCoworker: CoworkerSummary | null;
   initialSection?: SettingsSection;
@@ -384,6 +393,7 @@ export function OpenWorkSettings({
                     }}>Manage connected apps</Button>
                   </div>
                 </SettingsCard> : null}
+                <AssignedCoworkers signedIn={Boolean(session)} result={templateSync} error={templateError} selected={selectedCoworker} onSync={onSyncTemplates} onImported={onImportedTemplates} />
               </>
             ) : null}
 

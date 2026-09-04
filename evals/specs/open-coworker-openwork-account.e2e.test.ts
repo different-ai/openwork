@@ -459,6 +459,7 @@ async function openDetails(app: Awaited<ReturnType<typeof coworker>>): Promise<v
 
 test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"], commands: ["opencode"] });
+  let assignedTemplates: Array<Record<string, unknown>> = [];
 
   // --- Mock organization model: an OpenAI-compatible endpoint that answers deterministically.
   const completionAuthorizations: string[] = [];
@@ -614,6 +615,10 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
           { windowType: "weekly", windowStartAt: "2020-01-01T00:00:00Z", windowEndAt: "2020-01-08T00:00:00Z", limitAmount: 100, usedAmount: 0 },
         ],
       } });
+      return;
+    }
+    if (request.method === "GET" && path === "/v1/me/coworkers") {
+      respondJson(response, 200, { items: assignedTemplates, nextCursor: null });
       return;
     }
     if (request.method === "GET" && path === "/v1/llm-providers") {
@@ -1165,4 +1170,55 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     `After Sign out the settings showed Local mode with no OpenWork Cloud group, the Apps & tools root row read Not connected with the Connect explanation as the Connected screen's first step again (Skip left the short card), and the next discussion turn failed visibly with a plain headline, naming ${PROVIDER_RECORD_ID}/${MODEL_ID} in the detail, explaining that no account is signed in, with Continue with OpenWork and Choose AI model actions.`,
     true,
   );
+
+  // A new teammate receives a prepared team through the same account handoff.
+  await app.stop();
+  const starts = completionAuthorizations.length;
+  const startingTemplate = { kind: "coworker", schemaVersion: 1, description: "Ready for the marketing team", role: "Marketing", mission: "Help plan campaigns", instructions: "Ask for the audience before drafting.", provisioning: "automatic" };
+  assignedTemplates = [
+    { id: "campaign", versionId: "one", assigned: true, template: { ...startingTemplate, name: "Campaign partner" } },
+    { id: "research", versionId: "one", assigned: true, template: { ...startingTemplate, name: "Research partner" } },
+    { id: "catalog", versionId: "one", assigned: false, template: { ...startingTemplate, name: "Catalog only" } },
+    { id: "optional", versionId: "one", assigned: true, template: { ...startingTemplate, name: "Optional partner", provisioning: "optional" } },
+  ];
+  await using teammateApp = await coworker({ name: "assigned-team", env: { COWORKER_DEN_BASE_URL: denBaseUrl } });
+  await clickTestId(teammateApp, "onboarding-cloud-choice");
+  await waitForText(teammateApp, "Continue with OpenWork", { timeoutMs: 120_000 });
+  await fill(teammateApp, 'input[placeholder^="opencoworker://den-auth"]', `opencoworker://den-auth?grant=${GRANT}&denBaseUrl=${encodeURIComponent(denBaseUrl)}`);
+  await clickButton(teammateApp, "Connect");
+  await waitFor(teammateApp, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && document.body.innerText.includes("Campaign partner")`, { timeoutMs: 180_000, label: "assigned coworkers ready after first sign-in" });
+  const readTeam = () => evalIn(teammateApp, `(async () => (await window.__COWORKER__.invoke("coworkers.list")).result.map(({slug, name, model, automations}) => ({slug, name, model, automations})))()`, { awaitPromise: true });
+  expect(await readTeam()).toEqual([
+    expect.objectContaining({ name: "Campaign partner", model: "", automations: [] }),
+    expect.objectContaining({ name: "Research partner", model: "", automations: [] }),
+  ]);
+  const initialSoul = await evalIn(teammateApp, `(async () => (await window.__COWORKER__.invoke("coworkers.files.read", {slug:"campaign-partner", path:"soul.md"})).result.content)()`, { awaitPromise: true });
+  expect(initialSoul).toContain(startingTemplate.instructions);
+  expect(completionAuthorizations.length).toBe(starts);
+  expect(denRequests.filter((entry) => entry.path === "/v1/me/coworkers").every((entry) => entry.authorization === `Bearer ${SESSION_TOKEN}` && entry.org === ORG_ID)).toBe(true);
+  evidence.recordAssertionEvidence("An assigned team is ready on first account sign-in", "A fresh Open Coworker profile signed in through the real handoff and displayed Campaign partner and Research partner without manual creation. The reusable instructions were installed; optional and catalog-only coworkers were not created. Neither model selection nor scheduled work was imported, and provisioning made no completion requests.", true);
+
+  await evalIn(teammateApp, `(async () => window.__COWORKER__.invoke("coworkers.files.write", {slug:"campaign-partner", path:"memory/working.md", content:"My campaign work stays here."}))()`, { awaitPromise: true });
+  assignedTemplates[0] = { ...assignedTemplates[0], versionId: "two", template: { ...startingTemplate, name: "Campaign partner", instructions: "New instructions for future copies." } };
+  await evalIn(teammateApp, "location.reload(); true");
+  await waitFor(teammateApp, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]'))`, { timeoutMs: 120_000, label: "assigned team after reload" });
+  await clickButtonContaining(teammateApp, ORG_NAME);
+  await clickButton(teammateApp, "Account");
+  await clickButton(teammateApp, "Refresh assigned coworkers");
+  await waitForText(teammateApp, "Template updated · your working copy is preserved", { timeoutMs: 120_000 });
+  expect(await readTeam()).toHaveLength(2);
+  const preserved = await evalIn(teammateApp, `(async () => {
+    const read = async (path) => (await window.__COWORKER__.invoke("coworkers.files.read", {slug:"campaign-partner", path})).result.content;
+    return { memory: await read("memory/working.md"), soul: await read("soul.md") };
+  })()`, { awaitPromise: true });
+  expect(preserved).toMatchObject({ memory: "My campaign work stays here.", soul: expect.stringContaining(startingTemplate.instructions) });
+  await waitFor(teammateApp, `(() => { const button = document.querySelector('[data-template-id="optional"] button'); if (!(button instanceof HTMLButtonElement) || button.disabled) return false; button.click(); return true; })()`, { timeoutMs: 30_000, label: "add an optional assigned coworker" });
+  await waitFor(teammateApp, `document.querySelector('[data-template-id="optional"]')?.textContent.includes("Already added")`, { timeoutMs: 120_000, label: "optional coworker added" });
+  expect(await readTeam()).toHaveLength(3);
+  await evalIn(teammateApp, `(async () => window.__COWORKER__.invoke("coworkers.delete", {slug:"research-partner"}))()`, { awaitPromise: true });
+  await clickButton(teammateApp, "Refresh assigned coworkers");
+  await waitFor(teammateApp, `!document.querySelector('[data-testid="assigned-coworkers"] button')?.disabled`, { timeoutMs: 120_000, label: "assignment refresh after retirement" });
+  expect(await readTeam()).toHaveLength(2);
+  expect(completionAuthorizations.length).toBe(starts);
+  evidence.recordAssertionEvidence("Refreshes preserve personal work, optional choices, and retirement", "After a version update and reload, the team still had two coworkers and Account explained the preserved working copy. Original starting instructions and edited working memory were unchanged. Explicitly adding an optional coworker created one copy; retiring another and refreshing did not recreate it. No background completion requests were made.", true);
 });

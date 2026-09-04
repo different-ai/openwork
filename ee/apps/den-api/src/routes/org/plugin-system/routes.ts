@@ -1,4 +1,5 @@
 import type { Context, Hono } from "hono"
+import { coworkerTemplateListSchema } from "@openwork/types/coworker-template"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -159,6 +160,7 @@ import {
   listMarketplaces,
   listMeLibraryConnectionItems,
   listMeLibraryPluginItems,
+  listMeCoworkerTemplates,
   listMeEffectivePluginAccess,
   listPluginMemberships,
   listPlugins,
@@ -283,6 +285,22 @@ function withPluginArchOrgContext(app: Hono<any>, method: "delete" | "get" | "pa
 }
 
 export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
+  withPluginArchOrgContext(app, "get", pluginArchRoutePaths.meCoworkers,
+    queryValidator(configObjectVersionListQuerySchema),
+    describeRoute({
+      tags: ["Config Objects"],
+      summary: "List available coworker templates",
+      description: "Returns versioned coworkers visible to the member and whether a people, team, or marketplace grant assigns them for onboarding.",
+      responses: {
+        200: jsonResponse("Available coworkers.", coworkerTemplateListSchema),
+        401: jsonResponse("Sign in to see coworkers.", unauthorizedSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      const query = validQuery<z.infer<typeof configObjectVersionListQuerySchema>>(c)
+      return c.json(await listMeCoworkerTemplates({ context: actorContext(c), cursor: query.cursor, limit: query.limit }))
+    },
+  )
   withPluginArchOrgContext(
     app,
     "post",

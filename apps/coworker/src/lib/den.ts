@@ -18,6 +18,7 @@ import {
   type AutomationRun,
 } from "@openwork/types/automations";
 import { z } from "zod";
+import { coworkerTemplateListSchema, type AssignedCoworkerTemplate } from "@openwork/types/coworker-template";
 
 /** `POST /v1/mcp/token` — the minted gateway token plus the resource it is valid for. */
 const connectTokenSchema = z.object({
@@ -55,6 +56,25 @@ export type DenSession = {
   orgId: string;
   orgName: string;
 };
+
+/** The main process supplies its already-resolved API base, including any self-hosted proxy path. */
+export async function listAssignedCoworkerTemplates(session: Pick<DenSession, "baseUrl" | "token" | "orgId">): Promise<AssignedCoworkerTemplate[]> {
+  const items: AssignedCoworkerTemplate[] = [];
+  const cursors = new Set<string>();
+  let cursor: string | null = null;
+  do {
+    const query = new URLSearchParams({ limit: "100" });
+    if (cursor) query.set("cursor", cursor);
+    const page = coworkerTemplateListSchema.parse(await denRequest(session.baseUrl, `/v1/me/coworkers?${query}`, { token: session.token, orgId: session.orgId, resolvedApiBase: true }));
+    items.push(...page.items);
+    cursor = page.nextCursor;
+    if (cursor) {
+      if (cursors.has(cursor)) throw new Error("The team catalog could not be read completely. Refresh to try again.");
+      cursors.add(cursor);
+    }
+  } while (cursor);
+  return items;
+}
 
 const denSessionSchema = z.object({
   baseUrl: z.string().min(1),
@@ -258,6 +278,7 @@ export function describeSkippedProvider(reason: "missing_credentials" | "needs_k
 }
 
 type DenRequestOptions = {
+  resolvedApiBase?: boolean;
   method?: string;
   token?: string;
   orgId?: string;
@@ -281,7 +302,7 @@ async function denRequest(baseUrl: string, path: string, options: DenRequestOpti
   }
   headers[AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER] = AUTOMATION_MODEL_ATTENTION_CAPABILITY;
   if (options.body !== undefined) headers["Content-Type"] = "application/json";
-  const response = await fetch(`${requestBase(baseUrl, path)}${path}`, {
+  const response = await fetch(`${options.resolvedApiBase ? trimBase(baseUrl) : requestBase(baseUrl, path)}${path}`, {
     method: options.method ?? "GET",
     headers,
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
