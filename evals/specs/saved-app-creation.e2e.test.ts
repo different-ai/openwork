@@ -30,7 +30,7 @@ test("create, preview, save and reopen an app without changing already-open resu
       await user.screenshot();
     }
     await user.click("Save app");
-    await user.see("Save to Apps");
+    await user.see({ text: "Save to Apps" });
     await user.see({ label: "App name" }, { value: "Briefing app" });
     await user.screenshot();
     await user.click("Cancel");
