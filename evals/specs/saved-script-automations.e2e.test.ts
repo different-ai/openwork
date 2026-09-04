@@ -76,6 +76,16 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
   const organizationId = String(orgRows[0]?.id ?? "")
   expect(organizationId).not.toBe("")
 
+  // Cloud Automations require OpenWork Web access for the organization. The
+  // launched Den seeds this admin into the platform-admin allowlist, so the
+  // spec grants the audited complimentary entitlement inline.
+  const webAccess = await denFetch(den.admin, `/v1/admin/organizations/${organizationId}/openwork-web-access`, {
+    method: "PUT",
+    headers: { authorization: `Bearer ${den.admin.token}` },
+    body: JSON.stringify({ enabled: true, reason: "saved-script-automations spec exercises Cloud Automations" }),
+  })
+  expect(webAccess.response.ok, webAccess.text).toBe(true)
+
   const connection = await createOrgConnection(den.admin, {
     name: "Report source",
     url: den.mocks.reports.mcpUrl,
