@@ -510,7 +510,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     },
     models: [{ id: MODEL_ID, name: MODEL_NAME, config: { tool_call: false, reasoning: false } }],
   };
-  let membershipResponse: "active" | "unavailable" | "admin" = "active";
+  let membershipResponse: "active" | "unpaid" | "setup" | "unavailable" | "admin" = "active";
   const den = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://den.local");
     // Self-hosted Den is addressed through its /api/den proxy path.
@@ -606,9 +606,9 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     }
     if (request.method === "GET" && path === "/v1/inference") {
       if (org !== ORG_ID) { respondJson(response, 403, { error: "wrong_organization" }); return; }
-      if (membershipResponse !== "active") { respondJson(response, membershipResponse === "admin" ? 403 : 503, { error: "unavailable" }); return; }
+      if (membershipResponse === "unavailable" || membershipResponse === "admin") { respondJson(response, membershipResponse === "admin" ? 403 : 503, { error: "unavailable" }); return; }
       respondJson(response, 200, { inference: {
-        subscribed: true, enabled: true, upstreamProviderConfigured: true,
+        subscribed: membershipResponse !== "unpaid", enabled: membershipResponse === "active", upstreamProviderConfigured: membershipResponse === "active",
         buckets: [
           { windowType: "five_hour", windowStartAt: new Date(Date.now() - 60_000).toISOString(), windowEndAt: new Date(Date.now() + 60_000).toISOString(), limitAmount: 100, usedAmount: 25 },
           { windowType: "weekly", windowStartAt: "2020-01-01T00:00:00Z", windowEndAt: "2020-01-08T00:00:00Z", limitAmount: 100, usedAmount: 0 },
@@ -1030,10 +1030,26 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   membershipResponse = "admin";
   await clickButton(app, "Refresh membership & models");
   await waitForText(app, "Your workspace admin manages the membership", { timeoutMs: 30_000 });
+  membershipResponse = "unpaid";
+  await clickButton(app, "Refresh membership & models");
+  await waitForText(app, "No active Models membership", { timeoutMs: 30_000 });
+  const unpaidText = String(await evalIn(app, `document.querySelector('[data-testid="models-membership"]')?.textContent ?? ""`));
+  expect(unpaidText).toContain("View models & pricing");
+  expect(unpaidText).not.toMatch(/Manage membership|75% left|Membership active/);
+  membershipResponse = "setup";
+  await clickButton(app, "Refresh membership & models");
+  await waitForText(app, "Membership active · setup needs attention", { timeoutMs: 30_000 });
+  const setupText = String(await evalIn(app, `document.querySelector('[data-testid="models-membership"]')?.textContent ?? ""`));
+  expect(setupText).toContain("Finish Models setup");
+  expect(setupText).not.toMatch(/No active Models membership|View models & pricing/);
+  membershipResponse = "active";
+  await clickButton(app, "Refresh membership & models");
+  await waitForText(app, "Manage membership", { timeoutMs: 30_000 });
+  expect(denRequests.filter((entry) => entry.path === "/v1/inference").every((entry) => entry.authorization === `Bearer ${SESSION_TOKEN}` && entry.org === ORG_ID)).toBe(true);
   expect(denRequests.some((entry) => entry.method === "POST" && /billing|checkout/.test(entry.path))).toBe(false);
   evidence.recordAssertionEvidence(
     "Models membership shows authenticated workspace usage; errors and member permissions never masquerade as an unpaid subscription",
-    "The account-scoped read showed 75% remaining and a management action, refused to present an expired bucket as fresh usage, and explained 503 and 403 without an unpaid claim. No checkout was created and no proposed promotion was advertised.", true,
+    "The account-scoped read showed 75% remaining and a management action, refused to present an expired bucket as fresh usage, and explained 503 and 403 without an unpaid claim. Confirmed unpaid accounts saw pricing; paid accounts needing setup saw Finish Models setup. No checkout was created and no promotion was advertised.", true,
   );
 
   evidence.recordAssertionEvidence(
