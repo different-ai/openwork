@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { CoworkerSummary, ProviderSyncRun, RuntimeInfo } from "@/lib/bridge";
 import { describeSkippedProvider, type DenSession } from "@/lib/den";
+import { carryVariant } from "@/lib/model-choice";
 import {
   createCoworkerThreads,
   modelSourceLabel,
@@ -126,7 +127,7 @@ export function ModelPicker({
   function selectModel(model: EngineModelOption | null) {
     onChange({
       model: model?.id ?? "",
-      modelVariant: model?.variants.includes(modelVariant) ? modelVariant : "",
+      modelVariant: carryVariant(modelVariant, model),
     });
     if (compact) setOpen(false);
   }

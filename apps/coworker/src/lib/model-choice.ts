@@ -1,4 +1,16 @@
 /**
+ * The thinking effort a coworker keeps when its model changes — whoever
+ * changes it (the person in settings or the failure card, the app's one-time
+ * fallback): the person's choice stays when the new model offers that effort,
+ * and otherwise returns to the model's default. Never a value the new model
+ * does not know, never silently a different one.
+ */
+export function carryVariant(variant: string, model: { variants: readonly string[] } | null | undefined): string {
+  const wanted = variant.trim();
+  return wanted && model?.variants.includes(wanted) ? wanted : "";
+}
+
+/**
  * Which coworker models the app chose by itself this session. A model the
  * person picked is never swapped behind their back; one the app picked may be
  * replaced automatically when it turns out not to work.
