@@ -592,6 +592,15 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
 
     try {
       await checkedExec(exec, ["exec", sandbox, "--", "mkdir", "-p", shellQuote(userDataDir)], `mkdir Daytona Electron profile ${userDataDir}`, { timeoutMs: 30_000 });
+      const cachedDevData = "/workspace/.openwork-daytona/engine-cache/openwork-dev-data";
+      const profileDevData = `${userDataDir}/openwork-dev-data`;
+      const seedCommand = `if [ -d ${shellQuote(cachedDevData)} ] && [ ! -e ${shellQuote(profileDevData)} ]; then cp -a ${shellQuote(cachedDevData)} ${shellQuote(userDataDir)}/; fi`;
+      await checkedExec(
+        exec,
+        ["exec", sandbox, "--", seedCommand],
+        `seed Daytona Electron engine cache ${userDataDir}`,
+        { timeoutMs: 60_000 },
+      );
       if (opts.bootstrap) {
         const bootstrapJson = `${JSON.stringify(opts.bootstrap, null, 2)}\n`;
         const encoded = Buffer.from(bootstrapJson, "utf8").toString("base64");

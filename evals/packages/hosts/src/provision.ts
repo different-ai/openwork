@@ -408,6 +408,75 @@ echo detached`;
     }
   });
 
+  await timedStep(log, "engine cache warm gate", async () => {
+    // The sandbox exec transport strips double quotes, so JSON travels base64.
+    const b64 = (text: string) => Buffer.from(text, "utf8").toString("base64");
+    const pluginManifestPrefix = b64('{"dependencies":{"@opencode-ai/plugin":"');
+    const pluginManifestSuffix = b64('"}}');
+    const devtoolsManifest = b64('{"dependencies":{"opencode-chrome-devtools":"latest"}}');
+    const warmScript = `set -e
+W=/workspace/.openwork-daytona/engine-cache
+if [ -d "$W/openwork-dev-data/xdg/config/opencode/node_modules" ] && [ -d "$W/openwork-dev-data/config/opencode/node_modules" ] && [ -d "$W/openwork-dev-data/xdg/cache/opencode/packages/opencode-chrome-devtools@latest/node_modules" ]; then
+  echo WARM_PRESENT
+  exit 0
+fi
+D=/tmp/engine-warm/openwork-dev-data
+rm -rf /tmp/engine-warm
+mkdir -p "$D/home" "$D/xdg/config/opencode" "$D/config/opencode" "$D/xdg/cache/opencode/packages/opencode-chrome-devtools@latest"
+rm -f /tmp/engine-warm.log
+sidecars=(/workspace/apps/desktop/resources/sidecars/opencode-*)
+SIDECAR="\${sidecars[0]:-}"
+if [ ! -x "$SIDECAR" ]; then
+  echo "No executable OpenCode sidecar found" > /tmp/engine-warm.log
+  echo WARM_TIMEOUT
+  tail -80 /tmp/engine-warm.log 2>&1 || true
+  exit 0
+fi
+ENGINE_VERSION=$("$SIDECAR" --version 2>>/tmp/engine-warm.log | tail -1 || true)
+if [ -z "$ENGINE_VERSION" ]; then
+  echo "OpenCode sidecar did not report a version" >> /tmp/engine-warm.log
+  echo WARM_TIMEOUT
+  tail -80 /tmp/engine-warm.log 2>&1 || true
+  exit 0
+fi
+printf %s ${pluginManifestPrefix} | base64 -d > "$D/xdg/config/opencode/package.json"
+printf %s "$ENGINE_VERSION" >> "$D/xdg/config/opencode/package.json"
+printf %s ${pluginManifestSuffix} | base64 -d >> "$D/xdg/config/opencode/package.json"
+cp "$D/xdg/config/opencode/package.json" "$D/config/opencode/package.json"
+printf %s ${devtoolsManifest} | base64 -d > "$D/xdg/cache/opencode/packages/opencode-chrome-devtools@latest/package.json"
+NPM=/usr/local/share/nvm/current/bin/npm
+if [ ! -x "$NPM" ]; then
+  echo "npm is missing at $NPM" >> /tmp/engine-warm.log
+  echo WARM_TIMEOUT
+  tail -80 /tmp/engine-warm.log 2>&1 || true
+  exit 0
+fi
+install_package() {
+  directory="$1"
+  if ! (cd "$directory" && HOME="$D/home" /usr/local/share/nvm/current/bin/npm install --no-audit --no-fund --loglevel=error) >> /tmp/engine-warm.log 2>&1; then
+    echo WARM_TIMEOUT
+    tail -80 /tmp/engine-warm.log 2>&1 || true
+    return 1
+  fi
+}
+install_package "$D/xdg/config/opencode" || exit 0
+install_package "$D/config/opencode" || exit 0
+install_package "$D/xdg/cache/opencode/packages/opencode-chrome-devtools@latest" || exit 0
+mkdir -p "$W"
+cp -a "$D" "$W/"
+echo WARM_OK`;
+    const result = await execInSandbox(exec, sandbox, warmScript, {
+      timeoutMs: 240_000,
+      context: `engine cache warm gate for ${sandbox}`,
+    }).catch((error) => {
+      log(`==> WARNING: engine cache warm gate could not complete for ${sandbox}; specs will start cold. ${messageText(error)}`);
+      return null;
+    });
+    if (result?.stdout.includes("WARM_TIMEOUT")) {
+      log(`==> WARNING: engine cache warm gate did not complete for ${sandbox}; specs will start cold. Log tail:\n${outputTail(result)}`);
+    }
+  });
+
   await timedStep(log, "Vite prewarm gate", async () => {
     const detachScript = `cd /workspace; python3 - <<PYEOF
 import subprocess

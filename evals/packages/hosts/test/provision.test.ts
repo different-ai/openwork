@@ -42,6 +42,7 @@ function desktopFake(diskUse = "40%"):
     if (script.includes("pgrep -f Xvfb")) return { stdout: "XVFB_OK\n", stderr: "", code: 0 };
     if (script.includes("xdg-open-proof")) return { stdout: "XDG_OPEN_WORKS\n", stderr: "", code: 0 };
     if (script.includes("json/version")) return { stdout: '{"Browser":"Chrome/144"}', stderr: "", code: 0 };
+    if (script.includes("WARM_PRESENT")) return { stdout: "WARM_PRESENT\n", stderr: "", code: 0 };
     if (script.includes("%{http_code}")) return { stdout: "200", stderr: "", code: 0 };
     return { stdout: "", stderr: "", code: 0 };
   };
@@ -112,6 +113,13 @@ test("provisionDesktopSandbox reuses a sandbox and keeps every remote command in
   assert.deepEqual(calls[0]?.args, ["sandbox", "start", "existing-a"]);
   assert.equal(calls.filter((call) => call.args[0] === "create").length, 0);
   assert.equal(calls.filter((call) => call.args[0] === "snapshot").length, 0);
+  const lastFirstBootCall = calls.findLastIndex((call) => call.args[3]?.includes("/tmp/warmup-profile"));
+  const engineWarmCall = calls.findIndex((call) => call.args[3]?.includes("WARM_PRESENT"));
+  assert(lastFirstBootCall >= 0);
+  assert(engineWarmCall > lastFirstBootCall);
+  const engineWarmScript = calls[engineWarmCall]?.args[3] ?? "";
+  assert(engineWarmScript.includes("npm install"));
+  assert(engineWarmScript.includes("opencode-chrome-devtools@latest"));
   assertRemoteCommandsAreSingleArgument(calls);
 });
 
