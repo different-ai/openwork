@@ -2067,6 +2067,7 @@ export function SessionRoute() {
   const handleCreateTaskInWorkspaceWithOpenMode = useCallback(async (
     workspaceId: string,
     openAs: "primary" | "split",
+    source: "new_task" | "new_split" = openAs === "split" ? "new_split" : "new_task",
   ): Promise<string | null> => {
     const workspace = workspaces.find((item) => item.id === workspaceId);
     if (
@@ -2111,7 +2112,7 @@ export function SessionRoute() {
         void refreshCloudProviderSync("new_chat");
       }
       captureAnalyticsEvent("task_created", {
-        source: openAs === "split" ? "new_split" : "new_task",
+        source,
         workspace_type: workspace.workspaceType ?? "unknown",
       });
       toast.dismiss(taskCreateUnavailableToastId(workspaceId));
@@ -2158,7 +2159,7 @@ export function SessionRoute() {
         description: failure.description,
         action: {
           label: "Retry",
-          onClick: () => void handleCreateTaskInWorkspaceWithOpenMode(workspaceId, openAs),
+          onClick: () => void handleCreateTaskInWorkspaceWithOpenMode(workspaceId, openAs, source),
         },
         // A blue/green reload brings up a fresh engine without killing live
         // sessions; the full desktop restart stays a last resort elsewhere.
@@ -2168,7 +2169,7 @@ export function SessionRoute() {
                 label: t("session.engine_reload_action"),
                 onClick: () => {
                   void reloadEngineWithDesktopFallback(endpoint.client, endpoint.workspaceId)
-                    .then(() => handleCreateTaskInWorkspaceWithOpenMode(workspaceId, openAs))
+                    .then(() => handleCreateTaskInWorkspaceWithOpenMode(workspaceId, openAs, source))
                     .catch(() => undefined);
                 },
               },
@@ -2189,10 +2190,11 @@ export function SessionRoute() {
     }
   }, [applyLastUsedModelToSession, developerMode, endpointForWorkspace, loading, navigateToWorkspaceSession, refreshCloudProviderSync, refreshRouteState, rememberPendingCreatedSession, retryingWorkspaceIds, selectedWorkspaceId, workspaces]);
 
-  const handleCreateTaskInWorkspace = useCallback(
-    (workspaceId: string): Promise<string | null> => handleCreateTaskInWorkspaceWithOpenMode(workspaceId, "primary"),
-    [handleCreateTaskInWorkspaceWithOpenMode],
-  );
+  const handleCreateTaskInWorkspace = useCallback((workspaceId: string): Promise<string | null> => {
+    const { focusedPane, secondary } = useWorkbenchStore.getState();
+    const openAs = focusedPane === "secondary" && secondary ? "split" : "primary";
+    return handleCreateTaskInWorkspaceWithOpenMode(workspaceId, openAs, "new_task");
+  }, [handleCreateTaskInWorkspaceWithOpenMode]);
 
   const handleCreateSplitTaskInWorkspace = useCallback(
     (workspaceId: string): Promise<string | null> => handleCreateTaskInWorkspaceWithOpenMode(workspaceId, "split"),
