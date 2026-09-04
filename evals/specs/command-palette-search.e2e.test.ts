@@ -222,7 +222,8 @@ test.skipIf(!runnable)(
           agentWorkloads: [{
             promptMarker: `UNUSED-PALETTE-${runId}`,
             finalReply: "unused",
-            steps: [],
+            // The mock requires one step; this spec never sends a prompt.
+            steps: [{ tool: "bash", arguments: { command: "true", timeout: 1_000, description: "unused" } }],
           }],
         }),
       },
