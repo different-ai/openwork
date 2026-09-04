@@ -181,7 +181,7 @@ test(defaultJourney, async ({ world: selectedWorld, user, agent, probe, step, ev
     expect(savedRestricted[key]).toBe(value);
   }
 
-  const { reopenedLockNotes, unlockedLockNotes, savedAfterCustom } = await step("the admin reopens the policy and returns it to Custom", async () => {
+  const { reopenedLockNotes, unlockedLockNotes, savedEnabled, savedAfterCustom } = await step("the admin reopens the policy and returns it to Custom", async () => {
     await admin.user.navigate(new URL(world.editorPath, world.den.ref.webUrl).toString());
     await admin.user.see({ text: "Policy mode" }, { timeoutMs: 90_000 });
     await admin.user.see({ text: lockNote }, { timeoutMs: 30_000 });
@@ -189,11 +189,22 @@ test(defaultJourney, async ({ world: selectedWorld, user, agent, probe, step, ev
     await admin.user.click({ text: "Custom" });
     await admin.user.notSee({ text: lockNote }, { timeoutMs: 15_000 });
     const unlockedLockNotes = await lockNotes();
-    // Saving again from Custom without touching a checkbox must keep the same
-    // booleans: Custom unlocks the controls, it does not rewrite the values.
+    for (const card of lockedCards) {
+      await admin.user.see({ role: "checkbox", label: new RegExp(`^${card}`) }, { editable: true });
+    }
+    // Persist an actual edit, then restore it so the member still receives the
+    // fully restricted policy in the next phase.
+    for (const card of lockedCards) await admin.user.click({ role: "checkbox", label: new RegExp(`^${card}`) });
+    await admin.user.click("Save changes");
+    await admin.user.see({ text: /^default$/i }, { timeoutMs: 60_000 });
+    const savedEnabled = await savedPolicy();
+    for (const key of lockedKeys) expect(savedEnabled[key]).toBe(true);
+    await admin.user.navigate(new URL(world.editorPath, world.den.ref.webUrl).toString());
+    await admin.user.see({ role: "checkbox", label: /^Control Settings/ }, { editable: true, timeoutMs: 60_000 });
+    for (const card of lockedCards) await admin.user.click({ role: "checkbox", label: new RegExp(`^${card}`) });
     await admin.user.click("Save changes");
     await admin.user.see({ testId: "desktop-policy-restricted-badge" }, { timeoutMs: 60_000 });
-    return { reopenedLockNotes, unlockedLockNotes, savedAfterCustom: await savedPolicy() };
+    return { reopenedLockNotes, unlockedLockNotes, savedEnabled, savedAfterCustom: await savedPolicy() };
   });
   expect(reopenedLockNotes).toBe(lockedCards.length);
   expect(unlockedLockNotes).toBe(0);
@@ -201,9 +212,9 @@ test(defaultJourney, async ({ world: selectedWorld, user, agent, probe, step, ev
     expect(savedAfterCustom[key]).toBe(value);
   }
   evidence.recordAssertionEvidence(
-    "Saving stores plain booleans, the editor reopens in Restricted, and Custom unlocks the checkboxes without changing values",
-    `saved=${JSON.stringify(lockedKeys.map((key) => [key, savedRestricted[key]]))}; reopenedLockNotes=${reopenedLockNotes}; unlockedLockNotes=${unlockedLockNotes}; savedAfterCustom unchanged=${lockedKeys.every((key) => savedAfterCustom[key] === savedRestricted[key])}`,
-    reopenedLockNotes === lockedCards.length && unlockedLockNotes === 0 && lockedKeys.every((key) => savedAfterCustom[key] === false),
+    "Custom lets the admin enable and save every governed capability before restoring the Restricted values",
+    `saved=${JSON.stringify(lockedKeys.map((key) => [key, savedRestricted[key]]))}; reopenedLockNotes=${reopenedLockNotes}; unlockedLockNotes=${unlockedLockNotes}; savedEnabled=${JSON.stringify(savedEnabled)}; savedAfterCustom unchanged=${lockedKeys.every((key) => savedAfterCustom[key] === savedRestricted[key])}`,
+    reopenedLockNotes === lockedCards.length && unlockedLockNotes === 0 && lockedKeys.every((key) => savedEnabled[key] === true) && lockedKeys.every((key) => savedAfterCustom[key] === false),
   );
 
   // Phase 3 — the member's desktop re-reads the effective policy. A reload
@@ -280,12 +291,23 @@ test(defaultJourney, async ({ world: selectedWorld, user, agent, probe, step, ev
       label: "built-in extensions notice",
       until: (shown) => shown,
     });
-    await member.user.click({ role: "button", label: /^MCPs$/ });
-    await member.user.see({ role: "button", label: "Add organization MCP" });
-    await member.user.notSee({ role: "button", label: /^Add$/ });
+    await member.user.click({ role: "button", label: /^All$/ });
+    await member.user.click({ role: "button", label: /^Add$/ });
+    await member.user.see({ testId: "library-add-choices" });
+    await member.user.see({ text: "Organization MCP" });
+    await member.user.notSee({ text: "Workspace MCP" });
+    const choicesText = await member.probe.text();
+    expect(choicesText).not.toContain("Workspace MCP");
+    await member.user.click({ text: "Organization MCP" });
+    await member.user.click({ role: "button", label: "Continue" });
+    await member.user.see({ text: "Add an MCP server" });
+    await member.user.see({ text: "Saved to your organization Library as a remote MCP connection." });
     await member.user.notSee({ text: "Add workspace MCP" });
-    const restrictedMcpText = await member.probe.text();
+    const restrictedMcpText = `${choicesText}\n${await member.probe.text()}`;
+    expect(restrictedMcpText).not.toContain("Workspace MCP");
     expect(restrictedMcpText).not.toContain("Add workspace MCP");
+    await member.user.press("Escape");
+    await member.user.notSee({ text: "Add an MCP server" });
     await member.user.click({ role: "button", label: /^All$/ });
     return { libraryHashAfter: await member.probe.hash(), builtInNoticeShown, restrictedMcpText };
   });
@@ -297,8 +319,8 @@ test(defaultJourney, async ({ world: selectedWorld, user, agent, probe, step, ev
   ]);
   evidence.recordAssertionEvidence(
     "The Library removes the local workspace MCP add path while keeping organization MCP authoring available",
-    `hash=${libraryHashAfter}; manage-extensions notice visible; builtInNotice=${builtInNoticeShown}; MCPs filter=${restrictedMcpText}`,
-    libraryHashAfter.includes("/extensions") && builtInNoticeShown && restrictedMcpText.includes("Add organization MCP") && !restrictedMcpText.includes("Add workspace MCP"),
+    `hash=${libraryHashAfter}; manage-extensions notice visible; builtInNotice=${builtInNoticeShown}; add choices and organization form=${restrictedMcpText}`,
+    libraryHashAfter.includes("/extensions") && builtInNoticeShown && restrictedMcpText.includes("Saved to your organization Library as a remote MCP connection.") && !restrictedMcpText.includes("Workspace MCP") && !restrictedMcpText.includes("Add workspace MCP"),
   );
 
 });
@@ -460,13 +482,24 @@ test(teamJourney, async ({ world: selectedWorld, user, agent, probe, step, evide
     await member.user.click("Library");
     await member.user.see(manageExtensionsNotice, { timeoutMs: 90_000 });
     await member.user.see({ text: /Need an MCP server or skill/ });
-    await member.user.click({ role: "button", label: /^MCPs$/ });
-    await member.user.see({ role: "button", label: "Add organization MCP" });
-    await member.user.notSee({ role: "button", label: /^Add$/ });
+    await member.user.click({ role: "button", label: /^All$/ });
+    await member.user.click({ role: "button", label: /^Add$/ });
+    await member.user.see({ testId: "library-add-choices" });
+    await member.user.see({ text: "Organization MCP" });
+    await member.user.notSee({ text: "Workspace MCP" });
+    const choicesText = await member.probe.text();
+    expect(choicesText).not.toContain("Workspace MCP");
+    await member.user.click({ text: "Organization MCP" });
+    await member.user.click({ role: "button", label: "Continue" });
+    await member.user.see({ text: "Add an MCP server" });
+    await member.user.see({ text: "Saved to your organization Library as a remote MCP connection." });
     await member.user.notSee({ text: "Add workspace MCP" });
-    const mcpText = await member.probe.text();
+    const mcpText = `${choicesText}\n${await member.probe.text()}`;
+    expect(mcpText).not.toContain("Workspace MCP");
     expect(mcpText).not.toContain("Add workspace MCP");
-    evidence.recordAssertionEvidence("Blocked local tool management removes the workspace MCP add path without removing organization MCP authoring", mcpText, mcpText.includes("Add organization MCP") && !mcpText.includes("Add workspace MCP"));
+    await member.user.press("Escape");
+    await member.user.notSee({ text: "Add an MCP server" });
+    evidence.recordAssertionEvidence("Blocked local tool management removes the workspace MCP add path without removing organization MCP authoring", mcpText, mcpText.includes("Saved to your organization Library as a remote MCP connection.") && !mcpText.includes("Workspace MCP") && !mcpText.includes("Add workspace MCP"));
     await member.user.click({ role: "button", label: /^All$/ });
     const libraryText = await member.probe.text();
     evidence.recordAssertionEvidence("The locked desktop hides Settings, redirects forbidden routes, and explains how to get an MCP server", JSON.stringify({ redirected, forbiddenRoute, permissionsText, menuText, libraryText }), redirected.includes("/settings/cloud-account") && forbiddenRoute.includes("/settings/cloud-account") && count(permissionsText, "Blocked") === lockedKeys.length && libraryText.includes("Need an MCP server or skill"));
@@ -497,13 +530,24 @@ test(teamJourney, async ({ world: selectedWorld, user, agent, probe, step, evide
     for (const key of lockedKeys.filter((key) => key !== "allowManageExtensions")) expect(config[key]).toBe(true);
     await member.user.reload();
     await member.user.see(manageExtensionsNotice, { timeoutMs: 90_000 });
-    await member.user.click({ role: "button", label: /^MCPs$/ });
-    await member.user.see({ role: "button", label: "Add organization MCP" });
-    await member.user.notSee({ role: "button", label: /^Add$/ });
+    await member.user.click({ role: "button", label: /^All$/ });
+    await member.user.click({ role: "button", label: /^Add$/ });
+    await member.user.see({ testId: "library-add-choices" });
+    await member.user.see({ text: "Organization MCP" });
+    await member.user.notSee({ text: "Workspace MCP" });
+    const choicesText = await member.probe.text();
+    expect(choicesText).not.toContain("Workspace MCP");
+    await member.user.click({ text: "Organization MCP" });
+    await member.user.click({ role: "button", label: "Continue" });
+    await member.user.see({ text: "Add an MCP server" });
+    await member.user.see({ text: "Saved to your organization Library as a remote MCP connection." });
     await member.user.notSee({ text: "Add workspace MCP" });
-    const mcpText = await member.probe.text();
+    const mcpText = `${choicesText}\n${await member.probe.text()}`;
+    expect(mcpText).not.toContain("Workspace MCP");
     expect(mcpText).not.toContain("Add workspace MCP");
-    evidence.recordAssertionEvidence("Blocked local tool management removes the workspace MCP add path without removing organization MCP authoring", mcpText, mcpText.includes("Add organization MCP") && !mcpText.includes("Add workspace MCP"));
+    await member.user.press("Escape");
+    await member.user.notSee({ text: "Add an MCP server" });
+    evidence.recordAssertionEvidence("Blocked local tool management removes the workspace MCP add path without removing organization MCP authoring", mcpText, mcpText.includes("Saved to your organization Library as a remote MCP connection.") && !mcpText.includes("Workspace MCP") && !mcpText.includes("Add workspace MCP"));
     await member.user.click({ role: "button", label: /^All$/ });
     const libraryText = await member.probe.text();
     await member.user.click(accountMenu);
