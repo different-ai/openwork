@@ -109,6 +109,8 @@ overrides:
   "uuid@<11.1.1": 11.1.1
   "ws@>=8.0.0 <8.21.0": 8.21.0
 allowBuilds:
+  # @stoplight/spectral-cli -> @scarf/scarf is install analytics; never run it.
+  "@scarf/scarf": false
   "@sentry/cli": true
   "@whiskeysockets/baileys": true
   better-sqlite3: true
