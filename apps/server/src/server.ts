@@ -1351,9 +1351,10 @@ async function proxyOpencodeV2Request(input: {
   target.pathname = forwardedPath;
   target.search = input.url.search;
   if (forwardedPath.startsWith("/api/")) {
-    const hasLocation = [...target.searchParams.keys()]
-      .some((key) => key === "location" || key.startsWith("location["));
-    if (!hasLocation) target.searchParams.append("location[directory]", input.workspace.path);
+    for (const key of [...target.searchParams.keys()]) {
+      if (key === "location" || key.startsWith("location[")) target.searchParams.delete(key);
+    }
+    target.searchParams.set("location[directory]", input.workspace.path);
   }
 
   const headers = new Headers(input.request.headers);
@@ -1363,6 +1364,38 @@ async function proxyOpencodeV2Request(input: {
   headers.delete("host");
   headers.delete("origin");
   headers.set("authorization", `Basic ${Buffer.from(`opencode:${input.connection.password}`).toString("base64")}`);
+
+  // The v2 daemon has a global session namespace: a location query does not
+  // prevent reading a session owned by another workspace. Match the v1 mount's
+  // ownership boundary before forwarding session reads or mutations.
+  const sessionMatch = forwardedPath.match(/^\/api\/session\/([^/]+)(?:\/|$)/);
+  const sessionId = sessionMatch?.[1] ? decodeURIComponent(sessionMatch[1]) : null;
+  if (sessionId?.startsWith("ses_")) {
+    const sessionUrl = new URL(target);
+    sessionUrl.pathname = `/api/session/${encodeURIComponent(sessionId)}`;
+    sessionUrl.search = "";
+    sessionUrl.searchParams.set("location[directory]", input.workspace.path);
+    const sessionHeaders = new Headers(headers);
+    sessionHeaders.delete("content-length");
+    sessionHeaders.delete("transfer-encoding");
+    const sessionResponse = await loopbackFetch(sessionUrl.toString(), {
+      headers: sessionHeaders,
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!sessionResponse.ok) return sanitizeProxyResponse(sessionResponse);
+    const payload: unknown = await sessionResponse.json();
+    const data = isRecord(payload) && isRecord(payload.data) ? payload.data : payload;
+    const session = isRecord(data) && isRecord(data.info) ? data.info : data;
+    const location = isRecord(session) && isRecord(session.location) ? session.location : null;
+    const directory = location && typeof location.directory === "string" ? location.directory : null;
+    const [expected, actual] = await Promise.all([
+      realpath(input.workspace.path).catch(() => input.workspace.path),
+      directory ? realpath(directory).catch(() => directory) : null,
+    ]);
+    if (!actual || actual !== expected) {
+      throw new ApiError(404, "session_not_found", "Session not found");
+    }
+  }
 
   const body = method === "GET" || method === "HEAD"
     ? undefined
