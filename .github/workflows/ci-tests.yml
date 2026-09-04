@@ -170,7 +170,7 @@ jobs:
         run: pnpm --dir evals install --frozen-lockfile --prefer-offline
 
       - name: Run eval spec lane
-        run: pnpm --dir evals run test:pr
+        run: pnpm sdk:build && pnpm --dir evals run test:pr
 
   openwork-tests-unit:
     needs: classify-changes

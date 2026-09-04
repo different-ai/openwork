@@ -20,6 +20,7 @@
     "typecheck:spec-layer": "tsc -p tsconfig.primitives.json"
   },
   "dependencies": {
+    "@openwork/sdk": "link:../packages/sdk",
     "@openwork/behaviors": "workspace:*",
     "@openwork/cdp": "workspace:*",
     "@openwork/env": "workspace:*",

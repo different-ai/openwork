@@ -1,0 +1,40 @@
+name: Generated Den SDK
+
+on:
+  pull_request:
+    paths:
+      - "packages/**"
+      - "ee/apps/den-api/**"
+      - "ee/packages/**"
+      - "package.json"
+      - "pnpm-workspace.yaml"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/ci-sdk.yml"
+  push:
+    branches: [dev]
+    paths:
+      - "packages/**"
+      - "ee/apps/den-api/**"
+      - "ee/packages/**"
+      - "package.json"
+      - "pnpm-workspace.yaml"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/ci-sdk.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  generated-sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm sdk:check
+      - run: pnpm sdk:build
