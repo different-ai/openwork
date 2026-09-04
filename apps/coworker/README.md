@@ -329,7 +329,7 @@ those choices; the standard above is what each row is held to.
 |---|---|---|---|---|---|---|---|
 | The AI model when nobody chose | `recommendModel` in `lib/threads.ts`; first pick in `ui/coworker-home.tsx` and `ui/threads.tsx` | The connected catalog | A connected, tool-capable, non-deprecated model from the best tier (OpenWork account → subscription or key on this Mac → model server on this Mac → the free model), preferring the provider default, then a reasoning model, then the newest release. A model started on the local mode screen goes to the first coworker instead, once | None can use tools → "No connected AI model can use tools." with the two ways out | Coworker settings; the failure card's *Choose AI model* / *Use ‹model›*; *Start with this* on the local mode screen | One line under the model in Coworker settings when the app chose it: "Chosen for you, from your OpenWork account. It stays until you pick one; if it can't answer, the next best takes over once." | `threads.test.ts`, `model-choice.test.ts`, `open-coworker-local-first` (who chose, the line present or absent) |
 | Swapping a model that cannot answer | `wasAutoPicked` in `lib/model-choice.ts`; `fallBack` in `ui/threads.tsx` | `coworker.md` `modelChosenBy`, the failure | Only the app's own pick, only for a model-related failure, at most two more recommendations, never the person's model. The record on disk carries who chose, so the rule reads the same after a relaunch (a record that never said is the person's) | The failure card | Choosing a model or an effort makes it the person's | "‹model› could not answer, so Nova is trying ‹next› instead." then "Retried with ‹next›" | `model-choice.test.ts`, `coworkers.test.mjs`, `open-coworker-turn-recovery` (the card's choices) |
-| Thinking effort | Coworker settings (the model's own variants or *Model default*) | The person | Manual; the model default unless the person chose. It reaches the engine on every path — a discussion turn (`submitTurn`), an assignment or group turn (the thread client's default model), a responsibility run, a Worker turn, and a review (`localRunModel`), a Cloud assignment (`resolveCloudModel`) — and the facilitator always runs at the model default. It stays across a model change when the new model offers it, otherwise returns to the model default, whoever changes the model. No per-turn effort rule: the model default is right for a person who never opens a setting, a per-turn rule would show a different effort than the setting says, and the free model offers none | — | The setting | The setting, and "‹model› · thinking effort high" in OpenWork › AI models | `model-choice.test.ts`; `open-coworker-team` (Nova's "high" arrives at the provider as `reasoning_effort`; Editor, on the default, sends none) |
+| Thinking effort per turn | `lib/effort.ts`; the dial in the composer and Coworker settings; `submitTurn`, group replies, `localRunModel`, the facilitator | The kind of turn, the dial's stop (`effortPreference`), the model's offered efforts, an exact effort if fixed | Baseline per kind (quick reply low · reply medium · deep work, Worker turn, assignment run high · review medium · facilitator minimal), shifted −2 … +2 by the stop, snapped to what the model offers; the model default when it offers none; a fixed exact effort wins. The dial also nudges the lane and a Worker's default turns | The model default | The dial (Reset to Balanced); *Exact thinking effort* in Coworker settings fixes one for every turn | The dial's one line per stop ("The usual: quick questions get quick answers, real work and Workers think harder."); an exact effort survives a model change only when offered | `effort.test.ts`, `model-choice.test.ts`; `open-coworker-team` (a fixed high arrives as `reasoning_effort` every turn; on the dial at Balanced a draft is asked for high and a one-line question for low); `open-coworker-local-first` (the dial's pill, popover, and record) |
 | The facilitator's model | `facilitatorModels` in `lib/facilitator.ts` | The members' models, the catalog, the group's setting | The model the person set for the group, else the coworkers' models (account first, then most used), else the recommendation; the next such model is the second try; the model default effort | The scorer | Group details › Advanced | "Automatic" in the setting | `facilitator.test.ts` |
 | A Cloud assignment's model | `resolveCloudModel` in `lib/cloud-responsibilities.ts` | The coworker's model, the organization's providers | The coworker's model when the organization authorizes it, else a mapped equivalent, else the free starter | The free starter | The coworker's model | The assignment names its model | `cloud-responsibilities.test.ts` |
 
@@ -338,7 +338,7 @@ those choices; the standard above is what each row is held to.
 | Choice | Where | Inputs | Rule | Fallback | Override | Explained to the person? | Proven by |
 |---|---|---|---|---|---|---|---|
 | Starting a Worker | Contract `### Which shape an answer takes` and `## Workers`; `worker_spawn` | The request | One goal with an end, not on a clock, worked in steps; never for a quick question; never on a schedule (that is an assignment); a Worker never starts a Worker (a prompt rule — a Worker shares the coworker's tool token, so the handler cannot tell them apart) | — | New Worker; Steer, Pause, Stop | "Started a Worker · Name" and one sentence from the coworker | `coworkers.test.mjs`, `workers.test.mjs`, `open-coworker-workers` |
-| Its lifespan | `normalizeLifespan` | The tool's `lifespan`, or nothing | Ten turns when nobody chose (1–100), a deadline, or until stopped | Ten turns | The coworker chooses; the person steers or stops | The row reads "3 of 10 turns left", "Until 4:30 PM", "Until you stop it" | `workers.test.mjs`, `workers.test.ts` |
+| Its lifespan | `normalizeLifespan`; `spawnWorker` with the effort dial | The tool's `lifespan`, or nothing; the dial's stop | A number of turns (1–100), a deadline, or until stopped; when nobody chose, the dial says how much work is welcome — 6 · 8 · 10 · 14 · 20 turns from Light to All in (10 at Balanced) | Ten turns | The coworker chooses; the person steers or stops, or turns the dial | The row reads "3 of 10 turns left", "Until 4:30 PM", "Until you stop it"; the dial's line names Workers | `workers.test.mjs`, `workers.test.ts`, `effort.test.ts` |
 | At most three live per coworker | `createWorker` | The live Workers | The fourth is refused with a sentence | — | Stop one | The tool's sentence, `workers_list` | `workers.test.mjs` |
 | When a turn runs | `admitWorkerTurn` in `electron/main.mjs` | This Mac's run limit (`maxParallelLocalRuns`, default 2) | Turns follow one another as soon as a slot is free; runs already in line go first | Queued | AI & local setup › the limit | "Waiting its turn" | `open-coworker-workers` (limit 1 → queued) |
 | Waking the coworker | `createReviewScheduler` | Findings | Per coworker, at most once a minute, as one turn in the open discussion once it is idle (up to five minutes); held without a discussion; retried once after a failure, then dropped and recorded on the Worker | Held / dropped, recorded | — | "Reviewed an update from Market scan"; "Not reviewed …" on the Worker | `workers.test.mjs`, `open-coworker-workers` |
@@ -641,9 +641,9 @@ whoever changes the model.
 
 ### Automatic: the right brain for each message
 
-A coworker's AI model has a mode (`coworker.md` `modelMode`): **Automatic**
-(new coworkers) or **fixed** (one model, every time — what a chosen model meant
-before the field existed). In Automatic the coworker reads each message and
+A coworker's AI model has a mode (`coworker.md` `modelMode`): **fixed** (one
+model, every time — the default, and what any record from before the field
+means) or **Automatic**, chosen in the picker. In Automatic the coworker reads each message and
 picks a lane (`lib/model-choice.ts`): `classifyRequest` — the person's own
 words win ("quickly", "briefly", "tl;dr" → quick; "think carefully",
 "thorough", "step by step" → deep), then the shape of the ask (a greeting or a
@@ -652,14 +652,17 @@ drafts, code, a stack trace, three questions, a numbered list, or more than
 120 words → deep; anything that asks the coworker to *do* something — check,
 find, write, schedule, explain — is at least standard). `chooseModelForLane`
 anchors on the coworker's standard model (the saved one, or the recommendation
-that is then saved) and looks **only among that provider's models**, so one
-account is billed and nothing surprising appears: quick takes the newest fast,
+that is then saved) and looks **only among that provider's models that cost no
+more than it** (`costsNoMoreThan`; the free provider is one provider with a
+free model beside dozens of paid ones, so "same provider" alone promised
+nothing about the bill), so one account is billed and never for more than the
+person already accepted: quick takes the newest fast,
 non-reasoning sibling (`mini`, `flash`, `haiku`, `nano`…), deep the most
 capable reasoning sibling (`opus`, `pro`, `max`, `o-series`…), and each lane
 falls back to the standard model when nothing better exists there. A standard
 model that is already fast stays for quick; one that is already the most
-capable stays for deep. The thinking-effort variant applies to the standard
-model only.
+capable stays for deep. Automatic stays opt-in until the free provider's lanes
+are proven on the packaged app.
 
 The choice is never hidden: the rail says "Working on a deep think on GPT-5
 pro" while the turn runs (the live row keeps to its shapes), every reply
@@ -671,6 +674,30 @@ standard model (`localRunModel` in `main.mjs`). When a lane's model cannot
 answer, the app steps back towards the standard model and retries the same
 message once or twice, saying so; only the standard model failing changes what
 is saved. A model the person fixed is never swapped.
+
+### Dynamic effort: the dial
+
+How hard a coworker thinks is decided per turn, from what the turn is and how
+hard the person wants the coworker to work in general — never from an exact
+value the person picked (`lib/effort.ts`). The person turns a five-stop
+**effort dial** — Light · Steady · Balanced · Thorough · All in — from a pill at
+the foot of the conversation (`ui/effort-dial.tsx`: the stop's name, one line
+saying what it means for the turns, Reset, a slider) or from *How hard to
+work* in Coworker settings; the stop is kept in `coworker.md`
+(`effortPreference`, Balanced when unsaid). Each kind of work has a baseline
+effort (a quick reply low · a reply medium · deep work, a Worker turn, and an
+assignment run high · a review medium · the facilitator minimal, always), the
+stop moves it by −2 … +2 steps, and the result snaps to the nearest effort the
+model actually offers — or the model default when it offers none, whatever the
+dial says. An *exact thinking effort* fixed in Coworker settings wins over the
+dial when the model offers it. The dial also nudges the lane a message takes
+(Thorough gives a quick ask a proper look, All in makes ordinary work deep,
+Light and Steady the other way) and sets a Worker's default lifespan when the
+coworker chose none (6 · 8 · 10 · 14 · 20 turns), so "work harder" reaches the
+Workers. It applies on every path: a discussion turn, a group reply, a
+responsibility run, a Worker turn, and a review (`localRunModel` reads the
+model's offered efforts from the engine once per model per launch), while the
+facilitator always runs at the lowest effort its model offers.
 
 Sign-ins and keys go through the AI service's own credential store
 (`~/.local/share/opencode/auth.json`, shared with OpenWork Desktop and the

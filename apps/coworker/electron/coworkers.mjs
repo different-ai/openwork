@@ -25,6 +25,7 @@ import {
   removeFromMemoryIndex,
 } from "./memory-index.mjs";
 import { TEAM_ROSTER_FILE, refreshTeamRosters, roleById, writeTeamRoster } from "./team.mjs";
+import { effortStopOf } from "../src/lib/effort.ts";
 
 export { parseFrontmatter, serializeFrontmatter };
 
@@ -483,6 +484,7 @@ function coworkerConfigTemplate({ name, role, mission, avatarColor: color, avata
       modelVariant: "",
       modelChosenBy: "",
       modelMode: "fixed",
+      effortPreference: "balanced",
       automations: [],
       createdAt,
     },
@@ -547,6 +549,8 @@ async function readCoworkerRecord(coworkersDir, slug) {
     modelChosenBy: modelChosenByOf(data.modelChosenBy),
     /** `auto`: a quick, standard, or deep model per message around `model`; `fixed`: `model` every time. */
     modelMode: modelModeOf(data.modelMode),
+    /** The effort dial: how hard the person wants this coworker to work in general; each turn's effort is derived from it, never taken as is. */
+    effortPreference: effortStopOf(data.effortPreference),
     automations,
     createdAt: typeof data.createdAt === "string" ? data.createdAt : "",
   };
@@ -686,6 +690,7 @@ export async function updateCoworker(coworkersDir, slug, patch) {
   if (typeof patch?.modelVariant === "string") data.modelVariant = patch.modelVariant.trim();
   if (typeof patch?.modelChosenBy === "string") data.modelChosenBy = modelChosenByOf(patch.modelChosenBy);
   if (patch?.modelMode === "auto" || patch?.modelMode === "fixed") data.modelMode = patch.modelMode;
+  if (typeof patch?.effortPreference === "string") data.effortPreference = effortStopOf(patch.effortPreference);
   if (typeof patch?.avatarColor === "string") data.avatarColor = avatarColor(patch.avatarColor);
   if (typeof patch?.avatarGlasses === "string") data.avatarGlasses = avatarGlasses(patch.avatarGlasses);
   if (typeof patch?.personality === "string") data.personality = personality(patch.personality);
