@@ -34,6 +34,7 @@ import {
   mergeComposerConnectionInventory,
 } from "./composer-connections";
 import { DevProfiler } from "@/react-app/shell/dev-profiler";
+import { LocalDictationButton } from "./local-dictation-button";
 
 type MentionItem = {
   id: string;
@@ -1639,6 +1640,11 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                 >
                   <Paperclip size={16} />
                 </button>
+                <LocalDictationButton
+                  draft={props.draft}
+                  disabled={props.disabled}
+                  onDraftChange={props.onDraftChange}
+                />
 
                 {/* Agent picker (#2101/#1971). Only shown once a non-default
                     agent is selected. Switching back to Default agent lives in

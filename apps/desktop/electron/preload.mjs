@@ -93,6 +93,12 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     askMicrophoneAccess() {
       return ipcRenderer.invoke("openwork:system:askMicrophoneAccess");
     },
+    getLocalSpeechStatus() {
+      return ipcRenderer.invoke("openwork:system:localSpeechStatus");
+    },
+    transcribeLocalAudio(input) {
+      return ipcRenderer.invoke("openwork:system:transcribeLocalAudio", input);
+    },
   },
   migration: {
     readSnapshot() {

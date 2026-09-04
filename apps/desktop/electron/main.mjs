@@ -81,6 +81,7 @@ import {
   setOpenworkSentrySession,
 } from "./sentry.mjs";
 import { installStdioErrorHandlers } from "./stdio-errors.mjs";
+import { createLocalSpeechService } from "./local-speech.mjs";
 import {
   createRendererCrashRecovery,
   installSocketTypeOfServiceGuard,
@@ -172,6 +173,7 @@ const uiControlServer = createUiControlServer({
 
 const terminalProcesses = new Map();
 let nextTerminalId = 1;
+const localSpeechService = createLocalSpeechService();
 
 function defaultTerminalShell() {
   if (process.platform === "win32") return process.env.COMSPEC || "powershell.exe";
@@ -2631,6 +2633,18 @@ ipcMain.handle("openwork:system:askMicrophoneAccess", async () => {
   const granted = await systemPreferences.askForMediaAccess("microphone");
   const after = systemPreferences.getMediaAccessStatus("microphone");
   return { platform: process.platform, before, after, granted };
+});
+ipcMain.handle("openwork:system:localSpeechStatus", async (event) => {
+  if (!mainWindow || event.sender.id !== mainWindow.webContents.id) {
+    throw new Error("Local speech is only available to the main OpenWork window.");
+  }
+  return localSpeechService.status();
+});
+ipcMain.handle("openwork:system:transcribeLocalAudio", async (event, input) => {
+  if (!mainWindow || event.sender.id !== mainWindow.webContents.id) {
+    throw new Error("Local speech is only available to the main OpenWork window.");
+  }
+  return localSpeechService.transcribe(input);
 });
 
 // ── Terminal IPC ────────────────────────────────────────────────────────
