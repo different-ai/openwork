@@ -83,6 +83,7 @@ test("voice sends and steers real conversation work, interrupts speech, cancels,
     expect(users(await world.messages(world.a.sessionId))).toHaveLength(4);
     await agent.run("voice.panel.open");
     await user.notSee({ text: "Uncertain words" });
+    await user.see({ label: "Voice request" }, { value: "" });
   });
   await step("denied permission and a late capture grant recover without a live microphone", async () => {
     await world.fixture("deny", [true]);
