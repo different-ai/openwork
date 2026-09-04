@@ -1067,7 +1067,7 @@ export async function snapshotFailure(seed: Seed) {
   const workspace = await seed.workspace(app, seed.tmpPath("composer-snapshot-failure"));
   const session = await seedSessionRetry(seed, app, { title: "Composer snapshot failure proof" });
   await arrangeControl(seed, app, "eval.chat_transcript.seed");
-  const failure = await seed.evalIn(app, `async () => {
+  const failureJson = await seed.evalIn(app, `async () => {
     const deadline = Date.now() + 30000;
     while (Date.now() < deadline) {
       const available = window.__openworkControl?.listActions()
@@ -1077,8 +1077,9 @@ export async function snapshotFailure(seed: Seed) {
     }
     const result = await window.__openworkControl.execute("eval.session_snapshot.fail", null);
     if (!result?.ok) throw new Error(String(result?.error ?? "control action failed"));
-    return result.result;
+    return JSON.stringify(result.result);
   }`, { awaitPromise: true, timeoutMs: 120_000 });
+  const failure: unknown = typeof failureJson === "string" ? JSON.parse(failureJson) : failureJson;
   if (!isRecord(failure) || failure.isError !== true) {
     throw new Error(`Session snapshot failure was not established: ${JSON.stringify(failure)}`);
   }
