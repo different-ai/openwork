@@ -3014,7 +3014,7 @@ function createRoutes(
       reloadOpencodeEngine(routeConfig, workspace, engineMcpServerState, { reason: "operation_route" }),
   });
 
-  registerUiControlRoutes({ routes, jsonResponse, readJsonBody });
+  registerUiControlRoutes({ routes, jsonResponse, readJsonBody, requireClientScope });
 
   registerFileRoutes({
     routes,

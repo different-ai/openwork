@@ -149,7 +149,7 @@ export async function agentUiContext(seed: Seed): Promise<AgentUiContextWorld> {
   try {
     managed = await bootManagedOpenworkServer({ scratch, workspace, token, sink });
     const server = managed;
-    const headers = { authorization: `Bearer ${token}`, "x-openwork-host-token": `${token}-host`, "content-type": "application/json" };
+    const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
 
     const request = async (path: string, init: RequestInit, timeoutMs: number): Promise<unknown> => {
       const response = await fetch(`${server.base}${path}`, {

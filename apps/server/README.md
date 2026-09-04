@@ -100,7 +100,7 @@ Sandbox advertisement (for capability discovery):
 - `GET /workspace/:id/audit`
 - `GET /workspace/:id/export`
 
-Token management (host/owner auth):
+Token management (collaborator or owner bearer token):
 
 - `GET /tokens`
 - `POST /tokens` (body: `{ "scope": "owner"|"collaborator"|"viewer", "label"?: string }`)
@@ -119,8 +119,8 @@ Inbox/outbox:
 UI control mailbox:
 
 - `POST /experimental/ui-control/request` (collaborator or owner bearer token)
-- `GET /experimental/ui-control/pending` (host/owner auth; optional `?wait=1`)
-- `POST /experimental/ui-control/:id/reply` (host/owner auth)
+- `GET /experimental/ui-control/pending` (collaborator or owner bearer token; optional `?wait=1`)
+- `POST /experimental/ui-control/:id/reply` (collaborator or owner bearer token)
 
 Desktop and web renderers poll the same server they are connected to. The first
 polling window claims each request; commands are never broadcast to every tab.
