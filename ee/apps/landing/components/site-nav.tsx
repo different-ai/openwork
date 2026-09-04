@@ -11,6 +11,7 @@ type ActivePage =
   | "download"
   | "enterprise"
   | "connect"
+  | "coworker"
   | "cloud"
   | "dashboard"
   | "docs"
@@ -53,6 +54,7 @@ export function SiteNav(props: Props) {
   const navItems: NavItem[] = [
     { href: "/#product", label: "Product", key: "home" },
     { href: "/connect", label: "Connect", key: "connect" },
+    { href: "/coworker", label: "Coworker", key: "coworker" },
     { href: "/cloud", label: "Cloud", key: "cloud" },
     { href: "/enterprise", label: "Enterprise", key: "enterprise" },
     { href: "/docs", label: "Docs", key: "docs", newTab: true },
