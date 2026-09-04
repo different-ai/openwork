@@ -174,8 +174,9 @@ export function DenCommandPalette({ open, onOpenChange }: DenCommandPaletteProps
       label: member.user.name,
       href: getMembersRoute(activeOrg.slug),
       icon: User,
-      hint: member.user.email,
-      keywords: [member.user.email, member.role, "member"],
+      // Names only: email addresses stay on the Members page itself.
+      hint: member.role,
+      keywords: [member.role, "member"],
     }));
   }, [access.isAdmin, activeOrg, orgContext?.members]);
 
