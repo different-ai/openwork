@@ -57,11 +57,12 @@ test("voice sends and steers real conversation work, interrupts speech, cancels,
     expect(await waitForUsers(4)).toContain("When this finishes, change the note again.");
     expect(JSON.stringify(await world.messages(world.a.sessionId))).toContain('"status":"running"');
     await world.fixture("say", ["cancel this operation", "cancel"]);
-    await user.see({ text: "Cancellation requested." });
+    await user.see({ text: /Cancellation requested\./ });
     await probe.eventually(() => world.messages(world.a.sessionId), { within: 30_000, until: (value) => !JSON.stringify(value).includes('"status":"running"'), label: "cancelled tool is no longer running" });
     expect(object(await world.file("voice-slow.txt")).status).toBe(404);
     expect(String(object(await world.file("voice-note.txt")).body)).toContain("updated by follow-up");
     expect(users(await world.messages(world.a.sessionId))).toHaveLength(4);
+    await user.screenshot();
   });
   await step("a lost connection releases audio and reconnect never resubmits accepted requests", async () => {
     await world.fixture("disconnect");

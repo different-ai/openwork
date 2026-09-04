@@ -53,7 +53,7 @@ export function OpenWorkVoiceConfig(props: OpenWorkVoiceConfigProps) {
       <CardHeader>
         <CardTitle>Realtime voice</CardTitle>
         <CardDescription>
-          Voice Mode uses OpenAI for audio. Requests run in your conversation with its selected model and permissions. Audio goes to the voice provider; accepted transcripts stay in the conversation.
+          Voice Mode uses OpenAI audio through your configured OpenWork Models service or OpenAI key. Requests run in your conversation with its selected model and permissions. Accepted transcripts stay in the conversation.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -62,7 +62,7 @@ export function OpenWorkVoiceConfig(props: OpenWorkVoiceConfigProps) {
             <Mic2 />
             <AlertTitle>OpenAI key detected</AlertTitle>
             <AlertDescription>
-              Voice Mode will use OPENAI_REALTIME_API_KEY when present, otherwise OPENAI_API_KEY from OpenWork environment variables.
+              For a direct OpenAI connection, Voice Mode uses OPENAI_REALTIME_API_KEY when present, otherwise OPENAI_API_KEY from OpenWork environment variables.
             </AlertDescription>
           </Alert>
         ) : null}
@@ -97,13 +97,14 @@ export function OpenWorkVoiceConfig(props: OpenWorkVoiceConfigProps) {
         ) : null}
       </CardContent>
       <CardFooter className="flex-wrap gap-2 border-t border-border justify-between">
-        <Button onClick={() => void props.onSaveApiKey(apiKey)} disabled={props.busy || !canSave}>
+        <Button onClick={() => { const value = apiKey; setApiKey(""); void props.onSaveApiKey(value); }} disabled={props.busy || !canSave}>
           {props.busy ? <Loader2 data-icon="inline-start" className="animate-spin" /> : null}
           Save key
         </Button>
-        <Button variant="outline" onClick={() => void props.onTestSession()} disabled={props.busy || !props.envKeyDetected}>
-          Test Realtime
+        <Button variant="outline" onClick={() => void props.onTestSession()} disabled={props.busy}>
+          Check provider
         </Button>
+        <p className="w-full text-xs text-muted-foreground">This checks provider session setup. Start voice in a conversation to check microphone capture and playback. Conversation tools run through your selected model.</p>
       </CardFooter>
     </Card>
   );

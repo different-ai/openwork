@@ -70,7 +70,7 @@ export class VoiceSession {
   private disposed = false;
   private submitting = false;
   private delivery: Promise<unknown> | null = null;
-  private muting = false;
+  private muting: Connection | null = null;
   private submissionEpoch = 0;
   private cancelling = false;
   private initialized = false;
@@ -99,6 +99,7 @@ export class VoiceSession {
   private closeConnection() {
     const connection = this.connection;
     this.connection = null;
+    if (this.muting === connection) this.muting = null;
     ++this.generation;
     this.queuedSpeech = "";
     if (connection) {
@@ -464,8 +465,8 @@ export class VoiceSession {
 
   toggleMute = async () => {
     const connection = this.connection;
-    if (!connection?.ready || !this.current(connection) || this.muting) return;
-    this.muting = true;
+    if (!connection?.ready || !this.current(connection) || this.muting === connection) return;
+    this.muting = connection;
     try {
     if (!this.store.getSnapshot().micMuted) {
       this.store.update({ micMuted: true });
@@ -494,7 +495,7 @@ export class VoiceSession {
       finally { window.clearTimeout(deadline); }
     }
     } catch (error) { this.fail(connection, mediaError(error)); }
-    finally { this.muting = false; }
+    finally { if (this.muting === connection) this.muting = null; }
   };
 
   submitText = async (raw: string, spoken = false) => {
@@ -575,10 +576,10 @@ export class VoiceSession {
     } finally { this.cancelling = false; }
   };
 
-  private observing = false;
+  private observing: Connection | null = null;
   private async observe(connection: Connection, baseline = false) {
-    if (this.observing || !this.current(connection)) return;
-    this.observing = true;
+    if (this.observing === connection || !this.current(connection)) return;
+    this.observing = connection;
     try {
       const snapshot = await readVoiceConversation(this.owner, AbortSignal.any([connection.abort.signal, AbortSignal.timeout(8_000)]));
       if (!this.current(connection)) return;
@@ -608,6 +609,6 @@ export class VoiceSession {
     } catch {
       if (baseline) this.fail(connection, "Could not verify this conversation before starting voice. Check the connection and reconnect; nothing was sent.");
       else if (this.current(connection)) this.store.update({ statusText: "Could not verify the conversation’s current state. Check the connection; no requests will be resent." });
-    } finally { this.observing = false; }
+    } finally { if (this.observing === connection) this.observing = null; }
   }
 }
