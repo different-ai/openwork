@@ -5,7 +5,7 @@ import { LockKeyhole, SlidersHorizontal, ShieldCheck } from "lucide-react";
 import { desktopPolicyDefaults, desktopPolicyDefinitions, type TeamAccess } from "@openwork/types/den/desktop-policies";
 import { DenButton } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
-import { getOrgAccessFlags } from "../../_lib/den-org";
+import { getMembersRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { createDesktopPolicy, updateDesktopPolicy, useOrgDesktopPolicies, type DenDesktopPolicy } from "./desktop-policy-data";
 
@@ -15,7 +15,7 @@ const capabilityLabels: Record<(typeof capabilities)[number]["id"], string> = {
   allowZenModel: "Use OpenCode models",
   allowMultipleWorkspaces: "Create more workspaces",
   allowControlSettings: "Change app settings",
-  allowManageExtensions: "Add and manage tools, skills & MCP servers",
+  allowManageExtensions: "Add and manage local tools, skills & MCP servers",
   allowBuiltInExtensions: "Use built-in extensions",
   allowAlphaUpdates: "Try experimental updates",
   showWelcomePage: "Show welcome page",
@@ -34,7 +34,6 @@ export function TeamPermissionsPanel({ teamId }: { teamId: string }) {
   if (error) return <DenNotice tone="error" message={error} />;
   if (busy || definitions.length === 0) return <p className="py-6 text-sm text-gray-500">Loading permissions…</p>;
   if (!team) return <DenNotice tone="error" message="This team is no longer available." />;
-  if (policy && !policy.isEnabled) return <DenNotice tone="warning" message="This team’s access configuration is disabled. Ask your organization owner to enable it before changing permissions." />;
   if (policies.length > 1 || !exclusivelyAssigned) return <DenNotice tone="error" message="This team has shared or overlapping access configurations. Ask your organization owner to review the assigned policies before editing team permissions." />;
 
   return <>{saved ? <DenNotice tone="info" className="mb-4" message="Permissions saved. Members receive updates when their app refreshes." /> : null}<TeamPermissionsEditor key={`${teamId}-${JSON.stringify(policy)}`} teamId={teamId} teamName={team.name} policy={policy} canManage={access.canManageSettings} onSaved={async () => { await reloadPolicies(); setSaved(true); }} /></>;
@@ -47,6 +46,7 @@ function TeamPermissionsEditor({ teamId, teamName, policy, canManage, onSaved }:
   canManage: boolean;
   onSaved: () => Promise<void>;
 }) {
+  const { orgSlug } = useOrgDashboard();
   const initial: TeamAccess = policy?.policy.access ?? { mode: "custom", capabilities: { ...desktopPolicyDefaults } };
   const [draft, setDraft] = useState(initial);
   const [saving, setSaving] = useState(false);
@@ -82,12 +82,13 @@ function TeamPermissionsEditor({ teamId, teamName, policy, canManage, onSaved }:
         <div className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-gray-500" /><h2 className="text-lg font-semibold tracking-tight text-gray-950">What this team can do</h2></div>
         <p className="mt-1 text-sm text-gray-500">Set access here. Members see these permissions in their app.</p>
       </div>
+      {policy && !policy.isEnabled ? <DenNotice tone="warning" message="These permissions are currently disabled. Save permissions to enable them for this team." /> : null}
       {!canManage ? <DenNotice tone="info" message="Only an organization owner or super-admin can change these permissions." /> : null}
       <fieldset disabled={!canManage || saving} className="space-y-4">
         <legend className="mb-3 text-sm font-medium text-gray-800">Team mode</legend>
         <div className="grid gap-3 sm:grid-cols-2">
           {([
-            { mode: "locked", title: "Locked", icon: LockKeyhole, description: "Keep work focused. Members use available tools without adding their own or changing app settings." },
+            { mode: "locked", title: "Locked", icon: LockKeyhole, description: "Keep work focused. Members use available tools without adding local tools or changing app settings." },
             { mode: "custom", title: "Custom", icon: SlidersHorizontal, description: "Choose which capabilities this team can use. Organization restrictions still apply." },
           ] satisfies Array<{ mode: TeamAccess["mode"]; title: string; icon: typeof LockKeyhole; description: string }>).map((option) => (
             <label key={option.mode} className={`flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition ${draft.mode === option.mode ? "border-gray-900 bg-gray-50 ring-1 ring-gray-900" : "border-gray-200 bg-white"}`}>
@@ -113,11 +114,12 @@ function TeamPermissionsEditor({ teamId, teamName, policy, canManage, onSaved }:
         <p className="font-medium text-gray-800">Members can still chat and use available connections.</p>
         <p>Blocking wins over grants from other teams. Allowing a capability here does not override another restriction. Existing installed tools are not removed.</p>
         <p className="mt-2">Cloud editing is controlled by each member’s role. Plugin and tool access is managed below. These settings do not suspend accounts.</p>
+        <DenButton href={getMembersRoute(orgSlug)} variant="secondary" size="sm" className="mt-3">Review member roles</DenButton>
       </div>
       {error ? <DenNotice tone="error" message={error} /> : null}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p role="status" className="text-xs text-gray-500">{saved ? "Permissions saved." : dirty ? "Unsaved changes" : "Members receive updates when their app refreshes."}</p>
-        <DenButton onClick={() => void save()} disabled={!canManage || !dirty} loading={saving}>Save permissions</DenButton>
+        <DenButton onClick={() => void save()} disabled={!canManage || (!dirty && policy?.isEnabled !== false)} loading={saving}>Save permissions</DenButton>
       </div>
     </section>
   );

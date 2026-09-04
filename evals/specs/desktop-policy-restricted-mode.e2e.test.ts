@@ -7,7 +7,7 @@ import { defaultPolicyEditorAndMemberDesktop, readDefaultDesktopPolicy } from ".
 // real member desktop side by side: the editor locks every governed capability
 // and stores plain booleans, and the member's settings and Library surfaces
 // collapse to what the policy leaves reachable.
-const test = spec.world(defaultPolicyEditorAndMemberDesktop, { timeout: 600_000 });
+const test = spec.world(defaultPolicyEditorAndMemberDesktop, { timeout: 900_000 });
 
 // The capability cards as the editor labels them. Restricted locks the first
 // seven; the Welcome Page display preference stays editable in both modes.
@@ -52,7 +52,7 @@ function count(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
 }
 
-test("an admin switches the default desktop policy to Restricted and a member's desktop hides settings and local extension add flows", async ({ world, user, agent, probe, step, evidence, seed }) => {
+test("an admin controls default and team access while members can understand their permissions", async ({ world, user, agent, probe, step, evidence, seed }) => {
   const member = { user: user.on(world.member), agent: agent.on(world.member), probe: probe.on(world.member) };
   const admin = { user: user.on(world.admin), probe: probe.on(world.admin) };
   const lockNotes = () => admin.probe.text().then((text) => count(text, lockNote));
@@ -330,7 +330,7 @@ test("an admin switches the default desktop policy to Restricted and a member's 
 
   await step("the admin grants selected capabilities while keeping tool installation blocked", async () => {
     await admin.user.click({ role: "radio", label: /^Custom/ });
-    await admin.user.click({ role: "checkbox", label: "Add and manage tools, skills & MCP servers" });
+    await admin.user.click({ role: "checkbox", label: "Add and manage local tools, skills & MCP servers" });
     await admin.user.click("Save permissions");
     await admin.probe.eventually(async () => (await effective(world.den.members.jordan)).allowControlSettings, {
       within: 30_000, label: "custom mode restores selected capabilities", until: (value) => value === true,
@@ -351,5 +351,17 @@ test("an admin switches the default desktop policy to Restricted and a member's 
   expect(forbidden.response.status).toBe(403);
   expect((await effective(world.den.members.jordan)).allowManageExtensions).toBe(false);
   evidence.recordAssertionEvidence("A member cannot change their own team permissions", `HTTP ${forbidden.response.status}; tool installation remains blocked`, forbidden.response.status === 403);
+
+  const policyList = await probe.api(world.den.admin, "/v1/desktop-policies");
+  const teamPolicy = isRecord(policyList.body) && Array.isArray(policyList.body.desktopPolicies)
+    ? policyList.body.desktopPolicies.find((entry: unknown) => isRecord(entry) && isRecord(entry.policy) && isRecord(entry.policy.access))
+    : undefined;
+  if (!isRecord(teamPolicy) || typeof teamPolicy.id !== "string") throw new Error("Expected team policy");
+  await admin.user.navigate(new URL(`/dashboard/desktop-policies/${teamPolicy.id}`, world.den.ref.webUrl).toString());
+  await admin.user.see({ text: "Managed in Team access" }, { timeoutMs: 60_000 });
+  await admin.user.notSee({ role: "button", label: "Save changes" });
+  await admin.user.click("Open team access");
+  await admin.user.see({ text: "What this team can do" }, { timeoutMs: 60_000 });
+  evidence.recordAssertionEvidence("Advanced policy settings direct team permission changes back to Team Access", "Team access link reaches the team; legacy Save changes absent", true);
 
 });

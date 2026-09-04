@@ -7,6 +7,8 @@ import {
   desktopPolicyDefinitions,
   isRestrictedDesktopPolicyValue,
   restrictedDesktopPolicyValue,
+  normalizeDesktopPolicyDocument,
+  resolveDesktopPolicyDocumentWrite,
 } from "@openwork/types/den/desktop-policies";
 import {
   SETTINGS_TAB_WITHOUT_CONTROL,
@@ -117,5 +119,44 @@ describe("allowControlSettings settings gate", () => {
     expect(desktopRestrictionNotice("allowControlSettings")).toBe(
       "Your organization administrator has disabled changing desktop app settings.",
     );
+  });
+});
+
+
+describe("explicit team access limits", () => {
+  test("a lock wins over all matching grants while preserving display preferences", () => {
+    const result = calculateEffectiveDesktopPolicy({
+      orgPolicyCount: 3,
+      defaultPolicy: desktopPolicyDefaults,
+      assignedPolicies: [desktopPolicyDefaults, JSON.stringify({ access: { mode: "locked", capabilities: {} } })],
+    });
+    expect(result).toEqual(restrictedDesktopPolicyValue);
+  });
+
+  test("custom limits block independently and cannot override another team's block", () => {
+    const result = calculateEffectiveDesktopPolicy({
+      orgPolicyCount: 3,
+      defaultPolicy: desktopPolicyDefaults,
+      assignedPolicies: [
+        { access: { mode: "custom", capabilities: { allowManageExtensions: false } } },
+        { access: { mode: "custom", capabilities: { allowManageExtensions: true, allowCustomProviders: false } } },
+      ],
+    });
+    expect(result.allowManageExtensions).toBe(false);
+    expect(result.allowCustomProviders).toBe(false);
+    expect(result.allowControlSettings).toBe(true);
+  });
+
+  test("JSON storage and edits by older callers preserve explicit access limits", () => {
+    const access = { mode: "locked", capabilities: { allowManageExtensions: false } };
+    const existingPolicy = JSON.stringify({ access });
+    expect(normalizeDesktopPolicyDocument(existingPolicy).access).toEqual(access);
+    const result = resolveDesktopPolicyDocumentWrite({
+      existingPolicy,
+      value: { allowCustomProviders: true },
+      preserveExistingOnboardingPrompts: true,
+    });
+    expect(result.access).toEqual(access);
+    expect(calculateEffectiveDesktopPolicy({ orgPolicyCount: 2, defaultPolicy: desktopPolicyDefaults, assignedPolicies: [result] }).allowCustomProviders).toBe(false);
   });
 });
