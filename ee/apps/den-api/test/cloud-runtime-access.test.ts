@@ -73,10 +73,10 @@ function options(input: {
     loadWorker: async () => input.runtimeWorker,
     store: input.runtimeStore ?? store(),
     getSandboxRecord: async () => ({
-      signed_preview_url: input.signedPreviewUrl ?? "https://fresh.preview.example.test",
-      signed_preview_url_expires_at: input.expiresAt ?? new Date("2026-08-27T12:00:00.000Z"),
+      endpointUrl: input.signedPreviewUrl ?? "https://fresh.preview.example.test",
+      endpointExpiresAt: input.expiresAt ?? new Date("2026-08-27T12:00:00.000Z"),
     }),
-    inspectSandbox: async () => ({ state: "started" }),
+    inspectSandbox: async () => ({ state: "running" }),
     refreshSignedPreview: async () => null,
     probeSignedPreview: async () => true,
     startWake: () => {},
@@ -140,8 +140,8 @@ describe("Cloud runtime access resolver", () => {
         expiresAt: new Date("2026-08-27T09:00:00.000Z"),
       }),
       refreshSignedPreview: async () => ({
-        signed_preview_url: "https://refreshed.preview.example.test",
-        signed_preview_url_expires_at: new Date("2026-08-27T12:00:00.000Z"),
+        endpointUrl: "https://refreshed.preview.example.test",
+        endpointExpiresAt: new Date("2026-08-27T12:00:00.000Z"),
       }),
       probeSignedPreview: async (url) => {
         probed.push(url)
@@ -168,8 +168,8 @@ describe("Cloud runtime access resolver", () => {
         expiresAt: new Date("2026-08-27T09:00:00.000Z"),
       }),
       refreshSignedPreview: async () => ({
-        signed_preview_url: "https://still-stale.preview.example.test",
-        signed_preview_url_expires_at: new Date("2026-08-27T10:00:00.000Z"),
+        endpointUrl: "https://still-stale.preview.example.test",
+        endpointExpiresAt: new Date("2026-08-27T10:00:00.000Z"),
       }),
       probeSignedPreview: async () => {
         probes += 1
@@ -296,8 +296,8 @@ describe("Cloud runtime access resolver", () => {
     const result = await runtimeAccess.resolveCloudRuntimeAccess({ organizationId, workerId: runtimeWorker.id }, {
       ...options({ runtimeWorker, runtimeStore }),
       getSandboxRecord: async () => ({
-        signed_preview_url: "https://recover.preview.example.test",
-        signed_preview_url_expires_at: new Date("2026-08-27T12:00:00.000Z"),
+        endpointUrl: "https://recover.preview.example.test",
+        endpointExpiresAt: new Date("2026-08-27T12:00:00.000Z"),
       }),
       startRecovery: (workerId) => {
         recovery = lifecycle.recoverClaimedCloudWorker(workerId, {

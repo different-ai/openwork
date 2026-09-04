@@ -138,15 +138,15 @@ function contextMiddleware(context: OrganizationContext, input: { userName?: str
 
 function fakeSandbox() {
   return {
-    signed_preview_url: "https://preview.example.test",
-    signed_preview_url_expires_at: new Date(Date.now() + 60_000),
+    endpointUrl: "https://preview.example.test",
+    endpointExpiresAt: new Date(Date.now() + 60_000),
   }
 }
 
 function fakeSandboxWithId(sandboxId: string) {
   return {
     ...fakeSandbox(),
-    sandbox_id: sandboxId,
+    sandbox: { providerId: "daytona", ref: { sandboxId } },
   }
 }
 

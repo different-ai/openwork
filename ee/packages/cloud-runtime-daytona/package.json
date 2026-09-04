@@ -1,0 +1,30 @@
+{
+  "name": "@openwork-ee/cloud-runtime-daytona",
+  "private": true,
+  "type": "module",
+  "description": "Daytona implementation of the OpenWork Cloud runtime provider contract.",
+  "main": "./dist/index.js",
+  "types": "./src/index.ts",
+  "source": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",
+    "test": "bun test src"
+  },
+  "dependencies": {
+    "@daytonaio/sdk": "^0.201.0",
+    "@openwork-ee/cloud-runtime": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "tsup": "^8.5.0",
+    "typescript": "^5.5.4"
+  }
+}

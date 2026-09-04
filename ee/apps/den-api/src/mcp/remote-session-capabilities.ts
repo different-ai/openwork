@@ -24,6 +24,7 @@ import {
   DEFAULT_TTL_MS,
   type RemoteSessionCommandStore,
 } from "../remote-sessions/commands.js"
+import { cloudRuntimeAvailable } from "../workers/cloud-runtime.js"
 import { resolveCloudRuntimeAccess, type CloudWorkerAccess } from "../workers/worker-access.js"
 import { fetchPreviewNoRedirect, previewFetch } from "../workers/preview-fetch.js"
 import { scoreText, tokenize, type CapabilityMatch } from "./search.js"
@@ -252,15 +253,15 @@ const CLOUD_NOT_AVAILABLE_MESSAGE =
 
 /**
  * Whether the remote-session capabilities exist on this deployment at all.
- * When Den cannot host Cloud (self-hosted single-org mode or no Daytona
- * provisioner), the capabilities are hidden from search and execute reports
+ * When Den cannot host Cloud (self-hosted single-org mode or no Cloud runtime
+ * provider), the capabilities are hidden from search and execute reports
  * them as unknown. Organization entitlement is enforced at execution time by
  * the OpenWork Web access check, which returns a clear access-required error.
  */
 export function remoteSessionCapabilitiesEnabled(
   _organizationMetadata?: Record<string, unknown> | string | null | undefined,
 ): boolean {
-  if (env.provisionerMode !== "daytona" || !env.daytona.apiKey) return false
+  if (!cloudRuntimeAvailable()) return false
   return cloudHostingAvailable({ orgMode: env.orgMode })
 }
 

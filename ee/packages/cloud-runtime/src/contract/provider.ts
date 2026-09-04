@@ -41,6 +41,7 @@ export type ProviderCapabilities = {
 
 export type SandboxState =
   | "creating"
+  | "starting"
   | "running"
   | "stopping"
   | "stopped"

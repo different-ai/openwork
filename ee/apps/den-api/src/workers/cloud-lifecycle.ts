@@ -8,12 +8,12 @@ import { captureException } from "../observability/runtime.js"
 import { CLOUD_INSTANCE_BACKEND } from "./cloud-constants.js"
 import { automationUpdateChangedRows } from "../automations/update-result.js"
 import {
-  isDaytonaSandboxMissingError,
-  provisionWorkerOnDaytona,
-  stopWorkerOnDaytona,
-  wakeWorkerOnDaytona,
-  type StopWorkerOnDaytonaResult,
-} from "./daytona.js"
+  isCloudRuntimeInstanceMissingError,
+  type ProvisionInput,
+  type ProvisionedInstance,
+  type StopInstanceResult,
+} from "@openwork-ee/cloud-runtime/orchestrator"
+import { cloudRuntimeConfigured, getCloudRuntime, type CloudRuntimeAvailabilityOptions } from "./cloud-runtime.js"
 import { withProvisionDeadline } from "./provision-deadline.js"
 import { touchProvisioningWorker, withProvisioningHeartbeat } from "./provisioning-heartbeat.js"
 import {
@@ -27,9 +27,9 @@ type WorkerId = typeof WorkerTable.$inferSelect.id
 type WorkerStatus = typeof WorkerTable.$inferSelect.status
 type CloudWorker = Pick<typeof WorkerTable.$inferSelect, "id" | "name" | "status" | "last_active_at" | "updated_at"> & Partial<Pick<typeof WorkerTable.$inferSelect, "org_id">>
 type WorkerToken = typeof WorkerTokenTable.$inferSelect
-type WakeWorkerOnDaytona = typeof wakeWorkerOnDaytona
-type ProvisionWorkerOnDaytona = typeof provisionWorkerOnDaytona
-type StopWorkerOnDaytona = typeof stopWorkerOnDaytona
+type WakeWorker = (input: ProvisionInput) => Promise<ProvisionedInstance>
+type ProvisionWorker = (input: ProvisionInput) => Promise<ProvisionedInstance>
+type StopWorker = (workerId: WorkerId) => Promise<StopInstanceResult>
 
 type CloudLifecycleStore = {
   getWorker: (workerId: WorkerId) => Promise<CloudWorker | null>
@@ -49,8 +49,8 @@ type CloudLifecycleStore = {
 
 type WakeCloudWorkerOptions = {
   store?: CloudLifecycleStore
-  wakeWorker?: WakeWorkerOnDaytona
-  provisionWorker?: ProvisionWorkerOnDaytona
+  wakeWorker?: WakeWorker
+  provisionWorker?: ProvisionWorker
   materializeProviders?: typeof materializeCloudWorkerProviders
   deadlineMs?: number
   heartbeatIntervalMs?: number
@@ -58,8 +58,8 @@ type WakeCloudWorkerOptions = {
 
 type StopIdleCloudWorkersOptions = {
   store?: CloudLifecycleStore
-  stopWorker?: StopWorkerOnDaytona
-  provisionerMode?: typeof env.provisionerMode
+  stopWorker?: StopWorker
+  provisionerMode?: CloudRuntimeAvailabilityOptions["provisionerMode"]
   idleMs?: number
   idleBefore?: Date
   batchSize?: number
@@ -200,8 +200,8 @@ async function safelyMarkWorkerFailed(store: CloudLifecycleStore, workerId: Work
 
 async function runClaimedCloudWorkerRecovery(workerId: WorkerId, options: WakeCloudWorkerOptions) {
   const store = options.store ?? databaseCloudLifecycleStore
-  const wakeWorker = options.wakeWorker ?? wakeWorkerOnDaytona
-  const provisionWorker = options.provisionWorker ?? provisionWorkerOnDaytona
+  const wakeWorker = options.wakeWorker ?? ((input: ProvisionInput) => getCloudRuntime().wake(input))
+  const provisionWorker = options.provisionWorker ?? ((input: ProvisionInput) => getCloudRuntime().provision(input))
   const materializeProviders = options.materializeProviders ?? materializeCloudWorkerProviders
   const deadlineMs = options.deadlineMs ?? env.cloudProvisionDeadlineMs
 
@@ -252,11 +252,11 @@ async function runClaimedCloudWorkerRecovery(workerId: WorkerId, options: WakeCl
             try {
               return await wakeWorker(wakeInput)
             } catch (error) {
-              if (!isDaytonaSandboxMissingError(error)) {
+              if (!isCloudRuntimeInstanceMissingError(error)) {
                 throw error
               }
 
-              logger.warn("worker wake sandbox missing; reprovisioning", { worker_id: workerId, error })
+              logger.warn("worker wake instance missing; reprovisioning", { worker_id: workerId, error })
               return provisionWorker(wakeInput)
             }
           })(),
@@ -342,17 +342,17 @@ export async function recoverClaimedCloudWorker(workerId: WorkerId, options: Wak
   return runWorkerRecoveryOnce(workerId, () => runClaimedCloudWorkerRecovery(workerId, options))
 }
 
-function stopResultAllowsStoppedStatus(result: StopWorkerOnDaytonaResult) {
-  return result.status === "stopped" || result.status === "no_sandbox"
+function stopResultAllowsStoppedStatus(result: StopInstanceResult) {
+  return result.status === "stopped" || result.status === "no_instance"
 }
 
 export async function stopIdleCloudWorkers(options: StopIdleCloudWorkersOptions = {}) {
-  if ((options.provisionerMode ?? env.provisionerMode) !== "daytona") {
+  if (!cloudRuntimeConfigured({ provisionerMode: options.provisionerMode })) {
     return { checked: 0, stopped: 0 }
   }
 
   const store = options.store ?? databaseCloudLifecycleStore
-  const stopWorker = options.stopWorker ?? stopWorkerOnDaytona
+  const stopWorker = options.stopWorker ?? ((workerId: WorkerId) => getCloudRuntime().stop(workerId))
   const idleBefore = options.idleBefore ?? new Date(Date.now() - (options.idleMs ?? env.cloudIdleStopMs))
   const workers = await store.listIdleWorkers({
     idleBefore,

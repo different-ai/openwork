@@ -22,6 +22,28 @@ export type FakeExecResult = {
   stderr?: string
 }
 
+export type FakeOperationName =
+  | "create"
+  | "find"
+  | "get"
+  | "inspect"
+  | "start"
+  | "stop"
+  | "destroy"
+  | "exec"
+  | "endpoint"
+  | "storage.ensureVolume"
+  | "storage.eraseSubpaths"
+  | "storage.exists"
+
+export type FakeOperation = {
+  name: FakeOperationName
+  /** Per-operation-name call count, starting at 1. */
+  attempt: number
+  sandboxId?: string
+  idempotencyKey?: string
+}
+
 export type FakeProviderOptions = {
   id?: string
   capabilities?: Partial<ProviderCapabilities>
@@ -31,6 +53,12 @@ export type FakeProviderOptions = {
   now?: () => number
   /** Decide what a command does; defaults to exit 0 with no output. */
   onExec?: (input: { sandboxId: string; spec: ExecSpec }) => FakeExecResult | Promise<FakeExecResult>
+  /**
+   * Consulted before every operation. Throw to fail the operation (typically a
+   * `RuntimeProviderError`); mutate the fake through `provider.fake` to model
+   * a host that changes state underneath the orchestrator.
+   */
+  onOperation?: (operation: FakeOperation) => void | Promise<void>
 }
 
 export type FakeSandboxRecord = {
@@ -47,7 +75,12 @@ export type FakeProvider = SandboxProvider & {
   readonly fake: {
     sandboxes(): FakeSandboxRecord[]
     sandbox(idempotencyKey: string): FakeSandboxRecord | null
+    /** Register an instance the host already has, bypassing hooks and counters. */
+    seed(input: { idempotencyKey: string; state: SandboxState; workerId?: string; labels?: Record<string, string>; hidden?: boolean }): FakeSandboxRecord
     setState(sandboxId: string, state: SandboxState): void
+    /** Hidden instances are invisible to `find` and `get` (read-after-write lag). */
+    setVisible(sandboxId: string, visible: boolean): void
+    count(operation: FakeOperationName, sandboxId?: string): number
     volumeFiles(volumeName: string): Set<string>
     /** Simulate a file the bootstrap wrote onto a persistent volume. */
     writeVolumeFile(volumeName: string, path: string): void
@@ -75,7 +108,15 @@ export function createFakeProvider(options: FakeProviderOptions = {}): FakeProvi
   const sandboxes = new Map<string, FakeSandboxRecord>()
   const volumes = new Map<string, { ref: VolumeRef; files: Set<string> }>()
   const calls: string[] = []
+  const attempts = new Map<FakeOperationName, number>()
+  const hidden = new Set<string>()
   let sequence = 0
+
+  async function before(name: FakeOperationName, detail: Omit<FakeOperation, "name" | "attempt"> = {}) {
+    const attempt = (attempts.get(name) ?? 0) + 1
+    attempts.set(name, attempt)
+    await options.onOperation?.({ name, attempt, ...detail })
+  }
 
   function fail(code: RuntimeProviderError["code"], message: string, retryable?: boolean): never {
     throw new RuntimeProviderError({ providerId, code, message, retryable })
@@ -117,6 +158,7 @@ export function createFakeProvider(options: FakeProviderOptions = {}): FakeProvi
   const storage: SandboxStorage = {
     async ensureVolume(name, _opts: ProviderTimeout) {
       calls.push(`storage.ensureVolume:${name}`)
+      await before("storage.ensureVolume")
       const existing = volumes.get(name)
       if (existing) return existing.ref
       const ref: VolumeRef = { providerId, id: `vol-${++sequence}`, name }
@@ -125,6 +167,7 @@ export function createFakeProvider(options: FakeProviderOptions = {}): FakeProvi
     },
     async eraseSubpaths(volume, subpaths, _opts) {
       calls.push(`storage.eraseSubpaths:${volume.name}:${subpaths.join(",")}`)
+      await before("storage.eraseSubpaths")
       const entry = volumeRecord(volume)
       for (const file of Array.from(entry.files)) {
         if (subpaths.some((subpath) => file === subpath || file.startsWith(`${subpath}/`))) {
@@ -134,7 +177,18 @@ export function createFakeProvider(options: FakeProviderOptions = {}): FakeProvi
     },
     async exists(volume, path, _opts) {
       calls.push(`storage.exists:${volume.name}:${path}`)
-      return volumeRecord(volume).files.has(path)
+      await before("storage.exists")
+      const files = volumeRecord(volume).files
+      const lastSlash = path.lastIndexOf("/")
+      const directory = lastSlash === -1 ? "" : path.slice(0, lastSlash)
+      const pattern = lastSlash === -1 ? path : path.slice(lastSlash + 1)
+      if (!/[*?]/.test(pattern)) return files.has(path)
+      const matcher = new RegExp(`^${pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`)
+      return Array.from(files).some((file) => {
+        const fileSlash = file.lastIndexOf("/")
+        const fileDirectory = fileSlash === -1 ? "" : file.slice(0, fileSlash)
+        return fileDirectory === directory && matcher.test(file.slice(fileSlash + 1))
+      })
     },
   }
 
@@ -144,6 +198,7 @@ export function createFakeProvider(options: FakeProviderOptions = {}): FakeProvi
     currentImage: () => image,
     async create(spec, _opts) {
       calls.push(`create:${spec.idempotencyKey}`)
+      await before("create", { idempotencyKey: spec.idempotencyKey })
       for (const record of sandboxes.values()) {
         if (record.spec.idempotencyKey === spec.idempotencyKey && record.state !== "missing") {
           fail("conflict", `sandbox ${spec.idempotencyKey} already exists`, false)
@@ -165,8 +220,9 @@ export function createFakeProvider(options: FakeProviderOptions = {}): FakeProvi
     },
     async find(query: SandboxQuery) {
       calls.push(`find:${query.idempotencyKey ?? JSON.stringify(query.labels ?? {})}`)
+      await before("find", { idempotencyKey: query.idempotencyKey })
       for (const record of sandboxes.values()) {
-        if (record.state === "missing") continue
+        if (record.state === "missing" || hidden.has(record.id)) continue
         if (query.idempotencyKey !== undefined && record.spec.idempotencyKey !== query.idempotencyKey) continue
         if (query.labels && Object.entries(query.labels).some(([key, value]) => record.spec.labels[key] !== value)) continue
         return handleOf(record)
@@ -175,16 +231,19 @@ export function createFakeProvider(options: FakeProviderOptions = {}): FakeProvi
     },
     async get(ref) {
       calls.push(`get:${ref.ref.sandboxId ?? "?"}`)
+      await before("get", { sandboxId: ref.ref.sandboxId })
       const record = recordFor(ref)
-      return record && record.state !== "missing" ? handleOf(record) : null
+      return record && record.state !== "missing" && !hidden.has(record.id) ? handleOf(record) : null
     },
     async inspect(handle) {
       calls.push(`inspect:${handle.ref.ref.sandboxId ?? "?"}`)
+      await before("inspect", { sandboxId: handle.ref.ref.sandboxId })
       const record = recordFor(handle.ref)
       return record ? handleOf(record) : { ...handle, state: "missing", observedAt: now() }
     },
     async start(handle, _opts) {
       calls.push(`start:${handle.ref.ref.sandboxId ?? "?"}`)
+      await before("start", { sandboxId: handle.ref.ref.sandboxId })
       const record = requireRecord(handle)
       if (record.state === "stopping" || record.state === "creating") {
         fail("invalid_state", `sandbox ${record.id} state change in progress`)
@@ -193,16 +252,19 @@ export function createFakeProvider(options: FakeProviderOptions = {}): FakeProvi
     },
     async stop(handle, _opts) {
       calls.push(`stop:${handle.ref.ref.sandboxId ?? "?"}`)
+      await before("stop", { sandboxId: handle.ref.ref.sandboxId })
       const record = requireRecord(handle)
       record.state = "stopped"
     },
     async destroy(handle, _opts) {
       calls.push(`destroy:${handle.ref.ref.sandboxId ?? "?"}`)
+      await before("destroy", { sandboxId: handle.ref.ref.sandboxId })
       const record = requireRecord(handle)
       record.state = "missing"
     },
     async exec(handle, spec) {
       calls.push(`exec:${handle.ref.ref.sandboxId ?? "?"}`)
+      await before("exec", { sandboxId: handle.ref.ref.sandboxId })
       const record = requireRecord(handle)
       if (record.state !== "running") {
         fail("invalid_state", `sandbox ${record.id} is ${record.state}`, false)
@@ -221,6 +283,7 @@ export function createFakeProvider(options: FakeProviderOptions = {}): FakeProvi
     },
     async endpoint(handle, port, opts) {
       calls.push(`endpoint:${handle.ref.ref.sandboxId ?? "?"}:${port}`)
+      await before("endpoint", { sandboxId: handle.ref.ref.sandboxId })
       const record = requireRecord(handle)
       const ttl = opts?.ttlSeconds ?? endpointTtlSeconds
       const endpoint: Endpoint = {
@@ -235,11 +298,40 @@ export function createFakeProvider(options: FakeProviderOptions = {}): FakeProvi
       sandboxes: () => Array.from(sandboxes.values()),
       sandbox: (idempotencyKey) =>
         Array.from(sandboxes.values()).find((record) => record.spec.idempotencyKey === idempotencyKey && record.state !== "missing") ?? null,
+      seed: (input) => {
+        const record: FakeSandboxRecord = {
+          id: `sbx-${++sequence}`,
+          spec: {
+            workerId: input.workerId ?? `worker-${input.idempotencyKey}`,
+            idempotencyKey: input.idempotencyKey,
+            image,
+            labels: input.labels ?? {},
+            env: {},
+            storage: [],
+            exposePorts: [],
+          },
+          state: input.state,
+          region,
+          createdAt: now(),
+          execs: [],
+        }
+        sandboxes.set(record.id, record)
+        if (input.hidden) hidden.add(record.id)
+        return record
+      },
       setState: (sandboxId, state) => {
         const record = sandboxes.get(sandboxId)
         if (!record) throw new Error(`fake sandbox ${sandboxId} does not exist`)
         record.state = state
       },
+      setVisible: (sandboxId, visible) => {
+        if (visible) hidden.delete(sandboxId)
+        else hidden.add(sandboxId)
+      },
+      count: (operation, sandboxId) =>
+        calls.filter((call) => call === operation || call.startsWith(`${operation}:`))
+          .filter((call) => sandboxId === undefined || call.split(":")[1] === sandboxId)
+          .length,
       volumeFiles: (volumeName) => {
         const entry = volumes.get(volumeName)
         if (!entry) throw new Error(`fake volume ${volumeName} does not exist`)
