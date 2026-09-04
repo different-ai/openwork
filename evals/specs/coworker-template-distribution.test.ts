@@ -30,7 +30,7 @@ function template(name: string) {
 }
 
 test.skipIf(!mysql || !redis)(title, { timeout: 300_000 }, async ({ place, evidence }) => {
-  await using den = await server({ place, org: { name: "Coworker distribution", members: { teammate: { name: "Team Member" }, outsider: { name: "Other Member" } } } });
+  await using den = await server({ place, org: { name: "Coworker distribution", admin: { name: "Preview operator" }, members: { teammate: { name: "Team Member" }, outsider: { name: "Other Member" } } } });
   const admin = den.admin;
   const teammate = den.members.teammate!;
   const outsider = den.members.outsider!;
