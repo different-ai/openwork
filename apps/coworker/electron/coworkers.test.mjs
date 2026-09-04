@@ -286,6 +286,28 @@ test("updateCoworker patches profile and platform references", async () => {
   assert.equal(cleared.modelVariant, "");
 });
 
+test("the record says who chose the model: the app's pick may be swapped once, the person's never, and a record that never said is the person's", async () => {
+  const coworkersDir = await tempCoworkersDir();
+  const coworker = await createCoworker(coworkersDir, { name: "Pilot" });
+  assert.equal(coworker.modelChosenBy, "", "a new coworker has no model and no chooser yet");
+  const picked = await updateCoworker(coworkersDir, "pilot", { model: "openwork/claude", modelVariant: "", modelChosenBy: "app" });
+  assert.equal(picked.modelChosenBy, "app");
+  assert.equal((await getCoworker(coworkersDir, "pilot")).modelChosenBy, "app", "the answer survives a re-read (a relaunch)");
+  const effort = await updateCoworker(coworkersDir, "pilot", { modelVariant: "high" });
+  assert.equal(effort.modelChosenBy, "app", "an effort alone does not change who chose the model; the renderer says so when the person did");
+  const chosen = await updateCoworker(coworkersDir, "pilot", { model: "openwork/claude", modelVariant: "high", modelChosenBy: "person" });
+  assert.equal(chosen.modelChosenBy, "person");
+  const unsaid = await updateCoworker(coworkersDir, "pilot", { model: "openwork/other", modelVariant: "" });
+  assert.equal(unsaid.modelChosenBy, "", "a model change that does not say who chose it is the person's: the app never inherits a claim");
+  assert.equal((await updateCoworker(coworkersDir, "pilot", { modelChosenBy: "nobody" })).modelChosenBy, "", "unknown values read as the person's");
+  // A record written before the field existed reads as the person's.
+  const legacy = await createCoworker(coworkersDir, { name: "Legacy" });
+  const configPath = path.join(legacy.path, "coworker.md");
+  await writeFile(configPath, (await readFile(configPath, "utf8")).replace(/^modelChosenBy: .*\n/m, "").replace(/^model: .*$/m, 'model: "openwork/claude"'), "utf8");
+  assert.equal((await getCoworker(coworkersDir, "legacy")).model, "openwork/claude");
+  assert.equal((await getCoworker(coworkersDir, "legacy")).modelChosenBy, "");
+});
+
 test("avatar settings fall back when stored or patched values are unknown", async () => {
   const coworkersDir = await tempCoworkersDir();
   const created = await createCoworker(coworkersDir, {
