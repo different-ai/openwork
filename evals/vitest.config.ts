@@ -20,8 +20,6 @@ const namedLiveSpec = process.argv.some((argument) => argument.endsWith(".live.t
 export default defineConfig({
   test: {
     ...common,
-    fileParallelism: managedStack,
-    maxWorkers: e2eWorkers,
     projects: [
       {
         resolve: appResolve,
@@ -38,6 +36,8 @@ export default defineConfig({
         test: {
           ...common,
           name: "e2e",
+          fileParallelism: managedStack,
+          maxWorkers: e2eWorkers,
           testTimeout: 600_000,
           hookTimeout: 600_000,
           globalSetup: ["./runner/prepare-stack.ts"],
