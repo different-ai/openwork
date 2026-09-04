@@ -189,11 +189,10 @@ export function getWorkspaceSettingsTabs(): SettingsTab[] {
 
 export function getGlobalSettingsTabs(
   developerMode: boolean,
-  capabilities: Pick<PlatformCapabilities, "autoUpdate" | "localRuntimeControl">,
+  capabilities: Pick<PlatformCapabilities, "autoUpdate">,
 ): SettingsTab[] {
   const tabs: SettingsTab[] = ["ai", "appearance", "environment"];
   if (capabilities.autoUpdate) tabs.push("updates");
-  if (capabilities.localRuntimeControl) tabs.push("recovery");
   if (developerMode) tabs.push("debug");
   return tabs;
 }

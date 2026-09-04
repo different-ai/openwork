@@ -303,7 +303,6 @@ export function parseSettingsPath(pathname: string): {
     case "appearance":
     case "environment":
     case "updates":
-    case "recovery":
     case "debug":
       return { tab: head, redirectPath: null };
     case "cloud-account":
@@ -312,6 +311,8 @@ export function parseSettingsPath(pathname: string): {
       return { tab: head, redirectPath: null };
     case "connect":
       return { tab: "extensions", redirectPath: "extensions", extensionsSection: "all" };
+    case "recovery":
+      return { tab: "advanced", redirectPath: "advanced" };
     case "skills":
       return { tab: "extensions", redirectPath: "extensions/skills", extensionsSection: "skills" };
     case "mcp":
@@ -2610,6 +2611,21 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               refreshCloudMcpHealth={refreshCloudMcpHealth}
               organizationServer={denSession}
             />
+            {platform.capabilities.localRuntimeControl ? (
+              <RecoveryView
+                anyActiveRuns={false}
+                workspaceConfigPath={selectedWorkspaceRoot ? `${selectedWorkspaceRoot}/.opencode/openwork.json` : ""}
+                resetConfigBusy={resetConfigBusy}
+                onResetAppConfigDefaults={() => {}}
+                configActionStatus={configActionStatus}
+                cacheRepairBusy={false}
+                cacheRepairResult={null}
+                onRepairOpencodeCache={() => {}}
+                dockerCleanupBusy={false}
+                dockerCleanupResult={null}
+                onCleanupOpenworkDockerContainers={() => {}}
+              />
+            ) : null}
             <EffectivePermissionsPanel
               openworkServerClient={openworkClient}
               openworkServerStatus={routeOpenworkStatus}
@@ -2655,22 +2671,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               readDesktopDistributionInfo().flavor === "public" &&
               desktopConfig.config.allowAlphaUpdates !== false
             }
-          />
-        );
-      case "recovery":
-        return (
-          <RecoveryView
-            anyActiveRuns={false}
-            workspaceConfigPath={selectedWorkspaceRoot ? `${selectedWorkspaceRoot}/.opencode/openwork.json` : ""}
-            resetConfigBusy={resetConfigBusy}
-            onResetAppConfigDefaults={() => {}}
-            configActionStatus={configActionStatus}
-            cacheRepairBusy={false}
-            cacheRepairResult={null}
-            onRepairOpencodeCache={() => {}}
-            dockerCleanupBusy={false}
-            dockerCleanupResult={null}
-            onCleanupOpenworkDockerContainers={() => {}}
           />
         );
       case "environment":
