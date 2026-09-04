@@ -17,11 +17,11 @@ const detailsPanel = { testId: "session-error-details" };
 const statusLine = { text: /Status: 429/ };
 const requestId = { text: new RegExp(REQUEST_ID) };
 
-test("session error cards expose provider diagnostics only in Developer mode", async ({ user, probe, step, world }) => {
+test("session error cards expose provider diagnostics only in Developer mode", async ({ user, probe, step, world, place }) => {
   // Toggle Developer mode the way a person does: command palette → "Enable/Disable Developer Mode".
   const toggleDeveloperMode = async (next: "on" | "off") => {
     const label = next === "on" ? /enable developer mode/i : /disable developer mode/i;
-    await user.press(process.platform === "darwin" ? "Meta+K" : "Control+K");
+    await user.press(place.kind !== "daytona" && process.platform === "darwin" ? "Meta+K" : "Control+K");
     await user.click({ role: "option", label });
     await probe.eventually(() => probe.storage("openwork.developerMode"), {
       until: (value) => String(value) === (next === "on" ? "1" : "0"),
