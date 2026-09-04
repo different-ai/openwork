@@ -971,6 +971,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence, place }) =
         const appName = `bench-openwork-app-${benchEngine}-${coldIndex}`;
         const timelineStart = timeline().length;
         const coldStartedAt = Date.now();
+        // Benchmarks intentionally stay local so placement does not distort latency measurements.
         app = await desktop({
           name: appName,
           profileDir,

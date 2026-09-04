@@ -14,11 +14,6 @@ const title = enabled
   ? "the OpenCode v2 engine preview flag controls a hot-mirroring parallel sidecar"
   : "OpenCode v2 engine preview flag skipped — needs: set OPENWORK_EVAL_E2E_TESTS=1";
 
-interface ServerInfo {
-  baseUrl: string;
-  token: string;
-}
-
 interface EngineV2PreviewStatus {
   enabled: boolean;
   running: boolean;
@@ -30,6 +25,11 @@ interface EngineV2PreviewStatus {
   catalogModelIds: string[];
   lastMirroredAt?: string;
   lastError?: string;
+}
+
+interface ServerFetchResult {
+  status: number;
+  json: unknown;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -71,33 +71,6 @@ async function resolveOpencodeV2Bin(): Promise<string> {
   return binary;
 }
 
-async function readServerInfo(app: Parameters<typeof evalIn>[0]): Promise<ServerInfo> {
-  const value = await evalIn(app, `(async () => {
-    let baseUrl = "";
-    let token = "";
-    try {
-      const invokeDesktop = window.__OPENWORK_ELECTRON__ && window.__OPENWORK_ELECTRON__.invokeDesktop;
-      if (invokeDesktop) {
-        const info = await invokeDesktop("openworkServerInfo");
-        if (info && info.running === true) {
-          baseUrl = String(info.baseUrl ?? info.connectUrl ?? "").trim().replace(/\\\/+$/, "");
-          token = String(info.ownerToken ?? info.clientToken ?? "").trim();
-        }
-      }
-    } catch {}
-    if (!baseUrl || !token) {
-      const port = (localStorage.getItem("openwork.server.port") ?? "").trim();
-      baseUrl = port ? "http://127.0.0.1:" + port : baseUrl;
-      token = token || (localStorage.getItem("openwork.server.token") ?? "").trim();
-    }
-    return { baseUrl, token };
-  })()`, { awaitPromise: true, timeoutMs: 15_000 });
-  if (!isRecord(value) || typeof value.baseUrl !== "string" || !value.baseUrl || typeof value.token !== "string" || !value.token) {
-    throw new Error(`Local server credentials are unavailable: ${JSON.stringify(value)}`);
-  }
-  return { baseUrl: value.baseUrl, token: value.token };
-}
-
 function stringArray(value: unknown, field: string): string[] {
   if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) {
     throw new Error(`Engine v2 status ${field} was not a string array: ${JSON.stringify(value)}`);
@@ -124,31 +97,53 @@ function parseStatus(value: unknown): EngineV2PreviewStatus {
   };
 }
 
-function authHeaders(info: ServerInfo): { Authorization: string } {
-  return { Authorization: `Bearer ${info.token}` };
+async function serverFetchJson(
+  app: Parameters<typeof evalIn>[0],
+  path: string,
+  init: { method?: string; body?: unknown; timeoutMs?: number } = {},
+): Promise<ServerFetchResult> {
+  const timeoutMs = init.timeoutMs ?? 15_000;
+  const requestBody = init.body === undefined ? undefined : JSON.stringify(init.body);
+  if (init.body !== undefined && requestBody === undefined) throw new Error(`Could not serialize request body for ${path}`);
+  const value = await evalIn(app, `(async () => {
+    const port = (localStorage.getItem("openwork.server.port") ?? "").trim();
+    const token = (localStorage.getItem("openwork.server.token") ?? "").trim();
+    if (!port || !token) return { specProbeError: "missing local server credentials" };
+    const response = await fetch("http://127.0.0.1:" + port + ${JSON.stringify(path)}, {
+      method: ${JSON.stringify(init.method ?? "GET")},
+      headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+      ${requestBody === undefined ? "" : `body: ${JSON.stringify(requestBody)},`}
+      signal: AbortSignal.timeout(${timeoutMs}),
+    });
+    const text = await response.text();
+    let json = text;
+    try { json = JSON.parse(text); } catch {}
+    return { status: response.status, json };
+  })()`, { awaitPromise: true, timeoutMs: timeoutMs + 5_000 });
+  if (!isRecord(value) || typeof value.status !== "number" || !("json" in value)) {
+    throw new Error(`Server request ${path} failed: ${JSON.stringify(value)}`);
+  }
+  return { status: value.status, json: value.json };
 }
 
-async function readStatus(info: ServerInfo): Promise<EngineV2PreviewStatus> {
-  const response = await fetch(`${info.baseUrl}/experimental/engine-v2-preview/status`, {
-    headers: authHeaders(info),
-  });
-  const value: unknown = await response.json();
-  expect(response.status).toBe(200);
-  return parseStatus(value);
+async function readStatus(app: Parameters<typeof evalIn>[0]): Promise<EngineV2PreviewStatus> {
+  const result = await serverFetchJson(app, "/experimental/engine-v2-preview/status");
+  expect(result.status).toBe(200);
+  return parseStatus(result.json);
 }
 
 async function untilStatus(
-  info: ServerInfo,
+  app: Parameters<typeof evalIn>[0],
   predicate: (status: EngineV2PreviewStatus) => boolean,
   timeoutMs: number,
   label: string,
 ): Promise<EngineV2PreviewStatus> {
   const deadline = Date.now() + timeoutMs;
-  let last = await readStatus(info);
+  let last = await readStatus(app);
   while (Date.now() < deadline) {
     if (predicate(last)) return last;
     await new Promise((resolve) => setTimeout(resolve, 1_000));
-    last = await readStatus(info);
+    last = await readStatus(app);
   }
   throw new Error(`Timed out waiting for ${label}; last status: ${JSON.stringify(last)}`);
 }
@@ -202,13 +197,13 @@ test.skipIf(!enabled)(title, async ({ evidence, place }) => {
   try {
     app = await desktop({
       name: "engine-v2-preview-flag",
+      host: place.host(),
       profileDir,
       env: binPath === undefined ? {} : { OPENWORK_OPENCODE2_BIN: binPath },
     });
     const { workspaceId } = await createAndSelectWorkspace(app, { path: workspacePath });
-    const serverInfo = await readServerInfo(app);
 
-    const defaultStatus = await readStatus(serverInfo);
+    const defaultStatus = await readStatus(app);
     expect(defaultStatus).toMatchObject({ enabled: false, running: false });
     expect(Object.hasOwn(defaultStatus, "pid")).toBe(false);
     await go(app, `/workspace/${workspaceId}/settings/advanced`);
@@ -228,7 +223,7 @@ test.skipIf(!enabled)(title, async ({ evidence, place }) => {
       label: "enabled OpenCode v2 engine preview switch",
     });
     const runningStatus = await untilStatus(
-      serverInfo,
+      app,
       (status) => status.enabled && status.running && typeof status.pid === "number",
       180_000,
       "the OpenCode v2 sidecar to start",
@@ -239,7 +234,7 @@ test.skipIf(!enabled)(title, async ({ evidence, place }) => {
       timeoutMs: 30_000,
       label: "OpenCode v2 running status line",
     });
-    const healthResponse = await fetch(`${serverInfo.baseUrl}/health`, { headers: authHeaders(serverInfo) });
+    const healthResponse = await serverFetchJson(app, "/health");
     expect(healthResponse.status).toBe(200);
     evidence.recordAssertionEvidence(
       "F2 enabling starts the parallel sidecar without replacing v1",
@@ -247,10 +242,9 @@ test.skipIf(!enabled)(title, async ({ evidence, place }) => {
       true,
     );
 
-    const patchResponse = await fetch(`${serverInfo.baseUrl}/workspace/${workspaceId}/config`, {
+    const patchResponse = await serverFetchJson(app, `/workspace/${workspaceId}/config`, {
       method: "PATCH",
-      headers: { ...authHeaders(serverInfo), "content-type": "application/json" },
-      body: JSON.stringify({
+      body: {
         opencode: {
           provider: {
             "openwork-witness-e2e": {
@@ -262,12 +256,12 @@ test.skipIf(!enabled)(title, async ({ evidence, place }) => {
             "openwork-skip-e2e": { name: "Skip E2E", options: {} },
           },
         },
-      }),
+      },
     });
     expect(patchResponse.status).toBe(200);
     const patchCompletedAt = Date.now();
     const mirroredStatus = await untilStatus(
-      serverInfo,
+      app,
       (status) => status.mirroredProviderIds.includes("openwork-witness-e2e"),
       60_000,
       "the witness provider to be mirrored",
@@ -287,14 +281,14 @@ test.skipIf(!enabled)(title, async ({ evidence, place }) => {
 
     await clickPreviewSwitch(app);
     const disabledStatus = await untilStatus(
-      serverInfo,
+      app,
       (status) => !status.enabled && !status.running,
       60_000,
       "the OpenCode v2 sidecar to stop",
     );
     expect(Object.hasOwn(disabledStatus, "pid")).toBe(false);
     await new Promise((resolve) => setTimeout(resolve, 2_000));
-    const settledDisabledStatus = await readStatus(serverInfo);
+    const settledDisabledStatus = await readStatus(app);
     expect(settledDisabledStatus).toMatchObject({ enabled: false, running: false });
     expect(Object.hasOwn(settledDisabledStatus, "pid")).toBe(false);
     await waitFor(app, `${switchCheckedExpression} === "false"`, {

@@ -23,11 +23,6 @@ const modelIdV2 = "witness-model-v2";
 const modelNameV1 = "Witness Model V1";
 const modelNameV2 = "Witness Model V2";
 
-interface ServerInfo {
-  baseUrl: string;
-  token: string;
-}
-
 interface EngineV2PreviewStatus {
   enabled: boolean;
   running: boolean;
@@ -37,6 +32,11 @@ interface EngineV2PreviewStatus {
   skippedProviderIds: string[];
   catalogModelIds: string[];
   lastError?: string;
+}
+
+interface ServerFetchResult {
+  status: number;
+  json: unknown;
 }
 
 interface WitnessRequest {
@@ -88,37 +88,6 @@ async function resolveOpencodeV2Bin(): Promise<string> {
   return binary;
 }
 
-async function readServerInfo(app: Surface): Promise<ServerInfo> {
-  const value = await evalIn(app, `(async () => {
-    let baseUrl = "";
-    let token = "";
-    try {
-      const invokeDesktop = window.__OPENWORK_ELECTRON__ && window.__OPENWORK_ELECTRON__.invokeDesktop;
-      if (invokeDesktop) {
-        const info = await invokeDesktop("openworkServerInfo");
-        if (info && info.running === true) {
-          baseUrl = String(info.baseUrl ?? info.connectUrl ?? "").trim().replace(/\\\/+$/, "");
-          token = String(info.ownerToken ?? info.clientToken ?? "").trim();
-        }
-      }
-    } catch {}
-    if (!baseUrl || !token) {
-      const port = (localStorage.getItem("openwork.server.port") ?? "").trim();
-      baseUrl = port ? "http://127.0.0.1:" + port : baseUrl;
-      token = token || (localStorage.getItem("openwork.server.token") ?? "").trim();
-    }
-    return { baseUrl, token };
-  })()`, { awaitPromise: true, timeoutMs: 15_000 });
-  if (!isRecord(value) || typeof value.baseUrl !== "string" || !value.baseUrl || typeof value.token !== "string" || !value.token) {
-    throw new Error(`Local server credentials are unavailable: ${JSON.stringify(value)}`);
-  }
-  return { baseUrl: value.baseUrl, token: value.token };
-}
-
-function authHeaders(info: ServerInfo): { Authorization: string } {
-  return { Authorization: `Bearer ${info.token}` };
-}
-
 function stringArray(value: unknown, field: string): string[] {
   if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) {
     throw new Error(`Engine v2 status ${field} was not a string array: ${JSON.stringify(value)}`);
@@ -150,49 +119,72 @@ function parseStatus(value: unknown): EngineV2PreviewStatus {
   };
 }
 
-async function readStatus(info: ServerInfo): Promise<EngineV2PreviewStatus> {
-  const response = await fetch(`${info.baseUrl}/experimental/engine-v2-preview/status`, {
-    headers: authHeaders(info),
-    signal: AbortSignal.timeout(15_000),
-  });
-  const value: unknown = await response.json();
-  if (response.status !== 200) throw new Error(`Engine v2 status returned ${response.status}: ${JSON.stringify(value)}`);
-  return parseStatus(value);
+async function serverFetchJson(
+  app: Surface,
+  path: string,
+  init: { method?: string; body?: unknown; timeoutMs?: number } = {},
+): Promise<ServerFetchResult> {
+  const timeoutMs = init.timeoutMs ?? 15_000;
+  const requestBody = init.body === undefined ? undefined : JSON.stringify(init.body);
+  if (init.body !== undefined && requestBody === undefined) throw new Error(`Could not serialize request body for ${path}`);
+  const value = await evalIn(app, `(async () => {
+    const port = (localStorage.getItem("openwork.server.port") ?? "").trim();
+    const token = (localStorage.getItem("openwork.server.token") ?? "").trim();
+    if (!port || !token) return { specProbeError: "missing local server credentials" };
+    const response = await fetch("http://127.0.0.1:" + port + ${JSON.stringify(path)}, {
+      method: ${JSON.stringify(init.method ?? "GET")},
+      headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+      ${requestBody === undefined ? "" : `body: ${JSON.stringify(requestBody)},`}
+      signal: AbortSignal.timeout(${timeoutMs}),
+    });
+    const text = await response.text();
+    let json = text;
+    try { json = JSON.parse(text); } catch {}
+    return { status: response.status, json };
+  })()`, { awaitPromise: true, timeoutMs: timeoutMs + 5_000 });
+  if (!isRecord(value) || typeof value.status !== "number" || !("json" in value)) {
+    throw new Error(`Server request ${path} failed: ${JSON.stringify(value)}`);
+  }
+  return { status: value.status, json: value.json };
+}
+
+async function readStatus(app: Surface): Promise<EngineV2PreviewStatus> {
+  const result = await serverFetchJson(app, "/experimental/engine-v2-preview/status");
+  if (result.status !== 200) throw new Error(`Engine v2 status returned ${result.status}: ${JSON.stringify(result.json)}`);
+  return parseStatus(result.json);
 }
 
 async function untilStatus(
-  info: ServerInfo,
+  app: Surface,
   predicate: (status: EngineV2PreviewStatus) => boolean,
   timeoutMs: number,
   label: string,
 ): Promise<EngineV2PreviewStatus> {
   const deadline = Date.now() + timeoutMs;
-  let last = await readStatus(info);
+  let last = await readStatus(app);
   while (Date.now() < deadline) {
     if (predicate(last)) return last;
     await sleep(1_000);
-    last = await readStatus(info);
+    last = await readStatus(app);
   }
   throw new Error(`Timed out waiting for ${label}; last status: ${JSON.stringify(last)}`);
 }
 
-async function engineSessionCount(info: ServerInfo, workspaceId: string, lane: "opencode" | "opencode2"): Promise<number> {
+async function engineSessionCount(app: Surface, workspaceId: string, lane: "opencode" | "opencode2"): Promise<number> {
   const path = lane === "opencode" ? "opencode/session?limit=100" : "opencode2/api/session";
-  const response = await fetch(`${info.baseUrl}/workspace/${encodeURIComponent(workspaceId)}/${path}`, {
-    headers: authHeaders(info),
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (lane === "opencode2" && response.status === 503) return -1;
-  const value: unknown = await response.json();
-  if (!response.ok) throw new Error(`${lane} session list returned ${response.status}: ${JSON.stringify(value)}`);
+  const result = await serverFetchJson(app, `/workspace/${encodeURIComponent(workspaceId)}/${path}`);
+  if (lane === "opencode2" && result.status === 503) return -1;
+  if (result.status < 200 || result.status >= 300) {
+    throw new Error(`${lane} session list returned ${result.status}: ${JSON.stringify(result.json)}`);
+  }
   if (lane === "opencode") {
-    if (!Array.isArray(value)) throw new Error(`Unexpected v1 session list: ${JSON.stringify(value)}`);
-    return value.length;
+    if (!Array.isArray(result.json)) throw new Error(`Unexpected v1 session list: ${JSON.stringify(result.json)}`);
+    return result.json.length;
   }
-  if (!isRecord(value) || !Array.isArray(value.data)) {
-    throw new Error(`Unexpected v2 session list: ${JSON.stringify(value)}`);
+  if (!isRecord(result.json) || !Array.isArray(result.json.data)) {
+    throw new Error(`Unexpected v2 session list: ${JSON.stringify(result.json)}`);
   }
-  return value.data.length;
+  return result.json.data.length;
 }
 
 async function clickSwitch(app: Surface, ariaLabel: string): Promise<void> {
@@ -402,7 +394,7 @@ async function sendAndWaitForNonce(
   return { request, latencyMs };
 }
 
-test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place }) => {
+test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place, skip }) => {
   needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"] });
 
   const binPath = place.kind === "local" ? await resolveOpencodeV2Bin() : undefined;
@@ -477,34 +469,40 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place }) =
       response.end("data: [DONE]\n\n");
     });
   });
-  await new Promise<void>((resolve, reject) => {
-    witness.once("error", reject);
-    witness.listen(0, "127.0.0.1", resolve);
-  });
-  const address = witness.address();
-  if (!address || typeof address === "string") throw new Error("Witness server did not bind a TCP port");
-  const witnessBaseUrl = `http://127.0.0.1:${address.port}/v1`;
+  let witnessBaseUrl: string | undefined;
+  if (place.kind === "local") {
+    await new Promise<void>((resolve, reject) => {
+      witness.once("error", reject);
+      witness.listen(0, "127.0.0.1", resolve);
+    });
+    const address = witness.address();
+    if (!address || typeof address === "string") throw new Error("Witness server did not bind a TCP port");
+    witnessBaseUrl = `http://127.0.0.1:${address.port}/v1`;
+  }
   const profileDir = await mkdtemp(join(tmpdir(), "openwork-v2-chat-routing-eval-"));
   const workspacePath = join(profileDir, "workspace");
   const secondWorkspacePath = join(profileDir, "workspace-2");
   await mkdir(workspacePath, { recursive: true });
   await mkdir(secondWorkspacePath, { recursive: true });
-  await writeFile(join(workspacePath, "opencode.json"), `${JSON.stringify({
-    $schema: "https://opencode.ai/config.json",
-    provider: {
-      "witness-v1": {
-        npm: "@ai-sdk/openai-compatible",
-        name: "Witness V1",
-        options: { baseURL: witnessBaseUrl, apiKey: keyV1 },
-        models: { [modelIdV1]: { name: modelNameV1 } },
+  if (witnessBaseUrl !== undefined) {
+    await writeFile(join(workspacePath, "opencode.json"), `${JSON.stringify({
+      $schema: "https://opencode.ai/config.json",
+      provider: {
+        "witness-v1": {
+          npm: "@ai-sdk/openai-compatible",
+          name: "Witness V1",
+          options: { baseURL: witnessBaseUrl, apiKey: keyV1 },
+          models: { [modelIdV1]: { name: modelNameV1 } },
+        },
       },
-    },
-  }, null, 2)}\n`);
+    }, null, 2)}\n`);
+  }
 
   let app: Awaited<ReturnType<typeof desktop>> | undefined;
   try {
     app = await desktop({
       name: "opencode-v2-chat-routing",
+      host: place.host(),
       profileDir,
       env: {
         // This benchmark measures engine and UI latency, not plugins. On a fresh isolated HOME, the engine's external-plugin dependency bootstrap
@@ -521,10 +519,14 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place }) =
       },
     });
     const { workspaceId } = await createAndSelectWorkspace(app, { path: workspacePath });
-    const serverInfo = await readServerInfo(app);
+    if (place.kind === "daytona") {
+      await readStatus(app);
+      skip("needs: local placement for witness round-trip claims R1–R4 because Daytona cannot expose the spec process's 127.0.0.1 mock");
+    }
+    if (witnessBaseUrl === undefined) throw new Error("Local witness URL was unavailable");
 
     await selectModel(app, modelNameV1);
-    const v2BeforeEnable = await engineSessionCount(serverInfo, workspaceId, "opencode2");
+    const v2BeforeEnable = await engineSessionCount(app, workspaceId, "opencode2");
     expect(v2BeforeEnable).toBe(-1);
     const r1 = await sendAndWaitForNonce(
       app,
@@ -552,7 +554,7 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place }) =
     })()`, { timeoutMs: 60_000, label: "ready OpenCode v2 preview switch" });
     await clickSwitch(app, "OpenCode v2 engine preview");
     const runningStatus = await untilStatus(
-      serverInfo,
+      app,
       (status) => status.enabled && status.running && typeof status.pid === "number",
       180_000,
       "the OpenCode v2 sidecar to start",
@@ -566,13 +568,12 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place }) =
         && control.getAttribute("aria-disabled") !== "true";
     })()`, { timeoutMs: 30_000, label: "ready OpenCode v2 chat routing switch" });
     await clickSwitch(app, "Route chat through OpenCode v2");
-    await untilStatus(serverInfo, (status) => status.chatRouting, 30_000, "chat routing to be enabled");
+    await untilStatus(app, (status) => status.chatRouting, 30_000, "chat routing to be enabled");
     const routedOnAt = Date.now();
 
-    const patchResponse = await fetch(`${serverInfo.baseUrl}/workspace/${encodeURIComponent(workspaceId)}/config`, {
+    const patchResponse = await serverFetchJson(app, `/workspace/${encodeURIComponent(workspaceId)}/config`, {
       method: "PATCH",
-      headers: { ...authHeaders(serverInfo), "content-type": "application/json" },
-      body: JSON.stringify({
+      body: {
         opencode: {
           provider: {
             "witness-v2": {
@@ -583,12 +584,11 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place }) =
             },
           },
         },
-      }),
-      signal: AbortSignal.timeout(15_000),
+      },
     });
     expect(patchResponse.status).toBe(200);
     const mirroredStatus = await untilStatus(
-      serverInfo,
+      app,
       (status) => status.mirroredProviderIds.includes("witness-v2") && status.catalogModelIds.includes(modelIdV2),
       60_000,
       "the v2 witness provider to be mirrored",
@@ -598,8 +598,8 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place }) =
     await go(app, `/workspace/${workspaceId}/session`);
     await waitForModelInPicker(app, modelNameV2, 45_000);
     await closeModelPicker(app);
-    const v1BeforeR2 = await engineSessionCount(serverInfo, workspaceId, "opencode");
-    const v2BeforeR2 = await engineSessionCount(serverInfo, workspaceId, "opencode2");
+    const v1BeforeR2 = await engineSessionCount(app, workspaceId, "opencode");
+    const v2BeforeR2 = await engineSessionCount(app, workspaceId, "opencode2");
     expect(v2BeforeR2).toBeGreaterThanOrEqual(0);
 
     // New task uses the selected workspace's currently swapped client. This
@@ -615,8 +615,8 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place }) =
       routedOnAt,
       "R2 v2",
     );
-    const v1AfterR2 = await engineSessionCount(serverInfo, workspaceId, "opencode");
-    const v2AfterR2 = await engineSessionCount(serverInfo, workspaceId, "opencode2");
+    const v1AfterR2 = await engineSessionCount(app, workspaceId, "opencode");
+    const v2AfterR2 = await engineSessionCount(app, workspaceId, "opencode2");
     expect(v2AfterR2).toBeGreaterThan(v2BeforeR2);
     expect(v1AfterR2).toBe(v1BeforeR2);
     expect(r2.request.at).toBeGreaterThanOrEqual(routedOnAt);
@@ -640,7 +640,7 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place }) =
       label: "v2 session remains in the sidebar after switching workspaces",
     });
 
-    const statusAfterR2 = await readStatus(serverInfo);
+    const statusAfterR2 = await readStatus(app);
     expect(statusAfterR2.running).toBe(true);
     expect(statusAfterR2.pid).toBe(pid0);
     evidence.recordAssertionEvidence(
@@ -655,7 +655,7 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place }) =
       label: "enabled chat routing switch before reversal",
     });
     await clickSwitch(app, "Route chat through OpenCode v2");
-    await untilStatus(serverInfo, (status) => !status.chatRouting, 30_000, "chat routing to be disabled");
+    await untilStatus(app, (status) => !status.chatRouting, 30_000, "chat routing to be disabled");
     const routedOffAt = Date.now();
     await go(app, `/workspace/${workspaceId}/session`);
     await waitForModelInPicker(app, modelNameV1, 45_000);
@@ -671,7 +671,7 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place }) =
       routedOffAt,
       "R4 v1",
     );
-    const v2AfterR4 = await engineSessionCount(serverInfo, workspaceId, "opencode2");
+    const v2AfterR4 = await engineSessionCount(app, workspaceId, "opencode2");
     expect(r4.request.at).toBeGreaterThanOrEqual(routedOffAt);
     expect(r4.request.auth).toBe(`Bearer ${keyV1}`);
     expect(r4.request.model).toBe(modelIdV1);
@@ -683,8 +683,10 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place }) =
     );
   } finally {
     if (app !== undefined) await app.stop();
-    witness.closeAllConnections();
-    await new Promise<void>((resolve, reject) => witness.close((error) => error ? reject(error) : resolve()));
+    if (witness.listening) {
+      witness.closeAllConnections();
+      await new Promise<void>((resolve, reject) => witness.close((error) => error ? reject(error) : resolve()));
+    }
     await rm(profileDir, { recursive: true, force: true });
   }
 });
