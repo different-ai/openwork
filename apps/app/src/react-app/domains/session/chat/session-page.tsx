@@ -1361,10 +1361,15 @@ export function SessionPage(props: SessionPageProps) {
     <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-background">
       {props.settingsSlot}
     </div>
-  ) : activeSidePanel === "voice" ? (
+  ) : activeSidePanel === "voice" && props.openworkServerClient && props.selectedSessionId && props.surface ? (
     <VoicePanel
+      key={`${props.selectedWorkspaceId}:${props.selectedSessionId}:${reactSessionBaseUrl}`}
       client={props.openworkServerClient}
       sessionId={props.selectedSessionId}
+      workspaceId={props.runtimeWorkspaceId ?? props.selectedWorkspaceId}
+      workspaceRoot={props.selectedWorkspaceRoot}
+      needsScreen={Boolean(props.surface.activePermission || props.surface.activeQuestion)}
+      onSendDraft={props.surface.onSendDraft}
       opencodeBaseUrl={reactSessionBaseUrl}
       openworkToken={reactSessionToken}
       onClose={closeRightPane}

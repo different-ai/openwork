@@ -1,88 +1,41 @@
-/**
- * Module-scope Voice Mode runtime state. It intentionally outlives the panel
- * so a background session keeps streaming into the timeline, but it must stay
- * bounded: entries are capped and an explicit stop releases the whole
- * snapshot instead of retaining transcript text for the rest of the app run.
- */
-
-export type VoiceStatus = "idle" | "connecting" | "listening" | "muted" | "speaking" | "error";
-
-export type VoiceTimelineEntry = {
-  id: string;
-  role: "user" | "assistant" | "tool" | "system";
-  text: string;
-  toolName?: string;
-  error?: boolean;
-  at: number;
-};
-
+/** One store per mounted conversation. No audio or transcript lives in a global singleton. */
+export type VoiceStatus = "idle" | "connecting" | "reconnecting" | "listening" | "processing" | "speaking" | "muted" | "paused" | "error";
+export type VoiceTimelineEntry = { id: string; role: "user" | "assistant" | "system"; text: string; at: number };
+export const VOICE_TIMELINE_LIMIT = 120;
 export type VoiceRuntimeSnapshot = {
   status: VoiceStatus;
   statusText: string;
+  captureActive: boolean;
   micMuted: boolean;
-  micDiagnostics: string;
-  realtimeDiagnostics: string;
-  entries: VoiceTimelineEntry[];
-  latestUserTranscript: string;
+  working: boolean;
+  pendingText: string;
   assistantPreview: string;
+  entries: VoiceTimelineEntry[];
+  devices: { id: string; label: string; kind: string }[];
+  inputDevice: string;
+  outputDevice: string;
+  outputSelectionSupported: boolean;
 };
-
-export const VOICE_TIMELINE_LIMIT = 120;
-
 export const initialVoiceRuntimeSnapshot: VoiceRuntimeSnapshot = {
-  status: "idle",
-  statusText: "Ready for voice control.",
-  micMuted: false,
-  micDiagnostics: "Microphone has not started yet.",
-  realtimeDiagnostics: "Realtime is not connected.",
-  entries: [],
-  latestUserTranscript: "",
-  assistantPreview: "",
+  status: "idle", statusText: "Start speaking in this conversation.",
+  captureActive: false, micMuted: false, working: false, pendingText: "", assistantPreview: "",
+  entries: [], devices: [], inputDevice: "", outputDevice: "", outputSelectionSupported: false,
 };
-
-let voiceRuntimeSnapshot: VoiceRuntimeSnapshot = initialVoiceRuntimeSnapshot;
-const voiceRuntimeListeners = new Set<() => void>();
-
-export function getVoiceRuntimeSnapshot() {
-  return voiceRuntimeSnapshot;
-}
-
-export function subscribeVoiceRuntime(listener: () => void) {
-  voiceRuntimeListeners.add(listener);
-  return () => {
-    voiceRuntimeListeners.delete(listener);
+export function createVoiceRuntime() {
+  let snapshot = initialVoiceRuntimeSnapshot;
+  const listeners = new Set<() => void>();
+  const update = (patch: Partial<VoiceRuntimeSnapshot>) => {
+    snapshot = { ...snapshot, ...patch };
+    listeners.forEach((listener) => listener());
   };
-}
-
-export function setVoiceRuntimeSnapshot(update: (current: VoiceRuntimeSnapshot) => VoiceRuntimeSnapshot) {
-  voiceRuntimeSnapshot = update(voiceRuntimeSnapshot);
-  voiceRuntimeListeners.forEach((listener) => listener());
-}
-
-/** Release everything the voice runtime retained, including timeline text. */
-export function resetVoiceRuntimeSnapshot() {
-  setVoiceRuntimeSnapshot(() => initialVoiceRuntimeSnapshot);
-}
-
-export function appendVoiceTimelineEntry(
-  role: VoiceTimelineEntry["role"],
-  text: string,
-  options: { toolName?: string; error?: boolean } = {},
-) {
-  const trimmed = text.trim();
-  if ((role === "user" || role === "assistant") && !trimmed) return;
-  setVoiceRuntimeSnapshot((current) => ({
-    ...current,
-    entries: [
-      ...current.entries,
-      {
-        id: `voice-${Date.now()}-${current.entries.length}`,
-        role,
-        text: trimmed || options.toolName || "Tool call",
-        toolName: options.toolName,
-        error: options.error,
-        at: Date.now(),
-      },
-    ].slice(-VOICE_TIMELINE_LIMIT),
-  }));
+  return {
+    getSnapshot: () => snapshot,
+    subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    update,
+    append(role: VoiceTimelineEntry["role"], text: string) {
+      if (!text.trim()) return;
+      update({ entries: [...snapshot.entries, { id: crypto.randomUUID(), role, text: text.trim().slice(0, 8_000), at: Date.now() }].slice(-VOICE_TIMELINE_LIMIT) });
+    },
+    reset() { snapshot = initialVoiceRuntimeSnapshot; listeners.forEach((listener) => listener()); },
+  };
 }

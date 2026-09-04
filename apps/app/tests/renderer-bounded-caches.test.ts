@@ -10,13 +10,7 @@ import {
   MAX_TRACKED_MESSAGE_ROLES,
   useSessionActivityStore,
 } from "../src/react-app/domains/session/status/session-activity-store";
-import {
-  appendVoiceTimelineEntry,
-  getVoiceRuntimeSnapshot,
-  initialVoiceRuntimeSnapshot,
-  resetVoiceRuntimeSnapshot,
-  VOICE_TIMELINE_LIMIT,
-} from "../src/react-app/domains/session/voice/voice-runtime";
+import { createVoiceRuntime, initialVoiceRuntimeSnapshot, VOICE_TIMELINE_LIMIT } from "../src/react-app/domains/session/voice/voice-runtime";
 
 test("session activity message-role tracking stays bounded per session", () => {
   const store = useSessionActivityStore.getState();
@@ -77,28 +71,15 @@ test("connected provider snapshot cache evicts the oldest workspace keys", async
   expect(getConnectedProviderSnapshotChange({ baseUrl: "http://localhost:1", directory: "/tmp/workspace-5" })).not.toBeNull();
 });
 
-test("voice runtime timeline stays bounded and an explicit stop releases the snapshot", () => {
-  resetVoiceRuntimeSnapshot();
-  for (let index = 0; index < VOICE_TIMELINE_LIMIT + 30; index += 1) {
-    appendVoiceTimelineEntry("assistant", `spoken line ${index}`);
-  }
-
-  const bounded = getVoiceRuntimeSnapshot();
-  expect(bounded.entries).toHaveLength(VOICE_TIMELINE_LIMIT);
-  expect(bounded.entries[0]?.text).toBe("spoken line 30");
-  expect(bounded.entries.at(-1)?.text).toBe(`spoken line ${VOICE_TIMELINE_LIMIT + 29}`);
-
-  // Existing filtering behavior is preserved: blank user/assistant text is
-  // dropped, tool entries fall back to the tool name.
-  appendVoiceTimelineEntry("user", "   ");
-  expect(getVoiceRuntimeSnapshot().entries).toHaveLength(VOICE_TIMELINE_LIMIT);
-  appendVoiceTimelineEntry("tool", "", { toolName: "openwork_snapshot" });
-  expect(getVoiceRuntimeSnapshot().entries.at(-1)?.text).toBe("openwork_snapshot");
-
-  // Reset drops every retained entry and transcript, returning the exact
-  // initial snapshot object shape.
-  resetVoiceRuntimeSnapshot();
-  expect(getVoiceRuntimeSnapshot()).toEqual(initialVoiceRuntimeSnapshot);
-  expect(getVoiceRuntimeSnapshot().entries).toHaveLength(0);
-
+test("voice runtimes are isolated, bounded, and release their transcript", () => {
+  const first = createVoiceRuntime();
+  const second = createVoiceRuntime();
+  for (let index = 0; index < VOICE_TIMELINE_LIMIT + 30; index += 1) first.append("assistant", `spoken line ${index}`);
+  expect(first.getSnapshot().entries).toHaveLength(VOICE_TIMELINE_LIMIT);
+  expect(first.getSnapshot().entries[0]?.text).toBe("spoken line 30");
+  expect(second.getSnapshot().entries).toHaveLength(0);
+  first.append("user", "   ");
+  expect(first.getSnapshot().entries).toHaveLength(VOICE_TIMELINE_LIMIT);
+  first.reset();
+  expect(first.getSnapshot()).toEqual(initialVoiceRuntimeSnapshot);
 });

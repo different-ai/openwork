@@ -53,7 +53,7 @@ export function OpenWorkVoiceConfig(props: OpenWorkVoiceConfigProps) {
       <CardHeader>
         <CardTitle>Realtime voice</CardTitle>
         <CardDescription>
-          Voice Mode uses OpenAI Realtime and the same OpenWork UI control surface exposed through OpenWork UI MCP.
+          Voice Mode uses OpenAI for audio. Requests run in your conversation with its selected model and permissions. Audio goes to the voice provider; accepted transcripts stay in the conversation.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -78,7 +78,7 @@ export function OpenWorkVoiceConfig(props: OpenWorkVoiceConfigProps) {
               placeholder="sk-..."
             />
             <FieldDescription>
-              Saved as OPENAI_API_KEY in OpenWork's local env store. The renderer only receives short-lived Realtime client secrets.
+              Saved as OPENAI_API_KEY in OpenWork's local env store. Calls receive only short-lived Realtime client secrets.
             </FieldDescription>
           </Field>
         </FieldGroup>
