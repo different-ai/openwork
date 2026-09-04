@@ -73,13 +73,13 @@ test("an admin creates a collection-ready plugin by picking an existing connecto
     urlPlaceholder: false,
   };
   await step("pick the organization's existing connector", async () => {
-    await user.see("Create a plugin", { timeoutMs: 90_000 });
+    await user.see({ text: "Create a plugin" }, { timeoutMs: 90_000 });
     await user.type({ placeholder: "e.g. Sales call prep" }, world.pluginName);
     await user.click("Connector");
     await user.see({ text: world.connection.name });
-    await user.notSee("Authentication");
-    await user.notSee("API key");
-    await user.notSee("Whose account does the AI use?");
+    await user.notSee({ text: "Authentication" });
+    await user.notSee({ text: "API key" });
+    await user.notSee({ text: "Whose account does the AI use?" });
     await user.notSee({ placeholder: "https://mcp.example.com/mcp" });
     const editorText = await probe.text();
     editorWitness = {
@@ -105,7 +105,7 @@ test("an admin creates a collection-ready plugin by picking an existing connecto
 
   await step("see the created plugin and its selected MCP server", async () => {
     await user.see({ text: world.pluginName }, { timeoutMs: 90_000 });
-    await user.see("MCP Servers");
+    await user.see({ text: "MCP Servers" });
     await user.see({ text: world.connection.name });
     await user.screenshot();
   });
