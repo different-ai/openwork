@@ -16,6 +16,7 @@ import {
   preserveWorkspaceRouteSession,
   removeWorkspaceRouteSession,
   sessionIdForLegacyWorkspaceInference,
+  settingsNavigationFromPathname,
   globalExtensionsRoute,
   workspaceExtensionsRoute,
   workspaceSettingsRoute,
@@ -33,6 +34,33 @@ describe("workspace surface routes", () => {
       "/workspace/workspace%2Fa/extensions/skills",
     );
     expect(globalExtensionsRoute("mcps")).toBe("/extensions/mcps");
+  });
+
+  test("menu/agent settings entry keeps the workspace and remembers the open session", () => {
+    // Native menu "Settings…" and agent settings.panel.open only know the URL.
+    // They must enter Settings the same way the in-app button does, so
+    // settingsReturnRoute can bring the user back to the same session.
+    const fromSession = settingsNavigationFromPathname(
+      "/workspace/workspace%2Fa/session/session_1",
+      "general",
+    );
+    expect(fromSession).toEqual({
+      to: "/workspace/workspace%2Fa/settings/general",
+      state: { workspaceId: "workspace/a", sessionId: "session_1" },
+    });
+
+    expect(settingsNavigationFromPathname("/workspace/workspace_1/session", "updates")).toEqual({
+      to: "/workspace/workspace_1/settings/updates",
+      state: { workspaceId: "workspace_1", sessionId: null },
+    });
+    expect(settingsNavigationFromPathname("/workspace/workspace_1/extensions/skills", "ai")).toEqual({
+      to: "/workspace/workspace_1/settings/ai",
+      state: { workspaceId: "workspace_1", sessionId: null },
+    });
+    expect(settingsNavigationFromPathname("/automations", "general")).toEqual({
+      to: "/settings/general",
+      state: { workspaceId: "", sessionId: null },
+    });
   });
 });
 

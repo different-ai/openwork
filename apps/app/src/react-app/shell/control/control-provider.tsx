@@ -703,6 +703,7 @@ export function useControlActions(actions: readonly OpenworkControlAction[]) {
 }
 
 import { SETTINGS_TAB_VALUES } from "../../../app/types";
+import { settingsNavigationFromPathname } from "../workspace-routes";
 
 const SETTINGS_TABS: ReadonlySet<string> = new Set<string>(
   SETTINGS_TAB_VALUES.filter((tab) => tab !== "extensions"),
@@ -710,6 +711,14 @@ const SETTINGS_TABS: ReadonlySet<string> = new Set<string>(
 
 export function OpenworkRouteControlActions() {
   const navigate = useNavigate();
+  const location = useLocation();
+  // Read through a ref so the action list stays stable across route changes.
+  const pathnameRef = useRef(location.pathname);
+  pathnameRef.current = location.pathname;
+  const openSettingsTab = useCallback((tab: string) => {
+    const target = settingsNavigationFromPathname(pathnameRef.current, tab);
+    navigate(target.to, { state: target.state });
+  }, [navigate]);
 
   const actions = useMemo<OpenworkControlAction[]>(() => [
     {
@@ -724,7 +733,7 @@ export function OpenworkRouteControlActions() {
       label: "Open general settings",
       description: "Navigate to general settings.",
       sideEffect: "navigation",
-      execute: () => navigate("/settings/general"),
+      execute: () => openSettingsTab("general"),
     },
     {
       id: "route.extensions.skills",
@@ -738,21 +747,21 @@ export function OpenworkRouteControlActions() {
       label: "Open provider settings",
       description: "Navigate to AI provider settings.",
       sideEffect: "navigation",
-      execute: () => navigate("/settings/ai"),
+      execute: () => openSettingsTab("ai"),
     },
     {
       id: "route.settings.authorized_folders",
       label: "Open authorized folder settings",
       description: "Navigate to authorized folders and file access settings.",
       sideEffect: "navigation",
-      execute: () => navigate("/settings/permissions"),
+      execute: () => openSettingsTab("permissions"),
     },
     {
       id: "route.settings.appearance",
       label: "Open appearance settings",
       description: "Navigate to appearance settings.",
       sideEffect: "navigation",
-      execute: () => navigate("/settings/appearance"),
+      execute: () => openSettingsTab("appearance"),
     },
     {
       id: "settings.panel.open",
@@ -779,7 +788,7 @@ export function OpenworkRouteControlActions() {
             error: `Unknown settings panel: ${panel || "(empty)"}. Expected one of ${Array.from(SETTINGS_TABS).join(", ")}.`,
           };
         }
-        navigate(`/settings/${panel}`);
+        openSettingsTab(panel);
         return { ok: true, panel };
       },
     },
@@ -822,7 +831,7 @@ export function OpenworkRouteControlActions() {
         hint: "Use settings.panel.open for settings such as AI providers, and route.extensions.skills to browse Library.",
       }),
     },
-  ], [navigate]);
+  ], [navigate, openSettingsTab]);
 
   useControlActions(actions);
   return null;

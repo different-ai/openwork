@@ -185,6 +185,7 @@ import { getDenInferenceUrl, type DenSettings } from "@/app/lib/den";
 import { readActiveWorkspaceId, writeActiveWorkspaceId } from "./session-memory";
 import {
   globalExtensionsRoute,
+  settingsReturnRoute,
   workspaceExtensionsRoute,
   workspaceSessionRoute,
   workspaceSettingsRoute,
@@ -388,18 +389,6 @@ function readNavigationSessionId(state: unknown): string | null {
   if (!state || typeof state !== "object") return null;
   const value = (state as { sessionId?: unknown }).sessionId;
   return typeof value === "string" ? value.trim() || null : null;
-}
-
-export function settingsReturnRoute(
-  selectedWorkspaceId: string,
-  navigationWorkspaceId: string | null,
-  navigationSessionId: string | null,
-) {
-  if (!selectedWorkspaceId) return "/session";
-  const returnSessionId = navigationWorkspaceId === selectedWorkspaceId
-    ? navigationSessionId
-    : null;
-  return workspaceSessionRoute(selectedWorkspaceId, returnSessionId);
 }
 
 export function settingsDeveloperModePaletteItem(

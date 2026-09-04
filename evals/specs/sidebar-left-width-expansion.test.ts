@@ -13,6 +13,7 @@ function uiState(overrides: Partial<UiState> = {}): UiState {
   return {
     sidebarOpen: true,
     sidePanelState: {},
+    expandedWorkspaceIds: [],
     applicationMenuVisible: false,
     workspaceLeftSidebarWidth: DEFAULT_WORKSPACE_LEFT_SIDEBAR_WIDTH,
     workspaceLeftSidebarResizing: false,
