@@ -475,6 +475,7 @@ export function CoworkerHome({
             headerSlots={{ title: headerTitleSlot, actions: headerActionsSlot }}
             onOpenModelSettings={() => openSettingsSection("model", Date.now())}
             onOpenAccount={() => onOpenOpenWork("account")}
+            onOpenProviders={() => onOpenOpenWork("models")}
             onActivityChange={onActivityChange}
             documents={documentHooks}
             summary={summaryLine}

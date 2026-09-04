@@ -15,9 +15,30 @@ export type TurnFailure = {
   modelRelated: boolean;
   /** Whether simply trying again may clear it (network, a busy or rate-limited provider, a 5xx). */
   transient: boolean;
+  /** The free model's shared limit was reached: waiting or the person's own AI provider is the way out. */
+  freeModelLimit: boolean;
 };
 
+/**
+ * The engine's error as one line of raw text: its name, the provider's own
+ * error type when the engine relayed one ("APIError · FreeUsageLimitError: …"),
+ * then the message. `describeTurnFailure`, the retry decision, and Technical
+ * details all read this same line, so the cause is never lost between them.
+ */
+export function failureText(error: { name: string; message: string; providerError: string | null }): string {
+  const name = error.providerError && error.providerError !== error.name ? `${error.name} · ${error.providerError}` : error.name;
+  return `${name}: ${error.message}`;
+}
+
 const SAVED_MODEL = /^The saved model "([^"]+)"/;
+/** The engine's names for the free model's shared limit: the provider's error type, its retry reason, its own retry line. */
+export const FREE_MODEL_LIMIT = /FreeUsageLimitError|free_tier_limit|free usage exceeded/i;
+
+export const FREE_MODEL_LIMIT_HEADLINE = "The free model is busy right now.";
+
+export function freeModelLimitDetail(coworkerName: string): string {
+  return `Too many people are using the free model at once. Wait a few minutes and try again, or connect your own AI provider so ${coworkerName} can keep working.`;
+}
 
 export function describeTurnFailure(raw: string, coworkerName: string, retryable: boolean | null = null): TurnFailure {
   const message = raw.trim();
@@ -30,6 +51,7 @@ export function describeTurnFailure(raw: string, coworkerName: string, retryable
       technical: "",
       modelRelated: true,
       transient: false,
+      freeModelLimit: false,
     };
   }
   if (/^No connected AI model can use tools\./.test(message)) {
@@ -39,6 +61,7 @@ export function describeTurnFailure(raw: string, coworkerName: string, retryable
       technical: "",
       modelRelated: true,
       transient: false,
+      freeModelLimit: false,
     };
   }
   if (/no endpoints found that support tool use/i.test(message) || /does not support tool/i.test(message)) {
@@ -48,6 +71,7 @@ export function describeTurnFailure(raw: string, coworkerName: string, retryable
       technical: message,
       modelRelated: true,
       transient: false,
+      freeModelLimit: false,
     };
   }
   if (!message || /stopped before producing a response/i.test(message)) {
@@ -57,6 +81,17 @@ export function describeTurnFailure(raw: string, coworkerName: string, retryable
       technical: message,
       modelRelated: false,
       transient: false,
+      freeModelLimit: false,
+    };
+  }
+  if (FREE_MODEL_LIMIT.test(message)) {
+    return {
+      headline: FREE_MODEL_LIMIT_HEADLINE,
+      detail: freeModelLimitDetail(coworkerName),
+      technical: message,
+      modelRelated: true,
+      transient: false,
+      freeModelLimit: true,
     };
   }
   if (transient) {
@@ -66,6 +101,7 @@ export function describeTurnFailure(raw: string, coworkerName: string, retryable
       technical: message,
       modelRelated: true,
       transient: true,
+      freeModelLimit: false,
     };
   }
   if (/model|provider|endpoint|api ?key|unauthorized|401|403|quota|rate limit|429|usage exceeded|free usage|subscribe/i.test(message)) {
@@ -75,6 +111,7 @@ export function describeTurnFailure(raw: string, coworkerName: string, retryable
       technical: message,
       modelRelated: true,
       transient: false,
+      freeModelLimit: false,
     };
   }
   return {
@@ -83,5 +120,6 @@ export function describeTurnFailure(raw: string, coworkerName: string, retryable
     technical: message,
     modelRelated: false,
     transient: false,
+    freeModelLimit: false,
   };
 }

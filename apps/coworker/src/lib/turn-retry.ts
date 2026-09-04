@@ -26,6 +26,8 @@ const HARD = [
   /unauthorized|forbidden|invalid (api )?key|authentication|permission denied|not permitted|access denied/i,
   /insufficient (credits|quota|funds|balance)|billing|payment/i,
   /usage exceeded|free usage|subscribe/i,
+  // The free model's shared limit: the engine names it, and a few seconds' patience does not clear it.
+  /FreeUsageLimitError|free_tier_limit/i,
   /context (length|window)|too many tokens|prompt is too long|maximum context/i,
   /aborted|cancelled|canceled|stopped before/i,
   /invalid request|bad request|\b400\b|unsupported/i,

@@ -37,6 +37,7 @@ import {
   unavailableModelReason,
 } from "@/lib/groups";
 import { createCoworkerThreads, type EngineModelCatalog } from "@/lib/threads";
+import { failureText } from "@/lib/turn-failure";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
 import { GroupAvatars } from "@/ui/coworker-rail";
 import { InteractionCard, LETTERS, OptionRow, typingInField } from "@/ui/interactions";
@@ -98,7 +99,7 @@ async function settledReplyText(client: HeadlessThreadClient, threadId: string, 
       await client.abortThread(threadId).catch(() => undefined);
       throw new Error(`${name} took too long to reply.`);
     }
-    if (result.outcome === "failed") throw new Error(result.terminalError?.message || `${name} could not reply.`);
+    if (result.outcome === "failed") throw new Error(result.terminalError ? failureText(result.terminalError) : `${name} could not reply.`);
     const text = replyTextSince(result.snapshot.messages, acceptance.messageCountBefore);
     if (text) return text;
     const graceEnd = Date.now() + REPLY_TEXT_GRACE_MS;
