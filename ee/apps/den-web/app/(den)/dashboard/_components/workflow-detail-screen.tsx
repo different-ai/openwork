@@ -140,7 +140,7 @@ export function WorkflowDetailScreen({ workflowId }: { workflowId: string }) {
             Automate
           </DenButton>
         ) : null}
-        caption={`${freshnessLabel(workflow.resultState)} · Version updated ${updatedDate(state.detail.currentVersion.createdAt)}`}
+        caption={`${freshnessLabel(workflow.resultState)} · Updated ${updatedDate(state.detail.currentVersion.createdAt)}`}
       />
 
       {state.error ? <DenNotice tone="error" message={state.error} /> : null}

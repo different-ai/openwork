@@ -146,6 +146,7 @@ export function WorkflowRunsTab({
               snapshot={selectedSnapshot}
               freshness={selectedSnapshot.receiptId === detail.latestSnapshot?.receiptId ? detail.freshness : undefined}
               lastSuccessful={selectedSnapshot.receiptId === detail.latestSuccessfulSnapshot?.receiptId}
+              technical={technical}
             />
           </div>
         ) : null}

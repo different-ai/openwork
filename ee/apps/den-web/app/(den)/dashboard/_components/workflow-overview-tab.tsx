@@ -196,6 +196,7 @@ export function WorkflowOverviewTab({
               snapshot={latestResult}
               freshness={latestResult.receiptId === detail.latestSnapshot?.receiptId ? detail.freshness : undefined}
               lastSuccessful={latestResult.receiptId === detail.latestSuccessfulSnapshot?.receiptId}
+              technical={technical}
             />
           ) : (
             <p className="text-[13px] text-gray-400">Run this workflow to see its first result.</p>

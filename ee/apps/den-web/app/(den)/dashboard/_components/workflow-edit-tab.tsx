@@ -10,6 +10,7 @@ import { DenSectionHeader } from "../../_components/ui/section-header";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { WorkflowInputForm } from "./workflow-input-form";
 import { WorkflowMarkdownPreview } from "./workflow-artifact-result";
+import { WorkflowFriendlyValue } from "./workflow-friendly-value";
 import { describeToolStep } from "./workflow-plain-language";
 import type { WorkflowFields } from "./use-workflow-detail-state";
 
@@ -145,17 +146,13 @@ export function WorkflowEditTab({
             </DenButton>
           </div>
           {tested ? (
-            <div className="grid gap-4 border-t border-gray-100 pt-5 lg:grid-cols-2">
-              <div>
-                <h3 className="mb-2 text-[12px] font-medium text-gray-600">Test result</h3>
-                <WorkflowMarkdownPreview markdown={tested.result.markdown} />
-              </div>
-              <div>
-                <h3 className="mb-2 text-[12px] font-medium text-gray-600">Test data</h3>
-                <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-xl bg-gray-950 p-3 font-mono text-[11px] text-gray-100">
-                  {JSON.stringify(tested.result.value, null, 2)}
-                </pre>
-              </div>
+            <div className="space-y-4 border-t border-gray-100 pt-5">
+              <h3 className="text-[12px] font-medium text-gray-600">Test output</h3>
+              <WorkflowFriendlyValue value={tested.result.value} />
+              <details className="border-t border-gray-100 pt-3">
+                <summary className="cursor-pointer text-[12px] font-medium text-gray-600">Rendered preview</summary>
+                <div className="mt-3"><WorkflowMarkdownPreview markdown={tested.result.markdown} /></div>
+              </details>
             </div>
           ) : null}
         </div>
