@@ -3,7 +3,6 @@ import {
   control,
   createAndSelectWorkspace,
   evalIn,
-  selectModel,
   waitFor,
 } from "@openwork/behaviors";
 import { screenshot } from "@openwork/test-evidence";
@@ -239,7 +238,6 @@ test.skipIf(!runnable)(
       path: `/tmp/openwork-palette-${runId}`,
     });
     await configureWorkspaces(desktopApp, [workspace.workspaceId], den.mocks.agent.url);
-    await selectModel(desktopApp, modelId);
     const sessionId = await createSession(desktopApp);
     await control(desktopApp, "session.rename", { sessionId, title: `Palette Probe ${runId}` });
 
