@@ -39,7 +39,7 @@ test("Open Coworker has its own stable packaged identity and local runtime resou
   assert.deepEqual(config.extraResources[1], {
     from: "server/dist/opencode-plugins",
     to: "opencode-plugins",
-    filter: ["*.js"],
+    filter: ["*.js", "!*.test.js"],
   });
   const serverPackage = JSON.parse(await readFile(path.resolve(coworkerRoot, "..", "server", "package.json"), "utf8"));
   assert.equal(serverPackage.devDependencies["opencode-chrome-devtools"], "^1.0.4");
