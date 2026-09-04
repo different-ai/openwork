@@ -1032,3 +1032,35 @@ a {
     animation: none;
   }
 }
+
+/*
+ * The live turn. While the coworker thinks, a small typing bubble: three dots
+ * that rise and fall one after another, the way someone typing reads in
+ * Messages. Still under reduced motion.
+ */
+@keyframes typing-dot {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.55; }
+  30% { transform: translateY(-1.5px); opacity: 1; }
+}
+.typing-dot {
+  animation: typing-dot 1.1s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .typing-dot {
+    animation: none;
+    opacity: 0.8;
+  }
+}
+/* The popover under the live row settles in with a short fade; none under reduced motion. */
+@keyframes popover-in {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.thinking-popover {
+  animation: popover-in 120ms ease-out 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .thinking-popover {
+    animation: none;
+  }
+}

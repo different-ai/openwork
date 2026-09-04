@@ -37,7 +37,7 @@ import {
   type PendingInteractions,
   type ThreadListItem,
 } from "@/lib/threads";
-import { isRunning, type HeadlessThreadModel, type HeadlessTurnAcceptance } from "@openwork/headless-threads";
+import { isRunning, type HeadlessThreadModel, type HeadlessThreadUsage, type HeadlessTurnAcceptance } from "@openwork/headless-threads";
 import {
   classifyThreads,
   configureDiscussionStore,
@@ -53,7 +53,10 @@ import { markAutoPicked, wasAutoPicked } from "@/lib/model-choice";
 import { describeReview, parseWorkerReview, parseWorkerTurn, workerNameFromTitle, type WorkerReview, type WorkerSummary } from "@/lib/workers";
 import { WorkerDecisionCards } from "@/ui/worker-decision";
 import { coworkerToolName } from "@/lib/coworker-tools";
-import { GLIMPSE_MS, describeGlimpse, describeProgress, describeWorkStep, summarizeWork, technicalSections, type ProgressPhase, type WorkStep } from "@/lib/work-receipt";
+import { describeWorkStep, summarizeWork, technicalSections, type WorkStep } from "@/lib/work-receipt";
+import { isUnsettledToolStatus, livePhase, phaseWord, safeLiveMarkdown, writingText, type LivePhase } from "@/lib/live-phase";
+import { describeSpeed, firstWordsFor, rememberFirstWords } from "@/lib/turn-speed";
+import { LiveRow } from "@/ui/live-row";
 import { isServerTool, toolRefPath } from "@/lib/apps-tools";
 import { openPanelRoute } from "@/lib/panel-route";
 import { appsToolsRoute } from "@/lib/panel-views";
@@ -123,6 +126,8 @@ type TranscriptMessage = {
   reasoning: string;
   /** Provider/model the engine attributed this reply to; null for user turns and unbound replies. */
   model: { providerId: string; modelId: string } | null;
+  /** What the reply cost in tokens as the engine reported it; null for user turns and until it reports. */
+  usage: HeadlessThreadUsage | null;
   toolCalls: TranscriptToolCall[];
 };
 
@@ -160,7 +165,7 @@ function endedWithoutWords(message: TranscriptMessage): "stopped" | "failed" | n
 
 /** The optimistic user message for a turn the transcript does not carry yet. */
 function optimisticMessage(turn: { messageId: string; prompt: string }): TranscriptMessage {
-  return { id: turn.messageId, role: "user", parentId: null, text: turn.prompt, createdAt: null, completedAt: null, error: null, reasoning: "", model: null, toolCalls: [] };
+  return { id: turn.messageId, role: "user", parentId: null, text: turn.prompt, createdAt: null, completedAt: null, error: null, reasoning: "", model: null, usage: null, toolCalls: [] };
 }
 
 const EMPTY_REPLY_MESSAGE = "The model stopped before producing a response.";
@@ -200,6 +205,8 @@ function newQueuedId(): string {
 
 /** How long a freshly (re)started AI service may stay silent before it is a problem worth naming. */
 const WORKSPACE_WARMUP_MS = 45_000;
+/** Within this many pixels of the bottom the transcript counts as pinned, so streaming words keep the end in view. */
+const LIVE_SCROLL_SLACK_PX = 48;
 
 export const NO_TOOL_MODEL_MESSAGE =
   "No connected AI model can use tools. Connect an AI provider in OpenWork, or choose an AI model in Coworker settings.";
@@ -1073,6 +1080,7 @@ function ThreadView({
           error: message.error,
           reasoning: message.reasoning,
           model: message.model,
+          usage: message.usage,
           toolCalls: message.toolCalls.map((call) => ({
             partId: call.partId,
             tool: call.name,
@@ -1106,7 +1114,13 @@ function ThreadView({
     void refresh();
     const unsubscribe = threads.subscribe(
       () => void refresh(),
-      (event) => setLiveStream((current) => applyStreamEvent(current, event, threadId)),
+      (event) => setLiveStream((current) => {
+        const next = applyStreamEvent(current, event, threadId);
+        // The first words of the reply on screen: the moment the speed line is measured from.
+        const pendingId = turnStateRef.current.pending?.messageId;
+        if (pendingId && next && next.type === "text" && next.text.trim()) rememberFirstWords(window.localStorage, pendingId, Date.now());
+        return next;
+      }),
     );
     const timer = window.setInterval(() => void refresh(), 5_000);
     return () => {
@@ -1188,6 +1202,15 @@ function ThreadView({
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
   }, [messages.length, activeTurn, engineStatus.type, pending.permissions.length, pending.questions.length, turnState.next.length]);
+
+  // Words streaming into the live bubble keep the end in view only while the person is already
+  // there; someone who scrolled up to read is left where they are.
+  const pinnedRef = useRef(true);
+  const liveWordCount = liveStream?.type === "text" ? liveStream.text.length : 0;
+  useEffect(() => {
+    if (liveWordCount === 0 || !pinnedRef.current) return;
+    endRef.current?.scrollIntoView({ block: "end" });
+  }, [liveWordCount]);
 
   /**
    * Run one turn to its end: send (or re-send) the message, follow the engine
@@ -1344,6 +1367,7 @@ function ThreadView({
         error: message.error,
         reasoning: "",
         model: null,
+        usage: null,
         toolCalls: [],
       })), messageId).state === "complete" && !isRunning(result.snapshot.status);
       const settledReplies = result.snapshot.messages.filter((message) => message.role === "assistant" && message.parentId === messageId);
@@ -1677,20 +1701,34 @@ function ThreadView({
   const lastPersonIndex = visibleMessages.findLastIndex((message) => message.role === "user");
   const activeToolLabel = activeToolCallLabel(visibleMessages);
   // The reply for this turn has started only when the newest message is an
-  // assistant message with text; an older reply must not read as progress.
+  // assistant message with words; an older reply must not read as progress.
   const newestMessage = visibleMessages.at(-1);
-  const replyStarted = newestMessage?.role === "assistant" && newestMessage.text.length > 0;
-  const workingLabel = activeTurn?.phase === "accepting"
-    ? "Sending"
-    : outcome?.kind === "retrying"
-      ? "Retrying"
-      : outcome?.kind === "slow"
-        ? "Still working"
-        : activeToolLabel
-          ? "Using a tool"
-          : replyStarted
-            ? "Working"
-            : "Thinking";
+  const activeReply = newestMessage?.role === "assistant" ? newestMessage : null;
+  const activeStep = activeWorkStep(visibleMessages);
+  const activeCall = activeToolCall(visibleMessages);
+  // What the coworker is doing this moment comes from what is streaming, not from a label:
+  // a reasoning part is thinking, a text part is writing, an unsettled tool call is a tool.
+  const phase: LivePhase = livePhase({
+    label: activeTurn?.phase === "accepting" ? "Sending" : outcome?.kind === "retrying" ? "Retrying" : "",
+    stream: working ? liveStream : null,
+    activeStep,
+    landedWords: working ? activeReply?.text ?? "" : "",
+  });
+  const workingLabel = outcome?.kind === "slow" ? "Still working" : phaseWord(phase);
+  /** Words of the reply have arrived this turn — streaming now, or landed by an earlier step of the same turn. */
+  const wordsArrived = phase === "writing"
+    || visibleMessages.some((message) => message.role === "assistant" && message.parentId === pendingTurn?.messageId && message.text.trim() !== "");
+  // When the step under way began, for the popover's small print; one moment per tool call, a few remembered.
+  const stepStartsRef = useRef<Map<string, number>>(new Map());
+  let stepSince: number | null = null;
+  if (activeCall) {
+    const known = stepStartsRef.current.get(activeCall.partId);
+    if (known === undefined) {
+      stepStartsRef.current.set(activeCall.partId, Date.now());
+      if (stepStartsRef.current.size > 50) stepStartsRef.current = new Map([...stepStartsRef.current].slice(-25));
+    }
+    stepSince = stepStartsRef.current.get(activeCall.partId) ?? null;
+  }
 
   const readableStatus = outcome && outcome.kind !== "working" && outcome.kind !== "replied"
     ? outcome.label
@@ -1784,7 +1822,13 @@ function ThreadView({
       <p data-testid="coworker-thread-status" className="sr-only" aria-live="polite" data-state={needsYou ? "needs-you" : working ? "working" : "idle"} data-outcome={outcome?.kind ?? ""}>
         {kind === "discussion" && !working && !needsYou && !failed && !settledWord ? "Ready" : readableStatus}
       </p>
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+      <div
+        className="min-h-0 flex-1 overflow-y-auto px-5 py-5"
+        onScroll={(event) => {
+          const box = event.currentTarget;
+          pinnedRef.current = box.scrollHeight - box.scrollTop - box.clientHeight <= LIVE_SCROLL_SLACK_PX;
+        }}
+      >
         <div className="mx-auto max-w-3xl space-y-3">
           {freshDiscussion ? <QuietEmptyConversation coworker={coworker} proposerName={team?.coworkers.find((member) => member.slug === coworker.suggestedBy?.slug)?.name ?? ""} /> : null}
           {conversationBlocks(visibleMessages, (message, index) => working && message.role === "assistant" && index === lastAssistantIndex).map((block) => {
@@ -1815,6 +1859,8 @@ function ThreadView({
                   conversation={visibleMessages}
                   onSendReply={sendText}
                   onLongReply={block.message.id === visibleMessages[lastAssistantIndex]?.id ? recordLongReply : undefined}
+                  liveStream={block.active && phase === "writing" ? liveStream : null}
+                  sentAt={block.message.role === "assistant" ? visibleMessages.find((entry) => entry.id === block.message.parentId)?.createdAt ?? null : null}
                 />
                 {resolution && block.message.id === resolution.messageId ? <QuietLine outcome="retried" text={resolution.note} /> : null}
               </Fragment>
@@ -1840,11 +1886,23 @@ function ThreadView({
             <WorkerDecisionCards coworker={coworker} workers={workers} onAnswered={() => onWorkersChanged?.()} />
           ) : null}
           <LiveRowSlot open={working && outcome?.kind !== "retrying"}>
-            <WorkIndicator
+            {phase === "writing" && !activeReply ? (
+              // The words are arriving: the bubble is the live view. It renders in the transcript
+              // once the engine has the reply; until then the words stand in here, in the same shape.
+              <article className="flex flex-col items-start" data-message-role="assistant" data-live="true">
+                <div className="bubble bubble-coworker max-w-[76%]" data-testid="coworker-live-bubble"><Markdown text={safeLiveMarkdown(writingText(liveStream, null))} /></div>
+              </article>
+            ) : null}
+            <LiveRow
               coworker={coworker}
-              messages={visibleMessages}
+              phase={phase}
+              step={activeStep}
+              stepCall={activeCall}
+              stepSince={stepSince}
               stream={liveStream}
-              label={workingLabel}
+              reply={activeReply ? { text: activeReply.text, reasoning: activeReply.reasoning } : null}
+              wordsArrived={wordsArrived}
+              sentAt={pendingTurn?.startedAt ?? null}
               stillWorking={outcome?.kind === "slow" ? outcome.line : ""}
               onStop={outcome?.kind === "slow" ? () => void stop() : undefined}
             />
@@ -2047,11 +2105,17 @@ function MessageBubble({
   conversation = [],
   onSendReply,
   onLongReply,
+  liveStream = null,
+  sentAt = null,
 }: {
   message: TranscriptMessage;
   coworker: CoworkerSummary;
   mcpClient: CoworkerMcpClient;
   active: boolean;
+  /** The words of this reply as they arrive, while it is the one being written; the bubble shows them before they land. */
+  liveStream?: LiveStream | null;
+  /** When the person sent the message this reply answers, for the speed line in the tooltip. */
+  sentAt?: number | null;
   /** The next message is from someone else (or this is the last one): the bubble gets its tail. */
   tail?: boolean;
   /** The previous message is from the same speaker: no avatar or name again, tighter spacing. */
@@ -2072,6 +2136,17 @@ function MessageBubble({
   kind?: "discussion" | "assignment" | "worker";
 }) {
   const user = message.role === "user";
+  // How fast a reply came, for its tooltip only: from Send to the first words on screen and to the
+  // close. Read once per landed reply, not on every render.
+  const speed = useMemo(() => {
+    if (user || active || !message.completedAt) return "";
+    return describeSpeed({
+      sentAt,
+      firstWordsAt: message.parentId ? firstWordsFor(window.localStorage, message.parentId) : null,
+      completedAt: message.completedAt,
+      reasoningTokens: message.usage?.reasoningTokens ?? null,
+    });
+  }, [active, message.completedAt, message.parentId, message.usage?.reasoningTokens, sentAt, user]);
   if (user) {
     // A request a teammate passed on carries a brief for the model; the person sees their own
     // words as their bubble, with one small line saying where it came from.
@@ -2138,20 +2213,32 @@ function MessageBubble({
   // (see conversationBlocks), never inside or stacked. A team tile (a proposed teammate, an
   // offer to pass the request on) follows the bubble as its own rounded tile, like a shared contact.
   const teamCards = team ? teamCardsFromCalls(turnCalls) : [];
+  // While this reply is being written, its words come from the stream before they land: the
+  // bubble is the live view, in the same place and shape it keeps once the text has landed.
+  const liveWords = active && liveStream ? writingText(liveStream, message) : "";
+  const live = liveWords.length > message.text.length;
+  const answeredBy = message.model ? `Answered by ${message.model.providerId}/${message.model.modelId}` : "";
+  const tooltip = [answeredBy, speed].filter(Boolean).join(" · ");
   return (
-    <article className={`flex flex-col items-start gap-2 ${continued ? "-mt-1" : ""}`} data-message-role="assistant" data-continued={continued ? "true" : "false"}>
+    <article className={`flex flex-col items-start gap-2 ${continued ? "-mt-1" : ""}`} data-message-role="assistant" data-continued={continued ? "true" : "false"} {...(live ? { "data-live": "true" } : {})}>
       <p className="sr-only">
         {coworker.name}
         {message.model ? (
           <span data-testid="coworker-reply-model">
-            {" "}Answered by {message.model.providerId}/{message.model.modelId}
+            {" "}{answeredBy}
           </span>
         ) : null}
+        {speed ? <span data-testid="coworker-reply-speed">{" "}{speed}</span> : null}
       </p>
-      {message.text ? (
+      {live ? (
+        <div className="bubble bubble-coworker max-w-[76%]" data-testid="coworker-live-bubble">
+          <Markdown text={safeLiveMarkdown(liveWords)} />
+        </div>
+      ) : message.text ? (
         <div
           className={`bubble bubble-coworker max-w-[76%] ${tail && (active || teamCards.length === 0) ? "bubble-tail-left" : ""}`}
-          title={message.model ? `Answered by ${message.model.providerId}/${message.model.modelId}` : undefined}
+          title={tooltip || undefined}
+          data-testid="coworker-reply-bubble"
         >
           <ReplyText message={message} active={active} turnCalls={turnCalls} onLongReply={onLongReply} />
           {documentCardsFromCalls(turnCalls).map((card) => (
@@ -2226,12 +2313,15 @@ function ThinkingDisclosure({ text }: { text: string }) {
   );
 }
 
+/** The tool call under way right now, or null when the coworker is only thinking or writing. */
+function activeToolCall(messages: TranscriptMessage[]): TranscriptToolCall | null {
+  return messages.flatMap((message) => message.toolCalls).findLast((call) => isUnsettledToolStatus(call.status)) ?? null;
+}
+
 /** The step the coworker is on right now, or null when it is only thinking or writing. */
 function activeWorkStep(messages: TranscriptMessage[]): WorkStep | null {
-  const activeCall = messages
-    .flatMap((message) => message.toolCalls)
-    .findLast((call) => !["completed", "success", "error", "failed"].includes(call.status));
-  return activeCall ? describeWorkStep(activeCall) : null;
+  const call = activeToolCall(messages);
+  return call ? describeWorkStep(call) : null;
 }
 
 /** "Editing index.md" for the header and sidebar while a tool runs. */
@@ -2241,15 +2331,6 @@ function activeToolCallLabel(messages: TranscriptMessage[]): string | null {
   return step.doing.charAt(0).toUpperCase() + step.doing.slice(1);
 }
 
-function progressPhase(label: string, hasActiveStep: boolean): ProgressPhase {
-  if (label === "Sending") return "sending";
-  if (label === "Retrying") return "retrying";
-  if (hasActiveStep) return "tool";
-  if (label === "Working" || label === "Still working") return "writing";
-  return "thinking";
-}
-
-/** Three quiet dots; still under reduced motion. */
 /**
  * The place at the end of the transcript where the live row sits. The slot is
  * always there, one row tall, whether or not a turn is running: the transcript
@@ -2262,84 +2343,6 @@ function LiveRowSlot({ open, children }: { open: boolean; children: ReactNode })
   return (
     <div className="live-row-slot" data-open={open ? "true" : "false"} data-testid="live-row-slot">
       {open ? children : null}
-    </div>
-  );
-}
-
-function TypingDots() {
-  return (
-    <span className="flex items-center gap-[3px]" aria-hidden="true">
-      {[0, 1, 2].map((index) => (
-        <span
-          key={index}
-          className="size-1 rounded-full bg-mist/70 motion-safe:animate-pulse"
-          style={{ animationDelay: `${index * 180}ms`, animationDuration: "1.1s" }}
-        />
-      ))}
-    </span>
-  );
-}
-
-/**
- * One live row per active turn: a small avatar, three dots, and one phrase that
- * changes only when the phase changes — never on a timer. Past the wait budget
- * the phrase softens to "still working on it" and gains one inline Stop; a
- * long wait is not a problem, and nothing rose or card-shaped appears.
- *
- * A person who gets impatient can tap the phrase: one discreet gray line below
- * shows the end of what is streaming right now — the words being written, the
- * thinking, or the tool step — live, and goes away by itself after a moment so
- * the row is discreet again. Tapping again hides it at once.
- */
-function WorkIndicator({
-  coworker,
-  messages,
-  stream = null,
-  label,
-  stillWorking = "",
-  onStop,
-}: {
-  coworker: CoworkerSummary;
-  messages: TranscriptMessage[];
-  /** The words arriving this moment, when the engine is streaming any. */
-  stream?: LiveStream | null;
-  label: string;
-  /** The softened phrase once the wait budget has passed; empty while the phase phrase applies. */
-  stillWorking?: string;
-  onStop?: () => void;
-}) {
-  const step = activeWorkStep(messages);
-  const phase = progressPhase(label, step !== null);
-  const [peekUntil, setPeekUntil] = useState<number | null>(null);
-  useEffect(() => {
-    if (peekUntil === null) return;
-    const timer = window.setTimeout(() => setPeekUntil(null), Math.max(0, peekUntil - Date.now()));
-    return () => window.clearTimeout(timer);
-  }, [peekUntil]);
-  const writing = messages.findLast((message) => message.role === "assistant");
-  const glimpse = peekUntil === null ? "" : describeGlimpse({ live: stream?.text ?? "", text: writing?.text ?? "", reasoning: writing?.reasoning ?? "", step });
-  return (
-    <div className="px-1 py-1.5 text-xs text-mist" data-testid="coworker-working" data-phase={phase} data-outcome={stillWorking ? "slow" : "working"} data-peek={peekUntil === null ? "false" : "true"}>
-      <div className="flex items-center gap-2.5">
-        <CoworkerAvatar animated working={phase === "tool"} color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={22} />
-        <TypingDots />
-        <button
-          type="button"
-          className="text-left hover:text-snow"
-          title={peekUntil === null ? `See what ${coworker.name} is doing right now` : "Hide"}
-          aria-expanded={peekUntil !== null}
-          data-testid="coworker-progress-phrase"
-          onClick={() => setPeekUntil((current) => (current === null ? Date.now() + GLIMPSE_MS : null))}
-        >
-          {stillWorking || describeProgress(coworker.name, phase, step)}
-        </button>
-        {stillWorking && onStop ? <InlineAction label="Stop" choice="stop" onClick={onStop} /> : null}
-      </div>
-      {peekUntil !== null ? (
-        <p className="mt-1 truncate pl-[3.75rem] text-[11px] text-mist/60" data-testid="coworker-working-peek" aria-live="polite">
-          {glimpse || `Nothing to show yet — ${coworker.name} hasn't started writing.`}
-        </p>
-      ) : null}
     </div>
   );
 }

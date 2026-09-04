@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { GLIMPSE_CHARS, GLIMPSE_MS, describeGlimpse, describeProgress, describeWorkStep, summarizeWork, technicalSections, workStepState } from "./work-receipt.ts";
+import { describeWorkStep, summarizeWork, technicalSections, workStepState } from "./work-receipt.ts";
 
 test("tool calls become steps a person can read, with the tool name kept for details", () => {
   const edit = describeWorkStep({ tool: "edit", status: "completed", input: { filePath: "/Users/me/coworkers/yo/memory/index.md" } });
@@ -30,16 +30,6 @@ test("the collapsed line sums the work up and never hides a failure or a running
   assert.equal(summarizeWork([edited, searched]), "Worked with your files and OpenWork Connect · 2 steps");
   assert.equal(summarizeWork([edited, searched, failed]), "Worked with your files and OpenWork Connect and 1 more · 3 steps · 1 step didn't finish");
   assert.equal(summarizeWork([edited, running]), "Worked with your files and the terminal · 2 steps · still working");
-});
-
-test("the progress phrase follows the phase, not a timer", () => {
-  assert.equal(describeProgress("Nova", "sending"), "Sending…");
-  assert.equal(describeProgress("Nova", "thinking"), "Nova is thinking…");
-  assert.equal(describeProgress("Nova", "tool", { doing: "editing index.md" }), "Nova is editing index.md…");
-  assert.equal(describeProgress("Nova", "tool", null), "Nova is using a tool…");
-  assert.equal(describeProgress("Nova", "writing"), "Nova is putting it together…");
-  assert.equal(describeProgress("Nova", "retrying"), "Nova is trying again…");
-  assert.equal(describeProgress("Nova", "finishing"), "Nova is finishing up…");
 });
 
 test("technical details show a shell command on its own, other input as tidy JSON, then result and error, all clipped", () => {
@@ -138,17 +128,3 @@ test("the coworker's memory and soul tools read as what it remembered or changed
   assert.equal(summarizeWork([remembered, describeWorkStep({ tool: "coworker_soul_update", status: "completed", input: { section: "Communication", change: { kind: "add", text: "Shorter replies" } } })]), "Worked with your memory · 2 steps");
 });
 
-test("a glance at the live row shows the end of one line of what is streaming, or the step under way, or nothing yet", () => {
-  assert.equal(describeGlimpse({ text: "", reasoning: "", step: null }), "");
-  assert.equal(describeGlimpse({ text: "", reasoning: "", step: { doing: "editing index.md" } }), "Editing index.md…");
-  assert.equal(describeGlimpse({ text: "", reasoning: "First the sources,\n\nthen the summary.", step: null }), "First the sources, then the summary.");
-  // Words being written win over the thinking behind them and over the step; words arriving this moment win over all.
-  assert.equal(describeGlimpse({ text: "Here is the plan.", reasoning: "hmm", step: { doing: "reading notes.md" } }), "Here is the plan.");
-  assert.equal(describeGlimpse({ live: "and one more thing", text: "Here is the plan.", reasoning: "hmm", step: null }), "and one more thing");
-  const long = Array.from({ length: 40 }, (_, index) => `word${index}`).join(" ");
-  const glance = describeGlimpse({ text: long, reasoning: "", step: null });
-  assert.ok(glance.startsWith("…"), glance);
-  assert.ok(glance.length <= GLIMPSE_CHARS + 1, String(glance.length));
-  assert.ok(glance.endsWith("word39"), glance);
-  assert.equal(GLIMPSE_MS, 12_000);
-});
