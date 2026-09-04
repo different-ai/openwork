@@ -110,8 +110,8 @@ test("opencode v2 injects providers at runtime without an engine reload", async 
   if (witnessAddress === null || typeof witnessAddress === "string") throw new Error("Witness failed to bind a TCP port");
   const witnessUrl = `http://127.0.0.1:${witnessAddress.port}`;
   const rootDir = await mkdtemp(join(tmpdir(), "oc2-hot-inject-"));
-  // A fresh HOME proves cold-cache catalog initialization and keeps the developer's global opencode config and plugins out of the engine.
-  const homeDir = await mkdtemp(join(tmpdir(), "oc2-home-"));
+  // A fresh cache proves the model catalog does not remain stuck behind the cold-cache 503.
+  const cacheDir = await mkdtemp(join(tmpdir(), "oc2-model-cache-"));
   const directory = join(rootDir, "workspace");
   await mkdir(directory);
   const baseConfig = join(rootDir, "opencode.json");
@@ -124,15 +124,7 @@ test("opencode v2 injects providers at runtime without an engine reload", async 
     server = await createManagedOpencodeV2Server({
       bin: binary,
       rootDir,
-      env: {
-        HOME: homeDir,
-        XDG_CONFIG_HOME: join(homeDir, ".config"),
-        XDG_DATA_HOME: join(homeDir, ".local/share"),
-        XDG_STATE_HOME: join(homeDir, ".local/state"),
-        XDG_CACHE_HOME: join(homeDir, ".cache"),
-        OPENCODE_CONFIG: baseConfig,
-        OPENCODE_MODELS_URL: opencodeModelsUrl,
-      },
+      env: { XDG_CACHE_HOME: cacheDir, OPENCODE_CONFIG: baseConfig, OPENCODE_MODELS_URL: opencodeModelsUrl },
     });
     const initialHealth = await server.health();
     const pid0 = initialHealth.pid;
@@ -279,6 +271,6 @@ test("opencode v2 injects providers at runtime without an engine reload", async 
     if (server !== undefined) await server.close();
     await new Promise<void>((resolve, reject) => witness.close((error) => error ? reject(error) : resolve()));
     await rm(rootDir, { recursive: true, force: true });
-    await rm(homeDir, { recursive: true, force: true });
+    await rm(cacheDir, { recursive: true, force: true });
   }
 }, 240_000);
