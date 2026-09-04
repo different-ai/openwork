@@ -21,6 +21,8 @@ import type { ServerConfig } from "./types.js";
 const OPENCODE_V2_VERSION = constants.opencodeV2Version;
 const PREVIEW_STATE_FILE = "engine-v2-preview.json";
 const UNSET_API_KEY = "openwork-engine-v2-preview-unset";
+// A cold sidecar can return HTTP 503 while its model catalog initializes for 17–20 seconds.
+const CATALOG_MIRROR_TIMEOUT_MS = 60_000;
 
 export interface EngineV2PreviewStatus {
   enabled: boolean;
@@ -270,7 +272,7 @@ export function createEngineV2Preview(options: { config: ServerConfig }): Engine
     await active.setProviders(mapped.specs);
     const nextMirroredProviderIds = mapped.specs.map((spec) => spec.id);
     const expectedModelIds = mapped.specs.flatMap((spec) => spec.models.map((model) => model.id));
-    const deadline = Date.now() + 15_000;
+    const deadline = Date.now() + CATALOG_MIRROR_TIMEOUT_MS;
     let catalog = await active.fetchJson("/api/model", { directory: workspaceDir });
     let nextCatalogModelIds = catalogModelIds(catalog.json, nextMirroredProviderIds);
     while (expectedModelIds.some((modelId) => !nextCatalogModelIds.includes(modelId)) && Date.now() < deadline) {
@@ -282,7 +284,13 @@ export function createEngineV2Preview(options: { config: ServerConfig }): Engine
     mirroredProviderIds = nextMirroredProviderIds;
     skippedProviderIds = [...mapped.skippedProviderIds];
     lastMirroredAt = new Date().toISOString();
-    lastError = undefined;
+    const missingModelIds = expectedModelIds.filter((modelId) => !nextCatalogModelIds.includes(modelId));
+    const catalogMessage = isRecord(catalog.json) && typeof catalog.json.message === "string"
+      ? ` ${catalog.json.message}`
+      : "";
+    lastError = missingModelIds.length === 0
+      ? undefined
+      : `catalog missing [${missingModelIds.join(", ")}] after ${CATALOG_MIRROR_TIMEOUT_MS}ms: ${catalog.status}${catalogMessage}`;
   }
 
   function scheduleMirror(): void {
