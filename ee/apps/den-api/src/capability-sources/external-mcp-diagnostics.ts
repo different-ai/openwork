@@ -857,6 +857,21 @@ function safeBaseMessageFor(input: {
   if (input.phase === "HTTP_ROUTING") {
     return "Den reached the host, but the configured path did not behave like the intended MCP endpoint."
   }
+  if (input.category === "mcp_tool_input_invalid") {
+    if (input.code === "MCP_TOOL_ARGUMENT_INVALID_JSON") {
+      return "OpenWork rejected the tool arguments before contacting the provider because they are not valid JSON data (for example an undefined field, a non-finite number, or a non-plain object)."
+    }
+    if (input.code === "MCP_TOOL_ARGUMENT_SIZE_LIMIT") {
+      return "OpenWork rejected the tool arguments before contacting the provider because they exceed the 1 MiB argument limit."
+    }
+    if (input.code === "MCP_TOOL_ARGUMENT_DEPTH_LIMIT") {
+      return "OpenWork rejected the tool arguments before contacting the provider because they are nested too deeply."
+    }
+    if (input.code === "MCP_TOOL_ARGUMENT_CYCLE") {
+      return "OpenWork rejected the tool arguments before contacting the provider because they contain a circular reference."
+    }
+    return "OpenWork rejected the tool arguments before contacting the provider because they are invalid."
+  }
   return "The MCP connection failed before OpenWork could complete the protocol lifecycle."
 }
 

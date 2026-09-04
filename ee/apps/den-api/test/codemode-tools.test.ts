@@ -21,6 +21,7 @@ let isCodemodeEligibleConnection: typeof import("../src/mcp/codemode-tools.js")[
 let firstUnattendedUnsafeCapability: typeof import("../src/mcp/codemode-tools.js")["firstUnattendedUnsafeCapability"]
 let restrictCodemodeToolTree: typeof import("../src/mcp/codemode-tools.js")["restrictCodemodeToolTree"]
 let sanitizeNamespaceSegment: typeof import("../src/mcp/codemode-tools.js")["sanitizeNamespaceSegment"]
+let stripUndefinedEntries: typeof import("../src/mcp/codemode-tools.js")["stripUndefinedEntries"]
 let parseNativeCapabilityName: typeof import("../src/mcp/native-capabilities.js")["parseNativeCapabilityName"]
 
 beforeAll(async () => {
@@ -38,6 +39,7 @@ beforeAll(async () => {
   firstUnattendedUnsafeCapability = codemodeTools.firstUnattendedUnsafeCapability
   restrictCodemodeToolTree = codemodeTools.restrictCodemodeToolTree
   sanitizeNamespaceSegment = codemodeTools.sanitizeNamespaceSegment
+  stripUndefinedEntries = codemodeTools.stripUndefinedEntries
   parseNativeCapabilityName = nativeCapabilities.parseNativeCapabilityName
 })
 
@@ -45,6 +47,19 @@ test("sanitizes connection names into interpreter-safe namespaces", () => {
   expect(sanitizeNamespaceSegment("Acme Drive")).toBe("acme_drive")
   expect(sanitizeNamespaceSegment("123 / CRM")).toBe("_123_crm")
   expect(sanitizeNamespaceSegment("***")).toBe("_")
+})
+
+test("strips undefined object entries while preserving array positions", () => {
+  expect(stripUndefinedEntries({
+    channel: "bug",
+    omitted: undefined,
+    nested: { omitted: undefined, kept: true },
+    values: [1, undefined, { omitted: undefined, kept: 2 }],
+  })).toEqual({
+    channel: "bug",
+    nested: { kept: true },
+    values: [1, null, { kept: 2 }],
+  })
 })
 
 test("reserves prototype-sensitive connection namespaces", () => {

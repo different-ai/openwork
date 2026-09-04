@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { workflowArtifactSnapshotSchema } from "@openwork/types/workflows"
 import {
   artifactDigest,
   artifactFreshness,
@@ -54,6 +55,25 @@ test("viewer and editor projections omit manager-only Workflow authoring data", 
   const projected = redactWorkflowVersionAuthoringDetails({
     id: "cov_test",
     code: "return input.token",
+    graph: {
+      nodes: [
+        { id: "input", kind: "input", label: "Input", fields: ["token"] },
+        {
+          id: "tool1",
+          kind: "tool",
+          label: "tools.reports.list",
+          namespace: "reports",
+          tool: "list",
+          scriptPath: "tools.reports.list",
+          assignsTo: "reports",
+          parallelGroup: null,
+        },
+        { id: "branch1", kind: "branch", label: "input.apiKey === \"sk-live-123\"" },
+        { id: "return1", kind: "return", label: "secret" },
+      ],
+      edges: [],
+      parseError: null,
+    },
     inputSchema: { type: "object" },
     outputSchema: { type: "string" },
     exampleInput: { token: "authoring-secret" },
@@ -72,6 +92,21 @@ test("viewer and editor projections omit manager-only Workflow authoring data", 
   })
 
   assert.equal(projected.code, null)
+  assert.deepEqual(projected.graph?.nodes, [
+    { id: "input", kind: "input", label: "Input", fields: ["token"] },
+    {
+      id: "tool1",
+      kind: "tool",
+      label: "tools.reports.list",
+      namespace: "reports",
+      tool: "list",
+      scriptPath: "tools.reports.list",
+      assignsTo: "reports",
+      parallelGroup: null,
+    },
+    { id: "branch1", kind: "branch", label: "Condition" },
+    { id: "return1", kind: "return", label: "Result" },
+  ])
   assert.equal(projected.exampleInput, null)
   assert.equal("input" in projected.automationReferences[0]!, false)
   assert.equal(JSON.stringify(projected).includes("authoring-secret"), false)
@@ -94,6 +129,33 @@ test("generic config-object projections omit Workflow example input", () => {
     requiredCapabilities: [],
   })
   assert.equal(JSON.stringify(projected).includes("authoring-secret"), false)
+})
+
+test("artifact snapshot projections expose tool calls", () => {
+  const projected = workflowArtifactSnapshotSchema.parse({
+    receiptId: "cmr_test",
+    pluginId: "plg_test",
+    configObjectId: "cob_test",
+    configObjectVersionId: "cov_test",
+    automationRunId: null,
+    value: { count: 1 },
+    markdown: "| count |\n| --- |\n| 1 |",
+    codeDigest: `sha256:${"a".repeat(64)}`,
+    resultDigest: `sha256:${"b".repeat(64)}`,
+    inputSchemaDigest: null,
+    outputSchemaDigest: null,
+    rendererVersion: "codemode-markdown-v1",
+    toolCalls: [{ name: "tools.reports.list" }],
+    status: "succeeded",
+    errorKind: null,
+    errorMessage: null,
+    source: "manual",
+    startedAt: "2026-08-13T12:00:00.000Z",
+    finishedAt: "2026-08-13T12:00:01.000Z",
+    contentDeletedAt: null,
+  })
+
+  assert.deepEqual(projected.toolCalls, [{ name: "tools.reports.list" }])
 })
 
 test("Markdown rendering is deterministic and never emits raw HTML", () => {

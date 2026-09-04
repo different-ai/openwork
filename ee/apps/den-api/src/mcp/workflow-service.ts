@@ -16,6 +16,7 @@ import {
 } from "./codemode-script-object.js"
 import { firstUnattendedUnsafeCapability, restrictCodemodeToolTree, type BuiltCodemodeTools } from "./codemode-tools.js"
 import { runCodemodeScript } from "./codemode-run.js"
+import { normalizeToolBody } from "./invoke.js"
 
 type CodemodeDb = ReturnType<typeof createDenDb>["db"]
 
@@ -70,7 +71,8 @@ export async function executeWorkflow(input: {
 }): Promise<WorkflowExecutionResult> {
   const parsed = parseCodemodeScriptPayload(input.normalizedPayloadJson)
   if (!parsed.ok) return { ok: false, error: "unsupported", message: parsed.message }
-  const normalizedScriptInput = input.scriptInput ?? null
+  const scriptInput = normalizeToolBody(input.scriptInput)
+  const normalizedScriptInput = scriptInput ?? null
   const scriptInputDigest = artifactDigest(normalizedScriptInput)
   const inputSchemaDigest = optionalArtifactDigest(parsed.payload.inputSchema)
   const outputSchemaDigest = optionalArtifactDigest(parsed.payload.outputSchema)
@@ -100,7 +102,7 @@ export async function executeWorkflow(input: {
   }
 
   if (parsed.payload.inputSchema) {
-    const validation = validateCodemodeScriptInput(parsed.payload.inputSchema, input.scriptInput)
+    const validation = validateCodemodeScriptInput(parsed.payload.inputSchema, scriptInput)
     if (!validation.ok) {
       if (validation.error === "invalid_schema") return { ok: false, error: "unsupported", message: validation.message }
       const message = "The arguments do not match the Workflow's inputSchema."
@@ -143,7 +145,7 @@ export async function executeWorkflow(input: {
   const startedAt = new Date()
   const result = await runCodemodeScript({
     code: input.code,
-    scriptInput: input.scriptInput,
+    scriptInput,
     tools: restricted.tools,
     timeoutMs: Math.min(parsed.payload.limits?.timeoutMs ?? 120_000, 170_000),
     maxToolCalls: parsed.payload.limits?.maxToolCalls,

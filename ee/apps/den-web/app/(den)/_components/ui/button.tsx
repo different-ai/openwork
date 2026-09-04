@@ -39,7 +39,7 @@ export function buttonVariants({
     className?: string;
 } = {}): string {
     return [
-        "inline-flex items-center justify-center rounded-lg font-medium transition-colors",
+        "inline-flex items-center justify-center whitespace-nowrap rounded-lg font-medium transition-colors",
         variantClasses[variant],
         sizeClasses[size],
         className,
@@ -172,7 +172,7 @@ export function DenButton({
 }: DenButtonProps) {
     const isDisabled = disabled || loading;
     const classNames = [
-        "relative flex flex-row gap-2 items-center justify-center rounded-lg font-medium transition-colors",
+        "relative flex flex-row gap-2 items-center justify-center whitespace-nowrap rounded-lg font-medium transition-colors",
         variantClasses[variant],
         sizeClasses[size],
         isDisabled ? "cursor-not-allowed opacity-70" : "",
