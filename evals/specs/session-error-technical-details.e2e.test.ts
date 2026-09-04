@@ -89,6 +89,19 @@ test("session error cards expose provider diagnostics only in Developer mode", a
       await user.notSee(detailsPanel);
       await user.notSee({ text: /at runLoop/ });
     });
+    await step(`${kind} banner hides the stack trace outside Developer mode`, async () => {
+      await world.seedStorageError(kind, "banner");
+      const title = kind === "disk-full" ? "Not enough disk space" : "OpenWork couldn’t access its saved data";
+      await user.see({ testId: "session-error-card" });
+      await user.see({ text: title });
+      await user.notSee({ text: /at runLoop/ });
+      await toggleDeveloperMode("on");
+      await user.see({ text: /effect\/sql\/SqlError/ });
+      await user.see({ text: /at runLoop/ });
+      await toggleDeveloperMode("off");
+      await user.see({ text: title });
+      await user.notSee({ text: /at runLoop/ });
+    });
   }
 
 });

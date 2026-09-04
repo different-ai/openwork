@@ -1438,13 +1438,22 @@ export function SessionSurface(props: SessionSurfaceProps) {
       description: "Dev-only eval hook that renders a failed turn with a provider API error (status, code, response body) through the live session-error presentation path.",
       sideEffect: "mutation",
       disabled: !props.sessionId,
-      args: [{ name: "kind", type: "string", description: "Optional disk-full or database-error fixture." }],
+      args: [
+        { name: "kind", type: "string", description: "Optional disk-full or database-error fixture." },
+        { name: "surface", type: "string", description: "Optional banner instead of the transcript." },
+      ],
       execute: (args) => {
         const kind = args && typeof args === "object" && "kind" in args ? args.kind : null;
         const error = kind === "disk-full" || kind === "database-error"
           ? { name: "SqlError", data: { message: `effect/sql/SqlError: Failed to execute statement\n    at runLoop (/$bunfs/root/chunk.js:25:2045)${kind === "disk-full" ? "\nCaused by: ENOSPC: no space left on device, write" : ""}` } }
           : SESSION_ERROR_EVAL_PAYLOAD;
-        setEvalMarkdownMessages(createSessionErrorEvalMessages(props.sessionId, error));
+        if (args && typeof args === "object" && "surface" in args && args.surface === "banner") {
+          setEvalMarkdownMessages([]);
+          setError({ message: error.data.message });
+        } else {
+          setError(null);
+          setEvalMarkdownMessages(createSessionErrorEvalMessages(props.sessionId, error));
+        }
         return { ok: true };
       },
     };
