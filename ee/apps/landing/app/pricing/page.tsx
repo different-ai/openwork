@@ -44,7 +44,7 @@ const pricingSchema = {
       name: "Enterprise",
       price: "40",
       priceCurrency: "USD",
-      url: "https://openworklabs.com/enterprise",
+      url: "https://app.openworklabs.com/dashboard/billing",
       availability: "https://schema.org/InStock",
       priceSpecification: {
         "@type": "UnitPriceSpecification",

@@ -520,7 +520,7 @@ export function OrgSettingsScreen() {
       colors={["#D9F99D", "#0F172A", "#0F766E", "#FDE68A"]}
     >
       {orgContext && !orgContext.entitlements.orgControls ? (
-        <EnterprisePlanNotice feature="Enforced SSO and desktop version control" />
+        <EnterprisePlanNotice feature={orgContext.entitlements.sso ? "Desktop version control" : "Enforced SSO and desktop version control"} />
       ) : null}
       {pageError ? (
         <DenNotice message={pageError} className="mb-6" />

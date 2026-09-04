@@ -22,6 +22,7 @@ import {
   parseStripeWebBilling,
   type StripeWebBilling,
 } from "../_lib/stripe-web-billing";
+import { SelfServePlans, selfServeBillingSchema, type SelfServeBilling, type SelfServeProduct } from "./self-serve-plans";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 type StripeBilling = {
@@ -39,6 +40,7 @@ type StripeBilling = {
     currentPeriodEnd: string | null;
     cancelAtPeriodEnd: boolean;
   } | null;
+  plans: SelfServeBilling | null;
   seats: StripeSeatBilling;
   web: StripeWebBilling | null;
 };
@@ -87,7 +89,9 @@ function parseStripeBilling(payload: unknown): StripeBilling | null {
     typeof seats.freeSeatCount !== "number" ||
     typeof seats.billableSeatCount !== "number"
   ) return null;
+  const plans = selfServeBillingSchema.safeParse(value.plans);
   return {
+    plans: plans.success ? plans.data : null,
     configured: value.configured === true,
     priceId: typeof value.priceId === "string" ? value.priceId : null,
     unitAmount: value.unitAmount,
@@ -171,7 +175,7 @@ export function BillingDashboardScreen() {
   const [stripeBillingOrgId, setStripeBillingOrgId] = useState<string | null>(null);
   const [polarBilling, setPolarBilling] = useState<PolarBilling | null>(null);
   const [stripeBusy, setStripeBusy] = useState(false);
-  const [stripeActionBusy, setStripeActionBusy] = useState<"seat-checkout" | "portal" | null>(null);
+  const [stripeActionBusy, setStripeActionBusy] = useState<"seat-checkout" | "portal" | "plan-checkout" | null>(null);
   const [stripeError, setStripeError] = useState<string | null>(null);
   const [stripeReturnChecking, setStripeReturnChecking] = useState(false);
   const currentOrgIdRef = useRef(activeOrgId);
@@ -185,6 +189,27 @@ export function BillingDashboardScreen() {
     orgContext?.roles,
   );
   const canManageBillingSettings = access.canManageSettings;
+
+  async function choosePlan(product: SelfServeProduct) {
+    const expectedOrgId = activeOrgId;
+    if (!canManageBillingSettings || !expectedOrgId) return;
+    setStripeError(null);
+    setStripeActionBusy("plan-checkout");
+    try {
+      await runReauthableAction("plan-checkout", async () => {
+        const { response, payload } = await requestJson("/v1/billing/plans/checkout", {
+          method: "POST", headers: { [ORG_SCOPE_HEADER]: expectedOrgId }, body: JSON.stringify({ product }),
+        }, 30000);
+        if (!response.ok) throw getRequestError(payload, response, "Could not start checkout.");
+        if (!payload || typeof payload !== "object" || !("url" in payload) || typeof payload.url !== "string") throw new Error("Checkout did not return a link.");
+        if (currentOrgIdRef.current === expectedOrgId) window.location.href = payload.url;
+      });
+    } catch (error) {
+      if (currentOrgIdRef.current === expectedOrgId) setStripeError(error instanceof Error ? error.message : "Could not start checkout.");
+    } finally {
+      setStripeActionBusy(null);
+    }
+  }
 
   async function refreshStripeBilling(quiet = false) {
     const expectedOrgId = activeOrgId;
@@ -371,7 +396,7 @@ export function BillingDashboardScreen() {
   const webCancelling = webSubscription?.cancelAtPeriodEnd === true;
   const webQuantityCurrent = webSubscription ? webSubscription.quantity === webBilling?.quantity : true;
 
-  const totalMinor = (aiActive ? aiChargeMinor : 0) + (seatsActive ? seatChargeMinor : 0) + (webFeatureEnabled && webCountsTowardTotal ? webChargeMinor : 0);
+  const totalMinor = (stripeBilling?.plans?.sso.hasActiveSubscription ? stripeBilling.plans.sso.unitAmount : 0) + (aiActive ? aiChargeMinor : 0) + (seatsActive ? seatChargeMinor : 0) + (webFeatureEnabled && webCountsTowardTotal ? webChargeMinor : 0);
   const totalLabel = stripeBilling ? formatMoneyMinor(totalMinor, stripeBilling.currency) : null;
 
   const membersRoute = getMembersRoute(activeOrg?.slug);
@@ -428,6 +453,7 @@ export function BillingDashboardScreen() {
         </DenCard>
       ) : (
         <>
+      {stripeBilling.plans ? <SelfServePlans billing={stripeBilling.plans} members={activeMemberCount} canManage={canManageBillingSettings} busy={stripeActionBusy !== null} onChoose={(product) => void choosePlan(product)} /> : null}
       {showPolar ? (
         <section className="mb-6 rounded-[20px] border border-gray-100 bg-white p-8 shadow-[0_2px_12px_-4px_rgba(0,0,0,0.06)]">
           <div className="mb-6 flex items-start justify-between gap-4">
@@ -471,12 +497,12 @@ export function BillingDashboardScreen() {
                 active={seatsActive && billableSeatCount > 0}
               />
             }
-            title="Team seats"
+            title={stripeBilling.plans?.tier === "enterprise" ? "Enterprise seats" : "Team seats"}
             description={
               !seatsConfigured
                 ? `${activeMemberCount} active ${activeMemberCount === 1 ? "user" : "users"} · this deployment does not charge for seats`
                 : billableSeatCount > 0
-                  ? `${billableSeatCount} paid ${billableSeatCount === 1 ? "user" : "users"} beyond the free ${freeSeatCount}`
+                  ? `${billableSeatCount} paid ${billableSeatCount === 1 ? "user" : "users"}${freeSeatCount > 0 ? ` beyond the free ${freeSeatCount}` : ""}`
                   : `${activeMemberCount} of ${freeSeatCount} included users · nothing to pay yet`
             }
             value={seatsActive ? seatChargeLabel ?? "" : formatMoneyMinor(0, seatBilling?.currency ?? "usd")}
@@ -489,6 +515,7 @@ export function BillingDashboardScreen() {
                   : <DenBadge tone="neutral">Included</DenBadge>
             }
           />
+          {stripeBilling.plans?.sso.hasActiveSubscription ? <DenLineItemRow className="mx-4 rounded-[18px]" title="SSO add-on" description="Organization-wide SSO / SAML" value={formatMoneyMinor(stripeBilling.plans.sso.unitAmount, "usd")} valueCaption="per month" /> : null}
           {webFeatureEnabled ? (
             <DenLineItemRow
               className="mx-4 rounded-[18px]"
@@ -691,10 +718,12 @@ export function BillingDashboardScreen() {
 
       <DenCard className="mb-6" data-testid="billing-seats-card">
         <DenSectionHeader
-          title="Team seats"
+          title={stripeBilling.plans?.tier === "enterprise" ? "Enterprise seats" : "Team seats"}
           description={
             seatsConfigured
-              ? `Invite more than ${freeSeatCount} people. The first ${freeSeatCount} users are free; each additional user is ${seatPrice} per ${seatBilling?.interval ?? "month"}.`
+              ? freeSeatCount === 0
+                ? `Every organization member is ${seatPrice} per month, including invited members.`
+                : `Invite more than ${freeSeatCount} people. The first ${freeSeatCount} users are free; each additional user is ${seatPrice} per ${seatBilling?.interval ?? "month"}.`
               : "Everyone you invite can use this workspace."
           }
           action={
@@ -719,9 +748,9 @@ export function BillingDashboardScreen() {
         {seatsConfigured ? (
           <DenUsageMeter
             className="mt-5"
-            label={billableSeatCount > 0 ? `${activeMemberCount} users · ${freeSeatCount} free, ${billableSeatCount} paid` : "Free seats used"}
+            label={billableSeatCount > 0 ? `${activeMemberCount} users · ${freeSeatCount > 0 ? `${freeSeatCount} free, ` : ""}${billableSeatCount} paid` : "Free seats used"}
             used={activeMemberCount}
-            total={freeSeatCount}
+            total={Math.max(freeSeatCount, activeMemberCount)}
             caption={
               billableSeatCount > 0
                 ? `You are charged ${seatChargeLabel} per ${seatBilling?.interval ?? "month"} for the ${billableSeatCount} ${billableSeatCount === 1 ? "user" : "users"} beyond the free ${freeSeatCount}.`

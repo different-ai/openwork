@@ -82,9 +82,11 @@ export function getOrganizationEntitlements(
 ): OrganizationEntitlements {
   const gatingEnabled = options.gatingEnabled ?? env.planGatingEnabled
   const entitled = !gatingEnabled || parseOrganizationPlan(metadata).tier === "enterprise"
+  const addons = parseMetadata(metadata).billingAddons
 
   return {
-    sso: entitled,
+    sso: entitled || (parseOrganizationPlan(metadata).tier === "team"
+      && Array.isArray(addons) && addons.includes("sso")),
     desktopPolicies: entitled,
     orgControls: entitled,
     analytics: entitled,
@@ -106,7 +108,7 @@ export function checkEntitlement(
     response: {
       error: "enterprise_plan_required",
       feature: key,
-      message: `${ENTITLEMENT_FEATURE_LABELS[key]} requires an Enterprise plan. Talk to us at openworklabs.com/enterprise.`,
+      message: `${ENTITLEMENT_FEATURE_LABELS[key]} requires an Enterprise plan. Manage your plan at app.openworklabs.com/dashboard/billing.`,
     },
   }
 }
