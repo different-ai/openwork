@@ -1073,6 +1073,8 @@ test("desktop Automation execution creates a normal visible local OpenWork threa
     }
     if (parsed.pathname === sessionPaths.prompt) return new Response(null, { status: 204 })
     if ([sessionPaths.get, sessionPaths.messages, sessionPaths.todo, sessionPaths.status].includes(parsed.pathname)) {
+      // Force the session route to finish last, as it can on either CI runner.
+      if (parsed.pathname === sessionPaths.get) await new Promise((resolve) => setImmediate(resolve))
       // Snapshot routes run concurrently; each route advances its own fixture.
       const snapshots = (snapshotReads.get(parsed.pathname) ?? 0) + 1
       snapshotReads.set(parsed.pathname, snapshots)
