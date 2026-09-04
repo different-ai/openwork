@@ -311,7 +311,16 @@ app.get(
       openapi: "3.1.0",
       info: {
         title: "Den API",
-        version: "dev",
+        version: env.serviceVersion,
+        contact: {
+          name: "OpenWork",
+          url: "https://openworklabs.com",
+          email: "team@openworklabs.com",
+        },
+        license: {
+          name: "OpenWork Enterprise Edition License",
+          url: "https://github.com/different-ai/openwork/blob/dev/ee/LICENSE",
+        },
         description: [
           "OpenAPI spec for the Den control plane API.",
           "",
