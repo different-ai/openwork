@@ -1,7 +1,6 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { mkdir, rm } from "node:fs/promises";
-import { callFunctionOnSurface } from "@openwork/cdp";
-import { desktop as launchDesktop } from "@openwork/hosts";
+import { daytonaSandbox, desktop as launchDesktop } from "@openwork/hosts";
 import type { Seed } from "@openwork/env";
 
 const stormProviderId = "active-session-storm-mock";
@@ -294,10 +293,13 @@ function parseSidebarRouteFacts(value: unknown): SidebarRouteFacts {
  * returns to `home`, so `other`'s rows keep rendering while it is not selected.
  */
 export async function externalSessionVisibility(seed: Seed) {
-  const runId = `${Date.now().toString(36)}-${process.pid}`;
   const app = await seed.desktop({ name: "sidebar-external-session-visibility" });
-  const home = await seed.workspace(app, `/tmp/openwork-external-sessions-${runId}-home`);
-  const other = await additionalWorkspace(seed, app, `/tmp/openwork-external-sessions-${runId}-other`);
+  const repoRoot = app.workspaceRoot;
+  if (!repoRoot) throw new Error("External session visibility needs a spawned desktop with a known workspace root.");
+  // Real checkout directories avoid conflating session-list freshness with a
+  // missing-directory cold start in OpenCode.
+  const home = await seed.workspace(app, `${repoRoot}/apps/app`);
+  const other = await additionalWorkspace(seed, app, `${repoRoot}/apps/server`);
   // TODO(primitive): seed.desktop should accept an initial viewport for Electron surfaces.
   // The sidebar renders its workspace rows only on a desktop-width viewport.
   await app.client.send("Emulation.setDeviceMetricsOverride", {
@@ -306,6 +308,28 @@ export async function externalSessionVisibility(seed: Seed) {
     deviceScaleFactor: 1,
     mobile: false,
   });
+  const rawServerInfo = await seed.evalIn(app, `window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo")`, {
+    awaitPromise: true,
+    timeoutMs: 30_000,
+  });
+  if (!isRecord(rawServerInfo) || typeof rawServerInfo.baseUrl !== "string") {
+    throw new Error(`OpenWork server info was unavailable: ${JSON.stringify(rawServerInfo)}`);
+  }
+  const serverUrl = new URL(rawServerInfo.baseUrl);
+  const serverToken = typeof rawServerInfo.ownerToken === "string"
+    ? rawServerInfo.ownerToken
+    : typeof rawServerInfo.clientToken === "string"
+      ? rawServerInfo.clientToken
+      : "";
+  if (!serverToken) throw new Error("OpenWork server info did not include a token.");
+  let externalServerUrl = serverUrl.origin;
+  if (app.handle.hostKind === "daytona") {
+    const sandboxId = app.handle.sandboxId?.trim();
+    if (!sandboxId) throw new Error("Daytona desktop did not expose its sandbox id.");
+    await using previewHost = daytonaSandbox(sandboxId);
+    if (!previewHost.previewUrl) throw new Error("Daytona host cannot expose the OpenWork server port.");
+    externalServerUrl = await previewHost.previewUrl(Number(serverUrl.port));
+  }
   return {
     app,
     home,
@@ -337,31 +361,47 @@ export async function externalSessionVisibility(seed: Seed) {
      */
     // TODO(primitive): seed.externalSession should create a session on the server without touching the renderer.
     async createSessionOutsideWindow(workspaceId: string, title: string): Promise<string> {
-      // Keep the original target for this non-idempotent POST: reattaching and
-      // replaying it could create two sessions, while returning before it
-      // settles strands the renderer fetch when its execution context exits.
-      const value = await callFunctionOnSurface(app, `async (workspaceId, title) => {
-        const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
-        if (!info?.running || !info.baseUrl) return { error: "local_server_unavailable" };
-        const response = await fetch(
-          String(info.baseUrl).replace(/\\/+$/, "") + "/workspace/" + encodeURIComponent(workspaceId) + "/opencode/session",
-          {
+      const url = `${externalServerUrl.replace(/\/+$/, "")}/workspace/${encodeURIComponent(workspaceId)}/opencode/session`;
+      const headers = {
+        Authorization: `Bearer ${serverToken}`,
+        "Content-Type": "application/json",
+      };
+      const findCreatedSession = async (): Promise<string | null> => {
+        try {
+          const response = await fetch(`${url}?limit=200`, { headers, signal: AbortSignal.timeout(15_000) });
+          const value: unknown = await response.json().catch(() => null);
+          if (!response.ok || !Array.isArray(value)) return null;
+          const match = value.find((session) => isRecord(session) && session.title === title && typeof session.id === "string");
+          return isRecord(match) && typeof match.id === "string" ? match.id : null;
+        } catch {
+          return null;
+        }
+      };
+
+      let lastError = "no response";
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        const existing = await findCreatedSession();
+        if (existing) return existing;
+        try {
+          const response = await fetch(url, {
             method: "POST",
-            headers: {
-              Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? ""),
-              "Content-Type": "application/json",
-            },
+            headers,
             body: JSON.stringify({ title }),
-            signal: AbortSignal.timeout(180_000),
-          },
-        );
-        const body = await response.json().catch(() => null);
-        return { ok: response.ok, status: response.status, id: typeof body?.id === "string" ? body.id : null };
-      }`, [workspaceId, title], { awaitPromise: true, timeoutMs: 210_000, reattachAttempts: 0 });
-      if (!isRecord(value) || value.ok !== true || typeof value.id !== "string") {
-        throw new Error(`Creating a session outside the window failed: ${JSON.stringify(value)}`);
+            signal: AbortSignal.timeout(30_000),
+          });
+          const value: unknown = await response.json().catch(() => null);
+          if (response.ok && isRecord(value) && typeof value.id === "string") return value.id;
+          lastError = `HTTP ${response.status}: ${JSON.stringify(value)}`;
+        } catch (error) {
+          lastError = error instanceof Error ? error.message : String(error);
+        }
+        // A timed-out POST may have committed before its response was lost.
+        // Check by unique title before the next non-idempotent attempt.
+        const created = await findCreatedSession();
+        if (created) return created;
+        await new Promise((resolve) => setTimeout(resolve, Math.pow(2, attempt) * 1_000));
       }
-      return value.id;
+      throw new Error(`Creating a session outside the window failed after 4 attempts: ${lastError}`);
     },
   };
 }
