@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 export async function voiceTaskProvider() {
   const requests: { user: string; model: unknown; tools: string[] }[] = [];
   const server = createServer(async (request, response) => {
+    response.setHeader("access-control-allow-origin", "*");
     if (request.url === "/__facts") { response.setHeader("content-type", "application/json"); response.end(JSON.stringify(requests)); return; }
     if (request.url === "/v1/models") {
       response.setHeader("content-type", "application/json");

@@ -49,7 +49,7 @@ The base review covered current `dev`, all-author open PR metadata, relevant dif
 | #3189, untrusted input validation | Open, owns broker model validation among other changes. Preserve existing broker model defaults; do not copy its server/inference edits |
 | #4358, inference gateway | Open, separate provider routing/credentials/usage work; no dependency |
 | #4111 and current browser-task work | WebMCP/browser internals remain separate. Voice enters through the normal sender; no browser/native transport changes |
-| #4459, UI control through server | Open, separate control mailbox transport. Voice no longer depends on general UI-control tools |
+| #4459, UI control through server | Merged into the current base, separate control mailbox transport. Voice no longer depends on general UI-control tools |
 | #4461, computer task mentions | Open, owns composer encoding and routing hints. Plain spoken requests use the existing capabilities; no copying of the mention implementation |
 
 PR links use `https://github.com/different-ai/openwork/pull/<number>`. No unrelated open branch is imported. The only conversation-shell wiring passes its existing sender and immutable owner into the voice panel.

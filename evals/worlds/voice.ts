@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { ModuleKind, ScriptTarget, transpileModule } from "typescript";
 import { evalIn } from "@openwork/behaviors";
 import type { Place, Seed } from "@openwork/env";
 import { voiceAudioFixtureSource, voiceTaskProvider } from "../packages/labs/src/mock-voice.ts";
@@ -16,11 +18,13 @@ export async function voiceConversation(seed: Seed, { place }: { place: Place })
     const sandbox = app.handle.sandboxId;
     if (!sandbox) throw new Error("Missing owned desktop sandbox");
     const prefix = `/tmp/voice-provider-${randomUUID()}`;
-    const code = `const { createServer } = require("node:http"); (${voiceTaskProvider.toString()})().then(p => console.log(JSON.stringify({url:p.url})));`;
+    const source = await readFile(new URL("../packages/labs/src/mock-voice.ts", import.meta.url), "utf8");
+    const code = transpileModule(source, { compilerOptions: { module: ModuleKind.CommonJS, target: ScriptTarget.ES2022 } }).outputText
+      + '\nexports.voiceTaskProvider().then(p => console.log(JSON.stringify({url:p.url})));';
     const command = `printf %s ${quote(Buffer.from(code).toString("base64"))} | base64 -d > ${prefix}.cjs; nohup node ${prefix}.cjs > ${prefix}.log 2>&1 & echo $! > ${prefix}.pid; for i in $(seq 1 30); do if test -s ${prefix}.log; then cat ${prefix}.log; exit 0; fi; sleep 1; done; exit 1`;
     const result = await exec("daytona", ["exec", sandbox, "--", `bash -lc ${quote(command)}`], { timeout: 60_000 });
     const line = result.stdout.split("\n").find((line) => line.trim().startsWith('{"url":'));
-    if (!line) throw new Error("Voice model witness did not start in the desktop sandbox");
+    if (!line) throw new Error("Voice model witness did not start in the desktop sandbox: " + result.stdout.slice(-2000));
     const { url } = JSON.parse(line);
     provider = { url, async [Symbol.asyncDispose]() {
       await exec("daytona", ["exec", sandbox, "--", `bash -lc ${quote(`kill $(cat ${prefix}.pid) 2>/dev/null || true`)}`], { timeout: 30_000 });
