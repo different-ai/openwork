@@ -40,7 +40,7 @@ test("voice sends and steers real conversation work, interrupts speech, cancels,
   });
   await step("uncertain and muted audio cannot send or approve a request", async () => {
     await world.fixture("say", ["Uncertain words", "unclear", -3]);
-    await user.see({ label: "Voice request" }, { text: "Uncertain words" });
+    await user.see({ label: "Voice request" }, { value: "Uncertain words" });
     expect(users(await world.messages(world.a.sessionId))).toHaveLength(2);
     await user.click({ role: "button", text: /^Mute$/ });
     expect(object(await world.facts()).liveTracks).toBe(0);

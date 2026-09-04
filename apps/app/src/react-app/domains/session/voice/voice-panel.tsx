@@ -44,6 +44,8 @@ export function VoicePanel(props: VoicePanelProps) {
   const timelineEnd = useRef<HTMLDivElement>(null);
   const starting = state.status === "connecting" || state.status === "reconnecting";
   const connected = ["listening", "processing", "speaking", "muted"].includes(state.status);
+  const activity = useSessionActivityStore((store) => store.getStatus(props.workspaceId, props.sessionId));
+  const working = connected ? state.working : ["thinking", "responding", "compacting"].includes(activity);
   useEffect(() => {
     if (state.pendingText) setText(state.pendingText);
   }, [state.pendingText]);
@@ -66,7 +68,7 @@ export function VoicePanel(props: VoicePanelProps) {
     } },
     { id: "voice.status", label: "Read Voice Mode status", description: "Read capture and conversation status without transcript contents.", kind: "query", sideEffect: "none", execute: () => ({
       sessionId: props.sessionId, workspaceId: props.workspaceId, status: state.status,
-      captureActive: state.captureActive, micMuted: state.micMuted, working: state.working,
+      captureActive: state.captureActive, micMuted: state.micMuted, working,
     }) },
   ];
   return (
@@ -77,15 +79,15 @@ export function VoicePanel(props: VoicePanelProps) {
           <p className="text-xs text-muted-foreground">Speak and work in this conversation</p></div>
         <Button variant="ghost" size="icon-sm" onClick={() => { session.end(); props.onClose(); }} aria-label="Close Voice Mode"><X /></Button>
       </header>
-      <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
+      <div className="shrink-0 space-y-3 border-b p-4">
         <div className="space-y-3 text-center">
-          <div aria-hidden="true" className={cn("mx-auto flex size-20 items-center justify-center rounded-full border bg-muted", state.captureActive && "border-primary bg-primary/10", state.status === "speaking" && "ring-4 ring-primary/20")}>
+          <div aria-hidden="true" className={cn("mx-auto flex size-12 items-center justify-center rounded-full border bg-muted", state.captureActive && "border-primary bg-primary/10", state.status === "speaking" && "ring-4 ring-primary/20")}>
             {starting ? <Loader2 className="size-7 animate-spin motion-reduce:animate-none" /> : state.captureActive ? <Mic2 className="size-7" /> : <MicOff className="size-7" />}
           </div>
           <p role="status" aria-live="polite" className="text-sm font-medium">{state.statusText}</p>
           <div className="flex justify-center gap-3 text-xs text-muted-foreground">
             <span data-testid="voice-capture-state">{state.captureActive ? "Microphone on" : "Microphone off"}</span>
-            {state.working ? <span>Conversation working</span> : null}
+            {working ? <span>Conversation working</span> : null}
           </div>
         </div>
         <div className="grid grid-cols-2 gap-2">
@@ -95,7 +97,9 @@ export function VoicePanel(props: VoicePanelProps) {
           <Button variant="outline" onClick={session.stopTalking} disabled={!connected}><VolumeX />Stop talking</Button>
           <Button variant="outline" className="col-span-2" onClick={() => void session.cancel()}>Cancel operation</Button>
         </div>
-        <p className="text-xs leading-relaxed text-muted-foreground">Mute turns off microphone capture. End voice or close this panel to end the call; accepted work continues. Cancel operation requests a stop and clears queued follow-ups. Completed changes cannot be undone by cancellation.</p>
+        <p className="text-xs leading-relaxed text-muted-foreground">Mute or End voice affects audio; accepted work continues. Cancel operation requests a stop. Completed changes remain.</p>
+      </div>
+      <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
         <details className="rounded-lg border p-3 text-xs">
           <summary className="cursor-pointer font-medium">Audio and privacy</summary>
           <div className="mt-3 space-y-3 text-muted-foreground">
