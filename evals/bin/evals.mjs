@@ -133,6 +133,8 @@ export function parseArgs(args) {
   return options;
 }
 
+// The complete caller environment, including OPENWORK_EVAL_ENGINE, is passed
+// through below. Only these remote-placement inputs are removed by --local.
 const REMOTE_PLACEMENT_ENV = [
   "OPENWORK_EVAL_DAYTONA",
   "OPENWORK_EVAL_DAYTONA_SANDBOX",

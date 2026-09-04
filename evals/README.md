@@ -421,6 +421,12 @@ Without a placement flag, the CLI uses Daytona when `daytona snapshot list`
 succeeds and local otherwise, then prints the placement and reason. `--daytona`
 requires Daytona; `--local` forces local.
 
+Set `OPENWORK_EVAL_ENGINE=v2` to run any named spec with the app's chat routed
+through the OpenCode v2 sidecar, locally or on Daytona; unset it (or use `v1`)
+for the unchanged default. For example,
+`OPENWORK_EVAL_ENGINE=v2 pnpm evals:e2e <slug> [--daytona]`. The test-evidence
+header records the selected engine.
+
 Use direct CDP tools only to explore or debug. Convert repeatable coverage into
 a testkit test.
 

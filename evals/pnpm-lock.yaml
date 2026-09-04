@@ -113,6 +113,9 @@ importers:
       '@openwork/cdp':
         specifier: workspace:*
         version: link:../cdp
+      '@openwork/env':
+        specifier: workspace:*
+        version: link:../env
       '@openwork/timeline':
         specifier: workspace:*
         version: link:../timeline

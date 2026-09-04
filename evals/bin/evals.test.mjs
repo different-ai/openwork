@@ -86,9 +86,10 @@ test("explicit local placement removes inherited remote provisioning inputs", ()
     OPENWORK_EVAL_DAYTONA_DESKTOP_SANDBOX: "prepared-desktop",
     OPENWORK_EVAL_DEN_API_URL: "https://den-api.example.test",
     OPENWORK_EVAL_DEN_WEB_URL: "https://den.example.test",
+    OPENWORK_EVAL_ENGINE: "v2",
   }, () => { throw new Error("probe called"); });
 
-  assert.deepEqual(resolved, { env: { PATH: "/bin" }, placement: "local", reason: "--local" });
+  assert.deepEqual(resolved, { env: { PATH: "/bin", OPENWORK_EVAL_ENGINE: "v2" }, placement: "local", reason: "--local" });
 });
 
 test("explicit attached Den placement does not probe Daytona", () => {
@@ -125,6 +126,7 @@ test("ambient Daytona placement preserves the caller environment without probing
   const ambient = {
     OPENWORK_EVAL_DAYTONA: "1",
     OPENWORK_EVAL_DEN_API_URL: "https://den.example.test",
+    OPENWORK_EVAL_ENGINE: "v2",
   };
   assert.deepEqual(resolveRunEnvironment(parseArgs(["app-smoke"]), ambient, () => {
     throw new Error("probe called");

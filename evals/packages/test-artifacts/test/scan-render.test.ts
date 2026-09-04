@@ -13,6 +13,7 @@ function record(name: string, dir: string, createdAt: string, passed: boolean): 
     dir,
     createdAt,
     closedAt: createdAt,
+    engine: "v1",
     summary: {
       ok: passed,
       totalArtifacts: 1,
@@ -48,8 +49,10 @@ function legacyRecord(testRun: TestRunRecord): Record<string, unknown> {
     void judgments;
     return legacyArtifact;
   });
+  const { engine, ...legacyTestRun } = testRun;
+  void engine;
   return {
-    ...testRun,
+    ...legacyTestRun,
     summary: {
       ok: testRun.summary.ok,
       totalFrames: testRun.summary.totalArtifacts,
@@ -84,6 +87,7 @@ test("scanTestRuns reads current and persisted legacy results while tolerating c
     assert.deepEqual(entries.map((entry) => entry.name), ["Current", "Persisted", "2026-06-01T10-00-00-000Z-legacy"]);
     const storedEntries = entries.filter((entry) => entry.kind === "test-run");
     assert.deepEqual(storedEntries.map((entry) => entry.format), ["current", "legacy"]);
+    assert.equal(storedEntries[1]?.testRun.engine, "v1");
     assert.deepEqual(storedEntries[1]?.testRun.artifacts[0]?.judgments, [{
       expectation: "Persisted expectation",
       state: "passed",
@@ -101,6 +105,7 @@ test("scanTestRuns reads current and persisted legacy results while tolerating c
 
 test("renderPrMarkdown writes only the new test-evidence marker", () => {
   const testRun = record("PR proof", "/tmp/2026-pr-proof", "2026-07-02T10:00:00.000Z", false);
+  testRun.engine = "v2";
   testRun.trace = [
     { seq: 1, at: testRun.createdAt, stage: "world", channel: "seed", verb: "den", detail: "den(local)", ok: true },
     { seq: 2, at: testRun.createdAt, stage: "body", channel: "user", verb: "reload", detail: "reload", ok: true },
@@ -111,6 +116,7 @@ test("renderPrMarkdown writes only the new test-evidence marker", () => {
   assert.match(markdown, /<!-- test-evidence -->/);
   assert.doesNotMatch(markdown, /<!-- photo-roll -->|<!-- fraimz -->/);
   assert.match(markdown, /PR proof first validation/);
+  assert.match(markdown, /SHA unknown · engine v2/);
   assert.match(markdown, /\*\*\[world\]\*\* den\(local\)/);
   assert.match(markdown, /\*\*\[user\]\*\* reload ×2/);
   assert.match(markdown, /\*\*steps\*\* 1 ❌ draft persists \(6\.1s\)/);

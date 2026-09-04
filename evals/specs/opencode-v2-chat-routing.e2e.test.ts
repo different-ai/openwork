@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { clickButton, createAndSelectWorkspace, evalIn, go, waitFor } from "@openwork/behaviors";
 import type { Surface } from "@openwork/cdp";
 import { desktop } from "@openwork/hosts";
-import { needs, test } from "@openwork/testkit";
+import { needs, resolveEvalEngine, test } from "@openwork/testkit";
 import { expect } from "vitest";
 
 const execFileAsync = promisify(execFile);
@@ -397,6 +397,7 @@ async function sendAndWaitForNonce(
 test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place, skip }) => {
   needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"] });
 
+  const evalEngine = resolveEvalEngine();
   const binPath = place.kind === "local" ? await resolveOpencodeV2Bin() : undefined;
   const witnessRequests: WitnessRequest[] = [];
   const validAuth = new Set([`Bearer ${keyV1}`, `Bearer ${keyV2}`]);
@@ -531,56 +532,74 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place, ski
       }, null, 2)}\n`);
     }
     const { workspaceId } = await createAndSelectWorkspace(app, { path: workspacePath });
+    const harnessLaneStatus = evalEngine === "v2"
+      ? await untilStatus(
+        app,
+        (status) => status.enabled && status.chatRouting && status.running && typeof status.pid === "number",
+        180_000,
+        "the harness-selected OpenCode v2 chat lane to start",
+      )
+      : undefined;
+    if (harnessLaneStatus !== undefined) {
+      evidence.recordAssertionEvidence(
+        "harness lane switch routes chat through v2 with no in-spec flag flip",
+        `OPENWORK_EVAL_ENGINE=v2 started the app with preview enabled, chat routing enabled, and sidecar pid ${harnessLaneStatus.pid}; the spec had not changed either preview setting.`,
+        true,
+      );
+    }
     if (place.kind === "daytona") {
-      await readStatus(app);
+      if (harnessLaneStatus === undefined) await readStatus(app);
       skip("needs: local placement for witness round-trip claims R1–R4 because Daytona cannot expose the spec process's 127.0.0.1 mock");
     }
     if (witnessBaseUrl === undefined) throw new Error("Local witness URL was unavailable");
 
-    await selectModel(app, modelNameV1);
-    const v2BeforeEnable = await engineSessionCount(app, workspaceId, "opencode2");
-    expect(v2BeforeEnable).toBe(-1);
-    const r1 = await sendAndWaitForNonce(
-      app,
-      witnessRequests,
-      "hello r1",
-      `Bearer ${keyV1}`,
-      modelIdV1,
-      0,
-      "R1 v1",
-    );
-    expect(r1.request.auth).toBe(`Bearer ${keyV1}`);
-    expect(r1.request.model).toBe(modelIdV1);
-    expect(witnessRequests.some((request) => request.auth === `Bearer ${keyV2}`)).toBe(false);
-    evidence.recordAssertionEvidence(
-      "R1 chat stays on v1 before the preview is enabled",
-      `The transcript streamed ${r1.request.nonce} from ${modelIdV1} with Bearer ${keyV1} in ${r1.latencyMs}ms; the v2 proxy returned 503 and no request used Bearer ${keyV2}.`,
-      true,
-    );
+    let runningStatus = harnessLaneStatus;
+    if (runningStatus === undefined) {
+      await selectModel(app, modelNameV1);
+      const v2BeforeEnable = await engineSessionCount(app, workspaceId, "opencode2");
+      expect(v2BeforeEnable).toBe(-1);
+      const r1 = await sendAndWaitForNonce(
+        app,
+        witnessRequests,
+        "hello r1",
+        `Bearer ${keyV1}`,
+        modelIdV1,
+        0,
+        "R1 v1",
+      );
+      expect(r1.request.auth).toBe(`Bearer ${keyV1}`);
+      expect(r1.request.model).toBe(modelIdV1);
+      expect(witnessRequests.some((request) => request.auth === `Bearer ${keyV2}`)).toBe(false);
+      evidence.recordAssertionEvidence(
+        "R1 chat stays on v1 before the preview is enabled",
+        `The transcript streamed ${r1.request.nonce} from ${modelIdV1} with Bearer ${keyV1} in ${r1.latencyMs}ms; the v2 proxy returned 503 and no request used Bearer ${keyV2}.`,
+        true,
+      );
 
-    await go(app, `/workspace/${workspaceId}/settings/advanced`);
-    await waitFor(app, `(() => {
-      const control = document.querySelector('[aria-label="OpenCode v2 engine preview"]');
-      return control?.getAttribute("aria-checked") === "false"
-        && control.getAttribute("aria-disabled") !== "true";
-    })()`, { timeoutMs: 60_000, label: "ready OpenCode v2 preview switch" });
-    await clickSwitch(app, "OpenCode v2 engine preview");
-    const runningStatus = await untilStatus(
-      app,
-      (status) => status.enabled && status.running && typeof status.pid === "number",
-      180_000,
-      "the OpenCode v2 sidecar to start",
-    );
+      await go(app, `/workspace/${workspaceId}/settings/advanced`);
+      await waitFor(app, `(() => {
+        const control = document.querySelector('[aria-label="OpenCode v2 engine preview"]');
+        return control?.getAttribute("aria-checked") === "false"
+          && control.getAttribute("aria-disabled") !== "true";
+      })()`, { timeoutMs: 60_000, label: "ready OpenCode v2 preview switch" });
+      await clickSwitch(app, "OpenCode v2 engine preview");
+      runningStatus = await untilStatus(
+        app,
+        (status) => status.enabled && status.running && typeof status.pid === "number",
+        180_000,
+        "the OpenCode v2 sidecar to start",
+      );
+
+      await waitFor(app, `(() => {
+        const control = document.querySelector('[aria-label="Route chat through OpenCode v2"]');
+        return control?.getAttribute("aria-checked") === "false"
+          && control.getAttribute("aria-disabled") !== "true";
+      })()`, { timeoutMs: 30_000, label: "ready OpenCode v2 chat routing switch" });
+      await clickSwitch(app, "Route chat through OpenCode v2");
+      await untilStatus(app, (status) => status.chatRouting, 30_000, "chat routing to be enabled");
+    }
     const pid0 = runningStatus.pid;
     if (pid0 === undefined) throw new Error("Running OpenCode v2 status did not contain a pid");
-
-    await waitFor(app, `(() => {
-      const control = document.querySelector('[aria-label="Route chat through OpenCode v2"]');
-      return control?.getAttribute("aria-checked") === "false"
-        && control.getAttribute("aria-disabled") !== "true";
-    })()`, { timeoutMs: 30_000, label: "ready OpenCode v2 chat routing switch" });
-    await clickSwitch(app, "Route chat through OpenCode v2");
-    await untilStatus(app, (status) => status.chatRouting, 30_000, "chat routing to be enabled");
     const routedOnAt = Date.now();
 
     const patchResponse = await serverFetchJson(app, `/workspace/${encodeURIComponent(workspaceId)}/config`, {

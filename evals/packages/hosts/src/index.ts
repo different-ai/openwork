@@ -2,6 +2,7 @@ export * from "./browser.ts";
 export * from "./daytona.ts";
 export * from "./den-stack.ts";
 export * from "./desktop.ts";
+export * from "./eval-engine.ts";
 export * from "./local.ts";
 export * from "./provision.ts";
 export * from "./resolve.ts";
