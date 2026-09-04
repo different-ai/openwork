@@ -4,17 +4,25 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { type ReactNode, type Ref, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeft, Check, Loader2, MessageCircle, Minus, MoreHorizontal, Pencil, Plug, Plus, Puzzle, Search, Server, Trash2, Users, Wrench } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, ChevronRight, Link2, Loader2, MessageCircle, Minus, MoreHorizontal, Pencil, Plus, Puzzle, Search, Server, Trash2, Users, Wrench } from "lucide-react";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenSelect } from "../../_components/ui/select";
-import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
-import { getConfiguredMcpConnectionsRoute, getMcpConnectionsRoute, getPluginRoute, getToolTesterRoute } from "../../_lib/den-org";
+import { DenChip } from "../../_components/ui/chip";
+import { DenPageHeader } from "../../_components/ui/page-header";
+import { getConfiguredMcpConnectionsRoute, getMcpConnectionRoute, getMcpConnectionsRoute, getPluginRoute, getToolTesterRoute } from "../../_lib/den-org";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
 import { ConnectorCatalog, connectorChatHref } from "./connector-catalog-list";
 import type { PopularConnector } from "./connector-catalog";
-import { presetEffort } from "./connector-effort";
+import {
+  connectorDetailEffort,
+  connectorDetailFacts,
+  connectorDetailIdentity,
+  connectorDetailPrimaryAction,
+  resolveConnectorDetailSubject,
+} from "./connector-detail";
+import { EFFORT_LABELS, presetEffort } from "./connector-effort";
 import { IntegrationIcon } from "./integration-icon";
 import { Microsoft365Dialog } from "./microsoft-365-dialog";
 import { openMcpAuthorizationWindow, safeMcpAuthorizationUrl, showMcpAuthorizationError } from "./mcp-authorization-url";
@@ -88,7 +96,7 @@ import {
   MICROSOFT_365_QUICK_ADD_ID,
 } from "./connector-quick-add-grid";
 
-export type McpConnectionsScreenView = "catalog" | "configured";
+export type McpConnectionsScreenView = "catalog" | "configured" | "detail";
 
 const OAUTH_POLL_INTERVAL_MS = 2000;
 const OAUTH_POLL_TIMEOUT_MS = 90_000;
@@ -258,7 +266,7 @@ function importServerStatus(server: GithubPluginImportServer): string {
   return "unsupported";
 }
 
-export function McpConnectionsScreen({ view = "catalog" }: { view?: McpConnectionsScreenView }) {
+export function McpConnectionsScreen({ view = "catalog", connectorId }: { view?: McpConnectionsScreenView; connectorId?: string }) {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { orgContext, orgSlug } = useOrgDashboard();
@@ -297,6 +305,7 @@ export function McpConnectionsScreen({ view = "catalog" }: { view?: McpConnectio
   const [smartBarResolution, setSmartBarResolution] = useState<McpConnectionResolution | null>(null);
   const [smartBarSubmitting, setSmartBarSubmitting] = useState(false);
   const [instantAddingPresetId, setInstantAddingPresetId] = useState<string | null>(null);
+  const [detailLinkCopied, setDetailLinkCopied] = useState(false);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const handledQuickAddId = useRef<string | null>(null);
   const smartBarRequestId = useRef(0);
@@ -332,7 +341,7 @@ export function McpConnectionsScreen({ view = "catalog" }: { view?: McpConnectio
   }
 
   function manageConnection(connection: ExternalMcpConnection) {
-    router.push(getConfiguredMcpConnectionsRoute(orgSlug, connection.id));
+    router.push(getMcpConnectionRoute(orgSlug, connection.id));
   }
 
   /**
@@ -699,6 +708,101 @@ export function McpConnectionsScreen({ view = "catalog" }: { view?: McpConnectio
   const configuredRoute = getConfiguredMcpConnectionsRoute(orgSlug);
   const focusConnectionId = configuredView ? trustedConnectionFocusId(listedConnections, searchParams.get("connectionId")) : null;
   const configuredConnections = sortConnectionsForFocus(listedConnections, focusConnectionId);
+  const detailView = view === "detail";
+  const detailSubject = detailView ? resolveConnectorDetailSubject(connectorId ?? "", listedConnections, presets) : null;
+  const detailConnection = detailSubject?.kind === "connection" ? detailSubject.connection : null;
+  const detailIdentity = detailSubject ? connectorDetailIdentity(detailSubject) : null;
+  const detailEffort = detailSubject ? connectorDetailEffort(detailSubject) : null;
+  const detailPrimary = detailEffort ? connectorDetailPrimaryAction(detailEffort) : null;
+  const detailFacts = detailSubject
+    ? connectorDetailFacts(detailSubject, {
+      orgName: orgContext?.organization.name ?? "the org",
+      pluginHref: (pluginId) => getPluginRoute(orgSlug, pluginId),
+    })
+    : [];
+  const detailConnectionSetup = detailConnection ? connectionSetupState(detailConnection) : null;
+  const detailCanInspectTools = detailConnection && detailConnectionSetup
+    ? !isNativeProviderConnectionId(detailConnection.id, detailConnection.nativeProviderKey)
+      && !detailConnectionSetup.setupRequired
+      && !detailConnection.issuerReviewRequired
+      && (detailConnection.credentialMode === "shared" ? detailConnection.connected : detailConnection.connectedForMe)
+    : false;
+  const detailIsBusy = detailSubject?.kind === "popular"
+    ? detailSubject.popular.target.kind === "preset" && instantAddingPresetId === detailSubject.popular.target.presetId
+    : detailSubject?.kind === "preset"
+      ? instantAddingPresetId === detailSubject.preset.presetId
+      : false;
+
+  function connectionSetupState(connection: ExternalMcpConnection) {
+    const connectAttemptRequiresConfiguration = oauthClientConfigurationRequiredIds.includes(connection.id);
+    const needsOAuthClientConfiguration = connectionNeedsOAuthClientConfiguration(connection, connectAttemptRequiresConfiguration);
+    const needsPluginSetup = marketplaceConnectionNeedsAdminSetup(connection, presets) && !needsOAuthClientConfiguration;
+    return { needsOAuthClientConfiguration, needsPluginSetup, setupRequired: needsPluginSetup || needsOAuthClientConfiguration };
+  }
+
+  /** Detail-page primary action: same paths the catalog "+" takes. */
+  function startDetailSetup() {
+    if (!detailSubject) return;
+    if (detailSubject.kind === "popular") {
+      addPopularConnector(detailSubject.popular);
+      return;
+    }
+    if (detailSubject.kind === "preset") {
+      addPreset(detailSubject.preset);
+      return;
+    }
+    if (detailSubject.kind === "microsoft-365") openQuickAdd(MICROSOFT_365_QUICK_ADD_ID);
+  }
+
+  async function copyDetailLink() {
+    if (typeof window === "undefined") return;
+    if (await copyTextToClipboard(window.location.href)) {
+      setDetailLinkCopied(true);
+      window.setTimeout(() => setDetailLinkCopied(false), 2000);
+    }
+  }
+
+  function renderConnectionRow(
+    connection: ExternalMcpConnection,
+    options: { highlighted?: boolean; rowRef?: Ref<HTMLDivElement> } = {},
+  ) {
+    const setup = connectionSetupState(connection);
+    const setupPluginId = connection.identityManagedBy[0]?.pluginId;
+    return <ConnectionRow
+      key={connection.id}
+      orgSlug={orgSlug}
+      connection={connection}
+      highlighted={options.highlighted ?? false}
+      rowRef={options.rowRef}
+      needsPluginSetup={setup.needsPluginSetup}
+      needsOAuthClientConfiguration={setup.needsOAuthClientConfiguration}
+      setupHref={setup.needsPluginSetup && setupPluginId ? getPluginRoute(orgSlug, setupPluginId) : null}
+      polling={pollingConnectionId === connection.id}
+      connecting={startOAuth.isPending && startOAuth.variables === connection.id}
+      errorMessage={connectionActionError?.connectionId === connection.id ? connectionActionError.message : null}
+      onEdit={() => {
+        if (connection.id === GOOGLE_WORKSPACE_QUICK_ADD_ID) {
+          saveNativeClient.reset();
+          setGoogleDialogMode("legacy");
+          return;
+        }
+        updateConnection.reset();
+        setConfiguringOAuthClient(false);
+        setEditingConnection(connection);
+      }}
+      onConfigure={() => {
+        updateConnection.reset();
+        setConfiguringOAuthClient(true);
+        setEditingConnection(connection);
+      }}
+      onReviewIssuer={() => void handleOpenIssuerReview(connection)}
+      onConnect={() => void handleConnectOAuth(connection.id)}
+      onDisconnect={() => void handleDisconnect(connection)}
+      onRemove={() => handleRemove(connection)}
+      disconnecting={disconnectConnection.isPending && disconnectConnection.variables === connection.id}
+      removing={deleteConnection.isPending && deleteConnection.variables === connection.id}
+    />;
+  }
 
   useEffect(() => {
     if (!focusConnectionId || !focusedRowRef.current) return;
@@ -707,14 +811,40 @@ export function McpConnectionsScreen({ view = "catalog" }: { view?: McpConnectio
   }, [focusConnectionId, configuredConnections.length]);
 
   return (
-    <DashboardPageTemplate
-      icon={Plug}
-      title={configuredView ? "Configured connectors" : "Connectors"}
-      description={configuredView
-        ? "Everything your team has set up: connect accounts, review tools, change access, or uninstall."
-        : "Connectors is where you can add MCP servers that your whole team can use."}
-      colors={["#E2E8F0", "#020617", "#0F172A", "#94A3B8"]}
-    >
+    <div className="mx-auto max-w-[860px] px-4 pb-16 pt-6 sm:px-6 md:px-8" data-testid="mcp-connections-page" data-view={view}>
+      {detailView ? (
+        <Link
+          href={getMcpConnectionsRoute(orgSlug)}
+          className="mb-6 inline-flex items-center gap-1.5 text-[13px] text-gray-400 transition hover:text-gray-700"
+          data-testid="connector-detail-back"
+        >
+          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+          Connectors
+        </Link>
+      ) : (
+        <DenPageHeader
+          className="mb-8"
+          title={configuredView ? "Configured connectors" : "Connectors"}
+          description={configuredView
+            ? "Everything your team has set up: connect accounts, review tools, change access, or uninstall."
+            : "Connectors is where you can add MCP servers that your whole team can use."}
+          action={configuredView ? (
+            <Link
+              href={getMcpConnectionsRoute(orgSlug)}
+              className={buttonVariants({ variant: "primary" })}
+              data-testid="configured-add-connector"
+            >
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              Add connector
+            </Link>
+          ) : (
+            <Link href={configuredRoute} className={buttonVariants({ variant: "secondary" })} data-testid="connectors-open-configured">
+              Configured
+              <ChevronRight className="h-4 w-4" aria-hidden="true" />
+            </Link>
+          )}
+        />
+      )}
       {showStagingBanner ? (
         <div data-testid="mcp-connections-staging-banner" className="mb-6 rounded-[24px] border border-amber-200 bg-amber-50 px-5 py-4 text-[14px] leading-6 text-amber-800">
           <p className="font-semibold text-amber-900">OpenWork Connect (beta) is staged for this org.</p>
@@ -742,7 +872,7 @@ export function McpConnectionsScreen({ view = "catalog" }: { view?: McpConnectio
         </div>
       ) : null}
 
-      {configuredView ? null : (
+      {configuredView || detailView ? null : (
       <div className="mb-8">
         <div className="flex items-center gap-3">
           <div className="min-w-0 flex-1">
@@ -860,7 +990,8 @@ export function McpConnectionsScreen({ view = "catalog" }: { view?: McpConnectio
             presets={presets}
             filter={smartBarResolutionMode ? "" : smartQuery}
             configuredHref={configuredRoute}
-            configuredConnectionHref={(connectionId) => getConfiguredMcpConnectionsRoute(orgSlug, connectionId)}
+            configuredConnectionHref={(connectionId) => getMcpConnectionRoute(orgSlug, connectionId)}
+            connectorHref={(id) => getMcpConnectionRoute(orgSlug, id)}
             onAddPopular={addPopularConnector}
             onAddPreset={addPreset}
             onAddMicrosoft365={() => openQuickAdd(MICROSOFT_365_QUICK_ADD_ID)}
@@ -876,14 +1007,7 @@ export function McpConnectionsScreen({ view = "catalog" }: { view?: McpConnectio
       <>
       <div className="mb-3 flex items-center justify-between gap-3">
         <h3 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">Configured</h3>
-        <Link
-          href={getMcpConnectionsRoute(orgSlug)}
-          className={buttonVariants({ variant: "secondary", size: "sm" })}
-          data-testid="configured-add-connector"
-        >
-          <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-          Add connector
-        </Link>
+        <span className="text-[12px] text-gray-400">{configuredConnections.length} {configuredConnections.length === 1 ? "connector" : "connectors"}</span>
       </div>
       {isLoading || usableConnectionsLoading ? (
         <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
@@ -896,53 +1020,147 @@ export function McpConnectionsScreen({ view = "catalog" }: { view?: McpConnectio
         </div>
       ) : (
         <div className="divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white">
-          {configuredConnections.map((connection) => {
-            const connectAttemptRequiresConfiguration = oauthClientConfigurationRequiredIds.includes(connection.id);
-            const needsOAuthClientConfiguration = connectionNeedsOAuthClientConfiguration(
-              connection,
-              connectAttemptRequiresConfiguration,
-            );
-            const needsPluginSetup = marketplaceConnectionNeedsAdminSetup(connection, presets)
-              && !needsOAuthClientConfiguration;
-            const setupPluginId = connection.identityManagedBy[0]?.pluginId;
-            return <ConnectionRow
-              key={connection.id}
-              orgSlug={orgSlug}
-              connection={connection}
-              highlighted={focusConnectionId === connection.id}
-              rowRef={focusConnectionId === connection.id ? focusedRowRef : undefined}
-              needsPluginSetup={needsPluginSetup}
-              needsOAuthClientConfiguration={needsOAuthClientConfiguration}
-              setupHref={needsPluginSetup && setupPluginId ? getPluginRoute(orgSlug, setupPluginId) : null}
-              polling={pollingConnectionId === connection.id}
-              connecting={startOAuth.isPending && startOAuth.variables === connection.id}
-              errorMessage={connectionActionError?.connectionId === connection.id ? connectionActionError.message : null}
-              onEdit={() => {
-                if (connection.id === GOOGLE_WORKSPACE_QUICK_ADD_ID) {
-                  saveNativeClient.reset();
-                  setGoogleDialogMode("legacy");
-                  return;
-                }
-                updateConnection.reset();
-                setConfiguringOAuthClient(false);
-                setEditingConnection(connection);
-              }}
-              onConfigure={() => {
-                updateConnection.reset();
-                setConfiguringOAuthClient(true);
-                setEditingConnection(connection);
-              }}
-              onReviewIssuer={() => void handleOpenIssuerReview(connection)}
-              onConnect={() => void handleConnectOAuth(connection.id)}
-              onDisconnect={() => void handleDisconnect(connection)}
-              onRemove={() => handleRemove(connection)}
-              disconnecting={disconnectConnection.isPending && disconnectConnection.variables === connection.id}
-              removing={deleteConnection.isPending && deleteConnection.variables === connection.id}
-            />;
-          })}
+          {configuredConnections.map((connection) => renderConnectionRow(connection, {
+            highlighted: focusConnectionId === connection.id,
+            rowRef: focusConnectionId === connection.id ? focusedRowRef : undefined,
+          }))}
         </div>
       )}
       </>
+      )}
+
+      {!detailView || !detailSubject || !detailIdentity ? null : detailSubject.kind === "not_found" ? (
+        <div
+          className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-center text-[14px] text-gray-500"
+          data-testid="connector-detail-not-found"
+        >
+          {isLoading ? "Loading connector…" : (
+            <>
+              We couldn&apos;t find that connector.{" "}
+              <Link href={getMcpConnectionsRoute(orgSlug)} className="font-semibold underline underline-offset-2">Browse connectors</Link>
+            </>
+          )}
+        </div>
+      ) : (
+        <article data-testid="connector-detail" data-connector-kind={detailSubject.kind}>
+          <header className="flex flex-col gap-5">
+            <IntegrationIcon
+              name={detailIdentity.name}
+              iconUrl={detailIdentity.icon.iconUrl}
+              simpleIconSlug={detailIdentity.icon.simpleIconSlug}
+              serviceUrl={detailIdentity.icon.serviceUrl}
+              className="h-[72px] w-[72px] rounded-[20px]"
+              imageClassName="h-9 w-9"
+            />
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h1 className="flex flex-wrap items-center gap-2.5 text-[28px] font-medium leading-[34px] tracking-[-0.5px] text-gray-950">
+                  {detailIdentity.name}
+                  {detailConnection ? (
+                    <DenChip tone={detailConnection.connectedForMe || detailConnection.connected ? "success" : "neutral"} size="sm" data-testid="connector-detail-state">
+                      {detailConnection.connectedForMe ? "Connected as you" : detailConnection.connected ? "Connected" : "Not connected"}
+                    </DenChip>
+                  ) : detailEffort ? (
+                    <DenChip tone="neutral" size="sm" data-testid="connector-detail-state">{EFFORT_LABELS[detailEffort]}</DenChip>
+                  ) : null}
+                </h1>
+                {detailIdentity.description ? (
+                  <p className="mt-2 text-[14px] leading-[20px] text-gray-500">{detailIdentity.description}</p>
+                ) : null}
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <DenButton
+                  variant="secondary"
+                  size="sm"
+                  icon={detailLinkCopied ? Check : Link2}
+                  onClick={() => void copyDetailLink()}
+                  data-testid="connector-detail-copy-link"
+                >
+                  {detailLinkCopied ? "Copied" : "Copy link"}
+                </DenButton>
+                {detailConnection ? (
+                  <DenButton size="sm" icon={MessageCircle} href={connectorChatHref(detailIdentity.name)} data-testid="connector-detail-chat">
+                    Chat
+                  </DenButton>
+                ) : detailPrimary ? (
+                  <DenButton size="sm" loading={detailIsBusy} onClick={startDetailSetup} data-testid="connector-detail-primary">
+                    {detailPrimary.label}
+                  </DenButton>
+                ) : null}
+              </div>
+            </div>
+          </header>
+
+          <section className="mt-10" data-testid="connector-detail-connection">
+            <DetailSectionTitle>Connection</DetailSectionTitle>
+            {detailConnection ? (
+              <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white">
+                {renderConnectionRow(detailConnection)}
+              </div>
+            ) : (
+              <div className="flex flex-col gap-4 rounded-2xl border border-dashed border-gray-200 bg-gray-50/60 px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-[14px] font-medium text-gray-900">Not set up for {orgContext?.organization.name ?? "your org"} yet</p>
+                  {detailPrimary ? <p className="mt-1 max-w-[520px] text-[13px] leading-5 text-gray-500">{detailPrimary.explanation}</p> : null}
+                </div>
+                {detailPrimary ? (
+                  <DenButton className="shrink-0" loading={detailIsBusy} onClick={startDetailSetup} data-testid="connector-detail-setup">
+                    {detailPrimary.label}
+                  </DenButton>
+                ) : null}
+              </div>
+            )}
+          </section>
+
+          {detailConnection ? (
+            <section className="mt-10" data-testid="connector-detail-tools">
+              <DetailSectionTitle>Tools</DetailSectionTitle>
+              {detailCanInspectTools ? (
+                <div className="flex flex-col gap-4 rounded-2xl border border-gray-100 bg-white px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-[13px] leading-5 text-gray-500">
+                    Browse this connector&apos;s live tool catalog and run a tool against your connected account in the Tool Tester.
+                  </p>
+                  <Link
+                    href={`${getToolTesterRoute(orgSlug)}?connectionId=${encodeURIComponent(detailConnection.id)}`}
+                    className={buttonVariants({ variant: "secondary", size: "sm" })}
+                    data-testid="connector-detail-test-tools"
+                  >
+                    <Wrench className="h-3.5 w-3.5" aria-hidden="true" />
+                    Test tools
+                  </Link>
+                </div>
+              ) : (
+                <p className="text-[13px] leading-5 text-gray-500">
+                  {isNativeProviderConnectionId(detailConnection.id, detailConnection.nativeProviderKey)
+                    ? "Native connectors expose their capabilities through OpenWork Connect rather than an MCP tool catalog."
+                    : "Tools appear here once the connection is connected for you."}
+                </p>
+              )}
+            </section>
+          ) : null}
+
+          <section className="mt-10" data-testid="connector-detail-information">
+            <DetailSectionTitle>Information</DetailSectionTitle>
+            <dl className="divide-y divide-gray-100">
+              {detailFacts.map((fact) => (
+                <div key={`${fact.label}-${fact.value}`} className="grid gap-1 py-3 sm:grid-cols-[160px_1fr] sm:gap-6">
+                  <dt className="text-[13px] text-gray-400">{fact.label}</dt>
+                  <dd className={`min-w-0 text-[14px] text-gray-900 ${fact.mono ? "truncate font-mono text-[12.5px]" : ""}`}>
+                    {fact.href?.startsWith("/") ? (
+                      <Link href={fact.href} className="underline-offset-2 hover:underline">{fact.value}</Link>
+                    ) : fact.href ? (
+                      <a href={fact.href} target="_blank" rel="noopener noreferrer" className="underline-offset-2 hover:underline">{fact.value}</a>
+                    ) : fact.value}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+
+          <p className="mt-10 text-[12px] leading-5 text-gray-400">
+            When a connector is connected, OpenWork agents can use its tools with the connected account whenever a request calls for it. Tool calls follow the connector&apos;s tool policy, and anyone can disconnect their own account from Your Connections at any time.
+          </p>
+        </article>
       )}
 
       <AddConnectionDialog
@@ -1025,7 +1243,7 @@ export function McpConnectionsScreen({ view = "catalog" }: { view?: McpConnectio
           setMicrosoftDialogOpen(false);
         }}
       />
-    </DashboardPageTemplate>
+    </div>
   );
 }
 
@@ -1732,6 +1950,10 @@ function IssuerReviewDialog({
       </div>
     </div>
   );
+}
+
+function DetailSectionTitle({ children }: { children: ReactNode }) {
+  return <h2 className="mb-3 border-b border-gray-100 pb-3 text-[16px] font-medium tracking-[-0.02em] text-gray-950">{children}</h2>;
 }
 
 function accessSummaryLabel(connection: ExternalMcpConnection): string {

@@ -29,6 +29,12 @@ export type ConnectorCatalogProps = {
   filter: string;
   configuredHref: string;
   configuredConnectionHref: (connectionId: string) => string;
+  /**
+   * Detail page for a row. Receives the connection id when the row is
+   * configured, otherwise the catalog id (popular id, preset id, or
+   * `microsoft-365`), matching what the detail route resolves.
+   */
+  connectorHref: (connectorId: string) => string;
   onAddPopular: (connector: PopularConnector) => void;
   onAddPreset: (preset: ExternalMcpPreset) => void;
   onAddMicrosoft365: () => void;
@@ -156,6 +162,7 @@ function CatalogRow({
   description,
   icon,
   connection,
+  href,
   adding,
   onAdd,
   onManage,
@@ -166,25 +173,32 @@ function CatalogRow({
   description: string;
   icon: CatalogRowIcon;
   connection: ExternalMcpConnection | undefined;
+  href: string;
   adding: boolean;
   onAdd: () => void;
   onManage: (connection: ExternalMcpConnection) => void;
   onRemove: (connection: ExternalMcpConnection) => void;
 }) {
   return (
-    <div className="flex items-center gap-3.5 py-2" data-testid={`connector-row-${id}`}>
-      <IntegrationIcon
-        name={name}
-        iconUrl={icon.iconUrl}
-        simpleIconSlug={icon.simpleIconSlug}
-        serviceUrl={icon.serviceUrl}
-        className="h-12 w-12 rounded-[14px]"
-        imageClassName="h-6 w-6"
-      />
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-[15px] font-medium leading-5 text-gray-900">{name}</p>
-        <p className="truncate text-[13px] leading-5 text-gray-500" title={description}>{description}</p>
-      </div>
+    <div className="group flex items-center gap-1 py-1" data-testid={`connector-row-${id}`}>
+      <Link
+        href={href}
+        className="flex min-w-0 flex-1 items-center gap-3.5 rounded-2xl px-2 py-1.5 transition hover:bg-gray-50"
+        data-testid={`connector-open-${id}`}
+      >
+        <IntegrationIcon
+          name={name}
+          iconUrl={icon.iconUrl}
+          simpleIconSlug={icon.simpleIconSlug}
+          serviceUrl={icon.serviceUrl}
+          className="h-12 w-12 rounded-[14px]"
+          imageClassName="h-6 w-6"
+        />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[15px] font-medium leading-5 text-gray-900">{name}</span>
+          <span className="block truncate text-[13px] leading-5 text-gray-500" title={description}>{description}</span>
+        </span>
+      </Link>
       {connection ? (
         <RowMenu
           name={name}
@@ -274,6 +288,7 @@ export function ConnectorCatalog({
   filter,
   configuredHref,
   configuredConnectionHref,
+  connectorHref,
   onAddPopular,
   onAddPreset,
   onAddMicrosoft365,
@@ -317,6 +332,7 @@ export function ConnectorCatalog({
                   description={connector.description}
                   icon={connector.icon}
                   connection={connection}
+                  href={connectorHref(connection?.id ?? connector.id)}
                   adding={adding}
                   onAdd={() => onAddPopular(connector)}
                   onManage={onManage}
@@ -354,6 +370,7 @@ export function ConnectorCatalog({
                 description="Outlook email, calendar, and OneDrive"
                 icon={{ simpleIconSlug: "microsoft" }}
                 connection={microsoftConnection}
+                href={connectorHref(microsoftConnection?.id ?? MICROSOFT_365_QUICK_ADD_ID)}
                 adding={false}
                 onAdd={onAddMicrosoft365}
                 onManage={onManage}
@@ -368,6 +385,7 @@ export function ConnectorCatalog({
                 description={preset.description}
                 icon={{ serviceUrl: preset.url }}
                 connection={connectionForPresetUrl(connections, preset.url)}
+                href={connectorHref(connectionForPresetUrl(connections, preset.url)?.id ?? preset.presetId)}
                 adding={addingPresetId === preset.presetId}
                 onAdd={() => onAddPreset(preset)}
                 onManage={onManage}
