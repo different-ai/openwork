@@ -479,7 +479,7 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
               npm: "@ai-sdk/openai-compatible",
               name: "Scripted model",
               options: { baseURL: scripted.baseUrl, apiKey: "eval-scripted-key" },
-              models: { [SCRIPTED_MODEL]: { name: "Scripted model", tool_call: true, variants: { high: { reasoningEffort: "high" } } } },
+              models: { [SCRIPTED_MODEL]: { name: "Scripted model", tool_call: true, variants: { low: { reasoningEffort: "low" }, medium: { reasoningEffort: "medium" }, high: { reasoningEffort: "high" } } } },
             },
           },
         },
@@ -512,7 +512,8 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
     expect(connected, `${String(member.slug)}'s engine lists the scripted provider as connected`).toBe(true);
   }
   const scriptedId = `${SCRIPTED_PROVIDER}/${SCRIPTED_MODEL}`;
-  // Nova keeps a thinking effort of its own ("high"); Editor follows the model default. Both must reach the provider as such.
+  // Nova has an exact thinking effort fixed ("high"), which wins every turn; Editor leaves the effort dial at Balanced, so
+  // each of its turns gets the effort the dial derives from the message: a draft is deep work (high), a one-line question is quick (low).
   for (let attempt = 0; attempt < 3; attempt += 1) {
     for (const member of team) await invokeCoworker(app, "coworkers.update", { slug: String(member.slug), patch: { model: scriptedId, modelVariant: member.slug === "nova" ? "high" : "" } });
     await evalIn(app, "location.reload(); true");
@@ -549,9 +550,10 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   expect(firstTurn?.contractInPrompt).toBe(true);
   expect(firstTurn?.tools ?? 0).toBeGreaterThanOrEqual(23);
   expect(firstTurn?.reasoningEffort).toBe("high");
+  expect(scripted.facts.filter((facts) => facts.prompt.includes(DRAFT_PROMPT)).every((facts) => facts.reasoningEffort === "high")).toBe(true);
   evidence.recordAssertionEvidence(
     "A coworker's first turn receives the contract once, with the shape rule, beside its tools, at the thinking effort the person chose",
-    `Nova's first request carried a system prompt of ${firstTurn?.systemChars ?? 0} characters that included the contract's "Which shape an answer takes" section, offered ${firstTurn?.tools ?? 0} tools, measured ${firstTurn?.bodyChars ?? 0} characters as a whole, and asked the provider for the person's thinking effort (reasoning_effort high); the tool server's own one-line instruction ${firstTurn?.toolServerLineInPrompt ? "was" : "was not"} part of the prompt on this engine.`,
+    `Nova's first request carried a system prompt of ${firstTurn?.systemChars ?? 0} characters that included the contract's "Which shape an answer takes" section, offered ${firstTurn?.tools ?? 0} tools, measured ${firstTurn?.bodyChars ?? 0} characters as a whole, and asked the provider for the person's exact thinking effort (reasoning_effort high, fixed in settings, so the dial stays out of it); the tool server's own one-line instruction ${firstTurn?.toolServerLineInPrompt ? "was" : "was not"} part of the prompt on this engine.`,
     true,
   );
   await tapPill(app, "ask");
@@ -566,7 +568,8 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   await waitFor(app, `[...document.querySelectorAll('[data-message-role="assistant"]')].some((message) => (message.textContent ?? "").includes(${json(EDITOR_REPLY)}))`, { timeoutMs: 300_000, label: "Editor's reply to the passed request" });
   const editorPrompt = scripted.prompts.find((prompt) => prompt.includes("Passed from Nova"));
   expect(editorPrompt).toBeDefined();
-  expect(scripted.facts.find((facts) => facts.prompt.includes("Passed from Nova"))?.reasoningEffort).toBe("");
+  // Editor, on the dial at Balanced: the passed request is a draft — deep work — so the provider is asked for high.
+  expect(scripted.facts.find((facts) => facts.prompt.includes("Passed from Nova"))?.reasoningEffort).toBe("high");
   expect(editorPrompt).toContain(`${DRAFT_PROMPT}\n\nPassed from Nova (Research and synthesis): Editor writes for a living.`);
   expect(editorPrompt).toContain("Take it from here as your own request; the person is now talking to you.");
   await openCoworker(app, "nova", "Nova");
@@ -643,6 +646,8 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   await openCoworker(app, "editor", "Editor");
   const sales = await converse(app, "Editor", SALES_PROMPT, SALES_REPLY);
   expect(sales.summary).toBe("Suggested a teammate · Pipeline");
+  // A one-line question is a quick reply: the dial at Balanced asks the provider for low, never the dial's own value.
+  expect(scripted.facts.find((facts) => facts.prompt.includes(SALES_PROMPT))?.reasoningEffort).toBe("low");
   const salesTile = await waitFor(app, `(() => { const tiles = ${READ_TILES}; const tile = tiles.find((candidate) => candidate.kind === "suggestion"); return tile && tile.state === "open" ? tile : false; })()`, { timeoutMs: 30_000, label: "the sales suggestion" });
   expect(salesTile).toMatchObject({ name: "Pipeline", role: "Sales and relationships", smallPrint: "Suggested by Editor · Sales and relationships", pills: ["Add to team", "Not now"] });
   await tapPill(app, "dismiss");

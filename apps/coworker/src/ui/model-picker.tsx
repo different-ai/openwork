@@ -312,13 +312,14 @@ export function ModelPicker({
       ) : null}
 
       {value && variants.length > 0 ? (
-        <Field label={automatic ? "Thinking effort for the standard model" : "Thinking effort"}>
+        <Field label={automatic ? "Exact thinking effort for the standard model (optional)" : "Exact thinking effort (optional)"}>
           <select
             className={`${inputClass} bg-panel`}
             value={modelVariant}
+            title="Fixes one effort for every turn. On Model default, the effort dial decides per turn."
             onChange={(event) => onChange({ model: value, modelVariant: event.target.value, modelMode })}
           >
-            <option value="">Model default</option>
+            <option value="">Model default — the dial decides</option>
             {variants.map((variant) => (
               <option key={variant} value={variant}>{variant.slice(0, 1).toUpperCase() + variant.slice(1)}</option>
             ))}
