@@ -82,7 +82,8 @@ test("sessions created outside the window appear in a non-selected workspace's s
 
   // --- Path 1: an explicit reload request, as issued by session.create. ---
   const reloadedTitle = "External session surfaced by reload";
-  const reloadedId = await world.createSessionOutsideWindow(otherId, reloadedTitle);
+  // A caller cannot redirect a workspace-mounted create into another folder.
+  const reloadedId = await world.createSessionOutsideWindow(otherId, reloadedTitle, world.homePath);
   await step("the external session is not yet visible", async () => {
     await expectStillHidden(world, otherId, reloadedId);
     await user.notSee({ text: reloadedTitle });
@@ -101,7 +102,7 @@ test("sessions created outside the window appear in a non-selected workspace's s
   expect(sessionIds(afterReload, homeId)).toEqual(homeSessionsBefore);
   evidence.recordAssertionEvidence(
     "workspace.reload_sessions surfaces a session created outside the window without selecting its workspace",
-    `Session ${reloadedId} was absent for ${STALE_OBSERVATION_MS}ms, then appeared under ${otherName} with its title after the reload; the selection stayed on ${homeName} and its ${homeSessionsBefore.length} session(s) were unchanged.`,
+    `Session ${reloadedId} was absent for ${STALE_OBSERVATION_MS}ms, then appeared under ${otherName} with its title after the reload, despite a conflicting home-directory hint in the create request; the selection stayed on ${homeName} and its ${homeSessionsBefore.length} session(s) were unchanged.`,
     true,
   );
 

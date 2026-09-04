@@ -417,6 +417,7 @@ export async function externalSessionVisibility(seed: Seed) {
     app,
     home,
     other,
+    homePath,
     /** The sidebar's own per-workspace session lists and load state. */
     // TODO(primitive): probe.route should expose the sidebar's per-workspace session lists.
     async route(): Promise<SidebarRouteFacts> {
@@ -443,8 +444,8 @@ export async function externalSessionVisibility(seed: Seed) {
      * OpenWork server's workspace mount, never through the desktop's UI state.
      */
     // TODO(primitive): seed.externalSession should create a session on the server without touching the renderer.
-    async createSessionOutsideWindow(workspaceId: string, title: string): Promise<string> {
-      const directory = workspaceDirectories.get(workspaceId);
+    async createSessionOutsideWindow(workspaceId: string, title: string, requestedDirectory?: string): Promise<string> {
+      const directory = requestedDirectory ?? workspaceDirectories.get(workspaceId);
       if (!directory) throw new Error(`No directory is registered for workspace ${workspaceId}.`);
       const probe = engineSessionProbe({
         engine: resolveEvalEngine(),
