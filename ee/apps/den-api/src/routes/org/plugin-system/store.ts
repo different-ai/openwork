@@ -650,7 +650,7 @@ function deriveProjection(input: { objectType: ConfigObjectRow["objectType"]; va
       throw new PluginArchRouteFailure(400, "invalid_coworker_template", "Provide a valid coworker template with reusable instructions only. Memory, credentials, workspace files, and running work cannot be included.")
     }
     if (input.coworkerTeamsEnabled !== true) {
-      throw new PluginArchRouteFailure(403, "coworker_teams_disabled", "Prepared coworker teams are not enabled for this organization.")
+      throw new PluginArchAuthorizationError(403, "forbidden", "Prepared coworker teams are not enabled for this organization.", "coworker_teams_disabled")
     }
     return { title: parsed.data.name, description: parsed.data.description, searchText: `${parsed.data.name}\n${parsed.data.role}\n${parsed.data.description}` }
   }
