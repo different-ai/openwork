@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { createAndSelectWorkspace, evalIn, go, waitFor } from "@openwork/behaviors";
-import { desktop, localHost } from "@openwork/hosts";
+import { desktop } from "@openwork/hosts";
 import { needs, test } from "@openwork/testkit";
 import { expect } from "vitest";
 
@@ -191,21 +191,19 @@ const switchReadyUncheckedExpression = `(() => {
   return control?.getAttribute("aria-checked") === "false";
 })()`;
 
-test.skipIf(!enabled)(title, async ({ evidence }) => {
+test.skipIf(!enabled)(title, async ({ evidence, place }) => {
   needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"] });
 
-  const binPath = await resolveOpencodeV2Bin();
+  const binPath = place.kind === "local" ? await resolveOpencodeV2Bin() : undefined;
   const profileDir = await mkdtemp(join(tmpdir(), "openwork-engine-v2-preview-eval-"));
   const workspacePath = join(profileDir, "workspace");
-  await using host = localHost();
   let app: Awaited<ReturnType<typeof desktop>> | undefined;
 
   try {
     app = await desktop({
       name: "engine-v2-preview-flag",
-      host,
       profileDir,
-      env: { OPENWORK_OPENCODE2_BIN: binPath },
+      env: binPath === undefined ? {} : { OPENWORK_OPENCODE2_BIN: binPath },
     });
     const { workspaceId } = await createAndSelectWorkspace(app, { path: workspacePath });
     const serverInfo = await readServerInfo(app);
@@ -232,7 +230,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     const runningStatus = await untilStatus(
       serverInfo,
       (status) => status.enabled && status.running && typeof status.pid === "number",
-      120_000,
+      180_000,
       "the OpenCode v2 sidecar to start",
     );
     const pid0 = runningStatus.pid;

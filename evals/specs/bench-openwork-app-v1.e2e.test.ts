@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { clickButton, createAndSelectWorkspace, evalIn, readComposerState } from "@openwork/behaviors";
 import type { Surface } from "@openwork/cdp";
-import { desktop, localHost } from "@openwork/hosts";
+import { desktop } from "@openwork/hosts";
 import type { DesktopHandle } from "@openwork/hosts";
 import { eventually, needs, test } from "@openwork/testkit";
 import { timeline } from "../packages/timeline/src/index.ts";
@@ -399,7 +399,7 @@ async function setupV2Routing(app: Surface, workspaceId: string, witnessUrl: str
     throw new Error(`Enabling engine v2 routing returned ${enableResponse.status}: ${JSON.stringify(enableValue)}`);
   }
   parseStatus(enableValue);
-  await untilStatus(info, (status) => status.running && status.chatRouting, 120_000, "engine v2 routed lane to start");
+  await untilStatus(info, (status) => status.running && status.chatRouting, 180_000, "engine v2 routed lane to start");
 
   const patchResponse = await fetch(`${info.baseUrl}/workspace/${encodeURIComponent(workspaceId)}/config`, {
     method: "PATCH",
@@ -924,11 +924,11 @@ function gitCommit(): Promise<string> {
   });
 }
 
-test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
+test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence, place }) => {
   needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"] });
   const iterations = Number(process.env.OPENWORK_BENCH_ITERATIONS ?? "1");
   expect(Number.isInteger(iterations) && iterations > 0, "OPENWORK_BENCH_ITERATIONS must be a positive integer").toBe(true);
-  const opencodeV2Bin = benchEngine === "v2" ? await resolveOpencodeV2Bin() : undefined;
+  const opencodeV2Bin = benchEngine === "v2" && place.kind === "local" ? await resolveOpencodeV2Bin() : undefined;
   const runNonce = `${Date.now().toString(36)}-${process.pid}`;
   const results: BenchmarkResults = {
     cold_boot_to_composer: [],
@@ -949,9 +949,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   const v1SessionFreezeChecks: V1SessionFreezeCheck[] = [];
   let modelReselectedPerSession = false;
   let uiCompactionAvailable = false;
-  const host = localHost();
 
-  try {
     for (let coldIndex = 0; coldIndex < iterations; coldIndex += 1) {
       const witnessNonce = `${runNonce}-cold-${coldIndex}`;
       const witness = await startWitness(witnessNonce);
@@ -975,7 +973,6 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
         const coldStartedAt = Date.now();
         app = await desktop({
           name: appName,
-          host,
           profileDir,
           env: {
             // This benchmark measures engine and UI latency, not plugins. On a fresh isolated HOME, the engine's external-plugin dependency bootstrap
@@ -1284,7 +1281,4 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     await writeFile(resultsPath, `${JSON.stringify(report, null, 2)}\n`);
     console.info(`[bench-openwork-app-${benchEngine}] medians\n${medianTable(results)}`);
     console.info(`[bench-openwork-app-${benchEngine}] results=${resultsPath} uiCompactionAvailable=${uiCompactionAvailable}`);
-  } finally {
-    await host.stop();
-  }
 });

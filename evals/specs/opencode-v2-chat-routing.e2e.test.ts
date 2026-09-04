@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 
 import { clickButton, createAndSelectWorkspace, evalIn, go, waitFor } from "@openwork/behaviors";
 import type { Surface } from "@openwork/cdp";
-import { desktop, localHost } from "@openwork/hosts";
+import { desktop } from "@openwork/hosts";
 import { needs, test } from "@openwork/testkit";
 import { expect } from "vitest";
 
@@ -402,10 +402,10 @@ async function sendAndWaitForNonce(
   return { request, latencyMs };
 }
 
-test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence }) => {
+test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place }) => {
   needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"] });
 
-  const binPath = await resolveOpencodeV2Bin();
+  const binPath = place.kind === "local" ? await resolveOpencodeV2Bin() : undefined;
   const witnessRequests: WitnessRequest[] = [];
   const validAuth = new Set([`Bearer ${keyV1}`, `Bearer ${keyV2}`]);
   const witness = createServer((request, response) => {
@@ -501,19 +501,17 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence }) => {
     },
   }, null, 2)}\n`);
 
-  await using host = localHost();
   let app: Awaited<ReturnType<typeof desktop>> | undefined;
   try {
     app = await desktop({
       name: "opencode-v2-chat-routing",
-      host,
       profileDir,
       env: {
         // This benchmark measures engine and UI latency, not plugins. On a fresh isolated HOME, the engine's external-plugin dependency bootstrap
         // (injected by apps/server/src/openwork-runtime-config.ts) can hold its install lock for minutes and block /config + /provider, so the picker
         // reports "No models found" and the run times out. OPENCODE_PURE skips plugin loading for both the v1 and v2 lanes alike.
         OPENCODE_PURE: "true",
-        OPENWORK_OPENCODE2_BIN: binPath,
+        ...(binPath === undefined ? {} : { OPENWORK_OPENCODE2_BIN: binPath }),
         ANTHROPIC_API_KEY: "",
         OPENAI_API_KEY: "",
         OPENROUTER_API_KEY: "",
@@ -556,7 +554,7 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence }) => {
     const runningStatus = await untilStatus(
       serverInfo,
       (status) => status.enabled && status.running && typeof status.pid === "number",
-      120_000,
+      180_000,
       "the OpenCode v2 sidecar to start",
     );
     const pid0 = runningStatus.pid;
