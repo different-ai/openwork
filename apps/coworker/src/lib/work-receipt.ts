@@ -337,50 +337,6 @@ export function summarizeWork(steps: ReadonlyArray<WorkStep>): string {
   return line;
 }
 
-export type ProgressPhase = "sending" | "thinking" | "tool" | "writing" | "retrying" | "finishing";
-
-/**
- * The live progress row's one phrase. It changes only when the phase changes:
- * "Nova is thinking…", "Nova is editing index.md…", "Nova is putting it together…".
- */
-export function describeProgress(name: string, phase: ProgressPhase, activeStep?: Pick<WorkStep, "doing"> | null): string {
-  switch (phase) {
-    case "sending":
-      return "Sending…";
-    case "tool":
-      return `${name} is ${activeStep?.doing ?? "using a tool"}…`;
-    case "writing":
-      return `${name} is putting it together…`;
-    case "retrying":
-      return `${name} is trying again…`;
-    case "finishing":
-      return `${name} is finishing up…`;
-    default:
-      return `${name} is thinking…`;
-  }
-}
-
-/** How much of the stream one glance shows: the end of one line. */
-export const GLIMPSE_CHARS = 140;
-/** How long a glance stays before the live row is discreet again. */
-export const GLIMPSE_MS = 12_000;
-
-/**
- * One discreet line of what is streaming right now, for a person who taps the
- * live row while waiting: the end of the words arriving this moment, else of
- * the words already written, else of the thinking, else the tool step under
- * way. Empty when nothing has arrived.
- */
-export function describeGlimpse(input: { live?: string; text: string; reasoning: string; step: Pick<WorkStep, "doing"> | null }): string {
-  const source = (input.live ?? "").trim() || input.text.trim() || input.reasoning.trim();
-  if (source) {
-    const flat = source.replace(/\s+/g, " ").trim();
-    return flat.length > GLIMPSE_CHARS ? `…${flat.slice(-GLIMPSE_CHARS).trimStart()}` : flat;
-  }
-  if (input.step) return `${input.step.doing.charAt(0).toUpperCase()}${input.step.doing.slice(1)}…`;
-  return "";
-}
-
 /** One labelled block inside a step's technical details. */
 export type TechnicalSection = { label: "Command" | "Input" | "Result" | "Error"; text: string };
 

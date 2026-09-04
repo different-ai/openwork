@@ -67,8 +67,10 @@ async function beginStatusTrace(app: Awaited<ReturnType<typeof coworker>>, promp
         threadStatus: document.querySelector('[data-testid="coworker-thread-status"]')?.textContent?.trim() ?? "",
         topStatus: document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() ?? "",
         working: Boolean(document.querySelector('[data-testid="coworker-working"]')),
-        phrase: document.querySelector('[data-testid="coworker-progress-phrase"]')?.textContent?.trim() ?? "",
-        phase: document.querySelector('[data-testid="coworker-working"]')?.getAttribute("data-phase") ?? "",
+        typing: Boolean(document.querySelector('[data-testid="coworker-typing"]')),
+        chip: document.querySelector('[data-testid="coworker-tool-chip"]')?.textContent?.trim() ?? "",
+        liveBubble: Boolean(document.querySelector('[data-testid="coworker-live-bubble"]')),
+        phase: document.querySelector('[data-testid="coworker-working"]')?.getAttribute("data-phase") ?? (document.querySelector('[data-testid="live-row-slot"][data-open="true"] [data-live="true"]') ? "writing" : ""),
       });
     };
     const observer = new MutationObserver(record);
@@ -150,14 +152,18 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     beforeReply.every((entry) => entry.topStatus !== "Ready"),
     `status trace before the matched reply: ${JSON.stringify(beforeReply)}`,
   ).toBe(true);
-  // While working, the transcript shows one live row with one phrase that names the phase in
-  // everyday words; the coworker's personality never replaces the operational state.
-  const phrases = [...new Set(beforeReply.map((entry) => String(entry.phrase)).filter(Boolean))];
-  expect(phrases.length, `live progress phrases: ${JSON.stringify(phrases)}`).toBeGreaterThan(0);
-  for (const phrase of phrases) {
-    expect(phrase).toMatch(/^(Sending…|Editor is (thinking|putting it together|trying again|finishing up|using .+|editing .+|writing .+|reading .+|looking through .+|running .+|searching .+|updating .+|working with .+|asking .+)…)$/);
+  // While working, the transcript reads like someone typing: a typing bubble while the coworker
+  // thinks (no phrase), a chip in everyday words while a tool runs, and the words themselves in a
+  // live bubble once they arrive; the coworker's personality never replaces the operational state.
+  const liveShapes = beforeReply.filter((entry) => entry.working || entry.liveBubble);
+  expect(liveShapes.length, `live shapes: ${JSON.stringify(beforeReply)}`).toBeGreaterThan(0);
+  expect(liveShapes.some((entry) => entry.typing || entry.chip || entry.liveBubble), `something live was on screen: ${JSON.stringify(liveShapes)}`).toBe(true);
+  for (const chip of new Set(liveShapes.map((entry) => String(entry.chip)).filter(Boolean))) {
+    expect(chip).toMatch(/^(Using .+|Editing .+|Writing .+|Reading .+|Looking through .+|Running .+|Searching .+|Updating .+|Working with .+|Asking .+|Checking .+)$/);
   }
-  expect(beforeReply.every((entry) => !entry.working || ["sending", "thinking", "tool", "writing", "retrying", "finishing"].includes(String(entry.phase)))).toBe(true);
+  expect(liveShapes.every((entry) => !entry.typing || String(entry.phase) === "thinking"), "the typing bubble means thinking").toBe(true);
+  expect(liveShapes.every((entry) => !entry.chip || String(entry.phase) === "tool"), "a chip means a tool").toBe(true);
+  expect(beforeReply.every((entry) => !entry.working || ["sending", "thinking", "tool", "writing", "retrying"].includes(String(entry.phase)))).toBe(true);
   // Once the turn has closed, the live row is gone, thinking folds to one quiet line, and tool work
   // to one receipt per reply, with no raw tool identifiers in either collapsed line.
   const folded = await waitFor(app, `(() => {
