@@ -153,8 +153,14 @@ async function startManagedOpencodeServer(
   const password = randomSecret();
   const args = ["serve", "--hostname", hostname, "--port", String(port), "--cors", "*"];
   const command = options.bin?.trim() || "opencode";
+  // The engine's in-process npm installs use Arborist, which audits by default.
+  // That audit POST depends on npm's advisories endpoint, which has been observed
+  // to hang for the full five-minute registry timeout, so first-run must not wait.
+  // @npmcli/config reads npm_config_* settings from the environment.
+  const engineEnvDefaults = { npm_config_audit: "false" };
   const env: NodeJS.ProcessEnv = {
     ...process.env,
+    ...engineEnvDefaults,
     ...options.env,
     OPENCODE_SERVER_USERNAME: username,
     OPENCODE_SERVER_PASSWORD: password,
@@ -163,6 +169,7 @@ async function startManagedOpencodeServer(
   // that decrypts OpenWork-owned OAuth credentials.
   delete env.OPENWORK_ENCRYPTION_KEY;
   const injectedEnv = Object.entries({
+    ...engineEnvDefaults,
     ...(options.env ?? {}),
     OPENCODE_SERVER_USERNAME: username,
     OPENCODE_SERVER_PASSWORD: password,
