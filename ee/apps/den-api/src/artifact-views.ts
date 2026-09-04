@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, desc, eq, isNull, isNotNull } from "@openwork-ee/den-db/drizzle"
 import { ArtifactViewRevisionTable, ArtifactViewTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import type { GeneratedArtifactView, GeneratedArtifactViewRevision } from "@openwork/types/workflows"
@@ -52,6 +52,7 @@ function serializeView(row: ArtifactViewRow, revisions: ArtifactViewRevisionRow[
     description: row.description,
     status: row.status,
     activeRevisionId: row.active_revision_id,
+    useInWorkflow: row.use_in_workflow,
     revisions: revisions.map(serializeRevision),
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
@@ -86,11 +87,13 @@ async function revisionRows(artifactViewId: ArtifactViewId): Promise<ArtifactVie
 export async function listArtifactViews(input: {
   context: PluginArchActorContext
   activeOnly?: boolean
+  savedOnly?: boolean
 }): Promise<GeneratedArtifactView[]> {
   const conditions = [eq(ArtifactViewTable.organization_id, input.context.organizationContext.organization.id)]
   if (input.activeOnly) {
     conditions.push(eq(ArtifactViewTable.status, "active"))
   }
+  if (input.savedOnly) conditions.push(isNotNull(ArtifactViewTable.active_revision_id))
   const rows = await db.select().from(ArtifactViewTable)
     .where(and(...conditions))
     .orderBy(desc(ArtifactViewTable.updated_at), desc(ArtifactViewTable.id))
@@ -189,13 +192,10 @@ export async function saveArtifactViewRevision(input: {
 
   await db.transaction(async (tx) => {
     if (existing) {
-      await tx.update(ArtifactViewTable).set({
-        title,
-        description,
-        ...(build.ok && existing.active_revision_id === null
-          ? { status: "active" as const, active_revision_id: revisionId }
-          : {}),
-      }).where(eq(ArtifactViewTable.id, existing.id))
+      if (existing.active_revision_id === null) {
+        await tx.update(ArtifactViewTable).set({ title, description })
+          .where(eq(ArtifactViewTable.id, existing.id))
+      }
     } else {
       await tx.insert(ArtifactViewTable).values({
         id: artifactViewId,
@@ -205,7 +205,8 @@ export async function saveArtifactViewRevision(input: {
         title,
         description,
         status: "active",
-        active_revision_id: build.ok ? revisionId : null,
+        active_revision_id: null,
+        use_in_workflow: false,
       })
     }
     await tx.insert(ArtifactViewRevisionTable).values({
@@ -240,6 +241,7 @@ export async function activateArtifactViewRevision(input: {
   context: PluginArchActorContext
   artifactViewId: string
   revisionId: string
+  save?: { title: string; useInWorkflow: boolean; expectedActiveRevisionId: string | null }
 }): Promise<GeneratedArtifactView> {
   const view = await accessibleView({ context: input.context, artifactViewId: input.artifactViewId, role: "manager" })
   const revisionId = parseRevisionId(input.revisionId)
@@ -255,9 +257,22 @@ export async function activateArtifactViewRevision(input: {
   if (script.currentVersion.outputSchemaDigest !== revision.output_schema_digest) {
     throw new Error("artifact_view_schema_incompatible")
   }
-  await db.update(ArtifactViewTable).set({ status: "active", active_revision_id: revision.id })
-    .where(eq(ArtifactViewTable.id, view.id))
-  const updated = { ...view, status: "active" as const, active_revision_id: revision.id, updated_at: new Date() }
+  const saved = input.save
+  const updated = await db.transaction(async (tx) => {
+    const [current] = await tx.select().from(ArtifactViewTable)
+      .where(eq(ArtifactViewTable.id, view.id)).limit(1).for("update")
+    if (!current) throw new Error("artifact_view_not_found")
+    if (saved && current.active_revision_id !== saved.expectedActiveRevisionId) {
+      throw new Error("app_changed_since_preview")
+    }
+    const patch = {
+      status: "active" as const,
+      active_revision_id: revision.id,
+      ...(saved ? { title: saved.title, use_in_workflow: saved.useInWorkflow } : {}),
+    }
+    await tx.update(ArtifactViewTable).set(patch).where(eq(ArtifactViewTable.id, view.id))
+    return { ...current, ...patch, updated_at: new Date() }
+  })
   return serializeView(updated, await revisionRows(view.id))
 }
 
@@ -270,4 +285,17 @@ export async function retireArtifactView(input: {
     .where(eq(ArtifactViewTable.id, view.id))
   const updated = { ...view, status: "retired" as const, active_revision_id: null, updated_at: new Date() }
   return serializeView(updated, await revisionRows(view.id))
+}
+
+export async function getArtifactView(input: { context: PluginArchActorContext; artifactViewId: string }) {
+  const view = await accessibleView({ ...input, role: "viewer" })
+  return serializeView(view, await revisionRows(view.id))
+}
+
+export async function readArtifactViewSource(input: { context: PluginArchActorContext; artifactViewId: string }) {
+  const view = await accessibleView({ ...input, role: "manager" })
+  const revisions = await revisionRows(view.id)
+  const latest = revisions[0]
+  if (!latest) throw new Error("artifact_view_revision_not_found")
+  return { view: serializeView(view, revisions), reactSource: latest.react_source, cssSource: latest.css_source }
 }

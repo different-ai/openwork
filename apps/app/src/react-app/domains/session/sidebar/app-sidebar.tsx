@@ -927,6 +927,8 @@ export type AppSidebarProps = {
   onOpenAutomations?: () => void;
   dashboardActive?: boolean;
   onOpenDashboard?: () => void;
+  appsActive?: boolean;
+  onOpenApps?: () => void;
   /** Opens the cross-session message search dialog (Cmd/Ctrl+Shift+F). */
   onOpenSessionSearch?: () => void;
   /** Back/forward across recently viewed conversations, rendered at the top of the sidebar. */
@@ -1174,6 +1176,7 @@ export function AppSidebar(props: AppSidebarProps) {
                 </SidebarMenuButton>
               </SidebarMenuItem>
             ) : null}
+            {props.onOpenApps ? <SidebarDestination active={props.appsActive === true} icon={Blocks} label="Apps" onSelect={props.onOpenApps} /> : null}
             {props.onOpenDashboard ? (
               <SidebarDestination
                 active={props.dashboardActive === true}

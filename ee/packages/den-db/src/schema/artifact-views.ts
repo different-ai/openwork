@@ -1,4 +1,4 @@
-import { index, int, mysqlEnum, mysqlTable, timestamp, varchar } from "drizzle-orm/mysql-core"
+import { boolean, index, int, mysqlEnum, mysqlTable, timestamp, varchar } from "drizzle-orm/mysql-core"
 import { compatJsonColumn, denTypeIdColumn, encryptedColumn, encryptedMediumTextColumn, timestamps } from "../columns"
 
 const encryptedJsonColumn = <TData>(name: string) => encryptedColumn<TData>(name, {
@@ -32,6 +32,7 @@ export const ArtifactViewTable = mysqlTable(
     description: varchar("description", { length: 2_000 }),
     status: mysqlEnum("status", ["active", "retired"]).notNull().default("active"),
     active_revision_id: denTypeIdColumn("artifactViewRevision", "active_revision_id"),
+    use_in_workflow: boolean("use_in_workflow").notNull().default(true),
     ...timestamps,
   },
   (table) => [

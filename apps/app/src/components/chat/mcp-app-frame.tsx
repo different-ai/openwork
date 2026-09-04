@@ -6,6 +6,7 @@ import { AppBridge, PostMessageTransport } from "@modelcontextprotocol/ext-apps/
 import type { McpUiStyles, McpUiStyleVariableKey } from "@modelcontextprotocol/ext-apps"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 
+import { AppChatArtifact } from "@/react-app/domains/apps/app-chat-artifact"
 import { openDesktopUrl } from "@/app/lib/desktop"
 import {
   OpenworkServerError,
@@ -609,6 +610,13 @@ export function McpAppFrame({ part }: { part: DynamicToolUIPart }) {
     return () => { cancelled = true }
   }, [launch, openworkServerClient, part.toolName, result, workspaceId])
 
+  const viewId = result?._meta?.artifactViewId
+  const revisionId = result?._meta?.viewRevisionId
+  if (app && typeof viewId === "string" && typeof revisionId === "string" && app.resourceUri === `ui://openwork/artifacts/${viewId}/views/${revisionId}/index.html`) {
+    const artifact = result?.structuredContent?.artifact
+    const title = typeof result?._meta?.appTitle === "string" ? result._meta.appTitle : isRecord(artifact) && typeof artifact.title === "string" ? artifact.title : "App preview"
+    return <AppChatArtifact key={`${viewId}:${revisionId}`} appId={viewId} revisionId={revisionId} title={title} receiptId={isRecord(artifact) && typeof artifact.receiptId === "string" ? artifact.receiptId : undefined} />
+  }
   if (!result || (!app && !error)) return null
   if (error) return <McpAppDiagnosticNotice error={error} notice={CHAT_MCP_APP_UNAVAILABLE_NOTICE} />
   if (!app) return null

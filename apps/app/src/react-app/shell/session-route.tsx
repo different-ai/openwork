@@ -100,6 +100,8 @@ import {
   type SessionPagePaneRuntime,
 } from "@/react-app/domains/session/chat/session-page";
 import { AutomationsPage } from "@/react-app/domains/automations/automations-page";
+import { AppsPage } from "@/react-app/domains/apps/apps-page";
+import { useSavedApps } from "@/react-app/domains/apps/use-apps";
 import { DashboardPage } from "@/react-app/domains/dashboard/dashboard-page";
 import { useDashboardDeploymentAvailability } from "@/react-app/domains/dashboard/dashboard-availability";
 import { useAutomationDeploymentEnabled } from "@/react-app/domains/automations/automation-availability";
@@ -352,6 +354,8 @@ function singlePickedDirectory(selection: string | string[] | null) {
 export function SessionRoute() {
   const navigate = useNavigate();
   const location = useLocation();
+  const appsRouteActive = /^\/apps(?:\/|$)/.test(location.pathname);
+  const { available: appsAvailable } = useSavedApps();
   const automationsRouteRequested = /^\/automations(?:\/|$)/.test(location.pathname);
   const dashboardRouteRequested = /^\/dashboard(?:\/|$)/.test(location.pathname);
   const {
@@ -486,7 +490,7 @@ export function SessionRoute() {
     runRemoteWorkspaceConnectionCheck,
   } = useWorkspaceRouteState({
     developerMode,
-    workspaceRoute: automationsRouteActive ? "automations" : dashboardWorkspaceRoute ? "dashboard" : "session",
+    workspaceRoute: automationsRouteActive ? "automations" : dashboardWorkspaceRoute || appsRouteActive ? "dashboard" : "session",
     onServerSettingsChanged: () => setOpenworkServerSettingsVersion((value) => value + 1),
     onHostInfo: setOpenworkServerHostInfoState,
   });
@@ -3263,8 +3267,15 @@ export function SessionRoute() {
           }}
         />
       }
-      primaryTitle={automationsRouteActive ? "Automations" : dashboardRouteActive ? "Dashboard" : undefined}
-      primarySlot={automationsRouteActive ? (
+      primaryTitle={appsRouteActive ? "Apps" : automationsRouteActive ? "Automations" : dashboardRouteActive ? "Dashboard" : undefined}
+      primarySlot={appsRouteActive ? (
+        <AppsPage onNewApp={async (prompt) => {
+          const sessionId = await handleCreateTaskInWorkspaceWithOpenMode(selectedWorkspaceId, "primary");
+          if (!sessionId) throw new Error("Could not start a conversation. Check that your workspace is connected.");
+          saveSessionDraft(sessionDraftScope, selectedWorkspaceId, sessionId, { text: prompt, mode: "prompt" });
+          focusPromptSoon();
+        }} />
+      ) : automationsRouteActive ? (
         <AutomationsPage providerCatalog={providerCatalog} workspaceId={selectedWorkspaceId} />
       ) : dashboardRouteActive ? (
         <WorkspaceProvider
@@ -3300,6 +3311,8 @@ export function SessionRoute() {
               navigate(automationsRoute());
             }
           : undefined,
+        appsActive: appsRouteActive,
+        onOpenApps: appsAvailable ? () => navigate("/apps") : undefined,
         dashboardActive: dashboardRouteActive,
         onOpenDashboard: mcpAppsDashboardEnabled
           ? () => {
