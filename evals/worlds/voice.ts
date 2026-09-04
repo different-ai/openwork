@@ -53,9 +53,29 @@ export async function voiceConversation(seed: Seed, { place }: { place: Place })
       location.reload();
       return true;
     }`, { args: [workspace.workspaceId, providerUrl.toString().replace(/\/$/, "")], awaitPromise: true, timeoutMs: 120_000 });
-    await arrangeControl(seed, app, "session.create_task");
-    const a = await seed.session(app, { title: "Voice conversation A" });
-    const b = await seed.session(app, { title: "Voice conversation B" });
+    // Renderer controls appear before the reloaded workspace engine is ready.
+    await seed.evalIn(app, `async (workspaceId) => {
+      const deadline = Date.now() + 60000;
+      while (Date.now() < deadline) {
+        const root = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
+        try {
+          const response = await fetch(root + "/workspace/" + workspaceId + "/opencode/session", { headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") } });
+          if (response.ok && window.__openworkControl) return true;
+        } catch {}
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      throw new Error("Fixture engine did not become ready after reload");
+    }`, { args: [workspace.workspaceId], awaitPromise: true, timeoutMs: 70_000 });
+    const session = async (title: string) => {
+      const deadline = Date.now() + 60_000;
+      while (true) {
+        try { return await seed.session(app, { title }); }
+        catch (error) { if (Date.now() >= deadline) throw error; }
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    };
+    const a = await session("Voice conversation A");
+    const b = await session("Voice conversation B");
     await arrangeControl(seed, app, "session.open", { sessionId: a.sessionId });
     await seed.evalIn(app, voiceAudioFixtureSource);
     await arrangeControl(seed, app, "voice.panel.open");

@@ -38,7 +38,7 @@ export function VoicePanel(props: VoicePanelProps) {
     needsScreen: () => latest.current.needsScreen || useSessionActivityStore.getState().getStatus(props.workspaceId, props.sessionId) === "waiting",
     submit: (draft, id) => latest.current.onSendDraft(draft, id),
   }), [props.sessionId, props.workspaceId, props.workspaceRoot, props.opencodeBaseUrl, props.openworkToken, props.client]);
-  useLayoutEffect(() => () => session.dispose(), [session]);
+  useLayoutEffect(() => { session.mount(); return session.dispose; }, [session]);
   const state = useSyncExternalStore(session.store.subscribe, session.store.getSnapshot, session.store.getSnapshot);
   const [text, setText] = useState("");
   const timelineEnd = useRef<HTMLDivElement>(null);

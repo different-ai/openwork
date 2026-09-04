@@ -79,6 +79,10 @@ export class VoiceSession {
 
   constructor(readonly owner: VoiceConversation) {}
 
+  // React may replay effect setup/cleanup in development. Re-arm only the
+  // mounted owner; disposal has already invalidated every earlier callback.
+  mount = () => { this.disposed = false; };
+
   private current(connection?: Connection) {
     return !this.disposed && this.owner.isCurrent() && (!connection || this.connection === connection && connection.generation === this.generation);
   }
@@ -349,9 +353,9 @@ export class VoiceSession {
       if (connection.seenItems.size >= MAX_TURNS) return this.pause("Voice reached its turn limit. Reconnect to continue; accepted work stays here.");
       const text = field(event, "transcript").trim();
       if (!/[\p{Letter}\p{Number}]/u.test(text)) return this.rest(connection);
-      const logprobs = Array.isArray(event.logprobs) ? event.logprobs.flatMap((p) => record(p) && typeof p.logprob === "number" ? [p.logprob] : []) : [];
+      const logprobs = Array.isArray(event.logprobs) ? event.logprobs.flatMap((p) => record(p) && typeof p.logprob === "number" && Number.isFinite(p.logprob) ? [p.logprob] : []) : [];
       const uncertain = !logprobs.length || logprobs.reduce((a, b) => a + b, 0) / logprobs.length < -1;
-      if (uncertain || text.length > 8_000 || this.submitting || this.cancelling) {
+      if (uncertain || text.length > 8_000) {
         this.store.update({ pendingText: text.slice(0, 8_000) });
         this.status("listening", "Please review the transcript below before sending it.");
         return;
@@ -455,6 +459,9 @@ export class VoiceSession {
       await connection.sender?.replaceTrack(null);
       this.rest(connection);
     } else {
+      const deadline = window.setTimeout(() => {
+        if (this.current(connection)) this.pause("Microphone setup timed out. Reconnect when you are ready; accepted work is unchanged.");
+      }, 30_000);
       try {
         const stream = await this.acquireMicrophone(connection.generation, this.store.getSnapshot().inputDevice);
         if (!stream || !this.current(connection)) return;
@@ -462,9 +469,10 @@ export class VoiceSession {
         await connection.sender?.replaceTrack(track);
         if (!this.current(connection)) { stream.getTracks().forEach((t) => t.stop()); return; }
         this.store.update({ micMuted: false });
-        this.capture(connection, true);
+        this.capture(connection, connection.echoCancellation || !connection.playing);
         this.rest(connection);
       } catch (error) { this.fail(connection, mediaError(error)); }
+      finally { window.clearTimeout(deadline); }
     }
     } catch (error) { this.fail(connection, mediaError(error)); }
     finally { this.muting = false; }
@@ -579,7 +587,8 @@ export class VoiceSession {
       if (reply.info.error) this.speak(connection, "The conversation reported an error. Please read its details before continuing.");
       else if (text) this.speak(connection, text);
     } catch {
-      if (this.current(connection)) this.store.update({ statusText: "Could not verify the conversation’s current state. Check the connection; no requests will be resent." });
+      if (baseline) this.fail(connection, "Could not verify this conversation before starting voice. Check the connection and reconnect; nothing was sent.");
+      else if (this.current(connection)) this.store.update({ statusText: "Could not verify the conversation’s current state. Check the connection; no requests will be resent." });
     } finally { this.observing = false; }
   }
 }
