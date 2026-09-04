@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { expect } from "vitest";
 import { server, test } from "@openwork/testkit";
+import { requestDenLoopback } from "@openwork/labs";
 
 function stringField(value: unknown, key: string): string {
   if (typeof value !== "object" || value === null || !(key in value)) throw new Error(`Missing ${key}`);
@@ -18,12 +19,11 @@ test("MCP requests keep valid credentials after the public auth rate limit is ex
   });
   const origin = den.ref.webUrl;
   const forwarded = { "x-forwarded-for": "198.51.100.10, 192.0.2.10" };
-  const request = (path: string, init: RequestInit = {}) => fetch(`${den.ref.apiUrl}${path}`, {
-    ...init,
-    redirect: "manual",
-    signal: AbortSignal.timeout(15_000),
-    headers: { origin, ...forwarded, ...init.headers },
-  });
+  const request = (path: string, init: RequestInit = {}) => {
+    const options = { ...init, headers: { origin, ...forwarded, ...init.headers } };
+    if (den.placement?.kind === "daytona") return requestDenLoopback(den.placement.sandboxId, path, options);
+    return fetch(`${den.ref.apiUrl}${path}`, { ...options, redirect: "manual", signal: AbortSignal.timeout(15_000) });
+  };
   const login = await request("/api/auth/sign-in/email", {
     method: "POST",
     headers: { "content-type": "application/json" },
