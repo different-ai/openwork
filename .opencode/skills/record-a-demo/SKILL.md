@@ -1,16 +1,16 @@
 ---
-name: daytona-recording-artifacts
-description: screenshots, recording, presentation artifacts, validate visually. Supplementary Daytona screenshots and optional videos after testkit validation.
+name: record-a-demo
+description: Screenshots, recording, and presentation artifacts.
 ---
 
 # Daytona Recording Artifacts
 
 Use this skill to collect supplementary presentation artifacts for a Daytona UI
 journey. Pass/fail evidence comes from an `@openwork/testkit` spec and its
-ambient test evidence; use `daytona-flow-validator` and `run-tests` before declaring a
-verdict. Custom screenshots or recordings never replace the test run.
+ambient test evidence; use `run-tests` before declaring a verdict. Custom
+screenshots or recordings never replace the test run.
 
-Follow `prove-a-pr` for the repository-wide agent-first and human-verification contract.
+Follow `publish-evidence` for the repository-wide verdict and publication contract.
 
 ## Default supplementary format: screenshot index
 
@@ -144,8 +144,8 @@ daytona exec "$SANDBOX" -- 'bash .devcontainer/capture-daytona-screenshot.sh'
 Use this after important states: welcome screen, workspace created, settings
 connected, task response visible, error state reproduced, or final success.
 
-Before sharing any screenshot URL, follow `daytona-flow-validator` and inspect
-the saved PNG itself. Confirm the visible image shows the claimed state and is
+Before sharing any screenshot URL, inspect the saved PNG itself. Confirm the
+visible image shows the claimed state and is
 not covered by a native picker, modal, toast, desktop window, or unrelated
 overlay. If the screenshot does not match, recapture and inspect a replacement.
 

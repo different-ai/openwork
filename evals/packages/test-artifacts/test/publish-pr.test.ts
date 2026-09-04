@@ -1,13 +1,19 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { publishPr } from "../src/publish-pr.ts";
-import type { CommandRunner, Fetcher } from "../src/publish-pr.ts";
+import type { CommandRunner } from "../src/publish-pr.ts";
 import type { TestRunRecord } from "../src/schema.ts";
 
 const TEST_RUN_SHA = "1111111111111111111111111111111111111111";
+
+interface RecordedCommand {
+  command: string;
+  args: string[];
+  input?: string;
+}
 
 function testRunRecord(dir: string): TestRunRecord {
   return {
@@ -46,73 +52,65 @@ function testRunRecord(dir: string): TestRunRecord {
   };
 }
 
-test("publishPr dry-run emits the new marker without upload or gh calls", async () => {
+function recordingExec(calls: RecordedCommand[], comments: object[] = [], attach = true): CommandRunner {
+  return (command, args, opts) => {
+    calls.push({ command, args, input: opts?.input });
+    if (args.includes("headRefOid")) {
+      return { status: 0, stdout: JSON.stringify({ headRefOid: TEST_RUN_SHA }), stderr: "" };
+    }
+    if (args[0] === "pr" && args[1] === "comment" && args[2] === "--help") {
+      return { status: 0, stdout: attach ? "--attach <file>" : "GitHub CLI help", stderr: "" };
+    }
+    if (args.includes("comments")) {
+      return { status: 0, stdout: JSON.stringify({ comments }), stderr: "" };
+    }
+    return { status: 0, stdout: "ok", stderr: "" };
+  };
+}
+
+test("publishPr dry-run makes no gh calls", async () => {
   const testRunDir = await mkdtemp(join(tmpdir(), "openwork-test-artifacts-publish-"));
   try {
     await writeFile(join(testRunDir, "test-run.json"), JSON.stringify(testRunRecord(testRunDir)));
-    let commandCalled = false;
-    let fetchCalled = false;
+    const calls: RecordedCommand[] = [];
     let output = "";
-    const exec: CommandRunner = () => {
-      commandCalled = true;
-      return { status: 1, stdout: "", stderr: "unexpected command" };
-    };
-    const fetcher: Fetcher = async () => {
-      fetchCalled = true;
-      throw new Error("unexpected fetch");
-    };
     const result = await publishPr(
       { testRunDir, dryRun: true },
-      { exec, fetch: fetcher, stdout: (markdown) => { output = markdown; } },
+      { exec: recordingExec(calls), stdout: (markdown) => { output = markdown; } },
     );
-    assert.equal(commandCalled, false);
-    assert.equal(fetchCalled, false);
+    assert.deepEqual(calls, []);
     assert.equal(result.posted, false);
     assert.match(output, /<!-- test-evidence -->/);
-    assert.match(output, /Dry run: screenshots were not uploaded/);
+    assert.match(output, /Dry run: screenshots were not attached/);
   } finally {
     await rm(testRunDir, { recursive: true, force: true });
   }
 });
 
-test("publishPr recognizes an old sticky marker and uploads under the test-artifacts prefix", async () => {
+test("publishPr deletes a legacy sticky comment and posts attachments", async () => {
   const testRunDir = await mkdtemp(join(tmpdir(), "openwork-test-artifacts-current-"));
-  const previousToken = process.env.BLOB_READ_WRITE_TOKEN;
   try {
     await writeFile(join(testRunDir, "test-run.json"), JSON.stringify(testRunRecord(testRunDir)));
     await writeFile(join(testRunDir, "01-published.png"), Buffer.from("regular png"));
-    process.env.BLOB_READ_WRITE_TOKEN = "test-token";
-    const uploads: string[] = [];
-    let patchedBody = "";
-    const fetcher: Fetcher = async (input) => {
-      uploads.push(String(input));
-      return new Response(JSON.stringify({ url: "https://example.test/published.png" }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    };
-    const exec: CommandRunner = (_command, args, opts) => {
-      if (args.includes("headRefOid")) return { status: 0, stdout: JSON.stringify({ headRefOid: TEST_RUN_SHA }), stderr: "" };
-      if (args.includes("comments")) {
-        return { status: 0, stdout: JSON.stringify({ comments: [{ databaseId: 77, body: "<!-- photo-roll --> old" }] }), stderr: "" };
-      }
-      patchedBody = opts?.input ?? "";
-      return { status: 0, stdout: "updated", stderr: "" };
-    };
-    const result = await publishPr({ pr: 17, testRunDir }, { exec, fetch: fetcher });
+    const calls: RecordedCommand[] = [];
+    const result = await publishPr(
+      { pr: 17, testRunDir },
+      { exec: recordingExec(calls, [{ databaseId: 77, body: "<!-- photo-roll --> old" }]) },
+    );
+    const absPath = join(await realpath(testRunDir), "01-published.png");
+    const deleted = calls.find((call) => call.args.includes("DELETE"));
+    const posted = calls.find((call) => call.args[0] === "pr" && call.args[1] === "comment" && call.args[2] === "17");
     assert.equal(result.updated, true);
-    assert.equal(uploads.length, 1);
-    assert.match(uploads[0] ?? "", /\/test-artifacts\/[^/]+\/01-published\.png$/);
-    assert.match(patchedBody, /<!-- test-evidence -->/);
-    assert.doesNotMatch(patchedBody, /<!-- photo-roll -->/);
+    assert.deepEqual(deleted?.args, ["api", "--method", "DELETE", "repos/{owner}/{repo}/issues/comments/77"]);
+    assert.deepEqual(posted?.args, ["pr", "comment", "17", "--body-file", "-", "--attach", `${absPath}#Published validation`]);
+    assert.match(posted?.input ?? "", new RegExp(`!\\[Published validation\\]\\(${absPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\)`));
+    assert.doesNotMatch(posted?.input ?? "", /<!-- photo-roll -->/);
   } finally {
-    if (previousToken === undefined) delete process.env.BLOB_READ_WRITE_TOKEN;
-    else process.env.BLOB_READ_WRITE_TOKEN = previousToken;
     await rm(testRunDir, { recursive: true, force: true });
   }
 });
 
-test("publishPr reads persisted legacy roll.json input", async () => {
+test("publishPr publishes persisted legacy roll.json input", async () => {
   const testRunDir = await mkdtemp(join(tmpdir(), "openwork-test-artifacts-legacy-"));
   try {
     const current = testRunRecord(testRunDir);
@@ -130,38 +128,50 @@ test("publishPr reads persisted legacy roll.json input", async () => {
       frames: current.artifacts,
       artifacts: undefined,
     }));
-    let output = "";
-    await publishPr({ testRunDir, dryRun: true }, { stdout: (markdown) => { output = markdown; } });
-    assert.match(output, /evals\/results\/rolls\/.*\/roll\.json/);
-    assert.match(output, /<!-- test-evidence -->/);
+    await writeFile(join(testRunDir, "01-published.png"), Buffer.from("regular png"));
+    const calls: RecordedCommand[] = [];
+    const result = await publishPr({ pr: 17, testRunDir }, { exec: recordingExec(calls) });
+    const posted = calls.find((call) => call.args[0] === "pr" && call.args[1] === "comment" && call.args[2] === "17");
+    assert.equal(result.posted, true);
+    assert.match(posted?.input ?? "", /evals\/results\/rolls\/.*\/roll\.json/);
+    assert.match(posted?.input ?? "", /<!-- test-evidence -->/);
   } finally {
     await rm(testRunDir, { recursive: true, force: true });
   }
 });
 
-test("publishPr refuses a symlinked screenshot before upload", async () => {
+test("publishPr refuses a symlinked screenshot before any PR comment", async () => {
   const root = await mkdtemp(join(tmpdir(), "openwork-test-artifacts-symlink-"));
   const testRunDir = join(root, "test-run");
-  const previousToken = process.env.BLOB_READ_WRITE_TOKEN;
   try {
     await mkdir(testRunDir);
     await writeFile(join(testRunDir, "test-run.json"), JSON.stringify(testRunRecord(testRunDir)));
     const outside = join(root, "private-key");
     await writeFile(outside, "private material");
     await symlink(outside, join(testRunDir, "01-published.png"));
-    process.env.BLOB_READ_WRITE_TOKEN = "test-token";
-    const exec: CommandRunner = (_command, args) => ({
-      status: 0,
-      stdout: args.includes("headRefOid") ? JSON.stringify({ headRefOid: TEST_RUN_SHA }) : "",
-      stderr: "",
-    });
+    const calls: RecordedCommand[] = [];
     await assert.rejects(
-      () => publishPr({ pr: 17, testRunDir }, { exec }),
-      /Refusing to upload non-regular or symlinked test artifact: 01-published\.png/,
+      () => publishPr({ pr: 17, testRunDir }, { exec: recordingExec(calls) }),
+      /Refusing to attach non-regular or symlinked test artifact: 01-published\.png/,
     );
+    assert.equal(calls.some((call) => call.args[0] === "pr" && call.args[1] === "comment"), false);
   } finally {
-    if (previousToken === undefined) delete process.env.BLOB_READ_WRITE_TOKEN;
-    else process.env.BLOB_READ_WRITE_TOKEN = previousToken;
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("publishPr posts a notice without attachments when gh lacks --attach", async () => {
+  const testRunDir = await mkdtemp(join(tmpdir(), "openwork-test-artifacts-old-gh-"));
+  try {
+    await writeFile(join(testRunDir, "test-run.json"), JSON.stringify(testRunRecord(testRunDir)));
+    await writeFile(join(testRunDir, "01-published.png"), Buffer.from("regular png"));
+    const calls: RecordedCommand[] = [];
+    await publishPr({ pr: 17, testRunDir }, { exec: recordingExec(calls, [], false) });
+    const posted = calls.find((call) => call.args[0] === "pr" && call.args[1] === "comment" && call.args[2] === "17");
+    assert.equal(posted?.args.includes("--attach"), false);
+    assert.match(posted?.input ?? "", /screenshots not attached \(gh < 2\.99; run `brew upgrade gh`\)/);
+    assert.doesNotMatch(posted?.input ?? "", /!\[Published validation\]/);
+  } finally {
+    await rm(testRunDir, { recursive: true, force: true });
   }
 });

@@ -35,6 +35,13 @@ them. Model setup as resources in dependency order: `needs()` → `server()` →
 - Never smuggle the answer into the prompt. Assert that the user-facing request
   does not contain connector or resource IDs.
 
+## Mocks
+
+- Use `mcpMock()` witnesses; never exercise real providers from a spec.
+- Witnesses live under `evals/packages/labs/src/`, following `mock-mcp.ts` and
+  the provider-specific `mock-*.ts` fixtures.
+- Keep witnesses deterministic, identity-scoped, and queryable for assertions.
+
 ## Evidence contract
 
 - Test evidence is ambient: `screenshot()` records screenshot artifacts,

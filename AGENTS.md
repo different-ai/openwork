@@ -30,18 +30,11 @@ escalate any leak instead of rewriting history.
 
 ## Verification (every change)
 
-- The only proof path is `evals/specs/**/*.test.ts` with `test` from
-  `@openwork/testkit`; app-driving E2E tests use `.e2e.test.ts`. Prose,
-  screenshots, and recordings never decide pass/fail — test evidence does.
-- Skills own the mechanics: `prove-a-pr` → `write-a-spec` → `run-tests` →
-  `diagnose-a-red-run` when red → `publish-evidence`. Evidence is ambient; never
-  create or pass test-evidence recorder handles.
-- Verdicts: `Passed` only when every claim has an observable assertion in the
-  test run; otherwise `Incomplete` or `Failed` with repro steps. Skips are never
-  passed.
-- Prefer Daytona when credentials are available; local fallback is an expected
-  OSS path, not a failure. Report which lane ran.
+- Proof is `evals/specs/**/*.test.ts` with `test` from `@openwork/testkit`; app-driving tests use `.e2e.test.ts`.
+- Run `pnpm evals:e2e <slug>` or `pnpm evals:pr specs/<name>.test.ts`; report the printed placement and verdict.
+- `Passed` requires an observable assertion for every claim; skips are never passed.
 - Docs/comments, types-only, and inert agent config may skip runtime proof — say so.
+- Skill chain: `write-a-spec` → `run-tests` → `diagnose-a-red-run` when red → `publish-evidence`.
 
 ## Pull requests
 
