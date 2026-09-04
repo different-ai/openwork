@@ -26,10 +26,11 @@ export const CHECKING_STATUS = "Checking status";
 export const AI_UNAVAILABLE = "AI unavailable";
 
 /**
- * The moment-to-moment phases the live row in the transcript already names
- * ("Editor is thinking…"); the header folds them into one steady word.
+ * The moment-to-moment phases the live turn in the transcript already shows
+ * (the typing bubble, the tool chip, the words streaming in); the header folds
+ * them into one steady word.
  */
-export const HEADER_COLLAPSED_LABELS: ReadonlySet<string> = new Set(["Sending", "Thinking", "Using a tool"]);
+export const HEADER_COLLAPSED_LABELS: ReadonlySet<string> = new Set(["Sending", "Thinking", "Using a tool", "Writing"]);
 export const HEADER_WORKING_WORD = "Working";
 
 /** States where something went wrong and a person should look. */

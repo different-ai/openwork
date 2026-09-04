@@ -66,8 +66,11 @@ export function LiveRow({
   const doingWords = step ? `${step.doing.charAt(0).toUpperCase()}${step.doing.slice(1)}` : "";
 
   // While the words are arriving the bubble is the live view: the row shows nothing — unless the
-  // words have stalled past the wait budget, when the soft phrase and Stop still need a place.
-  if (phase === "writing" && !stillWorking) return null;
+  // words have stalled past the wait budget, when the soft phrase and Stop still need a place. A
+  // zero-height marker keeps saying a turn is running, and in which phase, for anything that reads it.
+  if (phase === "writing" && !stillWorking) {
+    return <div className="h-0 overflow-hidden" aria-hidden="true" data-testid="coworker-working" data-phase="writing" data-outcome="working" data-popover="closed" />;
+  }
 
   return (
     <div className="px-1 py-1.5 text-xs text-mist" data-testid="coworker-working" data-phase={phase} data-outcome={stillWorking ? "slow" : "working"} data-popover={open ? "open" : "closed"}>
