@@ -474,6 +474,10 @@ echo WARM_OK`;
     });
     if (result?.stdout.includes("WARM_TIMEOUT")) {
       log(`==> WARNING: engine cache warm gate did not complete for ${sandbox}; specs will start cold. Log tail:\n${outputTail(result)}`);
+    } else if (result?.stdout.includes("WARM_OK")) {
+      log(`==> engine cache warmed for ${sandbox}`);
+    } else if (result?.stdout.includes("WARM_PRESENT")) {
+      log(`==> engine cache already warm for ${sandbox}`);
     }
   });
 
