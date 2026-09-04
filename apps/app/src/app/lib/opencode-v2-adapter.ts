@@ -14,6 +14,7 @@ import type {
 import { createClient, createDesktopFetch, type FieldsResult } from "./opencode";
 import { isDesktopRuntime } from "./runtime-env";
 import type { OpencodeEvent } from "../types";
+import { normalizeDirectoryPath } from "../utils";
 
 type RequestOptions = {
   signal?: AbortSignal;
@@ -903,7 +904,7 @@ export function translateV2Event(
   }
 
   if (type === "session.created" || type === "session.renamed") {
-    const info = mapV2Session(properties, undefined);
+    const info = mapV2Session(properties, readString(readRecord(value, "location") ?? {}, "directory"));
     if (!info) return null;
     return [{
       type: type === "session.created" ? "session.created" : "session.updated",
@@ -912,7 +913,7 @@ export function translateV2Event(
   }
 
   if (type === "session.deleted") {
-    const info = mapV2Session(properties, undefined);
+    const info = mapV2Session(properties, readString(readRecord(value, "location") ?? {}, "directory"));
     const deletedSessionID = sessionID || info?.id || "";
     if (!deletedSessionID) return null;
     return [{
@@ -931,6 +932,7 @@ export function translateV2Event(
 async function* translateV2Events(
   response: Response,
   signal: AbortSignal | undefined,
+  directory?: string,
 ): AsyncGenerator<OpencodeEvent> {
   if (!response.body) return;
   const reader = response.body.getReader();
@@ -955,6 +957,8 @@ async function* translateV2Events(
         } catch {
           continue;
         }
+        const eventDirectory = isRecord(event) ? readString(readRecord(event, "location") ?? {}, "directory") : undefined;
+        if (directory && eventDirectory && normalizeDirectoryPath(directory) !== normalizeDirectoryPath(eventDirectory)) continue;
         const translated = translateV2Event(event, state);
         if (!translated) continue;
         for (const item of translated) yield item;
@@ -1018,8 +1022,9 @@ async function* mergeV2Events(
   signal: AbortSignal | undefined,
   queue: InjectedEventQueue,
   close: () => void,
+  directory?: string,
 ): AsyncGenerator<OpencodeEvent> {
-  const source = translateV2Events(response, signal);
+  const source = translateV2Events(response, signal, directory);
   let sourceNext = source.next();
   try {
     while (!signal?.aborted) {
@@ -1530,7 +1535,7 @@ export function createClientV2(
           stream: mergeV2Events(response, options?.signal, queue, () => {
             injectedEventListeners.delete(listener);
             queue.close();
-          }),
+          }, directory),
         };
       },
     },
