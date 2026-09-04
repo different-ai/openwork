@@ -1,5 +1,5 @@
 import { expect } from "vitest";
-import { createOrgConnection, denFetch, evalIn, waitFor } from "@openwork/behaviors";
+import { createOrgConnection, denFetch, evalIn, signInInBrowser, waitFor } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
 import { navigate } from "@openwork/cdp";
 import { chrome } from "@openwork/hosts";
@@ -116,7 +116,7 @@ test(title, { timeout: 420_000 }, async ({ evidence, place }) => {
     timeoutMs: 60_000,
     label: "Den Web origin before token handoff",
   });
-  await evalIn(browser, `localStorage.setItem("openwork:web:auth-token", ${JSON.stringify(den.admin.token)})`);
+  await signInInBrowser(browser, den.ref.webUrl, den.admin);
   await navigate(browser.client, `${den.ref.webUrl}/dashboard/dashboards/${dashboardId}`);
   await waitFor(browser, `document.body.innerText.includes(${JSON.stringify(dashboardName)})
     && [...document.querySelectorAll("button")].some((button) => (button.textContent ?? "").trim() === "Add app")`, {
