@@ -7,6 +7,20 @@ adds no new database concepts.
 
 ## Team onboarding through OpenWork Connect
 
+Prepared teams are a per-organization preview, **off by default**. A platform
+admin can open **/admin → organization → Capabilities → Prepared coworker
+teams (preview)** to enable publishing and delivery for that organization
+alone. The stored key is `capabilities.coworkerTeams`; only literal `true`
+enables it. Clearing the override returns to off. No database migration,
+global rollout switch, or hardcoded organization is required.
+
+While disabled, Connect hides the coworker section and protects direct editor
+links; the API rejects template publishing and returns `enabled: false` with
+an empty catalog. Open Coworker hides the team controls and installs nothing
+from a disabled or older server. Opening Account refreshes this state. Turning
+the flag off stops future delivery without removing personal coworkers or
+their work. Local template file import/export remains available.
+
 An organization can prepare a team once and give every new teammate a useful
 starting point. In Connect, open a plugin and choose **Add coworker**. Define
 the name, role, mission, description, and reusable instructions, or import a
