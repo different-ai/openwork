@@ -16,7 +16,7 @@
 {{- end -}}
 
 {{- define "openwork-ee.namespace" -}}
-{{- .Values.namespace | default .Release.Namespace | quote -}}
+{{- .Values.namespace | default .Release.Namespace | toString | quote -}}
 {{- end -}}
 
 {{- define "openwork-ee.chart" -}}

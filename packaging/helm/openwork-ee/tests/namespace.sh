@@ -42,9 +42,16 @@ fallback_rendered="$tmp_dir/fallback.yaml"
 helm template openwork-ee "$chart_dir" --namespace rel-ns --set namespace= > "$fallback_rendered"
 assert_count "$fallback_rendered" '  namespace: "rel-ns"' 8
 
-# Numeric override remains a YAML string after rendering.
+# Numeric and YAML-keyword overrides stay quoted strings: --set types these as
+# number/bool, and metadata.namespace must render as a quoted string.
 numeric_rendered="$tmp_dir/numeric.yaml"
 helm template openwork-ee "$chart_dir" --set namespace=123 > "$numeric_rendered"
 assert_count "$numeric_rendered" '  namespace: "123"' 8
+assert_count "$numeric_rendered" '  namespace: 123' 0
+
+keyword_rendered="$tmp_dir/keyword.yaml"
+helm template openwork-ee "$chart_dir" --set namespace=yes > "$keyword_rendered"
+assert_count "$keyword_rendered" '  namespace: "yes"' 8
+assert_count "$keyword_rendered" '  namespace: yes' 0
 
 printf 'namespace chart checks passed\n'
