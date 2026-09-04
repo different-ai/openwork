@@ -660,7 +660,7 @@ export async function mockToolsListCount(mock: MockHandle): Promise<number> {
 
 export async function coworkerTemplateEditor(seed: Seed) {
   const den = await seed.den({
-    org: { name: "Prepared coworker team", members: { teammate: { name: "Team Member" } } },
+    org: { name: "Prepared coworker team", admin: { name: "Preview operator" }, members: { teammate: { name: "Team Member" } } },
   });
   const created = await seed.api(den.admin, "/v1/plugins", {
     method: "POST",
