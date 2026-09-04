@@ -255,12 +255,15 @@ read more.
   quiet **Show the rest**; nothing is cut. The app records it in
   `memory/style.jsonl` and the index carries a one-line reminder of the
   contract until the coworker next writes a document.
-- **The contract** lives in the coworker's `AGENTS.md` (`## How I talk`, with
-  three before/after examples: a research question, a plan request, a quick
-  question that needs no document). It is versioned and regenerated on launch
-  for existing coworkers without touching `soul.md` or anything under
-  `memory/`; the repair also adds `documents/index.md` to `opencode.json`'s
-  instructions and creates the index when it is missing.
+- **The contract** lives in the coworker's `AGENTS.md` (`## How I talk`, whose
+  *Which shape an answer takes* decides once between a reply, a document beside
+  the reply, an assignment, and a Worker — see *Automatic choices* below — with
+  five before/after examples: a research question, a plan request, a quick
+  question that needs no document, work on a clock, and a goal for a Worker).
+  It is versioned (6) and regenerated on launch for existing coworkers without
+  touching `soul.md` or anything under `memory/`; the repair also adds
+  `documents/index.md` to `opencode.json`'s instructions and creates the index
+  when it is missing.
 
 Prove it with the packaged app:
 
@@ -268,6 +271,66 @@ Prove it with the packaged app:
 OPENWORK_EVAL_ELECTRON_BINARY="apps/coworker/dist-electron/mac-arm64/Open Coworker.app/Contents/MacOS/Open Coworker" \
   pnpm evals:e2e open-coworker-documents --local
 ```
+
+## Automatic choices
+
+The app decides a number of things for the person without asking. Each such
+choice must be right by default, explainable in one plain line the interface
+can show, overridable where a person would look (and the override kept), never
+swapped behind the person's back once they chose, stable (the same inputs give
+the same choice, or the app says why not), and proven by a unit test on the
+rule and a journey assertion on the effect. The inventory below is the list of
+those choices; the standard above is what each row is held to.
+
+**What a coworker needs**
+
+| Choice | Where | Inputs | Rule | Fallback | Override | Explained to the person? | Proven by |
+|---|---|---|---|---|---|---|---|
+| The team proposed at onboarding | `electron/team.mjs` `recommendTeam` | The intents picked, in order | None picked → Scout and Ops; one → it plus its complement (Ops for everyone, Scout for Ops); two or three → one each; more → the first three. Names: the role's default, then its alternates, then numbered. Deterministic. | — | Rename in place, remove (one stays), add a role; *I'll add my own* skips it | The cards show name, role, mission; the complement is not explained as such (left: a one-line "why" per card is the open item) | `team.test.mjs`, `open-coworker-team` (two intents → two cards, a rename) |
+| Roles suggested on the Add screen | `new-coworker-suggested` | The team | Up to three catalog roles nobody covers | — | The form stays editable | The card's pitch | `onboarding-team.test.ts` |
+| Offering to pass a request to a teammate | Contract `## My team`; `team_refer` in `electron/team-tools.mjs` | The request, `team/roster.md` | When the request is clearly a teammate's job and more than a quick answer, before doing the work; never in a group chat. The handler refuses a teammate who is not on the team, itself, and — since contract 6 — the same request the person already chose to keep with this coworker | The person's tap decides; Continue makes the coworker do it | Ask ‹teammate› / Continue with ‹coworker›; a later message closes the pills | The tile's small print ("Editor could take this · Writing and content") and the coworker's sentence; receipts name the outcome, including "you asked to keep this here" | `team-tools.test.mjs`, `team.test.ts`, `open-coworker-team` |
+| Proposing a new teammate | Contract `## My team`; `team_suggest` + `suggestionGuard` | The request, the team, `team/suggestions.jsonl` | When uncovered work comes up twice in a conversation or once when ongoing, or the person asks who could do it. The handler refuses a role a teammate covers, a role declined within fourteen days, and a second proposal in one day | The person's tap decides | Add to team / Not now | Small print "Suggested by Nova · Customer support"; the guards read "Checked the team · …" | `team.test.mjs`, `team-tools.test.mjs`, `open-coworker-team` |
+| The shape of an answer: reply, document, assignment, Worker | Contract `### Which shape an answer takes` (one rule, one example each); the tool descriptions | The request | A reply for what fits in a few sentences; a document beside the reply past about 120 words; an assignment whenever the person named a schedule; a Worker for one goal with an end that is not on a clock. Tie-break: a schedule wins over a Worker, a document beside a short reply over a long reply | A long reply with no document folds behind *Show the rest* and leaves a one-line reminder in the documents index until the next document | Ask for a shape by name; put a document aside; steer or stop a Worker; change or remove an assignment | Receipts: "Wrote a document · Launch plan", "Started a Worker · Market scan", "Created assignment · Move the car · Every weekday at 9:00 AM" | `coworkers.test.mjs` (the rule and its examples), `open-coworker-documents`, `open-coworker-workers`, `open-coworker-local-first` (scheduling) |
+| Who answers in a group, in what order | `lib/facilitator.ts`; scorer in `lib/groups.ts` | Members with roles, missions, and who is busy; the last 12 visible lines; the last 5 speaking orders; the message and its mentions | One strict JSON plan, validated (unknown or duplicate coworkers, the wrong count, ignored mentions, a dependency the wrong way are rejected), repaired once, tried once on the next model, else the deterministic scorer (role and mission words, last speaker +0.5, then the first member). Mentions always rule; without a name one speaker, never more than three | The scorer | `@name`, `@everyone`; Group details › Advanced for the model | "Choosing who should respond…", then "Scout is replying… then Editor" — the who, not the why, by design (the facilitator is silent; its briefs are in the turn record) | `facilitator.test.ts`, `groups.test.ts`, `open-coworker-group-conversation` |
+| Sequential or parallel; one follow-up; a wrap-up | The plan | The plan | Parallel only when replies do not depend on one another; a dependency forces sequential; at most one follow-up; a wrap-up only when the facilitator asked | Sequential | — | Replies settle in the plan's order; *Nothing to add.* is a quiet line | `facilitator.test.ts`, `groups.test.ts` |
+
+**What a coworker is told**
+
+| Choice | Where | Inputs | Rule | Fallback | Override | Explained to the person? | Proven by |
+|---|---|---|---|---|---|---|---|
+| The fixed stack every turn | `AGENTS.md`, `soul.md`, `memory/working.md`, `memory/index.md`, `documents/index.md`, `team/roster.md`, the 23-tool catalog, the tool server's one line | — | Each rule is said in one layer: the contract owns the rules, the app-written files carry facts, the tool server's line names the server and points at the contract. Measured: 27,549 characters for a fresh coworker with one teammate (contract 9,818; tool catalog 16,218, of which descriptions 5,438; the six files 1,295 without the contract; the server line 218), 29,174 with five documents in play and ten long-term memories — only the two indexes grow. In the packaged app the engine adds its own system prompt and built-in tools: a fresh coworker's first request carried a 24,503-character system prompt and 49 tools (73,920 characters in all), and the free model reported 24,547 input tokens for it, none from cache | — | The person edits soul and memory; the contract is the app's | The Memory view shows soul and memory as pages | `prompt-stack.test.mjs` (budget 30,000 / 32,000 and said-once); `open-coworker-team` reads what the model received (system prompt size, the shape rule present, the tools offered, whether the server line reached the prompt) and `open-coworker-workers` the engine's reported tokens on the free model |
+| The per-turn variable part | `assignmentPrompt` / `referralPrompt` in `lib/conversation.ts`; `groupSpeakerPrompt`; `workerTurnPrompt`, `reviewPrompt` in `electron/workers.mjs`; `facilitatorPrompt` | The visible conversation, never reasoning or tool payloads | Bounded: an assignment carries 8 messages / 6,000 characters; a hand-over 3 exchanges / 600; a group speaker the last 12 lines at 600 each and the earlier replies of the turn; a Worker turn its frame (name, goal, lifespan, the reporting contract) every turn; a review the live Workers and the new findings | — | — | The person sees a brief, not the scaffolding (`parseAssignmentBrief`, `parseReferralBrief`; the review turn is one action line) | `conversation.test.ts`, `groups.test.ts`, `workers.test.mjs` |
+| Style enforcement | `lib/documents.ts`, `memory/style.jsonl`, the documents index reminder | A finished reply over about 1,200 characters with no document call in its turn | Fold behind *Show the rest*; record; one-line reminder until the next document | — | *Show the rest*; nothing is cut | The fold itself | `documents.test.mjs`, `open-coworker-documents` |
+
+**How hard a coworker thinks**
+
+| Choice | Where | Inputs | Rule | Fallback | Override | Explained to the person? | Proven by |
+|---|---|---|---|---|---|---|---|
+| The AI model when nobody chose | `recommendModel` in `lib/threads.ts`; first pick in `ui/coworker-home.tsx` and `ui/threads.tsx` | The connected catalog | A connected, tool-capable, non-deprecated model from the best tier (OpenWork account → subscription or key on this Mac → model server on this Mac → the free model), preferring the provider default, then a reasoning model, then the newest release. A model started on the local mode screen goes to the first coworker instead, once | None can use tools → "No connected AI model can use tools." with the two ways out | Coworker settings; the failure card's *Choose AI model* / *Use ‹model›*; *Start with this* on the local mode screen | One line under the model in Coworker settings when the app chose it: "Chosen for you, from your OpenWork account. It stays until you pick one; if it can't answer, the next best takes over once." | `threads.test.ts`, `model-choice.test.ts`, `open-coworker-local-first` (who chose, the line present or absent) |
+| Swapping a model that cannot answer | `wasAutoPicked` in `lib/model-choice.ts`; `fallBack` in `ui/threads.tsx` | `coworker.md` `modelChosenBy`, the failure | Only the app's own pick, only for a model-related failure, at most two more recommendations, never the person's model. The record on disk carries who chose, so the rule reads the same after a relaunch (a record that never said is the person's) | The failure card | Choosing a model or an effort makes it the person's | "‹model› could not answer, so Nova is trying ‹next› instead." then "Retried with ‹next›" | `model-choice.test.ts`, `coworkers.test.mjs`, `open-coworker-turn-recovery` (the card's choices) |
+| Thinking effort | Coworker settings (the model's own variants or *Model default*) | The person | Manual; the model default unless the person chose. It reaches the engine on every path — a discussion turn (`submitTurn`), an assignment or group turn (the thread client's default model), a responsibility run, a Worker turn, and a review (`localRunModel`), a Cloud assignment (`resolveCloudModel`) — and the facilitator always runs at the model default. It stays across a model change when the new model offers it, otherwise returns to the model default, whoever changes the model. No per-turn effort rule: the model default is right for a person who never opens a setting, a per-turn rule would show a different effort than the setting says, and the free model offers none | — | The setting | The setting, and "‹model› · thinking effort high" in OpenWork › AI models | `model-choice.test.ts`; `open-coworker-team` (Nova's "high" arrives at the provider as `reasoning_effort`; Editor, on the default, sends none) |
+| The facilitator's model | `facilitatorModels` in `lib/facilitator.ts` | The members' models, the catalog, the group's setting | The model the person set for the group, else the coworkers' models (account first, then most used), else the recommendation; the next such model is the second try; the model default effort | The scorer | Group details › Advanced | "Automatic" in the setting | `facilitator.test.ts` |
+| A Cloud assignment's model | `resolveCloudModel` in `lib/cloud-responsibilities.ts` | The coworker's model, the organization's providers | The coworker's model when the organization authorizes it, else a mapped equivalent, else the free starter | The free starter | The coworker's model | The assignment names its model | `cloud-responsibilities.test.ts` |
+
+**Workers**
+
+| Choice | Where | Inputs | Rule | Fallback | Override | Explained to the person? | Proven by |
+|---|---|---|---|---|---|---|---|
+| Starting a Worker | Contract `### Which shape an answer takes` and `## Workers`; `worker_spawn` | The request | One goal with an end, not on a clock, worked in steps; never for a quick question; never on a schedule (that is an assignment); a Worker never starts a Worker (a prompt rule — a Worker shares the coworker's tool token, so the handler cannot tell them apart) | — | New Worker; Steer, Pause, Stop | "Started a Worker · Name" and one sentence from the coworker | `coworkers.test.mjs`, `workers.test.mjs`, `open-coworker-workers` |
+| Its lifespan | `normalizeLifespan` | The tool's `lifespan`, or nothing | Ten turns when nobody chose (1–100), a deadline, or until stopped | Ten turns | The coworker chooses; the person steers or stops | The row reads "3 of 10 turns left", "Until 4:30 PM", "Until you stop it" | `workers.test.mjs`, `workers.test.ts` |
+| At most three live per coworker | `createWorker` | The live Workers | The fourth is refused with a sentence | — | Stop one | The tool's sentence, `workers_list` | `workers.test.mjs` |
+| When a turn runs | `admitWorkerTurn` in `electron/main.mjs` | This Mac's run limit (`maxParallelLocalRuns`, default 2) | Turns follow one another as soon as a slot is free; runs already in line go first | Queued | AI & local setup › the limit | "Waiting its turn" | `open-coworker-workers` (limit 1 → queued) |
+| Waking the coworker | `createReviewScheduler` | Findings | Per coworker, at most once a minute, as one turn in the open discussion once it is idle (up to five minutes); held without a discussion; retried once after a failure, then dropped and recorded on the Worker | Held / dropped, recorded | — | "Reviewed an update from Market scan"; "Not reviewed …" on the Worker | `workers.test.mjs`, `open-coworker-workers` |
+| Needs a decision | `nextWorkerState`; the review prompt | The Worker's report | The Worker waits; the coworker is told not to ask the person the same question; the discussion shows a lettered choice card; the answer is a steer | Waits | Steer or stop | The card and the amber "Waiting for a decision" | `workers.test.mjs`, `workers.test.ts` |
+| Done on the first turn | `nextWorkerState` | The report | Finishes; the slot is released; one turn spent | — | — | "Done" | `workers.test.mjs` |
+| After a quit | `recoverInterruptedWorkers` | The records | Running or starting → waits its turn with a status line; a decision keeps waiting; paused stays paused | — | — | "Paused when the app closed; resumes on the next turn." | `workers.test.mjs` |
+
+Left as they are, with the reason: the onboarding cards do not yet say *why*
+a complement joins (one line per card would); the facilitator's reason stays
+private by design; a Worker starting a Worker is held by the prompt only; the
+tool catalog's 16 KB of JSON is the largest fixed cost of a turn and its
+schedule schema is carried twice (create and update), which a later pass may
+trim once the free model's scheduling is shown to survive it.
 
 ## When a reply doesn't come
 
@@ -424,16 +487,17 @@ tap ever creates a coworker.
   indicator for existing installs are not built.
 - **Teammates know each other.** Every coworker home carries `team/roster.md`:
   who it is, its teammates one line each (name, id, role, mission; alphabetical,
-  twelve then "and n more"), the roles the person declined in the last two
-  weeks, and how to hand work over or propose a teammate. The app writes it
-  whenever the team changes (create, a role or mission change, retire,
-  restore, delete) and on launch; it is loaded every turn beside memory and the
-  documents index and never carries another coworker's memory, documents, or
-  conversation. Contract v5 (`## My team`) says when to use it: refer *before*
-  doing a teammate's job when it is more than a quick answer, never in a group
-  chat, suggest only when uncovered work keeps coming up or the person asks
-  who could do it, never create, rename, or retire anyone, never more than one
-  suggestion a day.
+  twelve then "and n more"), and the roles the person declined in the last two
+  weeks — facts only; the rules live in the contract and are not repeated
+  here. The app writes it whenever the team changes (create, a role or mission
+  change, retire, restore, delete) and on launch; it is loaded every turn
+  beside memory and the documents index and never carries another coworker's
+  memory, documents, or conversation. The contract (`## My team`) says when to
+  use it: refer *before* doing a teammate's job when it is more than a quick
+  answer, never in a group chat, never again for a request the person chose to
+  keep with this coworker (the tool holds that line too, see below), suggest
+  only when uncovered work keeps coming up or the person asks who could do it,
+  never create, rename, or retire anyone, never more than one suggestion a day.
 - **Three team tools** on the coworker's own server (`electron/team-tools.mjs`;
   `coworker_team_list`, `coworker_team_refer`, `coworker_team_suggest`). A
   referral names a real teammate (by name or id, never itself), carries the
@@ -443,8 +507,13 @@ tap ever creates a coworker.
   answers "Editor already covers writing — offer to pass it to them instead",
   a role the person declined within fourteen days answers "don't bring it up",
   a second proposal in one day answers "you already suggested a teammate
-  today"; none of those leaves a tile. Both offers are appended to the
-  coworker's `team/*.jsonl` logs, and the person's answer is appended after.
+  today"; none of those leaves a tile. A referral is guarded the same way once
+  the person has answered one: the same request (case, spacing, and
+  punctuation aside) that they chose to keep with this coworker is answered
+  "do the work now and don't offer to pass it on again" and leaves no tile
+  either (`referralGuard` in `electron/team.mjs`). Both offers are appended to
+  the coworker's `team/*.jsonl` logs, and the person's answer is appended
+  after.
 - **Tiles like a shared contact** (`ui/team-cards.tsx`). A reply whose turn
   made an offer ends with a rounded tile after the bubble, the radius and width
   of a bubble: a live avatar, the name plate, role, mission, and small print
@@ -471,7 +540,7 @@ tap ever creates a coworker.
   tiles come only from kept tool results (`lib/team.ts`), never from prose.
   Receipts read "Checked the team", "Offered to pass this to Editor",
   "Suggested a teammate · Care", "Checked the team · Editor already covers
-  this" — never an id.
+  this", "Checked the team · you asked to keep this here" — never an id.
 
 Proof: `evals/specs/open-coworker-team.e2e.test.ts` (a scripted model plays
 both coworkers so every tool call is exact) plus the unit tests in
@@ -539,6 +608,15 @@ When nobody chose a model, `recommendModel` prefers the OpenWork account, then
 a subscription or key on this Mac, then a local model server, then the free
 model; a model chosen on the local mode screen before the first coworker
 existed becomes that coworker's model. Existing coworkers keep their choice.
+`coworker.md` records who chose (`modelChosenBy`: the app, the person, or
+unsaid — read as the person's), so the rule reads the same after a relaunch:
+a model the app picked is explained under the AI model in Coworker settings in
+one line ("Chosen for you, from your OpenWork account. It stays until you pick
+one; if it can't answer, the next best takes over once.") and may be swapped
+once when it cannot answer; a model the person picked never is. The person's
+thinking effort stays across a model change when the new model offers it and
+otherwise returns to the model default (`carryVariant` in `lib/model-choice.ts`),
+whoever changes the model.
 
 Sign-ins and keys go through the AI service's own credential store
 (`~/.local/share/opencode/auth.json`, shared with OpenWork Desktop and the
