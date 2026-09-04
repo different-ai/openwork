@@ -8,23 +8,8 @@ import { adminDashboardWeb } from "../worlds/den-admin-navigation.ts";
 const test = spec.world(adminDashboardWeb, { timeout: 420_000 });
 
 test("the Den admin sidebar exposes Advanced and moves Sources into Plugin Directory", async ({ world, user, probe, evidence }) => {
-  async function sidebarLabels(): Promise<string[]> {
-    const value = await probe.eval("Array.from(document.querySelectorAll('[data-testid=\"den-org-sidebar\"] a')).map((a) => (a.textContent ?? '').trim())");
-    return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
-  }
-
-  async function selectedTabs(): Promise<string[]> {
-    const value = await probe.eval("Array.from(document.querySelectorAll('[role=\"tab\"][aria-selected=\"true\"]')).map((tab) => Array.from(tab.childNodes).filter((node) => node.nodeType === Node.TEXT_NODE).map((node) => node.textContent ?? '').join('').trim())");
-    return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
-  }
-
-  async function pathnameAndSearch(): Promise<string> {
-    const value = await probe.eval("window.location.pathname + window.location.search");
-    return typeof value === "string" ? value : "";
-  }
-
   await user.see({ testId: "den-org-sidebar" }, { timeoutMs: 90_000 });
-  const initialLabels = await probe.eventually(sidebarLabels, {
+  const initialLabels = await probe.eventually(() => world.sidebarLinks(), {
     within: 30_000,
     label: "new top-level admin navigation",
     until: (labels) => labels.includes("Advanced") && labels.includes("Plugin Directory"),
@@ -36,11 +21,11 @@ test("the Den admin sidebar exposes Advanced and moves Sources into Plugin Direc
   evidence.recordAssertionEvidence("The sidebar has Advanced and Plugin Directory without legacy top-level or Settings children", `Sidebar links: ${JSON.stringify(initialLabels)}`, initialOk);
 
   await user.click({ role: "link", label: "Advanced" });
-  const advancedPath = await probe.eventually(pathnameAndSearch, {
+  const advancedPath = await probe.eventually(() => world.location(), {
     within: 30_000, label: "Advanced route", until: (path) => path === "/dashboard/marketplaces",
   });
   await user.see({ text: "Advanced" }, { timeoutMs: 30_000 });
-  const collectionsTabs = await probe.eventually(selectedTabs, {
+  const collectionsTabs = await probe.eventually(() => world.selectedTabs(), {
     within: 30_000, label: "Collections tab selected", until: (tabs) => tabs.length === 1 && tabs[0] === "Collections",
   });
   const advancedOk = advancedPath === "/dashboard/marketplaces" && collectionsTabs.length === 1 && collectionsTabs[0] === "Collections";
@@ -49,13 +34,13 @@ test("the Den admin sidebar exposes Advanced and moves Sources into Plugin Direc
   await user.screenshot();
 
   await user.click({ role: "tab", label: "Desktop policies" });
-  const desktopPath = await probe.eventually(pathnameAndSearch, {
+  const desktopPath = await probe.eventually(() => world.location(), {
     within: 30_000, label: "Desktop policies route", until: (path) => path === "/dashboard/desktop-policies",
   });
-  const desktopTabs = await probe.eventually(selectedTabs, {
+  const desktopTabs = await probe.eventually(() => world.selectedTabs(), {
     within: 30_000, label: "Desktop policies tab selected", until: (tabs) => tabs.length === 1 && tabs[0] === "Desktop policies",
   });
-  const desktopLabels = await probe.eventually(sidebarLabels, {
+  const desktopLabels = await probe.eventually(() => world.sidebarLinks(), {
     within: 30_000, label: "single Advanced sidebar entry", until: (labels) => labels.includes("Advanced") && !labels.includes("Desktop Policies"),
   });
   const desktopOk = desktopPath === "/dashboard/desktop-policies" && desktopTabs[0] === "Desktop policies"
@@ -64,11 +49,11 @@ test("the Den admin sidebar exposes Advanced and moves Sources into Plugin Direc
   evidence.recordAssertionEvidence("Desktop policies is an Advanced tab, not a separate sidebar child", `path=${desktopPath}; selected=${JSON.stringify(desktopTabs)}; sidebar=${JSON.stringify(desktopLabels)}`, desktopOk);
 
   await user.click({ role: "tab", label: "Brand appearance" });
-  const brandPath = await probe.eventually(pathnameAndSearch, {
+  const brandPath = await probe.eventually(() => world.location(), {
     within: 30_000, label: "Brand appearance route", until: (path) => path === "/dashboard/brand-appearance",
   });
   await user.see({ testId: "brand-appearance-screen" }, { timeoutMs: 30_000 });
-  const brandTabs = await probe.eventually(selectedTabs, {
+  const brandTabs = await probe.eventually(() => world.selectedTabs(), {
     within: 30_000, label: "Brand appearance tab selected", until: (tabs) => tabs.length === 1 && tabs[0] === "Brand appearance",
   });
   const brandOk = brandPath === "/dashboard/brand-appearance" && brandTabs.length === 1 && brandTabs[0] === "Brand appearance";
@@ -77,7 +62,7 @@ test("the Den admin sidebar exposes Advanced and moves Sources into Plugin Direc
 
   await user.navigate(new URL("/dashboard/org-settings", world.den.ref.webUrl).toString());
   await user.see({ testId: "den-org-sidebar" }, { timeoutMs: 30_000 });
-  const settingsLabels = await probe.eventually(sidebarLabels, {
+  const settingsLabels = await probe.eventually(() => world.sidebarLinks(), {
     within: 30_000,
     label: "expanded Settings children",
     until: (labels) => labels.includes("General") && labels.includes("Billing"),
@@ -88,13 +73,13 @@ test("the Den admin sidebar exposes Advanced and moves Sources into Plugin Direc
   evidence.recordAssertionEvidence("Expanded Settings keeps General and Billing but removes Brand appearance and Desktop Policies", `Sidebar links: ${JSON.stringify(settingsLabels)}`, settingsOk);
 
   await user.click({ role: "link", label: "Plugin Directory" });
-  const pluginsPath = await probe.eventually(pathnameAndSearch, {
+  const pluginsPath = await probe.eventually(() => world.location(), {
     within: 30_000, label: "Plugin Directory route", until: (path) => path === "/dashboard/plugins",
   });
   await user.see({ role: "tab", label: /^Sources/ }, { timeoutMs: 30_000 });
   await user.see({ text: "Create plugin" }, { timeoutMs: 30_000 });
   await user.click({ role: "tab", label: /^Sources/ });
-  const sourceTabs = await probe.eventually(selectedTabs, {
+  const sourceTabs = await probe.eventually(() => world.selectedTabs(), {
     within: 30_000, label: "Sources tab selected", until: (tabs) => tabs.length === 1 && tabs[0] === "Sources",
   });
   await user.see({ text: "GitHub" }, { timeoutMs: 30_000 });
@@ -106,10 +91,10 @@ test("the Den admin sidebar exposes Advanced and moves Sources into Plugin Direc
   await user.screenshot();
 
   await user.navigate(new URL("/dashboard/integrations", world.den.ref.webUrl).toString());
-  const redirectPath = await probe.eventually(pathnameAndSearch, {
+  const redirectPath = await probe.eventually(() => world.location(), {
     within: 30_000, label: "legacy integrations redirect", until: (path) => path === "/dashboard/plugins?view=sources",
   });
-  const redirectedTabs = await probe.eventually(selectedTabs, {
+  const redirectedTabs = await probe.eventually(() => world.selectedTabs(), {
     within: 30_000, label: "redirected Sources tab selected", until: (tabs) => tabs.length === 1 && tabs[0] === "Sources",
   });
   const redirectOk = redirectPath === "/dashboard/plugins?view=sources" && redirectedTabs.length === 1 && redirectedTabs[0] === "Sources";
