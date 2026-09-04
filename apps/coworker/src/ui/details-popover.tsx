@@ -15,6 +15,7 @@ export function PopoverDisclosure({
   icon = null,
   testId,
   className = "",
+  align = "start",
   children,
 }: {
   /** The line as it reads closed: "Thought through", "Reviewed 2 updates from Workers". */
@@ -24,6 +25,7 @@ export function PopoverDisclosure({
   icon?: ReactNode;
   testId: string;
   className?: string;
+  align?: "start" | "end";
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -76,7 +78,7 @@ export function PopoverDisclosure({
           role="dialog"
           aria-modal="false"
           aria-label={title}
-          className={`thinking-popover absolute left-0 z-40 w-[min(420px,calc(100vw-48px))] rounded-[14px] border border-line bg-panel text-left text-[11px] text-mist shadow-[0_12px_32px_rgba(0,0,0,0.35)] ${placement === "above" ? "bottom-full mb-1.5" : "top-full mt-1.5"}`}
+          className={`thinking-popover absolute ${align === "end" ? "right-0" : "left-0"} z-40 w-[min(420px,calc(100vw-48px))] rounded-[14px] border border-line bg-panel text-left text-[11px] text-mist shadow-[0_12px_32px_rgba(0,0,0,0.35)] ${placement === "above" ? "bottom-full mb-1.5" : "top-full mt-1.5"}`}
           data-testid="coworker-details-popover"
           data-placement={placement}
         >

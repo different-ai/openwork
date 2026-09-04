@@ -37,7 +37,7 @@ export const FREE_MODEL_LIMIT = /FreeUsageLimitError|free_tier_limit|free usage 
 export const FREE_MODEL_LIMIT_HEADLINE = "The free model is busy right now.";
 
 export function freeModelLimitDetail(coworkerName: string): string {
-  return `Too many people are using the free model at once. Wait a few minutes and try again, or connect your own AI provider so ${coworkerName} can keep working.`;
+  return `The free model's shared usage limit was reached. Wait and try again, or explore OpenWork Models membership and your own AI providers so ${coworkerName} can keep working. Switching models is your choice.`;
 }
 
 export function describeTurnFailure(raw: string, coworkerName: string, retryable: boolean | null = null): TurnFailure {

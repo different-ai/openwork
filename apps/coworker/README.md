@@ -60,7 +60,13 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
   after an interruption · since 7:40 AM"). An empty conversation shows only a small
   avatar, the coworker's name and role, one line ("What should we work
   through?", or, for a coworker a teammate proposed, "Nova suggested me — …"),
-  and the focused composer; there are no starter cards. At the foot
+  and the focused composer, with no starter cards in the canvas. A discreet
+  **Starting points** control beside the composer offers three editable requests
+  to turn a goal
+  into a plan, work through a document, or prepare recurring work. Choosing one
+  fills an editable draft; nothing is sent until the person sends it. Unsent
+  conversation and assignment drafts are saved locally per coworker and thread,
+  and removed when sent. At the foot
   of the conversation column one discreet **summary line** on the composer's
   hint row says what the coworker holds — "2 assignments · 1 Worker · 3
   documents" (`lib/coworker-summary.ts`) — each part opening the matching level
@@ -409,11 +415,12 @@ line, Activity's Now card, and the journeys read the same value.
   `status.reason`) and its terminal error with the provider's type
   (`FreeUsageLimitError`, carried as `error.providerError`); the app reads
   either and says "The free model is busy. Trying again in 6 s…" with *Stop*
-  and *Connect an AI provider* inline, or, once the engine gives up, "The free
-  model is busy right now." with "Too many people are using the free model at
-  once. Wait a few minutes and try again, or connect your own AI provider so
-  Nova can keep working." The engine's subscription copy stays behind
-  *Technical details*. The app never runs its own 2/6/15 s attempts on it.
+  and *Connect an AI provider* inline. After three engine retries against a
+  named free-tier limit, the app cancels the loop and explains the shared usage
+  limit with options to wait, choose a connected model, or explore OpenWork
+  Models membership and other providers. It makes no speed or reset-time claim.
+  The engine's raw reason appears separately in bounded *Technical details*.
+  The app never runs its own 2/6/15 s attempts on this limit.
 - **A failure** is one message on the coworker's side at the bubble's width: a
   headline in its voice ("Nova couldn't reach the AI model.", "Nova's AI model
   cannot use the tools enabled for this coworker."), one line of explanation,
@@ -463,6 +470,26 @@ popover, the words streaming into a live bubble, the tooltip's speed line, the
 same dots for a model that shares no thinking, the typing bubble past the wait
 budget with its soft phrase and Stop, and a reload are each read from a trace
 of the live shapes.
+
+## Models membership and connected apps
+
+OpenWork settings brings the existing Models subscription into the app. The
+membership card reads `/v1/inference` with the current account and organization,
+shows active membership and remaining shared allowances, and distinguishes
+expired usage data, unavailable status, and an admin-only response. An unknown
+status never becomes an unpaid-account claim. Signed-out users can compare
+models and pricing or sign in; existing members can manage the subscription.
+
+Checkout and subscription changes use Den's existing browser pages. Links carry
+`utm_source=opencoworker` and `utm_medium=desktop`, never a session token. The
+browser may have another workspace selected, so the card names the workspace
+to check. Returning can refresh membership; **Refresh membership & models** also
+synchronizes providers. It never silently changes a coworker's chosen model.
+The Account page also opens **Manage connected apps** in Den; the coworker's
+Apps & tools panel remains the place to use those connections.
+
+Promotion terms are not part of this integration. Available models, subscription
+entitlements, and checkout remain controlled by the existing services.
 
 ## Architecture
 
