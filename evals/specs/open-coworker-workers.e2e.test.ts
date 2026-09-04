@@ -124,6 +124,25 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   const discussionThreadId = String(resultRecord(await invokeCoworker(app, "coworkers.get", { slug: "editor" })).conversationThreadId);
   expect(discussionThreadId).toMatch(/^ses_/);
   await waitFor(app, `document.querySelector('[data-testid="coworker-thread-status"]')?.textContent?.trim() === "Ready"`, { timeoutMs: 120_000, label: "discussion settled" });
+  // What a fresh coworker's first turn costs on the free model, as the engine reports it: the fixed stack
+  // (contract, identity, memory, the two indexes, the team description, and the tools) plus one short message.
+  const firstTurnTokens = await evalIn(app, `(async () => {
+    const runtime = (await window.__COWORKER__.invoke("runtime.info")).result;
+    const coworker = (await window.__COWORKER__.invoke("coworkers.get", { slug: "editor" })).result;
+    const response = await fetch(runtime.serverUrl + "/workspace/" + encodeURIComponent(coworker.workspaceId) + "/opencode/session/" + encodeURIComponent(coworker.conversationThreadId) + "/message", { headers: { Authorization: "Bearer " + runtime.ownerToken } });
+    if (!response.ok) return { status: response.status };
+    const messages = await response.json();
+    const reply = messages.find((message) => message.info?.role === "assistant" && message.info?.tokens);
+    const tokens = reply?.info?.tokens ?? null;
+    return tokens ? { input: tokens.input, output: tokens.output, reasoning: tokens.reasoning, cacheRead: tokens.cache?.read ?? 0, cacheWrite: tokens.cache?.write ?? 0, model: reply.info.modelID ?? "" } : { status: "no tokens" };
+  })()`, { awaitPromise: true, timeoutMs: 30_000 });
+  expect(firstTurnTokens).toMatchObject({ input: expect.any(Number) });
+  const measured = isRecord(firstTurnTokens) ? firstTurnTokens : {};
+  evidence.recordAssertionEvidence(
+    "The engine reports what a fresh coworker's first turn costs on the free model",
+    `Editor's first reply on ${String(measured.model)} reported ${String(measured.input)} input tokens (${String(measured.cacheRead)} read from cache, ${String(measured.cacheWrite)} written), ${String(measured.output)} output tokens, and ${String(measured.reasoning)} reasoning tokens for a one-line message — the fixed instruction stack plus the message.`,
+    true,
+  );
 
   // One run at a time on this Mac, so a Worker turn and a responsibility run must take turns.
   expect(resultRecord(await invokeCoworker(app, "settings.update", { maxParallelLocalRuns: 1 })).maxParallelLocalRuns).toBe(1);
