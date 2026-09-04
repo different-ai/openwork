@@ -27,6 +27,22 @@ permissions:
 jobs:
   generated-sdk:
     runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: password
+          MYSQL_DATABASE: openwork_sdk_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -ppassword"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      DATABASE_URL: mysql://root:password@127.0.0.1:3306/openwork_sdk_ci
+      DEN_DB_ENCRYPTION_KEY: local-dev-db-encryption-key-please-change-1234567890
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -36,5 +52,10 @@ jobs:
         with:
           version: 11.4.0
       - run: pnpm install --frozen-lockfile --ignore-scripts
+      # Loading the live app initializes OAuth's resource registry.
+      - name: Prepare the isolated schema-export database
+        run: pnpm --filter @openwork-ee/den-db exec drizzle-kit push --force
+        env:
+          NODE_OPTIONS: --conditions=development
       - run: pnpm sdk:check
       - run: pnpm sdk:build

@@ -125,7 +125,7 @@ jobs:
         run: pnpm test:eval-runner
       - name: Run all PR specs
         if: (success() || failure()) && steps.setup.outcome == 'success'
-        run: pnpm evals:pr
+        run: pnpm sdk:build && pnpm evals:pr
       - name: Run engine smoke tests
         if: (success() || failure()) && steps.setup.outcome == 'success'
         run: pnpm test:e2e
