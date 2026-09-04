@@ -10,6 +10,7 @@ import { checkedExec, defaultDaytonaExec } from "./daytona.ts";
 import { FAULT_PROXY_SCRIPT } from "./fault-proxy-script.ts";
 import type { DaytonaExec, DaytonaExecResult } from "./daytona.ts";
 
+const CHROME_DEVTOOLS_PLUGIN_VERSION = "1.0.4";
 const REPO_ROOT = fileURLToPath(new URL("../../../..", import.meta.url));
 const DESKTOP_READY_TIMEOUT_MS = 300_000;
 const INSTALL_TIMEOUT_MS = 25 * 60 * 1_000;
@@ -417,7 +418,10 @@ echo detached`;
     const b64 = (text: string) => Buffer.from(text, "utf8").toString("base64");
     const pluginManifestPrefix = b64('{"dependencies":{"@opencode-ai/plugin":"');
     const pluginManifestSuffix = b64('"}}');
-    const devtoolsManifest = b64('{"dependencies":{"opencode-chrome-devtools":"latest"}}');
+    // The engine resolves the unpinned `opencode-chrome-devtools` plugin as `latest`
+    // and keys its cache dir by that tag; the harness installs one audited version
+    // into that slot so evaluation desktops never load whatever the tag points at.
+    const devtoolsManifest = b64(`{"dependencies":{"opencode-chrome-devtools":"${CHROME_DEVTOOLS_PLUGIN_VERSION}"}}`);
     const warmDir = `/tmp/openwork-engine-warm-${Date.now()}`;
     const warmScript = `set -e
 W=${warmDir}

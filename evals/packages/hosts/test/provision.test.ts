@@ -127,6 +127,7 @@ test("provisionDesktopSandbox reuses a sandbox and keeps every remote command in
   assert(engineWarmScript.includes("npm install"));
   assert(engineWarmScript.includes("npm install --ignore-scripts --no-audit --no-fund --loglevel=error"));
   assert(engineWarmScript.includes("opencode-chrome-devtools@latest"));
+  assert(!engineWarmScript.includes(Buffer.from('"opencode-chrome-devtools":"latest"').toString("base64").slice(0, 24)));
   assert(!engineWarmScript.includes("WARM_PRESENT"));
   assert(!engineWarmScript.includes("W=/workspace/.openwork-daytona/engine-cache"));
   assert(engineWarmScript.includes("rm -rf /workspace/.openwork-daytona/engine-cache"));
