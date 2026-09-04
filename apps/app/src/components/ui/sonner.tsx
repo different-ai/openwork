@@ -194,6 +194,92 @@ function ToastCard({ id, type, title, description, action, cancel, notification 
   )
 }
 
+interface UndoToastOptions {
+  id?: string | number
+  duration?: number
+  /** Glyph for the action that was just taken, e.g. an archive box. */
+  icon?: LucideIcon
+  /** Reverses the action; the toast dismisses as soon as it is chosen. */
+  undo: ToastAction
+  /** Optional secondary action that leaves the change in place, e.g. "View". */
+  view?: ToastAction
+  closeLabel?: string
+}
+
+/** Reversible actions stay quiet for long enough to change your mind. */
+const UNDO_TOAST_DURATION_MS = 10_000
+
+interface UndoToastCardProps extends Omit<UndoToastOptions, "id" | "duration"> {
+  id: string | number
+  title: React.ReactNode
+}
+
+/**
+ * One-line confirmation for a reversible action, dropped in from the top of
+ * the window: icon, what happened, then "View" / "Undo" / close. The wrapper
+ * spans sonner's toast width so the pill itself can hug its content and stay
+ * centered under the title bar.
+ */
+function UndoToastCard({ id, title, icon: Icon, undo, view, closeLabel }: UndoToastCardProps) {
+  return (
+    <div className="flex w-[var(--width)] max-w-full justify-center">
+      <div
+        data-undo-toast
+        className="flex w-fit max-w-full items-center gap-3 rounded-2xl border border-border bg-popover/95 py-1.5 pl-4 pr-1.5 text-popover-foreground shadow-md ring-1 ring-popover-border/20 backdrop-blur-sm"
+      >
+        {Icon ? <Icon className="size-4 shrink-0" /> : null}
+        <p className="min-w-0 truncate text-sm font-medium">{title}</p>
+        <div className="flex shrink-0 items-center gap-1">
+          {view ? (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                view.onClick()
+                sonnerToast.dismiss(id)
+              }}
+            >
+              {view.label}
+            </Button>
+          ) : null}
+          <Button
+            size="sm"
+            onClick={() => {
+              undo.onClick()
+              sonnerToast.dismiss(id)
+            }}
+          >
+            {undo.label}
+          </Button>
+          <Button size="icon-sm" variant="ghost" aria-label={closeLabel} onClick={() => sonnerToast.dismiss(id)}>
+            <XIcon className="size-4" />
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function showUndoToast(message: React.ReactNode, options: UndoToastOptions) {
+  return sonnerToast.custom(
+    (id) => (
+      <UndoToastCard
+        id={id}
+        title={message}
+        icon={options.icon}
+        undo={options.undo}
+        view={options.view}
+        closeLabel={options.closeLabel}
+      />
+    ),
+    {
+      id: options.id,
+      duration: options.duration ?? UNDO_TOAST_DURATION_MS,
+      position: "top-center",
+    },
+  )
+}
+
 function showToast(type: ToastType, message: React.ReactNode, options?: ToastOptions) {
   const notification = options?.action === undefined && options?.cancel === undefined;
 
@@ -227,6 +313,7 @@ const toast = Object.assign(
     info: (message: React.ReactNode, options?: ToastOptions) => showToast("info", message, options),
     warning: (message: React.ReactNode, options?: ToastOptions) => showToast("warning", message, options),
     error: (message: React.ReactNode, options?: ToastOptions) => showToast("error", message, options),
+    undo: (message: React.ReactNode, options: UndoToastOptions) => showUndoToast(message, options),
     dismiss: (id?: string | number) => sonnerToast.dismiss(id),
   },
 )
