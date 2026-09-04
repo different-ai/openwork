@@ -144,7 +144,7 @@ test(title, { timeout: 420_000 }, async ({ evidence, place }) => {
     setter.call(textarea, ${JSON.stringify(JSON.stringify(launchInput))});
     textarea.dispatchEvent(new Event("input", { bubbles: true }));
     const addButton = [...row.querySelectorAll("button")]
-      .find((button) => (button.textContent ?? "").trim() === "Add");
+      .find((button) => /^Add( another)?$/.test((button.textContent ?? "").trim()));
     if (!(addButton instanceof HTMLButtonElement) || addButton.disabled) return "Add button not available";
     addButton.click();
     return "added";
@@ -180,33 +180,35 @@ test(title, { timeout: 420_000 }, async ({ evidence, place }) => {
   expect(afterFirstAdd).toEqual([{ toolName: appToolName, jql: firstArguments.jql }]);
 
   // The reported limitation: after one add, the picker must still offer the
-  // same capability (with a fresh launch-input field) instead of a terminal
+  // same capability (with its launch-input field) instead of a terminal
   // "Added" state, so a member can add a second tile with different arguments.
+  // "Added" may remain as a count hint, but never in place of the Add control.
   await screenshot(browser);
   const secondAddOffer = await evalIn(browser, `(() => {
     ${pickerRowScript}
     if (!(row instanceof HTMLElement)) return null;
     return {
-      addButtonVisible: [...row.querySelectorAll("button")]
-        .some((button) => (button.textContent ?? "").trim() === "Add"),
-      addedBadgeVisible: row.innerText.includes("Added"),
+      addButtonLabel: [...row.querySelectorAll("button")]
+        .map((button) => (button.textContent ?? "").trim())
+        .find((label) => /^Add( another)?$/.test(label)) ?? null,
+      addedHintVisible: row.innerText.includes("Added"),
       launchInputVisible: Boolean(row.querySelector("textarea")),
     };
   })()`);
   expect(
     secondAddOffer,
-    "After one tile is added, the picker row must keep its Add button and launch-input field for a second tile of the same capability",
+    "After one tile is added, the picker row must keep an Add control and its launch-input field for a second tile of the same capability",
   ).toEqual({
-    addButtonVisible: true,
-    addedBadgeVisible: false,
+    addButtonLabel: "Add another",
+    addedHintVisible: true,
     launchInputVisible: true,
   });
   evidence.recordAssertionEvidence(
     "The Add app picker keeps offering an already-added capability for a second tile with different launch input",
     `Picker row state after the first add: ${JSON.stringify(secondAddOffer)}`,
     isRecord(secondAddOffer)
-      && secondAddOffer.addButtonVisible === true
-      && secondAddOffer.addedBadgeVisible === false
+      && secondAddOffer.addButtonLabel === "Add another"
+      && secondAddOffer.addedHintVisible === true
       && secondAddOffer.launchInputVisible === true,
   );
 
@@ -227,6 +229,35 @@ test(title, { timeout: 420_000 }, async ({ evidence, place }) => {
     { toolName: appToolName, jql: firstArguments.jql },
     { toolName: appToolName, jql: secondArguments.jql },
   ]);
+
+  // Negative half: an identical tile (same app, same launch input) is refused
+  // with a visible message rather than silently dropped or silently duplicated.
+  const duplicateAdd = await openPickerAndAdd(secondArguments);
+  expect(duplicateAdd).toBe("added");
+  await waitFor(browser, `(() => {
+    ${pickerRowScript}
+    return row instanceof HTMLElement && row.innerText.includes("already on the dashboard with the same launch input");
+  })()`, {
+    timeoutMs: 15_000,
+    label: "identical tile refused with a visible message",
+  });
+  const duplicateState = await evalIn(browser, `(() => {
+    ${pickerRowScript}
+    return row instanceof HTMLElement
+      ? { refusalVisible: row.innerText.includes("already on the dashboard with the same launch input"), addedHint: row.innerText.includes("Added ×2") }
+      : null;
+  })()`);
+  const afterDuplicateAttempt = await readDashboardElements(den.admin, dashboardId);
+  expect(afterDuplicateAttempt).toEqual(afterSecondAdd);
+  evidence.recordAssertionEvidence(
+    "An identical tile is refused visibly and does not change the saved dashboard",
+    `row=${JSON.stringify(duplicateState)}; persisted after attempt=${JSON.stringify(afterDuplicateAttempt)}`,
+    isRecord(duplicateState)
+      && duplicateState.refusalVisible === true
+      && duplicateState.addedHint === true
+      && JSON.stringify(afterDuplicateAttempt) === JSON.stringify(afterSecondAdd),
+  );
+
   const tileTitles = await evalIn(browser, `(() => {
     const doneButton = [...document.querySelectorAll('[role="dialog"] button')]
       .find((button) => (button.textContent ?? "").trim() === "Done");
