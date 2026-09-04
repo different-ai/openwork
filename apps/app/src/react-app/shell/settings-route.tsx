@@ -2361,13 +2361,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       case "permissions":
         return (
           <SettingsStack>
-            <EffectivePermissionsPanel
-              openworkServerClient={openworkClient}
-              openworkServerStatus={routeOpenworkStatus}
-              openworkServerCapabilities={routeOpenworkCapabilities}
-              runtimeWorkspaceId={runtimeWorkspaceId}
-              refreshToken={permissionsRefreshToken}
-            />
             <AuthorizedFoldersPanel
               openworkServerClient={openworkClient}
               openworkServerStatus={routeOpenworkStatus}
@@ -2594,28 +2587,37 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         );
       case "advanced":
         return (
-          <AdvancedView
-            key={runtimeWorkspaceId ?? selectedWorkspaceId}
-            busy={busy}
-            clientConnected={Boolean(opencodeClient)}
-            opencodeConnectStatus={null}
-            openworkServerStatus={openworkServerSnapshot.openworkServerStatus}
-            developerMode={developerMode}
-            toggleDeveloperMode={toggleDeveloperMode}
-            opencodeDevModeEnabled={false}
-            openDebugDeepLink={async () => ({ ok: false, message: "Debug deep links are not wired into the React settings route yet." })}
-            cloudMcpUrl={openworkCloudMcpUrl}
-            canInspectRuntimeConfig={Boolean(openworkClient && selectedWorkspaceId)}
-            getRuntimeConfigStatus={async () => {
-              if (!openworkClient || !selectedWorkspaceId) {
-                throw new Error("Select a workspace to inspect runtime config.");
-              }
-              return openworkClient.getRuntimeConfigStatus(selectedWorkspaceId);
-            }}
-            cloudMcpHealth={cloudMcpHealth}
-            refreshCloudMcpHealth={refreshCloudMcpHealth}
-            organizationServer={denSession}
-          />
+          <SettingsStack>
+            <AdvancedView
+              key={runtimeWorkspaceId ?? selectedWorkspaceId}
+              busy={busy}
+              clientConnected={Boolean(opencodeClient)}
+              opencodeConnectStatus={null}
+              openworkServerStatus={openworkServerSnapshot.openworkServerStatus}
+              developerMode={developerMode}
+              toggleDeveloperMode={toggleDeveloperMode}
+              opencodeDevModeEnabled={false}
+              openDebugDeepLink={async () => ({ ok: false, message: "Debug deep links are not wired into the React settings route yet." })}
+              cloudMcpUrl={openworkCloudMcpUrl}
+              canInspectRuntimeConfig={Boolean(openworkClient && selectedWorkspaceId)}
+              getRuntimeConfigStatus={async () => {
+                if (!openworkClient || !selectedWorkspaceId) {
+                  throw new Error("Select a workspace to inspect runtime config.");
+                }
+                return openworkClient.getRuntimeConfigStatus(selectedWorkspaceId);
+              }}
+              cloudMcpHealth={cloudMcpHealth}
+              refreshCloudMcpHealth={refreshCloudMcpHealth}
+              organizationServer={denSession}
+            />
+            <EffectivePermissionsPanel
+              openworkServerClient={openworkClient}
+              openworkServerStatus={routeOpenworkStatus}
+              openworkServerCapabilities={routeOpenworkCapabilities}
+              runtimeWorkspaceId={runtimeWorkspaceId}
+              refreshToken={permissionsRefreshToken}
+            />
+          </SettingsStack>
         );
       case "appearance":
         return (
