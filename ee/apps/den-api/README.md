@@ -102,6 +102,11 @@ Rules for adding cache helpers:
 - `ee/apps/den-api/src/openapi.ts` exposes `denTypeIdSchema(...)` so path params, request bodies, and response fields all share the same validation rules and Swagger examples.
 - Swagger now documents Den IDs with their required prefix and fixed 26-character TypeID suffix, so invalid IDs fail request validation before route logic runs.
 
+## OpenAPI contract
+
+- `packages/docs/openapi.json` is the published contract, regenerated with `pnpm api:snapshot` and linted with `pnpm api:lint` (Spectral, ruleset in `.spectral.yaml`). The API Contract workflow fails on snapshot drift, on any lint error, and when warnings exceed `.spectral-baseline.json`.
+- Every route registration carries a `describeRoute()` with `summary`, `tags`, `security` and `responses`; conventions and documented exceptions are in [`docs/api-style.md`](../../../docs/api-style.md).
+
 ## Migration approach
 
 1. Keep `den-api` (formerly `den-controller`) as the source of truth for Den control-plane behavior.
