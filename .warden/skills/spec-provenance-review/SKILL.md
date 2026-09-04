@@ -35,8 +35,6 @@ Do not report:
 - `seed.*` calls inside world functions (`evals/worlds/**`) or after the first
   act in a body — that is legitimate arrangement.
 - `agent.*` in specs whose title explicitly says agent, control rail, or voice.
-- Legacy specs listed in `evals/specs/quarantine.json` unless this diff
-  migrates them.
 - Anything outside `evals/specs/**` and `evals/worlds/**`.
 
 Never report `high` or `low`. Keep each finding to the title fragment, the

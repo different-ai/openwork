@@ -3,7 +3,6 @@ import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
 import { test } from "@openwork/testkit";
 import { listSinglesTests } from "../scripts/list-singles-tests.mjs";
-import { listQuarantined } from "../scripts/quarantine.mjs";
 
 const profilePath = fileURLToPath(
   new URL("./daytona-e2e-regression-profile.json", import.meta.url),
@@ -23,7 +22,6 @@ const DISALLOWED_CATEGORIES = new Set([
   "raw-or-local-placement",
   "unavailable-secret-or-docker",
 ]);
-const DENIED_TEST = "capability-search-latency.e2e.test.ts";
 const FRESH_DESKTOP_PROFILE_TESTS = [
   "compatible-release-picker.e2e.test.ts",
   "first-run-cloud-share.e2e.test.ts",
@@ -65,9 +63,8 @@ test("the singles selection is exactly the standalone-runnable excluded categori
   ]);
   const profile: unknown = JSON.parse(profileSource);
   const entries = profileEntries(profile);
-  const quarantined = new Set(listQuarantined());
   const expected = entries
-    .filter(({ category, test: profileTest }) => SINGLES_CATEGORIES.has(category) && profileTest !== DENIED_TEST && !quarantined.has(profileTest))
+    .filter(({ category }) => SINGLES_CATEGORIES.has(category))
     .map(({ test: profileTest }) => profileTest);
 
   expect(new Set(selected)).toEqual(new Set(expected));
@@ -78,15 +75,13 @@ test("the singles selection is exactly the standalone-runnable excluded categori
   expect(selectedEntries).toHaveLength(selected.length);
   expect(selectedEntries.every(({ category }) => SINGLES_CATEGORIES.has(category))).toBe(true);
   expect(selectedEntries.some(({ category }) => DISALLOWED_CATEGORIES.has(category))).toBe(false);
-  expect(selected.some((selectedTest) => quarantined.has(selectedTest))).toBe(false);
-  expect(selected).not.toContain(DENIED_TEST);
   expect(entries.filter(({ category }) => category === "fresh-desktop-profile").map(({ test: profileTest }) => profileTest))
     .toEqual(FRESH_DESKTOP_PROFILE_TESTS);
   expect(selected).toEqual(expect.arrayContaining(FRESH_DESKTOP_PROFILE_TESTS));
 
   evidence.recordAssertionEvidence(
     "The singles selector contains exactly the standalone-runnable profile exclusions",
-    "Selection equals the non-quarantined fresh-den-url, fault-proxy, and fresh-desktop-profile entries after the explicit local-placement denial; every selected spec exists and no incompatible category enters the lane.",
+    "Selection equals the fresh-den-url, fault-proxy, and fresh-desktop-profile entries; every selected spec exists and no incompatible category enters the lane.",
     true,
   );
 });

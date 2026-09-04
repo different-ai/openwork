@@ -39,7 +39,6 @@ const CUSTOM_PROVIDER_NAME = "Sync Contract Custom Models";
 const CUSTOM_PROVIDER_KEY = "sync-contract-custom-models";
 const CUSTOM_MODEL_ID = "sync-contract-custom-model";
 const CATALOG_PROVIDER_NAME = "Sync Contract Catalog Models";
-// Same real models.dev catalog entry models-available.e2e.test.ts:37 publishes.
 const CATALOG_MODEL_ID = "gpt-5.4";
 const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -187,8 +186,7 @@ function parseSyncStatus(payload: Record<string, unknown>): SyncStatusFacts {
 // The desktop local server's GET /cloud-provider-sync/status is registered
 // with "client" auth (apps/server/src/server.ts:2108), so the renderer's own
 // persisted credentials (localStorage openwork.server.port/openwork.server.token)
-// reach it with a plain Bearer fetch to 127.0.0.1 — the same access pattern
-// subagent-run-survives-provider-sync-storm.e2e.test.ts uses.
+// reach it with a plain Bearer fetch to 127.0.0.1.
 async function readSyncStatusPayload(surface: Parameters<typeof evalIn>[0]): Promise<Record<string, unknown>> {
   const value = await evalIn(surface, `(async () => {
     const port = localStorage.getItem("openwork.server.port");

@@ -83,19 +83,6 @@ jobs:
           node scripts/flake-report.mjs report --project pr --threshold "$FLAKE_THRESHOLD"
           cat results/flake/pr/flake-report.md >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Publish scenario coverage matrix
-        shell: bash
-        working-directory: evals
-        run: |
-          set -euo pipefail
-          node scripts/spec-coverage-matrix.mjs --out results/flake/spec-coverage-matrix.md
-          {
-            echo ""
-            head -3 results/flake/spec-coverage-matrix.md
-            echo ""
-            echo "Full matrix in the run artifacts."
-          } >> "$GITHUB_STEP_SUMMARY"
-
       - name: Upload flake report artifacts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

@@ -1,20 +1,11 @@
 import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { listQuarantined } from "./quarantine.mjs";
 
 const specsDirectory = new URL("../specs/", import.meta.url);
 const profileUrl = new URL("../specs/daytona-e2e-regression-profile.json", import.meta.url);
 
 const SINGLES_CATEGORIES = ["fresh-den-url", "fault-proxy", "fresh-desktop-profile"];
-const QUARANTINED = new Set(listQuarantined());
-
-const SINGLES_DENYLIST = new Map([
-  [
-    "capability-search-latency.e2e.test.ts",
-    "its fault proxy is built on the driver machine's loopback in front of a driver-local mock MCP; a Daytona-hosted Den can never reach it, so it is local-placement-only",
-  ],
-]);
 
 function profileEntries(value) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -60,7 +51,7 @@ export async function listSinglesTests() {
   }
 
   const selected = profileEntries(profile)
-    .filter(({ category, test }) => SINGLES_CATEGORIES.includes(category) && !SINGLES_DENYLIST.has(test) && !QUARANTINED.has(test))
+    .filter(({ category }) => SINGLES_CATEGORIES.includes(category))
     .map(({ test }) => test)
     .sort();
 
