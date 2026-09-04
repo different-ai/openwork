@@ -41,4 +41,26 @@ describe("Workflow flow diagram", () => {
     expect(markup).toContain('data-terminal="true"');
     expect(markup.match(/data-connector="flow"/g)).toHaveLength(5);
   });
+
+  test("marks the last started tool failed and later tools not reached", () => {
+    const markup = renderToStaticMarkup(createElement(WorkflowFlowDiagram, {
+      graph,
+      run: { toolCalls: [{ name: "slack.search" }], status: "failed", errorMessage: "Slack stopped responding", finishedAt: "2026-09-04T10:00:00.000Z" },
+    }));
+
+    expect(markup).toContain('data-node-id="slack" data-node-kind="tool" data-run-state="failed"');
+    expect(markup).toContain('data-node-id="gmail" data-node-kind="tool" data-run-state="not_reached"');
+    expect(markup).toContain('data-node-id="orgs" data-node-kind="tool" data-run-state="not_reached"');
+    expect(markup).toContain("Slack stopped responding");
+  });
+
+  test("matches succeeded parallel calls in either order", () => {
+    const markup = renderToStaticMarkup(createElement(WorkflowFlowDiagram, {
+      graph,
+      run: { toolCalls: [{ name: "gmail.search" }, { name: "slack.search" }], status: "succeeded", errorMessage: null, finishedAt: "2026-09-04T10:00:00.000Z" },
+    }));
+
+    expect(markup).toContain('data-node-id="slack" data-node-kind="tool" data-run-state="ran"');
+    expect(markup).toContain('data-node-id="gmail" data-node-kind="tool" data-run-state="ran"');
+  });
 });

@@ -8,6 +8,7 @@ import { DenInput } from "../../_components/ui/input";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { WorkflowArtifactResult, WorkflowMarkdownPreview } from "./workflow-artifact-result";
 import { WorkflowFlowDiagram } from "./workflow-flow-diagram";
+import { formFieldsFromSchema, WorkflowInputForm } from "./workflow-input-form";
 import {
   type WorkflowDraft,
   useDeleteWorkflowSnapshot,
@@ -33,6 +34,19 @@ function initialFields(detail: WorkflowDetail): Fields {
 function parseJson(label: string, value: string, optional = false) {
   if (!value.trim() && optional) return undefined;
   try { return JSON.parse(value.trim() || "null"); } catch { throw new Error(`${label} syntax: enter valid JSON.`); }
+}
+
+function parseJsonLenient(value: string): unknown {
+  try { return JSON.parse(value); } catch { return null; }
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function formValue(value: string): Record<string, unknown> {
+  const parsed = parseJsonLenient(value);
+  return isPlainObject(parsed) ? parsed : {};
 }
 
 function toDraft(detail: WorkflowDetail, fields: Fields): WorkflowDraft {
@@ -66,6 +80,7 @@ export function WorkflowDetailPanel({ configObjectId, onClose }: { configObjectI
   const [selectedReceiptId, setSelectedReceiptId] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
   const [loadedVersion, setLoadedVersion] = useState<string | null>(null);
+  const [showJsonInput, setShowJsonInput] = useState(false);
   const detail = detailQuery.data;
   const versionKey = detail?.currentVersion.id;
 
@@ -75,6 +90,7 @@ export function WorkflowDetailPanel({ configObjectId, onClose }: { configObjectI
     setFields(next);
     setBase(JSON.stringify(next));
     setTested(null);
+    setShowJsonInput(false);
     setSelectedReceiptId(detail.latestSnapshot?.receiptId ?? detail.latestSuccessfulSnapshot?.receiptId ?? null);
     setLoadedVersion(detail.currentVersion.id);
   }, [detail, loadedVersion, versionKey]);
@@ -100,6 +116,10 @@ export function WorkflowDetailPanel({ configObjectId, onClose }: { configObjectI
 
   if (detailQuery.isLoading || !detail || !fields) return <div className="rounded-2xl border border-gray-100 bg-white p-6 text-[13px] text-gray-400">{error ? message(error) : "Loading Workflow…"}</div>;
 
+  const parsedInputSchema = detail.canManage ? parseJsonLenient(fields.inputSchema) : detail.currentVersion.inputSchema;
+  const hasInputForm = formFieldsFromSchema(parsedInputSchema) !== null;
+  const inputFormValue = formValue(fields.input);
+
   return (
     <div className="space-y-5" data-testid="den-workflow-detail-panel">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -118,7 +138,7 @@ export function WorkflowDetailPanel({ configObjectId, onClose }: { configObjectI
           {detail.currentVersion.graph ? <section className="rounded-2xl border border-gray-100 bg-white p-5">
             <h2 className="text-[14px] font-semibold text-gray-900">Flow</h2>
             <p className="mt-1 text-[12px] text-gray-400">Each step is a tool call in the saved version. Branches and parallel work are shown as a structural preview.</p>
-            <WorkflowFlowDiagram graph={detail.currentVersion.graph} />
+            <WorkflowFlowDiagram graph={detail.currentVersion.graph} run={selected ? { toolCalls: selected.toolCalls, status: selected.status, errorMessage: selected.errorMessage, finishedAt: selected.finishedAt } : null} />
           </section> : null}
 
           {detail.canManage ? <section className="rounded-2xl border border-gray-100 bg-white p-5">
@@ -126,14 +146,15 @@ export function WorkflowDetailPanel({ configObjectId, onClose }: { configObjectI
             <div className="space-y-4">
               <div className="grid gap-3 sm:grid-cols-2"><label className="text-[12px] font-medium text-gray-600">Name<DenInput className="mt-1" value={fields.name} onChange={(event) => update("name", event.currentTarget.value)} /></label><label className="text-[12px] font-medium text-gray-600">Description<DenInput className="mt-1" value={fields.description} onChange={(event) => update("description", event.currentTarget.value)} /></label></div>
               <label className="block text-[12px] font-medium text-gray-600">Source<DenTextarea className="mt-1 min-h-72 font-mono text-[12px]" value={fields.code} onChange={(event) => update("code", event.currentTarget.value)} /></label>
-              <div className="grid gap-3 lg:grid-cols-3"><label className="text-[12px] font-medium text-gray-600">Example input<DenTextarea className="mt-1 min-h-36 font-mono text-[11px]" value={fields.input} onChange={(event) => update("input", event.currentTarget.value)} /></label><label className="text-[12px] font-medium text-gray-600">Input schema<DenTextarea className="mt-1 min-h-36 font-mono text-[11px]" value={fields.inputSchema} onChange={(event) => update("inputSchema", event.currentTarget.value)} /></label><label className="text-[12px] font-medium text-gray-600">Output schema<DenTextarea className="mt-1 min-h-36 font-mono text-[11px]" value={fields.outputSchema} onChange={(event) => update("outputSchema", event.currentTarget.value)} /></label></div>
+              {hasInputForm ? <div><div className="flex items-center justify-between gap-3"><p className="text-[12px] font-medium text-gray-600">Example input</p><button type="button" onClick={() => setShowJsonInput((current) => !current)} className="text-[11px] text-gray-400 hover:text-gray-700">{showJsonInput ? "Hide JSON" : "Edit as JSON"}</button></div><WorkflowInputForm schema={parsedInputSchema} value={inputFormValue} onChange={(next) => update("input", JSON.stringify(next, null, 2))} />{showJsonInput ? <DenTextarea aria-label="Example input JSON" className="mt-2 min-h-36 font-mono text-[11px]" value={fields.input} onChange={(event) => update("input", event.currentTarget.value)} /> : null}</div> : <label className="block text-[12px] font-medium text-gray-600">Example input<DenTextarea className="mt-1 min-h-36 font-mono text-[11px]" value={fields.input} onChange={(event) => update("input", event.currentTarget.value)} /></label>}
+              <div className="grid gap-3 lg:grid-cols-2"><label className="text-[12px] font-medium text-gray-600">Input schema<DenTextarea className="mt-1 min-h-36 font-mono text-[11px]" value={fields.inputSchema} onChange={(event) => update("inputSchema", event.currentTarget.value)} /></label><label className="text-[12px] font-medium text-gray-600">Output schema<DenTextarea className="mt-1 min-h-36 font-mono text-[11px]" value={fields.outputSchema} onChange={(event) => update("outputSchema", event.currentTarget.value)} /></label></div>
               <div><p className="text-[12px] font-medium text-gray-600">Required capabilities</p><div className="mt-2 flex flex-wrap gap-2">{detail.currentVersion.requiredCapabilities.length === 0 ? <span className="rounded-full bg-gray-100 px-2 py-1 text-[11px] text-gray-500">No provider tools</span> : detail.currentVersion.requiredCapabilities.map((capability) => <span key={`${capability.capabilityName}:${capability.scriptPath}`} className="rounded-full bg-gray-100 px-2 py-1 font-mono text-[11px] text-gray-600">{capability.scriptPath}</span>)}</div></div>
               <div className="flex justify-end gap-2"><DenButton variant="secondary" disabled={pending} onClick={() => { setLocalError(null); const draft = toDraft(detail, fields); void testMutation.mutateAsync(draft).then((result) => setTested({ result, fingerprint })).catch((reason) => setLocalError(message(reason))); }}><TestTube2 className="h-3.5 w-3.5" />Test changes</DenButton><DenButton disabled={pending || tested?.fingerprint !== fingerprint} onClick={() => { if (!tested) return; const draft = toDraft(detail, fields); void saveMutation.mutateAsync({ receiptId: tested.result.receiptId, draft }).catch((reason) => setLocalError(message(reason))); }}><Save className="h-3.5 w-3.5" />Save new version</DenButton></div>
             </div>
           </section> : <section className="rounded-2xl border border-gray-100 bg-white p-5">
             <h2 className="text-[14px] font-semibold text-gray-900">Script</h2>
             <p className="mt-1 text-[12px] text-gray-400">Source and saved example input are authoring details visible only to Workflow managers.</p>
-            {detail.canRun ? <label className="mt-4 block text-[12px] font-medium text-gray-600">Run input<DenTextarea className="mt-1 min-h-32 font-mono text-[11px]" value={fields.input} onChange={(event) => update("input", event.currentTarget.value)} /></label> : null}
+            {detail.canRun ? hasInputForm ? <div className="mt-4"><div className="flex items-center justify-between gap-3"><p className="text-[12px] font-medium text-gray-600">Run input</p><button type="button" onClick={() => setShowJsonInput((current) => !current)} className="text-[11px] text-gray-400 hover:text-gray-700">{showJsonInput ? "Hide JSON" : "Edit as JSON"}</button></div><WorkflowInputForm schema={parsedInputSchema} value={inputFormValue} onChange={(next) => update("input", JSON.stringify(next, null, 2))} />{showJsonInput ? <DenTextarea aria-label="Run input JSON" className="mt-2 min-h-32 font-mono text-[11px]" value={fields.input} onChange={(event) => update("input", event.currentTarget.value)} /> : null}</div> : <label className="mt-4 block text-[12px] font-medium text-gray-600">Run input<DenTextarea className="mt-1 min-h-32 font-mono text-[11px]" value={fields.input} onChange={(event) => update("input", event.currentTarget.value)} /></label> : null}
             <div className="mt-4 grid gap-3 lg:grid-cols-2"><div><p className="text-[12px] font-medium text-gray-600">Input schema</p><pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded-xl bg-gray-950 p-3 font-mono text-[11px] text-gray-100">{fields.inputSchema || "No input schema"}</pre></div><div><p className="text-[12px] font-medium text-gray-600">Output schema</p><pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded-xl bg-gray-950 p-3 font-mono text-[11px] text-gray-100">{fields.outputSchema || "No output schema"}</pre></div></div>
           </section>}
 
