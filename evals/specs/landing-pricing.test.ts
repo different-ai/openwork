@@ -1,9 +1,21 @@
 import { expect } from "vitest";
-import { needs, test } from "@openwork/testkit";
+import { chrome } from "@openwork/hosts";
+import { evaluateOnSurface } from "@openwork/cdp";
+import { eventually, needs, test } from "@openwork/testkit";
 
 test("visitors see consistent monthly Team and Enterprise pricing", async ({ evidence }) => {
   needs({ env: ["OPENWORK_EVAL_LANDING_URL"] });
   const origin = process.env.OPENWORK_EVAL_LANDING_URL;
+  await using browser = await chrome({ startUrl: `${origin}/pricing`, headless: true });
+  const visible = await eventually(async () => evaluateOnSurface(browser, "document.body.innerText"), {
+    within: 30_000,
+    until: (value) => typeof value === "string" && value.includes("$10") && value.includes("$40"),
+  });
+  expect(visible).toContain("$10");
+  expect(visible).toContain("$40");
+  expect(visible).not.toContain("$20");
+  expect(visible).not.toContain("$50");
+  evidence.recordAssertionEvidence("Visitors see the new prices in the browser", "Team $10; Enterprise $40; old prices absent", true);
   for (const path of ["/pricing"]) {
     const response = await fetch(`${origin}${path}`, { signal: AbortSignal.timeout(60_000) });
     expect(response.status).toBe(200);
