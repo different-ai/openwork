@@ -1,5 +1,6 @@
 import { expect } from "vitest";
 import { createDenClient } from "@openwork/sdk";
+import { denFetch } from "@openwork/behaviors";
 import { localMysqlIsRunning, localRedisIsRunning, server, test } from "@openwork/testkit";
 
 const remote = process.env.OPENWORK_EVAL_DAYTONA === "1" || Boolean(process.env.OPENWORK_EVAL_DEN_API_URL);
@@ -41,6 +42,40 @@ test.skipIf(!available)(
     const org = organizations.data.orgs.find((org) => org.name === "SDK integration");
     if (!org) throw new Error("The SDK did not return the integration organization.");
     const scoped = createDenClient({ baseUrl: den.ref.apiUrl, token: den.admin.token, orgId: org.id });
+    // Organization creation is a hidden route, used only to prepare the second
+    // membership. All context assertions below exercise the public SDK.
+    const secondCreated = await denFetch(den.admin, "/v1/org", {
+      method: "POST", headers: { authorization: `Bearer ${den.admin.token}` },
+      body: JSON.stringify({ name: "SDK default organization" }),
+    });
+    expect(secondCreated.response.status).toBe(201);
+    const memberships = await session.getV1MeOrgs({ throwOnError: true });
+    const secondOrg = memberships.data.orgs.find((entry) => entry.name === "SDK default organization");
+    if (!secondOrg) throw new Error("The SDK did not return the second organization.");
+    expect(secondOrg.id).not.toBe(org.id);
+    expect(memberships.data.activeOrgId).toBe(secondOrg.id);
+    const selectedTeam = await scoped.postV1Teams({ name: "SDK context team" }, { throwOnError: true });
+    try {
+      expect(selectedTeam.data.team.organizationId).toBe(org.id);
+      const defaultTeam = await session.postV1Teams({ name: "SDK context team" }, { throwOnError: true });
+      try {
+        expect(defaultTeam.data.team.organizationId).toBe(secondOrg.id);
+        expect(defaultTeam.data.team.id).not.toBe(selectedTeam.data.team.id);
+        const override = await scoped.getV1Org(undefined, {
+          headers: { "x-openwork-org-id": secondOrg.id }, throwOnError: true,
+        });
+        expect(override.data.organization.id).toBe(secondOrg.id);
+        const unchanged = await scoped.getV1Org(undefined, { throwOnError: true });
+        expect(unchanged.data.organization.id).toBe(org.id);
+        evidence.recordAssertionEvidence("Session organization context and request overrides", "With a different default organization, the configured orgId places a team in the selected organization. An unscoped client creates a distinct team in the default organization; a per-request override selects that organization without changing the client default.",
+          selectedTeam.data.team.organizationId === org.id && defaultTeam.data.team.organizationId === secondOrg.id
+          && override.data.organization.id === secondOrg.id && unchanged.data.organization.id === org.id);
+      } finally {
+        await session.deleteV1TeamsByTeamId({ teamId: defaultTeam.data.team.id }, { throwOnError: true });
+      }
+    } finally {
+      await scoped.deleteV1TeamsByTeamId({ teamId: selectedTeam.data.team.id }, { throwOnError: true });
+    }
     const key = await scoped.postV1ApiKeys({ createOrganizationApiKeyRequest: { name: "SDK integration" } }, { throwOnError: true });
     const requestedUrls: string[] = [];
     const keyed = createDenClient({
