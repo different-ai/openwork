@@ -54,8 +54,16 @@ test.skipIf(!localPlacement)(
     await user.click({ role: "button", label: `Run ${confluenceTileTitle}` });
     await user.click({ role: "button", label: `Run ${jiraTileTitle}` });
 
+    // What the member sees: the provider's rejection naming cloudId with the
+    // failed-refresh badge, and never the pre-fix generic 500 text.
+    await user.see({ text: /rejected the tool arguments/ }, { timeoutMs: 120_000 });
+    await user.see({ text: /cloudId/ });
+    await user.see({ text: /Refresh failed/ });
+    await user.notSee({ text: /Unexpected server error/ });
+
+    // Per-tile facts prove both tiles (not just one) carry that message.
     const tiles = await probe.eventually(() => world.tiles(), {
-      within: 120_000,
+      within: 30_000,
       label: "both Atlassian tiles name the missing required argument",
       until: (value) => value.confluence?.namesCloudId === true && value.jql?.namesCloudId === true,
     });

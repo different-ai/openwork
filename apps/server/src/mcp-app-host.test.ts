@@ -24,6 +24,7 @@ import { readRuntimeOpencodeConfig, runtimeMcpMap, writeRuntimeOpencodeConfig } 
 import {
   callMcpAppTool,
   listMcpAppCatalog,
+  McpAppHostError,
   projectedMcpToolName,
   resolveConnectMcpAppResource,
   resolveMcpAppResource,
@@ -165,9 +166,11 @@ async function startFixtureMcp(
   });
   mcp.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
     if (params.name === "render_report" && typeof params.arguments?.id !== "string") {
+      // A control character and an oversized tail model a hostile provider;
+      // the host must relay neither verbatim.
       throw new McpError(
         ErrorCode.InvalidParams,
-        'Invalid arguments for tool render_report: [{"path":["id"],"message":"Required"}]',
+        `Invalid arguments for tool render_report: [{"path":["id"],"message":"Required"}]\u0007 ${"x".repeat(2_000)}`,
       );
     }
     return {
@@ -667,19 +670,28 @@ describe("MCP Apps host transport", () => {
     // A dashboard tile launched with input that omits a required argument must
     // show the provider's rejection, which names the missing key, instead of
     // the generic 500 "Unexpected server error" an untyped throw produces.
-    await expect(callMcpAppTool({
-      serverConfig: config,
-      workspaceId: WORKSPACE_ID,
-      workspaceRoot: root,
-      serverName: "fixture",
-      name: "render_report",
-      resourceUri: RESOURCE_URI,
-      arguments: {},
-    })).rejects.toMatchObject({
-      name: "McpAppHostError",
-      code: "tool_call_failed",
-      message: expect.stringContaining('"path":["id"],"message":"Required"'),
-    });
+    let failure: unknown = null;
+    try {
+      await callMcpAppTool({
+        serverConfig: config,
+        workspaceId: WORKSPACE_ID,
+        workspaceRoot: root,
+        serverName: "fixture",
+        name: "render_report",
+        resourceUri: RESOURCE_URI,
+        arguments: {},
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(McpAppHostError);
+    if (!(failure instanceof McpAppHostError)) throw new Error("unreachable");
+    expect(failure.code).toBe("tool_call_failed");
+    // Provider text is relayed, but bounded: no control characters, capped length.
+    expect(failure.message).toContain('"path":["id"],"message":"Required"');
+    expect(failure.message).not.toContain("\u0007");
+    expect(failure.message.length).toBeLessThanOrEqual(512 + 1);
+    expect(failure.message.endsWith("…")).toBe(true);
   });
 
   test("mediates a resource-bound same-server tool for its exact MCP App", async () => {
