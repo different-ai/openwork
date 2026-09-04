@@ -11,8 +11,39 @@ interface TitleState {
   scrollWidth: number;
 }
 
+interface RowState {
+  title: string;
+  titleRight: number;
+  actionsLeft: number;
+  actionsOpacity: string;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function rowStates(probe: Probe): Promise<RowState[]> {
+  // TODO(primitive): probe.geometry should read the boxes of a row's title and actions.
+  const value = await probe.eval(`(() => [...document.querySelectorAll("[data-sidebar-session-id]")].map((row) => {
+    const title = row.querySelector("[data-session-title-slot]");
+    const actions = row.querySelector("[data-session-hover-actions]");
+    if (!(title instanceof HTMLElement) || !(actions instanceof HTMLElement)) return null;
+    return {
+      title: (title.textContent ?? "").trim(),
+      titleRight: title.getBoundingClientRect().right,
+      actionsLeft: actions.getBoundingClientRect().left,
+      actionsOpacity: getComputedStyle(actions).opacity,
+    };
+  }))()`);
+  if (!Array.isArray(value)) throw new Error(`Unexpected sidebar rows: ${JSON.stringify(value)}`);
+  return value.map((row) => {
+    if (!isRecord(row)
+      || typeof row.title !== "string"
+      || typeof row.titleRight !== "number"
+      || typeof row.actionsLeft !== "number"
+      || typeof row.actionsOpacity !== "string") throw new Error(`Unexpected sidebar row: ${JSON.stringify(row)}`);
+    return { title: row.title, titleRight: row.titleRight, actionsLeft: row.actionsLeft, actionsOpacity: row.actionsOpacity };
+  });
 }
 
 async function titleState(probe: Probe, title: string): Promise<TitleState> {
@@ -108,6 +139,19 @@ test("the sidebar title fade follows only the edges with hidden text", async ({ 
     const workspaceAfterResize = await titleState(probe, workspaceName);
     expect(workspaceAfterResize.hiddenEdges).toBe("none");
     expect(workspaceAfterResize.maskImage).toBe("none");
+    await user.screenshot();
+  });
+
+  await step("below the hover breakpoint, titles stop before the always-visible row actions", async () => {
+    // TODO(primitive): user.resizeViewport should narrow a desktop surface below the hover breakpoint.
+    await world.app.client.send("Emulation.setDeviceMetricsOverride", { width: 900, height: 800, deviceScaleFactor: 1, mobile: false });
+    await user.press("Meta+b");
+    const rows = await probe.eventually(() => rowStates(probe), {
+      within: 15_000,
+      label: "session rows with visible actions",
+      until: (rows) => rows.length > 0 && rows.every((row) => row.actionsOpacity === "1"),
+    });
+    for (const row of rows) expect(row.titleRight, row.title).toBeLessThanOrEqual(row.actionsLeft);
     await user.screenshot();
   });
 });
