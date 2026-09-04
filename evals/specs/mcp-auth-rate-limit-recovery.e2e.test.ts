@@ -43,8 +43,12 @@ test("MCP requests keep valid credentials after the public auth rate limit is ex
     body: JSON.stringify({ organizationId: stringField(organization, "id") }),
   });
   expect(selected.status).toBe(200);
-  const updatedCookies = selected.headers.getSetCookie();
-  if (updatedCookies.length > 0) cookie = updatedCookies.map((entry) => entry.split(";")[0]).join("; ");
+  const cookies = new Map<string, string>();
+  for (const entry of [...login.headers.getSetCookie(), ...selected.headers.getSetCookie()]) {
+    const pair = entry.split(";")[0];
+    cookies.set(pair.slice(0, pair.indexOf("=")), pair);
+  }
+  cookie = [...cookies.values()].join("; ");
   const redirectUri = "http://127.0.0.1:19876/callback";
   const scope = "mcp:read mcp:write offline_access";
   const registration = await request("/register", {
