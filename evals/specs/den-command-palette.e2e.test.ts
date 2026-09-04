@@ -2,8 +2,8 @@ import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { adminDashboardWeb } from "../worlds/den-admin-navigation.ts";
 
-// cmdk group headings render with CSS `uppercase`, and the rendered text is what
-// people (and probe.has) see — so the witnesses are the uppercase headings.
+// cmdk group headings render with CSS `uppercase`; the rendered text is what
+// people see, so the witnesses are the uppercase headings.
 const test = spec.world(adminDashboardWeb, { timeout: 420_000 });
 const paletteInput = { testId: "den-command-palette-input" };
 const palette = { testId: "den-command-palette" };
@@ -35,18 +35,9 @@ test("the Den command palette searches pages and members, navigates, and records
   await step("clicking the search bar opens the palette with pages", async () => {
     await user.click({ testId: "den-command-palette-trigger" });
     await user.see(paletteInput);
-    await probe.eventually(() => probe.has("PAGES"), {
-      within: 15_000,
-      label: "Pages group heading",
-      until: (has) => has,
-    });
+    await user.see({ text: "PAGES" });
     await user.see({ role: "option", label: /^Connectors/ });
-    const recent = await probe.eventually(() => probe.has("RECENT"), {
-      within: 15_000,
-      label: "empty palette has no Recent group",
-      until: (has) => !has,
-    });
-    expect(recent).toBe(false);
+    await user.notSee({ text: "RECENT" });
     await user.screenshot();
   });
 
@@ -73,11 +64,7 @@ test("the Den command palette searches pages and members, navigates, and records
   await step("the keyboard shortcut reopens it with Connectors under Recent", async () => {
     await user.press(paletteShortcut);
     await user.see(paletteInput);
-    await probe.eventually(() => probe.has("RECENT"), {
-      within: 15_000,
-      label: "Recent group heading",
-      until: (has) => has,
-    });
+    await user.see({ text: "RECENT" });
     await user.see({ role: "option", label: /^Connectors/ });
     const storedRecents = stringArray(await probe.storage("den.command-palette.recents"));
     expect(storedRecents).toEqual(["page:Manage:Connectors"]);
@@ -88,11 +75,7 @@ test("the Den command palette searches pages and members, navigates, and records
   await step("members are searchable and Escape closes", async () => {
     await user.type(paletteInput, "Navigation Admin", { replace: true });
     await user.see({ role: "option", label: /^Navigation Admin/ });
-    await probe.eventually(() => probe.has("MEMBERS"), {
-      within: 15_000,
-      label: "Members group heading",
-      until: (has) => has,
-    });
+    await user.see({ text: "MEMBERS" });
     await user.press("Escape");
     await probe.eventually(() => probe.has("↵ open"), {
       within: 15_000,
