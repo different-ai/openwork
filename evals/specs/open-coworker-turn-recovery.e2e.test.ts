@@ -462,37 +462,33 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   await beginOutcomeTrace(app);
   await type(app, SLOW_PROMPT);
   await waitUntilRunning(app, SLOW_PROMPT);
-  // An impatient tap on the live row shows one discreet line of what is streaming, live, then hides itself.
-  await waitFor(app, `(() => {
-    const row = document.querySelector('[data-testid="coworker-working"]');
-    if (!(row instanceof HTMLElement) || row.dataset.peek !== "false") return false;
-    row.querySelector('[data-testid="coworker-progress-phrase"]')?.click();
-    return true;
-  })()`, { timeoutMs: 30_000, label: "tap the live row" });
-  const peek = await waitFor(app, `(() => {
-    const line = document.querySelector('[data-testid="coworker-working-peek"]');
-    if (!line || !(line.textContent ?? "").includes(${json(SLOW_OPENING)})) return false;
-    return { text: line.textContent?.trim() ?? "", bubbles: document.querySelectorAll('[data-message-role="assistant"] .bubble').length };
-  })()`, { timeoutMs: 30_000, label: "the glimpse of what is streaming" });
-  expect(peek).toMatchObject({ text: SLOW_OPENING });
-  const peekShownAt = Date.now();
-  await waitFor(app, `!document.querySelector('[data-testid="coworker-working-peek"]') && document.querySelector('[data-testid="coworker-working"]')?.getAttribute("data-peek") === "false"`, { timeoutMs: 30_000, label: "the glimpse hid itself" });
-  const peekLastedMs = Date.now() - peekShownAt;
-  expect(peekLastedMs).toBeGreaterThan(5_000);
-  expect(peekLastedMs).toBeLessThan(20_000);
+  // The first words stream into a real bubble the moment they arrive — before the part lands in the
+  // transcript — so what is streaming is visible without a tap; the typing row is gone by then.
+  const liveBubble = await waitFor(app, `(() => {
+    const bubble = document.querySelector('[data-testid="coworker-live-bubble"]');
+    if (!bubble || !(bubble.textContent ?? "").includes(${json(SLOW_OPENING)})) return false;
+    return {
+      text: bubble.textContent?.trim() ?? "",
+      typingRow: Boolean(document.querySelector('[data-testid="coworker-typing"]')),
+      landedBubbles: document.querySelectorAll('[data-testid="coworker-reply-bubble"]').length,
+      header: document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() ?? "",
+    };
+  })()`, { timeoutMs: 30_000, label: "the words streaming into a live bubble" });
+  expect(liveBubble).toMatchObject({ text: SLOW_OPENING, typingRow: false, header: "Writing" });
   const slowRow = await waitFor(app, `(() => {
     const row = document.querySelector('[data-testid="coworker-working"][data-outcome="slow"]');
     if (!row) return false;
     return {
-      phrase: row.querySelector('[data-testid="coworker-progress-phrase"]')?.textContent?.trim() ?? "",
+      phrase: row.querySelector('[data-testid="coworker-still-working"] > span')?.textContent?.trim() ?? "",
       stop: Boolean(row.querySelector('[data-testid="coworker-turn-choice"][data-choice="stop"]')),
+      liveBubble: (document.querySelector('[data-testid="coworker-live-bubble"]')?.textContent ?? "").includes(${json(SLOW_OPENING)}),
       header: document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() ?? "",
       threadStatus: document.querySelector('[data-testid="coworker-thread-status"]')?.textContent?.trim() ?? "",
       rail: document.querySelector('[data-testid="coworker-rail-line"]')?.textContent?.trim() ?? "",
       failed: document.querySelectorAll('[data-testid="coworker-turn-failed"], [data-testid="coworker-turn-timeout"], [data-testid="coworker-turn-line"][data-outcome="failed"]').length,
     };
   })()`, { timeoutMs: SLOW_HOLD_MS + 30_000, label: "the live row softened past the wait budget" });
-  expect(slowRow).toEqual({ phrase: "Nova is still working on it…", stop: true, header: "Still working", threadStatus: "Still working", rail: "Still working on it", failed: 0 });
+  expect(slowRow).toEqual({ phrase: "Nova is still working on it…", stop: true, liveBubble: true, header: "Still working", threadStatus: "Still working", rail: "Still working on it", failed: 0 });
   await waitForReply(app, SLOW_REPLY, 60_000);
   const slowTrace = await endOutcomeTrace(app);
   expect(slowTrace.outcomes).toContain("slow");
@@ -500,8 +496,8 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(slowTrace.headers).not.toContain("Response delayed");
   expect(slowTrace.headers).not.toContain("Reply failed");
   evidence.recordAssertionEvidence(
-    "Two minutes without a reply is still working, in the same words everywhere, a tap shows a glimpse of the stream, and the reply then lands",
-    `The scripted model sent its first words and then held the rest for ${SLOW_HOLD_MS / 1_000} s. A tap on the live row showed one discreet line with the words streaming so far ("${SLOW_OPENING}") and hid it again by itself after ${Math.round(peekLastedMs / 1_000)} s. Past the wait budget the live row read "Nova is still working on it…" with one inline Stop, the header and thread status said Still working and the rail "Still working on it", nothing rose or card-shaped appeared, and the reply arrived afterwards.`,
+    "Two minutes without a reply is still working, in the same words everywhere, the words that did arrive are already in a bubble, and the reply then lands",
+    `The scripted model sent its first words and then held the rest for ${SLOW_HOLD_MS / 1_000} s. The words that had arrived ("${SLOW_OPENING}") were already in a live bubble with the header on Writing and no typing row. Past the wait budget the live row read "Nova is still working on it…" with one inline Stop, the header and thread status said Still working and the rail "Still working on it", nothing rose or card-shaped appeared, and the reply arrived afterwards.`,
     true,
   );
 
