@@ -51,8 +51,8 @@ test("session error cards expose provider diagnostics only in Developer mode", a
     await user.click(detailsToggle);
     await user.see(detailsPanel);
     for (const line of DIAGNOSTIC_LINES) await user.see({ text: new RegExp(line.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) });
-    // The request id sits inside the raw response-body block, so read it from the page text.
-    expect(await probe.has(REQUEST_ID)).toBe(true);
+    // The request id sits inside the raw response-body block, so match it within that block's text.
+    await user.see({ text: new RegExp(REQUEST_ID) });
     await user.see({ role: "button", label: /copy details/i });
   });
 
