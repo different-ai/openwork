@@ -1277,7 +1277,7 @@ export async function computerMentions(seed: Seed) {
         { target: "desktop", prompt: "COMPUTER-DESKTOP-TASK Summarize my local project notes." },
       ].map(({ target, prompt }) => ({
         // Only the app's synthetic instruction contains this marker. Without routing, the model refuses the task.
-        promptMarker: `target "${target}"`,
+        promptMarker: `[The user selected @${target}:`,
         finalReply: "Received computer task.",
         steps: [
           { tool: "computer_witness_search_capabilities", arguments: { query: "remote-session:create" } },
