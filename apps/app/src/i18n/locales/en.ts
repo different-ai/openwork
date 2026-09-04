@@ -2021,6 +2021,7 @@ export default {
   "session_management.pin_session": "Pin session",
   "session_management.unpin_session": "Unpin session",
   "session_management.open_in_split_view": "Open in split view",
+  "session_management.new_split": "New split",
   "session_management.close_split_view": "Close split view",
   "session_management.split_view": "Split view",
   "session_management.pinned": "Pinned",

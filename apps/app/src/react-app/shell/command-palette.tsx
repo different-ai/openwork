@@ -98,6 +98,8 @@ export type CommandPaletteProps = {
   currentSession?: CommandPaletteSessionRef | null;
   /** Called when "New session" is chosen. */
   onCreateNewSession: () => void;
+  /** Starts an empty session beside the current session. */
+  onCreateNewSplitSession?: () => void;
   /** Called when "Open settings" is chosen. Accepts an optional route to jump straight to a tab. */
   onOpenSettings: (route?: string) => void;
   /** Called when the first-class Extensions page is chosen. */
@@ -242,6 +244,19 @@ export function CommandPalette(props: CommandPaletteProps) {
           group: ACTIONS_GROUP,
           action: () => {
             setMode("split-sessions");
+          },
+        }]
+      : []),
+    ...(props.onCreateNewSplitSession && props.currentSession
+      ? [{
+          id: "new-split",
+          title: "New split",
+          detail: "Start an empty session beside this one",
+          meta: "Workbench",
+          searchText: "new split empty session side by side pane",
+          action: () => {
+            props.onClose();
+            props.onCreateNewSplitSession?.();
           },
         }]
       : []),

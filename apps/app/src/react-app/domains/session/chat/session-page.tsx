@@ -158,6 +158,7 @@ export type SessionPageSidebarProps = {
   onOpenSession: (workspaceId: string, sessionId: string) => void;
   onPrefetchSession?: (workspaceId: string, sessionId: string) => void;
   onCreateTaskInWorkspace: (workspaceId: string, groupId?: string) => void;
+  onCreateSplitTaskInWorkspace: (workspaceId: string) => void;
   onCreateTaskWithPrompt?: (workspaceId: string, prompt: string, attachments?: ComposerAttachment[]) => void;
   onOpenRenameWorkspace: (workspaceId: string) => void;
   onShareWorkspace: (workspaceId: string) => void;
@@ -1377,6 +1378,7 @@ export function SessionPage(props: SessionPageProps) {
           onOpenSession={openSessionTab}
           onPrefetchSession={props.sidebar.onPrefetchSession}
           onCreateTaskInWorkspace={props.sidebar.onCreateTaskInWorkspace}
+          onCreateSplitTaskInWorkspace={props.sidebar.onCreateSplitTaskInWorkspace}
           onOpenRenameSession={props.onRenameSession ? openRenameModal : undefined}
           onOpenDeleteSession={props.onDeleteSession ? (sessionId) => {
             setSessionActionId(sessionId);

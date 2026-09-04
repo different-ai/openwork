@@ -17,6 +17,7 @@ import {
   Pencil,
   Pin,
   PinOff,
+  PanelRightOpen,
   Plus,
   Search,
   Share2,
@@ -290,6 +291,7 @@ function SessionMenuContent({
   const canOpenInSplit = Boolean(primary)
     && !isSameWorkbenchSession(sessionRef, primary)
     && !isSameWorkbenchSession(sessionRef, secondary);
+  const canCreateNewSplit = Boolean(primary);
   const openInSplitView = () => {
     const tab = {
       workspaceId,
@@ -314,6 +316,12 @@ function SessionMenuContent({
           <DropdownMenuItem data-session-menu-open-split onClick={openInSplitView}>
             <Columns2 className="size-4" />
             {t("session_management.open_in_split_view")}
+          </DropdownMenuItem>
+        ) : null}
+        {canCreateNewSplit ? (
+          <DropdownMenuItem data-session-menu-new-split onClick={() => ctx.onCreateSplitTaskInWorkspace(workspaceId)}>
+            <PanelRightOpen className="size-4" />
+            {t("session_management.new_split")}
           </DropdownMenuItem>
         ) : null}
         {isInSplit ? (
@@ -399,6 +407,12 @@ function SessionMenuContent({
         <ContextMenuItem data-session-menu-open-split onClick={openInSplitView}>
           <Columns2 className="size-4" />
           {t("session_management.open_in_split_view")}
+        </ContextMenuItem>
+      ) : null}
+      {canCreateNewSplit ? (
+        <ContextMenuItem data-session-menu-new-split onClick={() => ctx.onCreateSplitTaskInWorkspace(workspaceId)}>
+          <PanelRightOpen className="size-4" />
+          {t("session_management.new_split")}
         </ContextMenuItem>
       ) : null}
       {isInSplit ? (
@@ -895,6 +909,7 @@ export type AppSidebarProps = {
   onOpenSession: (workspaceId: string, sessionId: string) => void;
   onPrefetchSession?: (workspaceId: string, sessionId: string) => void;
   onCreateTaskInWorkspace: (workspaceId: string, groupId?: string) => void;
+  onCreateSplitTaskInWorkspace: (workspaceId: string) => void;
   onOpenRenameSession?: (sessionId: string) => void;
   onOpenDeleteSession?: (sessionId: string) => void;
   onArchiveSession?: (sessionId: string, archived: boolean) => void;
@@ -1034,6 +1049,7 @@ export function AppSidebar(props: AppSidebarProps) {
     onOpenSession: props.onOpenSession,
     onPrefetchSession: props.onPrefetchSession,
     onCreateTaskInWorkspace: props.onCreateTaskInWorkspace,
+    onCreateSplitTaskInWorkspace: props.onCreateSplitTaskInWorkspace,
     onOpenRenameSession: props.onOpenRenameSession,
     onOpenDeleteSession: props.onOpenDeleteSession,
     onArchiveSession: props.onArchiveSession,

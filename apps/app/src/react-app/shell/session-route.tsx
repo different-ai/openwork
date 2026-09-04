@@ -2064,7 +2064,10 @@ export function SessionRoute() {
     });
   }, [local, selectedSessionId]);
 
-  const handleCreateTaskInWorkspace = useCallback(async (workspaceId: string): Promise<string | null> => {
+  const handleCreateTaskInWorkspaceWithOpenMode = useCallback(async (
+    workspaceId: string,
+    openAs: "primary" | "split",
+  ): Promise<string | null> => {
     const workspace = workspaces.find((item) => item.id === workspaceId);
     if (
       !workspace ||
@@ -2108,14 +2111,16 @@ export function SessionRoute() {
         void refreshCloudProviderSync("new_chat");
       }
       captureAnalyticsEvent("task_created", {
-        source: "new_task",
+        source: openAs === "split" ? "new_split" : "new_task",
         workspace_type: workspace.workspaceType ?? "unknown",
       });
       toast.dismiss(taskCreateUnavailableToastId(workspaceId));
       toast.dismiss();
-      setLegacySelectedWorkspaceId(workspaceId);
-      writeActiveWorkspaceId(workspaceId || null);
-      writeLastSessionFor(workspaceId, session.id);
+      if (openAs === "primary") {
+        setLegacySelectedWorkspaceId(workspaceId);
+        writeActiveWorkspaceId(workspaceId || null);
+        writeLastSessionFor(workspaceId, session.id);
+      }
       rememberPendingCreatedSession(workspaceId, session.id);
       applyLastUsedModelToSession(session.id);
       setSessionsByWorkspaceId((current) => {
@@ -2126,8 +2131,21 @@ export function SessionRoute() {
         sessionsByWorkspaceIdRef.current = next;
         return next;
       });
-      navigateToWorkspaceSession(workspaceId, session.id);
-      focusPromptSoon();
+      if (openAs === "primary") {
+        navigateToWorkspaceSession(workspaceId, session.id);
+        focusPromptSoon();
+      } else {
+        const tab = {
+          workspaceId,
+          workspaceTitle: workspace.displayNameResolved.trim() || workspaceId,
+          sessionId: session.id,
+          title: session.title,
+        };
+        const workbench = useWorkbenchStore.getState();
+        workbench.openTab(tab);
+        workbench.setSplit(tab);
+        workbench.focusPane("secondary");
+      }
       void refreshRouteState();
       return session.id;
     } catch (error) {
@@ -2140,7 +2158,7 @@ export function SessionRoute() {
         description: failure.description,
         action: {
           label: "Retry",
-          onClick: () => void handleCreateTaskInWorkspace(workspaceId),
+          onClick: () => void handleCreateTaskInWorkspaceWithOpenMode(workspaceId, openAs),
         },
         // A blue/green reload brings up a fresh engine without killing live
         // sessions; the full desktop restart stays a last resort elsewhere.
@@ -2150,7 +2168,7 @@ export function SessionRoute() {
                 label: t("session.engine_reload_action"),
                 onClick: () => {
                   void reloadEngineWithDesktopFallback(endpoint.client, endpoint.workspaceId)
-                    .then(() => handleCreateTaskInWorkspace(workspaceId))
+                    .then(() => handleCreateTaskInWorkspaceWithOpenMode(workspaceId, openAs))
                     .catch(() => undefined);
                 },
               },
@@ -2170,6 +2188,16 @@ export function SessionRoute() {
       return null;
     }
   }, [applyLastUsedModelToSession, developerMode, endpointForWorkspace, loading, navigateToWorkspaceSession, refreshCloudProviderSync, refreshRouteState, rememberPendingCreatedSession, retryingWorkspaceIds, selectedWorkspaceId, workspaces]);
+
+  const handleCreateTaskInWorkspace = useCallback(
+    (workspaceId: string): Promise<string | null> => handleCreateTaskInWorkspaceWithOpenMode(workspaceId, "primary"),
+    [handleCreateTaskInWorkspaceWithOpenMode],
+  );
+
+  const handleCreateSplitTaskInWorkspace = useCallback(
+    (workspaceId: string): Promise<string | null> => handleCreateTaskInWorkspaceWithOpenMode(workspaceId, "split"),
+    [handleCreateTaskInWorkspaceWithOpenMode],
+  );
 
   // Latest session-list state for prev/next session tab navigation. The
   // `options` field is updated by `onSessionTabsChange` from SessionPage so we
@@ -3312,6 +3340,9 @@ export function SessionRoute() {
             }
           });
         },
+        onCreateSplitTaskInWorkspace: (workspaceId) => {
+          void handleCreateSplitTaskInWorkspace(workspaceId);
+        },
         onCreateTaskWithPrompt: (workspaceId, prompt, attachments) => {
           void (async () => {
             const workspace = workspaces.find((item) => item.id === workspaceId);
@@ -3526,6 +3557,11 @@ export function SessionRoute() {
       onCreateNewSession={() => {
         if (selectedWorkspaceId) {
           void handleCreateTaskInWorkspace(selectedWorkspaceId);
+        }
+      }}
+      onCreateNewSplitSession={() => {
+        if (selectedWorkspaceId) {
+          void handleCreateSplitTaskInWorkspace(selectedWorkspaceId);
         }
       }}
       onOpenSession={(workspaceId, sessionId) => navigateToWorkspaceSession(workspaceId, sessionId)}
