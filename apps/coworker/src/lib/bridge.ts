@@ -1,6 +1,7 @@
 /** Typed access to the Open Coworker main-process bridge. */
 import type { CoworkerDocument, CoworkerDocumentSummary, DocumentRevision, DocumentStatus } from "./documents";
 import type { LocalSchedule } from "./local-schedule.ts";
+import type { ModelMode } from "./model-choice.ts";
 import type { Personality } from "./personalities";
 import type { WorkerEvent, WorkerLifespan, WorkerSummary } from "./workers";
 
@@ -89,12 +90,14 @@ export type CoworkerSummary = {
   workspaceId: string;
   /** Native OpenWork session reserved for ongoing chat, separate from assignments. */
   conversationThreadId: string;
-  /** Preferred model as "providerId/modelId"; empty means engine default. */
+  /** Preferred model as "providerId/modelId"; empty means engine default. In `auto` mode this is the standard model the lanes anchor on. */
   model: string;
   /** Optional reasoning/behavior variant for the preferred model. */
   modelVariant: string;
   /** Who chose the model: the app by itself ("app", may be swapped once when it fails), the person ("person"), or "" for a record that never said (read as the person's). */
   modelChosenBy: ModelChosenBy;
+  /** `auto`: a quick, standard, or deep model per message around `model`; `fixed`: `model` every time. */
+  modelMode: ModelMode;
   automations: string[];
   createdAt: string;
 };
@@ -349,7 +352,7 @@ export const coworkerBridge = {
     get: (slug: string) => invoke<CoworkerSummary>("coworkers.get", { slug }),
     create: (input: { name: string; role: string; mission: string; avatarColor: AvatarColor; avatarGlasses: AvatarGlasses; personality: Personality; roleId?: string; firstNote?: string }) =>
       invoke<CoworkerSummary>("coworkers.create", input),
-    update: (slug: string, patch: Partial<Pick<CoworkerSummary, "workspaceId" | "conversationThreadId" | "automations" | "mission" | "role" | "model" | "modelVariant" | "modelChosenBy" | "avatarColor" | "avatarGlasses" | "personality">>) =>
+    update: (slug: string, patch: Partial<Pick<CoworkerSummary, "workspaceId" | "conversationThreadId" | "automations" | "mission" | "role" | "model" | "modelVariant" | "modelChosenBy" | "modelMode" | "avatarColor" | "avatarGlasses" | "personality">>) =>
       invoke<CoworkerSummary>("coworkers.update", { slug, patch }),
     ensureWorkspace: (slug: string) => invoke<CoworkerSummary>("coworkers.ensureWorkspace", { slug }),
     /** Retire: archive the whole home under `.retired/`; nothing is deleted. */
