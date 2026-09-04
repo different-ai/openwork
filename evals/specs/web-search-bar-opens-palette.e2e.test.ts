@@ -1,4 +1,3 @@
-import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { webSearchBar } from "../worlds/web-shell.ts";
 
@@ -13,7 +12,7 @@ test("the web header search bar opens the command palette from sessions and sett
   await step("the web header shows a search bar and the palette is closed", async () => {
     await webUser.see(searchBar);
     await webUser.notSee(paletteInput);
-    expect(await webProbe.text()).toMatch(/Describe your task/);
+    await webUser.see({ text: /Describe your task/ });
     await webUser.screenshot();
   });
 
