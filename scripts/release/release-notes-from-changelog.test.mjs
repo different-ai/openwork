@@ -60,8 +60,9 @@ test("release notes are extracted for exactly one version and keep the signing n
 
     assert(notes.startsWith("## Target release title\n"))
     assert(notes.includes("- First target bullet.\n- Second target bullet."))
-    assert(notes.includes("[Compare](https://github.com/different-ai/openwork/compare/v0.18.37...v0.18.38)"))
-    assert(notes.includes("https://openworklabs.com/docs/changelog"))
+    const links = [...notes.matchAll(/\((https?:\/\/[^)]+)\)/g)].map((match) => match[1])
+    assert(links.includes("https://github.com/different-ai/openwork/compare/v0.18.37...v0.18.38"))
+    assert(links.includes("https://openworklabs.com/docs/changelog"))
     assert(notes.trimEnd().endsWith("*Windows installers are signed using Microsoft Artifact Signing.*"))
 
     assert(!notes.includes("Newer bullet"))
