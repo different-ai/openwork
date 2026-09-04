@@ -1,7 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import { expect } from "vitest";
 import { denFetch } from "@openwork/behaviors";
-import { server, test } from "@openwork/testkit";
+import { localMysqlIsRunning, localRedisIsRunning, server, test } from "@openwork/testkit";
+import { SkipError } from "@openwork/env";
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected an OAuth response object");
@@ -14,6 +15,17 @@ function string(value: unknown, key: string): string {
 }
 
 test("overlapping MCP refreshes reuse one successor without granting another client or broader scopes", { timeout: 300_000 }, async ({ place, evidence }) => {
+  const remote = process.env.OPENWORK_EVAL_DAYTONA === "1" || Boolean(process.env.OPENWORK_EVAL_DEN_API_URL?.trim());
+  if (!remote) {
+    const missing = [];
+    if (!await localMysqlIsRunning()) missing.push("MySQL on 127.0.0.1:3306");
+    if (!await localRedisIsRunning()) missing.push("Redis on 127.0.0.1:6379");
+    if (missing.length) {
+      const message = missing.join(" and ");
+      if (process.env.OPENWORK_EVAL_MCP_OAUTH_REQUIRED === "1") throw new Error(`Required MCP OAuth regression needs ${message}`);
+      throw new SkipError(message);
+    }
+  }
   await using den = await server({ place, web: false, org: { name: "MCP refresh regression", members: {} } });
   const login = await denFetch(den.ref, "/api/auth/sign-in/email", {
     method: "POST", body: JSON.stringify({ email: den.admin.email, password: den.admin.password }),

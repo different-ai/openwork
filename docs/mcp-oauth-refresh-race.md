@@ -44,6 +44,10 @@ requests and family revocation after the grace interval. Each round must return 
 successor. A different registered client and a request for broader scopes must
 still be rejected.
 
+The general spec lane reports missing MySQL/Redis as an explicit skip. Linux CI
+then starts those services and runs this journey separately with
+`OPENWORK_EVAL_MCP_OAUTH_REQUIRED=1`, which makes a missing service a failure.
+
 ## Recovery for an already rejected credential
 
 Reauthorize the OpenWork MCP connection to obtain a new credential. A server

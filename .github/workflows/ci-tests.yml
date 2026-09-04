@@ -172,6 +172,20 @@ jobs:
       - name: Run eval spec lane
         run: pnpm --dir evals run test:pr
 
+      - name: Start MCP OAuth regression services
+        if: runner.os == 'Linux'
+        run: pnpm dev:den:mysql
+
+      - name: Run MCP OAuth regression with database
+        if: runner.os == 'Linux'
+        env:
+          OPENWORK_EVAL_MCP_OAUTH_REQUIRED: "1"
+        run: pnpm evals:pr specs/mcp-oauth-concurrent-refresh.test.ts
+
+      - name: Stop MCP OAuth regression services
+        if: always() && runner.os == 'Linux'
+        run: pnpm dev:den:mysql:down
+
   openwork-tests-unit:
     needs: classify-changes
     if: needs.classify-changes.outputs.lane == 'full'
