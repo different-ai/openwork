@@ -363,7 +363,9 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     const choices = [...(failure?.querySelectorAll('[data-testid="coworker-turn-choice"]') ?? [])];
     return {
       headlineFirst: Boolean(headline) && failure?.firstElementChild?.contains(headline) === true,
-      technicalShown: technical instanceof HTMLElement && technical.getBoundingClientRect().height > 0 && !(technical instanceof HTMLDetailsElement),
+      // A saved-model failure carries no raw text, so there is nothing technical to show; when there is, it is in view from the start, never a fold.
+      technicalFold: technical instanceof HTMLDetailsElement,
+      technicalShown: technical instanceof HTMLElement ? technical.getBoundingClientRect().height > 0 : null,
       loadingIndicator: Boolean(document.querySelector('[data-testid="coworker-working"]')),
       roseCard: /rose/.test(failure?.className ?? "") || Boolean(document.querySelector('[data-testid="coworker-turn-timeout"]')),
       widthRatio: failure && failure.parentElement ? failure.getBoundingClientRect().width / failure.parentElement.getBoundingClientRect().width : null,
@@ -371,7 +373,8 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
       outcome: document.querySelector('[data-testid="coworker-thread-status"]')?.getAttribute("data-outcome"),
     };
   })()`);
-  expect(failureLayout).toMatchObject({ headlineFirst: true, loadingIndicator: false, roseCard: false, outcome: "failed", technicalShown: true });
+  expect(failureLayout).toMatchObject({ headlineFirst: true, loadingIndicator: false, roseCard: false, outcome: "failed", technicalFold: false });
+  if (isRecord(failureLayout) && failureLayout.technicalShown !== null) expect(failureLayout.technicalShown).toBe(true);
   if (!isRecord(failureLayout) || !Array.isArray(failureLayout.choices)) throw new Error("Failure layout facts were unavailable.");
   expect(failureLayout.choices.length).toBeLessThanOrEqual(3);
   expect(failureLayout.choices.map((choice) => (isRecord(choice) ? choice.letter : null))).toEqual(["A", "B", "C"].slice(0, failureLayout.choices.length));
