@@ -72,6 +72,23 @@ export type RecoveryActionResult = {
   reason?: string;
 };
 
+export type LocalSpeechStatus = {
+  supported: boolean;
+  ready: boolean;
+  model: string;
+  reason?: string;
+  setupCommand: string;
+  pythonPath?: string;
+  ffmpegPath?: string;
+};
+
+export type LocalSpeechTranscription = {
+  text: string;
+  language: string | null;
+  model: string;
+  durationMs: number;
+};
+
 // ---------------------------------------------------------------------------
 // Electron bridge surface
 // ---------------------------------------------------------------------------
@@ -120,6 +137,12 @@ declare global {
           status?: string;
           granted: boolean;
         }>;
+        getLocalSpeechStatus?: () => Promise<LocalSpeechStatus>;
+        transcribeLocalAudio?: (input: {
+          audio: Uint8Array;
+          mimeType: string;
+          language?: string;
+        }) => Promise<LocalSpeechTranscription>;
       };
       migration?: {
         readSnapshot?: () => Promise<unknown>;

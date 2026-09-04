@@ -159,6 +159,17 @@ Dev startup prints a banner like `[openwork] dev profile=... cdp=http://127.0.0.
 
 If a second instance cannot get the profile lock it now says so and exits, instead of lingering with an open CDP port and no window.
 
+### Local voice input (Apple Silicon)
+
+The microphone button beside the composer attachment button records up to 60 seconds and transcribes it on the Mac with MLX Whisper. Audio is not sent to OpenAI or to the configured chat model. Install the private Python environment, ffmpeg integration, and default model once:
+
+```bash
+brew install ffmpeg
+pnpm local-voice:setup
+```
+
+The setup is stored under `~/.openwork/local-voice`. Override the defaults with `OPENWORK_LOCAL_SPEECH_HOME`, `OPENWORK_LOCAL_SPEECH_MODEL`, `OPENWORK_LOCAL_SPEECH_PYTHON`, or `OPENWORK_LOCAL_SPEECH_FFMPEG` before launching OpenWork. The default model is `mlx-community/whisper-large-v3-turbo`.
+
 ### Headless web (no Electron)
 
 To run the OpenWork UI in a browser against a local `openwork-server` (no desktop shell):
