@@ -95,8 +95,10 @@ interface EngineV2PreviewStatus {
   enabled: boolean;
   running: boolean;
   chatRouting: boolean;
+  pid?: number;
   mirroredProviderIds: string[];
   catalogModelIds: string[];
+  lastError?: string;
 }
 
 interface V1SessionFreezeCheck {
@@ -351,12 +353,17 @@ function parseStatus(value: unknown): EngineV2PreviewStatus {
   ) {
     throw new Error(`Unexpected engine v2 preview status: ${JSON.stringify(value)}`);
   }
+  if (value.pid !== undefined && typeof value.pid !== "number") {
+    throw new Error(`Unexpected engine v2 pid: ${JSON.stringify(value.pid)}`);
+  }
   return {
     enabled: value.enabled,
     running: value.running,
     chatRouting: value.chatRouting,
+    ...(typeof value.pid === "number" ? { pid: value.pid } : {}),
     mirroredProviderIds: stringArray(value.mirroredProviderIds, "mirroredProviderIds"),
     catalogModelIds: stringArray(value.catalogModelIds, "catalogModelIds"),
+    ...(typeof value.lastError === "string" ? { lastError: value.lastError } : {}),
   };
 }
 
@@ -843,6 +850,14 @@ async function clickSessionRow(app: Surface, chat: Chat): Promise<void> {
   expect(clicked, `sidebar row for ${chat.title}`).toBe(true);
 }
 
+async function waitForSessionRow(app: Surface, chat: Chat): Promise<void> {
+  await pollExpression(app, `(() => {
+    const row = document.querySelector(${JSON.stringify(`[data-sidebar-session-id="${chat.sessionId}"][data-sidebar-session-workspace-id="${chat.workspaceId}"]`)});
+    return row instanceof HTMLElement
+      && row.querySelector(${JSON.stringify(`[data-session-tab-id="${chat.sessionId}"]`)}) instanceof HTMLElement;
+  })()`, `sidebar row for ${chat.title}`, 10_000);
+}
+
 async function waitForChatSurface(app: Surface, chat: Chat): Promise<void> {
   await pollExpression(app, `(() => {
     const surface = document.querySelector("[data-session-surface-id]");
@@ -852,6 +867,7 @@ async function waitForChatSurface(app: Surface, chat: Chat): Promise<void> {
 }
 
 async function switchAndMeasure(app: Surface, chat: Chat): Promise<number> {
+  await waitForSessionRow(app, chat);
   const startedAt = Date.now();
   await clickSessionRow(app, chat);
   await waitForChatSurface(app, chat);
