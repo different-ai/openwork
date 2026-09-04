@@ -25,6 +25,8 @@ import type { App } from "@openwork/testkit";
 const providerId = "live-tool-switch-mock";
 const modelId = "live-tool-switch-model";
 const modelName = "Live tool switch model";
+const evalEngine = resolveEvalEngine();
+const shellToolName = evalEngine === "v2" ? "shell" : "bash";
 const e2eTestsEnabled = process.env.OPENWORK_EVAL_E2E_TESTS === "1";
 const daytonaEnabled = process.env.OPENWORK_EVAL_DAYTONA === "1";
 const configuredDen = Boolean(process.env.OPENWORK_EVAL_DEN_API_URL?.trim());
@@ -41,6 +43,7 @@ const skipSuffix = !e2eTestsEnabled
       : "";
 
 interface ToolFact {
+  tool: string;
   callId: string;
   status: string;
   command: string;
@@ -169,7 +172,7 @@ async function clickSessionRow(appSurface: App, workspaceId: string, sessionId: 
 
 async function readSessionFacts(appSurface: App, workspaceId: string, sessionId: string): Promise<SessionFacts> {
   const probe = engineSessionProbe({
-    engine: resolveEvalEngine(),
+    engine: evalEngine,
     surface: appSurface,
     workspaceId,
   });
@@ -182,6 +185,7 @@ async function readSessionFacts(appSurface: App, workspaceId: string, sessionId:
     tools: parts.flatMap((part) => {
       if (!part.tool) return [];
       return [{
+        tool: part.tool,
         callId: part.callId,
         status: part.status,
         command: typeof part.input.command === "string" ? part.input.command : "",
@@ -193,7 +197,7 @@ async function readSessionFacts(appSurface: App, workspaceId: string, sessionId:
 
 async function approvePendingPermission(appSurface: App, workspaceId: string, sessionId: string): Promise<number> {
   const statuses = await engineSessionProbe({
-    engine: resolveEvalEngine(),
+    engine: evalEngine,
     surface: appSurface,
     workspaceId,
   }).approvePendingPermissions(sessionId);
@@ -245,6 +249,8 @@ test.skipIf(!runnable)(
     const completionMarker = `DONE-${promptMarker}`;
     const firstCommand = `sleep 15 && printf '%s\\n' '${firstMarker}'`;
     const command = `sleep 45 && printf '%s\\n' '${completionMarker}'`;
+    const matchesDescription = (tool: ToolFact, description: string) =>
+      evalEngine === "v2" || tool.description === description;
 
     await using den = await server({
       place,
@@ -255,19 +261,19 @@ test.skipIf(!runnable)(
             finalReply: completionMarker,
             steps: [
               {
-                tool: "bash",
+                tool: shellToolName,
                 arguments: {
                   command: firstCommand,
                   timeout: 30_000,
-                  description: firstToolDescription,
+                  ...(evalEngine === "v1" ? { description: firstToolDescription } : {}),
                 },
               },
               {
-                tool: "bash",
+                tool: shellToolName,
                 arguments: {
                   command,
                   timeout: 90_000,
-                  description: toolDescription,
+                  ...(evalEngine === "v1" ? { description: toolDescription } : {}),
                 },
               },
             ],
@@ -309,17 +315,18 @@ test.skipIf(!runnable)(
     }, {
       within: 90_000,
       intervalMs: 500,
-      label: "chat A first bash tool running",
+      label: `chat A first ${shellToolName} tool running`,
       until: ({ approved, facts }) => approved === 0
         && facts.sessionId === chatA
         && facts.tools.some((tool) =>
-        tool.status === "running"
+        tool.tool === shellToolName
+          && tool.status === "running"
           && tool.command === firstCommand
-          && tool.description === firstToolDescription),
+          && matchesDescription(tool, firstToolDescription)),
     });
     expect(running.facts.sessionId).toBe(chatA);
     const runningTool = running.facts.tools.find((tool) => tool.command === firstCommand);
-    if (!runningTool?.callId) throw new Error(`The running bash tool had no call ID: ${JSON.stringify(running.facts)}`);
+    if (!runningTool?.callId) throw new Error(`The running ${shellToolName} tool had no call ID: ${JSON.stringify(running.facts)}`);
 
     const visibleBeforeSwitch = await eventually(
       () => readVisibleTool(desktopApp, chatA, runningTool.callId),
@@ -344,17 +351,20 @@ test.skipIf(!runnable)(
       within: 30_000,
       intervalMs: 500,
       label: "second chat A tool started while workspace B is visible",
-      until: (facts) => facts.tools.some((tool) => tool.status === "completed" && tool.callId === runningTool.callId)
-        && facts.tools.some((tool) => tool.status === "running" && tool.command === command && tool.description === toolDescription),
+      until: (facts) => facts.tools.some((tool) => tool.tool === shellToolName
+        && tool.status === "completed" && tool.callId === runningTool.callId)
+        && facts.tools.some((tool) => tool.tool === shellToolName
+          && tool.status === "running" && tool.command === command && matchesDescription(tool, toolDescription)),
     });
     const laterTool = laterRunning.tools.find((tool) => tool.command === command);
-    if (!laterTool?.callId) throw new Error(`The later bash tool had no call ID: ${JSON.stringify(laterRunning)}`);
+    if (!laterTool?.callId) throw new Error(`The later ${shellToolName} tool had no call ID: ${JSON.stringify(laterRunning)}`);
     await clickSessionRow(desktopApp, workspaceA.workspaceId, chatA);
     const stillRunning = await readSessionFacts(desktopApp, workspaceA.workspaceId, chatA);
     expect(stillRunning.tools.some((tool) =>
-      tool.status === "running"
+      tool.tool === shellToolName
+        && tool.status === "running"
         && tool.callId === laterTool.callId
-        && tool.description === toolDescription), JSON.stringify(stillRunning)).toBe(true);
+        && matchesDescription(tool, toolDescription)), JSON.stringify(stillRunning)).toBe(true);
 
     const visibleAfterReturn = await eventually(
       () => readVisibleTool(desktopApp, chatA, laterTool.callId),
@@ -381,9 +391,10 @@ test.skipIf(!runnable)(
       {
         within: 90_000,
         intervalMs: 500,
-        label: "chat A unique bash tool completed",
+        label: `chat A unique ${shellToolName} tool completed`,
         until: (facts) => facts.text.includes(completionMarker)
-          && facts.tools.some((tool) => tool.status === "completed" && tool.command === command),
+          && facts.tools.some((tool) => tool.tool === shellToolName
+            && tool.status === "completed" && tool.command === command),
       },
     );
     expect(completed.text).toContain(completionMarker);

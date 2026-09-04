@@ -30,6 +30,8 @@ import type { App } from "@openwork/testkit";
 const providerId = "active-session-storm-mock";
 const modelId = "mock-agent-workload-model";
 const modelName = "Active session storm model";
+const evalEngine = resolveEvalEngine();
+const shellToolName = evalEngine === "v2" ? "shell" : "bash";
 const workspaceCount = 3;
 const e2eTestsEnabled = process.env.OPENWORK_EVAL_E2E_TESTS === "1";
 const daytonaEnabled = process.env.OPENWORK_EVAL_DAYTONA === "1";
@@ -190,7 +192,7 @@ function buildPlans(runId: string): WorkspacePlan[] {
 }
 
 function agentWorkloads(plans: WorkspacePlan[]) {
-  return plans.map((plan) => ({
+  const workloads = plans.map((plan) => ({
     promptMarker: plan.marker,
     finalReply: plan.finalReply,
     steps: [
@@ -249,6 +251,18 @@ function agentWorkloads(plans: WorkspacePlan[]) {
         },
       },
     ],
+  }));
+  if (evalEngine === "v1") return workloads;
+  return workloads.map((workload) => ({
+    ...workload,
+    steps: workload.steps.map((step) => ({
+      tool: shellToolName,
+      arguments: {
+        command: step.arguments.command,
+        timeout: step.arguments.timeout,
+        workdir: step.arguments.workdir,
+      },
+    })),
   }));
 }
 
@@ -366,7 +380,7 @@ async function openExactSessionRoute(desktopApp: App, plan: WorkspacePlan): Prom
 
 async function readSessionFacts(desktopApp: App, workspaceId: string, sessionId: string): Promise<SessionFacts> {
   const probe = engineSessionProbe({
-    engine: resolveEvalEngine(),
+    engine: evalEngine,
     surface: desktopApp,
     workspaceId,
   });
@@ -449,7 +463,7 @@ async function readEngineLogSignals(desktopApp: App): Promise<string[]> {
 }
 
 function slowToolRunning(facts: SessionFacts): boolean {
-  return facts.tools.some((tool) => tool.tool.endsWith("bash")
+  return facts.tools.some((tool) => tool.tool.endsWith(shellToolName)
     && (tool.status === "running" || tool.status === "pending")
     && typeof tool.input.command === "string"
     && tool.input.command.includes("sleep "));
@@ -473,7 +487,7 @@ async function allowVisibleToolPermission(desktopApp: App): Promise<boolean> {
 
 async function approvePendingToolPermissions(desktopApp: App, plan: WorkspacePlan): Promise<number> {
   const statuses = await engineSessionProbe({
-    engine: resolveEvalEngine(),
+    engine: evalEngine,
     surface: desktopApp,
     workspaceId: plan.workspaceId,
   }).approvePendingPermissions(plan.sessionId);
@@ -599,7 +613,7 @@ test.skipIf(!runnable)(
 
     evidence.recordAssertionEvidence(
       "All three originating workspaces reached a live slow tool concurrently",
-      `${plans.map((plan) => `${plan.workspaceId}/${plan.sessionId}`).join(", ")} each exposed a pending or running bash sleep before route switching began; configured slow duration=${slowToolMs}ms.`,
+      `${plans.map((plan) => `${plan.workspaceId}/${plan.sessionId}`).join(", ")} each exposed a pending or running ${shellToolName} sleep before route switching began; configured slow duration=${slowToolMs}ms.`,
       plans.length === workspaceCount && plans.every((plan) => Boolean(plan.workspaceId && plan.sessionId)),
     );
     const engineBeforeStorm = await readEngineRuntimeFacts(desktopApp);
@@ -613,7 +627,7 @@ test.skipIf(!runnable)(
     const liveShot = await screenshot(desktopApp);
     const liveValidation = await validate(liveShot, [
       "The active workspace session visibly shows its deterministic workload prompt or marker",
-      "The session visibly shows live agent activity such as Thinking, a running tool, or a bash command",
+      "The session visibly shows live agent activity such as Thinking, a running tool, or a shell command",
       "No sign-in, reconnect, or application crash screen is visible",
     ]);
     expect(liveValidation.ok, liveValidation.why).toBe(true);
@@ -678,7 +692,7 @@ test.skipIf(!runnable)(
       engineBeforeStorm.enginePid !== null && engineAfterStorm.enginePid !== null,
     );
 
-    const expectedTools = ["bash", "bash", "bash", "bash", "bash", "bash"];
+    const expectedTools = Array.from({ length: 6 }, () => shellToolName);
     for (const plan of plans) {
       await openExactSessionRoute(desktopApp, plan);
       const complete = await eventually(
