@@ -474,7 +474,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
       header: document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() ?? "",
     };
   })()`, { timeoutMs: 30_000, label: "the words streaming into a live bubble" });
-  expect(liveBubble).toMatchObject({ text: SLOW_OPENING, typingRow: false, header: "Writing" });
+  expect(liveBubble).toMatchObject({ text: SLOW_OPENING, typingRow: false, header: "Working" });
   const slowRow = await waitFor(app, `(() => {
     const row = document.querySelector('[data-testid="coworker-working"][data-outcome="slow"]');
     if (!row) return false;
@@ -497,7 +497,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(slowTrace.headers).not.toContain("Reply failed");
   evidence.recordAssertionEvidence(
     "Two minutes without a reply is still working, in the same words everywhere, the words that did arrive are already in a bubble, and the reply then lands",
-    `The scripted model sent its first words and then held the rest for ${SLOW_HOLD_MS / 1_000} s. The words that had arrived ("${SLOW_OPENING}") were already in a live bubble with the header on Writing and no typing row. Past the wait budget the live row read "Nova is still working on it…" with one inline Stop, the header and thread status said Still working and the rail "Still working on it", nothing rose or card-shaped appeared, and the reply arrived afterwards.`,
+    `The scripted model sent its first words and then held the rest for ${SLOW_HOLD_MS / 1_000} s. The words that had arrived ("${SLOW_OPENING}") were already in a live bubble with the header on Working and no typing row. Past the wait budget the live row read "Nova is still working on it…" with one inline Stop, the header and thread status said Still working and the rail "Still working on it", nothing rose or card-shaped appeared, and the reply arrived afterwards.`,
     true,
   );
 
