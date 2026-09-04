@@ -1,3 +1,8 @@
+import { execFile } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
 import { denFetch } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
@@ -425,4 +430,137 @@ test.skipIf(!mysqlOpen || !redisOpen)("an API-key client reapplies and changes a
   expect(recreated.id).not.toBe(policy1.id);
   await request(base("desktop-policies"), "DELETE");
   evidence.recordAssertionEvidence("Teardown is repeatable and scoped to the manifest", "Reverse-order deletion removed each managed resource; repeated deletion reported deleted:false and reads returned 404; the unrelated team survived and a deleted policy key could be recreated with a new ID.", true);
+});
+
+test.skipIf(!mysqlOpen || !redisOpen)("the shipped manifest CLI provisions five resource types, resumes a partial apply, and tears down without secrets", { timeout: 300_000 }, async ({ evidence, place }) => {
+  const orgName = `Manifest CLI ${Date.now()}`;
+  await using den = await server({ place, web: false, org: { name: orgName, members: {} }, env: { DEN_PLAN_GATING_ENABLED: "false" }, mocks: { connector: mcpMock({ port: 3987, allowUnauthenticatedMcp: true }) } });
+  const orgId = await organizationId(den.admin, orgName);
+  const minted = await denFetch(den.admin, "/v1/api-keys", { method: "POST", headers: orgHeaders(den.admin, orgId), body: JSON.stringify({ name: "Manifest CLI witness" }) });
+  expect(minted.response.status, minted.text).toBe(201);
+  const apiKey = stringField(requireRecord(minted.body, "API key"), "key");
+  const headers = { "x-api-key": apiKey };
+  const secret = 'cli-witness-"quoted"\nsecond-line';
+  const directory = await mkdtemp(join(tmpdir(), "openwork-manifest-cli-"));
+  const file = join(directory, "organization.json");
+  const client = fileURLToPath(new URL("../../examples/declarative-org/apply.mjs", import.meta.url));
+  const manifest = {
+    version: 1,
+    teams: { platform: { name: "CLI platform", memberIds: [] } },
+    llmProviders: { inference: { name: "CLI inference", source: "custom", apiKey: "${PROVISION_CLI_SECRET}", teams: ["platform"], customConfig: { id: "cli-inference", name: "CLI inference", npm: "@ai-sdk/openai-compatible", env: ["CLI_INFERENCE_KEY"], api: "https://inference.eval.invalid/v1", models: [{ id: "witness", name: "Witness", limit: { context: 32000, input: 32000, output: 32000 } }] } } },
+    mcpConnections: { tools: { name: "CLI tools", url: den.mocks.connector.mcpUrl, authType: "none", access: { orgWide: true } } },
+    desktopPolicies: { managed: { policyName: "CLI managed desktop", policy: { allowZenModel: false }, teams: ["platform"] } },
+    marketplaces: { catalog: { name: "CLI catalog", description: "Initial description" } },
+  };
+  async function request(path: string, method = "GET", body?: unknown) {
+    return denFetch(den.admin, path, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(30_000) });
+  }
+  async function cli(input: unknown, remove = false, credential: string | undefined = secret) {
+    await writeFile(file, JSON.stringify(input), { mode: 0o600 });
+    const result = await new Promise<{ status: number; stdout: string; stderr: string }>((resolve) => {
+      execFile(process.execPath, [client, file, ...(remove ? ["--delete"] : [])], {
+        env: { ...process.env, DEN_API_URL: den.ref.apiUrl, DEN_API_KEY: apiKey, PROVISION_CLI_SECRET: credential },
+        timeout: 45_000, maxBuffer: 1_000_000,
+      }, (error, stdout, stderr) => resolve({ status: error ? (typeof error.code === "number" ? error.code : -1) : 0, stdout, stderr }));
+    });
+    expect(result.stdout + result.stderr).not.toContain(apiKey);
+    expect(result.stdout + result.stderr).not.toContain(secret);
+    expect(result.stdout + result.stderr).not.toContain(JSON.stringify(secret).slice(1, -1));
+    return result;
+  }
+  async function snapshot() {
+    const entries: Array<[string, string, string]> = [["teams", "platform", "team"], ["llm-providers", "inference", "llmProvider"], ["desktop-policies", "managed", "desktopPolicy"], ["marketplaces", "catalog", "item"]];
+    const result = new Map<string, Record<string, unknown>>();
+    for (const [resource, key, envelope] of entries) {
+      const response = await request(`/v1/${resource}/by-key/${key}`);
+      expect(response.response.status, response.text).toBe(200);
+      expect(response.text).not.toContain(secret);
+      expect(response.text).not.toContain(JSON.stringify(secret).slice(1, -1));
+      result.set(resource, requireRecord(requireRecord(response.body, resource)[envelope], envelope));
+    }
+    const connections = await request("/v1/mcp-connections?scope=manageable");
+    expect(connections.response.status, connections.text).toBe(200);
+    const rows = requireRecord(connections.body, "connections").connections;
+    if (!Array.isArray(rows)) throw new Error("Missing connections list");
+    const keyed = rows.filter((row) => isRecord(row) && row.externalKey === "tools");
+    expect(keyed).toHaveLength(1);
+    result.set("mcp-connections", requireRecord(keyed[0], "MCP"));
+    return result;
+  }
+  try {
+    const unrelated = await request("/v1/teams", "POST", { name: "Outside this manifest" });
+    expect(unrelated.response.status, unrelated.text).toBe(201);
+    const unrelatedId = stringField(requireRecord(requireRecord(unrelated.body, "unrelated").team, "team"), "id");
+
+    // The real client fails after creating the team. A corrected retry must use
+    // that team rather than require cleanup or create another identity.
+    const broken = { ...manifest, llmProviders: { inference: { ...manifest.llmProviders.inference, source: "invalid" } } };
+    const partial = await cli(broken);
+    expect(partial.status).not.toBe(0);
+    expect(partial.stdout).toContain("created teams/platform");
+    expect((await request("/v1/llm-providers/by-key/inference")).response.status).toBe(404);
+    const partialTeam = await request("/v1/teams/by-key/platform");
+    const partialId = stringField(requireRecord(requireRecord(partialTeam.body, "partial").team, "team"), "id");
+    const recovered = await cli(manifest);
+    expect(recovered.status, recovered.stderr).toBe(0);
+    expect(recovered.stdout).toContain("updated teams/platform");
+    const first = await snapshot();
+    expect(first.get("teams")?.id).toBe(partialId);
+    const connected = await request(`/v1/llm-providers/${first.get("llm-providers")?.id}/connect`);
+    expect(connected.response.status).toBe(200);
+    const runtimeProvider = requireRecord(requireRecord(connected.body, "runtime configuration").llmProvider, "provider");
+    expect(runtimeProvider.apiKey === secret, "The runtime credential must exactly match the environment value, including quotes and newline").toBe(true);
+    const repeated = await cli(manifest);
+    expect(repeated.status, repeated.stderr).toBe(0);
+    expect(repeated.stdout.match(/^updated /gm)).toHaveLength(5);
+    expect(repeated.stdout).not.toContain("created ");
+    const second = await snapshot();
+    for (const [resource, row] of first) expect(second.get(resource)?.id).toBe(row.id);
+    const providerAccess = requireRecord(first.get("llm-providers")?.access, "provider access");
+    expect(providerAccess.teams).toEqual(expect.arrayContaining([expect.objectContaining({ teamId: partialId })]));
+    expect(first.get("desktop-policies")?.assignments).toEqual(expect.arrayContaining([expect.objectContaining({ teamId: partialId })]));
+    evidence.recordAssertionEvidence("The real CLI resumes partial provisioning and converges all five resources", "The invalid provider stopped the client after team creation; correcting the manifest retained that team ID, resolved provider and policy team references, delivered the exact quoted/newline environment credential to the runtime API, and a repeat run updated all five IDs without another create.", true);
+
+    manifest.teams.platform.name = "CLI platform renamed";
+    manifest.llmProviders.inference.teams = [];
+    manifest.desktopPolicies.managed.teams = [];
+    manifest.desktopPolicies.managed.policy.allowZenModel = true;
+    const changed = await cli(manifest);
+    expect(changed.status, changed.stderr).toBe(0);
+    const after = await snapshot();
+    for (const [resource, row] of first) expect(after.get(resource)?.id).toBe(row.id);
+    expect(after.get("teams")?.name).toBe("CLI platform renamed");
+    expect(requireRecord(after.get("llm-providers")?.access, "provider access").teams).toEqual([]);
+    expect(after.get("desktop-policies")?.assignments).toEqual([]);
+    expect(after.get("desktop-policies")?.policy).toMatchObject({ allowZenModel: true });
+    evidence.recordAssertionEvidence("Manifest edits change assignments without changing resource identity", "The client renamed the team, removed provider/policy team assignments, and changed the policy flag while all five resource IDs stayed stable.", true);
+
+    const invalid = { ...manifest, teams: { ...manifest.teams, unwritten: { name: "Must not be created" } }, llmProviders: { inference: { ...manifest.llmProviders.inference, teams: ["missing"] } } };
+    const rejected = await cli(invalid);
+    expect(rejected.status).not.toBe(0);
+    expect(rejected.stdout).toBe("");
+    expect(rejected.stderr).toContain("Unknown team reference");
+    expect((await request("/v1/teams/by-key/unwritten")).response.status).toBe(404);
+    const missingSecret = await cli(manifest, false, "");
+    expect(missingSecret.status).not.toBe(0);
+    expect(missingSecret.stdout).toBe("");
+    expect(missingSecret.stderr).toContain("Missing environment variable");
+    const afterRejected = await snapshot();
+    for (const [resource, row] of after) expect(afterRejected.get(resource)?.updatedAt).toBe(row.updatedAt);
+    evidence.recordAssertionEvidence("CLI preflight failures cause no provisioning writes or credential logging", "An unknown team reference and missing environment secret both failed before any progress output; the extra desired team was absent and all existing resource timestamps were unchanged. Every invocation's stdout/stderr was checked for API-key and provider-secret leakage.", true);
+
+    const removed = await cli(manifest, true, "");
+    expect(removed.status, removed.stderr).toBe(0);
+    expect(removed.stdout.match(/^deleted /gm)).toHaveLength(5);
+    const repeatDelete = await cli(manifest, true, "");
+    expect(repeatDelete.status, repeatDelete.stderr).toBe(0);
+    for (const [resource, key] of [["teams", "platform"], ["llm-providers", "inference"], ["desktop-policies", "managed"], ["marketplaces", "catalog"]]) {
+      expect((await request(`/v1/${resource}/by-key/${key}`)).response.status).toBe(404);
+    }
+    expect((await request(`/v1/mcp-connections/${first.get("mcp-connections")?.id}`)).response.status).toBe(404);
+    expect((await request(`/v1/teams/${unrelatedId}`)).response.status).toBe(200);
+    evidence.recordAssertionEvidence("CLI teardown is repeatable without provider credentials and preserves unrelated state", "Both --delete invocations exited successfully with the provider secret unset; all five managed resources were absent and the unrelated team remained accessible.", true);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
