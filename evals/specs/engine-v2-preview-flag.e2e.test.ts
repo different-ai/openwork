@@ -276,15 +276,21 @@ test.skipIf(!enabled)(title, async ({ evidence, place }) => {
       "the witness provider to be mirrored",
     );
     const mirrorLatencyMs = Date.now() - patchCompletedAt;
-    console.info(`[engine-v2-preview-flag] mirror latency after PATCH 200: ${mirrorLatencyMs}ms`);
-    expect(mirroredStatus.catalogModelIds).toContain("witness-model-e2e");
+    const catalogStatus = await untilStatus(
+      app,
+      (status) => status.catalogModelIds.includes("witness-model-e2e"),
+      120_000,
+      "the witness model to appear in the catalog",
+    );
+    const catalogLatencyMs = Date.now() - patchCompletedAt;
+    console.info(`[engine-v2-preview-flag] mirror latency after PATCH 200: ${mirrorLatencyMs}ms; catalog latency: ${catalogLatencyMs}ms`);
     expect(mirroredStatus.skippedProviderIds).toContain("openwork-skip-e2e");
     expect(mirroredStatus.mirroredProviderIds).not.toContain("openwork-skip-e2e");
-    expect(mirroredStatus.pid).toBe(pid0);
+    expect(catalogStatus.pid).toBe(pid0);
     expect(mirroredStatus.running).toBe(true);
     evidence.recordAssertionEvidence(
       "F3 provider changes hot-mirror without restarting the sidecar",
-      `The witness provider and model appeared after ${mirrorLatencyMs}ms, the invalid provider was skipped and never mirrored, and the sidecar remained running at pid ${pid0}.`,
+      `The witness provider mirrored after ${mirrorLatencyMs}ms and its model appeared in the catalog after ${catalogLatencyMs}ms, the invalid provider was skipped and never mirrored, and the sidecar remained running at pid ${pid0}.`,
       true,
     );
 

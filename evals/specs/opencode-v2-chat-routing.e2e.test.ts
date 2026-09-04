@@ -599,13 +599,22 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place, ski
       },
     });
     expect(patchResponse.status).toBe(200);
-    const mirroredStatus = await untilStatus(
+    const patchCompletedAt = Date.now();
+    await untilStatus(
       app,
-      (status) => status.mirroredProviderIds.includes("witness-v2") && status.catalogModelIds.includes(modelIdV2),
+      (status) => status.mirroredProviderIds.includes("witness-v2"),
       60_000,
       "the v2 witness provider to be mirrored",
     );
-    expect(mirroredStatus.pid).toBe(pid0);
+    const mirrorLatencyMs = Date.now() - patchCompletedAt;
+    const catalogStatus = await untilStatus(
+      app,
+      (status) => status.catalogModelIds.includes(modelIdV2),
+      120_000,
+      "the v2 witness model to appear in the catalog",
+    );
+    const catalogLatencyMs = Date.now() - patchCompletedAt;
+    expect(catalogStatus.pid).toBe(pid0);
 
     await go(app, `/workspace/${workspaceId}/session`);
     await waitForModelInPicker(app, modelNameV2, 45_000);
@@ -636,7 +645,7 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place, ski
     expect(r2.request.model).toBe(modelIdV2);
     evidence.recordAssertionEvidence(
       "R2 routed chat creates and streams through v2 without touching v1",
-      `The v2 transcript streamed ${r2.request.nonce} from ${modelIdV2} with Bearer ${keyV2} in ${r2.latencyMs}ms; v2 sessions grew ${v2BeforeR2}→${v2AfterR2}, while v1 stayed frozen at ${v1BeforeR2}.`,
+      `The provider mirrored in ${mirrorLatencyMs}ms and its catalog warmed in ${catalogLatencyMs}ms without restarting pid ${pid0}; the v2 transcript streamed ${r2.request.nonce} from ${modelIdV2} with Bearer ${keyV2} in ${r2.latencyMs}ms; v2 sessions grew ${v2BeforeR2}→${v2AfterR2}, while v1 stayed frozen at ${v1BeforeR2}.`,
       true,
     );
 

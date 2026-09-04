@@ -269,8 +269,11 @@ export function createEngineV2Preview(options: { config: ServerConfig }): Engine
     if (!active) return;
     const providerMap = runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config));
     const mapped = mapRuntimeProvidersToV2Specs(providerMap);
-    await active.setProviders(mapped.specs);
     const nextMirroredProviderIds = mapped.specs.map((spec) => spec.id);
+    await active.setProviders(mapped.specs);
+    mirroredProviderIds = nextMirroredProviderIds;
+    skippedProviderIds = [...mapped.skippedProviderIds];
+    lastMirroredAt = new Date().toISOString();
     const expectedModelIds = mapped.specs.flatMap((spec) => spec.models.map((model) => model.id));
     const deadline = Date.now() + CATALOG_MIRROR_TIMEOUT_MS;
     let catalog = await active.fetchJson("/api/model", { directory: workspaceDir });
@@ -281,9 +284,6 @@ export function createEngineV2Preview(options: { config: ServerConfig }): Engine
       nextCatalogModelIds = catalogModelIds(catalog.json, nextMirroredProviderIds);
     }
     currentCatalogModelIds = nextCatalogModelIds;
-    mirroredProviderIds = nextMirroredProviderIds;
-    skippedProviderIds = [...mapped.skippedProviderIds];
-    lastMirroredAt = new Date().toISOString();
     const missingModelIds = expectedModelIds.filter((modelId) => !nextCatalogModelIds.includes(modelId));
     const catalogMessage = isRecord(catalog.json) && typeof catalog.json.message === "string"
       ? ` ${catalog.json.message}`
