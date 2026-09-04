@@ -66,6 +66,7 @@ test.skipIf(!mysql || !redis)(title, { timeout: 300_000 }, async ({ place, evide
   const otherCatalog = await denFetch(admin, "/v1/me/coworkers", { headers: { authorization: `Bearer ${admin.token}`, "x-openwork-org-id": otherOrganization } });
   expect(otherCatalog.response.status).toBe(200);
   expect(otherCatalog.body).toMatchObject({ enabled: false, items: [] });
+  await request(admin, "/api/auth/organization/set-active", "POST", { organizationId });
   evidence.recordAssertionEvidence("Prepared teams require an explicit platform-admin opt-in for each organization", "New organizations defaulted off. Both direct template creation and bundle creation returned 403. A member could not enable the flag. Enabling the first organization left the second organization disabled on the same server.", true);
   const teammateId = await readCurrentOrganizationMemberId(teammate);
   const outsiderId = await readCurrentOrganizationMemberId(outsider);
