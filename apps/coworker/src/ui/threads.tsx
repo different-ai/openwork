@@ -1773,7 +1773,10 @@ function ThreadView({
         actions={(
           <>
             {kind !== "discussion" ? <Button variant="ghost" onClick={onBack}>Back</Button> : null}
-            {(working || needsYou) && kind !== "worker" ? <Button variant="ghost" onClick={() => void stop()}>Stop</Button> : null}
+            {kind !== "worker" ? (
+              // Stop keeps its place while it is not offered, so the status word beside it never slides.
+              <Button variant="ghost" className={working || needsYou ? "" : "invisible pointer-events-none"} aria-hidden={working || needsYou ? undefined : true} tabIndex={working || needsYou ? undefined : -1} onClick={() => void stop()}>Stop</Button>
+            ) : null}
           </>
         )}
       />
@@ -1786,7 +1789,7 @@ function ThreadView({
           {freshDiscussion ? <QuietEmptyConversation coworker={coworker} proposerName={team?.coworkers.find((member) => member.slug === coworker.suggestedBy?.slug)?.name ?? ""} /> : null}
           {conversationBlocks(visibleMessages, (message, index) => working && message.role === "assistant" && index === lastAssistantIndex).map((block) => {
             if (block.kind === "actions") {
-              return <ActionLine key={block.id} review={block.review} reasoning={block.reasoning} calls={block.calls} client={mcpClient} />;
+              return <ActionLine key={block.id} review={block.review} reasoning={block.reasoning} calls={block.calls} settled={block.settled} client={mcpClient} />;
             }
             // A reply that ended without words stays in the transcript as one quiet line; the turn still
             // unresolved is told by the outcome below instead, with its actions.
@@ -1836,7 +1839,7 @@ function ThreadView({
           {kind === "discussion" ? (
             <WorkerDecisionCards coworker={coworker} workers={workers} onAnswered={() => onWorkersChanged?.()} />
           ) : null}
-          {working && outcome?.kind !== "retrying" ? (
+          <LiveRowSlot open={working && outcome?.kind !== "retrying"}>
             <WorkIndicator
               coworker={coworker}
               messages={visibleMessages}
@@ -1845,7 +1848,7 @@ function ThreadView({
               stillWorking={outcome?.kind === "slow" ? outcome.line : ""}
               onStop={outcome?.kind === "slow" ? () => void stop() : undefined}
             />
-          ) : null}
+          </LiveRowSlot>
           {visibleMessages.length === 0 && !error && !working && kind !== "discussion" ? (
             <Empty><InlineLoader label={kind === "worker" ? "Loading the Worker's thread" : "Loading assignment"} /></Empty>
           ) : null}
@@ -1903,7 +1906,8 @@ function ThreadView({
 }
 
 type ConversationBlock =
-  | { kind: "actions"; id: string; review: WorkerReview | null; reasoning: string; calls: TranscriptToolCall[] }
+  /** `settled`: the person has written again since this turn, so its receipt may fold to one line. */
+  | { kind: "actions"; id: string; review: WorkerReview | null; reasoning: string; calls: TranscriptToolCall[]; settled: boolean }
   | { kind: "message"; message: TranscriptMessage; previous: TranscriptMessage | undefined; active: boolean; continued: boolean; tail: boolean; calls: TranscriptToolCall[] }
   /** A reply that ended without words — stopped or failed — kept as one quiet line where it happened. */
   | { kind: "ended"; message: TranscriptMessage; ended: "stopped" | "failed" };
@@ -1929,9 +1933,12 @@ export function conversationBlocks(
   let reasoning: string[] = [];
   let calls: TranscriptToolCall[] = [];
   let pendingId = "";
-  const flush = () => {
+  // A block flushed at `from` is settled once a person's message follows it (the message that
+  // triggers the flush counts, when it is the person's).
+  const flush = (from: number) => {
     if (!review && reasoning.length === 0 && calls.length === 0) return;
-    blocks.push({ kind: "actions", id: `actions-${pendingId}`, review, reasoning: reasoning.join("\n\n"), calls });
+    const settled = messages.slice(from).some((message) => message.role === "user" && !reviewTurn(message));
+    blocks.push({ kind: "actions", id: `actions-${pendingId}`, review, reasoning: reasoning.join("\n\n"), calls, settled });
     review = null;
     reasoning = [];
     calls = [];
@@ -1950,12 +1957,14 @@ export function conversationBlocks(
     }
     if (message.role === "assistant") {
       if (!pendingId) pendingId = message.id;
-      if (message.reasoning && !active) reasoning.push(message.reasoning);
+      // Thinking shows on its line as soon as any has arrived — while the reply is still being
+      // written too — so the line is already in place when the reply lands and nothing below it moves.
+      if (message.reasoning) reasoning.push(message.reasoning);
       if (message.toolCalls.length > 0) calls = [...calls, ...message.toolCalls];
       const ended = active ? null : endedWithoutWords(message);
       if (ended) {
         // Whatever it thought or did before it ended stays on its own line; the ending is one more.
-        flush();
+        flush(index + 1);
         pendingId = "";
         blocks.push({ kind: "ended", message, ended });
         return;
@@ -1964,7 +1973,7 @@ export function conversationBlocks(
     }
     // The bubble keeps its own turn's calls too, so it can end with a document card.
     const turnCalls = message.role === "assistant" ? calls : [];
-    flush();
+    flush(index);
     pendingId = "";
     const position = bubbles.indexOf(message);
     const previous = position > 0 ? bubbles[position - 1] : undefined;
@@ -1979,18 +1988,18 @@ export function conversationBlocks(
       calls: turnCalls,
     });
   });
-  flush();
+  flush(messages.length);
   return blocks;
 }
 
 /** One small centered line between bubbles: what the coworker thought through and did. */
-function ActionLine({ review, reasoning, calls, client }: { review: WorkerReview | null; reasoning: string; calls: TranscriptToolCall[]; client: CoworkerMcpClient }) {
+function ActionLine({ review, reasoning, calls, settled, client }: { review: WorkerReview | null; reasoning: string; calls: TranscriptToolCall[]; settled: boolean; client: CoworkerMcpClient }) {
   return (
     <div className="flex justify-center py-0.5" data-testid="coworker-action-line">
       <div className="flex max-w-[80%] flex-wrap items-start justify-center gap-x-4 gap-y-1">
         {review ? <ReviewDisclosure review={review} /> : null}
         {reasoning ? <ThinkingDisclosure text={reasoning} /> : null}
-        {calls.length > 0 ? <WorkReceipt calls={calls} client={client} /> : null}
+        {calls.length > 0 ? <WorkReceipt calls={calls} settled={settled} client={client} /> : null}
       </div>
     </div>
   );
@@ -2241,6 +2250,22 @@ function progressPhase(label: string, hasActiveStep: boolean): ProgressPhase {
 }
 
 /** Three quiet dots; still under reduced motion. */
+/**
+ * The place at the end of the transcript where the live row sits. The slot is
+ * always there, one row tall, whether or not a turn is running: the transcript
+ * is anchored to its bottom, so a row appearing or leaving must not change
+ * its height — that is exactly what made the reply that had just landed slide
+ * down as the row went. The row leaves the moment the turn ends (nothing keeps
+ * reporting "working" once it is not); the slot keeps its place.
+ */
+function LiveRowSlot({ open, children }: { open: boolean; children: ReactNode }) {
+  return (
+    <div className="live-row-slot" data-open={open ? "true" : "false"} data-testid="live-row-slot">
+      {open ? children : null}
+    </div>
+  );
+}
+
 function TypingDots() {
   return (
     <span className="flex items-center gap-[3px]" aria-hidden="true">
@@ -2476,11 +2501,13 @@ function describeUnavailableModel(model: string, available: EngineModelOption[],
  * open so it never disappears into the fold. Documents and Apps the work
  * produced stay first-class as compact attachments beneath.
  */
-function WorkReceipt({ calls, client }: { calls: TranscriptToolCall[]; client: CoworkerMcpClient }) {
+function WorkReceipt({ calls, settled, client }: { calls: TranscriptToolCall[]; /** The person has written again since this turn. */ settled: boolean; client: CoworkerMcpClient }) {
   const steps = calls.map((call) => describeWorkStep(call));
   const unsettled = steps.some((step) => step.state !== "done");
-  const [open, setOpen] = useState(false);
-  const expanded = open || unsettled;
+  // The person's own tap wins; otherwise the steps stay in view while they run and until the person
+  // writes again — never snapping shut the moment the last step finishes, under the reader's eyes.
+  const [open, setOpen] = useState<"auto" | "open" | "closed">("auto");
+  const expanded = open === "open" || (open === "auto" && (unsettled || !settled));
   const summary = summarizeWork(steps);
   const tone = steps.some((step) => step.state === "failed") ? "rose" : unsettled ? "spark" : "mint";
   return (
@@ -2489,7 +2516,7 @@ function WorkReceipt({ calls, client }: { calls: TranscriptToolCall[]; client: C
         type="button"
         className="group mx-auto flex max-w-full items-center gap-1.5 py-0.5 text-left text-mist hover:text-snow"
         aria-expanded={expanded}
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => setOpen(expanded ? "closed" : "open")}
         data-testid="coworker-work-summary"
       >
         <ToolIcon className={`size-3.5 shrink-0 ${unsettled ? "motion-safe:animate-pulse" : ""}`} />
