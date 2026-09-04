@@ -169,7 +169,13 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   for (const chip of new Set(liveShapes.map((entry) => String(entry.chip)).filter(Boolean))) {
     expect(chip).toMatch(/^(Using .+|Editing .+|Writing .+|Reading .+|Looking through .+|Running .+|Searching .+|Updating .+|Working with .+|Asking .+|Checking .+)$/);
   }
-  expect(liveShapes.every((entry) => !entry.typing || String(entry.phase) === "thinking"), "the typing bubble means thinking").toBe(true);
+  // The typing bubble is the row's shape whenever there is no tool step to name and no words yet:
+  // thinking, but also the instant before the engine picks the turn up (sending), a retry, and a tool
+  // call whose step is not known yet. It never shows while words are streaming.
+  expect(
+    liveShapes.every((entry) => !entry.typing || ["thinking", "sending", "retrying", "tool"].includes(String(entry.phase))),
+    `the typing bubble shows only before the words: ${JSON.stringify(liveShapes.filter((entry) => entry.typing))}`,
+  ).toBe(true);
   expect(liveShapes.every((entry) => !entry.chip || String(entry.phase) === "tool"), "a chip means a tool").toBe(true);
   expect(beforeReply.every((entry) => !entry.working || ["sending", "thinking", "tool", "writing", "retrying"].includes(String(entry.phase)))).toBe(true);
   // Once the turn has closed, the live row is gone, thinking folds to one quiet line, and tool work
