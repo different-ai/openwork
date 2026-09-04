@@ -41,7 +41,7 @@ function parseSplitFacts(value: unknown): SplitFacts {
   };
 }
 
-test("new split creates fresh same-workspace secondary sessions without moving the primary; New session replaces the focused pane", async ({ world, user, agent, probe, step, place }) => {
+test("new split creates fresh same-workspace secondary sessions without moving the primary; New session replaces the focused pane", async ({ world, user, agent, probe, step, place, evidence }) => {
   // The key chord belongs to the machine running the app, not the one running the spec.
   const paletteShortcut = place.kind !== "daytona" && process.platform === "darwin" ? "Meta+K" : "Control+K";
   const workspaceId = world.workspace.workspaceId;
@@ -183,6 +183,12 @@ test("new split creates fresh same-workspace secondary sessions without moving t
     expect(layout?.kind).toBe(currentFacts.layoutKind);
     expect(layout?.primarySessionId).toBe(currentFacts.primarySessionId);
     expect(layout?.secondarySessionId).toBe(currentFacts.secondarySessionId);
+    expect(layout?.focused).toBe(currentFacts.focusedPane);
+    evidence.recordAssertionEvidence(
+      "Desktop split context reaches the agent through the server mailbox",
+      `The server returned ok=true with kind=${layout?.kind}, primarySessionId=${layout?.primarySessionId}, secondarySessionId=${layout?.secondarySessionId}, and focused=${layout?.focused}, all matching the rendered split.`,
+      true,
+    );
   });
 
   await step("New session replaces the focused secondary pane", async () => {
@@ -277,4 +283,10 @@ test("new split creates fresh same-workspace secondary sessions without moving t
     });
     expect(afterFocusedPrimary).toHaveLength(afterFocusedSecondary.length + 1);
   });
+  evidence.recordAssertionEvidence(
+    "New splits preserve the primary, and New session replaces only the focused pane",
+    "Context-menu and command-palette splits each created one distinct same-workspace secondary session. The focused-secondary and focused-primary New session actions each preserved the opposite pane and created exactly one session.",
+    true,
+  );
+
 });
