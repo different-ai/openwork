@@ -337,6 +337,29 @@ export function summarizeWork(steps: ReadonlyArray<WorkStep>): string {
   return line;
 }
 
+/**
+ * The one line the transcript shows for a turn's work. While a step runs it says
+ * what is happening now and where it sits in the run ("Running a command · 2 of
+ * 3"); once every step has settled it is the summary ("Worked with the terminal
+ * · 2 steps"). The steps themselves wait behind the line, never stacked in the chat.
+ */
+export function describeWorkLine(steps: ReadonlyArray<WorkStep>): string {
+  const position = steps.findLastIndex((step) => step.state === "running");
+  const running = position >= 0 ? steps[position] : undefined;
+  if (!running) return summarizeWork(steps);
+  const doing = running.doing.charAt(0).toUpperCase() + running.doing.slice(1);
+  return steps.length > 1 ? `${doing} · ${position + 1} of ${steps.length}` : doing;
+}
+
+/** The small print beside the steps: "2 of 3 done", "3 steps", "3 steps · 1 didn't finish". */
+export function describeWorkProgress(steps: ReadonlyArray<WorkStep>): string {
+  const done = steps.filter((step) => step.state === "done").length;
+  const failed = steps.filter((step) => step.state === "failed").length;
+  if (steps.some((step) => step.state === "running")) return `${done} of ${steps.length} done`;
+  const count = `${steps.length} step${steps.length === 1 ? "" : "s"}`;
+  return failed ? `${count} · ${failed} didn't finish` : count;
+}
+
 /** One labelled block inside a step's technical details. */
 export type TechnicalSection = { label: "Command" | "Input" | "Result" | "Error"; text: string };
 

@@ -53,13 +53,10 @@ import { carryVariant, markAutoPicked, wasAutoPicked } from "@/lib/model-choice"
 import { describeReview, parseWorkerReview, parseWorkerTurn, workerNameFromTitle, type WorkerReview, type WorkerSummary } from "@/lib/workers";
 import { WorkerDecisionCards } from "@/ui/worker-decision";
 import { coworkerToolName } from "@/lib/coworker-tools";
-import { describeWorkStep, summarizeWork, technicalSections, type WorkStep } from "@/lib/work-receipt";
+import { describeWorkLine, describeWorkStep, type WorkStep } from "@/lib/work-receipt";
 import { isUnsettledToolStatus, livePhase, phaseWord, safeLiveMarkdown, writingText, type LivePhase } from "@/lib/live-phase";
 import { describeSpeed, firstWordsFor, rememberFirstWords } from "@/lib/turn-speed";
 import { LiveRow } from "@/ui/live-row";
-import { isServerTool, toolRefPath } from "@/lib/apps-tools";
-import { openPanelRoute } from "@/lib/panel-route";
-import { appsToolsRoute } from "@/lib/panel-views";
 import type { CoworkerSummaryLine, SummaryKind } from "@/lib/coworker-summary";
 import {
   EMPTY_THREAD_TURNS,
@@ -100,6 +97,7 @@ import { documentCardsFromCalls, isDocumentTool, shouldFoldReply, splitReplyLead
 import { newcomerLine, teamCardsFromCalls } from "@/lib/team";
 import { TeamCardsForTurn, type TeamHooks } from "@/ui/team-cards";
 import { McpAppFrame } from "@/ui/mcp-app-frame";
+import { WorkPopover, workPopoverPlacement, type WorkPopoverPlacement } from "@/ui/work-popover";
 
 type TranscriptToolCall = {
   partId: string;
@@ -1841,7 +1839,7 @@ function ThreadView({
           {freshDiscussion ? <QuietEmptyConversation coworker={coworker} proposerName={team?.coworkers.find((member) => member.slug === coworker.suggestedBy?.slug)?.name ?? ""} /> : null}
           {conversationBlocks(visibleMessages, (message, index) => working && message.role === "assistant" && index === lastAssistantIndex).map((block) => {
             if (block.kind === "actions") {
-              return <ActionLine key={block.id} review={block.review} reasoning={block.reasoning} calls={block.calls} settled={block.settled} client={mcpClient} />;
+              return <ActionLine key={block.id} review={block.review} reasoning={block.reasoning} calls={block.calls} client={mcpClient} />;
             }
             // A reply that ended without words stays in the transcript as one quiet line; the turn still
             // unresolved is told by the outcome below instead, with its actions.
@@ -1972,8 +1970,7 @@ function ThreadView({
 }
 
 type ConversationBlock =
-  /** `settled`: the person has written again since this turn, so its receipt may fold to one line. */
-  | { kind: "actions"; id: string; review: WorkerReview | null; reasoning: string; calls: TranscriptToolCall[]; settled: boolean }
+  | { kind: "actions"; id: string; review: WorkerReview | null; reasoning: string; calls: TranscriptToolCall[] }
   | { kind: "message"; message: TranscriptMessage; previous: TranscriptMessage | undefined; active: boolean; continued: boolean; tail: boolean; calls: TranscriptToolCall[] }
   /** A reply that ended without words — stopped or failed — kept as one quiet line where it happened. */
   | { kind: "ended"; message: TranscriptMessage; ended: "stopped" | "failed" };
@@ -1999,12 +1996,9 @@ export function conversationBlocks(
   let reasoning: string[] = [];
   let calls: TranscriptToolCall[] = [];
   let pendingId = "";
-  // A block flushed at `from` is settled once a person's message follows it (the message that
-  // triggers the flush counts, when it is the person's).
-  const flush = (from: number) => {
+  const flush = () => {
     if (!review && reasoning.length === 0 && calls.length === 0) return;
-    const settled = messages.slice(from).some((message) => message.role === "user" && !reviewTurn(message));
-    blocks.push({ kind: "actions", id: `actions-${pendingId}`, review, reasoning: reasoning.join("\n\n"), calls, settled });
+    blocks.push({ kind: "actions", id: `actions-${pendingId}`, review, reasoning: reasoning.join("\n\n"), calls });
     review = null;
     reasoning = [];
     calls = [];
@@ -2030,7 +2024,7 @@ export function conversationBlocks(
       const ended = active ? null : endedWithoutWords(message);
       if (ended) {
         // Whatever it thought or did before it ended stays on its own line; the ending is one more.
-        flush(index + 1);
+        flush();
         pendingId = "";
         blocks.push({ kind: "ended", message, ended });
         return;
@@ -2039,7 +2033,7 @@ export function conversationBlocks(
     }
     // The bubble keeps its own turn's calls too, so it can end with a document card.
     const turnCalls = message.role === "assistant" ? calls : [];
-    flush(index);
+    flush();
     pendingId = "";
     const position = bubbles.indexOf(message);
     const previous = position > 0 ? bubbles[position - 1] : undefined;
@@ -2054,18 +2048,18 @@ export function conversationBlocks(
       calls: turnCalls,
     });
   });
-  flush(messages.length);
+  flush();
   return blocks;
 }
 
 /** One small centered line between bubbles: what the coworker thought through and did. */
-function ActionLine({ review, reasoning, calls, settled, client }: { review: WorkerReview | null; reasoning: string; calls: TranscriptToolCall[]; settled: boolean; client: CoworkerMcpClient }) {
+function ActionLine({ review, reasoning, calls, client }: { review: WorkerReview | null; reasoning: string; calls: TranscriptToolCall[]; client: CoworkerMcpClient }) {
   return (
     <div className="flex justify-center py-0.5" data-testid="coworker-action-line">
       <div className="flex max-w-[80%] flex-wrap items-start justify-center gap-x-4 gap-y-1">
         {review ? <ReviewDisclosure review={review} /> : null}
         {reasoning ? <ThinkingDisclosure text={reasoning} /> : null}
-        {calls.length > 0 ? <WorkReceipt calls={calls} settled={settled} client={client} /> : null}
+        {calls.length > 0 ? <WorkReceipt calls={calls} client={client} /> : null}
       </div>
     </div>
   );
@@ -2505,101 +2499,48 @@ function describeUnavailableModel(model: string, available: EngineModelOption[],
 }
 
 /**
- * One receipt for all the tool work behind a reply. Collapsed, it is one line
- * ("Edited index.md", "Worked with your files and Calendar · 3 steps"); open,
- * it lists each step in plain words with the tool name behind Technical
- * details. A step that is still running or did not finish keeps the receipt
- * open so it never disappears into the fold. Documents and Apps the work
- * produced stay first-class as compact attachments beneath.
+ * One receipt for all the tool work behind a reply: a single quiet line in the
+ * transcript that says what is happening while steps run ("Running a command ·
+ * 2 of 3") and sums the work up once they have settled ("Worked with the
+ * terminal · 2 steps"). The steps never stack in the chat: the line opens a
+ * popover that lists them in plain words with the tool's name behind Technical
+ * details, and the person closes it. Documents and Apps the work produced stay
+ * first-class as compact attachments beneath.
  */
-function WorkReceipt({ calls, settled, client }: { calls: TranscriptToolCall[]; /** The person has written again since this turn. */ settled: boolean; client: CoworkerMcpClient }) {
+function WorkReceipt({ calls, client }: { calls: TranscriptToolCall[]; client: CoworkerMcpClient }) {
   const steps = calls.map((call) => describeWorkStep(call));
   const unsettled = steps.some((step) => step.state !== "done");
-  // The person's own tap wins; otherwise the steps stay in view while they run and until the person
-  // writes again — never snapping shut the moment the last step finishes, under the reader's eyes.
-  const [open, setOpen] = useState<"auto" | "open" | "closed">("auto");
-  const expanded = open === "open" || (open === "auto" && (unsettled || !settled));
-  const summary = summarizeWork(steps);
+  const [open, setOpen] = useState<WorkPopoverPlacement | null>(null);
+  const lineRef = useRef<HTMLButtonElement | null>(null);
+  const line = describeWorkLine(steps);
   const tone = steps.some((step) => step.state === "failed") ? "rose" : unsettled ? "spark" : "mint";
+  const toggle = () => {
+    if (open) {
+      setOpen(null);
+      return;
+    }
+    const rect = lineRef.current?.getBoundingClientRect();
+    setOpen(rect ? workPopoverPlacement(rect, window.innerHeight) : "below");
+  };
   return (
-    <div className="min-w-0 text-[11px]" data-testid="coworker-work-receipt" data-state={tone === "rose" ? "failed" : unsettled ? "working" : "done"}>
+    <div className="relative min-w-0 text-[11px]" data-testid="coworker-work-receipt" data-state={tone === "rose" ? "failed" : unsettled ? "working" : "done"}>
       <button
+        ref={lineRef}
         type="button"
         className="group mx-auto flex max-w-full items-center gap-1.5 py-0.5 text-left text-mist hover:text-snow"
-        aria-expanded={expanded}
-        onClick={() => setOpen(expanded ? "closed" : "open")}
+        title={open ? "Hide the steps" : "See the steps"}
+        aria-expanded={open !== null}
+        aria-haspopup="dialog"
+        onClick={toggle}
         data-testid="coworker-work-summary"
       >
         <ToolIcon className={`size-3.5 shrink-0 ${unsettled ? "motion-safe:animate-pulse" : ""}`} />
-        <span className="min-w-0 flex-1 truncate">{summary}</span>
+        <span className="min-w-0 flex-1 truncate">{line}</span>
         <StatusDot tone={tone} />
-        <span className={`text-mist/60 transition-transform ${expanded ? "rotate-90" : ""}`} aria-hidden="true">›</span>
+        <span className={`text-mist/60 transition-transform ${open ? "rotate-90" : ""}`} aria-hidden="true">›</span>
       </button>
-      {expanded ? (
-        // One card of steady width holds the steps; each step can open its technical view.
-        <ol className="mt-1.5 w-[min(100%,560px)] divide-y divide-line/60 overflow-hidden rounded-xl border border-line/70 bg-panel/50 text-left" data-testid="coworker-work-steps">
-          {calls.map((call) => {
-            const step = describeWorkStep(call);
-            return (
-              <li key={call.partId} className="px-3 py-2" data-testid="coworker-work-step" data-state={step.state}>
-                <div className="flex items-center gap-2">
-                  <StatusDot tone={step.state === "failed" ? "rose" : step.state === "done" ? "mint" : "spark"} />
-                  {isServerTool(call.tool) ? (
-                    // A step that used one of the coworker's tools or Apps opens that item in Apps & tools.
-                    <button
-                      type="button"
-                      className={`min-w-0 flex-1 truncate text-left hover:underline ${step.state === "failed" ? "text-rose" : "text-snow"}`}
-                      title="Open in Apps & tools"
-                      data-testid="coworker-work-step-open"
-                      onClick={() => openPanelRoute(appsToolsRoute(toolRefPath(call.tool, step.label)))}
-                    >
-                      {step.label}
-                    </button>
-                  ) : (
-                    <span className={`min-w-0 flex-1 truncate ${step.state === "failed" ? "text-rose" : "text-snow"}`}>{step.label}</span>
-                  )}
-                  <span className="shrink-0 text-mist">{step.state === "failed" ? "Didn't finish" : step.state === "done" ? "Done" : "Working on it"}</span>
-                </div>
-                <TechnicalDetails call={call} />
-              </li>
-            );
-          })}
-        </ol>
-      ) : null}
+      {open ? <WorkPopover calls={calls} steps={steps} anchor={lineRef.current} placement={open} onClose={() => setOpen(null)} /> : null}
       <ToolAttachments calls={calls} client={client} />
-    </div>
-  );
-}
-
-/**
- * The technical view of one step: the tool's name, then labelled blocks (Command, Input,
- * Result, Error) in a steady, readable layout. Closed by default; the error line stays visible.
- */
-function TechnicalDetails({ call }: { call: TranscriptToolCall }) {
-  const sections = technicalSections(call);
-  return (
-    <div className="pl-4">
-      {call.error ? <p className="mt-1 break-words text-rose">{call.error}</p> : null}
-      <details className="group/tech mt-0.5 text-[10px] text-mist/75" data-testid="coworker-work-technical">
-        <summary className="flex cursor-pointer select-none items-center gap-1 hover:text-mist">
-          <span className="text-mist/60 transition-transform group-open/tech:rotate-90" aria-hidden="true">›</span>
-          Technical details
-        </summary>
-        <dl className="mt-1.5 space-y-1.5 rounded-lg bg-ink/70 p-2.5">
-          <div className="flex items-baseline gap-2">
-            <dt className="w-14 shrink-0 text-mist/60">Tool</dt>
-            <dd className="min-w-0 break-all font-mono text-mist">{call.tool}</dd>
-          </div>
-          {sections.map((section) => (
-            <div key={section.label} className="flex items-baseline gap-2">
-              <dt className={`w-14 shrink-0 ${section.label === "Error" ? "text-rose/80" : "text-mist/60"}`}>{section.label}</dt>
-              <dd className="min-w-0 flex-1">
-                <pre className={`max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono leading-relaxed ${section.label === "Error" ? "text-rose" : "text-snow/85"}`}>{section.text}</pre>
-              </dd>
-            </div>
-          ))}
-        </dl>
-      </details>
     </div>
   );
 }
