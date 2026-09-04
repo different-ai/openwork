@@ -62,6 +62,16 @@ export interface EngineV2PreviewState {
   chatRouting?: boolean;
 }
 
+export function resolveInitialEngineV2PreviewState(
+  env: NodeJS.ProcessEnv,
+  persisted: EngineV2PreviewState,
+): EngineV2PreviewState {
+  const override = env.OPENWORK_ENGINE_V2_PREVIEW;
+  if (override === "1" || override === "chat") return { enabled: true, chatRouting: true };
+  if (override === "sidecar") return { enabled: true, chatRouting: false };
+  return persisted;
+}
+
 interface ResolvedBinary {
   bin: string;
   source: "env" | "path" | "cache";
@@ -230,9 +240,9 @@ export function createEngineV2Preview(options: { config: ServerConfig }): Engine
   const { config } = options;
   const rootDir = join(runtimeStorageDir(config), "opencode-v2", "state");
   const workspaceDir = join(rootDir, "workspace");
-  const persistedState = readEngineV2PreviewState(config);
-  let enabled = persistedState.enabled;
-  let chatRouting = persistedState.chatRouting === true;
+  const initialState = resolveInitialEngineV2PreviewState(process.env, readEngineV2PreviewState(config));
+  let enabled = initialState.enabled;
+  let chatRouting = initialState.chatRouting === true;
   let allowRunning = true;
   let running = false;
   let version: string | undefined;

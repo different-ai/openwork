@@ -7,6 +7,7 @@ import {
   createEngineV2Preview,
   mapRuntimeProvidersToV2Specs,
   readEngineV2PreviewState,
+  resolveInitialEngineV2PreviewState,
   writeEngineV2PreviewState,
 } from "./engine-v2-preview.js";
 import type { ServerConfig } from "./types.js";
@@ -30,6 +31,26 @@ function testConfig(root: string): ServerConfig {
     logRequests: false,
   };
 }
+
+test("keeps persisted engine v2 preview state when the override is unset", () => {
+  const persisted = { enabled: true, chatRouting: false };
+  expect(resolveInitialEngineV2PreviewState({}, persisted)).toEqual(persisted);
+});
+
+test("enables engine v2 preview and chat routing when the override is 1", () => {
+  expect(resolveInitialEngineV2PreviewState(
+    { OPENWORK_ENGINE_V2_PREVIEW: "1" },
+    { enabled: false, chatRouting: false },
+  )).toEqual({ enabled: true, chatRouting: true });
+});
+
+test("keeps persisted engine v2 preview state for an invalid override", () => {
+  const persisted = { enabled: false, chatRouting: true };
+  expect(resolveInitialEngineV2PreviewState(
+    { OPENWORK_ENGINE_V2_PREVIEW: "invalid" },
+    persisted,
+  )).toEqual(persisted);
+});
 
 test("round trips enabled and chat routing state and defaults corrupt state", async () => {
   const root = await mkdtemp(join(tmpdir(), "openwork-engine-v2-preview-"));
