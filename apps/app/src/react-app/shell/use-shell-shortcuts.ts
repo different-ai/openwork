@@ -22,6 +22,7 @@ import {
   type ThinkingModeShortcutDirection,
 } from "./thinking-mode-shortcut";
 import { isFavoriteModelShortcut } from "./favorite-model-shortcut";
+import { OPEN_COMMAND_PALETTE_EVENT } from "./command-palette-bus";
 
 export type UseShellShortcutsInput = {
   canCreateTask: boolean;
@@ -43,11 +44,19 @@ export function useCommandPaletteShortcut(enabled = true) {
     event.preventDefault();
     setCommandPaletteOpen((value) => !value);
   });
+  const handleOpenCommandPalette = useEffectEvent(() => {
+    if (enabled) setCommandPaletteOpen(true);
+  });
 
   useEffect(() => {
-    const handler = (event: KeyboardEvent) => handleCommandPaletteShortcut(event);
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+    const shortcutHandler = (event: KeyboardEvent) => handleCommandPaletteShortcut(event);
+    const openHandler = () => handleOpenCommandPalette();
+    window.addEventListener("keydown", shortcutHandler);
+    window.addEventListener(OPEN_COMMAND_PALETTE_EVENT, openHandler);
+    return () => {
+      window.removeEventListener("keydown", shortcutHandler);
+      window.removeEventListener(OPEN_COMMAND_PALETTE_EVENT, openHandler);
+    };
   }, []);
 
   return { commandPaletteOpen, setCommandPaletteOpen };
