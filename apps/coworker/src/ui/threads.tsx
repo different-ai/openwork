@@ -49,7 +49,7 @@ import {
   registerDiscussion,
   rememberWorkspaceSlug,
 } from "@/lib/discussions";
-import { markAutoPicked, wasAutoPicked } from "@/lib/model-choice";
+import { carryVariant, markAutoPicked, wasAutoPicked } from "@/lib/model-choice";
 import { describeReview, parseWorkerReview, parseWorkerTurn, workerNameFromTitle, type WorkerReview, type WorkerSummary } from "@/lib/workers";
 import { WorkerDecisionCards } from "@/ui/worker-decision";
 import { coworkerToolName } from "@/lib/coworker-tools";
@@ -1245,9 +1245,10 @@ function ThreadView({
         const nextModel = next ? parseModelPreference(next.id) : undefined;
         if (!next || !nextModel) return false;
         markAutoPicked(coworker.slug, next.id);
-        onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { model: next.id, modelVariant: "" }));
+        const modelVariant = carryVariant(coworker.modelVariant, next);
+        onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { model: next.id, modelVariant }));
         setProviderRefreshNote(`${turnModelId} could not answer, so ${coworker.name} is trying ${next.modelLabel} instead.`);
-        window.setTimeout(() => void submitTurn(prompt, messageId, { mode: "retry", attempt, switchedTo: next.modelLabel }, nextModel, excluded), 0);
+        window.setTimeout(() => void submitTurn(prompt, messageId, { mode: "retry", attempt, switchedTo: next.modelLabel }, { ...nextModel, ...(modelVariant ? { variant: modelVariant } : {}) }, excluded), 0);
         return true;
       } catch {
         return false;
@@ -1496,13 +1497,15 @@ function ThreadView({
     if (!pick) return;
     const model = parseModelPreference(pick.id);
     if (!model) return;
+    // The person's thinking effort stays when the new model offers it; the retry runs with it too.
+    const modelVariant = carryVariant(coworker.modelVariant, pick);
     try {
-      onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { model: pick.id, modelVariant: "" }));
+      onCoworkerChanged(await coworkerBridge.coworkers.update(coworker.slug, { model: pick.id, modelVariant }));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
       return;
     }
-    void retryPending({ model, label: pick.modelLabel });
+    void retryPending({ model: { ...model, ...(modelVariant ? { variant: modelVariant } : {}) }, label: pick.modelLabel });
   }
 
   useEffect(() => {
