@@ -89,9 +89,10 @@ test("create, preview, save and reopen an app without changing already-open resu
   const colleague = world.den.members.colleague;
   if (!colleague) throw new Error("The second identity was not provisioned.");
   const denied = await probe.api(colleague, `/v1/apps/${world.appId}`);
-  expect(denied.response.status).toBe(404);
+  expect(denied.response.status).toBe(403);
+  expect(denied.body).toMatchObject({ error: "forbidden", message: "Missing viewer access for config object." });
   expect(denied.text).not.toContain("Launch briefing");
-  evidence.recordAssertionEvidence("Stale saves and members without workflow access cannot overwrite or read the saved app", "Stale activation returned 409 and kept the title; the ungranted colleague received 404 without result content.", true);
+  evidence.recordAssertionEvidence("Stale saves and members without workflow access cannot overwrite or read the saved app", "Stale activation returned 409 and kept the title; the ungranted colleague received 403 for missing workflow access without result content.", true);
 
   await step("New app returns to a creation conversation", async () => {
     await world.open("/apps");
