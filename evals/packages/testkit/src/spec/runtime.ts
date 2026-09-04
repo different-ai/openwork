@@ -466,6 +466,19 @@ export class SeedChannel implements Seed {
       });
       if (options.signedInAs !== undefined) {
         const session = sessionFromWebOptions(options);
+        const denOrigin = new URL(options.den.ref.webUrl).origin;
+        let lastHref = "unobserved";
+        const waitForDen = () => eventually(async () => {
+          const observation = await evaluateOnSurface(web, `location.origin === ${JSON.stringify(denOrigin)} && document.readyState !== "loading" ? "" : location.href`);
+          if (typeof observation === "string") lastHref = observation;
+          return observation === "";
+        }, { within: 30_000, intervalMs: 250, label: "Den origin document" });
+        try {
+          await waitForDen();
+        } catch {
+          await navigate(web.client, options.den.ref.webUrl);
+          await waitForDen().catch(() => { throw new Error(`Den origin document did not load; last observed location.href: ${lastHref}`); });
+        }
         await callFunctionOnSurface(web, `(token) => {
           localStorage.setItem("openwork:web:auth-token", token);
           return true;

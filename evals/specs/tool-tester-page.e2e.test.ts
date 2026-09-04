@@ -32,8 +32,14 @@ test("an admin reaches the Tool Tester from Connectors and can test and govern a
     };
   })()`)).toEqual({ inManage: true, inSettings: false });
   await user.click({ testId: `test-mcp-tools-${world.connection.id}` });
-  await user.see({ text: "Tool Tester" }, { timeoutMs: 60_000 });
-  expect(await probe.eval(`location.href`)).toContain(`connectionId=${encodeURIComponent(world.connection.id)}`);
+  // The sidebar also reads "Tool Tester", so wait on the route and the page description instead of the title.
+  const testerHref = await probe.eventually(() => probe.eval(`location.href`), {
+    timeoutMs: 60_000,
+    label: "tool tester route",
+    until: (href) => typeof href === "string" && href.includes("/dashboard/tool-tester?connectionId="),
+  });
+  expect(testerHref).toContain(`connectionId=${encodeURIComponent(world.connection.id)}`);
+  await user.see({ text: /Run any tool your connections expose/ }, { timeoutMs: 60_000 });
   await user.see({ text: world.connection.name });
   await user.see({ label: "Search tools" });
 
@@ -43,7 +49,7 @@ test("an admin reaches the Tool Tester from Connectors and can test and govern a
     await user.click({ text: /mock_echo/ });
     await user.see("Form");
     await user.see("JSON");
-    await user.type({ label: /^text$/i }, marker);
+    await user.type({ label: /^text\s*\*?$/i }, marker);
     // TODO(primitive): assert selected and unselected radio state.
     expect(await probe.eval(`(() => {
       const editor = document.querySelector('[role="radiogroup"][aria-label="Arguments editor mode"]');
@@ -78,7 +84,7 @@ test("an admin reaches the Tool Tester from Connectors and can test and govern a
   });
 
   await step("Nested schemas honestly fall back to JSON", async () => {
-    await user.type({ label: "Search tools" }, "batch", { replace: true });
+    // The "echo" filter already matches mock_batch through its description ("Echo a batch of items").
     await user.click({ text: /mock_batch/ });
     await user.see({ text: /schema can't be shown as a form/i });
     await user.see({ role: "textbox", nth: 1 });
