@@ -677,33 +677,48 @@ async function measurePreparedSend(
   expectedUserMarker: string,
   witnessNonce: string,
 ): Promise<SendFacts> {
+  const beforeAssistantCount = Number(await evalIn(app,
+    `document.querySelectorAll('[data-message-role="assistant"]').length`));
   const startedAt = Date.now();
   await clickButton(app, "Run task", { timeoutMs: 30_000 });
-  await pollExpression(app, `(() => {
-    const messages = [...document.querySelectorAll('[data-message-role="user"]')];
-    const latest = messages[messages.length - 1];
-    return messages.length > ${beforeUserCount}
-      && (latest?.innerText ?? "").includes(${JSON.stringify(expectedUserMarker)});
-  })()`, `user message rendered for ${expectedUserMarker.slice(0, 80)}`);
-  const userRendered = Date.now() - startedAt;
+  let userRendered: number | undefined;
+  let firstToken: number | undefined;
+  let complete: number | undefined;
+  // Observe all milestones together. Waiting for the user row first masks
+  // tokens that already streamed while that row was still being reconciled.
+  await eventually(async () => {
+    const observed = await evalIn(app, `(() => {
+      const users = [...document.querySelectorAll('[data-message-role="user"]')];
+      const assistants = [...document.querySelectorAll('[data-message-role="assistant"]')];
+      const text = assistants[assistants.length - 1]?.innerText ?? "";
+      const newAssistant = assistants.length > ${beforeAssistantCount};
+      const sessionId = document.querySelector('[data-session-surface-id]')?.getAttribute('data-session-surface-id');
+      const row = [...document.querySelectorAll('[data-sidebar-session-id]')]
+        .find((item) => item.getAttribute('data-sidebar-session-id') === sessionId);
+      return {
+        userRendered: users.length > ${beforeUserCount}
+          && (users[users.length - 1]?.innerText ?? "").includes(${JSON.stringify(expectedUserMarker)}),
+        firstToken: newAssistant && text.includes("token 1 "),
+        complete: newAssistant && Boolean(row) && text.includes("token 20")
+          && text.includes(${JSON.stringify(witnessNonce)}) && !row.querySelector('[data-session-loading-indicator]'),
+      };
+    })()`);
+    if (!isRecord(observed)) throw new Error("Invalid benchmark milestone observation.");
+    const elapsed = Date.now() - startedAt;
+    if (observed.userRendered === true) userRendered ??= elapsed;
+    if (observed.firstToken === true) firstToken ??= elapsed;
+    if (observed.complete === true) complete ??= elapsed;
+    return userRendered !== undefined && firstToken !== undefined && complete !== undefined;
+  }, {
+    within: 60_000,
+    intervalMs: pollResolutionMs,
+    label: `independent render milestones for ${expectedUserMarker.slice(0, 80)}`,
+    until: (ready) => ready,
+  });
+  if (userRendered === undefined || firstToken === undefined || complete === undefined) {
+    throw new Error("Benchmark render milestones were incomplete.");
+  }
   const sessionId = await activeSessionId(app);
-  await pollExpression(app, `(() => {
-    const messages = [...document.querySelectorAll('[data-message-role="assistant"]')];
-    const latest = messages[messages.length - 1];
-    return (latest?.innerText ?? "").includes("token 1 ");
-  })()`, `first witness token in ${sessionId}`);
-  const firstToken = Date.now() - startedAt;
-  await pollExpression(app, `(() => {
-    const messages = [...document.querySelectorAll('[data-message-role="assistant"]')];
-    const latest = messages[messages.length - 1];
-    const text = latest?.innerText ?? "";
-    const row = document.querySelector(${JSON.stringify(`[data-sidebar-session-id="${sessionId}"]`)});
-    return Boolean(row)
-      && text.includes("token 20")
-      && text.includes(${JSON.stringify(witnessNonce)})
-      && !row.querySelector("[data-session-loading-indicator]");
-  })()`, `completed witness stream in ${sessionId}`);
-  const complete = Date.now() - startedAt;
   const facts = await evalIn(app, `(() => {
     const users = [...document.querySelectorAll('[data-message-role="user"]')];
     const assistants = [...document.querySelectorAll('[data-message-role="assistant"]')];
