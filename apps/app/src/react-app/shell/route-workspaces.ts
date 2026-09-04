@@ -6,6 +6,7 @@
 import type { Session } from "@opencode-ai/sdk/v2/client";
 
 import { createClient, unwrap } from "@/app/lib/opencode";
+import { createClientV2 } from "@/app/lib/opencode-v2-adapter";
 import type { OpenworkWorkspaceInfo } from "@/app/lib/openwork-server";
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
 import type { WorkspaceInfo } from "@/app/lib/desktop-types";
@@ -35,7 +36,7 @@ export type RouteSession = Session & {
 type RouteSessionListResult =
   | { data: RouteSession[]; error?: undefined; request: Request; response: Response }
   | { data?: undefined; error: unknown; request: Request; response: Response };
-type RouteSessionListTransport = (input: {
+export type RouteSessionListTransport = (input: {
   endpoint: ResolvedWorkspaceEndpoint;
   limit: number;
 }) => Promise<RouteSessionListResult>;
@@ -47,6 +48,11 @@ const nativeRouteSessionList: RouteSessionListTransport = async ({ endpoint, lim
   });
   return client.session.list({ limit });
 };
+
+export const v2RouteSessionList: RouteSessionListTransport = async ({ endpoint, limit }) =>
+  createClientV2(`${endpoint.mountedBaseUrl}/opencode2`, undefined, {
+    token: endpoint.token,
+  }).session.list({ limit });
 
 export async function listRouteSessions(
   endpoint: ResolvedWorkspaceEndpoint,

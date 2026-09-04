@@ -67,6 +67,7 @@ import {
   stabilizeRouteWorkspaceOrder,
   type RouteSession,
   type RouteWorkspace,
+  v2RouteSessionList,
 } from "./route-workspaces";
 import {
   readActiveWorkspaceId,
@@ -182,6 +183,9 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   const [baseUrl, setBaseUrl] = useState("");
   const [token, setToken] = useState("");
   const [engineV2ChatRouting, setEngineV2ChatRouting] = useState(false);
+  const engineV2ChatRoutingRef = useRef(engineV2ChatRouting);
+  engineV2ChatRoutingRef.current = engineV2ChatRouting;
+  const previousEngineV2ChatRoutingRef = useRef<boolean | null>(null);
   const [workspaces, setWorkspaces] = useState<RouteWorkspace[]>([]);
   const [workspaceOrderIds, setWorkspaceOrderIds] = useState<string[]>(() => readWorkspaceOrderIds());
   const [sessionsByWorkspaceId, setSessionsByWorkspaceId] = useState<Record<string, RouteSession[]>>({});
@@ -343,7 +347,10 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
           }));
         }
         try {
-          const fetchedItems = await listRouteSessions(endpoint);
+          // The sidebar lists from whichever engine chat is routed to.
+          const fetchedItems = workspace.workspaceType !== "remote" && engineV2ChatRoutingRef.current
+            ? await listRouteSessions(endpoint, v2RouteSessionList)
+            : await listRouteSessions(endpoint);
           const workspaceRoot = normalizeDirectoryPath(workspace.path ?? "");
           const items = workspaceRoot && !isRemoteOpenworkWorkspace
             ? fetchedItems.filter((session) =>
@@ -1026,6 +1033,12 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       window.clearInterval(interval);
     };
   }, [selectedWorkspaceEndpoint?.baseUrl, selectedWorkspaceEndpoint?.client, selectedWorkspaceEndpoint?.workspaceId]);
+  useEffect(() => {
+    const previous = previousEngineV2ChatRoutingRef.current;
+    previousEngineV2ChatRoutingRef.current = engineV2ChatRouting;
+    if (previous === null || previous === engineV2ChatRouting || !selectedWorkspaceId) return;
+    void reloadWorkspaceSessions(selectedWorkspaceId);
+  }, [engineV2ChatRouting, reloadWorkspaceSessions, selectedWorkspaceId]);
   const opencodeBaseUrl = engineV2ChatRouting ? opencode2BaseUrl : defaultOpencodeBaseUrl;
   const selectedWorkspaceError = errorsByWorkspaceId[selectedWorkspaceId] ?? null;
   const selectedSessionKnown = Boolean(
