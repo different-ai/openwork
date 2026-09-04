@@ -199,6 +199,13 @@ export async function emptyChat(seed: Seed) {
   return { app, workspace, session };
 }
 
+export async function paletteSessionActions(seed: Seed) {
+  const app = await seed.desktop({ name: "command-palette-pin-rename" });
+  const workspace = await seed.workspace(app, seed.tmpPath("command-palette-pin-rename"));
+  const session = await seedSessionRetry(seed, app, { title: "Palette pin rename probe" });
+  return { app, workspace, session };
+}
+
 export async function shimmerChat(seed: Seed) {
   const base = await emptyChat(seed);
   await seedControls(seed, base.app, [{ action: "eval.chat_loading.seed" }]);

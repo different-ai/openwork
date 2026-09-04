@@ -88,4 +88,30 @@ describe("command palette search", () => {
     expect(rankPaletteItems("theme", items, [])[0]?.items[0]?.id).toBe("settings:appearance");
     expect(rankPaletteItems("model", items, [])[0]?.items[0]?.id).toBe("models");
   });
+
+  test("ranks current session pin and rename actions first", () => {
+    const items = [
+      item({
+        id: "settings:permissions",
+        title: "Permissions",
+        keywords: ["authorized folders", "folder access", "file access", "allow", "permission denied", "sandbox", "approvals"],
+        group: "settings",
+      }),
+      item({
+        id: "session.pin.toggle",
+        title: "Pin session",
+        keywords: ["pin", "unpin", "favorite", "star", "keep on top", "sidebar"],
+        group: "actions",
+      }),
+      item({
+        id: "session.rename",
+        title: "Rename session…",
+        keywords: ["rename", "title", "name", "edit title"],
+        group: "actions",
+      }),
+    ];
+
+    expect(rankPaletteItems("pin", items, [])[0]?.items[0]?.id).toBe("session.pin.toggle");
+    expect(rankPaletteItems("rename", items, [])[0]?.items[0]?.id).toBe("session.rename");
+  });
 });

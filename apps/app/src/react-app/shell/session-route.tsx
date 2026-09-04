@@ -176,6 +176,7 @@ import { useShareWorkspaceState } from "@/react-app/domains/workspace/share-work
 import { ModelPickerModal, MODEL_PICKER_UNAVAILABLE_SUBTITLE } from "@/react-app/domains/session/modals/model-picker-modal";
 import { CommandPalette, type PaletteItem, type SessionGroupOption } from "./command-palette";
 import { buildCommandPaletteSessions } from "./command-palette-sessions";
+import { requestRenameSession } from "./session-actions-bus";
 import type { ThinkingModeShortcutDirection } from "./thinking-mode-shortcut";
 import { SessionSearchDialog } from "./session-search-dialog";
 import type { SessionMessageFetcher } from "@/react-app/domains/session/search/session-search";
@@ -703,6 +704,9 @@ export function SessionRoute() {
     selectedWorkspaceId ? state.groupsByWorkspace[selectedWorkspaceId] : undefined
   ));
   const assignSessionToGroup = sessionManagementStore((state) => state.assignGroup);
+  const currentSessionPinned = sessionManagementStore((state) => (
+    selectedSessionId ? state.pinnedIds.includes(selectedSessionId) : false
+  ));
   const seedWorkspaceActivitySessions = useSessionActivityStore((state) => state.seedWorkspaceSessions);
   const sessionActivityByWorkspaceId = useSessionActivityStore((state) => state.statusesByWorkspaceId);
 
@@ -2617,6 +2621,39 @@ export function SessionRoute() {
     ) ?? null;
   }, [paletteSessionOptions, selectedSessionId, selectedWorkspaceId]);
 
+  const currentSessionActionPaletteItems = useMemo<PaletteItem[]>(() => {
+    if (!selectedSessionId || !selectedWorkspaceId || !currentSessionForGroupMove) return [];
+    const items: PaletteItem[] = [{
+      id: "session.pin.toggle",
+      title: currentSessionPinned
+        ? t("session_management.unpin_session")
+        : t("session_management.pin_session"),
+      detail: currentSessionForGroupMove.title,
+      meta: "Session",
+      keywords: ["pin", "unpin", "favorite", "star", "keep on top", "sidebar"],
+      group: "actions",
+      action: () => {
+        setCommandPaletteOpen(false);
+        sessionManagementStore.getState().togglePin(selectedSessionId);
+      },
+    }];
+    if (opencodeClient) {
+      items.push({
+        id: "session.rename",
+        title: "Rename session…",
+        detail: currentSessionForGroupMove.title,
+        meta: "Session",
+        keywords: ["rename", "title", "name", "edit title"],
+        group: "actions",
+        action: () => {
+          setCommandPaletteOpen(false);
+          requestRenameSession(selectedSessionId);
+        },
+      });
+    }
+    return items;
+  }, [currentSessionForGroupMove, currentSessionPinned, opencodeClient, selectedSessionId, selectedWorkspaceId]);
+
   const currentSessionGroupId = selectedSessionId
     ? selectedWorkspaceGroupState?.assignments[selectedSessionId] ?? null
     : null;
@@ -3540,7 +3577,7 @@ export function SessionRoute() {
       currentSessionForGroupMove={currentSessionForGroupMove}
       currentSessionGroupId={currentSessionGroupId}
       onMoveCurrentSessionToGroup={handleMoveCurrentSessionToGroup}
-      extraItems={[...(sessionFindPaletteItem ? [sessionFindPaletteItem] : []), sessionSearchPaletteItem, ...terminalPaletteItems, developerModePaletteItem, diagnosticsCopyPaletteItem, diagnosticsExportPaletteItem, nextSessionTabPaletteItem, prevSessionTabPaletteItem, reloadConfigPaletteItem]}
+      extraItems={[...currentSessionActionPaletteItems, ...(sessionFindPaletteItem ? [sessionFindPaletteItem] : []), sessionSearchPaletteItem, ...terminalPaletteItems, developerModePaletteItem, diagnosticsCopyPaletteItem, diagnosticsExportPaletteItem, nextSessionTabPaletteItem, prevSessionTabPaletteItem, reloadConfigPaletteItem]}
       listAgents={listAgents}
       selectedAgent={selectedAgent}
       onSelectAgent={setSelectedAgent}

@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import type { CSSProperties } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
 import { ArrowLeft, Cloud, FileText, Globe, Mic2, MoreHorizontal, PanelRight, TextSearch, X, Zap } from "lucide-react";
 
@@ -71,6 +71,10 @@ import { type SidePanelItem, useUiStateStore } from "../../../shell/ui-state-sto
 import type { SessionNumberShortcutsState } from "../../../shell/session-number-shortcuts";
 import { useBootOverlayVisible } from "../../../shell/boot-state";
 import { CommandPaletteSearchBar } from "../../../shell/command-palette-search-bar";
+import {
+  OPEN_RENAME_SESSION_EVENT,
+  renameSessionIdFromEvent,
+} from "../../../shell/session-actions-bus";
 
 import { isElectronRuntime } from "../../../../app/utils";
 import { isCollectibleArtifactTarget, isLocalhostBrowserTarget, isOpenableFileTarget, type OpenTarget } from "../artifacts/open-target";
@@ -1281,6 +1285,19 @@ export function SessionPage(props: SessionPageProps) {
     setRenameTitle(sessionTitleForId(props.sidebar.workspaceSessionGroups, sessionId));
     setRenameOpen(true);
   };
+
+  const handleRenameSessionRequest = useEffectEvent((event: Event) => {
+    if (!props.onRenameSession) return;
+    const sessionId = renameSessionIdFromEvent(event);
+    if (sessionId) openRenameModal(sessionId);
+  });
+
+  useEffect(() => {
+    if (!props.onRenameSession) return;
+    const handler = (event: Event) => handleRenameSessionRequest(event);
+    window.addEventListener(OPEN_RENAME_SESSION_EVENT, handler);
+    return () => window.removeEventListener(OPEN_RENAME_SESSION_EVENT, handler);
+  }, [props.onRenameSession]);
 
   const submitRename = async () => {
     const sessionId = sessionActionId;
