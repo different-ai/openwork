@@ -1250,3 +1250,38 @@ export async function suspendedTurn(seed: Seed, { place }: { place: import("@ope
     },
   };
 }
+
+/** Signed-in chat with a deterministic model and a scheduled desktop task. */
+export async function computerMentions(seed: Seed) {
+  const providerId = "computer-mentions-mock";
+  const modelId = "computer-mentions-model";
+  const markers = ["COMPUTER-CLOUD-TASK", "COMPUTER-DESKTOP-TASK", "COMPUTER-PLAIN-TASK"];
+  const mock = seed.mock({
+    agentWorkloads: markers.map((promptMarker) => ({ promptMarker, finalReply: `Received ${promptMarker}`, steps: [] })),
+  });
+  const den = await seed.den({ mocks: { agent: mock } });
+  const created = await seed.api(den.admin, "/v1/automations", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "Daily project summary",
+      instructions: "Summarize today's project notes.",
+      schedule: { kind: "daily", timezone: "UTC", hour: 23, minute: 59 },
+      model: { providerId: "opencode", modelId: "big-pickle", variant: null },
+    }),
+  });
+  if (created.response.status !== 201) throw new Error(`Automation setup failed: ${created.text}`);
+  const app = await seed.desktop({ den, as: "admin", model: `${providerId}/${modelId}` });
+  const workspace = await seed.workspace(app, seed.tmpPath("computer-mentions"));
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    provider: {
+      [providerId]: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "Computer mentions mock",
+        options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-computer-mentions" },
+        models: { [modelId]: { name: "Computer mentions model" } },
+      },
+    },
+  });
+  const session = await seedSessionRetry(seed, app, { title: "Computer task mentions" });
+  return { den, app, workspace, session };
+}
