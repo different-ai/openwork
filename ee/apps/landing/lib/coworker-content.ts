@@ -15,6 +15,16 @@ export type Claim = {
   planned?: true;
 };
 
+/** The words on the page's own chrome that name the platform; the mark beside them is OpenWork's own. */
+export const POWERED_BY = "Powered by OpenWork";
+
+/** Who each of the three coworkers is, in one line — from the app's own role catalog. */
+export const ROLES: Array<{ name: string; role: string; line: string; source: string }> = [
+  { name: "Scout", role: "Research partner", line: "Digs into questions, compares options, and keeps the digest.", source: "apps/coworker/electron/team.mjs (research)" },
+  { name: "Editor", role: "Writing partner", line: "Drafts, edits, and content in your voice — release notes to product strings.", source: "apps/coworker/electron/team.mjs (writing)" },
+  { name: "Ops", role: "Operations", line: "Schedules, reminders, and follow-ups; surfaces blockers first.", source: "apps/coworker/electron/team.mjs (operations)" },
+];
+
 export const COWORKER = {
   name: "Open Coworker",
   eyebrow: "Open Coworker · the coworker layer of OpenWork",
@@ -125,7 +135,7 @@ export const TEAM: { title: string; lead: Claim; points: Claim[] } = {
   },
   points: [
     {
-      text: "Group chats route the question to the right coworkers; a silent facilitator picks who speaks and in what order, with a deterministic fallback.",
+      text: "Group chats route the question to the right coworkers; a quiet facilitator picks who speaks and in what order, and you read one calm thread.",
       source: "apps/coworker/src/lib/facilitator.ts; apps/coworker/src/lib/groups.ts",
     },
     {
@@ -191,7 +201,7 @@ export const CLOUD: {
     badge: "Free · open source",
     points: [
       {
-        text: "Coworkers, memory, discussions, documents, and Workers on your Mac, with what this Mac already has: a Codex or Claude Code sign-in, Copilot, keys in your environment, Ollama or LM Studio — or the free model, ready at once.",
+        text: "Coworkers, memory, discussions, documents, and Workers on your Mac, with what this Mac already has: a ChatGPT sign-in from Codex, GitHub Copilot, keys in your environment, Ollama or LM Studio — or the free model, ready at once.",
         source: "apps/coworker/src/ui/local-providers.tsx; apps/coworker/electron/local-providers.mjs; apps/coworker/README.md (Local mode)",
       },
       {

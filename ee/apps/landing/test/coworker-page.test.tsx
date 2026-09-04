@@ -7,6 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { CoworkerAvatar, CoworkerMark } from "../components/coworker-brand";
 import { CoworkerVignette, TEAM } from "../components/coworker-vignette";
 import { SiteFooter } from "../components/site-footer";
+import CoworkerPage from "../app/coworker/page";
 import {
   AGENT,
   CLOUD,
@@ -16,6 +17,8 @@ import {
   HERO,
   MEMORY,
   PLACEMENTS,
+  POWERED_BY,
+  ROLES,
   STEPS,
   TEAM as TEAM_COPY,
   WITH_OPENWORK,
@@ -123,5 +126,56 @@ describe("/coworker visuals", () => {
   test("the site links to /coworker from its footer", () => {
     const html = renderToStaticMarkup(createElement(SiteFooter));
     expect(html).toContain('href="/coworker"');
+  });
+});
+
+describe("/coworker is its own front door", () => {
+  const html = renderToStaticMarkup(createElement(CoworkerPage));
+
+  test("the page wears Open Coworker's own chrome, not the site's", () => {
+    // Its own scoped theme, header, and footer…
+    expect(html).toContain('class="cw ');
+    expect(html).toContain('aria-label="Primary"');
+    expect(html).toContain('aria-label="Footer"');
+    expect(html).toContain('aria-label="Open Coworker"');
+    // …and none of the OpenWork site's shared nav or footer chrome.
+    for (const shared of ["Book a call", "Star on GitHub", "Skills & Plugins", "Get started for free", "Download for macOS"]) {
+      expect(html, `shared site chrome leaked in: ${shared}`).not.toContain(shared);
+    }
+  });
+
+  test("it says Powered by OpenWork with OpenWork's own mark, and links to the shared docs, pricing, enterprise, and home", () => {
+    const poweredBy = html.match(/data-testid="coworker-powered-by"/g) ?? [];
+    expect(poweredBy.length).toBeGreaterThanOrEqual(2);
+    expect(html).toContain(POWERED_BY);
+    expect(html).toContain('src="/openwork-mark.svg"');
+    for (const href of ['href="/docs"', 'href="/pricing"', 'href="/enterprise"', 'href="/"']) {
+      expect(html, `shared destination missing: ${href}`).toContain(href);
+    }
+    // The comparison names the platform's own desktop app beside this one.
+    expect(html).toContain("OpenWork Desktop");
+  });
+
+  test("its copy is the tested content module, rendered whole", () => {
+    for (const step of STEPS) expect(html).toContain(step.title);
+    for (const item of PLACEMENTS.items) expect(html).toContain(item.name);
+    for (const row of WITH_OPENWORK.rows) expect(html).toContain(row.ask);
+    for (const role of ROLES) expect(html).toContain(role.line);
+    expect(html).toContain(CLOUD.cloud.cta.label);
+    expect(html).toContain(CLOUD.direction.text);
+    expect(html).toContain(GET_STARTED.status);
+  });
+
+  test("nothing internal reaches the customer: claim sources, roadmap labels, agent guides, and repo paths stay off the page", () => {
+    // The sources behind each claim are a test-time contract (allClaims), never a footnote a customer reads.
+    expect(html).not.toContain("Where each claim on this page is true");
+    for (const claim of allClaims()) expect(html, `a claim source leaked: ${claim.source}`).not.toContain(claim.source);
+    for (const leak of ["Direction —", "Where this is going", "start.md", "llms.txt", "README", "for your agent", "For your agent", "same license", "Made by", "honest"]) {
+      expect(html, `internal wording leaked: ${leak}`).not.toContain(leak);
+    }
+    // Repository paths belong in the repository; the one path a customer sees is the coworker's own folder.
+    for (const path of ["apps/coworker", "ee/apps", "packages/", "src/ui", "src/lib", ".mjs", ".tsx"]) {
+      expect(html, `a repository path leaked: ${path}`).not.toContain(path);
+    }
   });
 });
