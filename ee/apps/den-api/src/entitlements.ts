@@ -108,7 +108,9 @@ export function checkEntitlement(
     response: {
       error: "enterprise_plan_required",
       feature: key,
-      message: `${ENTITLEMENT_FEATURE_LABELS[key]} requires an Enterprise plan. Manage your plan at app.openworklabs.com/dashboard/billing.`,
+      message: key === "sso"
+        ? "SSO / SAML requires Enterprise or the Team SSO add-on. Manage your plan at app.openworklabs.com/dashboard/billing."
+        : `${ENTITLEMENT_FEATURE_LABELS[key]} requires an Enterprise plan. Manage your plan at app.openworklabs.com/dashboard/billing.`,
     },
   }
 }

@@ -2,6 +2,7 @@ import type { Seed } from "@openwork/env";
 
 export async function selfServeBillingWeb(seed: Seed) {
   const den = await seed.den({ env: {
+    DEN_PLAN_GATING_ENABLED: "true",
     STRIPE_SECRET_KEY: "", STRIPE_TEAM_PRICE_ID: "", STRIPE_ENTERPRISE_PRICE_ID: "", STRIPE_SSO_PRICE_ID: "",
   } });
   const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/billing", headless: true,

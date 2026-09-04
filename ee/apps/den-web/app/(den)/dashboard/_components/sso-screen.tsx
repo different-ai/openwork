@@ -481,7 +481,7 @@ export function SsoScreen() {
         <div className="rounded-[28px] border border-amber-200 bg-amber-50 px-6 py-5 text-[14px] text-amber-900">Only workspace admins can view SSO.</div>
       ) : (
         <>
-          {!orgContext.entitlements.sso ? <EnterprisePlanNotice feature="SSO" /> : null}
+          {!orgContext.entitlements.sso ? <EnterprisePlanNotice feature="SSO" ssoAddon /> : null}
           {error ? <DenNotice message={error} className="mb-6" /> : null}
           {!access.canManageSso ? (
             <div className="mb-6 rounded-[24px] border border-amber-200 bg-amber-50 px-5 py-4 text-[14px] text-amber-800">

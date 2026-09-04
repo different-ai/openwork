@@ -290,7 +290,9 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
         subscriptionType: "seat",
         currentCount: seatEligibility.currentCount,
         freeSeatCount: seatEligibility.freeSeatCount,
-        message: `This workspace includes ${seatEligibility.freeSeatCount} free members. Start seat billing before inviting another member.`,
+        message: seatEligibility.hasActiveSeatSubscription
+          ? "Team supports up to 100 users. Choose Enterprise in Billing to invite more members."
+          : `This workspace includes ${seatEligibility.freeSeatCount} free members. Start seat billing before inviting another member.`,
       }, 402)
     }
 
