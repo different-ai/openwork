@@ -14,6 +14,7 @@ import {
 import type { ReleaseChannel } from "../../../../app/types";
 import { isElectronRuntime, safeStringify } from "../../../../app/utils";
 import { t } from "../../../../i18n";
+import { resolveElectronUpdaterInstallError } from "./electron-updater-install-error";
 import { useUpdateCheckRequestStore } from "./update-check-request";
 
 export type SettingsUpdateStatus = {
@@ -579,11 +580,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
           await runCheckForUpdates(undefined, true);
           return;
         }
-        setUpdateStatus({
-          state: "error",
-          message: result?.reason ?? "Update install failed.",
-          failedAction: "install",
-        });
+        setUpdateStatus(resolveElectronUpdaterInstallError(result?.reason));
       }
     } catch (error) {
       if (!isCurrentReleaseChannel()) return;
