@@ -1,6 +1,7 @@
 "use client";
 
 import { DenInput } from "../../_components/ui/input";
+import { humanizeIdentifier } from "./workflow-plain-language";
 
 export type FormField = {
   key: string;
@@ -31,7 +32,7 @@ export function formFieldsFromSchema(schema: unknown): FormField[] | null {
   const fields: FormField[] = [];
   for (const [key, property] of Object.entries(schema.properties)) {
     if (!isRecord(property)) return null;
-    const label = typeof property.title === "string" ? property.title : key;
+    const label = typeof property.title === "string" ? property.title : humanizeIdentifier(key.replace(/Iso$/, ""));
     const description = typeof property.description === "string" ? property.description : null;
     const minimum = typeof property.minimum === "number" ? property.minimum : undefined;
     const maximum = typeof property.maximum === "number" ? property.maximum : undefined;

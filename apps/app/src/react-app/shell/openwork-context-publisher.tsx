@@ -4,6 +4,7 @@ import { useLocation } from "react-router";
 
 import { usePanelTabStore } from "../domains/session/panel/panel-tab-store";
 import { useWorkbenchStore } from "../domains/session/chat/workbench-store";
+import { useSessionManagementStore } from "../domains/session/sidebar/session-management-store";
 import { usePublishOpenworkContext } from "./control/control-provider";
 import { buildOpenworkContext } from "./openwork-context-projector";
 import { useUiStateStore } from "./ui-state-store";
@@ -20,6 +21,7 @@ export function OpenworkContextPublisher() {
   const applicationMenuVisible = useUiStateStore((state) => state.applicationMenuVisible);
   const workspaceRightSidebarExpanded = useUiStateStore((state) => state.workspaceRightSidebarExpanded);
   const panelSessions = usePanelTabStore((state) => state.sessions);
+  const pinnedSessionIds = useSessionManagementStore((state) => state.pinnedIds);
   const route = `${location.pathname}${location.search}${location.hash}`;
 
   const context = useMemo(() => buildOpenworkContext({
@@ -40,11 +42,13 @@ export function OpenworkContextPublisher() {
       workspaceRightSidebarExpanded,
     },
     panelSessions,
+    pinnedSessionIds,
     availableAffordances: [],
   }), [
     applicationMenuVisible,
     focusedPane,
     panelSessions,
+    pinnedSessionIds,
     primary,
     revision,
     route,

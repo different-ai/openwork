@@ -562,6 +562,24 @@ describe("engine pool", () => {
     expect(await fixture.logLines()).toContain(`${oldPort} SIGTERM`);
   });
 
+  test("reports an active draining generation until it retires", async () => {
+    const fixture = await createFixture();
+    const { pool, primary } = await createPool(fixture);
+    const oldPort = portOf(primary.url);
+    expect(pool.hasDrainingGeneration()).toBe(false);
+    await fixture.setBusy(oldPort, ["ses_live"]);
+    await fixture.setRuntimeConfig(JSON.stringify({ generation: 2 }));
+
+    await pool.requestRollover({ reason: "config_changed", workspace: fixture.workspace });
+
+    expect(pool.hasDrainingGeneration()).toBe(true);
+    expect(primary.isAlive()).toBe(true);
+    await fixture.setBusy(oldPort, []);
+    expect(await waitUntil(() => !pool.hasDrainingGeneration(), 5_000)).toBe(true);
+    // Retirement removes the draining status before asynchronous process exit.
+    expect(await waitUntil(() => !primary.isAlive(), 5_000)).toBe(true);
+  });
+
   test("seeds the healthy standby before flipping and flips anyway when seeding fails", async () => {
     const fixture = await createFixture();
     const seeded: Array<{ generationId: string; baseUrl: string; primaryAtSeed: string | null; hasAuth: boolean }> = [];

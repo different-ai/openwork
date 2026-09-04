@@ -35,11 +35,23 @@ describe("Workflow flow diagram", () => {
     expect(markup).toContain('data-node-ids="slack,gmail"');
     expect(markup).toContain('data-parallel-group="p1"');
     expect(markup).toContain('data-node-kind="branch"');
-    expect(markup).toContain("channels.length &gt; 0");
-    expect(markup).toContain(">yes<");
-    expect(markup).toContain(">no · from if<");
+    expect(markup).toContain("The number of channels is more than 0");
+    expect(markup).toContain('data-lane="yes"');
+    expect(markup).toContain('data-lane="no"');
+    expect(markup).toContain('data-step-number="1">1<');
+    expect(markup).toContain('data-step-number="7">7<');
     expect(markup).toContain('data-terminal="true"');
     expect(markup.match(/data-connector="flow"/g)).toHaveLength(5);
+  });
+
+  test("only shows raw tool paths and conditions with technical details", () => {
+    const plainMarkup = renderToStaticMarkup(createElement(WorkflowFlowDiagram, { graph }));
+    const technicalMarkup = renderToStaticMarkup(createElement(WorkflowFlowDiagram, { graph, technical: true }));
+
+    expect(plainMarkup).not.toContain("tools.slack.search");
+    expect(plainMarkup).not.toContain("channels.length &gt; 0");
+    expect(technicalMarkup).toContain("tools.slack.search");
+    expect(technicalMarkup).toContain("channels.length &gt; 0");
   });
 
   test("marks the last started tool failed and later tools not reached", () => {
@@ -51,6 +63,8 @@ describe("Workflow flow diagram", () => {
     expect(markup).toContain('data-node-id="slack" data-node-kind="tool" data-run-state="failed"');
     expect(markup).toContain('data-node-id="gmail" data-node-kind="tool" data-run-state="not_reached"');
     expect(markup).toContain('data-node-id="orgs" data-node-kind="tool" data-run-state="not_reached"');
+    expect(markup).toContain("This run: ✗ stopped here");
+    expect(markup).toContain("This run: skipped");
     expect(markup).toContain("Slack stopped responding");
   });
 

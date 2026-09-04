@@ -56,6 +56,7 @@ import {
     type DenModelsDevProviderDetail,
     type DenModelsDevProviderSummary,
 } from "./llm-provider-data";
+import { RuntimeEnvKeyChip, RuntimeEnvKeyNote, resolveRuntimeEnvKeys } from "./runtime-env-key";
 
 const SOURCE_TABS = [
     { value: "models_dev" as const, label: "Catalog provider", icon: Cpu },
@@ -831,6 +832,14 @@ export function LlmProviderEditorScreen({
     const providerEnv = catalogDetail
         ? getProviderEnvNames(catalogDetail.config)
         : [];
+    // What members' machines will actually read: catalog providers get a
+    // provider-specific tag once the row exists; until then it is a placeholder.
+    const runtimeEnvKeys = resolveRuntimeEnvKeys({
+        declaredEnvNames: providerEnv,
+        scoped: source === "models_dev",
+        saved: provider !== null && provider.source === "models_dev",
+        runtimeEnvKeys: provider?.runtimeEnvKeys ?? [],
+    });
 
     // Credential inputs shared by the standalone Credential section and the
     // guided custom form (where they render inline, before the endpoint).
@@ -1043,17 +1052,19 @@ export function LlmProviderEditorScreen({
                                         <p className="text-[12px] font-semibold uppercase text-gray-400">
                                             Env keys
                                         </p>
-                                        {providerEnv.length > 0 ? (
-                                            <div className="mt-2 flex flex-wrap gap-2">
-                                                {providerEnv.map((envName) => (
-                                                    <span
-                                                        key={envName}
-                                                        className="inline-flex max-w-full break-all rounded-md bg-white px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 ring-1 ring-inset ring-gray-200"
-                                                    >
-                                                        {envName}
-                                                    </span>
-                                                ))}
-                                            </div>
+                                        {runtimeEnvKeys.length > 0 ? (
+                                            <>
+                                                <div className="mt-2 flex flex-wrap gap-2">
+                                                    {runtimeEnvKeys.map((envKey) => (
+                                                        <RuntimeEnvKeyChip
+                                                            key={envKey.declared}
+                                                            envKey={envKey}
+                                                            className="inline-flex max-w-full break-all rounded-md bg-white px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 ring-1 ring-inset ring-gray-200"
+                                                        />
+                                                    ))}
+                                                </div>
+                                                <RuntimeEnvKeyNote keys={runtimeEnvKeys} />
+                                            </>
                                         ) : (
                                             <p className="mt-2">
                                                 <span className="inline-flex max-w-full rounded-md bg-white px-3 py-1.5 font-mono text-[11px] leading-5 text-gray-700 ring-1 ring-inset ring-gray-200">
@@ -1323,19 +1334,21 @@ export function LlmProviderEditorScreen({
                     </div>
 
                     {credentialFields}
-                    {provider?.source === "models_dev" && provider.runtimeEnvKeys.length > 0 ? (
+                    {runtimeEnvKeys.some((envKey) => envKey.tag !== null) ? (
                         <p className="mt-6 text-[13px] leading-6 text-gray-500">
                             On members&apos; machines and cloud workers this provider reads{" "}
-                            {provider.runtimeEnvKeys.map((envName, index) => (
-                                <span key={envName}>
+                            {runtimeEnvKeys.map((envKey, index) => (
+                                <span key={envKey.declared}>
                                     {index > 0 ? ", " : null}
-                                    <code className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[12px]">
-                                        {envName}
-                                    </code>
+                                    <RuntimeEnvKeyChip
+                                        envKey={envKey}
+                                        className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[12px]"
+                                    />
                                 </span>
                             ))}
-                            , so it never collides with a key someone set themselves or
-                            with another provider of the same kind.
+                            {runtimeEnvKeys.some((envKey) => envKey.pending)
+                                ? ". The 5-character tag is assigned when the provider is created and stays fixed."
+                                : ", so it never collides with a key someone set themselves or with another provider of the same kind."}
                         </p>
                     ) : null}
                 </section>

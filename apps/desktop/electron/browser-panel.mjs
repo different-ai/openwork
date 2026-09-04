@@ -547,6 +547,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     });
     view.webContents.on("did-start-loading", () => sendBrowserState());
     view.webContents.on("did-stop-loading", () => sendBrowserState());
+    view.webContents.on("focus", () => resetViewportEmulation(view));
     view.webContents.once("destroyed", () => {
       browserTabs.delete(tabId);
       browserTabOrder = browserTabOrder.filter((id) => id !== tabId);
@@ -606,6 +607,35 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
   function scaleRendererPoint(point) {
     const zoom = mainWindowZoomFactor();
     return { x: Math.round(point.x * zoom), y: Math.round(point.y * zoom) };
+  }
+
+  // Automation clients (docs shots, screenshot skills, Playwright) attach to a
+  // tab over CDP and emulate a viewport with Emulation.setDeviceMetricsOverride.
+  // Chromium keeps that emulated size after the client disconnects, so the page
+  // keeps laying out for e.g. 1440x900 inside a 400px panel and shows up
+  // clipped. Only a DevTools session that owns an override can drop it: take a
+  // brief session of our own, set a disabled (zero) override, then clear it.
+  // Call this on user-driven moments only — panel show, tab select, focus —
+  // so a capture in progress is not disturbed by background navigation.
+  function resetViewportEmulation(view) {
+    const webContents = view?.webContents;
+    if (!webContents || webContents.isDestroyed()) return;
+    const cdp = webContents.debugger;
+    if (cdp.isAttached()) return;
+    runDetachedTask("reset browser viewport emulation", async () => {
+      cdp.attach("1.3");
+      try {
+        await cdp.sendCommand("Emulation.setDeviceMetricsOverride", {
+          width: 0,
+          height: 0,
+          deviceScaleFactor: 0,
+          mobile: false,
+        });
+        await cdp.sendCommand("Emulation.clearDeviceMetricsOverride");
+      } finally {
+        if (cdp.isAttached()) cdp.detach();
+      }
+    });
   }
 
   function attachActiveBrowserView() {
@@ -721,6 +751,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     if (bounds.width > 0 && bounds.height > 0) {
       view?.setBounds(scaleRendererBounds(bounds));
     }
+    resetViewportEmulation(view);
     const url = view?.webContents.getURL();
     if (preloadDefault && (!url || url === "about:blank")) {
       runDetachedTask("load browser default page", () => view?.webContents.loadURL(BROWSER_DEFAULT_URL));
@@ -785,7 +816,11 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     });
     ipcMain.handle("openwork:browser:closeTab", (_event, tabId) => closeBrowserTab(tabId == null ? undefined : String(tabId)));
     ipcMain.handle("openwork:browser:closeAllTabs", () => closeAllBrowserTabs());
-    ipcMain.handle("openwork:browser:selectTab", (_event, tabId) => selectBrowserTab(String(tabId ?? "")).tabId);
+    ipcMain.handle("openwork:browser:selectTab", (_event, tabId) => {
+      const tab = selectBrowserTab(String(tabId ?? ""));
+      resetViewportEmulation(tab.view);
+      return tab.tabId;
+    });
     ipcMain.handle("openwork:browser:reorderTabs", (_event, tabIds) => reorderBrowserTabs(tabIds));
     ipcMain.handle("openwork:browser:listTabs", () => listBrowserTabs());
     ipcMain.handle("openwork:browser:setProxy", (_event, proxy) => setBrowserProxy(proxy));

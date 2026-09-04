@@ -991,9 +991,12 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
       engineMcpServerState,
       { forceStandby: true, reason: "cloud_provider_sync" },
     ),
-    engineBusy: () => enginePoolForConfig(config)
-      ? Promise.resolve(false)
-      : engineHasActiveSessions(config, resolveEngineRuntimeWorkspace(config)),
+    engineBusy: () => {
+      const pool = enginePoolForConfig(config);
+      return pool
+        ? Promise.resolve(pool.hasDrainingGeneration())
+        : engineHasActiveSessions(config, resolveEngineRuntimeWorkspace(config));
+    },
     logger: toManagedProviderAuthLogger(logger),
   });
   const routes = createRoutes(

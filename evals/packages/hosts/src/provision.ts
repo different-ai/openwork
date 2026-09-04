@@ -10,7 +10,6 @@ import { checkedExec, defaultDaytonaExec } from "./daytona.ts";
 import { FAULT_PROXY_SCRIPT } from "./fault-proxy-script.ts";
 import type { DaytonaExec, DaytonaExecResult } from "./daytona.ts";
 
-const CHROME_DEVTOOLS_PLUGIN_VERSION = "1.0.4";
 const REPO_ROOT = fileURLToPath(new URL("../../../..", import.meta.url));
 const DESKTOP_READY_TIMEOUT_MS = 300_000;
 const INSTALL_TIMEOUT_MS = 25 * 60 * 1_000;
@@ -44,7 +43,6 @@ export interface DesktopSandboxOptions {
 export interface DesktopSandbox {
   sandbox: string;
   created: boolean;
-  engineCacheDir: string | null;
 }
 
 export interface DenSandboxOptions {
@@ -96,8 +94,6 @@ export interface ConnectorE2eTestEnv {
   denWebUrl: string;
   sandboxA: string;
   sandboxB: string;
-  engineCacheDirA: string | null;
-  engineCacheDirB: string | null;
   mockUrl: string;
   ref: string;
   created: string[];
@@ -228,7 +224,6 @@ export async function provisionDesktopSandbox(options: DesktopSandboxOptions & P
   const ref = assertSafeRef(options.ref);
   const reused = options.reuse?.trim() || "";
   let sandbox = reused;
-  let engineCacheDir: string | null = null;
 
   await timedStep(log, "sandbox gate", async () => {
     if (reused) {
@@ -413,76 +408,6 @@ echo detached`;
     }
   });
 
-  await timedStep(log, "engine cache warm gate", async () => {
-    // The sandbox exec transport strips double quotes, so JSON travels base64.
-    const b64 = (text: string) => Buffer.from(text, "utf8").toString("base64");
-    const pluginManifestPrefix = b64('{"dependencies":{"@opencode-ai/plugin":"');
-    const pluginManifestSuffix = b64('"}}');
-    // The engine resolves the unpinned `opencode-chrome-devtools` plugin as `latest`
-    // and keys its cache dir by that tag; the harness installs one audited version
-    // into that slot so evaluation desktops never load whatever the tag points at.
-    const devtoolsManifest = b64(`{"dependencies":{"opencode-chrome-devtools":"${CHROME_DEVTOOLS_PLUGIN_VERSION}"}}`);
-    const warmDir = `/tmp/openwork-engine-warm-${Date.now()}`;
-    const warmScript = `set -e
-W=${warmDir}
-rm -rf /workspace/.openwork-daytona/engine-cache "$W"
-D="$W/openwork-dev-data"
-mkdir -p "$D/home" "$D/xdg/config/opencode" "$D/config/opencode" "$D/xdg/cache/opencode/packages/opencode-chrome-devtools@latest"
-LOG="$W/warm.log"
-sidecars=(/workspace/apps/desktop/resources/sidecars/opencode-*)
-SIDECAR="\${sidecars[0]:-}"
-if [ ! -x "$SIDECAR" ]; then
-  echo "No executable OpenCode sidecar found" > "$LOG"
-  echo WARM_TIMEOUT
-  tail -80 "$LOG" 2>&1 || true
-  exit 0
-fi
-ENGINE_VERSION=$("$SIDECAR" --version 2>>"$LOG" | tail -1 || true)
-if [ -z "$ENGINE_VERSION" ]; then
-  echo "OpenCode sidecar did not report a version" >> "$LOG"
-  echo WARM_TIMEOUT
-  tail -80 "$LOG" 2>&1 || true
-  exit 0
-fi
-printf %s ${pluginManifestPrefix} | base64 -d > "$D/xdg/config/opencode/package.json"
-printf %s "$ENGINE_VERSION" >> "$D/xdg/config/opencode/package.json"
-printf %s ${pluginManifestSuffix} | base64 -d >> "$D/xdg/config/opencode/package.json"
-cp "$D/xdg/config/opencode/package.json" "$D/config/opencode/package.json"
-printf %s ${devtoolsManifest} | base64 -d > "$D/xdg/cache/opencode/packages/opencode-chrome-devtools@latest/package.json"
-NPM=/usr/local/share/nvm/current/bin/npm
-if [ ! -x "$NPM" ]; then
-  echo "npm is missing at $NPM" >> "$LOG"
-  echo WARM_TIMEOUT
-  tail -80 "$LOG" 2>&1 || true
-  exit 0
-fi
-install_package() {
-  directory="$1"
-  if ! (cd "$directory" && HOME="$D/home" /usr/local/share/nvm/current/bin/npm install --ignore-scripts --no-audit --no-fund --loglevel=error) >> "$LOG" 2>&1; then
-    echo WARM_TIMEOUT
-    tail -80 "$LOG" 2>&1 || true
-    return 1
-  fi
-}
-install_package "$D/xdg/config/opencode" || exit 0
-install_package "$D/config/opencode" || exit 0
-install_package "$D/xdg/cache/opencode/packages/opencode-chrome-devtools@latest" || exit 0
-echo WARM_OK`;
-    const result = await execInSandbox(exec, sandbox, warmScript, {
-      timeoutMs: 240_000,
-      context: `engine cache warm gate for ${sandbox}`,
-    }).catch((error) => {
-      log(`==> WARNING: engine cache warm gate could not complete for ${sandbox}; specs will start cold. ${messageText(error)}`);
-      return null;
-    });
-    if (result?.stdout.includes("WARM_TIMEOUT")) {
-      log(`==> WARNING: engine cache warm gate did not complete for ${sandbox}; specs will start cold. Log tail:\n${outputTail(result)}`);
-    } else if (result?.stdout.includes("WARM_OK")) {
-      engineCacheDir = warmDir;
-      log(`==> engine cache warmed for ${sandbox}`);
-    }
-  });
-
   await timedStep(log, "Vite prewarm gate", async () => {
     const detachScript = `cd /workspace; python3 - <<PYEOF
 import subprocess
@@ -532,7 +457,7 @@ echo detached`;
     throw new Error(`Vite prewarm gate timed out after ${VITE_PREWARM_TIMEOUT_MS}ms waiting for ${phase} in ${sandbox}. Last readiness error: ${last}. Log tail:\n${outputTail(viteLog)}`);
   });
 
-  return { sandbox, created: !reused, engineCacheDir };
+  return { sandbox, created: !reused };
 }
 
 interface LocalProcessResult {
@@ -985,8 +910,6 @@ export function renderConnectorE2eTestEnv(facts: ConnectorE2eTestEnv): string {
     `OPENWORK_EVAL_DEN_WEB_URL=${shellQuote(facts.denWebUrl)}`,
     `OPENWORK_EVAL_DAYTONA_SANDBOX_A=${shellQuote(facts.sandboxA)}`,
     `OPENWORK_EVAL_DAYTONA_SANDBOX_B=${shellQuote(facts.sandboxB)}`,
-    `OPENWORK_EVAL_DAYTONA_ENGINE_CACHE_DIR_A=${shellQuote(facts.engineCacheDirA ?? "")}`,
-    `OPENWORK_EVAL_DAYTONA_ENGINE_CACHE_DIR_B=${shellQuote(facts.engineCacheDirB ?? "")}`,
     `OPENWORK_EVAL_CONNECTOR_MOCK_PUBLIC_URL=${shellQuote(facts.mockUrl)}`,
     "OPENWORK_EVAL_MODEL=big-pickle",
     "",
@@ -1024,8 +947,6 @@ export function parseConnectorE2eTestEnv(content: string): ConnectorE2eTestEnv {
     denWebUrl: required("OPENWORK_EVAL_DEN_WEB_URL"),
     sandboxA: required("OPENWORK_EVAL_DAYTONA_SANDBOX_A"),
     sandboxB: required("OPENWORK_EVAL_DAYTONA_SANDBOX_B"),
-    engineCacheDirA: values.get("OPENWORK_EVAL_DAYTONA_ENGINE_CACHE_DIR_A")?.trim() || null,
-    engineCacheDirB: values.get("OPENWORK_EVAL_DAYTONA_ENGINE_CACHE_DIR_B")?.trim() || null,
     mockUrl: required("OPENWORK_EVAL_CONNECTOR_MOCK_PUBLIC_URL"),
     ref,
     created: createdText.split(",").map((id) => id.trim()).filter(Boolean),

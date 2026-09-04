@@ -112,6 +112,13 @@ type DenProviderConnection = DenProvider & {
   apiKey: string | null;
   apiKeys: Record<string, string> | null;
   memberCredentialState: "missing" | "active" | "blocked" | "stale" | "error" | null;
+  /**
+   * The env names as stored in Den (from the list payload). The connect
+   * payload carries the runtime names, which Den scopes per provider for
+   * catalog providers; where the two differ, the stored name is where an
+   * earlier release put this credential.
+   */
+  declaredEnvNames: string[];
 };
 
 type EnvEntry = {
@@ -130,6 +137,12 @@ type PreparedMaterialization = {
   fingerprint: string;
   providers: MaterializedProvider[];
   envEntries: EnvEntry[];
+  /**
+   * Entries an earlier release wrote under a catalog provider's declared name.
+   * Deleted only while the store still holds exactly the value now written
+   * under the runtime name; a different value there is the user's own key.
+   */
+  supersededEntries: EnvEntry[];
   skipped: CloudProviderSyncSkippedProvider[];
 };
 
@@ -283,7 +296,8 @@ function parseProviderList(payload: unknown): DenProvider[] {
   return providers;
 }
 
-function parseProviderConnection(payload: unknown, expectedId: string): DenProviderConnection {
+function parseProviderConnection(payload: unknown, listed: DenProvider): DenProviderConnection {
+  const expectedId = listed.id;
   if (!isRecord(payload) || !isRecord(payload.llmProvider)) {
     throw new Error(`den_llm_provider_connect_invalid_response_${expectedId}`);
   }
@@ -308,6 +322,7 @@ function parseProviderConnection(payload: unknown, expectedId: string): DenProvi
     apiKey: typeof payload.llmProvider.apiKey === "string" ? payload.llmProvider.apiKey : null,
     apiKeys: parseApiKeys(payload.llmProvider.apiKeys),
     memberCredentialState,
+    declaredEnvNames: readProviderEnvNames(listed.providerConfig),
   };
 }
 
@@ -362,7 +377,7 @@ async function fetchProviders(
     providers.map(async (provider) =>
       parseProviderConnection(
         await requestJson(fetchImpl, session, `/v1/llm-providers/${encodeURIComponent(provider.id)}/connect`),
-        provider.id,
+        provider,
       )),
   );
 }
@@ -524,6 +539,17 @@ function prepareMaterialization(
   for (const provider of materialized) {
     for (const entry of provider.envEntries) upsertEnvEntry(envEntries, entry.key, entry.value);
   }
+  const desiredKeys = new Set(envEntries.map((entry) => entry.key));
+  const supersededEntries: EnvEntry[] = [];
+  for (const { provider, envEntries: written } of materialized) {
+    readProviderEnvNames(provider.providerConfig).forEach((runtimeName, index) => {
+      const declaredName = provider.declaredEnvNames[index];
+      const value = written.find((entry) => entry.key === runtimeName)?.value;
+      if (declaredName && declaredName !== runtimeName && value !== undefined && !desiredKeys.has(declaredName)) {
+        upsertEnvEntry(supersededEntries, declaredName, value);
+      }
+    });
+  }
 
   // Preserve den-api's stable, secret-safe owp:v1 fingerprint format.
   const fingerprintPayload = materialized.map((entry) => ({
@@ -540,6 +566,7 @@ function prepareMaterialization(
     fingerprint: `owp:v1:${hashString(stableJson(fingerprintPayload))}`,
     providers: materialized,
     envEntries,
+    supersededEntries,
     skipped,
   };
 }
@@ -954,6 +981,13 @@ export class CloudProviderSync {
     // cloud credential behind permanently.
     for (const key of desiredEnvKeys) this.ownedEnvKeys.add(key);
     const envDeletes = [...this.ownedEnvKeys].filter((key) => !desiredEnvKeys.has(key));
+    // Ownership is in-memory, so after the app restarts nothing remembers the
+    // credential an earlier release wrote under the bare catalog name — and
+    // left there it keeps enabling OpenCode's built-in vendor catalog. Remove
+    // it only on an exact value match: a different value is the user's own.
+    for (const entry of prepared.supersededEntries) {
+      if (storedEnv.get(entry.key) === entry.value && !envDeletes.includes(entry.key)) envDeletes.push(entry.key);
+    }
     for (const key of envDeletes) {
       await this.env.delete(key);
       this.ownedEnvKeys.delete(key);
