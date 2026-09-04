@@ -3274,8 +3274,10 @@ export function SessionRoute() {
         onCreateTaskWithPrompt: (workspaceId, prompt, attachments) => {
           void (async () => {
             const workspace = workspaces.find((item) => item.id === workspaceId);
+            console.error("[diag] onCreateTaskWithPrompt", { workspaceId, found: Boolean(workspace), workspaceIds: workspaces.map((item) => item.id) });
             if (!workspace) return;
             const endpoint = endpointForWorkspace(workspace);
+            console.error("[diag] endpoint", { hasEndpoint: Boolean(endpoint), hasToken: Boolean(endpoint?.token), baseUrl: endpoint?.opencodeBaseUrl });
             if (!endpoint?.token) return;
             const workspaceClient = createClient(
               endpoint.opencodeBaseUrl,
@@ -3318,7 +3320,8 @@ export function SessionRoute() {
               }));
               navigateToWorkspaceSession(workspaceId, session.id);
               focusPromptSoon();
-            } catch {
+            } catch (error) {
+              console.error("[diag] session.create failed", error);
               // Fall back to normal task creation without prompt
               void handleCreateTaskInWorkspace(workspaceId);
             }

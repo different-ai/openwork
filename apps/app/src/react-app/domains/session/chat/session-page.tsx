@@ -1897,9 +1897,10 @@ export function SessionPage(props: SessionPageProps) {
                     <div className="flex flex-1 items-center justify-center py-16">
                       <SessionEmptyHero
                         providerCount={providerCount}
-                        onRunTask={(prompt, attachments) =>
-                          props.sidebar.onCreateTaskWithPrompt?.(props.selectedWorkspaceId, prompt, attachments)
-                        }
+                        onRunTask={(prompt, attachments) => {
+                          console.error("[diag] page onRunTask", { hasHandler: Boolean(props.sidebar.onCreateTaskWithPrompt), selectedWorkspaceId: props.selectedWorkspaceId });
+                          props.sidebar.onCreateTaskWithPrompt?.(props.selectedWorkspaceId, prompt, attachments);
+                        }}
                         onOpenProviderAuth={props.onOpenProviderAuth}
                         composer={props.newTaskComposer}
                       />
