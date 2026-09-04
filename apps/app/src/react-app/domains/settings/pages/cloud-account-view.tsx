@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
 import * as React from "react";
+import { desktopPolicyDefinitions } from "@openwork/types/den/desktop-policies";
 import { ArrowUpRight } from "lucide-react";
 import { useNavigate } from "react-router";
 
@@ -12,6 +13,14 @@ import {
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useOrgRestrictions } from "../../cloud/desktop-config-provider";
+import {
+  SettingsList,
+  SettingsListItem,
+  SettingsListItemContent,
+  SettingsListItemTitle,
+} from "../settings-list";
 import { t } from "@/i18n";
 import { SignInFallbackNotice } from "@/react-app/domains/cloud/signin-fallback-notice";
 import { CloudAccountSection } from "../cloud/cloud-account-section";
@@ -171,6 +180,55 @@ function DenSignedOutPanel({
   );
 }
 
+const permissionLabels = {
+  allowCustomProviders: "Add AI providers",
+  allowZenModel: "Use OpenCode models",
+  allowMultipleWorkspaces: "Create more workspaces",
+  allowControlSettings: "Change app settings",
+  allowManageExtensions: "Add tools, skills & MCP servers",
+  allowBuiltInExtensions: "Use built-in extensions",
+  allowAlphaUpdates: "Try experimental updates",
+  showWelcomePage: "Show welcome page",
+};
+
+function AppPermissionsView() {
+  const config = useOrgRestrictions();
+  return (
+    <SettingsStack>
+      <Separator />
+      <SettingsSection>
+        <SettingsSectionHeader>
+          <SettingsSectionHeaderContent>
+            <SettingsSectionHeaderTitle>Your app permissions</SettingsSectionHeaderTitle>
+            <SettingsSectionHeaderDescription>
+              These are your current permissions for this organization.
+            </SettingsSectionHeaderDescription>
+          </SettingsSectionHeaderContent>
+        </SettingsSectionHeader>
+        <SettingsList>
+          {desktopPolicyDefinitions.filter((entry) => entry.restrictedValue !== null).map((entry) => {
+            const allowed = config[entry.id] !== false;
+            return (
+              <div key={entry.id} data-testid={`app-permission-${entry.id}`}>
+                <SettingsListItem>
+                  <SettingsListItemContent>
+                    <SettingsListItemTitle>{permissionLabels[entry.id]}</SettingsListItemTitle>
+                  </SettingsListItemContent>
+                  <SettingsStatusBadge label={allowed ? "Allowed" : "Blocked"} tone={allowed ? "ready" : "neutral"} />
+                </SettingsListItem>
+              </div>
+            );
+          })}
+        </SettingsList>
+        <SettingsSectionHeaderDescription>
+          Your administrator manages team permissions in Cloud → Team → Access.
+          Ask them if you need a change, including access to an MCP server or skill.
+        </SettingsSectionHeaderDescription>
+      </SettingsSection>
+    </SettingsStack>
+  );
+}
+
 export function CloudAccountView({ developerMode, session }: CloudAccountViewProps) {
   const { activeOrganization, isSignedIn, statusMessage } = useCloudSession();
   const navigate = useNavigate();
@@ -180,7 +238,7 @@ export function CloudAccountView({ developerMode, session }: CloudAccountViewPro
     navigate("/onboarding", { replace: true });
   }, [isSignedIn, navigate, session.needsOrgSelection]);
 
-  return (
+  const accountContent = (
     <SettingsStack>
       <Separator />
 
@@ -256,5 +314,18 @@ export function CloudAccountView({ developerMode, session }: CloudAccountViewPro
         />
       ) : null}
     </SettingsStack>
+  );
+
+  if (!isSignedIn) return accountContent;
+
+  return (
+    <Tabs defaultValue="account" className="w-full max-w-3xl gap-y-6">
+      <TabsList variant="line" aria-label="Account pages">
+        <TabsTrigger value="account">Account</TabsTrigger>
+        <TabsTrigger value="permissions">App permissions</TabsTrigger>
+      </TabsList>
+      <TabsContent value="account">{accountContent}</TabsContent>
+      <TabsContent value="permissions"><AppPermissionsView /></TabsContent>
+    </Tabs>
   );
 }

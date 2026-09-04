@@ -1,6 +1,5 @@
 /** @jsxImportSource react */
 import type * as React from "react";
-import { desktopPolicyDefinitions } from "@openwork/types/den/desktop-policies";
 import {
   ArrowLeft,
   Bug,
@@ -9,7 +8,6 @@ import {
   CloudCog,
   Cog,
   FolderLock,
-  Info,
   Paintbrush,
   Puzzle,
   RefreshCcw,
@@ -47,7 +45,7 @@ import type { PlatformCapabilities } from "../../../../app/lib/platform-capabili
 import type { SettingsTab } from "../../../../app/types";
 import { cn } from "@/lib/utils";
 import { usePlatform } from "../../../kernel/platform";
-import { useCheckDesktopRestriction, useOrgRestrictions } from "../../cloud/desktop-config-provider";
+import { useCheckDesktopRestriction } from "../../cloud/desktop-config-provider";
 import {
   SettingsContent,
   SettingsPanel,
@@ -393,48 +391,6 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
   );
 }
 
-function DesktopPolicyBanner() {
-  const config = useOrgRestrictions();
-
-  // Show the banner when the org has any active desktop policy restriction
-  // (a boolean set to false) or any white-label branding override.
-  const hasRestriction = Object.entries(config).some(
-    ([key, value]) => typeof value === "boolean" && value === false && key !== "allowedDesktopVersions",
-  );
-  const hasBranding = Boolean(config.brandAppName ?? config.brandLogoUrl ?? config.brandAccentColor);
-
-  if (!hasRestriction && !hasBranding) return null;
-
-  return (
-    <div
-      data-testid="desktop-policy-banner"
-      className="flex items-start gap-2.5 rounded-xl border border-indigo-6/30 bg-indigo-2/50 px-3.5 py-2.5 text-sm dark:border-indigo-7/25 dark:bg-indigo-3/30"
-    >
-      <Info className="mt-0.5 size-4 shrink-0 text-indigo-11" />
-      <div className="min-w-0 flex-1">
-        <p className="font-medium text-indigo-12">
-          {t("settings.desktop_policy_active_title")}
-        </p>
-        <p className="mt-0.5 text-xs text-indigo-11">
-          Your organization manages access in Cloud → Team → Access. These are your current app permissions; ask your admin if you need a change.
-
-        </p>
-        <details className="mt-3">
-          <summary className="cursor-pointer text-xs font-medium text-indigo-12">What can I do?</summary>
-          <dl className="mt-2 divide-y divide-indigo-6/30">
-            {desktopPolicyDefinitions.filter((entry) => entry.restrictedValue !== null).map((entry) => (
-              <div key={entry.id} className="flex items-center justify-between gap-4 py-2 text-xs">
-                <dt>{entry.id === "allowManageExtensions" ? "Add tools, skills & MCP servers" : entry.name}</dt>
-                <dd className="shrink-0 font-medium">{config[entry.id] === false ? "Blocked by organization" : "Allowed"}</dd>
-              </div>
-            ))}
-          </dl>
-        </details>
-      </div>
-    </div>
-  );
-}
-
 export function SettingsPageHeading({ activeTab }: Pick<SettingsPageProps, "activeTab">) {
   return (
     <SettingsPanelHeading>
@@ -449,7 +405,6 @@ export function SettingsPage(props: SettingsPageProps) {
     <SettingsContent>
       <SettingsPanel>
         <SettingsPageHeading activeTab={props.activeTab} />
-        <DesktopPolicyBanner />
 
         {props.showUpdateToolbar && props.activeTab === "general" ? (
           <SettingsPanelToolbar>

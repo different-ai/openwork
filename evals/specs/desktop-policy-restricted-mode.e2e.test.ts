@@ -54,7 +54,10 @@ const settingsHub = { role: "button", label: "Settings" } as const;
 const accountMenu = { testId: "account-status-menu" };
 const settingsMenuItem = { role: "menuitem", label: "Settings" } as const;
 const accountMenuItem = { role: "menuitem", label: "Account" } as const;
-const policyBanner = { testId: "desktop-policy-banner" };
+const removedPolicyBanner = { testId: "desktop-policy-banner" };
+const permissionsTab: { role: "tab"; label: string } = { role: "tab", label: "App permissions" };
+const accountTab: { role: "tab"; label: string } = { role: "tab", label: "Account" };
+const signOut: { role: "button"; label: string } = { role: "button", label: "Sign out" };
 const manageExtensionsNotice = { testId: "manage-extensions-policy-notice" };
 const builtInExtensionsNotice = "Built-in OpenWork extensions are disabled by your organization";
 
@@ -80,9 +83,7 @@ test(defaultJourney, async ({ world: selectedWorld, user, agent, probe, step, ev
   // Phase 1 — the member's desktop before any restriction: the Library carries
   // no extension-management notice, and the settings hub and every settings
   // group are reachable. Settings comes last so the desktop is still on that
-  // route when it reloads in phase 3. (The generic "Organization policies active"
-  // banner is not a discriminator here: it already reacts to unrelated
-  // organization flags such as Dashboards or Automations being off.)
+  // route when it reloads in phase 3.
   const libraryHashBefore = await step("the member opens the Library before the policy changes", async () => {
     await member.user.click("Library");
     await member.user.see({ text: "Library" }, { timeoutMs: 90_000 });
@@ -200,7 +201,8 @@ test(defaultJourney, async ({ world: selectedWorld, user, agent, probe, step, ev
   // is the level-based safety net.
   const hashAfter = await step("the member's desktop refreshes on the settings route", async () => {
     await member.user.reload();
-    await member.user.see(policyBanner, { timeoutMs: 90_000 });
+    await member.user.see(permissionsTab, { timeoutMs: 90_000 });
+    await member.user.notSee(removedPolicyBanner);
     return member.probe.eventually(() => member.probe.hash(), {
       within: 90_000,
       label: "restricted settings navigation redirected to the Cloud account tab",
@@ -214,11 +216,11 @@ test(defaultJourney, async ({ world: selectedWorld, user, agent, probe, step, ev
   await member.user.notSee(settingsHub);
   await member.user.looks([
     "The settings navigation shows only a Cloud group and no Workspace or Global group",
-    "An Organization policies active notice is visible on the account page",
+    "The account page has Account and App permissions tabs without a policy banner",
   ]);
   evidence.recordAssertionEvidence(
     "Under the Restricted default policy the settings surface collapses to the Cloud account page",
-    `hash=${hashAfter}; Cloud group visible; Workspace and Global groups absent; Settings hub absent; policy banner visible`,
+    `hash=${hashAfter}; Cloud group visible; Workspace and Global groups absent; Settings hub absent; App permissions tab visible; policy banner absent`,
     hashAfter.includes("/settings/cloud-account"),
   );
 
@@ -329,9 +331,22 @@ test(teamJourney, async ({ world: selectedWorld, user, agent, probe, step, evide
     await member.user.click(accountMenu);
     await member.user.click(settingsMenuItem);
     await member.user.see(settingsHub, { timeoutMs: 60_000 });
+    await member.user.click({ role: "button", label: /^Account$/ });
+    await member.user.click(permissionsTab);
+    await member.user.notSee(signOut);
+    for (const key of lockedKeys) {
+      await member.user.see({ testId: `app-permission-${key}` }, { text: /Allowed/ });
+    }
+    const baselinePermissions = await member.probe.text();
+    expect(count(baselinePermissions, "Allowed")).toBe(lockedKeys.length);
+    expect(baselinePermissions).not.toContain("Blocked");
+    await member.user.click(accountTab);
+    await member.user.see(signOut);
+    await member.agent.run("route.settings.general");
+    await member.user.see(settingsHub);
     const hash = await member.probe.hash();
     expect(hash).toContain("/settings/general");
-    evidence.recordAssertionEvidence("The target and control have the same ordinary role and unrestricted baseline", JSON.stringify({ roles, hash }), roles.every((role) => role === "member") && hash.includes("/settings/general"));
+    evidence.recordAssertionEvidence("The target and control have the same ordinary role and unrestricted baseline with a working App permissions tab", JSON.stringify({ roles, hash, baselinePermissions }), roles.every((role) => role === "member") && hash.includes("/settings/general") && count(baselinePermissions, "Allowed") === lockedKeys.length && !baselinePermissions.includes("Blocked"));
   });
 
   await step("the admin locks the team through Team Access", async () => {
@@ -379,11 +394,26 @@ test(teamJourney, async ({ world: selectedWorld, user, agent, probe, step, evide
     const forbiddenRoute = await member.probe.eventually(() => member.probe.hash(), {
       within: 60_000, label: "forbidden appearance route redirects", until: (hash) => hash.includes("/settings/cloud-account"),
     });
-    await member.user.see({ text: "What can I do?" });
-    await member.user.click({ text: "What can I do?" });
-    await member.user.see({ text: "Add tools, skills & MCP servers" });
+    await member.user.see(signOut);
+    await member.user.click(permissionsTab);
+    await member.user.see({ text: "Your app permissions" });
+    await member.user.notSee(signOut);
+    await member.user.notSee(removedPolicyBanner);
+    for (const key of lockedKeys) {
+      await member.user.see({ testId: `app-permission-${key}` }, { text: /Blocked/ });
+    }
     const permissionsText = await member.probe.text();
-    expect(permissionsText).toContain("Blocked by organization");
+    expect(count(permissionsText, "Blocked")).toBe(lockedKeys.length);
+    expect(permissionsText).not.toContain("Allowed");
+    await member.user.looks([
+      "App permissions is the selected account tab and seven read-only capability rows show Blocked",
+      "The permissions page uses the app settings layout with no colored policy banner and no account sign-out controls",
+    ]);
+    await member.user.click(accountTab);
+    await member.user.see(signOut);
+    await member.user.notSee({ text: "Your app permissions" });
+    const accountText = await member.probe.text();
+    evidence.recordAssertionEvidence("Account and App permissions are separate working tabs under Locked access", JSON.stringify({ permissionsText, accountText }), count(permissionsText, "Blocked") === lockedKeys.length && !permissionsText.includes("Allowed") && !accountText.includes("Your app permissions"));
     await member.user.click({ role: "button", label: "Back to app" });
     await member.user.click(accountMenu);
     await member.user.see(accountMenuItem);
@@ -394,7 +424,7 @@ test(teamJourney, async ({ world: selectedWorld, user, agent, probe, step, evide
     await member.user.see(manageExtensionsNotice, { timeoutMs: 90_000 });
     await member.user.see({ text: /Need an MCP server or skill/ });
     const libraryText = await member.probe.text();
-    evidence.recordAssertionEvidence("The locked desktop hides Settings, redirects forbidden routes, and explains how to get an MCP server", JSON.stringify({ redirected, forbiddenRoute, permissionsText, menuText, libraryText }), redirected.includes("/settings/cloud-account") && forbiddenRoute.includes("/settings/cloud-account") && permissionsText.includes("Blocked by organization") && libraryText.includes("Need an MCP server or skill"));
+    evidence.recordAssertionEvidence("The locked desktop hides Settings, redirects forbidden routes, and explains how to get an MCP server", JSON.stringify({ redirected, forbiddenRoute, permissionsText, menuText, libraryText }), redirected.includes("/settings/cloud-account") && forbiddenRoute.includes("/settings/cloud-account") && count(permissionsText, "Blocked") === lockedKeys.length && libraryText.includes("Need an MCP server or skill"));
     await member.user.looks(["The Library shows organization restrictions and guidance for requesting an MCP server or skill"]);
   });
 
@@ -431,6 +461,17 @@ test(teamJourney, async ({ world: selectedWorld, user, agent, probe, step, evide
     const hash = await member.probe.hash();
     expect(hash).toContain("/settings/general");
     evidence.recordAssertionEvidence("Custom survives Locked and reloads with tools still blocked while Settings returns on the real desktop", JSON.stringify({ chosen, locked, restored, config, hash, libraryText }), restored.capabilities.allowManageExtensions === false && config.allowControlSettings === true && config.allowManageExtensions === false && hash.includes("/settings/general"));
+    await member.user.click({ role: "button", label: /^Account$/ });
+    await member.user.click(permissionsTab);
+    await member.user.notSee(signOut);
+    await member.user.notSee(removedPolicyBanner);
+    await member.user.see({ testId: "app-permission-allowControlSettings" }, { text: /Change app settings\s*Allowed/ });
+    await member.user.see({ testId: "app-permission-allowManageExtensions" }, { text: /Add tools, skills & MCP servers\s*Blocked/ });
+    const permissionsText = await member.probe.text();
+    expect(count(permissionsText, "Blocked")).toBe(1);
+    expect(count(permissionsText, "Allowed")).toBe(lockedKeys.length - 1);
+    evidence.recordAssertionEvidence("The Custom account permissions tab shows Settings Allowed and tools Blocked", permissionsText, count(permissionsText, "Blocked") === 1 && count(permissionsText, "Allowed") === lockedKeys.length - 1);
+    await member.user.looks(["The dedicated App permissions tab shows Change app settings Allowed and Add tools, skills & MCP servers Blocked, without a policy banner"]);
     await admin.user.looks(["Custom is selected with tool installation Blocked and other capabilities Allowed"]);
   });
 
