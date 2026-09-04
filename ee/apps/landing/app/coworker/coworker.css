@@ -1,0 +1,218 @@
+/*
+ * Open Coworker's own look, scoped to /coworker. The rest of the site keeps its
+ * chrome and tokens; this page is treated as its own front door — its own
+ * name, palette, type, and shape — marked "Powered by OpenWork".
+ *
+ * Paper and ink: a warm off-white page, deep-ink type, and the four avatar
+ * pastels as the only colour. The app itself is dark, so the one dark thing on
+ * the page is the app's window (the vignette), which keeps the app's tokens.
+ */
+.cw {
+  --cw-paper: #f6f3ec;
+  --cw-paper-2: #ece7dc;
+  --cw-paper-card: #fffdf9;
+  --cw-ink: #14161c;
+  --cw-ink-700: #3a3d47;
+  --cw-ink-500: #6b6f7a;
+  --cw-ink-300: #a3a7b1;
+  --cw-rule: #d8d2c4;
+  /* The team's colours, as the page's accents */
+  --cw-blue: #5b8dff;
+  --cw-blue-soft: #c9d8ff;
+  --cw-violet: #9b7bff;
+  --cw-violet-soft: #ddd4ff;
+  --cw-mint: #3ed5a6;
+  --cw-mint-soft: #c8f2e4;
+  --cw-rose: #f5759d;
+  --cw-rose-soft: #ffd3e0;
+  --cw-amber-soft: #ffe3c2;
+  /* Defaults a section overrides */
+  --accent: var(--cw-blue);
+  --accent-soft: var(--cw-blue-soft);
+
+  background: var(--cw-paper);
+  color: var(--cw-ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+.cw ::selection {
+  background: color-mix(in srgb, var(--cw-blue) 30%, transparent);
+}
+
+.cw :focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--cw-blue) 80%, transparent);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+/* Paper: two warm glows and a faint grain, nothing on content. */
+.cw-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(1100px 640px at 80% -20%, rgb(155 123 255 / 0.12), transparent 60%),
+    radial-gradient(900px 520px at -10% 10%, rgb(62 213 166 / 0.1), transparent 60%),
+    var(--cw-paper);
+}
+
+.cw-backdrop::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0.35;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.1  0 0 0 0 0.1  0 0 0 0 0.12  0 0 0 0.06 0'/></filter><rect width='160' height='160' filter='url(%23n)'/></svg>");
+  mix-blend-mode: multiply;
+}
+
+.cw-nav {
+  background: rgb(246 243 236 / 0.82);
+  -webkit-backdrop-filter: blur(18px) saturate(120%);
+  backdrop-filter: blur(18px) saturate(120%);
+  border-bottom: 1px solid var(--cw-rule);
+}
+
+/* Display type: heavy, tight, editorial — the opposite of the site's light headings. */
+.cw-display {
+  font-weight: 700;
+  letter-spacing: -0.045em;
+  line-height: 0.98;
+  color: var(--cw-ink);
+}
+
+/* A hand-drawn underline under one word of a headline, in the section's accent. */
+.cw-mark {
+  background-image: linear-gradient(transparent 68%, var(--accent-soft) 68%, var(--accent-soft) 92%, transparent 92%);
+  padding: 0 0.04em;
+}
+
+.cw-eyebrow {
+  font-family: var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--cw-ink-500);
+}
+
+/* Speech bubble: the shape the brand is made of. */
+.cw-bubble {
+  position: relative;
+  background: var(--cw-paper-card);
+  border: 1px solid var(--cw-rule);
+  border-radius: 22px;
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.8) inset, 0 20px 40px -32px rgb(20 22 28 / 0.35);
+}
+
+.cw-bubble--tail::after {
+  content: "";
+  position: absolute;
+  left: 26px;
+  bottom: -11px;
+  width: 22px;
+  height: 22px;
+  background: inherit;
+  border-right: 1px solid var(--cw-rule);
+  border-bottom: 1px solid var(--cw-rule);
+  border-bottom-right-radius: 4px;
+  transform: skewX(-8deg) rotate(45deg);
+  clip-path: polygon(0 0, 100% 100%, 0 100%);
+}
+
+.cw-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  height: 2.75rem;
+  padding: 0 1.25rem;
+  border-radius: 999px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  transition: background-color 160ms ease, color 160ms ease, filter 160ms ease;
+  white-space: nowrap;
+}
+
+.cw-btn--primary {
+  background: var(--cw-ink);
+  color: var(--cw-paper);
+}
+
+.cw-btn--primary:hover {
+  background: var(--cw-ink-700);
+}
+
+.cw-btn--ghost {
+  border: 1px solid var(--cw-rule);
+  background: rgb(255 255 255 / 0.4);
+  color: var(--cw-ink);
+}
+
+.cw-btn--ghost:hover {
+  background: rgb(255 255 255 / 0.8);
+}
+
+.cw-btn--sm {
+  height: 2.25rem;
+  padding: 0 1rem;
+  font-size: 0.8125rem;
+}
+
+.cw-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.625rem;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--accent-soft);
+  color: var(--cw-ink);
+}
+
+.cw-pill--ink {
+  background: rgb(20 22 28 / 0.06);
+  color: var(--cw-ink-700);
+}
+
+.cw-pill--amber {
+  background: var(--cw-amber-soft);
+}
+
+.cw-pill--mint {
+  background: var(--cw-mint-soft);
+}
+
+/* Section accents */
+.cw-accent-blue { --accent: var(--cw-blue); --accent-soft: var(--cw-blue-soft); }
+.cw-accent-violet { --accent: var(--cw-violet); --accent-soft: var(--cw-violet-soft); }
+.cw-accent-mint { --accent: var(--cw-mint); --accent-soft: var(--cw-mint-soft); }
+.cw-accent-rose { --accent: var(--cw-rose); --accent-soft: var(--cw-rose-soft); }
+
+/* The dark band: "Powered by OpenWork", spelled out on ink. */
+.cw-ink-band {
+  background: var(--cw-ink);
+  color: var(--cw-paper);
+}
+
+.cw-ink-band .cw-mark {
+  --accent-soft: rgb(155 123 255 / 0.55);
+}
+
+/* Terminal block inside paper: keeps the app's dark. */
+.cw-terminal {
+  background: #0b0e14;
+  color: #f4f6fa;
+  border-radius: 16px;
+  border: 1px solid rgb(20 22 28 / 0.9);
+}
+
+.cw-rule {
+  border-color: var(--cw-rule);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cw * {
+    transition: none !important;
+  }
+}
