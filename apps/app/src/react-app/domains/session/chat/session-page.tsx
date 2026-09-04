@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import type { CSSProperties } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
 import { ArrowLeft, Cloud, FileText, Globe, Mic2, MoreHorizontal, PanelRight, TextSearch, X, Zap } from "lucide-react";
 
@@ -70,6 +70,11 @@ import { useShellConfig } from "../../../shell/shell-config";
 import { type SidePanelItem, useUiStateStore } from "../../../shell/ui-state-store";
 import type { SessionNumberShortcutsState } from "../../../shell/session-number-shortcuts";
 import { useBootOverlayVisible } from "../../../shell/boot-state";
+import { CommandPaletteSearchBar } from "../../../shell/command-palette-search-bar";
+import {
+  OPEN_RENAME_SESSION_EVENT,
+  renameSessionIdFromEvent,
+} from "../../../shell/session-actions-bus";
 
 import { isElectronRuntime } from "../../../../app/utils";
 import { isCollectibleArtifactTarget, isLocalhostBrowserTarget, isOpenableFileTarget, type OpenTarget } from "../artifacts/open-target";
@@ -153,6 +158,7 @@ export type SessionPageSidebarProps = {
   onOpenSession: (workspaceId: string, sessionId: string) => void;
   onPrefetchSession?: (workspaceId: string, sessionId: string) => void;
   onCreateTaskInWorkspace: (workspaceId: string, groupId?: string) => void;
+  onCreateSplitTaskInWorkspace: (workspaceId: string) => void;
   onCreateTaskWithPrompt?: (workspaceId: string, prompt: string, attachments?: ComposerAttachment[]) => void;
   onOpenRenameWorkspace: (workspaceId: string) => void;
   onShareWorkspace: (workspaceId: string) => void;
@@ -1281,6 +1287,19 @@ export function SessionPage(props: SessionPageProps) {
     setRenameOpen(true);
   };
 
+  const handleRenameSessionRequest = useEffectEvent((event: Event) => {
+    if (!props.onRenameSession) return;
+    const sessionId = renameSessionIdFromEvent(event);
+    if (sessionId) openRenameModal(sessionId);
+  });
+
+  useEffect(() => {
+    if (!props.onRenameSession) return;
+    const handler = (event: Event) => handleRenameSessionRequest(event);
+    window.addEventListener(OPEN_RENAME_SESSION_EVENT, handler);
+    return () => window.removeEventListener(OPEN_RENAME_SESSION_EVENT, handler);
+  }, [props.onRenameSession]);
+
   const submitRename = async () => {
     const sessionId = sessionActionId;
     const nextTitle = renameTitle.trim();
@@ -1359,6 +1378,7 @@ export function SessionPage(props: SessionPageProps) {
           onOpenSession={openSessionTab}
           onPrefetchSession={props.sidebar.onPrefetchSession}
           onCreateTaskInWorkspace={props.sidebar.onCreateTaskInWorkspace}
+          onCreateSplitTaskInWorkspace={props.sidebar.onCreateSplitTaskInWorkspace}
           onOpenRenameSession={props.onRenameSession ? openRenameModal : undefined}
           onOpenDeleteSession={props.onDeleteSession ? (sessionId) => {
             setSessionActionId(sessionId);
@@ -1423,8 +1443,13 @@ export function SessionPage(props: SessionPageProps) {
             className="min-h-0 flex-1 max-lg:rounded-none lg:rounded-[14px]"
           >
             <ResizablePanel minSize={isMobile ? "0px" : "360px"} className="min-w-0">
-              <main className="flex h-full min-w-0 flex-col overflow-hidden bg-dls-surface max-lg:rounded-none max-lg:border-0 max-lg:shadow-none lg:rounded-[14px] lg:border lg:border-border lg:shadow-[0_8px_24px_rgba(15,23,42,0.06)] dark:lg:shadow-[0_10px_30px_rgba(0,0,0,0.45)] mac:bg-dls-surface/85 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
-          <header className="z-10 flex h-9 shrink-0 items-center justify-between border-b border-border px-3 max-lg:h-12 lg:px-6 mac:titlebar-drag  mac:backdrop-blur-2xl mac:backdrop-saturate-150 @container/titlebar">
+              <main data-session-pane className="flex h-full min-w-0 flex-col overflow-hidden bg-dls-surface max-lg:rounded-none max-lg:border-0 max-lg:shadow-none lg:rounded-[14px] lg:border lg:border-border lg:shadow-[0_8px_24px_rgba(15,23,42,0.06)] dark:lg:shadow-[0_10px_30px_rgba(0,0,0,0.45)] mac:bg-dls-surface/85 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
+          {/* The pane `<main>` above already carries the macOS vibrancy blur. A
+              second backdrop filter on the header (or on the transcript surface
+              below) is invisible — nothing scrolls beneath either — but each
+              one forces an extra full-pane blur pass every frame the transcript
+              repaints. Keep the pane as the only backdrop surface. */}
+          <header className="z-10 flex h-9 shrink-0 items-center justify-between border-b border-border px-3 max-lg:h-12 lg:px-6 mac:titlebar-drag @container/titlebar">
             <div className="flex min-w-0 items-center gap-3">
               {shellConfig.sidebar ? <SidebarTrigger className="mac:hidden" /> : null}
               {parentSessionLink && !props.primarySlot && !hasMainContentTakeover ? (
@@ -1481,7 +1506,13 @@ export function SessionPage(props: SessionPageProps) {
               ) : null}
             </div>
 
-            <div className="flex items-center gap-1.5 text-gray-10 mac:titlebar-no-drag">
+            {!props.primarySlot ? (
+              <div className="flex shrink-0 justify-end px-1 md:min-w-0 md:flex-1 md:justify-center md:px-4">
+                <CommandPaletteSearchBar />
+              </div>
+            ) : null}
+
+            <div className="flex min-w-0 items-center gap-1.5 text-gray-10 mac:titlebar-no-drag">
               {!props.primarySlot && findButtonSessionId && !hasMainContentTakeover ? (
                 <Tooltip>
                   <TooltipTrigger
@@ -1637,7 +1668,7 @@ export function SessionPage(props: SessionPageProps) {
             className="min-h-0 flex-1 overflow-hidden"
           >
             <ResizablePanel minSize="180px" className="min-h-0">
-            <div className="relative h-full min-w-0 overflow-hidden bg-dls-surface mac:bg-dls-surface/85 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
+            <div className="relative h-full min-w-0 overflow-hidden bg-dls-surface mac:bg-dls-surface/85">
               {props.primarySlot ? (
                 <div className="h-full overflow-y-auto" data-workspace-primary-slot>
                   {props.primarySlot}

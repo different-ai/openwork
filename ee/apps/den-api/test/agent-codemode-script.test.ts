@@ -190,6 +190,28 @@ test("executes a confined script by default", async () => {
   expect(firstText(payload)).toBe("2")
 })
 
+test("normalizes JSON-encoded script input", async () => {
+  const payload = await rpc(buildApp(), "tools/call", {
+    name: "execute_capability_script",
+    arguments: {
+      code: "return { t: typeof input, v: input.channel }",
+      input: "{\"channel\":\"bug\"}",
+    },
+  })
+  expect(JSON.parse(firstText(payload))).toEqual({ t: "object", v: "bug" })
+})
+
+test("keeps object script input unchanged", async () => {
+  const payload = await rpc(buildApp(), "tools/call", {
+    name: "execute_capability_script",
+    arguments: {
+      code: "return { t: typeof input, v: input.channel }",
+      input: { channel: "bug" },
+    },
+  })
+  expect(JSON.parse(firstText(payload))).toEqual({ t: "object", v: "bug" })
+})
+
 test("exposes in-program capability search over the Den namespace", async () => {
   const payload = await rpc(buildApp(), "tools/call", {
     name: "execute_capability_script",

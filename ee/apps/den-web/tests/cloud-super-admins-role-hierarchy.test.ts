@@ -83,11 +83,11 @@ describe("cloud super-admin role hierarchy", () => {
   test("exposes exact admin sidebar destinations for Manage, Observability, and Team", () => {
     const shell = read("../app/(den)/dashboard/_components/org-dashboard-shell.tsx");
 
-    for (const label of ["Collections", "Plugin Directory", "Connectors", "Sources", "Models", "OpenWork Models", "Bring your Own Keys", "Workflow Runs", "Analytics", "Members", "Settings"]) {
+    for (const label of ["Plugin Directory", "Connectors", "Models", "OpenWork Models", "Bring your Own Keys", "Advanced", "Workflow Runs", "Analytics", "Members", "Settings"]) {
       expect(shell).toContain(`label: "${label}"`);
     }
 
-    for (const label of ["General", "Diagnostics", "Brand appearance", "Desktop Policies", "Billing", "API Keys", "SSO", "SCIM", "Tool Tester"]) {
+    for (const label of ["General", "Diagnostics", "Billing", "API Keys", "SSO", "SCIM", "Tool Tester"]) {
       expect(shell).toContain(`label: "${label}"`);
     }
 

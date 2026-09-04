@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   deleteSandboxes,
   desktopSandboxName,
+  encodeDenExtraEnv,
   parseConnectorE2eTestEnv,
   provisionDesktopSandbox,
   renderConnectorE2eTestEnv,
@@ -74,6 +75,18 @@ test("connector E2E test env rendering and parsing round-trip the provision cont
   assert.throws(() => parseConnectorE2eTestEnv(missingApi), /OPENWORK_EVAL_DEN_API_URL/);
 });
 
+test("Den extra env is carried as base64 KEY=VALUE lines and refuses unsafe names", () => {
+  const encoded = encodeDenExtraEnv({ DEN_DASHBOARDS_ENABLED: "true", DEN_WORKER_URL_TEMPLATE: "https://w.local/{id}?a=b" });
+  assert.match(encoded, /^[A-Za-z0-9+/=]+$/);
+  assert.equal(
+    Buffer.from(encoded, "base64").toString("utf8"),
+    "DEN_DASHBOARDS_ENABLED=true\nDEN_WORKER_URL_TEMPLATE=https://w.local/{id}?a=b",
+  );
+  assert.throws(() => encodeDenExtraEnv({ "den-flag": "x" }), /Unsafe Den environment name/);
+  assert.throws(() => encodeDenExtraEnv({ "$(id)": "x" }), /Unsafe Den environment name/);
+  assert.throws(() => encodeDenExtraEnv({ DEN_X: "a\nb" }), /may not contain a newline/);
+});
+
 test("server sandbox names are unique within the same CI process and second", () => {
   const first = serverSandboxName();
   const second = serverSandboxName();
@@ -95,10 +108,13 @@ test("provisionDesktopSandbox reuses a sandbox and keeps every remote command in
 
   const result = await provisionDesktopSandbox({ ref: "dev", name: "a", reuse: "existing-a", exec, log: () => undefined });
 
-  assert.deepEqual(result, { sandbox: "existing-a", created: false });
+  assert.equal(result.sandbox, "existing-a");
+  assert.equal(result.created, false);
   assert.deepEqual(calls[0]?.args, ["sandbox", "start", "existing-a"]);
   assert.equal(calls.filter((call) => call.args[0] === "create").length, 0);
   assert.equal(calls.filter((call) => call.args[0] === "snapshot").length, 0);
+  const lastFirstBootCall = calls.findLastIndex((call) => call.args[3]?.includes("/tmp/warmup-profile"));
+  assert(lastFirstBootCall >= 0);
   assertRemoteCommandsAreSingleArgument(calls);
 });
 

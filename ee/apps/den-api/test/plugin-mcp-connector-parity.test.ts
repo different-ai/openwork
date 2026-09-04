@@ -196,13 +196,15 @@ describe.serial("plugin-owned MCP connections follow the plugin lifecycle in the
     await seedBinding({ pluginId: ownerPluginId, connectionId: directConnectionId, owned: false })
 
     const before = await manageableConnections()
-    expect(pluginNames(before.find((row) => row.id === ownedConnectionId), "identityManagedBy")).toEqual(["Owner Plugin", "Reusing Plugin"])
+    expect(pluginNames(before.find((row) => row.id === ownedConnectionId), "identityManagedBy")).toEqual(["Owner Plugin"])
+    expect(pluginNames(before.find((row) => row.id === ownedConnectionId), "requiredBy")).toEqual(["Owner Plugin", "Reusing Plugin"])
     expect(before.some((row) => row.id === directConnectionId)).toBe(true)
 
     // Another active plugin still depends on the connection, so it stays listed under that plugin.
     await setPluginLifecycle(ownerPluginId, "archive")
     const afterOwnerArchived = await manageableConnections()
-    expect(pluginNames(afterOwnerArchived.find((row) => row.id === ownedConnectionId), "identityManagedBy")).toEqual(["Reusing Plugin"])
+    expect(pluginNames(afterOwnerArchived.find((row) => row.id === ownedConnectionId), "identityManagedBy")).toEqual([])
+    expect(pluginNames(afterOwnerArchived.find((row) => row.id === ownedConnectionId), "requiredBy")).toEqual(["Reusing Plugin"])
     expect(afterOwnerArchived.some((row) => row.id === directConnectionId)).toBe(true)
 
     // The last active plugin is gone: the plugin-owned connector disappears, the admin-created one does not.

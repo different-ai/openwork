@@ -64,6 +64,7 @@ export type PluginMcpTransport = "stdio" | "http" | "sse";
 
 export type PluginMcp = {
   configObjectId?: string;
+  connectionId?: string | null;
   id: string;
   name: string;
   description: string;
@@ -546,6 +547,7 @@ export function pluginMcpEntries(item: {
 
   return servers.map(([serverName, config], index) => ({
     configObjectId: item.id,
+    connectionId: asString(config.externalMcpConnectionId),
     description: item.description,
     id: servers.length === 1 ? item.id : `${item.id}:${index}`,
     name: servers.length === 1 ? item.title : serverName,
@@ -564,7 +566,7 @@ function parseMembershipConfigObject(entry: unknown) {
   const configObject = entry.configObject;
   const id = asString(configObject.id);
   const title = asString(configObject.title);
-  const description = asString(configObject.description) ?? "Imported from a connected repository.";
+  const description = asString(configObject.description) ?? "";
   const objectType = asString(configObject.objectType);
   const currentRelativePath = asString(configObject.currentRelativePath);
   const latestVersion = isRecord(configObject.latestVersion) ? configObject.latestVersion : null;
@@ -696,7 +698,7 @@ async function fetchResolvedPlugin(id: string): Promise<DenPlugin | null> {
     commands,
     createdAt: asString(pluginItem.createdAt) ?? new Date().toISOString(),
     createdByOrgMembershipId: asString(pluginItem.createdByOrgMembershipId),
-    description: asString(pluginItem.description) ?? "Imported from a connected repository.",
+    description: asString(pluginItem.description) ?? "",
     hooks,
     id: pluginId,
     installed: true,

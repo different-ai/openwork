@@ -1,10 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { lstat, readFile, realpath } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { renderPrMarkdown } from "./render.ts";
 import { readTestRunDirectory } from "./scan.ts";
 
-const BLOB_API_BASE = "https://blob.vercel-storage.com";
 const MARKER = "<!-- test-evidence -->";
 const LEGACY_MARKERS = ["<!-- photo-roll -->", "<!-- fraimz -->"];
 
@@ -20,11 +19,9 @@ export interface CommandResult {
 }
 
 export type CommandRunner = (command: string, args: string[], opts?: CommandOptions) => CommandResult;
-export type Fetcher = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 export interface PublishDependencies {
   exec?: CommandRunner;
-  fetch?: Fetcher;
   stdout?: (markdown: string) => void;
 }
 
@@ -72,61 +69,38 @@ function shortSha(sha: string): string {
   return sha.slice(0, 7);
 }
 
-function resolveBlobToken(exec: CommandRunner): string | null {
-  const fromEnv = process.env.BLOB_READ_WRITE_TOKEN;
-  if (fromEnv) return fromEnv;
-  const result = exec(
-    "infisical",
-    ["secrets", "get", "BLOB_READ_WRITE_TOKEN", "--plain", "--silent"],
-  );
-  const token = result.status === 0 && !result.error ? result.stdout.trim() : "";
-  return token.length > 0 ? token : null;
+interface Attachment {
+  fileName: string;
+  absPath: string;
+  caption: string;
 }
 
-async function uploadImages(
+function ghSupportsAttach(exec: CommandRunner): boolean {
+  return exec("gh", ["pr", "comment", "--help"]).stdout.includes("--attach");
+}
+
+function sanitizeCaption(caption: string, fileName: string): string {
+  return caption.replace(/[\r\n#]/g, "").trim() || fileName;
+}
+
+async function resolveAttachments(
   testRunDir: string,
-  testRunId: string,
-  files: string[],
-  token: string,
-  fetcher: Fetcher,
-): Promise<Record<string, string>> {
-  const urls: Record<string, string> = {};
+  fileNames: Array<{ fileName: string; caption: string }>,
+): Promise<Attachment[]> {
+  const attachments: Attachment[] = [];
   const realDir = await realpath(testRunDir);
-  for (const file of files) {
-    if (basename(file) !== file || !file.toLowerCase().endsWith(".png")) {
-      throw new Error(`Refusing to upload invalid test artifact path: ${file}`);
+  for (const { fileName, caption } of fileNames) {
+    if (basename(fileName) !== fileName || !fileName.toLowerCase().endsWith(".png")) {
+      throw new Error(`Refusing to attach invalid test artifact path: ${fileName}`);
     }
-    const filePath = join(realDir, file);
-    const stats = await lstat(filePath).catch(() => null);
+    const absPath = join(realDir, fileName);
+    const stats = await lstat(absPath).catch(() => null);
     if (!stats?.isFile()) {
-      throw new Error(`Refusing to upload non-regular or symlinked test artifact: ${file}`);
+      throw new Error(`Refusing to attach non-regular or symlinked test artifact: ${fileName}`);
     }
-    const pathname = `test-artifacts/${encodeURIComponent(testRunId)}/${encodeURIComponent(file)}`;
-    const response = await fetcher(`${BLOB_API_BASE}/${pathname}`, {
-      method: "PUT",
-      headers: {
-        authorization: `Bearer ${token}`,
-        "x-content-type": "image/png",
-        "x-add-random-suffix": "0",
-      },
-      body: await readFile(filePath),
-    });
-    if (!response.ok) {
-      const detail = (await response.text()).slice(0, 300);
-      throw new Error(`Vercel Blob upload failed (${response.status}) for ${file}: ${detail}`);
-    }
-    let payload: unknown;
-    try {
-      payload = await response.json();
-    } catch {
-      throw new Error(`Vercel Blob upload for ${file}: response was not JSON`);
-    }
-    if (!isRecord(payload) || typeof payload.url !== "string" || payload.url.length === 0) {
-      throw new Error(`Vercel Blob upload for ${file}: response did not include a url`);
-    }
-    urls[file] = payload.url;
+    attachments.push({ fileName, absPath, caption: sanitizeCaption(caption, fileName) });
   }
-  return urls;
+  return attachments;
 }
 
 function stickyCommentId(raw: string): string | null {
@@ -178,22 +152,21 @@ function resolvePrHeadSha(pr: string, exec: CommandRunner): string {
   return payload.headRefOid;
 }
 
-function postStickyComment(pr: string, markdown: string, exec: CommandRunner): boolean {
+function postStickyComment(pr: string, markdown: string, attachments: Attachment[], exec: CommandRunner): boolean {
   const viewed = exec("gh", ["pr", "view", pr, "--json", "comments"]);
   requireSuccess(viewed, "Reading PR comments");
   const commentId = stickyCommentId(viewed.stdout);
   if (commentId) {
-    const updated = exec(
+    const deleted = exec(
       "gh",
-      ["api", "--method", "PATCH", `repos/{owner}/{repo}/issues/comments/${commentId}`, "--input", "-"],
-      { input: JSON.stringify({ body: markdown }) },
+      ["api", "--method", "DELETE", `repos/{owner}/{repo}/issues/comments/${commentId}`],
     );
-    requireSuccess(updated, "Updating test evidence comment");
-    return true;
+    requireSuccess(deleted, "Deleting previous test evidence comment");
   }
-  const posted = exec("gh", ["pr", "comment", pr, "--body-file", "-"], { input: markdown });
+  const attachmentArgs = attachments.flatMap((attachment) => ["--attach", `${attachment.absPath}#${attachment.caption}`]);
+  const posted = exec("gh", ["pr", "comment", pr, "--body-file", "-", ...attachmentArgs], { input: markdown });
   requireSuccess(posted, "Posting test evidence comment");
-  return false;
+  return commentId !== null;
 }
 
 export async function publishPr(
@@ -204,7 +177,6 @@ export async function publishPr(
   if (!stored) throw new Error(`No valid test-run.json or legacy result found in ${options.testRunDir}`);
   const { format, testRun } = stored;
   const exec = dependencies.exec ?? commandRunner;
-  const fetcher = dependencies.fetch ?? globalThis.fetch;
   const testRunId = basename(options.testRunDir);
   const pr = options.pr === undefined ? "<n>" : String(options.pr);
   const reproCommand = `pnpm --dir evals artifacts:publish -- --pr ${pr} --test-run ${testRunId}`;
@@ -216,7 +188,7 @@ export async function publishPr(
     const markdown = renderPrMarkdown(testRun, {}, {
       reproCommand,
       sourcePath,
-      notice: "Dry run: screenshots were not uploaded.",
+      notice: "Dry run: screenshots were not attached.",
     });
     (dependencies.stdout ?? ((body) => process.stdout.write(`${body}\n`)))(markdown);
     return { markdown, posted: false, updated: false, urls: {} };
@@ -235,22 +207,19 @@ export async function publishPr(
     ? `⚠ evidence from ${shortSha(testRun.gitSha)}, PR head is ${shortSha(prHeadSha)}`
     : undefined;
 
-  const token = resolveBlobToken(exec);
-  const urls = token
-    ? await uploadImages(
-      options.testRunDir,
-      testRunId,
-      [...new Set(testRun.artifacts.map((artifact) => artifact.fileName).filter((fileName) => fileName.length > 0))],
-      token,
-      fetcher,
-    )
-    : {};
-  const uploadNotice = token ? undefined : "screenshots not uploaded (no BLOB_READ_WRITE_TOKEN)";
+  const uniqueArtifacts = testRun.artifacts.filter((artifact, index, artifacts) =>
+    artifact.fileName.length > 0 && artifacts.findIndex((candidate) => candidate.fileName === artifact.fileName) === index
+  );
+  const attachments = await resolveAttachments(options.testRunDir, uniqueArtifacts);
+  const supportsAttach = ghSupportsAttach(exec);
+  const postedAttachments = supportsAttach ? attachments : [];
+  const urls = Object.fromEntries(postedAttachments.map((attachment) => [attachment.fileName, attachment.absPath]));
+  const attachmentNotice = supportsAttach ? undefined : "screenshots not attached (gh < 2.99; run `brew upgrade gh`)";
   const markdown = renderPrMarkdown(testRun, urls, {
     reproCommand,
     sourcePath,
-    notice: [staleNotice, uploadNotice].filter((notice) => notice !== undefined).join(" · ") || undefined,
+    notice: [staleNotice, attachmentNotice].filter((notice) => notice !== undefined).join(" · ") || undefined,
   });
-  const updated = postStickyComment(String(options.pr), markdown, exec);
+  const updated = postStickyComment(String(options.pr), markdown, postedAttachments, exec);
   return { markdown, posted: true, updated, urls };
 }

@@ -73,7 +73,8 @@ import {
   messageHasVisibleAssistantOutput,
   resolveAdmissionOutcome,
 } from "./session-admission-outcome";
-import { interruptedTaskRecoveryPrompt } from "@/react-app/domains/session/sync/session-error";
+import { interruptedTaskRecoveryPrompt, presentOpencodeSessionError } from "@/react-app/domains/session/sync/session-error";
+import { createSessionErrorUIMessage } from "@/react-app/domains/session/sync/usechat-adapter";
 import { useLocal } from "@/react-app/kernel/local-provider";
 import { resolveAttachmentFileMetadata } from "@/react-app/domains/session/sync/attachment-file-part";
 import { deriveSessionRenderModel } from "@/react-app/domains/session/sync/transition-controller";
@@ -404,6 +405,47 @@ function createSessionLifecycleEvalMessages(sessionId: string): UIMessage[] {
       ],
       metadata: { opencode: { created: now + 1 } },
     },
+  ];
+}
+
+/**
+ * Shaped like a live `session.error` payload from OpenCode: an API error with
+ * provider, status, and the raw response body, so the transcript renders it
+ * through the same presentation path as a real failure.
+ */
+const SESSION_ERROR_EVAL_PAYLOAD = {
+  name: "APIError",
+  data: {
+    message: "Rate limit reached for claude-sonnet-4-5 on requests per minute (RPM): Limit 50, Used 50. Please try again in 1.2s.",
+    statusCode: 429,
+    providerID: "anthropic",
+    code: "rate_limit_error",
+    retries: 3,
+    responseBody: JSON.stringify({
+      type: "error",
+      error: { type: "rate_limit_error", message: "Rate limit reached for claude-sonnet-4-5 on requests per minute (RPM)." },
+      request_id: "req_01JZK4W9N7X2Q8M3V5T6B1C0DE",
+    }),
+  },
+};
+
+function createSessionErrorEvalMessages(sessionId: string): UIMessage[] {
+  const now = Date.now();
+  const turnId = `${sessionId}:eval-session-error-assistant`;
+  return [
+    {
+      id: `${sessionId}:eval-session-error-user`,
+      role: "user",
+      parts: [{ type: "text", text: "Summarize the open pull requests." }],
+      metadata: { opencode: { created: now } },
+    },
+    {
+      id: turnId,
+      role: "assistant",
+      parts: [{ type: "text", text: "Looking at the repository now." }],
+      metadata: { opencode: { created: now + 1, completed: now + 900 } },
+    },
+    createSessionErrorUIMessage(turnId, presentOpencodeSessionError(SESSION_ERROR_EVAL_PAYLOAD), { created: now + 1_000 }),
   ];
 }
 
@@ -1066,6 +1108,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [cloudQueueRetryVersion, setCloudQueueRetryVersion] = useState(0);
   const sending = props.cloudMcpSubmissionState.status === "sending";
   const cloudQueueBlockedRef = useRef(false);
+  const evalSnapshotFailureRef = useRef(false);
   // Shared with promote-to-send so a manual send-now cannot race the idle drain.
   const drainingQueueRef = useRef(false);
   // Admission-aware drain state. It lives in a module-level per-session store
@@ -1102,6 +1145,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const snapshotQuery = useQuery<OpenworkSessionSnapshot>({
     queryKey: snapshotQueryKey,
     queryFn: async ({ signal }) => {
+      if (evalSnapshotFailureRef.current) {
+        throw new Error("eval: forced session snapshot failure");
+      }
       const startedAt = Date.now();
       const item = await composeNativeSessionSnapshot(
         { opencodeBaseUrl: props.opencodeBaseUrl, token: props.openworkToken },
@@ -1112,6 +1158,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       return item;
     },
     staleTime: 500,
+    retry: (failureCount) => !evalSnapshotFailureRef.current && failureCount < 3,
   });
 
   const currentSnapshot = snapshotQuery.data?.session.id === props.sessionId ? snapshotQuery.data : null;
@@ -1135,6 +1182,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [props.sessionId, currentSnapshot]);
 
   useEffect(() => {
+    evalSnapshotFailureRef.current = false;
     hydratedKeyRef.current = null;
     setSteering(false);
     setError(null);
@@ -1376,6 +1424,22 @@ export function SessionSurface(props: SessionSurfaceProps) {
     };
   }, [props.sessionId]);
   useControlAction(props.isControlTarget ? seedConnectorToolCallControlAction : null);
+  const seedSessionErrorControlAction = useMemo<OpenworkControlAction | null>(() => {
+    if (!import.meta.env.DEV) return null;
+
+    return {
+      id: "eval.session_error.seed",
+      label: "Seed a provider session error",
+      description: "Dev-only eval hook that renders a failed turn with a provider API error (status, code, response body) through the live session-error presentation path.",
+      sideEffect: "mutation",
+      disabled: !props.sessionId,
+      execute: () => {
+        setEvalMarkdownMessages(createSessionErrorEvalMessages(props.sessionId));
+        return { ok: true };
+      },
+    };
+  }, [props.sessionId]);
+  useControlAction(props.isControlTarget ? seedSessionErrorControlAction : null);
   const seedSessionLifecycleControlAction = useMemo<OpenworkControlAction | null>(() => {
     if (!import.meta.env.DEV) return null;
 
@@ -1612,6 +1676,22 @@ export function SessionSurface(props: SessionSurfaceProps) {
     isFetching: snapshotQuery.isFetching,
     isError: snapshotQuery.isError || Boolean(error),
   });
+  const failSessionSnapshotControlAction = useMemo<OpenworkControlAction | null>(() => {
+    if (!import.meta.env.DEV) return null;
+
+    return {
+      id: "eval.session_snapshot.fail",
+      label: "Force the session snapshot query to fail",
+      sideEffect: "mutation",
+      disabled: !props.sessionId,
+      execute: async () => {
+        evalSnapshotFailureRef.current = true;
+        const result = await snapshotQuery.refetch();
+        return { ok: true, isError: result.isError };
+      },
+    };
+  }, [props.sessionId, snapshotQuery.refetch]);
+  useControlAction(props.isControlTarget ? failSessionSnapshotControlAction : null);
 
   const buildDraft = useCallback((text: string, nextAttachments: ComposerAttachment[]): ComposerDraft => {
     const parts: ComposerPart[] = text.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|@[^\s@]+)/).flatMap((segment) => {

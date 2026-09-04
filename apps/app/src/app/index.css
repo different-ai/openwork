@@ -487,7 +487,14 @@ select:disabled {
 }
 
 /* Quiet text shimmer for lightweight loading hints (e.g. cloud worker
-   sessions catching up): a soft highlight sweeps across muted text. */
+   sessions catching up): a soft highlight sweeps across muted text.
+
+   `background-position` is not a compositor-animatable property, so a smooth
+   sweep repaints the text mask on the main thread every vsync (120/s on
+   ProMotion) for as long as a run is active. On the macOS shell that damage
+   sits under the pane backdrop blur, so every one of those paints also
+   re-runs the full-pane blur pass. Stepping the sweep keeps the same look
+   while repainting twenty times a second instead of every frame. */
 @keyframes ow-text-shimmer {
   0% {
     background-position: 150% 0;
@@ -510,7 +517,7 @@ select:disabled {
   background-clip: text;
   -webkit-background-clip: text;
   color: transparent;
-  animation: ow-text-shimmer 2.4s linear infinite;
+  animation: ow-text-shimmer 2.4s steps(48, end) infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {

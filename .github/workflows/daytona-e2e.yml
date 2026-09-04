@@ -1,0 +1,257 @@
+# Runs one Daytona E2E spec per job so the testkit owns fresh topology
+# provisioning and each failure has one spec owner. CI does not grep test logs:
+# the evals:e2e exit code is the verdict (0 passed, 1 failed, 2 skipped and
+# therefore Incomplete). The explicit --daytona placement also fails loudly
+# when the Daytona CLI is missing or unauthenticated.
+name: Daytona E2E
+
+on:
+  schedule:
+    - cron: "0 6,18 * * *"
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "Substring filter on E2E test filenames; empty runs all eligible tests"
+        required: false
+        default: ""
+        type: string
+  workflow_run:
+    workflows: [Warden]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: daytona-e2e-${{ github.event.workflow_run.pull_requests[0].number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    if: >-
+      github.repository == 'different-ai/openwork' &&
+      (github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' ||
+      (github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository))
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 10
+    outputs:
+      enabled: ${{ steps.config.outputs.enabled }}
+      tests: ${{ steps.matrix.outputs.tests }}
+      has_tests: ${{ steps.matrix.outputs.has_tests }}
+    steps:
+      - name: Authorize Warden-cleared pull request
+        id: authorize
+        if: github.event_name == 'workflow_run'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          PR: ${{ github.event.workflow_run.pull_requests[0].number }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p /tmp/warden-summary
+          gh run download "$RUN_ID" --repo "$REPO" --name warden-summary --dir /tmp/warden-summary
+          summary_sha="$(jq -r '.head_sha' /tmp/warden-summary/warden-summary.json)"
+          blocking="$(jq -r '.blocking_count // .findings_count' /tmp/warden-summary/warden-summary.json)"
+          current_head="$(gh api "repos/$REPO/pulls/$PR" --jq '.head.sha')"
+
+          if [ "$summary_sha" != "$HEAD_SHA" ] || [ "$current_head" != "$HEAD_SHA" ]; then
+            echo "::error::Warden summary or pull request head does not match $HEAD_SHA."
+            exit 1
+          fi
+          if [ "$blocking" != "0" ]; then
+            echo "::notice::E2E regression withheld: Warden reported $blocking blocking finding(s)."
+            echo "authorized=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          guarded="$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename' \
+            | grep -E '^(\.github/|warden\.toml$|\.warden/|\.agents/skills/|\.claude/skills/)' || true)"
+          if [ -n "$guarded" ]; then
+            echo "::notice::E2E regression withheld: PR changes trusted review machinery."
+            echo "authorized=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "authorized=true" >> "$GITHUB_OUTPUT"
+
+      - name: Check Daytona E2E configuration
+        id: config
+        if: github.event_name != 'workflow_run' || steps.authorize.outputs.authorized == 'true'
+        env:
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          missing=""
+          [ -z "${DAYTONA_API_KEY:-}" ] && missing="$missing DAYTONA_API_KEY"
+          [ -z "${OPENAI_API_KEY:-}" ] && missing="$missing OPENAI_API_KEY"
+          if [ -n "$missing" ]; then
+            echo "::notice::Skipping Daytona E2E; missing GitHub configuration:$missing."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        if: steps.config.outputs.enabled == 'true'
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Build E2E test matrix
+        id: matrix
+        if: steps.config.outputs.enabled == 'true'
+        env:
+          ONLY_FILTER: ${{ inputs.only }}
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.workflow_run.pull_requests[0].base.sha }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          raw_desktop="$(node evals/scripts/list-daytona-raw-desktop-tests.mjs)"
+          excluded="$(printf '%s\n' "$raw_desktop" | jq -Rsc 'split("\n") | map(select(length > 0))')"
+          # shellcheck disable=SC2012
+          eligible_tests="$(ls evals/specs/*.e2e.test.ts | sed 's#^evals/specs/##' | jq -Rsc --argjson excluded "$excluded" 'split("\n") | map(select(length > 0)) | map(select(. as $test | $excluded | index($test) | not))')"
+          if [ "$EVENT_NAME" = "workflow_run" ]; then
+            matched_tests="$(git diff --name-only --diff-filter=ACMR "$BASE_SHA...$HEAD_SHA" | { grep -E '^evals/specs/[^/]+\.e2e\.test\.ts$' || true; } | sed 's#^evals/specs/##' | jq -Rsc 'split("\n") | map(select(length > 0))')"
+            only_filter=""
+          else
+            matched_tests='[]'
+            only_filter="$ONLY_FILTER"
+          fi
+
+          tests="$(echo "$eligible_tests" | jq -c --arg event "$EVENT_NAME" --arg only "$only_filter" --argjson matched "$matched_tests" 'map(select(if $event == "workflow_run" then (. as $test | ($matched | index($test)) != null) else ($only == "" or contains($only)) end))')"
+          count="$(echo "$tests" | jq 'length')"
+          has_tests=false
+          if [ "$count" -gt 0 ]; then
+            has_tests=true
+          fi
+          echo "tests=$tests" >> "$GITHUB_OUTPUT"
+          echo "has_tests=$has_tests" >> "$GITHUB_OUTPUT"
+          echo "### Daytona E2E plan: $count spec(s)" >> "$GITHUB_STEP_SUMMARY"
+          echo "$tests" | jq -r '.[] | "- `\(.)`"' >> "$GITHUB_STEP_SUMMARY"
+
+  e2e:
+    needs: plan
+    if: needs.plan.outputs.enabled == 'true' && needs.plan.outputs.has_tests == 'true'
+    name: E2E (${{ matrix.spec }})
+    environment: ${{ github.event_name == 'workflow_run' && 'pr-slow-specs' || 'scheduled-e2e-regression' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        spec: ${{ fromJSON(needs.plan.outputs.tests) }}
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.4.0
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          pnpm --dir evals install --frozen-lockfile --ignore-scripts
+
+      - name: Install Daytona CLI
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          DAYTONA_CLI_TAG: v0.204.0
+          DAYTONA_CLI_SHA256: 76701138c2ce93c14b30e7b10f51aa5ea2a9e156777bab933a4272237d81f14d
+        run: |
+          set -euo pipefail
+          gh release download "$DAYTONA_CLI_TAG" --repo daytona/clients --pattern daytona-linux-amd64 --output /tmp/daytona --clobber
+          echo "$DAYTONA_CLI_SHA256  /tmp/daytona" | sha256sum -c -
+          sudo install -m 0755 /tmp/daytona /usr/local/bin/daytona
+          daytona --version
+          # The CLI requires a stored profile; the env var alone is not enough.
+          daytona login --api-key "$DAYTONA_API_KEY"
+
+      - name: Run E2E spec
+        id: run
+        env:
+          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          NIGHTLY_MODEL: ${{ vars.OPENWORK_EVAL_NIGHTLY_MODEL }}
+          SPEC_SLUG: ${{ matrix.spec }}
+        run: |
+          set -euo pipefail
+
+          if [ "$SPEC_SLUG" = "org-team-lifecycle-critical-path.e2e.test.ts" ]; then
+            MODEL="${NIGHTLY_MODEL:-gpt-5.6-luna}"
+          else
+            MODEL="big-pickle"
+          fi
+          set +e
+          OPENWORK_EVAL_MODEL="${MODEL}" pnpm evals:e2e "${SPEC_SLUG}" --daytona 2>&1 | tee /tmp/daytona-e2e.log
+          cli_status="${PIPESTATUS[0]}"
+          set -e
+          tail -1 /tmp/daytona-e2e.log | jq -r '"- `\(.files[0])`: **\(.verdict)** (\(.placement))"' >> "$GITHUB_STEP_SUMMARY" \
+            || echo "- \`${SPEC_SLUG}\`: CLI exit ${cli_status} (no JSON summary)" >> "$GITHUB_STEP_SUMMARY"
+          exit "$cli_status"
+
+      - name: Judge deferred vision claims
+        if: steps.run.outcome == 'success'
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          pnpm --dir evals evidence:judge -- --test-run latest
+
+      - name: Upload E2E test artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: daytona-e2e-${{ strategy.job-index }}
+          path: evals/results/test-runs/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  verdict:
+    needs:
+      - plan
+      - e2e
+    if: always() && needs.plan.outputs.enabled == 'true'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - name: Report Daytona E2E verdict
+        env:
+          E2E_RESULT: ${{ needs.e2e.result }}
+          EVENT_NAME: ${{ github.event_name }}
+          HAS_TESTS: ${{ needs.plan.outputs.has_tests }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = "workflow_run" ] && [ "$HAS_TESTS" != "true" ]; then
+            echo "Warden suggestion: add or update an evals/specs/<feature>.e2e.test.ts test for this PR." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "Daytona E2E matrix result: **$E2E_RESULT**." >> "$GITHUB_STEP_SUMMARY"
+          if [ "$E2E_RESULT" != "success" ]; then
+            exit 1
+          fi

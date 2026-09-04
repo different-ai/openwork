@@ -107,13 +107,13 @@ const REMOTE_SESSION_DEFINITIONS: RemoteSessionDefinition[] = [
   {
     action: "create",
     summary:
-      "Create a chat session on your OpenWork Cloud workspace or queue one for your connected OpenWork desktop. Optionally start it with a first prompt.",
+      "Start a remote session: a native OpenWork chat on your OpenWork Web instance (runs in the cloud, visible in the browser). Give it the task to run as prompt. target \"desktop\" runs it on your connected OpenWork desktop instead.",
     searchExtraTokens:
-      "remote session sessions chat thread cloud web desktop create start new handoff continue browser workspace",
+      "remote session sessions chat thread cloud web instance browser openwork desktop create start new open run do task work delegate hand off handoff background continue workspace",
     argumentsSchema: {
       type: "object",
       properties: {
-        target: { type: "string", enum: ["cloud", "desktop"], description: "Execution target. Defaults to \"cloud\"." },
+        target: { type: "string", enum: ["cloud", "desktop"], description: "Where the session runs. Defaults to \"cloud\" (your OpenWork Web instance)." },
         title: { type: "string", maxLength: 120, description: "Session title shown in OpenWork." },
         prompt: { type: "string", description: "Optional first prompt. When present the session starts working immediately." },
         model: MODEL_ARGUMENT_SCHEMA,
@@ -123,9 +123,9 @@ const REMOTE_SESSION_DEFINITIONS: RemoteSessionDefinition[] = [
   {
     action: "send",
     summary:
-      "Send a prompt to an existing remote session on your OpenWork Cloud workspace. Returns an acceptance receipt; poll remote-session:read for the reply.",
+      "Send a follow-up prompt to an existing remote session on your OpenWork Web instance. Returns an acceptance receipt; poll remote-session:read for the reply.",
     searchExtraTokens:
-      "remote session sessions chat thread cloud web send prompt message turn continue",
+      "remote session sessions chat thread cloud web instance send prompt message turn continue follow up reply ask tell",
     argumentsSchema: {
       type: "object",
       properties: {
@@ -139,9 +139,9 @@ const REMOTE_SESSION_DEFINITIONS: RemoteSessionDefinition[] = [
   {
     action: "read",
     summary:
-      "Read the status of a queued desktop command or the recent transcript of a remote session on your OpenWork Cloud workspace.",
+      "Read a remote session's recent transcript and status from your OpenWork Web instance, or the status of a queued desktop command.",
     searchExtraTokens:
-      "remote session sessions chat thread cloud web read transcript status reply answer poll result",
+      "remote session sessions chat thread cloud web instance read transcript status reply answer poll result output check progress desktop command",
     argumentsSchema: {
       type: "object",
       properties: {
@@ -573,7 +573,7 @@ export async function executeRemoteSessionCapability(
         workerId: runtime.runtime.workerId,
         title: thread.title,
         started: thread.started,
-        note: "This is a native OpenWork session on your Cloud workspace; it appears in OpenWork Web. Use remote-session:send to prompt it and remote-session:read to read replies.",
+        note: "This is a native OpenWork session on your OpenWork Web instance; it is visible in OpenWork Web. Use remote-session:send for follow-ups and remote-session:read to read replies.",
       })
     } catch (error) {
       return threadErrorResult("create", null, error)

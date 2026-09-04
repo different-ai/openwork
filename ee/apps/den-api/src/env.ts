@@ -78,6 +78,7 @@ const EnvSchema = z.object({
   DEN_MICROSOFT_GRAPH_BASE_URL: z.string().optional(),
   PORT: z.string().optional(),
   CORS_ORIGINS: z.string().optional(),
+  DEN_CORS_HANDLED_BY_EDGE: z.string().optional(),
   DEN_API_PUBLIC_URL: z.string().optional(),
   DEN_API_VERSION: z.string().optional(),
   RENDER_GIT_COMMIT: z.string().optional(),
@@ -537,6 +538,10 @@ const automationsRuntimeEnabled = parseBooleanFlag(
 const automationsEnabled = automationsRuntimeEnabled
   && parseBooleanFlag(parsed.DEN_AUTOMATIONS_ENABLED ?? "false")
 const dashboardsEnabled = parseBooleanFlag(parsed.DEN_DASHBOARDS_ENABLED ?? "false")
+// An edge that already answers CORS (reflecting the caller's origin) in front
+// of den-api makes den-api's own headers duplicates, which browsers reject.
+// The allowlist still feeds proxy-trust decisions; only header emission stops.
+const corsHandledByEdge = parseBooleanFlag(parsed.DEN_CORS_HANDLED_BY_EDGE ?? "false")
 const openworkWebEnabled = parseBooleanFlag(parsed.DEN_OPENWORK_WEB_ENABLED ?? "false")
 
 const devMode = (parsed.OPENWORK_DEV_MODE ?? "0").trim() === "1"
@@ -801,6 +806,7 @@ export const env = {
     runnerClaimDeadlineMs: automationTuning(parsed.DEN_AUTOMATIONS_RUNNER_CLAIM_DEADLINE_MS, 900_000),
   },
   dashboardsEnabled,
+  corsHandledByEdge,
   openworkWebEnabled,
   inferenceProxyBaseUrl: optionalString(parsed.INFERENCE_PROXY_BASE_URL) ?? "http://127.0.0.1:8791",
   openRouterManagementApiKey: optionalString(parsed.OPENROUTER_MANAGEMENT_API_KEY),

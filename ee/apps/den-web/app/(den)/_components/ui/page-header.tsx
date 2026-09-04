@@ -8,7 +8,7 @@ import type { ReactNode } from "react";
  * the page's primary action plus an optional caption on the right.
  */
 export type DenPageHeaderProps = {
-  title: string;
+  title: ReactNode;
   description?: ReactNode;
   /** Right-aligned slot for the page's primary action. */
   action?: ReactNode;

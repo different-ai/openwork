@@ -6,6 +6,7 @@ import type {
   WorkflowDetail,
   WorkflowVersion,
 } from "@openwork/types/workflows"
+import { WorkflowGraph } from "@openwork/codemode"
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import {
   AutomationRevisionTable,
@@ -163,6 +164,7 @@ function serializeSnapshot(row: WorkflowRunRow, automationTrigger: AutomationRun
     rendererVersion: row.renderer_version === WORKFLOW_MARKDOWN_RENDERER_VERSION
       ? WORKFLOW_MARKDOWN_RENDERER_VERSION
       : null,
+    toolCalls: parseCodemodeToolCalls(row.tool_calls),
     status: row.status,
     errorKind: row.error_kind,
     errorMessage: row.error_message,
@@ -214,6 +216,7 @@ async function workflowVersions(
     const version: WorkflowVersion = {
       id: row.id,
       code,
+      graph: WorkflowGraph.analyze(code),
       inputSchema: parsed.payload.inputSchema ?? null,
       outputSchema: parsed.payload.outputSchema ?? null,
       exampleInput: parsed.payload.exampleInput ?? null,
@@ -547,8 +550,14 @@ export async function validateWorkflowAutomationAction(input: {
       )),
     ])
     const grantInput = { memberId: ownerMemberId, teamIds: teams.map((team) => team.id) }
-    if (!resolvePluginArchGrantRole({ ...grantInput, grants: configObjectGrants })
-      && !resolvePluginArchGrantRole({ ...grantInput, grants: pluginGrants })) {
+    // Scheduling a Workflow executes it, so the owner needs run access — the
+    // same editor-or-manager bar the detail response reports as `canRun`. A
+    // viewer may read results but must not gain scheduled execution.
+    const roles = [
+      resolvePluginArchGrantRole({ ...grantInput, grants: configObjectGrants }),
+      resolvePluginArchGrantRole({ ...grantInput, grants: pluginGrants }),
+    ]
+    if (!roles.some((role) => role === "editor" || role === "manager")) {
       throw new Error("automation_saved_script_forbidden")
     }
   }
@@ -588,7 +597,13 @@ export async function saveWorkflow(input: {
   workflow: SaveWorkflowInput
   buildTools: () => Promise<BuiltCodemodeTools>
   context?: PluginArchActorContext
-}): Promise<{ pluginId: string; configObjectId: string; configObjectVersionId: string }> {
+}): Promise<{
+  pluginId: string
+  configObjectId: string
+  configObjectVersionId: string
+  graph: WorkflowGraph.WorkflowGraph
+  mermaid: string
+}> {
   const organizationId = normalizeDenTypeId("organization", input.organizationId)
   const ownerMemberId = normalizeDenTypeId("member", input.ownerMemberId)
   const requestedPluginId = input.workflow.pluginId
@@ -649,6 +664,7 @@ export async function saveWorkflow(input: {
     const validation = validateCodemodeScriptInput(parsed.payload.inputSchema, input.workflow.currentInput)
     if (!validation.ok) throw new Error("workflow_current_input_invalid")
   }
+  const graph = WorkflowGraph.analyze(input.workflow.code)
 
   return db.transaction(async (tx) => {
     const plugins = requestedPluginId
@@ -771,6 +787,12 @@ export async function saveWorkflow(input: {
       sourceRevisionRef: receipt.code_digest,
       isDeletedVersion: false,
     })
-    return { pluginId, configObjectId, configObjectVersionId }
+    return {
+      pluginId,
+      configObjectId,
+      configObjectVersionId,
+      graph,
+      mermaid: WorkflowGraph.toMermaid(graph),
+    }
   })
 }

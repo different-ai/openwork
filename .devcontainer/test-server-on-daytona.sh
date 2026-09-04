@@ -141,7 +141,13 @@ daytona exec "$SANDBOX" -- "bash -lc 'set -euo pipefail; cd /workspace; mkdir -p
 
 echo "==> Starting OpenWork Den server stack..."
 BOOTSTRAP_ADMIN_EMAILS_B64="$(printf %s "${DEN_BOOTSTRAP_ADMIN_EMAILS:-}" | base64 | tr -d '\n')"
-daytona exec "$SANDBOX" -- "bash -lc 'set -euo pipefail; cd /workspace; DEN_BOOTSTRAP_ADMIN_EMAILS=\"\$(printf %s $BOOTSTRAP_ADMIN_EMAILS_B64 | base64 -d)\" DEN_GENERATED_ARTIFACT_VIEWS_ENABLED=\"$DEN_GENERATED_ARTIFACT_VIEWS_ENABLED\" DEN_WEB_PUBLIC_URL=\"$DEN_WEB_URL\" DEN_API_PUBLIC_URL=\"$DEN_API_URL\" DEN_WEB_PORT=$DEN_WEB_PORT DEN_API_PORT=$DEN_API_PORT RUN_SEED=$RUN_SEED bash .devcontainer/start-daytona-server.sh'"
+# Caller-supplied Den env (base64 KEY=VALUE lines from the eval harness); the
+# start script exports it before launching Den. Base64 keeps values out of
+# this command line.
+case "${OPENWORK_DEN_EXTRA_ENV_B64:-}" in
+  *[!A-Za-z0-9+/=]*) echo "ERROR: OPENWORK_DEN_EXTRA_ENV_B64 must be base64." >&2; exit 1 ;;
+esac
+daytona exec "$SANDBOX" -- "bash -lc 'set -euo pipefail; cd /workspace; OPENWORK_DEN_EXTRA_ENV_B64=\"${OPENWORK_DEN_EXTRA_ENV_B64:-}\" DEN_BOOTSTRAP_ADMIN_EMAILS=\"\$(printf %s $BOOTSTRAP_ADMIN_EMAILS_B64 | base64 -d)\" DEN_GENERATED_ARTIFACT_VIEWS_ENABLED=\"$DEN_GENERATED_ARTIFACT_VIEWS_ENABLED\" DEN_WEB_PUBLIC_URL=\"$DEN_WEB_URL\" DEN_API_PUBLIC_URL=\"$DEN_API_URL\" DEN_WEB_PORT=$DEN_WEB_PORT DEN_API_PORT=$DEN_API_PORT RUN_SEED=$RUN_SEED bash .devcontainer/start-daytona-server.sh'"
 
 echo "==> Waiting for public Den Web health (up to ${MAX_WAIT}s)..."
 elapsed=0

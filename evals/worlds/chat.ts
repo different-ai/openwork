@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join, resolve } from "node:path";
+import { evalIn } from "@openwork/behaviors";
 import type { Seed } from "@openwork/env";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
@@ -197,6 +198,41 @@ export async function emptyChat(seed: Seed) {
   const workspace = await seed.workspace(app, seed.tmpPath("chat-empty"));
   const session = await seedSessionRetry(seed, app);
   return { app, workspace, session };
+}
+
+export async function paletteSessionActions(seed: Seed) {
+  const app = await seed.desktop({ name: "command-palette-pin-rename" });
+  const workspace = await seed.workspace(app, seed.tmpPath("command-palette-pin-rename"));
+  const session = await seedSessionRetry(seed, app, { title: "Palette pin rename probe" });
+  return { app, workspace, session };
+}
+
+export async function newSplitPrimary(seed: Seed) {
+  const app = await seed.desktop({ name: "new-split-session" });
+  const workspace = await seed.workspace(app, seed.tmpPath("new-split-session"));
+  const session = await seedSessionRetry(seed, app, { title: "New split primary" });
+  const splitFacts = () => evalIn(app, `(() => {
+    const context = window.__openworkControl?.context?.();
+    const layout = context?.conversations?.layout;
+    const primaryPane = document.querySelector('[data-workbench-pane="primary"]');
+    const secondaryPanes = [...document.querySelectorAll('[data-workbench-pane="secondary"]')];
+    const secondaryPane = secondaryPanes[0];
+    return {
+      layoutKind: layout?.kind ?? "",
+      primarySessionId: layout?.primarySessionId ?? layout?.sessionId ?? "",
+      secondarySessionId: layout?.secondarySessionId ?? "",
+      primaryWorkspaceId: layout?.primaryWorkspaceId ?? "",
+      secondaryWorkspaceId: layout?.secondaryWorkspaceId ?? "",
+      primarySurfaceSessionId: primaryPane?.querySelector('[data-session-surface-id]')
+        ?.getAttribute('data-session-surface-id') ?? "",
+      secondarySurfaceSessionId: secondaryPane?.querySelector('[data-session-surface-id]')
+        ?.getAttribute('data-session-surface-id') ?? "",
+      secondaryPaneWorkspaceId: secondaryPane?.getAttribute('data-workbench-workspace-id') ?? "",
+      secondaryPaneCount: secondaryPanes.length,
+      locationHash: window.location.hash,
+    };
+  })()`);
+  return { app, workspace, session, splitFacts };
 }
 
 export async function shimmerChat(seed: Seed) {
@@ -1016,6 +1052,38 @@ export async function safeEdit(seed: Seed) {
     await close(provider);
     throw error;
   }
+}
+
+export async function sessionErrorCard(seed: Seed) {
+  const app = await seed.desktop({ name: "session-error-technical-details" });
+  const workspace = await seed.workspace(app, seed.tmpPath("session-error-details"));
+  const session = await seedSessionRetry(seed, app, { title: "Session error proof" });
+  await arrangeControl(seed, app, "eval.session_error.seed");
+  return { app, workspace, session };
+}
+
+export async function snapshotFailure(seed: Seed) {
+  const app = await seed.desktop({ name: "composer-snapshot-failure" });
+  const workspace = await seed.workspace(app, seed.tmpPath("composer-snapshot-failure"));
+  const session = await seedSessionRetry(seed, app, { title: "Composer snapshot failure proof" });
+  await arrangeControl(seed, app, "eval.chat_transcript.seed");
+  const failureJson = await seed.evalIn(app, `async () => {
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
+      const available = window.__openworkControl?.listActions()
+        .find((candidate) => candidate.id === "eval.session_snapshot.fail" && !candidate.disabled);
+      if (available) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    const result = await window.__openworkControl.execute("eval.session_snapshot.fail", null);
+    if (!result?.ok) throw new Error(String(result?.error ?? "control action failed"));
+    return JSON.stringify(result.result);
+  }`, { args: [], awaitPromise: true, timeoutMs: 120_000 });
+  const failure: unknown = typeof failureJson === "string" ? JSON.parse(failureJson) : failureJson;
+  if (!isRecord(failure) || failure.isError !== true) {
+    throw new Error(`Session snapshot failure was not established: ${JSON.stringify(failure)}`);
+  }
+  return { app, workspace, session };
 }
 
 export async function taskActivity(seed: Seed) {

@@ -2,7 +2,6 @@
 
 Cross-references:
 
-- `docs/memory-bank-architecture.md`
 - `ee/apps/den-api/src/mcp/README.md`
 
 Status: design note for a Den-only, additive Phase 1.
@@ -42,11 +41,10 @@ The MCP tool surface does not grow. The rail still exposes exactly two tools: `s
 
 ## 2. Why this is the natural next step
 
-Three precedents already prove the pattern:
+Two precedents already prove the pattern:
 
 1. External MCP Connections merge into `/mcp/agent` search results and execute through the same `execute_capability` tool, with namespaced names from `ee/apps/den-api/src/mcp/external-capabilities.ts` and `needs_connection` pseudo-matches when a member must connect.
-2. The memory bank in `docs/memory-bank-architecture.md` says memory is reached by executing a discovered capability, not by registering a bespoke `memory_save` tool.
-3. Google Workspace native capabilities are plain Den REST routes tagged `Capability Sources`, then auto-surfaced through the REST catalog.
+2. Google Workspace native capabilities are plain Den REST routes tagged `Capability Sources`, then auto-surfaced through the REST catalog.
 
 The marketplace source is the cheapest of the four: indexed DB rows, pre-derived `ConfigObjectTable.searchText` (`title\ndescription\nrawSource`), no live `tools/list`, no network, no new auth, and no new execution machinery for instructional content.
 

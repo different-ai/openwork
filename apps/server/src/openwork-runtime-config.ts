@@ -22,6 +22,7 @@ import {
   openworkAnthropicToolSchemaPluginPath,
   openworkOfficeAttachmentsPluginPath,
   openworkSpreadsheetsPluginPath,
+  openworkChromeDevtoolsPluginPath,
 } from "./openwork-extensions-plugin-path.js";
 import type { ServerConfig } from "./types.js";
 import { runtimeStorageDir } from "./runtime-db.js";
@@ -78,7 +79,7 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
       },
     },
     plugin: [
-      "opencode-chrome-devtools",
+      openworkChromeDevtoolsPluginPath(),
       // Registration order is prompt order: the knowledge plugin appends the
       // operating rules first, then the extensions plugin adds app-control
       // mechanics, live Connect steering, and the remote skill and Automation
