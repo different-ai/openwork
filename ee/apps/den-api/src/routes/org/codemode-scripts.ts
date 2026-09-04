@@ -188,6 +188,19 @@ function routeFailure(error: unknown) {
   return { status: 400, body: { error: "workflow_rejected", message } } as const
 }
 
+function appRouteFailure(error: unknown) {
+  const failure = routeFailure(error)
+  const code = error instanceof Error ? error.message : ""
+  const message = code.includes("not_found")
+    ? "This app is unavailable or you no longer have access."
+    : code === "artifact_view_schema_incompatible"
+      ? "The workflow’s results have changed. Ask OpenWork to update this app before saving."
+      : code === "artifact_view_revision_not_ready"
+        ? "This app is still being prepared. Wait for its preview before saving."
+        : null
+  return message ? { ...failure, body: { ...failure.body, message } } : failure
+}
+
 export const saveWorkflowOperationId = "saveWorkflow"
 
 export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
@@ -311,7 +324,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
         const { actorContext } = await contextFor(c)
         return c.json({ enabled: true, items: await listSavedApps(actorContext) })
       } catch (error) {
-        const failure = routeFailure(error)
+        const failure = appRouteFailure(error)
         return c.json(failure.body, failure.status)
       }
     },
@@ -330,7 +343,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
         const { actorContext } = await contextFor(c)
         return c.json(await getSavedApp({ context: actorContext, appId: c.req.param("appId"), ...c.req.valid("query") }))
       } catch (error) {
-        const failure = routeFailure(error)
+        const failure = appRouteFailure(error)
         return c.json(failure.body, failure.status)
       }
     },
@@ -350,7 +363,7 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
         const { revisionId, ...save } = c.req.valid("json")
         return c.json(await activateArtifactViewRevision({ context: actorContext, artifactViewId: c.req.param("appId"), revisionId, save }))
       } catch (error) {
-        const failure = routeFailure(error)
+        const failure = appRouteFailure(error)
         return c.json(failure.body, failure.status)
       }
     },

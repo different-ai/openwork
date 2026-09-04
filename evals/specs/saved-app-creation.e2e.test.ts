@@ -34,7 +34,7 @@ test("create, preview, save and reopen an app without changing already-open resu
   await step("save the app with its workflow", async () => {
     await user.click("Save app");
     await user.type({ label: "App name" }, "Team briefing", { replace: true });
-    await user.click("Save app");
+    await user.click({ role: "button", label: "Save app", nth: 1 });
     await user.see({ text: "Saved to Apps. Future results from Weekly briefing will use this app." }, { timeoutMs: 30_000 });
     const saved = record((await readApp()).view);
     expect(saved).toMatchObject({ title: "Team briefing", activeRevisionId: world.revisionId, useInWorkflow: true });
@@ -66,7 +66,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     await world.open(`${appPath}?revisionId=${newerRevision}`);
     await user.click("Save changes");
     await user.click({ role: "checkbox" });
-    await user.click("Save changes");
+    await user.click({ role: "button", label: "Save changes", nth: 1 });
     await user.see({ text: "Saved to Apps. Open it whenever you need it." }, { timeoutMs: 30_000 });
     expect(record((await readApp()).view)).toMatchObject({ activeRevisionId: newerRevision, useInWorkflow: false });
     expect(record((await world.render())._meta)).not.toHaveProperty("openwork/mcpApp");

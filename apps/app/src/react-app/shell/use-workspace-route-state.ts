@@ -87,7 +87,7 @@ import {
 
 export type UseWorkspaceRouteStateInput = {
   developerMode: boolean;
-  workspaceRoute?: "session" | "automations" | "dashboard";
+  workspaceRoute?: "session" | "automations" | "dashboard" | "apps";
   /** Invoked when the openwork-server settings-changed event fires (the route bumps its settings version). */
   onServerSettingsChanged: () => void;
   /** Receives the local openwork-server host info discovered during refresh. */
@@ -161,6 +161,11 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     if (workspaceRoute === "automations") {
       if (/^\/automations(?:\/|$)/.test(location.pathname)) return;
       navigate(automationsRoute(), options);
+      return;
+    }
+    if (workspaceRoute === "apps") {
+      if (/^\/apps(?:\/|$)/.test(location.pathname)) return;
+      navigate("/apps", options);
       return;
     }
     if (workspaceRoute === "dashboard") {

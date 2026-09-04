@@ -16,6 +16,14 @@ export function GeneratedAppPreview({ html, payload, title }: { html: string; pa
       hostContext: { theme: document.documentElement.classList.contains("dark") ? "dark" : "light", displayMode: "inline" },
     });
     const timer = window.setTimeout(() => { if (!disposed) setError("This preview could not start. Reopen the app to try again."); }, 10_000);
+    const onDiagnostic = (event: MessageEvent<unknown>) => {
+      if (event.source !== iframe.contentWindow || !event.data || typeof event.data !== "object") return;
+      if ("method" in event.data && event.data.method === "ui/notifications/sandbox-diagnostic") {
+        window.clearTimeout(timer);
+        if (!disposed) setError("This app could not render. Ask OpenWork to fix its preview.");
+      }
+    };
+    window.addEventListener("message", onDiagnostic);
     bridge.oninitialized = () => {
       window.clearTimeout(timer);
       void bridge.sendToolResult({ content: [], structuredContent: payload }).catch(() => {
@@ -28,7 +36,7 @@ export function GeneratedAppPreview({ html, payload, title }: { html: string; pa
     void bridge.connect(new PostMessageTransport(iframe.contentWindow, iframe.contentWindow)).then(() => {
       if (!disposed) iframe.srcdoc = html;
     }).catch(() => { if (!disposed) setError("This preview could not start."); });
-    return () => { disposed = true; window.clearTimeout(timer); void bridge.close(); };
+    return () => { disposed = true; window.clearTimeout(timer); window.removeEventListener("message", onDiagnostic); void bridge.close(); };
   }, [html, payload]);
   return <div className="overflow-hidden rounded-xl border bg-background">
     {error ? <p role="alert" className="p-4 text-sm text-destructive">{error}</p> : null}

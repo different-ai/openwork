@@ -79,7 +79,17 @@ export async function savedAppCreation(seed: Seed) {
         const item = record(document);
         if (strings[Number(item.documentURL)] !== "about:srcdoc") return [];
         const nodes = record(item.nodes);
-        return Array.isArray(nodes.nodeValue) ? nodes.nodeValue.flatMap((index) => typeof strings[Number(index)] === "string" ? [strings[Number(index)]] : []) : [];
+        const names = nodes.nodeName;
+        const parents = nodes.parentIndex;
+        const values = nodes.nodeValue;
+        if (!Array.isArray(names) || !Array.isArray(parents) || !Array.isArray(values)) return [];
+        return values.flatMap((value, index) => {
+          if (strings[Number(names[index])] !== "#text") return [];
+          const parentName = strings[Number(names[Number(parents[index])])];
+          if (parentName === "SCRIPT" || parentName === "STYLE") return [];
+          const text = strings[Number(value)];
+          return typeof text === "string" ? [text] : [];
+        });
       }).join(" ");
     },
     receiptId: field(firstRun, "receiptId"),
