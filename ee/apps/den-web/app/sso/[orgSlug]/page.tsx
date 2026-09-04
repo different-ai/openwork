@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import { DenStatusScreen } from "../../../components/den-status-screen";
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { getSocialCallbackUrl, requestJson } from "../../(den)/_lib/den-flow";
@@ -60,23 +62,17 @@ export default function OrganizationSsoSignInPage() {
   }, [callbackURL, loginHint, orgSlug]);
 
   return (
-    <main className="min-h-screen bg-[#0B1020] px-6 py-20 text-white">
-      <div className="mx-auto max-w-xl rounded-[32px] border border-white/10 bg-white/5 p-8 shadow-[0_30px_90px_-40px_rgba(0,0,0,0.6)] backdrop-blur">
-        <p className="text-[12px] font-semibold uppercase tracking-[0.24em] text-violet-200">Enterprise SSO</p>
-        <h1 className="mt-4 text-3xl font-semibold tracking-[-0.04em]">Signing you in</h1>
-        <p className="mt-3 text-[15px] leading-7 text-white/70">
-          Redirecting to your organization&apos;s identity provider for `{orgSlug}`.
-        </p>
-        {error ? (
-          <div className="mt-6 rounded-[20px] border border-red-400/40 bg-red-500/10 px-4 py-3 text-[14px] text-red-100">
-            {error}
-          </div>
-        ) : (
-          <div className="mt-6 rounded-[20px] border border-white/10 bg-black/20 px-4 py-3 text-[14px] text-white/70">
-            If the redirect does not start automatically, refresh the page and try again.
-          </div>
-        )}
-      </div>
-    </main>
+    <DenStatusScreen
+      title={error ? "We couldn’t sign you in" : "Signing you in"}
+      description={error ? "Return to sign in and try again, or contact your organization’s administrator." : "Taking you to your organization’s sign-in page."}
+      status="Connecting to your identity provider…"
+      error={error}
+    >
+      {error ? (
+        <Link href="/" className="mt-6 inline-flex h-10 items-center justify-center rounded-full border border-[var(--dls-border)] px-4 text-[13px] font-medium transition-colors hover:bg-[var(--dls-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--dls-accent)]">
+          Back to sign in
+        </Link>
+      ) : null}
+    </DenStatusScreen>
   );
 }
