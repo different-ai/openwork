@@ -7,7 +7,7 @@ import {
   waitFor,
   writeComposerText,
 } from "@openwork/behaviors";
-import { screenshot } from "@openwork/test-evidence";
+import { screenshot, validate } from "@openwork/test-evidence";
 import {
   app,
   eventually,
@@ -224,6 +224,22 @@ async function readSessionFacts(appSurface: App, workspaceId: string, sessionId:
   return parseSessionFacts(value);
 }
 
+async function expandTodoPanel(appSurface: App, sessionId: string, expectedItems: string[]): Promise<void> {
+  const clicked = await evalIn(appSurface, `(() => {
+    const surface = document.querySelector(${JSON.stringify(`[data-session-surface-id="${sessionId}"]`)});
+    const button = surface?.querySelector("[data-todo-progress-panel] button");
+    if (!(button instanceof HTMLElement)) return false;
+    button.click();
+    return true;
+  })()`);
+  expect(clicked, "todo panel toggle button present").toBe(true);
+  await waitFor(appSurface, `(() => {
+    const panel = document.querySelector(${JSON.stringify(`[data-session-surface-id="${sessionId}"] [data-todo-progress-panel]`)});
+    const text = panel instanceof HTMLElement ? panel.innerText : "";
+    return ${JSON.stringify(expectedItems)}.every((item) => text.includes(item));
+  })()`, { timeoutMs: 10_000, label: "todo panel expanded with every item listed" });
+}
+
 async function readTodoPanel(appSurface: App, sessionId: string): Promise<PanelFact> {
   const value = await evalIn(appSurface, `(() => {
     const currentSessionId = document.querySelector("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? "";
@@ -322,7 +338,17 @@ test.skipIf(!runnable)(
     expect(appeared.panel.total).toBe(todos.length);
     expect(appeared.panel.label).toContain(`1/${todos.length}`);
     expect(appeared.facts.todoCount).toBe(todos.length);
-    await screenshot(desktopApp);
+    await expandTodoPanel(desktopApp, chat, todos.map((todo) => todo.content));
+    const midRunShot = await screenshot(desktopApp);
+    const midRunValidation = await validate(midRunShot, [
+      "A chat session is open with a message composer at the bottom",
+      "A Progress panel above the composer lists three todo items",
+      "Exactly one todo item is shown as completed (checked) and the other two are not completed",
+      "One todo item is shown as in progress and one as pending",
+      "The agent is visibly still working, e.g. a running bash tool or Thinking indicator",
+      "No error, sign-in, or crash screen is visible",
+    ]);
+    expect(midRunValidation.ok, midRunValidation.why).toBe(true);
 
     // Sample continuously past the old 15s GC window while the run is still
     // busy. Every sample must show the panel with unchanged counts; the run
@@ -347,7 +373,6 @@ test.skipIf(!runnable)(
       `Sampled the panel ${samples.length} times over ${lastSample?.elapsedMs ?? 0}ms (past the ${gcWindowMs}ms GC window) while bash was still running; every sample showed a visible panel at 1/${todos.length}.`,
       true,
     );
-    await screenshot(desktopApp);
 
     const completed = await eventually(async () => {
       const facts = await readSessionFacts(desktopApp, workspace.workspaceId, chat, command);
@@ -362,5 +387,12 @@ test.skipIf(!runnable)(
     expect(completed.panel.found, "todo panel remains after the run finishes").toBe(true);
     expect(completed.panel.visible).toBe(true);
     expect(completed.panel.total).toBe(todos.length);
+    const afterRunShot = await screenshot(desktopApp);
+    const afterRunValidation = await validate(afterRunShot, [
+      "A Progress panel above the composer still lists three todo items after the agent finished",
+      "Exactly one todo item is shown as completed and the other two are not completed",
+      "The agent's final reply is visible in the chat and no tool is still running",
+    ]);
+    expect(afterRunValidation.ok, afterRunValidation.why).toBe(true);
   },
 );
