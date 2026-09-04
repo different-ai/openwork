@@ -20,8 +20,7 @@ import { openworkConfigDir } from "@openwork/paths";
 import { createHeadlessThreadClient, toTranscript } from "@openwork/headless-threads";
 import { cloudModelOptions, resolveCloudModel } from "../src/lib/cloud-responsibilities.ts";
 import { createDenAutomationsClient, listAssignedCoworkerTemplates } from "../src/lib/den.ts";
-import { coworkerTemplateSchema } from "@openwork/types/coworker-template";
-import { createTemplateInstaller, exportCoworkerTemplate, templateScope } from "./templates.mjs";
+import { createTemplateInstaller, exportCoworkerTemplate, parseCoworkerTemplateFile, templateScope } from "./templates.mjs";
 import { assignmentToolCatalog, createAssignmentToolHandlers, createSelfToolHandlers, selfToolCatalog } from "./assignment-tools.mjs";
 import {
   createCoworker,
@@ -1844,7 +1843,7 @@ const commands = {
     const selection = await dialog.showOpenDialog({ title: "Import a coworker template", properties: ["openFile"], filters: [{ name: "Coworker template", extensions: ["json"] }] });
     if (selection.canceled || !selection.filePaths[0]) return null;
     if ((await stat(selection.filePaths[0])).size > 131072) throw new Error("A coworker template must be 128 KB or smaller.");
-    const template = coworkerTemplateSchema.parse(JSON.parse(await readFile(selection.filePaths[0], "utf8")));
+    const template = parseCoworkerTemplateFile(await readFile(selection.filePaths[0], "utf8"));
     const id = createHash("sha256").update(JSON.stringify(template)).digest("hex");
     return installTemplates({ scope: "imported-file", items: [{ id, versionId: id, template, assigned: false }], installIds: [id] });
   },

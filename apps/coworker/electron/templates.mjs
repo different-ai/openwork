@@ -7,6 +7,11 @@ import { getCoworker, listCoworkers, readCoworkerFile, slugifyCoworkerName } fro
 
 const receiptsSchema = z.record(z.string(), z.object({ slug: z.string(), versionId: z.string() }));
 
+export function parseCoworkerTemplateFile(contents) {
+  try { return coworkerTemplateSchema.parse(JSON.parse(contents)); }
+  catch { throw new Error("Choose a valid coworker template. Memory, credentials, and working files are not accepted."); }
+}
+
 export function templateScope(session, userEmail) {
   if (typeof userEmail !== "string" || !userEmail.trim()) throw new Error("Sign in again before adding your assigned coworkers.");
   const base = new URL(session.baseUrl);
