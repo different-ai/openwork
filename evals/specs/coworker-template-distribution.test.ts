@@ -1,5 +1,5 @@
 import { expect } from "vitest";
-import { assignPluginToMarketplace, createMarketplace, denFetch, grantMarketplaceAccess, readCurrentOrganizationMemberId, type DenSession } from "@openwork/behaviors";
+import { assignPluginToMarketplace, createMarketplace, denFetch, freshSession, grantMarketplaceAccess, readCurrentOrganizationMemberId, type DenSession } from "@openwork/behaviors";
 import { localMysqlIsRunning, localRedisIsRunning, server, test } from "@openwork/testkit";
 
 const remote = process.env.OPENWORK_EVAL_DAYTONA === "1" || Boolean(process.env.OPENWORK_EVAL_DEN_API_URL);
@@ -60,13 +60,14 @@ test.skipIf(!mysql || !redis)(title, { timeout: 300_000 }, async ({ place, evide
   await request(admin, "/v1/config-objects", "POST", { type: "agent", sourceMode: "cloud", input: preparedInput }, 403);
   await request(admin, "/v1/plugins", "POST", { name: "Disabled bundle", components: [{ type: "agent", input: preparedInput }] }, 403);
   await request(teammate, capabilitiesPath, "PUT", { capabilities: { coworkerTeams: true } }, 403);
-  const otherOrganization = id((await request(admin, "/v1/org", "POST", { name: "Unenabled organization" }, 201)).organization);
+  const secondSession = await freshSession(admin);
+  expect(secondSession.token !== admin.token).toBe(true);
+  const otherOrganization = id((await request(secondSession, "/v1/org", "POST", { name: "Unenabled organization" }, 201)).organization);
   await request(admin, capabilitiesPath, "PUT", { capabilities: { coworkerTeams: true } });
   expect(await request(admin, "/v1/me/coworkers")).toMatchObject({ enabled: true, items: [] });
-  const otherCatalog = await denFetch(admin, "/v1/me/coworkers", { headers: { authorization: `Bearer ${admin.token}`, "x-openwork-org-id": otherOrganization } });
+  const otherCatalog = await denFetch(secondSession, "/v1/me/coworkers", { headers: { authorization: `Bearer ${secondSession.token}`, "x-openwork-org-id": otherOrganization } });
   expect(otherCatalog.response.status).toBe(200);
   expect(otherCatalog.body).toMatchObject({ enabled: false, items: [] });
-  await request(admin, "/api/auth/organization/set-active", "POST", { organizationId });
   evidence.recordAssertionEvidence("Prepared teams require an explicit platform-admin opt-in for each organization", "New organizations defaulted off. Both direct template creation and bundle creation returned 403. A member could not enable the flag. Enabling the first organization left the second organization disabled on the same server.", true);
   const teammateId = await readCurrentOrganizationMemberId(teammate);
   const outsiderId = await readCurrentOrganizationMemberId(outsider);
