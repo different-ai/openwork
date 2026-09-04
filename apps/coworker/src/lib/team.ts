@@ -203,7 +203,8 @@ function firstLine(output: unknown): string {
 /**
  * A team tool call as the receipt line reads it: "Checked the team", "Offered
  * to pass this to Editor", "Suggested a teammate · Care", and for the guards
- * "Checked the team · Editor already covers this". Never a raw id or slug.
+ * "Checked the team · Editor already covers this" or "Checked the team · you
+ * asked to keep this here". Never a raw id or slug.
  */
 export function describeTeamStep(
   name: TeamToolName,
@@ -219,6 +220,7 @@ export function describeTeamStep(
     const wanted = to || text(call.input.to);
     if (state === "failed") return { label: wanted ? `Couldn't offer to pass this to ${wanted}` : "Couldn't offer to pass this on", doing: "offering to pass this on" };
     if (state === "running") return { label: "Offering to pass this on", doing: "offering to pass this on" };
+    if (isRecord(structured?.kept)) return { label: "Checked the team · you asked to keep this here", doing: "offering to pass this on" };
     return { label: wanted ? `Offered to pass this to ${wanted}` : "Offered to pass this on", doing: "offering to pass this on" };
   }
   if (state === "failed") return { label: "Couldn't suggest a teammate", doing: "thinking about the team" };

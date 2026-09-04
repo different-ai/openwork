@@ -6,7 +6,7 @@ import { after, test } from "node:test";
 import { TEAM_TOOL_NAMES } from "../src/lib/coworker-tools.ts";
 import { createCoworker } from "./coworkers.mjs";
 import { handleMcpMessage } from "./coworker-tools.mjs";
-import { readReferrals, readSuggestions } from "./team.mjs";
+import { readReferrals, readSuggestions, setReferralState } from "./team.mjs";
 import { createTeamToolHandlers, teamToolCatalog } from "./team-tools.mjs";
 
 const roots = [];
@@ -74,6 +74,21 @@ test("team_refer offers a hand-over to a real teammate by name or id, records it
   assert.match(self.result.content[0].text, /That is you\. Do the work yourself/);
   const missing = await call("team_refer", { to: "editor", message: "", why: "y" });
   assert.match(missing.result.content[0].text, /Include the person's request in their own words/);
+});
+
+test("team_refer does not offer a request again once the person chose to keep it with the coworker", async () => {
+  const { coworkersDir, call } = await team();
+  const first = await call("team_refer", { to: "editor", message: "Draft the launch announcement", why: "Editor writes for a living." });
+  assert.equal(first.result.isError, false);
+  await setReferralState(coworkersDir, "nova", first.result.structuredContent.referral.id, "continued", { now: NOW + 60_000 });
+  const again = await call("team_refer", { to: "editor", message: "draft the launch announcement", why: "Editor writes for a living." });
+  assert.equal(again.result.isError, false, "a kept request is a check, not a failure");
+  assert.equal(again.result.content[0].text, "The person already asked you to keep this yourself. Do the work now and don't offer to pass it on again.");
+  assert.deepEqual(again.result.structuredContent, { kept: { at: NOW + 60_000 } });
+  assert.equal((await readReferrals(coworkersDir, "nova")).length, 1, "nothing new is recorded");
+  const other = await call("team_refer", { to: "editor", message: "Rewrite the pricing page", why: "Editor writes for a living." });
+  assert.equal(other.result.isError, false);
+  assert.ok(other.result.structuredContent.referral, "a different request may still be offered");
 });
 
 test("team_suggest proposes a teammate once, then defers to the guards: existing, declined, daily", async () => {
