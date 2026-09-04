@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
 import { test } from "@openwork/testkit";
 
+import { SETTINGS_TAB_VALUES } from "../../apps/app/src/app/types";
 import {
   DEFAULT_WORKSPACE_LEFT_SIDEBAR_WIDTH,
   expandWorkspace,
@@ -143,6 +144,39 @@ test("the session is not carried into a different workspace's settings", async (
   evidence.recordAssertionEvidence(
     "Remembered session stays bound to its own workspace",
     "settingsReturnRoute only restores the session when the selected workspace matches the one Settings was opened from; other workspaces and workspace-less routes fall back to their session root.",
+    true,
+  );
+});
+
+test("the Memory Bank preview tab and toggle are removed from Settings", async ({ evidence }) => {
+  expect(SETTINGS_TAB_VALUES).not.toContain("memory");
+  expect(SETTINGS_TAB_VALUES).toContain("cloud-account");
+
+  const settingsPage = appSource("react-app/domains/settings/shell/settings-page.tsx");
+  expect(settingsPage).not.toContain('case "memory"');
+  expect(settingsPage).not.toContain("getCloudSettingsTabs");
+  expect(settingsPage).toMatch(
+    /export const CLOUD_SETTINGS_TABS: SettingsTab\[\] = \[\s*"cloud-account",?\s*\]/,
+  );
+
+  const settingsRoute = appSource("react-app/shell/settings-route.tsx");
+  expect(settingsRoute).not.toContain('case "memory"');
+  expect(settingsRoute).not.toContain("MemoryView");
+  expect(settingsRoute).toContain('case "cloud-account"');
+
+  const preferencesView = appSource("react-app/domains/settings/pages/preferences-view.tsx");
+  expect(preferencesView).not.toContain("memoryEnabled");
+  expect(preferencesView).not.toContain("onToggleMemory");
+
+  const englishLocale = appSource("i18n/locales/en.ts");
+  expect(englishLocale).not.toMatch(/"memory\./);
+
+  const localProvider = appSource("react-app/kernel/local-provider.tsx");
+  expect(localProvider).not.toMatch(/memory:\s*(boolean|false)/);
+
+  evidence.recordAssertionEvidence(
+    "The Memory Bank preview is removed from Settings",
+    'the "memory" settings tab, its route case, MemoryView, the Preferences toggle, the featureFlags.memory preference, and all memory.* strings are gone while cloud-account remains the only Cloud tab.',
     true,
   );
 });

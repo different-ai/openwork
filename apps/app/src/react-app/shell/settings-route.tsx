@@ -99,8 +99,6 @@ import {
 } from "@/react-app/domains/connections/cloud-inventory-cache";
 import { createOpaqueDiagnosticsScopeKey } from "@/react-app/domains/settings/pages/agent-context-diagnostics-section";
 import { CloudProvidersView } from "@/react-app/domains/settings/pages/cloud-providers-view";
-import { MemoryView } from "@/react-app/domains/settings/pages/memory-view";
-import { useFeatureFlagsPreferences } from "@/react-app/domains/settings/state/feature-flags-preferences";
 import { DebugView } from "@/react-app/domains/settings/pages/debug-view";
 import { EnvironmentView } from "@/react-app/domains/settings/pages/environment-view";
 import { ExtensionsView, type ExtensionsSection } from "@/react-app/domains/settings/pages/extensions-view";
@@ -303,15 +301,15 @@ export function parseSettingsPath(pathname: string): {
     case "appearance":
     case "environment":
     case "updates":
-    case "recovery":
     case "debug":
       return { tab: head, redirectPath: null };
     case "cloud-account":
     case "cloud-providers":
-    case "memory":
       return { tab: head, redirectPath: null };
     case "connect":
       return { tab: "extensions", redirectPath: "extensions", extensionsSection: "all" };
+    case "recovery":
+      return { tab: "advanced", redirectPath: "advanced" };
     case "skills":
       return { tab: "extensions", redirectPath: "extensions/skills", extensionsSection: "skills" };
     case "mcp":
@@ -450,10 +448,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const routeWorkspaceIdRef = useRef(routeWorkspaceId);
   routeWorkspaceIdRef.current = routeWorkspaceId;
   const local = useLocal();
-  const {
-    memoryEnabled,
-    toggleMemory,
-  } = useFeatureFlagsPreferences();
   const platform = usePlatform();
   const checkDesktopRestriction = useCheckDesktopRestriction();
   const restrictionNotice = useRestrictionNotice();
@@ -2361,13 +2355,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       case "permissions":
         return (
           <SettingsStack>
-            <EffectivePermissionsPanel
-              openworkServerClient={openworkClient}
-              openworkServerStatus={routeOpenworkStatus}
-              openworkServerCapabilities={routeOpenworkCapabilities}
-              runtimeWorkspaceId={runtimeWorkspaceId}
-              refreshToken={permissionsRefreshToken}
-            />
             <AuthorizedFoldersPanel
               openworkServerClient={openworkClient}
               openworkServerStatus={routeOpenworkStatus}
@@ -2458,8 +2445,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             onDesktopNotificationsChange={(desktopNotifications) => {
               local.setPrefs((previous) => ({ ...previous, desktopNotifications }));
             }}
-            memoryEnabled={memoryEnabled}
-            onToggleMemory={toggleMemory}
           />
         );
       case "extensions":
@@ -2571,8 +2556,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             session={denSession}
           />
         );
-      case "memory":
-        return <MemoryView onOpenAccount={openCloudAccountSettings} />;
       case "cloud-providers":
         return (
           <CloudProvidersView
@@ -2594,28 +2577,52 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         );
       case "advanced":
         return (
-          <AdvancedView
-            key={runtimeWorkspaceId ?? selectedWorkspaceId}
-            busy={busy}
-            clientConnected={Boolean(opencodeClient)}
-            opencodeConnectStatus={null}
-            openworkServerStatus={openworkServerSnapshot.openworkServerStatus}
-            developerMode={developerMode}
-            toggleDeveloperMode={toggleDeveloperMode}
-            opencodeDevModeEnabled={false}
-            openDebugDeepLink={async () => ({ ok: false, message: "Debug deep links are not wired into the React settings route yet." })}
-            cloudMcpUrl={openworkCloudMcpUrl}
-            canInspectRuntimeConfig={Boolean(openworkClient && selectedWorkspaceId)}
-            getRuntimeConfigStatus={async () => {
-              if (!openworkClient || !selectedWorkspaceId) {
-                throw new Error("Select a workspace to inspect runtime config.");
-              }
-              return openworkClient.getRuntimeConfigStatus(selectedWorkspaceId);
-            }}
-            cloudMcpHealth={cloudMcpHealth}
-            refreshCloudMcpHealth={refreshCloudMcpHealth}
-            organizationServer={denSession}
-          />
+          <SettingsStack>
+            <AdvancedView
+              key={runtimeWorkspaceId ?? selectedWorkspaceId}
+              busy={busy}
+              clientConnected={Boolean(opencodeClient)}
+              opencodeConnectStatus={null}
+              openworkServerStatus={openworkServerSnapshot.openworkServerStatus}
+              developerMode={developerMode}
+              toggleDeveloperMode={toggleDeveloperMode}
+              opencodeDevModeEnabled={false}
+              openDebugDeepLink={async () => ({ ok: false, message: "Debug deep links are not wired into the React settings route yet." })}
+              cloudMcpUrl={openworkCloudMcpUrl}
+              canInspectRuntimeConfig={Boolean(openworkClient && selectedWorkspaceId)}
+              getRuntimeConfigStatus={async () => {
+                if (!openworkClient || !selectedWorkspaceId) {
+                  throw new Error("Select a workspace to inspect runtime config.");
+                }
+                return openworkClient.getRuntimeConfigStatus(selectedWorkspaceId);
+              }}
+              cloudMcpHealth={cloudMcpHealth}
+              refreshCloudMcpHealth={refreshCloudMcpHealth}
+              organizationServer={denSession}
+            />
+            {platform.capabilities.localRuntimeControl ? (
+              <RecoveryView
+                anyActiveRuns={false}
+                workspaceConfigPath={selectedWorkspaceRoot ? `${selectedWorkspaceRoot}/.opencode/openwork.json` : ""}
+                resetConfigBusy={resetConfigBusy}
+                onResetAppConfigDefaults={() => {}}
+                configActionStatus={configActionStatus}
+                cacheRepairBusy={false}
+                cacheRepairResult={null}
+                onRepairOpencodeCache={() => {}}
+                dockerCleanupBusy={false}
+                dockerCleanupResult={null}
+                onCleanupOpenworkDockerContainers={() => {}}
+              />
+            ) : null}
+            <EffectivePermissionsPanel
+              openworkServerClient={openworkClient}
+              openworkServerStatus={routeOpenworkStatus}
+              openworkServerCapabilities={routeOpenworkCapabilities}
+              runtimeWorkspaceId={runtimeWorkspaceId}
+              refreshToken={permissionsRefreshToken}
+            />
+          </SettingsStack>
         );
       case "appearance":
         return (
@@ -2653,22 +2660,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               readDesktopDistributionInfo().flavor === "public" &&
               desktopConfig.config.allowAlphaUpdates !== false
             }
-          />
-        );
-      case "recovery":
-        return (
-          <RecoveryView
-            anyActiveRuns={false}
-            workspaceConfigPath={selectedWorkspaceRoot ? `${selectedWorkspaceRoot}/.opencode/openwork.json` : ""}
-            resetConfigBusy={resetConfigBusy}
-            onResetAppConfigDefaults={() => {}}
-            configActionStatus={configActionStatus}
-            cacheRepairBusy={false}
-            cacheRepairResult={null}
-            onRepairOpencodeCache={() => {}}
-            dockerCleanupBusy={false}
-            dockerCleanupResult={null}
-            onCleanupOpenworkDockerContainers={() => {}}
           />
         );
       case "environment":

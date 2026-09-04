@@ -9,7 +9,6 @@ import {
   MessageCircle,
   Paintbrush,
   RefreshCcw,
-  ShieldCheck,
   Sparkles,
   Terminal,
   Wrench,
@@ -34,8 +33,8 @@ type SettingsCardDefinition = { tab: SettingsTab; icon: typeof Sparkles } & (
 
 const workspaceCards: SettingsCardDefinition[] = [
   { tab: "preferences", icon: Cog, title: "Preferences", desc: "Default model, reasoning, and compaction." },
-  { tab: "permissions", icon: FolderLock, title: "Permissions", desc: "How agents run here, authorized folders, and file access." },
-  { tab: "advanced", icon: Wrench, title: "Advanced", desc: "Runtime, engine, and developer options." },
+  { tab: "permissions", icon: FolderLock, title: "Permissions", desc: "Authorized folders and file access." },
+  { tab: "advanced", icon: Wrench, title: "Advanced", desc: "Runtime, engine, recovery, and developer options." },
 ];
 
 const globalCards: SettingsCardDefinition[] = [
@@ -44,7 +43,6 @@ const globalCards: SettingsCardDefinition[] = [
   { tab: "appearance", icon: Paintbrush, title: "Appearance", desc: "Theme, font size, and display." },
   { tab: "environment", icon: Terminal, title: "Environment", desc: "Environment variables and paths." },
   { tab: "updates", icon: RefreshCcw, title: "Updates", desc: "App version and update channel." },
-  { tab: "recovery", icon: ShieldCheck, title: "Recovery", desc: "Reset onboarding and clear data." },
 ];
 
 function cardTitle(card: SettingsCardDefinition) {

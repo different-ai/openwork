@@ -2,7 +2,6 @@
 import type * as React from "react";
 import {
   ArrowLeft,
-  BrainCircuit,
   Bug,
   Cable,
   ChevronDown,
@@ -59,7 +58,6 @@ import {
   SettingsPanelToolbarMessage,
   SettingsPanelToolbarStatus,
 } from "./panel";
-import { useFeatureFlagsPreferences } from "../state/feature-flags-preferences";
 import { SidebarDestination } from "../../session/sidebar/sidebar-destination";
 
 export function getSettingsTabIcon(tab: SettingsTab) {
@@ -80,8 +78,6 @@ export function getSettingsTabIcon(tab: SettingsTab) {
       return CloudCog;
     case "skills":
       return Sparkles;
-    case "memory":
-      return BrainCircuit;
     case "extensions":
       return Puzzle;
     case "environment":
@@ -119,8 +115,6 @@ export function getSettingsTabLabel(tab: SettingsTab) {
       return t("settings.tab_cloud_providers");
     case "skills":
       return t("settings.tab_skills");
-    case "memory":
-      return t("memory.tab_label");
     case "extensions":
       return t("settings.tab_extensions");
     case "environment":
@@ -149,7 +143,7 @@ export function getSettingsTabDescription(tab: SettingsTab) {
     case "preferences":
       return "Default model, reasoning, and compaction";
     case "permissions":
-      return "How agents run here, authorized folders, and file access";
+      return "Authorized folders and file access";
     case "cloud-account":
       return t("settings.tab_description_cloud_account");
     case "connect":
@@ -160,8 +154,6 @@ export function getSettingsTabDescription(tab: SettingsTab) {
       return t("settings.tab_description_cloud_providers");
     case "skills":
       return t("settings.tab_description_skills");
-    case "memory":
-      return t("memory.tab_description");
     case "extensions":
       return t("settings.tab_description_extensions");
     case "environment":
@@ -189,11 +181,10 @@ export function getWorkspaceSettingsTabs(): SettingsTab[] {
 
 export function getGlobalSettingsTabs(
   developerMode: boolean,
-  capabilities: Pick<PlatformCapabilities, "autoUpdate" | "localRuntimeControl">,
+  capabilities: Pick<PlatformCapabilities, "autoUpdate">,
 ): SettingsTab[] {
   const tabs: SettingsTab[] = ["ai", "appearance", "environment"];
   if (capabilities.autoUpdate) tabs.push("updates");
-  if (capabilities.localRuntimeControl) tabs.push("recovery");
   if (developerMode) tabs.push("debug");
   return tabs;
 }
@@ -232,15 +223,6 @@ function SettingsSidebarTabLabel({ tab }: { tab: SettingsTab }) {
   );
 }
 
-/**
- * Cloud settings tabs, gated by client-only preview flags. The Memory tab is
- * surfaced only when `featureFlags.memory` is on (C-4). Both settings nav
- * surfaces (sidebar + compact section menu) must use this so they can't drift.
- */
-export function getCloudSettingsTabs(memoryEnabled: boolean): SettingsTab[] {
-  return memoryEnabled ? ["cloud-account", "memory"] : CLOUD_SETTINGS_TABS;
-}
-
 type SettingsPageProps = {
   activeTab: SettingsTab;
   onSelectTab: (tab: SettingsTab) => void;
@@ -268,10 +250,9 @@ type SettingsSidebarProps = Pick<SettingsPageProps, "activeTab" | "onSelectTab" 
 
 export function SettingsSidebar(props: SettingsSidebarProps) {
   const platform = usePlatform();
-  const { memoryEnabled } = useFeatureFlagsPreferences();
   const workspaceTabs = getWorkspaceSettingsTabs();
   const globalTabs = getGlobalSettingsTabs(props.developerMode, platform.capabilities);
-  const cloudTabs = getCloudSettingsTabs(memoryEnabled);
+  const cloudTabs = CLOUD_SETTINGS_TABS;
 
   return (
     <Sidebar collapsible="icon" className="mac:**:data-[sidebar=sidebar]:bg-transparent">
