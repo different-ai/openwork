@@ -371,6 +371,85 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
     true,
   )
 
+  const externalManualRun = await denFetch(den.admin, `/v1/workflows/${externalConfigObjectId}/run`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${den.admin.token}` },
+    body: JSON.stringify({
+      pluginId: externalPluginId,
+      configObjectVersionId: externalConfigObjectVersionId,
+      input: { topic: externalMarker },
+    }),
+  })
+  expect(externalManualRun.response.ok, externalManualRun.text).toBe(true)
+  expect(requireRecord(externalManualRun.body, "external manual Workflow result").status).toBe("succeeded")
+
+  const latestDetail = await denFetch(den.admin, `/v1/workflows/${externalConfigObjectId}`, {
+    headers: { authorization: `Bearer ${den.admin.token}` },
+  })
+  expect(latestDetail.response.ok, latestDetail.text).toBe(true)
+  const latestScript = requireRecord(requireRecord(latestDetail.body, "external Workflow detail").script, "external Workflow script")
+  const latest = requireRecord(latestScript.latestSnapshot, "latest snapshot")
+  const externalToolCallNames = records(latest.toolCalls).map((call) => call.name)
+  expect(externalToolCallNames).toEqual(["report_source.mock_echo"])
+
+  const internalDetail = await denFetch(den.admin, `/v1/workflows/${configObjectId}`, {
+    headers: { authorization: `Bearer ${den.admin.token}` },
+  })
+  expect(internalDetail.response.ok, internalDetail.text).toBe(true)
+  const internalScript = requireRecord(requireRecord(internalDetail.body, "internal Workflow detail").script, "internal Workflow script")
+  const internalLatest = requireRecord(internalScript.latestSnapshot, "internal latest snapshot")
+  const internalToolCallNames = records(internalLatest.toolCalls).map((call) => call.name)
+  expect(internalToolCallNames).toEqual(["den.getWorkers"])
+  evidence.recordAssertionEvidence(
+    "Each Workflow run records the tool calls it made for step-level replay",
+    "The latest snapshot lists report_source.mock_echo for the external Workflow and only den.getWorkers for the internal one.",
+    externalToolCallNames.length === 1
+      && externalToolCallNames[0] === "report_source.mock_echo"
+      && internalToolCallNames.length === 1
+      && internalToolCallNames[0] === "den.getWorkers",
+  )
+
+  const searchCode = "const found = await tools.$codemode.search({ query: input.topic }); return { count: found.items.length }"
+  const searchExecuted = await agentRpc(den.ref.apiUrl, mcpToken, "tools/call", {
+    name: "execute_capability_script",
+    arguments: { code: searchCode, input: { topic: "workers" } },
+  })
+  expect(searchExecuted.isError).not.toBe(true)
+
+  const rejectedSearchWorkflow = await denFetch(den.admin, "/v1/workflows", {
+    method: "POST",
+    headers: { authorization: `Bearer ${den.admin.token}` },
+    body: JSON.stringify({
+      name: `${scriptName} search`,
+      code: searchCode,
+      currentInput: { topic: "workers" },
+      inputSchema,
+    }),
+  })
+  expect(rejectedSearchWorkflow.response.status, rejectedSearchWorkflow.text).toBe(400)
+  const rejectedSearchBody = requireRecord(rejectedSearchWorkflow.body, "rejected search Workflow")
+  expect(rejectedSearchBody.error).toBe("workflow_capability_unavailable")
+  expect(String(rejectedSearchBody.capability ?? "")).toMatch(/\$codemode\.search$/)
+  const rejectedSearchMessage = String(rejectedSearchBody.message ?? "")
+  expect(rejectedSearchMessage).toContain("search_capabilities")
+
+  const workflowList = await denFetch(den.admin, "/v1/workflows", {
+    headers: { authorization: `Bearer ${den.admin.token}` },
+  })
+  expect(workflowList.response.ok, workflowList.text).toBe(true)
+  const searchWorkflowWasSaved = records(requireRecord(workflowList.body, "Workflow list").items)
+    .some((item) => item.name === `${scriptName} search`)
+  expect(searchWorkflowWasSaved).toBe(false)
+  evidence.recordAssertionEvidence(
+    "Saving a Workflow that depends on in-script search is rejected with a next step",
+    rejectedSearchMessage,
+    rejectedSearchWorkflow.response.status === 400
+      && rejectedSearchBody.error === "workflow_capability_unavailable"
+      && /\$codemode\.search$/.test(String(rejectedSearchBody.capability ?? ""))
+      && rejectedSearchMessage.includes("search_capabilities")
+      && !searchWorkflowWasSaved,
+  )
+
   const externalAutomation = await denFetch(den.admin, `/v1/automations/${automationId}`, {
     method: "PATCH",
     headers: { authorization: `Bearer ${den.admin.token}` },

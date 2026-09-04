@@ -105,6 +105,7 @@ export const workflowArtifactSnapshotSchema = z.object({
   inputSchemaDigest: digestSchema.nullable(),
   outputSchemaDigest: digestSchema.nullable(),
   rendererVersion: z.literal("codemode-markdown-v1").nullable(),
+  toolCalls: z.array(z.object({ name: z.string() })),
   status: z.enum(["succeeded", "failed"]),
   errorKind: z.string().nullable(),
   errorMessage: z.string().nullable(),
