@@ -187,14 +187,20 @@ async function engineSessionCount(app: Surface, workspaceId: string, lane: "open
   return result.json.data.length;
 }
 
-async function clickSwitch(app: Surface, ariaLabel: string): Promise<void> {
+const engineSelectedExpression = (engine: "v1" | "v2", options: { ready?: boolean } = {}) => `(() => {
+  const group = document.querySelector('[aria-label="Chat engine"]');
+  if (!group) return false;
+  ${options.ready ? 'if (group.getAttribute("aria-disabled") === "true" || group.hasAttribute("data-disabled")) return false;' : ""}
+  const control = group.querySelector('[data-engine="${engine}"]');
+  return control?.getAttribute("aria-pressed") === "true" || control?.getAttribute("data-state") === "on";
+})()`;
+
+async function clickEngineOption(app: Surface, engine: "v1" | "v2"): Promise<void> {
   const point = await evalIn(app, `(() => {
-    const control = [...document.querySelectorAll(${JSON.stringify(`[aria-label="${ariaLabel}"]`)})]
+    const control = [...document.querySelectorAll('[aria-label="Chat engine"] [data-engine="${engine}"]')]
       .find((candidate) => {
         const rect = candidate.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0
-          && candidate.getAttribute("aria-disabled") !== "true"
-          && !candidate.hasAttribute("data-disabled");
+        return rect.width > 0 && rect.height > 0;
       });
     if (!(control instanceof HTMLElement)) return null;
     control.scrollIntoView({ block: "center", behavior: "instant" });
@@ -202,7 +208,7 @@ async function clickSwitch(app: Surface, ariaLabel: string): Promise<void> {
     return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
   })()`);
   if (!isRecord(point) || typeof point.x !== "number" || typeof point.y !== "number") {
-    throw new Error(`Could not resolve enabled switch ${ariaLabel}: ${JSON.stringify(point)}`);
+    throw new Error(`Could not resolve the ${engine} chat engine option: ${JSON.stringify(point)}`);
   }
   await app.client.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y });
   await app.client.send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
@@ -577,25 +583,14 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place, ski
       );
 
       await go(app, `/workspace/${workspaceId}/settings/advanced`);
-      await waitFor(app, `(() => {
-        const control = document.querySelector('[aria-label="OpenCode v2 engine preview"]');
-        return control?.getAttribute("aria-checked") === "false"
-          && control.getAttribute("aria-disabled") !== "true";
-      })()`, { timeoutMs: 60_000, label: "ready OpenCode v2 preview switch" });
-      await clickSwitch(app, "OpenCode v2 engine preview");
+      await waitFor(app, engineSelectedExpression("v1", { ready: true }), { timeoutMs: 60_000, label: "ready chat engine control on v1" });
+      await clickEngineOption(app, "v2");
       runningStatus = await untilStatus(
         app,
         (status) => status.enabled && status.running && typeof status.pid === "number",
         180_000,
         "the OpenCode v2 sidecar to start",
       );
-
-      await waitFor(app, `(() => {
-        const control = document.querySelector('[aria-label="Route chat through OpenCode v2"]');
-        return control?.getAttribute("aria-checked") === "false"
-          && control.getAttribute("aria-disabled") !== "true";
-      })()`, { timeoutMs: 30_000, label: "ready OpenCode v2 chat routing switch" });
-      await clickSwitch(app, "Route chat through OpenCode v2");
       await untilStatus(app, (status) => status.chatRouting, 30_000, "chat routing to be enabled");
     }
     const pid0 = runningStatus.pid;
@@ -690,11 +685,11 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place, ski
     );
 
     await go(app, `/workspace/${workspaceId}/settings/advanced`);
-    await waitFor(app, `document.querySelector('[aria-label="Route chat through OpenCode v2"]')?.getAttribute("aria-checked") === "true"`, {
+    await waitFor(app, engineSelectedExpression("v2"), {
       timeoutMs: 30_000,
-      label: "enabled chat routing switch before reversal",
+      label: "chat engine control on v2 before reversal",
     });
-    await clickSwitch(app, "Route chat through OpenCode v2");
+    await clickEngineOption(app, "v1");
     await untilStatus(app, (status) => !status.chatRouting, 30_000, "chat routing to be disabled");
     const routedOffAt = Date.now();
     await go(app, `/workspace/${workspaceId}/session`);
@@ -711,14 +706,18 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place, ski
       routedOffAt,
       "R4 v1",
     );
+    // Choosing OpenCode v1 turns routing off AND stops the sidecar, so the v2
+    // proxy must be unavailable again (-1), exactly as before the preview.
+    const stoppedStatus = await untilStatus(app, (status) => !status.enabled && !status.running, 60_000, "the OpenCode v2 sidecar to stop");
     const v2AfterR4 = await engineSessionCount(app, workspaceId, "opencode2");
     expect(r4.request.at).toBeGreaterThanOrEqual(routedOffAt);
     expect(r4.request.auth).toBe(`Bearer ${keyV1}`);
     expect(r4.request.model).toBe(modelIdV1);
-    expect(v2AfterR4).toBe(v2AfterR2);
+    expect(stoppedStatus.chatRouting).toBe(false);
+    expect(v2AfterR4).toBe(-1);
     evidence.recordAssertionEvidence(
-      "R4 disabling routing returns new chat to v1 without mutating v2",
-      `After routing was disabled, the transcript streamed ${r4.request.nonce} from ${modelIdV1} with Bearer ${keyV1} in ${r4.latencyMs}ms; v2 sessions stayed frozen at ${v2AfterR2}.`,
+      "R4 choosing OpenCode v1 returns new chat to v1 and stops the sidecar",
+      `After choosing v1, the transcript streamed ${r4.request.nonce} from ${modelIdV1} with Bearer ${keyV1} in ${r4.latencyMs}ms; the sidecar reported enabled=false running=false and the v2 proxy was unavailable (v2 sessions had reached ${v2AfterR2} while routed).`,
       true,
     );
   } finally {
