@@ -39,6 +39,9 @@ export function SiteFooter() {
           <Link href="/download" className="whitespace-nowrap transition-colors hover:text-gray-800">
             Desktop
           </Link>
+          <Link href="/coworker" className="whitespace-nowrap transition-colors hover:text-gray-800">
+            Coworker
+          </Link>
           <a
             href="https://app.openworklabs.com"
             target="_blank"
