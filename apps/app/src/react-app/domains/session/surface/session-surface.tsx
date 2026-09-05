@@ -30,6 +30,7 @@ import type {
   ModelRef,
   PendingPermission,
   PendingQuestion,
+  PermissionReply,
   SkillCard,
   TodoItem,
 } from "@/app/types";
@@ -591,7 +592,8 @@ export type SessionSurfaceProps = {
   activePermission?: PendingPermission | null;
   activePermissionSourceTitle?: string | null;
   permissionReplyBusy?: boolean;
-  respondPermission?: (requestID: string, reply: "once" | "always" | "reject") => void;
+  respondPermission?: (requestID: string, reply: PermissionReply) => void;
+  canAllowInWorkspace?: boolean;
   activeQuestion?: PendingQuestion | null;
   questionReplyBusy?: boolean;
   respondQuestion?: (requestID: string, answers: string[][]) => void;
@@ -3006,6 +3008,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                     sourceTitle={props.activePermissionSourceTitle ?? undefined}
                     busy={props.permissionReplyBusy}
                     respondPermission={props.respondPermission}
+                    canAllowInWorkspace={props.canAllowInWorkspace}
                     safeStringify={props.safeStringify}
                   />
                 ) : null}

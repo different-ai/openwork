@@ -120,6 +120,12 @@ import {
 import { runAgentContextDiagnostics } from "./agent-context-diagnostics.js";
 import { createAgentDiagnosticsEngineFetch, validateEffectiveEngineSnapshot } from "./agent-context-engine-inspection.js";
 import { selectGoverningAgent, summarizeEffectivePermissions } from "./effective-permissions.js";
+import {
+  addWorkspacePermissionRule,
+  listWorkspacePermissionRules,
+  removeWorkspacePermissionRule,
+  type WorkspacePermissionRule,
+} from "./workspace-permission-rules.js";
 import { sanitizeDiagnosticString } from "./diagnostic-sanitizer.js";
 import {
   mergeOpencodeConfigs,
@@ -2839,6 +2845,73 @@ function createRoutes(
 
     return jsonResponse({ item: removed, warnings: [] });
   });
+
+  addRoute(routes, "GET", "/workspace/:id/permissions/rules", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    return jsonResponse({
+      rules: await listWorkspacePermissionRules(workspace.path),
+      path: opencodeConfigPath(workspace.path),
+    });
+  });
+
+  // Add or remove one entry in the workspace's own opencode.json `permission`
+  // block — the same edit an OpenCode user would make by hand, so the result
+  // is visible in the file and the engine reads it as the last word.
+  const parseWorkspacePermissionRule = (body: Record<string, unknown>, requireAction: boolean): WorkspacePermissionRule => {
+    const permission = typeof body.permission === "string" ? body.permission.trim() : "";
+    const pattern = typeof body.pattern === "string" ? body.pattern : "";
+    const action = body.action;
+    if (!permission || !pattern) {
+      throw new ApiError(400, "invalid_payload", "permission and pattern are required");
+    }
+    if (requireAction && action !== "allow" && action !== "ask" && action !== "deny") {
+      throw new ApiError(400, "invalid_payload", 'action must be "allow", "ask", or "deny"');
+    }
+    return { permission, pattern, action: action === "ask" || action === "deny" ? action : "allow" };
+  };
+
+  const changeWorkspacePermissionRule = async (
+    ctx: RequestContext,
+    apply: (workspace: WorkspaceInfo, rule: WorkspacePermissionRule) => Promise<boolean>,
+    requireAction: boolean,
+    verb: "add" | "remove",
+  ) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const rule = parseWorkspacePermissionRule(await readJsonBody(ctx.request), requireAction);
+    const configPath = opencodeConfigPath(workspace.path);
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "config.write",
+      summary: verb === "add"
+        ? `Allow ${rule.permission} ${rule.pattern} in this workspace`
+        : `Remove the ${rule.permission} ${rule.pattern} rule from this workspace`,
+      paths: [configPath],
+    });
+    const changed = await apply(workspace, rule);
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "config.write",
+      target: configPath,
+      summary: verb === "add"
+        ? `Added permission rule ${rule.permission} ${rule.pattern}: ${rule.action}`
+        : `Removed permission rule ${rule.permission} ${rule.pattern}`,
+      timestamp: Date.now(),
+    });
+    if (changed) {
+      emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(configPath));
+    }
+    return jsonResponse({ changed, rules: await listWorkspacePermissionRules(workspace.path), path: configPath });
+  };
+
+  addRoute(routes, "POST", "/workspace/:id/permissions/rules", "client", (ctx) =>
+    changeWorkspacePermissionRule(ctx, (workspace, rule) => addWorkspacePermissionRule(workspace.path, rule), true, "add"));
+
+  addRoute(routes, "DELETE", "/workspace/:id/permissions/rules", "client", (ctx) =>
+    changeWorkspacePermissionRule(ctx, (workspace, rule) => removeWorkspacePermissionRule(workspace.path, rule), false, "remove"));
 
   addRoute(routes, "GET", "/workspace/:id/permissions/effective", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);

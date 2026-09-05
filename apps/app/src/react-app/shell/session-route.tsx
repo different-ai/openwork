@@ -1088,6 +1088,9 @@ export function SessionRoute() {
     sessionId: selectedSessionId,
     permissionSessionIds: selectedPermissionSessionIds,
     workspaceRoot: selectedWorkspaceRoot,
+    openworkServer: selectedWorkspaceEndpoint
+      ? { client: selectedWorkspaceEndpoint.client, workspaceId: selectedWorkspaceEndpoint.workspaceId }
+      : null,
   });
   const activePermissionSourceTitle = useMemo(() => {
     if (!activePermission || activePermission.sessionID === selectedSessionId) return null;
@@ -3473,6 +3476,7 @@ export function SessionRoute() {
       activePermissionSourceTitle={activePermissionSourceTitle}
       permissionReplyBusy={permissionReplyBusy}
       respondPermission={respondPermission}
+      canAllowInWorkspace={Boolean(selectedWorkspaceEndpoint)}
       activeQuestion={activeQuestion}
       questionReplyBusy={questionReplyBusy}
       respondQuestion={respondQuestion}
