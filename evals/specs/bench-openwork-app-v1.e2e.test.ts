@@ -715,11 +715,14 @@ async function createNewSession(app: Surface): Promise<{ sessionId: string; ms: 
     `document.querySelector("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? ""`,
   );
   const previous = typeof previousSessionId === "string" ? previousSessionId : "";
-  await pollExpression(app, `Boolean(document.querySelector("[data-sidebar-new-chat]"))`, "sidebar New task control");
+  await pollExpression(app, `(() => {
+    const button = document.querySelector('[data-sidebar-new-chat]');
+    return button instanceof HTMLButtonElement && !button.disabled;
+  })()`, "enabled sidebar New task control");
   const startedAt = Date.now();
   const clicked = await evalIn(app, `(() => {
     const button = document.querySelector("[data-sidebar-new-chat]");
-    if (!(button instanceof HTMLElement)) return false;
+    if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
     button.click();
     return true;
   })()`);
@@ -1056,8 +1059,8 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence, place }) =
             await createNewSession(app);
             if (await ensureBenchModelV2(app)) modelReselectedPerSession = true;
           } else {
-            await createNewSession(app);
             await selectBenchModel(app);
+            await createNewSession(app);
           }
           const bNonces: string[] = [];
           const setupNonce = `bench-b-setup-${witnessNonce}`;
