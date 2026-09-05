@@ -17,7 +17,7 @@ import type { TestNeeds } from "@openwork/testkit";
  *                                 provider never reached a terminal outcome.
  *   - applied-but-engine-empty -> claim 1 green, claim 2 red; status lists the
  *                                 provider (fingerprint recorded as done) but
- *                                 the engine never served its model — the
+ *                                 the picker never listed its model — the
  *                                 settings row derives "Syncing" from exactly
  *                                 this gap (entitled && !available).
  *   - silent-skip              -> a published provider is absent from status
@@ -382,7 +382,7 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
     `Latest status payload: ${JSON.stringify(settledStatus.raw)}`,
   ].join("\n")).toBe(true);
 
-  // ── Claim 2: truthfulness — a status entry means the engine serves it ───
+  // Claim 2 checks model-catalog visibility, not successful inference.
   const syncedProviders = published.filter((provider) =>
     settledStatus.providers.some((entry) => entry.cloudProviderId === provider.cloudId));
   const expectedModelIds = syncedProviders.map((provider) => provider.modelId);
@@ -398,12 +398,12 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
   }).then(() => true, () => false);
   const missingModelIds = expectedModelIds.filter((id) => !lastModels.some((model) => model.id === id));
   evidence.recordAssertionEvidence(
-    "Every provider the sync status lists actually contributes its model to the engine within 30s",
+    "Every provider the sync status lists contributes its model to the picker within 30s",
     `Status-synced providers claim ${JSON.stringify(expectedModelIds)}; engine picker ids: ${JSON.stringify(lastModels.map((model) => model.id))}`,
     modelsArrived,
   );
   expect(modelsArrived, [
-    "Claim 2 (truthfulness): the sync status lists these providers, but the engine never served their models within 30s — the fingerprint was recorded as done while the engine was never reloaded (the stuck-'Syncing' settings row).",
+    "Claim 2 (catalog availability): the sync status lists these providers, but the picker never listed their models within 30s.",
     `Missing model ids: ${JSON.stringify(missingModelIds)}.`,
     `Status entries for the published providers: ${JSON.stringify(settledStatus.providers.filter((entry) => published.some((provider) => provider.cloudId === entry.cloudProviderId)))}.`,
     `Latest status payload: ${JSON.stringify(settledStatus.raw)}`,

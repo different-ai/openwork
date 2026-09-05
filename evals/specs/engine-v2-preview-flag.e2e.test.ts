@@ -254,6 +254,16 @@ test.skipIf(!enabled)(title, async ({ evidence, place }) => {
     expect(mirroredStatus.mirroredProviderIds).not.toContain("openwork-skip-e2e");
     expect(catalogStatus.pid).toBe(pid0);
     expect(mirroredStatus.running).toBe(true);
+    for (const configPath of ["/api/config", "/api/config/", "/api/%63onfig"]) {
+      const privateConfig = await serverFetchJson(app, `/workspace/${workspaceId}/opencode2${configPath}`);
+      expect(privateConfig.status).toBe(403);
+      expect(JSON.stringify(privateConfig.json)).not.toContain("witness-key-e2e");
+    }
+    evidence.recordAssertionEvidence(
+      "F3 private sidecar configuration never exposes mirrored provider credentials",
+      "Authenticated reads of the config endpoint, trailing-slash form, and encoded form returned 403 without the synthetic provider key, while the catalog still exposed the witness model.",
+      true,
+    );
     evidence.recordAssertionEvidence(
       "F3 provider changes hot-mirror without restarting the sidecar",
       `The witness provider mirrored after ${mirrorLatencyMs}ms and its model appeared in the catalog after ${catalogLatencyMs}ms, the invalid provider was skipped and never mirrored, and the sidecar remained running at pid ${pid0}.`,

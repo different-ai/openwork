@@ -565,6 +565,28 @@ describe("OpenCode v2 client compatibility", () => {
     }
   });
 
+  test("workspace streams reject foreign and unscoped permission events", async () => {
+    const originalFetch = globalThis.fetch;
+    const events = [
+      { ...capturedPermissionAsked, location: undefined, data: { ...capturedPermissionAsked.data, sessionID: "ses_unscoped" } },
+      { ...capturedPermissionAsked, location: { directory: "/other" }, data: { ...capturedPermissionAsked.data, sessionID: "ses_foreign" } },
+      capturedPermissionAsked,
+    ];
+    globalThis.fetch = async () => new Response(
+      events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+      { headers: { "Content-Type": "text/event-stream" } },
+    );
+    try {
+      const client = createClientV2("http://opencode.test/opencode2", "/workspace/", {});
+      const subscription = await client.event.subscribe();
+      const next = await subscription.stream.next();
+      expect(next.value).toMatchObject({ type: "permission.asked", properties: { sessionID: "ses_child" } });
+      await subscription.stream.return(undefined);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("emits session.error when the dispatched prompt fails", async () => {
     const originalFetch = globalThis.fetch;
     let eventController: ReadableStreamDefaultController<Uint8Array> | undefined;

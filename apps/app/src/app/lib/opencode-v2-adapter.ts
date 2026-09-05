@@ -958,7 +958,7 @@ async function* translateV2Events(
           continue;
         }
         const eventDirectory = isRecord(event) ? readString(readRecord(event, "location") ?? {}, "directory") : undefined;
-        if (directory && eventDirectory && normalizeDirectoryPath(directory) !== normalizeDirectoryPath(eventDirectory)) continue;
+        if (directory && (!eventDirectory || normalizeDirectoryPath(directory) !== normalizeDirectoryPath(eventDirectory))) continue;
         const translated = translateV2Event(event, state);
         if (!translated) continue;
         for (const item of translated) yield item;
