@@ -900,7 +900,7 @@ export async function connectionActionMcpApp(seed: Seed) {
     org: { name: `Connection Action ${Date.now()}`, admin: { name: "Connection Admin" } },
     mocks: {
       connector: seed.mock(),
-      agent: seed.mock({ agentWorkloads: [{
+      agent: seed.mock({ port: 3980, agentWorkloads: [{
         promptMarker: connectionActionPrompt,
         finalReply: connectionActionReply,
         steps: [{ tool: "search_capabilities", arguments: { query: "Notes", type: "mcp" } }],

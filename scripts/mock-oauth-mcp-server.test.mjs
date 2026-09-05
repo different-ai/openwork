@@ -116,6 +116,11 @@ test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeo
     assert.equal(response.status, 200);
     return response.json();
   };
+  const discovery = await rpc("server/discover", {});
+  assert.equal(discovery.error.code, -32601);
+  assert.equal("result" in discovery, false);
+  const initialized = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "1" } });
+  assert.equal(initialized.result.protocolVersion, "2025-06-18");
   const listed = await rpc("tools/list", {});
   assert.deepEqual(listed.result.tools.map((tool) => tool.name), ["execute_capability"]);
   assert.equal("result" in listed.result.tools[0], false);

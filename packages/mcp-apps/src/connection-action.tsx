@@ -88,7 +88,7 @@ function ConnectionActionCard({ initialPayload, app }: { initialPayload: Connect
         ) : null}
         {error ? <p role="alert" className="description">{error}</p> : null}
         {payload.state !== "connected" ? (
-          <button className="action-primary" type="button" disabled={!app || busy} onClick={() => void checkConnection()}>
+          <button className="action-primary action-secondary" type="button" disabled={!app || busy} onClick={() => void checkConnection()}>
             {busy ? "Checking…" : "Check connection"}
           </button>
         ) : null}

@@ -797,6 +797,17 @@ export type DesktopPolicyResponse = {
   };
 };
 
+export type DenDesktopPolicyValue = {
+  allowCustomProviders?: boolean;
+  allowZenModel?: boolean;
+  allowMultipleWorkspaces?: boolean;
+  allowControlSettings?: boolean;
+  allowManageExtensions?: boolean;
+  allowBuiltInExtensions?: boolean;
+  allowAlphaUpdates?: boolean;
+  showWelcomePage?: boolean;
+};
+
 export type DenDesktopPolicyDocumentWrite = {
   allowCustomProviders?: boolean;
   allowZenModel?: boolean;
@@ -806,6 +817,10 @@ export type DenDesktopPolicyDocumentWrite = {
   allowBuiltInExtensions?: boolean;
   allowAlphaUpdates?: boolean;
   showWelcomePage?: boolean;
+  access?: {
+    mode: "custom" | "locked";
+    capabilities: DenDesktopPolicyValue;
+  };
   onboardingPrompts?: Array<string> | null;
   onboardingPromptDescriptions?: Array<string> | null;
 };

@@ -775,6 +775,11 @@ function mcpResult(message) {
 }
 
 function mcpResponse(message) {
+  // This fixture speaks legacy MCP. Give modern clients the explicit fallback
+  // signal instead of a successful but malformed discovery response.
+  if (message.method === "server/discover") {
+    return { jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "Method not found" } };
+  }
   if (
     errorToolMode === "authorization_required"
     && errorToolName
