@@ -50,8 +50,9 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await user.see({ role: "textbox", label: "Email" });
     await user.notSee({ role: "textbox", label: "Team name" });
     await user.see({ testId: "auth-landing-visual" });
+    await user.see({ text: "Your choice of model. One place to work." });
     await probe.eventually(() => probe.eval("Boolean(document.querySelector('[data-testid=auth-landing-visual] canvas'))"), { within: 15000, label: "Paper shader canvas", until: (visible) => visible === true });
-    await user.looks(["The signup landing shows Good work starts here alongside a clear email entry form within a restrained black-and-white setup frame, with a compact black-and-white dithered texture band above the form"]);
+    await user.looks(["The signup landing shows Good work starts here alongside a clear email entry form within a restrained black-and-white setup frame, with a compact black-and-white dithered texture band above the form. The product example clearly shows a chat conversation, an inline dashboard result, and a composer with provider choice"]);
     await user.type({ role: "textbox", label: "Email" }, world.owner.email);
     await user.click({ role: "button", label: "Next" });
     await user.type({ role: "textbox", label: "Name" }, world.owner.name);
@@ -213,7 +214,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     }
     expect(await connectionsFor(personalId)).toEqual([]);
     await user.see({ text: "Added to team" });
-    await user.looks(["The optional Tools screen shows Notion and Linear added for the team while explaining that each person still signs in to their own account, with a clear Continue action"]);
+    await user.looks(["The optional Tools screen shows Notion and Linear added for the team while explaining that each person still signs in to their own account, with a clear Continue action. Its product example is a chat with inline team tools and a persistent composer"]);
     await user.reload();
     await user.see({ text: "Give your team a head start." }, { timeoutMs: 90_000 });
     expect(await connectionsFor(flexibleId)).toEqual(added);
@@ -334,8 +335,9 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     const mobileUser = user.on(mobile);
     await mobileUser.see({ text: "Good work starts here." }, { timeoutMs: 90_000 });
     await mobileUser.see({ role: "textbox", label: "Email" });
+    await mobileUser.see({ text: "Your choice of model. One place to work." });
     expect(await probe.eval(mobile, "document.documentElement.scrollWidth <= window.innerWidth")).toBe(true);
-    await mobileUser.looks(["The narrow signup screen has legible progress steps, heading, and email form without horizontal clipping"]);
+    await mobileUser.looks(["The narrow signup screen has legible progress steps, heading, email form, and model-provider choice without horizontal clipping"]);
   });
 
 });

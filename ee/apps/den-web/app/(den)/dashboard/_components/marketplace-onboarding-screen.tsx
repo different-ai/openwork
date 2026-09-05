@@ -145,7 +145,7 @@ export function MarketplaceOnboardingScreen({
       step="ready"
       embedded
       title="Put your tools to work."
-      description={`Build dashboards, run workflows, and bring ${orgName}’s shared tools to OpenWork or your preferred AI app.`}
+      description={`Start a chat. Build dashboards, run workflows, and use ${orgName}’s tools—with the model you choose.`}
     >
       <div className="grid gap-8" data-testid="marketplace-onboarding">
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-neutral-50 px-4 py-3 text-xs text-neutral-500">
@@ -157,7 +157,7 @@ export function MarketplaceOnboardingScreen({
             <span className="flex size-7 shrink-0 items-center justify-center rounded-full border border-[var(--dls-border)] text-xs font-medium text-[var(--dls-text-secondary)]">1</span>
             <div>
               <h2 id="setup-download-heading" className="text-base font-semibold tracking-tight text-[var(--dls-text-primary)]">Choose where to start</h2>
-              <p className="mt-1 text-sm leading-6 text-[var(--dls-text-secondary)]">Your files, conversations, and tools in one place.</p>
+              <p className="mt-1 text-sm leading-6 text-[var(--dls-text-secondary)]">Chat with your files and team tools, in one place.</p>
             </div>
           </div>
           <div className={mobileDevice ? "block" : "sm:hidden"}>
@@ -195,7 +195,7 @@ export function MarketplaceOnboardingScreen({
                   ? "Checking OpenWork Models…"
                   : modelsEnabled
                     ? "OpenWork Models are on for this workspace."
-                    : "Use OpenWork Models or connect your own provider. You can do this later."}
+                    : "Choose your model and provider. Use OpenWork Models or bring your own account—you can set this up later."}
               </p>
             </div>
             {modelsEnabled ? <DenBadge icon={Check}>Models on</DenBadge> : null}
