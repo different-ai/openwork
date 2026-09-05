@@ -1801,7 +1801,7 @@ export async function proxyOpencodeRequest(input: {
     return sanitizeProxyResponse(response);
   };
 
-  if (workspace && workspace.workspaceType !== "remote" && !pool && isPromptAsyncProxyRequest(method, proxyPath)) {
+  if (workspace && workspace.workspaceType !== "remote" && isPromptAsyncProxyRequest(method, proxyPath)) {
     return withEngineDirectoryFence(input.config, workspace, forward);
   }
   return forward();
@@ -4794,7 +4794,9 @@ async function runRuntimeMcpSyncToOpencodeEngine(
   const failures: EngineMcpSyncFailure[] = [];
   const registrations: EngineMcpRegistrationResult[] = [];
   for (const [name, mcpConfig] of entries) {
-    const registration = await postMcpEntryWithRetry(config, workspace, url, headers, name, mcpConfig);
+    const registration = await withEngineDirectoryFence(config, workspace, () =>
+      registerRuntimeMcpEntry(config, workspace, url, headers, name, mcpConfig)
+    );
     registrations.push(registration);
     if (registration.failure) failures.push(registration.failure);
   }
@@ -4816,7 +4818,7 @@ async function runRuntimeMcpSyncToOpencodeEngine(
   );
 
   if (failures.length > 0) {
-    if (activeState && !options?.deferred && hasRetryableMcpSyncFailure(failures)) {
+    if (activeState && (!options?.deferred || failures.some((failure) => failure.deferredForActivity)) && hasRetryableMcpSyncFailure(failures)) {
       scheduleDeferredEngineMcpSync({
         config,
         state: activeState,
@@ -4867,9 +4869,59 @@ async function withEngineMcpRegistrationLock<Result>(
   }
 }
 
-// POST one MCP entry to the engine, retrying once on 5xx/network errors
-// (the engine is often mid-rebuild right after a dispose). 4xx responses
-// are not retried — they won't change.
+// Reuse verified clients and fence necessary replacements against local prompt
+// admission. A health observation alone is not proof of config delivery.
+async function registerRuntimeMcpEntry(
+  config: ServerConfig,
+  workspace: WorkspaceInfo,
+  url: URL,
+  headers: Record<string, string>,
+  name: string,
+  mcpConfig: Record<string, unknown>,
+): Promise<EngineMcpRegistrationResult> {
+  // Explicit disabling still takes effect immediately.
+  if (mcpConfig.enabled === false) return postMcpEntryWithRetry(config, workspace, url, headers, name, mcpConfig);
+  try {
+    const response = await loopbackFetch(url, { headers, signal: AbortSignal.timeout(5_000) });
+    if (!response.ok) throw new Error("MCP status probe failed");
+    const statuses: unknown = JSON.parse(await readBoundedEngineMcpRegistrationResponse(response));
+    if (!isRecord(statuses)) throw new Error("Invalid MCP status response");
+    const live = statuses[name];
+    if (isRecord(live) && live.status === "connected") {
+      const recorded = inspectEngineMcpRegistrationDetails(config, workspace, name, mcpConfig);
+      const receipt = activeEngineMcpServerState(config)?.registrationByWorkspace.get(workspace.id)?.get(name);
+      if (recorded.status === "connected" && receipt?.configDelivered) {
+        // OpenCode's add endpoint replaces and closes even an unchanged client.
+        // Keep the client already captured by a model turn or in-flight tool.
+        return { name, status: "connected", source: "engine_status", errorSummary: null, failure: null };
+      }
+      const activityUrl = new URL(url);
+      activityUrl.pathname = "/session/status";
+      const activity = await loopbackFetch(activityUrl, { headers, signal: AbortSignal.timeout(5_000) });
+      if (!activity.ok) throw new Error("Session activity probe failed");
+      const sessions: unknown = JSON.parse(await readBoundedEngineMcpRegistrationResponse(activity));
+      if (!isRecord(sessions)) throw new Error("Invalid session activity response");
+      if (Object.values(sessions).some((session) => !isRecord(session) || session.type !== "idle")) {
+        // The directory fence also covers prompt admission, so a task cannot
+        // start between this activity check and replacing its client's tools.
+        return {
+          name, status: "failed", source: "transport_failure", errorSummary: null,
+          failure: { name, status: 503, deferredForActivity: true, message: "MCP replacement deferred until active tasks finish" },
+        };
+      }
+    }
+  } catch {
+    // Unknown liveness must not turn a background refresh into a destructive
+    // replacement. Let the existing deferred-sync path retry the probe.
+    return {
+      name, status: "failed", source: "transport_failure", errorSummary: null,
+      failure: { name, status: 503, message: "Could not verify MCP connection activity before registration" },
+    };
+  }
+  return postMcpEntryWithRetry(config, workspace, url, headers, name, mcpConfig);
+}
+
+// POST one MCP entry to the engine, retrying once on 5xx/network errors.
 async function postMcpEntryWithRetry(
   config: ServerConfig,
   workspace: WorkspaceInfo,
@@ -5131,6 +5183,7 @@ function scheduleDeferredEngineMcpSync(input: {
 export type EngineMcpSyncFailure = {
   name: string;
   status?: number;
+  deferredForActivity?: boolean;
   registrationStatus?: EngineMcpRegistrationStatus;
   message?: string;
 };
@@ -5143,6 +5196,7 @@ export type EngineMcpSyncState = { status: "ok" | "failed"; at: number; failures
 
 type EngineMcpRegistrationRecord = {
   fingerprint: string;
+  configDelivered: boolean;
   status: EngineMcpRegistrationStatus;
   source: EngineMcpRegistrationSource;
   errorSummary: string | null;
@@ -5566,6 +5620,7 @@ function recordEngineMcpSyncResult(
     }
     registrations.set(name, {
       fingerprint,
+      configDelivered: registration.failure === null,
       status: registration.status,
       source: registration.source,
       errorSummary: registration.errorSummary,
@@ -5682,8 +5737,15 @@ export function refreshEngineMcpRegistrationFromLiveStatus(
     return false;
   }
   const registrations = new Map(state.registrationByWorkspace.get(workspace.id) ?? []);
+  const previous = registrations.get(name);
   registrations.set(name, {
     fingerprint,
+    // A health probe observes status, not the engine's effective credentials.
+    // It must not manufacture a delivery receipt for a changed desired config.
+    configDelivered: previous?.configDelivered === true
+      && previous.fingerprint === fingerprint
+      && previous.registrationIdentity === registrationIdentity
+      && previous.generation === state.generation,
     status,
     source: "engine_status",
     errorSummary: sanitizeEngineMcpRegistrationErrorSummary(liveError, status),
