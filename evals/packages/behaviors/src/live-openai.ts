@@ -9,7 +9,7 @@ export function assertNoLiveSecret(value: unknown): void {
 }
 
 /** Provision via Den's authenticated API; never put the key in a CDP expression. */
-export async function provisionLiveOpenAi(admin: DenSession) {
+export async function provisionLiveOpenAi(admin: DenSession, organizationName: string) {
   const empty = { id: "", async [Symbol.asyncDispose]() {} };
   if (!liveOpenAiEnabled()) return empty;
   const key = process.env.OPENAI_API_KEY?.trim();
@@ -17,7 +17,7 @@ export async function provisionLiveOpenAi(admin: DenSession) {
   const headers = { authorization: `Bearer ${admin.token}` };
   const orgs = await denFetch(admin, "/v1/me/orgs", { headers });
   const body = orgs.body;
-  const org = typeof body === "object" && body !== null && "orgs" in body && Array.isArray(body.orgs) ? body.orgs[0] : null;
+  const org = typeof body === "object" && body !== null && "orgs" in body && Array.isArray(body.orgs) ? body.orgs.find((entry) => record(entry) && entry.name === organizationName) : null;
   if (!org || typeof org.id !== "string") throw new Error("Live provider needs an isolated organization");
   const orgHeaders = { ...headers, "x-openwork-org-id": org.id };
   let result;

@@ -38,7 +38,7 @@ test("v2 refreshes OpenWork skill instructions just in time in an existing conve
     org: { name: "V2 Skill Lifecycle", members: { member: { name: "Skill Member" } } },
     mocks: { witness: mcpMock({}) },
   });
-  await using managed = await provisionLiveOpenAi(den.admin);
+  await using managed = await provisionLiveOpenAi(den.admin, "V2 Skill Lifecycle");
   await using desktop = await app({ den, as: "member", place });
   const api = (path: string, method?: string, body?: unknown) => request(desktop, path, method, body);
   const providerId = live ? await liveProviderId(api, managed.id) : "reload-witness";
