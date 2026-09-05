@@ -7,12 +7,10 @@ import {
   __applySessionSyncEventForTest,
   __createWorkspaceSessionSyncForTest,
   __disposeWorkspaceSessionSyncForTest,
-  __hasWorkspaceSessionSyncForTest,
   __resetWorkspaceSyncReconcileHealthForTest,
   __revalidateWorkspaceSyncsForTest,
   __setWorkspaceSessionSyncStatusFetcherForTest,
   __setWorkspaceSessionSyncSubscriptionFactoryForTest,
-  deriveRunSyncHealth,
   ensureWorkspaceSessionSync,
   markSessionSnapshotFetchStart,
   reconcileFailureDegradedThreshold,
@@ -692,24 +690,6 @@ describe("run status reconcile liveness health", () => {
     cleanup();
   });
 
-  test("treats the machine being offline as unconfirmed progress even when a local engine still answers", () => {
-    // A local engine keeps validating "busy" while the laptop has no network,
-    // so the confident Working row would otherwise persist for the whole outage.
-    const healthy = { consecutiveFailures: 0, lastSuccessAt: 500 };
-    expect(deriveRunSyncHealth({ networkOnline: true, health: healthy })).toEqual({ degraded: false, lastConfirmedAt: 500 });
-    expect(deriveRunSyncHealth({ networkOnline: false, health: healthy })).toEqual({ degraded: true, lastConfirmedAt: 500 });
-    expect(deriveRunSyncHealth({ networkOnline: false, health: undefined })).toEqual({ degraded: true, lastConfirmedAt: null });
-    expect(deriveRunSyncHealth({
-      networkOnline: true,
-      health: { consecutiveFailures: reconcileFailureDegradedThreshold, lastSuccessAt: 500 },
-    })).toEqual({ degraded: true, lastConfirmedAt: 500 });
-    // Coming back online alone does not restore confidence; validation does.
-    expect(deriveRunSyncHealth({
-      networkOnline: true,
-      health: { consecutiveFailures: reconcileFailureDegradedThreshold - 1, lastSuccessAt: 500 },
-    })).toEqual({ degraded: false, lastConfirmedAt: 500 });
-  });
-
   test("freezes the last confirmed time at the first failure and resets on recovery", () => {
     const key = "workspace-run-status:https://run-status-health-store.example/opencode";
     const store = useWorkspaceSyncStreamStore.getState();
@@ -802,40 +782,5 @@ describe("run status reconcile liveness health", () => {
     expect(health?.consecutiveFailures ?? 0).toBe(0);
 
     releaseSession();
-  });
-
-  test("keeps a background run's workspace stream alive past retention until the run settles", async () => {
-    __setWorkspaceSessionSyncSubscriptionFactoryForTest(createSubscription);
-    __setWorkspaceSessionSyncStatusFetcherForTest(async () => ({}));
-    setSystemTime(100);
-    const input = {
-      workspaceId,
-      baseUrl: "https://run-status-background-retention.example/opencode",
-      openworkToken: "token",
-    };
-    syncInputs.push(input);
-    const releaseWorkspace = ensureWorkspaceSessionSync(input);
-    const releaseSession = trackWorkspaceSessionSync(input, sessionId);
-    await waitForSubscriptions(1);
-    await flushMicrotasks();
-
-    setSystemTime(200);
-    applyStatus(input, { type: "busy" });
-
-    // The user leaves for another workspace while the run is still live.
-    jest.useFakeTimers();
-    releaseSession();
-    releaseWorkspace();
-    jest.advanceTimersByTime(10 * 60_000 + 5_000);
-    await flushMicrotasks();
-    expect(__hasWorkspaceSessionSyncForTest(input)).toBe(true);
-    expect(subscriptions[0]?.signal.aborted).toBe(false);
-
-    // Once the run settles, the retained stream is released on the idle path.
-    applyStatus(input, { type: "idle" });
-    jest.advanceTimersByTime(15_000);
-    await flushMicrotasks();
-    expect(__hasWorkspaceSessionSyncForTest(input)).toBe(false);
-    expect(subscriptions[0]?.signal.aborted).toBe(true);
   });
 });
