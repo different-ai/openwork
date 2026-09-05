@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 import { createHash } from "node:crypto";
-import { createAndSelectWorkspace, evalIn } from "@openwork/behaviors";
+import { control, evalIn } from "@openwork/behaviors";
 import type { Surface } from "@openwork/cdp";
 import { app, eventually, mcpMock, needs, server, test } from "@openwork/testkit";
 
@@ -116,8 +116,18 @@ test("v2 uses an MCP added through OpenWork on the next call and removes it in t
   const current = record(workspaces) && Array.isArray(workspaces.items)
     ? workspaces.items.find((item) => record(item) && item.id === workspaceId) : undefined;
   if (!record(current) || typeof current.path !== "string") throw new Error("Missing workspace path");
-  const other = await createAndSelectWorkspace(desktop, { path: `${current.path}-unrelated` });
-  expect(JSON.stringify((await request(desktop, `/workspace/${other.workspaceId}/opencode2/api/mcp`)).json)).not.toContain("reload-witness");
+  const otherPath = `${current.path}-unrelated`;
+  await control(desktop, "workspace.create", { path: otherPath }, { timeoutMs: 90_000 });
+  const otherId = await eventually(async () => {
+    const listing = (await request(desktop, "/workspaces")).json;
+    const other = record(listing) && Array.isArray(listing.items)
+      ? listing.items.find((item) => record(item) && item.path === otherPath) : undefined;
+    return record(other) && typeof other.id === "string" ? other.id : "";
+  }, { within: 90_000, intervalMs: 500, label: "separate workspace created", until: Boolean });
+  expect(otherId).not.toBe(workspaceId);
+  const otherCatalog = await request(desktop, `/workspace/${otherId}/opencode2/api/mcp`);
+  expect(otherCatalog.status).toBe(200);
+  expect(JSON.stringify(otherCatalog.json)).not.toContain("reload-witness");
   expect(JSON.stringify((await request(desktop, `${v2}/api/mcp`)).json)).toContain("reload-witness");
   evidence.recordAssertionEvidence("credential replacement stays scoped to the original workspace", "Updating the existing connection through OpenWork caused the next call to use only the replacement credential fingerprint. A separately created workspace did not receive this MCP, while the original workspace retained it and the same v2 process.", true);
   expect((await request(desktop, `${root}/mcp/reload-witness`, "DELETE")).status).toBe(200);

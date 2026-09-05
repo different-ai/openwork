@@ -319,8 +319,10 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
   let mirroredSpecs: OpencodeV2ProviderSpec[] = [];
   const workspaceMcp = new Map<string, Map<string, string>>();
   const mcpInFlight = new Map<string, Promise<void>>();
+  const mcpWorkspaces = new Map<string, string>();
 
   async function syncWorkspaceMcp(workspaceId: string, directory: string): Promise<void> {
+    mcpWorkspaces.set(directory, workspaceId);
     // Serialize each location, then re-read authoritative state. A queued call
     // must not reuse a snapshot taken before a removal or credential update.
     const previous = mcpInFlight.get(directory);
@@ -363,8 +365,10 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
           const result = await active.fetchJson("/api/mcp", { directory, timeoutMs: 5_000 });
           const entries = isRecord(result.json) ? result.json.data : undefined;
           if (result.status !== 200 || !Array.isArray(entries)) throw new Error("OpenCode v2 MCP status is unavailable");
-          const pending = [...desired.keys()].some((name) => entries.some((entry) =>
-            isRecord(entry) && entry.name === name && isRecord(entry.status) && entry.status.status === "pending"));
+          const pending = [...desired.keys()].some((name) => {
+            const entry = entries.find((entry) => isRecord(entry) && entry.name === name);
+            return !isRecord(entry) || !isRecord(entry.status) || entry.status.status === "pending";
+          });
           if (!pending) break;
           if (Date.now() >= deadline) {
             // Retry readiness on the next request rather than cache an
@@ -465,6 +469,7 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
     workspaceReadiness.clear();
     sidecar = undefined;
     workspaceMcp.clear();
+    mcpWorkspaces.clear();
     running = false;
     version = undefined;
     pid = undefined;
@@ -498,8 +503,16 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
       pid = health.pid;
       running = health.healthy;
       const unsubscribeConfig = onRuntimeOpencodeConfigWrite((_writeConfig, workspaceId) => {
-        if (!isEngineGlobalRuntimeConfigId(workspaceId)) return;
-        scheduleMirror();
+        const global = isEngineGlobalRuntimeConfigId(workspaceId);
+        if (global) scheduleMirror();
+        // Connections installed through OpenWork also update already-open
+        // locations while a conversation is active. Request admission joins
+        // the same serialized reconciliation rather than racing it.
+        for (const [directory, id] of mcpWorkspaces) {
+          if (global || id === workspaceId) void syncWorkspaceMcp(id, directory).catch((error) => {
+            if (sidecar) lastError = `MCP: ${errorMessage(error)}`;
+          });
+        }
       });
       const unsubscribeEnv = options.env?.onChange(scheduleMirror);
       unsubscribe = () => { unsubscribeConfig(); unsubscribeEnv?.(); };
