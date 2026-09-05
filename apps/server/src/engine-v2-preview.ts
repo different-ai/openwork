@@ -57,6 +57,7 @@ export interface EngineV2Preview {
   setEnabled(enabled: boolean): Promise<EngineV2PreviewStatus>;
   setChatRouting(chatRouting: boolean): Promise<EngineV2PreviewStatus>;
   connection(): { url: string; username: string; password: string } | undefined;
+  ensureWorkspaceReady(directory: string): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -267,6 +268,8 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
   let startPromise: Promise<void> | undefined;
   let mirrorInFlight: Promise<void> | undefined;
   let mirrorDirty = false;
+  const workspaceReadiness = new Map<string, Promise<void>>();
+  let mirroredSpecs: OpencodeV2ProviderSpec[] = [];
 
   function status(): EngineV2PreviewStatus {
     return {
@@ -292,6 +295,8 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
     const mapped = mapRuntimeProvidersToV2Specs(providerMap, credentials);
     const nextMirroredProviderIds = mapped.specs.map((spec) => spec.id);
     await active.setProviders(mapped.specs);
+    mirroredSpecs = mapped.specs;
+    workspaceReadiness.clear();
     mirroredProviderIds = nextMirroredProviderIds;
     skippedProviderIds = [...mapped.skippedProviderIds];
     lastMirroredAt = new Date().toISOString();
@@ -337,6 +342,7 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
 
   async function closeSidecar(): Promise<void> {
     const active = sidecar;
+    workspaceReadiness.clear();
     sidecar = undefined;
     running = false;
     version = undefined;
@@ -446,10 +452,38 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
     return { url: sidecar.url, username: sidecar.username, password: sidecar.password };
   }
 
+  async function ensureWorkspaceReady(directory: string): Promise<void> {
+    if (mirrorInFlight) await mirrorInFlight;
+    const active = sidecar;
+    if (!active) throw new Error("OpenCode v2 is not running");
+    const existing = workspaceReadiness.get(directory);
+    if (existing) return existing;
+    // V2 discovers configuration asynchronously for each new location. Its
+    // initial catalog can be empty even after the preview location is ready.
+    const pending = (async () => {
+      const deadline = Date.now() + 8_000;
+      do {
+        const response = await active.fetchJson("/api/provider", { directory, timeoutMs: 5_000 });
+        const payload = isRecord(response.json) ? response.json.data : undefined;
+        if (response.status === 200 && Array.isArray(payload) && mirroredSpecs.every((spec) =>
+          payload.some((provider) => isRecord(provider) && provider.id === spec.id
+            && isRecord(provider.settings) && provider.settings.apiKey === spec.apiKey)
+        )) return;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      } while (Date.now() < deadline);
+      throw new Error("OpenCode v2 workspace provider configuration did not become ready");
+    })();
+    workspaceReadiness.set(directory, pending);
+    try { await pending; } catch (error) {
+      if (workspaceReadiness.get(directory) === pending) workspaceReadiness.delete(directory);
+      throw error;
+    }
+  }
+
   async function stop(): Promise<void> {
     await stopRuntime();
   }
 
   if (enabled) void start().catch(recordStartError);
-  return { status, setEnabled, setChatRouting, connection, stop };
+  return { status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, stop };
 }

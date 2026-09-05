@@ -1118,6 +1118,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
           }
           proxyService = "opencode";
           proxyBaseUrl = connection.url;
+          await engineV2Preview.ensureWorkspaceReady(workspace.path);
           const response = await proxyOpencodeV2Request({
             config,
             request,
