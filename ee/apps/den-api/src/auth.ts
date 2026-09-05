@@ -609,6 +609,7 @@ export const auth = betterAuth({
     provider: "mysql",
     schema,
   }),
+  user: { additionalFields: { syntheticRunId: { type: "string", required: false, input: false } } },
   account: DEN_ACCOUNT_CONFIG,
   session: {
     expiresIn: DEN_SESSION_EXPIRES_IN_SECONDS,
@@ -618,12 +619,12 @@ export const auth = betterAuth({
   databaseHooks: {
     user: {
       create: {
-        before: async (user) => ({
-          data: {
-            ...user,
-            email: normalizeLoginEmail(user.email),
-          },
-        }),
+        before: async (user) => {
+          const email = normalizeLoginEmail(user.email);
+          const [registration] = await db.select().from(schema.SyntheticAccountTable)
+            .where(eq(schema.SyntheticAccountTable.email, email)).limit(1);
+          return { data: { ...user, email, syntheticRunId: registration?.runId ?? null } };
+        },
       },
       update: {
         before: async (user) => ({
@@ -1067,6 +1068,7 @@ export const auth = betterAuth({
       },
     }),
     organization({
+      schema: { organization: { additionalFields: { syntheticRunId: { type: "string", required: false, input: false } } } },
       ac: denOrganizationAccess,
       roles: denOrganizationStaticRoles,
       creatorRole: "owner",
@@ -1094,6 +1096,11 @@ export const auth = betterAuth({
         });
       },
       organizationHooks: {
+        beforeCreateOrganization: async ({ organization, user }) => {
+          const [creator] = await db.select({ run: schema.AuthUserTable.syntheticRunId })
+            .from(schema.AuthUserTable).where(eq(schema.AuthUserTable.id, normalizeDenTypeId("user", user.id))).limit(1);
+          return { data: { ...organization, syntheticRunId: creator?.run ?? null } };
+        },
         afterCreateOrganization: async ({ organization }) => {
           await seedDefaultOrganizationRoles(
             normalizeDenTypeId("organization", organization.id),

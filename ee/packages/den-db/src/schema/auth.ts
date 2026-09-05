@@ -9,6 +9,7 @@ export const AuthUserTable = mysqlTable(
     id: denTypeIdColumn("user", "id").notNull().primaryKey(),
     name: varchar("name", { length: 255 }).notNull(),
     email: varchar("email", { length: 255 }).notNull(),
+    syntheticRunId: varchar("synthetic_run_id", { length: 128 }),
     emailVerified: boolean("email_verified").notNull().default(false),
     image: text("image"),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
@@ -466,3 +467,10 @@ export const scimSyncEvent = ScimSyncEventTable
 export const ssoProvider = SsoProviderTable
 export const ssoConnection = SsoConnectionTable
 export const externalIdentity = ExternalIdentityTable
+
+// Retained after account deletion so historical exports can still classify the run.
+export const SyntheticAccountTable = mysqlTable("synthetic_account", {
+  email: varchar("email", { length: 255 }).notNull().primaryKey(),
+  runId: varchar("run_id", { length: 128 }).notNull(),
+  createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+})

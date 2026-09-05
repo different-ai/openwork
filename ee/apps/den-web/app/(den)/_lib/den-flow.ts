@@ -75,6 +75,7 @@ export type AuthUser = {
   email: string;
   name: string | null;
   authProviders: string[];
+  syntheticRunId?: string | null;
 };
 
 export class ReauthRequiredError extends Error {
@@ -260,13 +261,16 @@ export function getEmailDomain(email: string): string {
   return email.slice(atIndex + 1).toLowerCase();
 }
 
+let syntheticAnalyticsUser = false;
+
 export function trackPosthogEvent(eventName: string, properties: Record<string, unknown> = {}) {
   if (typeof window === "undefined") {
     return;
   }
 
+  if (syntheticAnalyticsUser) return;
   try {
-    window.posthog?.capture?.(eventName, properties);
+    window.posthog?.capture?.(eventName, { ...properties, is_synthetic: syntheticAnalyticsUser });
   } catch {
     // Ignore analytics delivery failures.
   }
@@ -277,9 +281,13 @@ export function identifyPosthogUser(user: AuthUser) {
     return;
   }
 
+  syntheticAnalyticsUser = typeof user.syntheticRunId === "string";
+  if (syntheticAnalyticsUser) return;
   try {
     window.posthog?.identify?.(user.id, {
       email: user.email,
+      is_synthetic: syntheticAnalyticsUser,
+      synthetic_run_id: user.syntheticRunId,
       name: user.name ?? undefined
     });
   } catch {
@@ -292,6 +300,7 @@ export function resetPosthogUser() {
     return;
   }
 
+  syntheticAnalyticsUser = false;
   try {
     window.posthog?.reset?.();
   } catch {
@@ -546,6 +555,7 @@ export function getUser(payload: unknown): AuthUser | null {
   return {
     id: user.id,
     email: user.email,
+    syntheticRunId: typeof user.syntheticRunId === "string" ? user.syntheticRunId : null,
     name: typeof user.name === "string" ? user.name : null,
     authProviders: Array.isArray(user.authProviders)
       ? user.authProviders.filter((provider): provider is string => typeof provider === "string")

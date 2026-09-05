@@ -7,7 +7,6 @@
   "kube-egress-allowlist.test.ts",
   "managed-provider-env-delivery-reload.test.ts",
   "plugin-mcp-connector-parity.test.ts",
-  "prod-den-signup-invites.live.test.ts",
   "server-log-file.test.ts",
   "skill-grant-access.test.ts",
   "thread-approvals-engine-memory.test.ts",

@@ -1395,8 +1395,8 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     setWorkerStatusFilter("all");
     setWorkerName(DEFAULT_WORKER_NAME);
     persistOnboardingIntent(null);
-    resetPosthogUser();
     trackPosthogEvent("den_signout_completed", { method: "manual" });
+    resetPosthogUser();
 
     if (typeof window !== "undefined") {
       window.localStorage.removeItem(LAST_WORKER_STORAGE_KEY);

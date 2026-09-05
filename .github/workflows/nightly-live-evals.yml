@@ -1,0 +1,71 @@
+name: Nightly Live Evals
+
+on:
+  schedule:
+    # 07:23 UTC daily (00:23 PDT / 23:23 PST).
+    - cron: "23 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-live-evals
+  cancel-in-progress: false
+
+jobs:
+  live:
+    if: github.repository == 'different-ai/openwork'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      OPENWORK_EVAL_LIVE: "1"
+      OPENWORK_EVAL_LIVE_DEN_API_URL: ${{ vars.OPENWORK_EVAL_LIVE_DEN_API_URL || 'https://api.openworklabs.com' }}
+      OPENWORK_EVAL_LIVE_DEN_WEB_URL: ${{ vars.OPENWORK_EVAL_LIVE_DEN_WEB_URL || 'https://app.openworklabs.com' }}
+      OPENWORK_EVAL_LIVE_ADMIN_TOKEN: ${{ secrets.OPENWORK_EVAL_LIVE_ADMIN_TOKEN }}
+      AGENTMAIL_API_KEY: ${{ secrets.AGENTMAIL_API_KEY }}
+      OPENWORK_EVAL_LIVE_STRIPE_SECRET_KEY: ${{ secrets.OPENWORK_EVAL_LIVE_STRIPE_SECRET_KEY }}
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.4.0
+      - name: Check live credentials before installing
+        shell: bash
+        run: |
+          set -euo pipefail
+          for key in AGENTMAIL_API_KEY OPENWORK_EVAL_LIVE_STRIPE_SECRET_KEY OPENWORK_EVAL_LIVE_ADMIN_TOKEN; do
+            if [ -z "${!key}" ]; then
+              echo "::error::Missing required live-test secret: $key"
+              exit 1
+            fi
+          done
+      - name: Install eval dependencies
+        run: |
+          pnpm install --frozen-lockfile --filter @openwork/world... --ignore-scripts
+          pnpm --dir evals install --frozen-lockfile
+      - name: Locate runner Chrome
+        run: |
+          command -v google-chrome
+          echo "CHROME_BIN=$(command -v google-chrome)" >> "$GITHUB_ENV"
+      - name: Run live journeys
+        run: pnpm evals:live
+      - name: Upload live results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nightly-live-evals
+          # Keep full browser/session traces local; publish only the test report.
+          path: evals/results/live/
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Summarize outcome
+        if: always()
+        env:
+          LIVE_JOB_STATUS: ${{ job.status }}
+        run: |
+          echo "Nightly live journeys: $LIVE_JOB_STATUS. See the test report artifact and job log. Missing credentials, skips, assertions, and cleanup failures are failures." >> "$GITHUB_STEP_SUMMARY"

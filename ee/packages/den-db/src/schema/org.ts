@@ -42,6 +42,7 @@ export const OrganizationTable = mysqlTable(
   {
     id: denTypeIdColumn("organization", "id").notNull().primaryKey(),
     name: varchar("name", { length: 255 }).notNull(),
+    syntheticRunId: varchar("synthetic_run_id", { length: 128 }),
     slug: varchar("slug", { length: 255 }).notNull(),
     logo: varchar("logo", { length: 2048 }),
     allowedEmailDomains: json("allowed_email_domains").$type<string[] | null>(),
