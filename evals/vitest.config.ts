@@ -15,12 +15,25 @@ const prepareSuite = shouldPrepareSuite(process.argv);
 const attachedDen = Boolean(process.env.OPENWORK_EVAL_DEN_API_URL?.trim());
 const managedStack = prepareSuite && !attachedDen;
 const e2eWorkers = managedStack ? suiteWorkerCount(process.argv, process.env) : 1;
-const namedLiveSpec = process.argv.some((argument) => argument.endsWith(".live.test.ts"));
+const namedLiveSpec = process.argv.some((argument) => /\.live(?:\.e2e)?\.test\.ts$/.test(argument));
 
 export default defineConfig({
   test: {
     ...common,
     projects: [
+      {
+        test: {
+          ...common,
+          name: "live",
+          include: ["specs/**/*.live.test.ts", "specs/**/*.live.e2e.test.ts"],
+          // Attached deployments only: no managed stack, retries, or parallel mutations.
+          fileParallelism: false,
+          maxWorkers: 1,
+          retry: 0,
+          testTimeout: 300_000,
+          hookTimeout: 300_000,
+        },
+      },
       {
         resolve: appResolve,
         test: {
@@ -28,7 +41,7 @@ export default defineConfig({
           name: "pr",
           // Live specs are attached-system incident signals: exclude them unless explicitly named.
           include: ["specs/**/*.test.ts"],
-          exclude: ["**/*.e2e.test.ts", ...(namedLiveSpec ? [] : ["**/*.live.test.ts"])],
+          exclude: ["**/*.e2e.test.ts", ...(namedLiveSpec ? [] : ["**/*.live.test.ts", "**/*.live.e2e.test.ts"])],
         },
       },
       {
@@ -43,6 +56,7 @@ export default defineConfig({
           globalSetup: ["./runner/prepare-stack.ts"],
           setupFiles: ["./runner/stack-env.ts"],
           include: ["specs/**/*.e2e.test.ts"],
+          exclude: namedLiveSpec ? [] : ["**/*.live.e2e.test.ts"],
         },
       },
     ],
