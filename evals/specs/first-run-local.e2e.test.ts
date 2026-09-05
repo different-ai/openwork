@@ -39,7 +39,9 @@ test("first use without an invite or cloud reaches local task UI with honest mod
   await user.notSee({ text: /Something went wrong/ });
   await user.see({ text: /Using the free starter model/ });
   await step("An example is an editable draft, not an automatic task", async () => {
+    await user.looks(["The new-task screen offers workspace and document examples before the first task is submitted"]);
     const before = await probe.composer();
+    expect(before.route).toMatch(/\/session$/);
     await user.click({ role: "button", text: /^Explore this workspace/ });
     await user.see("composer", { editable: true, text: "Give me an overview of the files in this workspace and suggest one useful first task. Don’t change any files yet." });
     await user.see({ text: "Example added to your draft. Make it yours, then choose Run task. Clear your draft to choose another." });
