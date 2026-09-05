@@ -1,3 +1,4 @@
+import { sideChatSystemContext } from "../chat/workbench-store";
 import type { OpenworkServerClient } from "../../../../app/lib/openwork-server";
 import { readOpenworkEnvPendingChanges } from "../../../../app/lib/openwork-env-runtime";
 import { readOpenworkRuntimeFacts, renderOpenworkRuntimeContext } from "./runtime-context";
@@ -25,6 +26,7 @@ function normalizeEnvKeys(keys: string[]): string[] {
 export async function buildOpenworkEnvSystemContext(
   client: OpenworkServerClient | null,
   options: {
+    workspaceId?: string;
     cacheKey?: string;
     runtimeKey?: string | null;
     readPendingChanges?: () => boolean;
@@ -79,6 +81,7 @@ function rememberEnvSystemContext(cacheKey: string, context: string | undefined)
 export async function buildOpenworkSessionSystemContext(
   client: OpenworkServerClient | null,
   options: {
+    workspaceId?: string;
     cacheKey?: string;
     runtimeKey?: string | null;
     readPendingChanges?: () => boolean;
@@ -86,5 +89,7 @@ export async function buildOpenworkSessionSystemContext(
 ): Promise<string> {
   const envContext = await buildOpenworkEnvSystemContext(client, options);
   const runtimeContext = renderOpenworkRuntimeContext(readOpenworkRuntimeFacts());
-  return envContext ? `${runtimeContext}\n\n${envContext}` : runtimeContext;
+  const sideChatContext = options.workspaceId && options.cacheKey
+    ? sideChatSystemContext(options.workspaceId, options.cacheKey) : undefined;
+  return [runtimeContext, envContext, sideChatContext].filter(Boolean).join("\n\n");
 }

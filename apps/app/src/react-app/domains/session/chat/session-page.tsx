@@ -326,14 +326,14 @@ function WorkbenchPaneHeader(props: {
             <Button
               variant="ghost"
               size="icon-xs"
-              aria-label={`Close ${props.pane} split pane`}
+              aria-label={`Close ${props.pane} chat pane`}
               onClick={props.onClose}
             >
               <X data-icon="inline-start" />
             </Button>
           }
         />
-        <TooltipContent>{props.pane === "primary" ? "Keep the other session" : "Close split view"}</TooltipContent>
+        <TooltipContent>{props.pane === "primary" ? "Keep the other session" : "Close side chat"}</TooltipContent>
       </Tooltip>
     </div>
   );
@@ -955,17 +955,7 @@ export function SessionPage(props: SessionPageProps) {
         pendingConversationHistoryNavigation.targetSessionId === props.selectedSessionId
       ) {
         setConversationHistory(pendingConversationHistoryNavigation.history);
-        // Restore the split layout recorded at this history step.
-        const targetSplit = pendingConversationHistoryNavigation.targetSplitSessionId;
-        if (targetSplit) {
-          openWorkbenchTab({
-            workspaceId: props.selectedWorkspaceId,
-            sessionId: targetSplit,
-            title: sessionTitleForId(props.sidebar.workspaceSessionGroups, targetSplit, props.selectedWorkspaceId),
-            workspaceTitle: workspaceTitleForId(props.sidebar.workspaceSessionGroups, props.selectedWorkspaceId),
-          });
-        }
-        setWorkbenchSplit(targetSplit ? { workspaceId: props.selectedWorkspaceId, sessionId: targetSplit } : null);
+        // The workbench restores the destination session’s own side chat.
         setPendingConversationHistoryNavigation(null);
         return;
       }
@@ -1127,7 +1117,7 @@ export function SessionPage(props: SessionPageProps) {
   })();
   const narrowPaneOptions = useMemo<NarrowPaneOption[]>(() => {
     const options: NarrowPaneOption[] = [{ id: "chat", label: "Chat" }];
-    if (splitSession) options.push({ id: "split", label: "Split chat" });
+    if (splitSession) options.push({ id: "split", label: "Side chat" });
     if (sidePanelOpen) {
       options.push({
         id: "panel",

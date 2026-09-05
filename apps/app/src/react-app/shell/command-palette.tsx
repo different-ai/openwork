@@ -241,7 +241,7 @@ export function CommandPalette(props: CommandPaletteProps) {
     ...(props.onOpenSessionInSplit && props.currentSession
       ? [{
           id: "open-in-split-view",
-          title: "Open in split view…",
+          title: "Open as side chat…",
           detail: "Choose any session, including one from another workspace",
           meta: "Workbench",
           searchText: "split view side by side session workspace",
@@ -254,10 +254,10 @@ export function CommandPalette(props: CommandPaletteProps) {
     ...(props.onCreateNewSplitSession && props.currentSession
       ? [{
           id: "new-split",
-          title: "New split",
+          title: "New side chat",
           detail: "Start an empty session beside this one",
           meta: "Workbench",
-          searchText: "new split empty session side by side pane",
+          searchText: "new side chat split empty session side by side pane",
           action: () => {
             props.onClose();
             props.onCreateNewSplitSession?.();
@@ -698,7 +698,7 @@ export function CommandPalette(props: CommandPaletteProps) {
           {mode === "sessions"
             ? t("session.palette_title_sessions")
             : mode === "split-sessions"
-              ? "Open in split view"
+              ? "Open as side chat"
             : mode === "accessible-items"
               ? "Accessible items"
               : mode === "agents"
