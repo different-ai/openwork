@@ -56,7 +56,11 @@ test("feedback removes credentials before submission and email delivery", async 
       const original = window.fetch;
       window.fetch = async (...args) => {
         if (String(args[0]).includes("/api/app-feedback")) window.__feedbackPayload = JSON.parse(args[1].body);
-        return original(...args);
+        const response = await original(...args);
+        if (String(args[0]).includes("/api/app-feedback")) {
+          window.__feedbackResponse = { status: response.status, body: await response.clone().json() };
+        }
+        return response;
       };
     })()`);
     // Respect the real form's minimum submission age.
@@ -71,6 +75,10 @@ test("feedback removes credentials before submission and email delivery", async 
     expect(serialized).toContain("Connection failed");
     expect(serialized).toContain("reporter@example.invalid");
     evidence.recordAssertionEvidence("Browser redacts pasted credentials before HTTP transmission", "Synthetic bearer and API credentials absent; failure context and intentional contact preserved", true);
+    const submission = await eventually(() => evaluateOnSurface(browser, "window.__feedbackResponse"), {
+      within: 30_000, until: (value) => Boolean(value),
+    });
+    expect(submission).toEqual({ status: 200, body: { ok: true } });
     await eventually(() => messages.length, { within: 30_000, until: (count) => count === 1 });
     const response = await fetch(`${origin}/api/app-feedback`, {
       method: "POST",
