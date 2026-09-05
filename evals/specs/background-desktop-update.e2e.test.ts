@@ -16,8 +16,8 @@ test("updates download outside Settings and offer a persistent, optional restart
     until: (value) => typeof value === "object" && value !== null && Reflect.get(value, "checks") === 2,
   });
   await world.openSettings();
-  await user.click("Check automatically");
-  await user.click("Check automatically");
+  await user.click({ role: "switch", label: "Check automatically" });
+  await user.click({ role: "switch", label: "Check automatically" });
   await world.openWorkspace();
   await world.tickUpdateInterval();
   await probe.eventually(world.snapshot, {
