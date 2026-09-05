@@ -6,6 +6,8 @@ import { AppBridge, PostMessageTransport } from "@modelcontextprotocol/ext-apps/
 import type { McpUiStyles, McpUiStyleVariableKey } from "@modelcontextprotocol/ext-apps"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 
+import { connectorCatalogSchema } from "@openwork/types/connection-action-app"
+import { ConnectorCatalogCard } from "./connector-catalog"
 import { ConnectionCard } from "./connection-card"
 import { reconnectActionFromChatToolResult } from "@/components/tools/error-attribution"
 import { AppChatArtifact } from "@/react-app/domains/apps/app-chat-artifact"
@@ -79,7 +81,19 @@ function preservedResult(part: DynamicToolUIPart): PreservedMcpAppResult | null 
 }
 
 export function hasPreservedMcpAppResult(part: DynamicToolUIPart): boolean {
-  return preservedResult(part) !== null
+  return preservedResult(part) !== null || connectorCatalogFromPart(part) !== null
+}
+
+export function connectorCatalogFromPart(part: DynamicToolUIPart) {
+  if (part.toolName !== "openwork-cloud_search_capabilities" || part.state !== "output-available") return null
+  let value: unknown = preservedResult(part)?.structuredContent ?? part.output
+  if (typeof value === "string") {
+    if (value.length > 128 * 1024) return null
+    try { value = JSON.parse(value) } catch { return null }
+  }
+  if (!isRecord(value)) return null
+  const parsed = connectorCatalogSchema.safeParse(value.connectorCatalog)
+  return parsed.success ? parsed.data : null
 }
 
 export function gatewayMcpAppLaunch(meta: unknown): OpenworkMcpAppLaunchReference | null {
@@ -564,6 +578,8 @@ export function McpAppFrame({ part }: { part: DynamicToolUIPart }) {
   const result = preservedResult(part)
   const action = reconnectActionFromChatToolResult(part.toolName, result?.structuredContent ?? part.output)
   if (action) return <ConnectionCard part={part} action={action} />
+  const catalog = connectorCatalogFromPart(part)
+  if (catalog) return <ConnectorCatalogCard catalog={catalog} />
   return <EmbeddedMcpAppFrame part={part} />
 }
 

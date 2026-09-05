@@ -9,6 +9,8 @@ import {
 import { formatMcpAppDiagnostic, safeMcpAppDiagnosticMessage } from "../src/components/chat/mcp-app-diagnostics"
 import {
   buildMcpAppCsp,
+  connectorCatalogFromPart,
+  hasPreservedMcpAppResult,
   gatewayMcpAppLaunch,
   isActionableMcpAppResolutionError,
   secureMcpAppHtml,
@@ -164,3 +166,14 @@ describe("MCP App iframe policy", () => {
     expect(csp).toContain("frame-src https://embed.example.com")
   })
 })
+
+
+test("only canonical completed gateway search results render connector setup suggestions", () => {
+  const catalog = { version: 1, selectedIds: ["slack"], entries: [{ id: "slack", name: "Slack", description: "Work chat", setup: "oauth_client", setupUrl: "https://example.com/dashboard/mcp-connections?quickAdd=slack" }] };
+  const part = { type: "dynamic-tool", toolName: "openwork-cloud_search_capabilities", toolCallId: "catalog", state: "output-available", input: { query: "Slack" }, output: JSON.stringify({ connectorCatalog: catalog }) } satisfies import("ai").DynamicToolUIPart;
+  expect(connectorCatalogFromPart(part)).toEqual(catalog);
+  expect(hasPreservedMcpAppResult(part)).toBe(true);
+  expect(connectorCatalogFromPart({ ...part, toolName: "other_search_capabilities" })).toBeNull();
+  expect(connectorCatalogFromPart({ ...part, output: "invalid json" })).toBeNull();
+  expect(connectorCatalogFromPart({ ...part, output: { connectorCatalog: { ...catalog, version: 2 } } })).toBeNull();
+});

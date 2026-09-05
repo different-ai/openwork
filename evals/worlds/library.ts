@@ -893,6 +893,11 @@ export const connectionActionResourceUri = "ui://openwork/connection-action/v1/v
 export const connectionActionReply = "Connect your Notion account to continue.";
 export const connectionActionPrompt = "I want to connect Notion.";
 
+export const allConnectorsPrompt = "Show me all the quick-add connectors.";
+export const allConnectorsReply = "Here are all the connectors available to add.";
+export const connectorCatalogPrompt = "I want to set up Slack.";
+export const connectorCatalogReply = "Choose Slack to set it up, or browse the available connectors.";
+
 export async function connectionActionMcpApp(seed: Seed) {
   const providerId = "connection-action-mcp-app-provider";
   const modelId = "connection-action-mcp-app-model";
@@ -903,6 +908,14 @@ export async function connectionActionMcpApp(seed: Seed) {
         promptMarker: connectionActionPrompt,
         finalReply: connectionActionReply,
         steps: [{ tool: "search_capabilities", arguments: { query: "Notion", type: "mcp" } }],
+      }, {
+        promptMarker: connectorCatalogPrompt,
+        finalReply: connectorCatalogReply,
+        steps: [{ tool: "search_capabilities", arguments: { query: "Slack", type: "mcp" } }],
+      }, {
+        promptMarker: allConnectorsPrompt,
+        finalReply: allConnectorsReply,
+        steps: [{ tool: "search_capabilities", arguments: { query: "quick add connectors", type: "connectors" } }],
       }] }),
     },
   });
@@ -1320,4 +1333,16 @@ export async function remoteMcpApps(seed: Seed) {
     await rm(profileDir, { recursive: true, force: true });
     throw error;
   }
+}
+
+export async function connectorCatalogDiscovery(seed: Seed) {
+  const world = await connectionActionMcpApp(seed);
+  const response = await seed.api(world.den.admin, "/v1/mcp-connections/presets");
+  if (!isRecord(response.body) || !Array.isArray(response.body.presets)) throw new Error("Den did not return its connector presets.");
+  const presetIds = response.body.presets.map((preset: unknown) => {
+    if (!isRecord(preset) || typeof preset.presetId !== "string") throw new Error("Invalid connector preset.");
+    return preset.presetId;
+  });
+  const web = await seed.web({ den: world.den, signedInAs: world.den.admin, startPath: "/dashboard/mcp-connections", headless: true });
+  return { ...world, web, expectedIds: ["google-workspace", "microsoft-365", ...presetIds] };
 }

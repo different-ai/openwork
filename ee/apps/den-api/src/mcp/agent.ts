@@ -13,6 +13,8 @@ import { openworkCloudMcpConnectionActionSchema } from "@openwork/types/den/mcp-
 import type { Hono } from "hono"
 import type { RequestIdVariables } from "hono/request-id"
 import { z } from "zod"
+import { connectorCatalogSchema, type ConnectorCatalog } from "@openwork/types/connection-action-app"
+import { connectorCatalogForQuery } from "./connector-catalog.js"
 import { publicRoute, tokenRoute } from "../middleware/index.js"
 import { db } from "../db.js"
 import { getMcpResourceContext, verifyMcpRequest } from "./auth.js"
@@ -110,7 +112,7 @@ export type { ExecuteCapabilityToolResult }
 
 export { EXECUTE_CAPABILITY_TOOL_NAME }
 export const EXECUTE_CAPABILITY_SCRIPT_TOOL_NAME = "execute_capability_script"
-const searchCapabilityTypeSchema = z.enum(["all", "api", "admin", "mcp", "marketplace", "skills"])
+const searchCapabilityTypeSchema = z.enum(["all", "api", "admin", "mcp", "marketplace", "skills", "connectors"])
 export const EXECUTE_CAPABILITY_TIMEOUT_MS = 180_000
 
 export const SEARCH_CAPABILITIES_ANNOTATIONS: ToolAnnotations = {
@@ -164,10 +166,12 @@ const capabilityMatchOutputSchema = z.object({
 export const SEARCH_CAPABILITIES_OUTPUT_SCHEMA = z.object({
   matches: z.array(capabilityMatchOutputSchema),
   connectionAction: connectionActionPayloadSchema.optional(),
+  connectorCatalog: connectorCatalogSchema.optional(),
   hint: z.string().optional(),
 })
 
 export const AGENT_MCP_INSTRUCTIONS = [
+  "When asked what can be connected or to browse quick adds, call search_capabilities with type connectors and any descriptive query. This returns the complete curated setup catalog, including Google Workspace and Microsoft 365. A named-service search also includes matching setup suggestions. Suggestions are not executable capabilities or proof of connection; let the user choose Set up in the card. Never invent credentials or claim setup is finished. Existing connection actions take priority.",
   "This OpenWork Cloud MCP server uses standard MCP tools, resources, structured results, and list-changed notifications.",
   "Always call search_capabilities first with 2-4 keyword variants before concluding something is unavailable. Use execute_capability only with exact names returned by search_capabilities. A successful search_capabilities call proves this connection is authorized: Never tell the user to reconnect OpenWork Cloud because a downstream connector failed.",
   "Capabilities include native Google Workspace operations (Gmail read/search, Calendar list/create, Drive search/read, and Gmail draft creation) executed with the signed-in member's organization credentials, plus any MCP connections the organization has added. Allowlisted platform admins also discover namespaced OpenWork Admin capabilities here; other members cannot.",
@@ -232,9 +236,9 @@ function textContent(text: string): { text: string; type: "text" }[] {
   return [{ type: "text", text }]
 }
 
-export function capabilitySearchToolResult<T extends CapabilityMatch>(matches: T[], coverageHint?: string) {
+export function capabilitySearchToolResult<T extends CapabilityMatch>(matches: T[], coverageHint?: string, connectorCatalog?: ConnectorCatalog | null) {
   const hint = [
-    ...(matches.length === 0 ? ["No matches. Try broader or different keywords."] : []),
+    ...(matches.length === 0 ? [connectorCatalog ? "These are setup suggestions, not connected tools. Use their setup actions; adding a connector requires an organization admin." : "No matches. Try broader or different keywords."] : []),
     ...(coverageHint ? [coverageHint] : []),
   ].join(" ")
   const card = connectionActionSearchCard(matches)
@@ -242,6 +246,7 @@ export function capabilitySearchToolResult<T extends CapabilityMatch>(matches: T
     matches,
     ...(hint ? { hint } : {}),
     ...(card ? { connectionAction: card.connectionAction } : {}),
+    ...(connectorCatalog ? { connectorCatalog } : {}),
   }
   return {
     content: textContent(JSON.stringify(result, null, 2)),
@@ -547,15 +552,16 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         inputSchema: z.object({
           query: z.string().min(1).describe("Keywords describing the capability you need, e.g. \"create organization\" or \"list workers\"."),
           limit: z.number().int().min(1).max(20).optional().describe("Max number of matches to return. Defaults to 5."),
-          type: searchCapabilityTypeSchema.optional().describe("Optional source filter. all searches every available source; api searches Den API capabilities; admin searches allowlisted platform-admin tools; mcp searches connected external MCP tools; marketplace searches marketplace plugin capabilities; skills searches built-in and marketplace skills. Defaults to all."),
+          type: searchCapabilityTypeSchema.optional().describe("Optional source filter. all searches every available source; api searches Den API capabilities; admin searches allowlisted platform-admin tools; mcp searches connected external MCP tools; marketplace searches marketplace plugin capabilities; skills searches built-in and marketplace skills; connectors lists the entire quick-add setup catalog without probing connected tools. Defaults to all."),
         }),
         outputSchema: SEARCH_CAPABILITIES_OUTPUT_SCHEMA,
       },
       async ({ query, limit, type }) => {
+        if (type === "connectors") return capabilitySearchToolResult([], undefined, connectorCatalogForQuery(query, true))
         const boundedLimit = limit ?? 5
         const result = await searchCapabilityRegistry(capabilityContext, { query, limit: boundedLimit, type })
         const matches = result.matches.sort(compareCapabilityMatches).slice(0, boundedLimit)
-        return capabilitySearchToolResult(matches, result.externalCoverageHint)
+        return capabilitySearchToolResult(matches, result.externalCoverageHint, (type === undefined || type === "all" || type === "mcp") && !matches.some(match => match.name.startsWith("mcp:")) ? connectorCatalogForQuery(query) : null)
       },
     )
 

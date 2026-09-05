@@ -119,7 +119,7 @@ test("agent MCP server exposes steering instructions during initialize", async (
   expect(client.getInstructions()).toContain("Use create_skill")
   expect(client.getInstructions()).toContain("do not route these flows through execute_capability, postPlugins, or postConfigObjectsVersions")
   expect(client.getInstructions()).toContain("update_skill to publish a new immutable version")
-  expect(client.getInstructions()).toContain("execute that exact match once: it returns the live status and renders an actionable connection card")
+  expect(client.getInstructions()).toContain("Do not execute the same status again when the search response includes connectionAction")
   expect(client.getInstructions()).toContain("create-skill")
   expect(client.getInstructions()).toContain("share-plugin")
   expect(client.getInstructions()).toContain("add-to-marketplace")
@@ -512,3 +512,21 @@ test("connection status only outranks equally relevant callable tools", () => {
   expect(matches[0]?.kind).toBe("connection_status")
   expect(matches[0]?.score).toBe(20)
 })
+
+
+test("connector discovery includes every preset and separates setup suggestions from tools", async () => {
+  const { connectorCatalogForQuery } = await import("../src/mcp/connector-catalog.js");
+  const { EXTERNAL_MCP_PRESETS } = await import("../src/capability-sources/external-mcp-presets.js");
+  const catalog = connectorCatalogForQuery("Please connect Slack");
+  expect(catalog?.selectedIds).toEqual(["slack"]);
+  expect(catalog?.entries.map(entry => entry.id)).toEqual(["google-workspace", "microsoft-365", ...EXTERNAL_MCP_PRESETS.map(preset => preset.presetId)]);
+  expect(catalog?.entries.find(entry => entry.id === "slack")?.setup).toBe("oauth_client");
+  expect(connectorCatalogForQuery("slacker")).toBeNull();
+  expect(connectorCatalogForQuery("write a report")).toBeNull();
+  expect(connectorCatalogForQuery("all quick adds")?.selectedIds).toEqual([]);
+  expect(connectorCatalogForQuery("Slack", true)?.selectedIds).toEqual([]);
+  const result = agentModule.capabilitySearchToolResult([], undefined, catalog);
+  expect(result.structuredContent.connectorCatalog).toEqual(catalog);
+  expect(result.structuredContent.hint).toContain("not connected tools");
+  for (const entry of catalog?.entries ?? []) expect(new URL(entry.setupUrl).searchParams.get("quickAdd")).toBe(entry.id);
+});
