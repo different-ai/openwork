@@ -14,6 +14,7 @@ test("first use without an invite or cloud reaches local task UI with honest mod
     await user.see({ text: "Bring your tools into the conversation" });
     await user.see({ text: "Without Cloud, choose a folder on this computer. Sign in to use your team’s shared tools and settings." });
     await user.notSee({ text: /Something went wrong/ });
+    await user.looks(["The welcome screen explains documents, folders and tools alongside local and cloud entry options"]);
   });
 
   await step("Choose a local folder", async () => {
@@ -39,16 +40,18 @@ test("first use without an invite or cloud reaches local task UI with honest mod
   await user.see({ text: /Using the free starter model/ });
   await step("An example is an editable draft, not an automatic task", async () => {
     const before = await probe.composer();
-    await user.click({ role: "button", text: "Explore this workspace" });
+    await user.click({ role: "button", text: /^Explore this workspace/ });
     await user.see("composer", { editable: true, text: "Give me an overview of the files in this workspace and suggest one useful first task. Don’t change any files yet." });
     await user.see({ text: "Example added to your draft. Make it yours, then choose Run task. Clear your draft to choose another." });
     expect(await probe.eval(`Array.from(document.querySelectorAll("button")).find(button => button.textContent.includes("Draft a document"))?.disabled`)).toBe(true);
     const selected = await probe.composer();
     expect(selected.userMessageCount).toBe(before.userMessageCount);
     expect(selected.route).toBe(before.route);
+    await user.looks(["The new-task screen shows an editable workspace overview draft and explains that the example has not been run"]);
     await user.type("composer", "", { replace: true });
+    await user.press("Backspace");
     expect(await probe.eval(`Array.from(document.querySelectorAll("button")).find(button => button.textContent.includes("Draft a document"))?.disabled`)).toBe(false);
-    await user.click({ role: "button", text: "Draft a document" });
+    await user.click({ role: "button", text: /^Draft a document/ });
     await user.see("composer", { editable: true, text: "Draft a one-page project brief. Ask me for the bullet points you need, then turn them into a clear, well-structured document." });
     await user.type("composer", prompt, { replace: true });
     await user.see("composer", { editable: true, text: prompt });
