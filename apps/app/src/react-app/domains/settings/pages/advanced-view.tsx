@@ -1,5 +1,8 @@
 /** @jsxImportSource react */
-import { useEffect, useReducer, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
+
+import { useLocation } from "react-router";
+import { ADVANCED_SETTINGS_SECTIONS } from "../advanced-sections";
 
 import { Separator } from "@/components/ui/separator";
 
@@ -34,6 +37,7 @@ type AdvancedOrganizationServerSession = Pick<
 >;
 
 export type AdvancedViewProps = {
+  sectionId?: string;
   busy: boolean;
   clientConnected: boolean;
   opencodeConnectStatus: OpencodeConnectStatus | null;
@@ -56,6 +60,18 @@ export type AdvancedViewProps = {
 type AdvancedStatusTone = "ready" | "warning" | "error" | "neutral";
 
 export function AdvancedView(props: AdvancedViewProps) {
+  const location = useLocation();
+  const viewRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const sectionId = props.sectionId;
+    if (!ADVANCED_SETTINGS_SECTIONS.some((section) => section.id === sectionId)) return;
+    const frame = requestAnimationFrame(() => {
+      const section = viewRef.current?.querySelector<HTMLElement>(`#advanced-${sectionId}`);
+      section?.scrollIntoView({ block: "start" });
+      section?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [location.key, props.sectionId]);
   const [localState, dispatchLocal] = useReducer(
     advancedLocalReducer,
     initialAdvancedLocalState,
@@ -159,6 +175,7 @@ export function AdvancedView(props: AdvancedViewProps) {
   }, [props.canInspectRuntimeConfig]);
 
   return (
+    <div ref={viewRef}>
     <LayoutStack>
       <AdvancedOrganizationServerSection
         authBusy={props.organizationServer.authBusy}
@@ -217,5 +234,6 @@ export function AdvancedView(props: AdvancedViewProps) {
         onSubmitDeepLink={submitDebugDeepLink}
       />
     </LayoutStack>
+    </div>
   );
 }

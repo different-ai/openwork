@@ -104,40 +104,52 @@ test("command palette searches settings by alias, navigates, records recents, an
     expect(hash).toMatch(/\/settings\/appearance$/);
   });
 
-  await step("Advanced settings is searchable without developer mode", async () => {
-    await user.press(paletteShortcut);
-    await user.type(paletteInput, "advanced settings", { replace: true });
-    await user.see({ role: "option", label: /^Advanced settings/ });
-    await user.press("Enter");
-    await probe.eventually(() => probe.hash(), {
-      within: 15_000,
-      label: "Advanced settings route",
-      until: (value) => value.endsWith("/settings/advanced"),
+  for (const section of [
+    { query: "server url", title: "Organization server", id: "organization-server" },
+    { query: "connection status", title: "Runtime", id: "runtime" },
+    { query: "cloud mcp", title: "Agent access diagnostics", id: "agent-access" },
+    { query: "config sources", title: "OpenCode config sources", id: "config-sources" },
+    { query: "chat engine", title: "Experimental engine", id: "experimental-engine" },
+    { query: "deep link", title: "Developer", id: "developer" },
+  ]) {
+    await step(`Command+K jumps directly to ${section.title}`, async () => {
+      await user.press(paletteShortcut);
+      await user.type(paletteInput, section.query, { replace: true });
+      await user.click({ role: "option", label: new RegExp(`^${section.title}`) });
+      await probe.eventually(() => probe.hash(), {
+        within: 15_000,
+        label: `${section.title} section route`,
+        until: (value) => value.endsWith(`/settings/advanced/${section.id}`),
+      });
+      expect(await probe.eventually(() => probe.eval(`(id) => {
+        const section = document.getElementById(id);
+        const heading = section?.querySelector("h3");
+        const bounds = heading?.getBoundingClientRect();
+        return document.activeElement === section && !!bounds && bounds.top >= 0 && bounds.bottom <= innerHeight;
+      }`, { args: [`advanced-${section.id}`] }), {
+        within: 15_000,
+        label: `${section.title} is focused and in view`,
+        until: (value) => value === true,
+      })).toBe(true);
+      await user.notSee(paletteInput);
     });
-    await user.see({ role: "button", label: "Back to app" });
-    await user.click({ role: "button", label: "Back to app" });
-    await user.notSee({ role: "button", label: /^Advanced settings$/ });
-  });
+  }
 
-  await step("developer mode reveals a direct Advanced settings shortcut", async () => {
+  await step("developer mode surfaces Advanced sections without a search", async () => {
     await user.press(paletteShortcut);
     await user.type(paletteInput, "Enable Developer Mode", { replace: true });
-    await user.see({ role: "option", label: /^Enable Developer Mode/ });
-    await user.press("Enter");
-    await user.see({ role: "button", label: /^Advanced settings$/ });
-    await user.click({ role: "button", label: /^Advanced settings$/ });
-    await probe.eventually(() => probe.hash(), {
-      within: 15_000,
-      label: "sidebar opens Advanced settings",
-      until: (value) => value.endsWith("/settings/advanced"),
-    });
-    await user.screenshot();
-    await user.click({ role: "button", label: "Back to app" });
+    await user.click({ role: "option", label: /^Enable Developer Mode/ });
     await user.press(paletteShortcut);
+    await user.see({ role: "option", label: /^Organization server/ });
+    await user.see({ role: "option", label: /^Runtime/ });
+    await user.see({ role: "option", label: /^Agent access diagnostics/ });
+    await user.see({ role: "option", label: /^OpenCode config sources/ });
+    await user.see({ role: "option", label: /^Experimental engine/ });
+    await user.see({ role: "option", label: /^Developer/ });
+    await user.screenshot();
     await user.type(paletteInput, "Disable Developer Mode", { replace: true });
-    await user.see({ role: "option", label: /^Disable Developer Mode/ });
-    await user.press("Enter");
-    await user.notSee({ role: "button", label: /^Advanced settings$/ });
+    await user.click({ role: "option", label: /^Disable Developer Mode/ });
+    await user.notSee(paletteInput);
   });
 
 });

@@ -9,6 +9,8 @@ import {
   getWorkspaceSettingsTabs,
 } from "@/react-app/domains/settings/shell/settings-page";
 
+import { ADVANCED_SETTINGS_SECTIONS } from "@/react-app/domains/settings/advanced-sections";
+
 import type { PaletteItem } from "./command-palette-search";
 
 const SETTINGS_KEYWORDS: Partial<Record<SettingsTab, string[]>> = {
@@ -76,5 +78,18 @@ export function buildCommandPaletteSettingsItems(input: {
     action: () => input.onOpenExtensions(section.slug),
   }));
 
-  return [...tabItems, ...libraryItems];
+  const advancedItems: PaletteItem[] = tabs.includes("advanced")
+    ? ADVANCED_SETTINGS_SECTIONS.map((section) => ({
+        id: `settings:advanced/${section.id}`,
+        title: section.title,
+        keywords: section.keywords,
+        breadcrumb: "Settings › Advanced",
+        group: "settings",
+        action: () => input.onOpenSettings(`/settings/advanced/${section.id}`),
+      }))
+    : [];
+
+  return input.developerMode
+    ? [...advancedItems, ...tabItems, ...libraryItems]
+    : [...tabItems, ...advancedItems, ...libraryItems];
 }

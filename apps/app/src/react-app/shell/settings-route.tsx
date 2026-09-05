@@ -285,6 +285,7 @@ const SETTINGS_HIDE_TITLEBAR_KEY = "openwork.react.settings.hide-titlebar";
 export function parseSettingsPath(pathname: string): {
   tab: SettingsTab;
   redirectPath: string | null;
+  advancedSection?: string;
   extensionsSection?: ExtensionsSection;
   extensionDetailId?: string;
 } {
@@ -302,12 +303,13 @@ export function parseSettingsPath(pathname: string): {
     case "ai":
     case "preferences":
     case "permissions":
-    case "advanced":
     case "appearance":
     case "environment":
     case "updates":
     case "debug":
       return { tab: head, redirectPath: null };
+    case "advanced":
+      return { tab: "advanced", redirectPath: null, advancedSection: tail };
     case "cloud-account":
     case "cloud-providers":
       return { tab: head, redirectPath: null };
@@ -418,6 +420,7 @@ function findSessionWorkspaceId(
 }
 
 export function settingsPathForRoute(route: ReturnType<typeof parseSettingsPath>) {
+  if (route.tab === "advanced" && route.advancedSection) return `advanced/${route.advancedSection}`;
   if (route.tab === "extensions" && route.extensionDetailId) {
     return `extensions/${encodeURIComponent(route.extensionDetailId)}`;
   }
@@ -2573,6 +2576,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         return (
           <SettingsStack>
             <AdvancedView
+              sectionId={route.advancedSection}
               key={runtimeWorkspaceId ?? selectedWorkspaceId}
               busy={busy}
               clientConnected={Boolean(opencodeClient)}
