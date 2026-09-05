@@ -6,7 +6,7 @@ import { spec } from "@openwork/testkit";
 import type { User } from "@openwork/testkit";
 import { bootCrossWorkspaceSplitView } from "../../worlds/cross-workspace-split-view.ts";
 
-const test = spec.world(async (_seed, { place }) => {
+const test = spec.world(async (seed, { place }) => {
   const stack = new AsyncDisposableStack();
   const runId = `${Date.now().toString(36)}-${process.pid}`;
   try {
@@ -15,7 +15,10 @@ const test = spec.world(async (_seed, { place }) => {
       workspacePath: `/tmp/openwork-cross-workspace-split-${runId}-a`,
       sessionTitles: [`Primary workspace anchor ${runId}`, `Primary workspace peer ${runId}`],
     });
-    return { ...world, app: world.desktop, runId, [Symbol.asyncDispose]: () => stack.disposeAsync() };
+    const { workspaceId: workspaceB } = await seed.workspace(world.desktop, `/tmp/openwork-cross-workspace-split-${runId}-b`);
+    const crossWorkspacePeer = { workspaceId: workspaceB,
+      ...await seed.session(world.desktop, { title: `Secondary workspace peer ${runId}` }) };
+    return { ...world, app: world.desktop, workspaceB, crossWorkspacePeer, [Symbol.asyncDispose]: () => stack.disposeAsync() };
   } catch (error) {
     await stack.disposeAsync();
     throw error;
@@ -166,9 +169,8 @@ async function readSplitFacts(app: Surface, primary: SplitCandidate, secondary: 
   })()`));
 }
 
-test("same-workspace and cross-workspace split sessions retain visible ownership", async ({ world, seed, user, evidence }) => {
-    const { app, runId } = world;
-    const crossWorkspaceTitle = `Secondary workspace peer ${runId}`;
+test("same-workspace and cross-workspace split sessions retain visible ownership", async ({ world, user, evidence }) => {
+    const { app, workspaceB, crossWorkspacePeer } = world;
     const workspaceA = app.workspaceId;
     if (!workspaceA) throw new Error("World app did not resolve a primary workspace id.");
 
@@ -179,8 +181,6 @@ test("same-workspace and cross-workspace split sessions retain visible ownership
     }
     const primary = { workspaceId: workspaceA, ...seededPrimary };
     const sameWorkspacePeer = { workspaceId: workspaceA, ...seededSameWorkspacePeer };
-    const { workspaceId: workspaceB } = await seed.workspace(app, `/tmp/openwork-cross-workspace-split-${runId}-b`);
-    const crossWorkspacePeer = { workspaceId: workspaceB, ...await seed.session(app, { title: crossWorkspaceTitle }) };
     expect(primary.workspaceId).not.toBe(crossWorkspacePeer.workspaceId);
 
     await openSessionRoute(app, primary);
