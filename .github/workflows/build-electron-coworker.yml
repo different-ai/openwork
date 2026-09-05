@@ -73,7 +73,9 @@ jobs:
           pnpm --filter @openwork/coworker test
 
       - name: Package Open Coworker (unpacked)
+        shell: bash
         run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then ulimit -n 65536; fi
           pnpm --filter @openwork/coworker build:electron
           pnpm --dir apps/coworker exec electron-builder --config electron-builder.yml --config.electronVersion=43.2.0 --dir --publish never
 
@@ -187,6 +189,7 @@ jobs:
           APPLE_API_KEY_PATH: ${{ env.NOTARY_KEY_PATH }}
         run: |
           set -euo pipefail
+          ulimit -n 65536
           pnpm --filter @openwork/coworker run build:electron
           pnpm --dir apps/coworker exec electron-builder --config electron-builder.yml --config.electronVersion=43.2.0 --mac dmg zip --publish never
 
