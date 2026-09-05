@@ -20,7 +20,7 @@ test("organization billing survives selection and blocks destructive deletion", 
   await using empty = await createOrg(den, "Empty Workspace");
   const request = (path: string, orgId: string, method = "GET", body?: unknown) => denFetch(den.admin, path, {
     method,
-    headers: { authorization: `Bearer ${den.admin.token}`, ...(path === "/v1/me/orgs" ? {} : { "x-openwork-org-id": orgId }) },
+    headers: { authorization: `Bearer ${den.admin.token}`, ...((path === "/v1/me/orgs" || path === "/v1/billing/web") ? {} : { "x-openwork-org-id": orgId }) },
     ...(body ? { body: JSON.stringify(body) } : {}),
     signal: AbortSignal.timeout(15_000),
   });
@@ -34,6 +34,7 @@ test("organization billing survives selection and blocks destructive deletion", 
       expect(selected.response.ok).toBe(true);
       const directory = await request("/v1/me/orgs", orgId);
       expect(directory.response.ok).toBe(true);
+      expect(directory.body).toMatchObject({ activeOrgId: orgId });
       const orgs = record(directory.body) && Array.isArray(directory.body.orgs) ? directory.body.orgs.filter(record) : [];
       expect(orgs.find((org) => org.id === subscribed.id)).toMatchObject({ name: "Subscribed Workspace", hasSubscriptions: true });
       expect(orgs.find((org) => org.id === empty.id)).toMatchObject({ hasSubscriptions: false });
