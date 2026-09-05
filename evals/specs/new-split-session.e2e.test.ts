@@ -150,8 +150,8 @@ test("new side chat creates fresh same-workspace secondary sessions without movi
       };
       window.fetch = async (...args) => {
         const url = args[0] instanceof Request ? args[0].url : String(args[0]);
-        if (url.includes("/prompt_async") && args[1]?.body) {
-          const body = JSON.parse(args[1].body);
+        if (url.includes("/prompt_async")) {
+          const body = args[0] instanceof Request ? await args[0].clone().json() : JSON.parse(args[1].body);
           window.__sideChatSystems ??= {};
           window.__sideChatSystems[url] = body.system;
         }
