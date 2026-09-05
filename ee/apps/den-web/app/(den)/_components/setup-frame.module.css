@@ -31,6 +31,9 @@
 .panel button { transition: background-color .16s, border-color .16s, transform .16s; }
 .panel button:active:not(:disabled) { transform: translateY(1px); }
 .panel button:focus-visible, .panel input:focus-visible, .panel a:focus-visible { outline: 2px solid #444; outline-offset: 3px; }
+.customPreview { margin-top: 30px; }
+.panel :global([data-testid="download-openwork-card"]) > :global(.grid) { grid-template-columns: 1fr; }
+.panel :global([data-testid="download-openwork-card"]) > div:first-child > div { flex-wrap: wrap; }
 .preview { position: relative; margin-top: 30px; padding: 42px 12px 14px 0; min-height: 280px; max-width: 390px; }
 .object { position: absolute; width: 114px; height: 114px; right: -8px; top: -12px; z-index: 2; transform: rotate(-18deg); filter: drop-shadow(0 14px 12px #00000016); animation: float 10s ease-in-out infinite; }
 .object i { position: absolute; inset: 13px 30px; border-radius: 50%; border: 10px solid #202020; background: linear-gradient(105deg, #111 18%, #aaa 35%, #181818 47%, #080808 66%, #777 79%, #202020 90%); box-shadow: inset 2px 1px 2px #fff9, 2px 0 1px #0005; transform: rotate(40deg); }
@@ -71,7 +74,7 @@
 .embedded .cloud { display: none; }
 @keyframes enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes float { 0%,100% { transform: translateY(0) rotate(-18deg); } 50% { transform: translateY(-6px) rotate(-12deg); } }
-@media (max-width: 1050px) { .steps { gap: 14px; } .embedded .grid { grid-template-columns: 1fr; } .embedded .story { display: grid; grid-template-columns: 1fr; } .embedded .preview, .embedded .storyNote { display: none; } .embedded .grid { margin-top: 35px; gap: 28px; } }
+@media (max-width: 1050px) { .steps { gap: 14px; } .embedded .grid { grid-template-columns: 1fr; } .embedded .story { display: grid; grid-template-columns: 1fr; } .embedded .preview, .embedded .customPreview, .embedded .storyNote { display: none; } .embedded .top { flex-direction: column; align-items: flex-start; gap: 24px; } .embedded .grid { margin-top: 35px; gap: 28px; } }
 @media (max-width: 760px) {
   .frame { padding: 22px 20px; } .top { align-items: flex-start; flex-direction: column; gap: 28px; }
   .brand { font-size: 17px; } .steps { justify-content: space-between; width: 100%; gap: 12px; } .top nav { width: 100%; }
@@ -79,7 +82,7 @@
   .grid, .embedded .grid { grid-template-columns: 1fr; margin: 34px auto 36px; gap: 27px; } .story { padding: 0; }
   .intro h1 { font-size: 42px; max-width: 380px; } .eyebrow { margin-bottom: 15px; font-size: 8px; }
   .description { margin-top: 13px; font-size: 13px; max-width: 350px; }
-  .preview, .storyNote { display: none; } .panel { padding: 25px; border-radius: 19px; }
+  .preview, .customPreview, .storyNote { display: none; } .panel { padding: 25px; border-radius: 19px; }
   .panelEyebrow { margin-bottom: 21px; } .footer > span:last-child { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .object, .panel { animation: none; } .panel button { transition: none; } }

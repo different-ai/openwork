@@ -200,4 +200,13 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     expect(await invitationsFor(flexibleId)).toHaveLength(2);
     evidence.recordAssertionEvidence("Restricted stays a draft through reload until explicit save, persists the real desktop booleans, and leaves the personal organization unchanged", JSON.stringify({ before, after, personalPolicy, orgCount: 3 }), true);
   });
+  await step("the public signup also fits a narrow screen", async () => {
+    const mobile = await seed.web({ den: world.den, startPath: "/", headless: true, viewport: { width: 390, height: 844 } });
+    const mobileUser = user.on(mobile);
+    await mobileUser.see({ text: "Good work starts here." }, { timeoutMs: 90_000 });
+    await mobileUser.see({ role: "textbox", label: "Email" });
+    expect(await probe.eval(mobile, "document.documentElement.scrollWidth <= window.innerWidth")).toBe(true);
+    await mobileUser.looks(["The narrow signup screen has legible progress steps, heading, and email form without horizontal clipping"]);
+  });
+
 });

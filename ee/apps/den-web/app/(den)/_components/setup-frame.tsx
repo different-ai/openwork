@@ -70,7 +70,7 @@ export function SetupFrame({ step, title, description, children, aside, embedded
             <h1>{title}</h1>
             <p className={styles.description}>{description}</p>
           </div>
-          {aside ?? <WorkPreview step={step} />}
+          {aside ? <div className={styles.customPreview}>{aside}</div> : <WorkPreview step={step} />}
           <p className={styles.storyNote}>{step === "people" ? "A shared space. Individual accounts. Everyone brings their own perspective." : "Documents, research, and the work in between. Start with what you want to get done."}</p>
         </aside>
         <div className={styles.panel} key={step}>
