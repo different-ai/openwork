@@ -1,7 +1,7 @@
 import { denFetch, type DenSession } from "./den.ts";
 
 export const liveOpenAiEnabled = () => process.env.OPENWORK_EVAL_LIVE_OPENAI === "1";
-export const liveOpenAiModel = () => process.env.OPENWORK_EVAL_OPENAI_MODEL?.trim() || "gpt-4.1-mini";
+export const liveOpenAiModel = () => process.env.OPENWORK_EVAL_OPENAI_MODEL?.trim() || "gpt-5.4";
 
 export function assertNoLiveSecret(value: unknown): void {
   const key = process.env.OPENAI_API_KEY?.trim();
@@ -82,6 +82,10 @@ export async function liveV2Turn(request: Request, v2: string, sessionId: string
     if (messages.some((message) => message.error || message.finish === "error")) throw new Error("Live model request failed (inspect redacted engine status)");
     const completed = messages.find((message) => record(message.time) && typeof message.time.completed === "number" && message.finish === "stop");
     if (completed) {
+      if (!record(completed.model) || completed.model.id !== liveOpenAiModel()
+        || !record(completed.tokens) || typeof completed.tokens.output !== "number" || completed.tokens.output <= 0) {
+        throw new Error("Live response did not report the requested model and generated tokens");
+      }
       const text = Array.isArray(completed.content) ? completed.content.filter(record).filter((part) => part.type === "text").map((part) => part.text).join("\n") : "";
       if (!text) throw new Error("Live model returned no final text");
       return { text, messages: JSON.stringify(messages), sinceIso };

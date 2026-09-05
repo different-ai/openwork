@@ -77,6 +77,8 @@ test("v2 uses an MCP added through OpenWork on the next call and removes it in t
         "Get the current verification report using the connected report tool. Discover the currently available tools yourself. "
         + "Fetch fresh data; never reuse a report from earlier messages. If the report tool is unavailable, say UNAVAILABLE. "
         + "Do not use files, shell, environment variables, or the internet. Return the report code briefly.");
+      if (useTool && stage !== "removed") expect(result.text).toContain(nonce);
+      else expect(result.text).toMatch(/unavailable/i);
       const next = (await api("/experimental/engine-v2-preview/status")).json;
       expect(record(next) ? next.pid : null).toBe(pid);
       return result;
