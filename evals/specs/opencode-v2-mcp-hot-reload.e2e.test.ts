@@ -74,15 +74,20 @@ test("v2 uses an MCP added through OpenWork on the next call and removes it in t
     const cloud = record(catalog) && Array.isArray(catalog.data) ? catalog.data.find((item) => record(item) && item.name === "openwork-cloud") : null;
     expect(record(cloud) && record(cloud.status) ? cloud.status.status : null).toBe("connected");
     const discovery = await liveV2Turn(api, v2, sessionId,
-      "Use OpenWork Cloud to discover whether any Slack capabilities are available to me, then summarize availability. "
+      "Use OpenWork Cloud to discover whether connected Slack capabilities are available to me. "
+      + "Report SLACK_CONNECTED only if discovery confirms access, otherwise report SLACK_NOT_CONNECTED, followed by a brief explanation. "
       + "Check the connected integration before answering. Do not read Slack messages, send anything, or use files or shell commands.");
     const messages: unknown = JSON.parse(discovery.messages);
     const parts = Array.isArray(messages) ? messages.filter(record).flatMap((message) => Array.isArray(message.content) ? message.content.filter(record) : []) : [];
     expect(parts.some((part) => part.type === "tool" && part.name === "execute" && record(part.state)
       && part.state.status === "completed" && record(part.state.metadata) && Array.isArray(part.state.metadata.toolCalls)
-      && part.state.metadata.toolCalls.some((call) => record(call) && call.tool === "openwork-cloud.search_capabilities" && call.status === "completed"))).toBe(true);
+      && part.state.metadata.toolCalls.some((call) => record(call) && call.tool === "openwork-cloud.search_capabilities" && call.status === "completed"
+        && record(call.input) && typeof call.input.query === "string" && /slack/i.test(call.input.query)))).toBe(true);
+    // This fresh organization has no Slack connection or account credentials.
+    expect(discovery.text).toContain("SLACK_NOT_CONNECTED");
+    expect(discovery.text).not.toContain("SLACK_CONNECTED");
     evidence.recordAssertionEvidence("the real model discovers OpenWork Cloud capabilities through the managed connection",
-      `${modelId} received the openwork-cloud connection created by normal sign-in and actually completed its discovery tool through native Code Mode when asked about Slack. This isolated organization does not establish access to a real user's Slack account; no Slack messages were read or sent.`, true);
+      `${modelId} received openwork-cloud from normal sign-in, completed native Code Mode discovery with a Slack query, and correctly reported SLACK_NOT_CONNECTED for the fresh organization without a Slack account. This does not establish access to a real user's Slack; no Slack messages were read or sent.`, true);
   }
   let executions = 0;
   const toolCode = 'return await tools["reload-witness"].read_report({});';
