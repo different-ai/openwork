@@ -79,13 +79,22 @@ export async function createManagedOpencodeV2Server(
   let url = "";
   const providers = new Map<string, OpencodeV2ProviderSpec>();
   const opencodeModelsUrl = (options.env?.OPENCODE_MODELS_URL ?? process.env.OPENCODE_MODELS_URL)?.replace(/\/+$/, "");
-  // v2 runs its own plugin/catalog bootstrap; the v1 pure-mode escape hatch must not reach the sidecar.
-  const inherited = { ...process.env, ...options.env };
-  delete inherited.OPENCODE_PURE;
-  // OpenWork control-plane credentials belong to the server, never engine tools/plugins.
-  for (const key of Object.keys(inherited)) {
-    if (key.startsWith("OPENWORK_")) delete inherited[key];
+  // The engine needs OS paths and locale settings, not the server's provider,
+  // cloud, database, or control-plane credentials. Unknown keys stay private.
+  const inherited: Record<string, string> = {};
+  for (const key of [
+    "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TMP", "TEMP",
+    "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TERM", "CI",
+    "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR",
+    "SystemRoot", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "USERPROFILE", "APPDATA", "LOCALAPPDATA",
+    "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR",
+  ]) {
+    const value = options.env?.[key] ?? process.env[key];
+    if (value !== undefined) inherited[key] = value;
   }
+  // A caller may deliberately provide a config file; never inherit the server's
+  // OPENCODE_CONFIG or OPENCODE_PURE settings implicitly.
+  if (options.env?.OPENCODE_CONFIG) inherited.OPENCODE_CONFIG = options.env.OPENCODE_CONFIG;
 
   await mkdir(options.rootDir, { recursive: true, mode: 0o700 });
   await chmod(options.rootDir, 0o700);

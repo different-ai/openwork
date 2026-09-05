@@ -131,6 +131,9 @@ test("opencode v2 injects providers at runtime without an engine reload", { time
         OPENCODE_CONFIG: baseConfig, OPENCODE_MODELS_URL: opencodeModelsUrl,
         OPENWORK_ENCRYPTION_KEY: "fixture-server-only", OPENWORK_TOKEN: "fixture-server-only",
         OPENWORK_HOST_TOKEN: "fixture-server-only", OPENWORK_SERVER_TOKEN: "fixture-server-only",
+        OPENAI_API_KEY: "fixture-server-only", ANTHROPIC_API_KEY: "fixture-server-only",
+        AWS_SECRET_ACCESS_KEY: "fixture-server-only", GITHUB_TOKEN: "fixture-server-only",
+        DATABASE_URL: "fixture-server-only", CUSTOM_SERVICE_SECRET: "fixture-server-only",
       },
     });
     const initialHealth = await server.health();
@@ -142,9 +145,13 @@ test("opencode v2 injects providers at runtime without an engine reload", { time
       const environment = await readFile(`/proc/${pid0}/environ`, "utf8");
       const names = environment.split("\0").map((entry) => entry.split("=")[0]);
       expect(names.filter((name) => name?.startsWith("OPENWORK_"))).toEqual([]);
+      for (const name of ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "AWS_SECRET_ACCESS_KEY", "GITHUB_TOKEN", "DATABASE_URL", "CUSTOM_SERVICE_SECRET"]) {
+        expect(names).not.toContain(name);
+      }
+      expect(names).toContain("PATH");
       evidence.recordAssertionEvidence(
         "server credentials do not cross the sidecar process boundary",
-        "The live Linux sidecar environment contained no OPENWORK_ variables, including four synthetic server credentials supplied through spawn options.",
+        "The live Linux sidecar retained PATH but contained none of the ten synthetic control-plane, provider, cloud, database, or arbitrary service credentials supplied through spawn options. Unknown environment keys were not inherited.",
         true,
       );
     }
