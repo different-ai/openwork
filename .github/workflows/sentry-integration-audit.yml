@@ -34,7 +34,7 @@ jobs:
           verdict=0
           for spec in server-log-file workspace-file-catalog desktop-calendar-read mcp-oauth-response-issuer native-google-refresh-recovery den-db-transient-read-retry; do
             touch integration-results/start
-            pnpm evals:pr "specs/$spec.test.ts" > "integration-results/$spec.log" 2>&1 && result=0 || result=$?
+            pnpm evals:pr "specs/$spec.test.ts" --reporter=default --reporter=json --outputFile.json="../integration-results/$spec-vitest.json" > "integration-results/$spec.log" 2>&1 && result=0 || result=$?
             cat "integration-results/$spec.log"
             SPEC="$spec" node --input-type=module <<'NODE' || result=1
           import fs from 'node:fs';
@@ -43,6 +43,7 @@ jobs:
           const root = 'evals/results/test-runs';
           const start = fs.statSync('integration-results/start').mtimeMs;
           const sha = execFileSync('git', ['rev-parse', 'HEAD'], {encoding: 'utf8'}).trim();
+          const vitest = JSON.parse(fs.readFileSync(`integration-results/${process.env.SPEC}-vitest.json`, 'utf8'));
           const runs = fs.existsSync(root) ? fs.readdirSync(root).flatMap(dir => {
             const file = path.join(root, dir, 'test-run.json');
             return fs.existsSync(file) && fs.statSync(file).mtimeMs >= start ? [JSON.parse(fs.readFileSync(file, 'utf8'))] : [];
@@ -50,7 +51,8 @@ jobs:
           const summary = runs.map(({name, gitSha, outcome, summary, failure}) => ({name, gitSha, outcome, summary, failure}));
           fs.writeFileSync(`integration-results/${process.env.SPEC}.json`, JSON.stringify(summary, null, 2));
           console.log(JSON.stringify(summary, null, 2));
-          if (!runs.length || runs.some(run => run.gitSha !== sha || run.outcome !== 'passed')) {
+          if (!vitest.success || !vitest.numTotalTests || vitest.numPassedTests !== vitest.numTotalTests
+            || !runs.length || runs.some(run => run.gitSha !== sha || run.outcome !== 'passed')) {
             throw new Error('Missing, stale, failed, or skipped journey evidence');
           }
           NODE
