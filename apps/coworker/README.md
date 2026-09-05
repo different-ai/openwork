@@ -120,7 +120,7 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
   discussion is open. Each view places its own title line and actions (Back,
   Stop) into that header, so there is never a second header row. The header
   ends in one plain status word — Ready, Working, Retrying, Needs you,
-  Stopped… — with no dot: mist unless the coworker is asking for the person
+  Stopped… — with no dot: muted sage for Ready, mist for neutral states, unless the coworker is asking for the person
   (amber: Needs you, Waiting for permission, Waiting for an answer) or reporting
   a failure (rose: AI unavailable, Not responding, Reply failed, Response
   delayed). The moment-to-moment phases (Sending, Thinking, Using a tool,
