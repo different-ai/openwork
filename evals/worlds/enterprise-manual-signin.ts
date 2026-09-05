@@ -23,6 +23,14 @@ export async function enterpriseManualSigninWorld(seed: Seed, { place }: { place
       try {
         await typeText(app, link.toString());
         await pressKey(app, "Enter");
+        const submitted = await evalIn(app, `(async () => {
+          const deadline = Date.now() + 10_000;
+          while (document.querySelector('#organization-server-input') && Date.now() < deadline) {
+            await new Promise(resolve => setTimeout(resolve, 50));
+          }
+          return !document.querySelector('#organization-server-input');
+        })()`, { awaitPromise: true, timeoutMs: 15_000 });
+        if (!submitted) throw new Error("Manual link submission did not reach confirmation.");
       } catch {
         // Never expose CDP arguments containing the link in error evidence.
         await evalIn(app, `document.querySelector('#organization-server-input')?.remove()`);
