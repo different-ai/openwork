@@ -3078,6 +3078,11 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         method: "POST", token, organizationId: orgId,
       });
     },
+    async shareSavedApp(orgId: string, appId: string, email: string) {
+      await requestJson<unknown>(baseUrls, `/v1/apps/${encodeURIComponent(appId)}/share`, {
+        method: "POST", token, organizationId: orgId, body: { email },
+      });
+    },
     async setAppOnDashboard(orgId: string, appId: string, added: boolean) {
       await requestJson<unknown>(baseUrls, `/v1/apps/${encodeURIComponent(appId)}/dashboard`, {
         method: "POST", token, organizationId: orgId, body: { added },

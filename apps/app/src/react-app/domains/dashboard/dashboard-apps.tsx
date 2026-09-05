@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { useSavedApps, useAppsClient } from "../apps/use-apps";
 import { DeleteAppButton } from "../apps/delete-app-button";
 import { GeneratedAppPreview } from "../apps/generated-app-preview";
+import { ShareDashboardButton } from "./share-dashboard-button";
 
 export type CreateDashboardApp = (prompt: string) => Promise<void>;
 
@@ -38,7 +39,7 @@ export function DashboardApps({ onCreateApp }: { onCreateApp: CreateDashboardApp
   return <>
     <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
       <div><h1 className="text-xl font-medium">Dashboard</h1><p className="mt-1 text-sm text-muted-foreground">Your apps and the tools your team shares with you.</p></div>
-      {available ? <Button onClick={() => { setChooser("add"); setError(null); placement.reset(); }}><Plus className="size-4" />Add</Button> : null}
+      {available ? <div className="flex items-center gap-2"><ShareDashboardButton apps={personal} /><Button onClick={() => { setChooser("add"); setError(null); placement.reset(); }}><Plus className="size-4" />Add</Button></div> : null}
     </header>
     {query.isError ? <div className="mb-5 flex items-center gap-3"><p role="alert" className="text-sm">Your apps could not be loaded.</p><Button variant="outline" onClick={() => void query.refetch()}>Try again</Button></div> : null}
     {placement.error && !chooser ? <p role="alert" className="mb-4 text-sm text-destructive">{placement.error.message}</p> : null}

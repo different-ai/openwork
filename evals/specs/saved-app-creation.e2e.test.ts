@@ -234,6 +234,44 @@ test("create, preview, save and reopen an app without changing already-open resu
   });
   evidence.recordAssertionEvidence("Members can delete their own apps but cannot delete another member's private app", "The member created and retired their own saved app, removing its placement and workflow selection while preserving historical results; deleting the admin's app was rejected and that app stayed saved.", true);
 
+  await step("share dashboard apps with a teammate", async () => {
+    await world.open("/dashboard");
+    await user.click({ role: "button", label: "Share" });
+    await user.see({ text: "Share your dashboard" });
+    await user.click("Cancel");
+    expect((await probe.api(colleague, `/v1/apps/${appId}`)).response.status).toBe(403);
+    const deniedShare = await seed.api(colleague, `/v1/apps/${appId}/share`, {
+      method: "POST", body: JSON.stringify({ email: world.den.admin.email }),
+    });
+    expect(deniedShare.response.status).toBe(403);
+    await user.click({ role: "button", label: "Share" });
+    await user.type({ label: "Teammate’s email" }, "unknown@openwork.test");
+    await user.click("Share apps");
+    await user.see({ text: /No teammate with that email belongs to this organization/ });
+    expect((await probe.api(colleague, `/v1/apps/${appId}`)).response.status).toBe(403);
+    await user.type({ label: "Teammate’s email" }, colleague.email, { replace: true });
+    await user.click("Share apps");
+    await user.see({ text: `Shared 1 app with ${colleague.email}. They’ll appear when your teammate opens or reloads their dashboard.` }, { timeoutMs: 30_000 });
+    const sharedApp = await probe.api(colleague, `/v1/apps/${appId}`);
+    expect(sharedApp.response.status, sharedApp.text).toBe(200);
+    expect(sharedApp.body).toMatchObject({ onDashboard: true, canManage: false, view: { id: appId } });
+    const repeat = await seed.api(world.den.admin, `/v1/apps/${appId}/share`, {
+      method: "POST", body: JSON.stringify({ email: colleague.email }),
+    });
+    expect(repeat.response.status, repeat.text).toBe(200);
+    const listed = record((await probe.api(colleague, "/v1/apps")).body).items;
+    expect(listed).toHaveLength(1);
+    const reshare = await seed.api(colleague, `/v1/apps/${appId}/share`, {
+      method: "POST", body: JSON.stringify({ email: world.den.admin.email }),
+    });
+    expect(reshare.response.status).toBe(403);
+    expect((await probe.api(world.den.admin, `/v1/dashboards/${world.dashboardId}`)).body).toEqual(companyBefore);
+    expect((await readApp()).onDashboard).toBe(true);
+    await user.screenshot();
+    await user.click("Done");
+  });
+  evidence.recordAssertionEvidence("Dashboard Share grants a teammate view access and adds the selected app to their dashboard", "Cancel and an unknown email left the app private. Sharing made one saved app visible on the recipient dashboard without manager access; repeat sharing did not duplicate it, viewers could not reshare, and company dashboards stayed unchanged.", true);
+
   const beforeDelete = await readWorkflow();
   const beforeDeleteSnapshots = (await probe.api(world.den.admin, `/v1/workflows/${world.configObjectId}/snapshots`)).body;
   await step("an admin cancels deletion in the app and confirms it on the dashboard", async () => {
