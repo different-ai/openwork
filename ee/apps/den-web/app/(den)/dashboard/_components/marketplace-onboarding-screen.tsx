@@ -94,7 +94,7 @@ export function MarketplaceOnboardingScreen({
               <p className="mt-1 text-sm leading-6 text-[var(--dls-text-secondary)]">Your files, conversations, and tools in one place.</p>
             </div>
           </div>
-          <DownloadOpenWorkCard installers={installers} releaseTag={releaseTag} />
+          <DownloadOpenWorkCard installers={installers} releaseTag={releaseTag} compact />
           <div className="flex items-center justify-between gap-3 text-xs text-[var(--dls-text-secondary)]">
             {appInstalled ? (
               <span className="inline-flex items-center gap-2" role="status">

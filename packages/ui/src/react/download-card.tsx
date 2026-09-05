@@ -315,13 +315,97 @@ function groupsForInstallers(installers: DownloadCardInstallers): DownloadPlatfo
 export function DownloadOpenWorkCard({
   installers,
   releaseTag,
+  compact = false,
 }: {
   installers?: DownloadCardInstallers | null
   releaseTag?: string
+  /** A single recommended download with the full platform list available on demand. */
+  compact?: boolean
 }) {
   const detected = useDetectedPlatform()
   const resolvedInstallers = installers ?? FALLBACK_INSTALLERS
   const tag = releaseTag?.trim()
+
+  if (compact) {
+    const groups = groupsForInstallers(resolvedInstallers)
+    const detectedGroup = groups.find((group) => group.os === detected?.os)
+    const recommended = detected?.arch
+      ? detectedGroup?.options.find((option) => option.arch === detected.arch)
+      : undefined
+
+    return (
+      <section
+        data-testid="download-openwork-card"
+        data-compact="true"
+        data-detected-os={detected?.os}
+        data-detected-arch={detected ? detected.arch ?? "unknown" : undefined}
+        data-detected-os-version={detected ? detected.osVersion ?? "unknown" : undefined}
+        data-detection-source={detected?.source}
+        className="overflow-hidden rounded-2xl border border-neutral-200 bg-white"
+      >
+        <div className="grid gap-4 p-5">
+          <div className="flex items-start gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-neutral-100 text-neutral-800">
+              {detectedGroup ? <PlatformIcon os={detectedGroup.os} className="h-5 w-5" /> : <MonitorIcon className="h-5 w-5" />}
+            </span>
+            <div className="min-w-0 flex-1">
+              <h3 className="text-sm font-semibold text-neutral-950">OpenWork for your desktop</h3>
+              <p className="mt-1 text-xs leading-5 text-neutral-500">
+                {recommended && detectedGroup
+                  ? `${detectedGroup.title} · ${recommended.label}`
+                  : "Choose the version that matches your computer."}
+              </p>
+            </div>
+            {tag ? <span className="shrink-0 text-[11px] leading-5 text-neutral-400">{tag}</span> : null}
+          </div>
+          {recommended && detectedGroup ? (
+            <a
+              href={recommended.href}
+              target="_blank"
+              rel="noreferrer"
+              data-testid="download-openwork-link"
+              data-download-openwork-link="true"
+              data-recommended="true"
+              aria-label={`Download OpenWork for ${detectedGroup.title} (${recommended.label})`}
+              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-neutral-950 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-neutral-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900"
+            >
+              <DownloadIcon className="h-4 w-4 shrink-0" />
+              Download for {detectedGroup.title}
+            </a>
+          ) : null}
+        </div>
+        <details className="group border-t border-neutral-200">
+          <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-5 py-3 text-xs font-medium text-neutral-600 hover:bg-neutral-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-neutral-900 [&::-webkit-details-marker]:hidden">
+            {recommended ? "Other platforms and versions" : "Choose a download"}
+            <span aria-hidden className="text-base leading-none group-open:rotate-45">+</span>
+          </summary>
+          <div className="grid gap-5 border-t border-neutral-100 px-5 py-4">
+            {groups.map((group) => (
+              <div key={group.os}>
+                <h4 className="mb-2 text-xs font-semibold text-neutral-900">{group.title}</h4>
+                <div className="grid gap-1">
+                  {group.options.map((option) => (
+                    <a
+                      key={`${option.label}-${option.href}`}
+                      href={option.href}
+                      target="_blank"
+                      rel="noreferrer"
+                      data-testid="download-openwork-link"
+                      data-download-openwork-link="true"
+                      aria-label={`Download OpenWork for ${group.title} (${option.label})`}
+                      className="flex min-h-9 items-center justify-between gap-3 rounded-lg px-2 py-2 text-xs text-neutral-600 hover:bg-neutral-100 hover:text-neutral-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900"
+                    >
+                      {option.label}<DownloadIcon className="h-3.5 w-3.5 shrink-0" />
+                    </a>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </details>
+      </section>
+    )
+  }
 
   return (
     <section

@@ -137,7 +137,16 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
 
     await user.type({ role: "textbox", label: "Teammate email 2" }, world.rejectedEmail, { replace: true });
     await user.click({ role: "button", label: "Send invitations" });
-    await user.see({ text: "Invitation sent" });
+    try {
+      await user.see({ text: "Invitation sent" });
+    } catch (error) {
+      await user.screenshot();
+      const screenText = await probe.text();
+      const formStart = screenText.indexOf("Who would you like to invite?");
+      const formText = formStart >= 0 ? screenText.slice(formStart) : screenText;
+      const invitations = await invitationsFor(flexibleId);
+      throw new Error(`First invitation did not show success. Form: ${formText.slice(0, 3000)}\nPersisted invitations: ${JSON.stringify(invitations)}`, { cause: error });
+    }
     await user.see({ text: "This workspace only allows openwork.test email addresses." });
     await user.see({ role: "textbox", label: "Teammate email 2" }, { value: world.rejectedEmail, editable: true });
     expect(await invitationsFor(flexibleId)).toEqual([{ email: world.invitees[0], role: "member", status: "pending" }]);
