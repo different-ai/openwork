@@ -723,4 +723,14 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   expect(resultList(await invokeCoworker(app, "coworkers.list", {})).find((member) => member.slug === "willow")).toMatchObject({ avatarColor: "sand", avatarGlasses: "oval" });
   evidence.recordAssertionEvidence("Sand and oval frames persist without changing the avatar's established shape", "The creation form preview showed two oval lenses. Creating Willow stored sand and oval, and the same look returned after reloading the app.", true);
 
+  await evalIn(app, `document.querySelector('[data-testid="new-group-chat"]').click(); true`);
+  await clickButton(app, "Create group chat");
+  const groupReady = await waitFor(app, `(() => {
+    if (!document.querySelector('[data-testid="group-chat-empty"]')) return false;
+    const status = document.querySelector('[data-testid="coworker-top-status"]');
+    return status?.textContent?.trim() === "Ready" ? { tone: status.dataset.tone, color: getComputedStyle(status).color, dots: status.querySelectorAll('span').length } : false;
+  })()`, { label: "new group is ready in the same muted sage" });
+  expect(groupReady).toEqual({ tone: "ready", color: "rgb(120, 148, 135)", dots: 0 });
+  evidence.recordAssertionEvidence("Group availability shares the discreet Ready tone", "Creating a group from the rail opened an empty conversation with Ready in muted sage rgb(120, 148, 135), with no status dot or unsolicited message.", true);
+
 });
