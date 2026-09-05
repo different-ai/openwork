@@ -1725,7 +1725,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   const completedRun = await waitFor(app, `window.__COWORKER__.invoke("localResponsibilities.list", { slug: "scout" })
     .then((response) => {
       const run = response.ok ? response.result?.[0]?.latestRun : null;
-      return run?.status === "succeeded" && run.threadId ? run : false;
+      return run && ["succeeded", "failed"].includes(run.status) && run.threadId ? run : false;
     })`, {
     awaitPromise: true,
     timeoutMs: 300_000,

@@ -342,7 +342,9 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
       } else {
         const reply = assistantReplyForTurn(snapshot.messages, { messageId, messageCountBefore });
         if (reply?.error) return finish("failed", snapshot);
-        if (reply) return finish("settled", snapshot);
+        // The assistant placeholder can arrive before the busy status. Wait
+        // for its completion timestamp rather than settling an empty turn.
+        if (reply && reply.completedAt !== null) return finish("settled", snapshot);
       }
 
       if (input.signal?.aborted) return finish("aborted", snapshot ?? await getThreadSnapshot(threadId));
