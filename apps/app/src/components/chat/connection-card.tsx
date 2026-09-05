@@ -32,7 +32,7 @@ export function ConnectionCard({ part, action }: { part: DynamicToolUIPart; acti
         </span>
         <div className="min-w-0 flex-1">
           <p className="truncate text-[13px] font-medium" title={action.connectionName}>{action.connectionName}</p>
-          {waiting || opening ? <p className="mt-0.5 text-[11px] text-muted-foreground">{opening ? "Opening sign-in…" : "Waiting for authorization…"}</p> : null}
+          {waiting || opening ? <p className="mt-0.5 text-[11px] text-muted-foreground">{opening ? "Opening sign-in…" : "Finish sign-in in your browser"}</p> : null}
         </div>
         {connected ? (
           <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground"><Check className="size-3.5 text-emerald-600 dark:text-emerald-400" />Connected</span>

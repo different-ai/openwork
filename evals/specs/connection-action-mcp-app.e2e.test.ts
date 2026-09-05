@@ -1,16 +1,29 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { connectionActionMcpApp, connectionActionPrompt, connectionActionReply } from "../worlds/library.ts";
+import { connectionActionMcpApp, connectionActionPrompt, connectionActionReply, ordinaryDiscoveryPrompt, ordinaryDiscoveryReply } from "../worlds/library.ts";
 
 const test = spec.world(connectionActionMcpApp, { timeout: 600_000 });
 
 test("desktop connects an account directly with the provider and confirms authorization in chat", async ({ world, agent, user, probe, evidence }) => {
+  await agent.send(ordinaryDiscoveryPrompt);
+  await user.see({ text: ordinaryDiscoveryReply }, { timeoutMs: 120_000 });
+  await user.notSee({ testId: "desktop-connection-card" });
+  await user.notSee({ testId: "connector-catalog" });
+  await user.notSee({ role: "button", label: "Connect Notion" });
+  expect((await world.den.mocks.connector.requests()).filter(request => request.path === "/authorize")).toHaveLength(0);
+  const discoveryCalls = await world.den.mocks.connector.agentRequests({ promptMarker: ordinaryDiscoveryPrompt });
+  expect(discoveryCalls.filter(call => call.kind === "tool")).toHaveLength(1);
+  await user.screenshot();
+  evidence.recordAssertionEvidence("Ordinary discovery of an unconnected service stays quiet", "Dashboard capability search completed without a connection card, catalog, Connect button, or provider authorization request", true);
+  await user.click({ role: "button", label: "New task" });
+  await user.see({ text: "Try one of these:" });
   expect(connectionActionPrompt).not.toContain(world.connection.id);
   await agent.send(connectionActionPrompt);
-  await user.see({ text: connectionActionReply }, { timeoutMs: 120_000 });
+  await user.see({ text: connectionActionReply, ordinaryDiscoveryPrompt, ordinaryDiscoveryReply }, { timeoutMs: 120_000 });
   await user.see({ testId: "desktop-connection-card" });
   await user.see({ role: "button", label: "Connect Notion" });
   await user.notSee({ text: "Connected" });
+  await user.notSee({ text: "Finish sign-in in your browser" });
   const calls = await world.den.mocks.connector.agentRequests({ promptMarker: connectionActionPrompt });
   expect(calls.filter(call => call.kind === "tool").every(call => call.toolName?.endsWith("search_capabilities"))).toBe(true);
   expect(calls.filter(call => call.kind === "tool")).toHaveLength(1);
