@@ -308,43 +308,29 @@ function WorkbenchPaneHeader(props: {
   const title = props.session.title?.trim() || t("session.default_title");
   return (
     <div
-      className={cn(
-        "flex min-h-14 shrink-0 items-center gap-2 border-b border-border px-3 py-2",
-        props.focused && "bg-muted/40",
-      )}
+      className={cn("shrink-0 border-b border-border px-4 py-3", props.focused && "bg-muted/40")}
       data-workbench-pane-header={props.pane}
       data-workbench-pane-workspace-name={props.workspaceTitle}
     >
-      <button type="button" className="min-w-0 flex-1 text-left" onClick={props.onFocus}>
-        <span className="block text-[10px] font-medium text-muted-foreground">
-          {t(props.pane === "primary" ? "session_management.main_chat" : "session_management.split_view")}
+      <button type="button" className="flex w-full min-w-0 items-start gap-2 text-left" onClick={props.onFocus}>
+        <span className="min-w-0 flex-1">
+          <span className="block text-xs font-semibold">{t(props.pane === "primary" ? "session_management.main_chat" : "session_management.split_view")}</span>
+          <span className="block truncate text-sm text-muted-foreground" title={title}>{title}</span>
+          {props.showWorkspace ? <span className="block truncate text-xs text-muted-foreground">{props.workspaceTitle}</span> : null}
         </span>
-        <span className="block truncate text-xs font-medium text-foreground">{title}</span>
-        {props.showWorkspace ? (
-          <span className="block truncate text-[10px] text-muted-foreground">{props.workspaceTitle}</span>
-        ) : null}
+        {props.focused ? <span className="rounded-full bg-background px-2 py-0.5 text-[10px] text-muted-foreground">{t("session_management.selected_chat")}</span> : null}
       </button>
-      {props.onExpand ? (
-        <Tooltip>
-          <TooltipTrigger render={
-            <Button variant="ghost" size="sm" aria-label={t("session_management.expand_side_chat")} onClick={props.onExpand}>
-              <Maximize2 data-icon="inline-start" />
-              {t("session_management.expand")}
-            </Button>
-          } />
-          <TooltipContent>{t("session_management.expand_side_chat")}</TooltipContent>
-        </Tooltip>
-      ) : null}
       {props.pane === "secondary" ? (
-        <Tooltip>
-          <TooltipTrigger render={
-            <Button variant="ghost" size="sm" aria-label={t("session_management.close_split_view")} onClick={props.onClose}>
-              <X data-icon="inline-start" />
-              {t("session_management.close")}
-            </Button>
-          } />
-          <TooltipContent>{t("session_management.close_split_view")}</TooltipContent>
-        </Tooltip>
+        <div className="mt-2 flex flex-wrap gap-1">
+          <Button variant="outline" size="sm" aria-label={t("session_management.close_split_view")} onClick={props.onClose}>
+            <ArrowLeft data-icon="inline-start" />
+            {t("session_management.close_split_view")}
+          </Button>
+          <Button variant="ghost" size="sm" aria-label={t("session_management.expand_side_chat")} onClick={props.onExpand}>
+            <Maximize2 data-icon="inline-start" />
+            {t("session_management.expand_side_chat")}
+          </Button>
+        </div>
       ) : null}
     </div>
   );
@@ -1814,6 +1800,7 @@ export function SessionPage(props: SessionPageProps) {
                             workspaceId={props.runtimeWorkspaceId!}
                             sessionId={props.selectedSessionId!}
                             isControlTarget={activeWorkbenchPane === "primary"}
+                            chatPane={canRenderSplitSurface ? "primary" : undefined}
                             opencodeBaseUrl={reactSessionBaseUrl}
                             openworkToken={reactSessionToken}
                             todos={props.todos}
@@ -1871,6 +1858,7 @@ export function SessionPage(props: SessionPageProps) {
                                   workspaceRoot={splitPaneRuntime.workspaceRoot}
                                   sessionId={splitSession.sessionId}
                                   isControlTarget={activeWorkbenchPane === "secondary"}
+                                  chatPane="secondary"
                                   opencodeBaseUrl={splitPaneRuntime.opencodeBaseUrl}
                                   openworkToken={splitPaneRuntime.openworkToken}
                                   todos={[]}

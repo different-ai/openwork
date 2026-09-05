@@ -64,16 +64,16 @@ test("new split creates fresh same-workspace secondary sessions without moving t
 
   await step("New session and Split view are directly available in the sidebar", async () => {
     await user.see({ role: "button", label: "New session" });
-    await user.see({ role: "button", label: "New side chat" });
+    await user.see({ role: "button", label: "Open a second chat" });
     await user.notSee({ role: "button", label: "Create new session" });
   });
 
   await step("New split in the session context menu opens a fresh secondary", async () => {
     // The sidebar row is the first place the title renders; the pane header comes later in DOM order.
     await user.rightClick({ text: world.session.title });
-    await user.see({ role: "menuitem", label: "New side chat" });
-    await user.click({ role: "menuitem", label: "New side chat" });
-    await user.see({ text: "Side chat" });
+    await user.see({ role: "menuitem", label: "Open a second chat" });
+    await user.click({ role: "menuitem", label: "Open a second chat" });
+    await user.see({ text: "Second chat" });
     await user.see({ text: "New session" });
   });
 
@@ -124,6 +124,24 @@ test("new split creates fresh same-workspace secondary sessions without moving t
     });
     expect(afterContextMenu).toHaveLength(before.length + 1);
     expect(afterContextMenu.map((session) => session.sessionId)).toContain(firstFacts.secondarySessionId);
+    await user.see({ text: "A fresh conversation, right here" });
+    await user.see({ text: "Ask something else while keeping your main chat open. Messages from your main chat are not included here." });
+    const orientation = await probe.eval(`(() => {
+      const rows = [...document.querySelectorAll('[data-session-tab-split-pill] button')];
+      const first = rows[0]?.getBoundingClientRect();
+      const second = rows[1]?.getBoundingClientRect();
+      return {
+        rowCount: rows.length,
+        stacked: Boolean(first && second && second.top >= first.bottom && first.width > 150),
+        selectionCount: rows.filter((row) => row.getAttribute('aria-pressed') === 'true').length,
+        mainComposer: document.querySelector('[data-workbench-pane="primary"] [data-chat-composer-label]')?.textContent,
+        secondComposer: document.querySelector('[data-workbench-pane="secondary"] [data-chat-composer-label]')?.textContent,
+        mainHasSecondIntro: Boolean(document.querySelector('[data-workbench-pane="primary"] [data-second-chat-intro]')),
+        duplicateStarterCards: (document.querySelector('[data-workbench-pane="secondary"]')?.textContent ?? '').includes('Try one of these'),
+      };
+    })()`);
+    expect(orientation).toEqual({ rowCount: 2, stacked: true, selectionCount: 1, mainComposer: "Message main chat", secondComposer: "Message second chat", mainHasSecondIntro: false, duplicateStarterCards: false });
+    evidence.recordAssertionEvidence("A second chat explains its separate history and identifies both message destinations", JSON.stringify(orientation), true);
     await user.screenshot();
     return { firstFacts, afterContextMenu };
   });
@@ -220,6 +238,7 @@ test("new split creates fresh same-workspace secondary sessions without moving t
       until: (value) => value === true,
     });
     expect(await readPaneReplies()).toBe(true);
+    expect(await probe.eval("Boolean(document.querySelector('[data-second-chat-intro]'))")).toBe(false);
     evidence.recordAssertionEvidence(
       "Both split composers send and receive replies without crossing sessions",
       JSON.stringify({ primarySessionId, secondarySessionId: firstFacts.secondarySessionId }),
@@ -231,11 +250,11 @@ test("new split creates fresh same-workspace secondary sessions without moving t
     await user.press(paletteShortcut);
     await user.see(paletteInput);
     await user.type(paletteInput, "new split", { replace: true });
-    await user.see({ role: "option", label: /^New side chat/ });
-    await user.type(paletteInput, "new side chat", { replace: true });
-    await user.see({ role: "option", label: /^New side chat/ });
+    await user.see({ role: "option", label: /^Open a second chat/ });
+    await user.type(paletteInput, "open a second chat", { replace: true });
+    await user.see({ role: "option", label: /^Open a second chat/ });
     await user.press("Enter");
-    await user.see({ text: "Side chat" });
+    await user.see({ text: "Second chat" });
     await user.see({ text: "New session" });
   });
 
@@ -418,12 +437,12 @@ test("new split creates fresh same-workspace secondary sessions without moving t
   });
   await step("side chat has clear controls and closing it preserves both conversations", async () => {
     await user.see({ text: "Main chat" });
-    await user.see({ role: "button", label: "Expand side chat" });
+    await user.see({ role: "button", label: "Use as main chat" });
     const beforeClose = parseSplitFacts(await world.splitFacts());
     const sessionsBeforeClose = await agent.list();
     expect(await probe.eval(`(() => {
       const button = document.querySelector('[data-sidebar-new-split]');
-      if (!(button instanceof HTMLButtonElement) || button.getAttribute('aria-label') !== 'Close side chat') return false;
+      if (!(button instanceof HTMLButtonElement) || button.getAttribute('aria-label') !== 'Back to main chat') return false;
       button.click();
       return true;
     })()`)).toBe(true);
@@ -436,11 +455,11 @@ test("new split creates fresh same-workspace secondary sessions without moving t
     });
     expect((await agent.list()).map((session) => session.sessionId).sort())
       .toEqual(sessionsBeforeClose.map((session) => session.sessionId).sort());
-    await user.see({ role: "button", label: "New side chat" });
-    await user.click({ role: "button", label: "New side chat" });
+    await user.see({ role: "button", label: "Open a second chat" });
+    await user.click({ role: "button", label: "Open a second chat" });
     const reopened = parseSplitFacts(await probe.eventually(() => world.splitFacts(), {
       within: 60_000,
-      label: "sidebar creates a new side chat beside the same main conversation",
+      label: "sidebar creates a open a second chat beside the same main conversation",
       until: (value) => parseSplitFacts(value).layoutKind === "split"
         && parseSplitFacts(value).primarySessionId === beforeClose.primarySessionId
         && parseSplitFacts(value).secondarySessionId !== beforeClose.secondarySessionId
@@ -448,7 +467,7 @@ test("new split creates fresh same-workspace secondary sessions without moving t
     }));
     await user.screenshot();
     expect(await probe.eval(`(() => {
-      const button = document.querySelector('[data-workbench-pane-header="secondary"] button[aria-label="Expand side chat"]');
+      const button = [...document.querySelectorAll('[data-workbench-pane-header="secondary"] button')].find((item) => item.textContent?.trim() === 'Use as main chat');
       if (!(button instanceof HTMLButtonElement)) return false;
       button.click();
       return true;
@@ -460,13 +479,14 @@ test("new split creates fresh same-workspace secondary sessions without moving t
         && parseSplitFacts(value).primarySessionId === reopened.secondarySessionId
         && parseSplitFacts(value).secondaryPaneCount === 0,
     });
+    expect(await probe.eval("document.querySelectorAll('[data-chat-composer-label], [data-second-chat-intro], [data-session-tab-split-pill]').length")).toBe(0);
     const remainingIds = (await agent.list()).map((session) => session.sessionId);
     expect(remainingIds).toContain(beforeClose.primarySessionId);
     expect(remainingIds).toContain(beforeClose.secondarySessionId);
     expect(remainingIds).toContain(reopened.secondarySessionId);
     evidence.recordAssertionEvidence(
       "Side chat controls close, create, and expand without deleting either conversation",
-      "The sidebar changes from Close side chat to New side chat; closing preserves all session IDs, creating preserves the main pane, and Expand promotes the side conversation while retaining both saved chats.",
+      "The sidebar changes from Back to main chat to Open a second chat; closing preserves all session IDs, creating preserves the main pane, and Expand promotes the side conversation while retaining both saved chats.",
       true,
     );
   });
