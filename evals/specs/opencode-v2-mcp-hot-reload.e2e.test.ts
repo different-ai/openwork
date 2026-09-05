@@ -1,5 +1,6 @@
 import { expect } from "vitest";
-import { evalIn } from "@openwork/behaviors";
+import { createHash } from "node:crypto";
+import { createAndSelectWorkspace, evalIn } from "@openwork/behaviors";
 import type { Surface } from "@openwork/cdp";
 import { app, eventually, mcpMock, needs, server, test } from "@openwork/testkit";
 
@@ -96,13 +97,29 @@ test("v2 uses an MCP added through OpenWork on the next call and removes it in t
     return { messages, sinceIso };
   }
   await turn("before", false);
-  const mcpConfig = { type: "remote", url: den.mocks.witness.mcpUrl, oauth: false };
+  const mcpConfig = { type: "remote", url: den.mocks.witness.mcpUrl, oauth: false,
+    headers: { Authorization: "Bearer eval-mcp-first" } };
   expect((await request(desktop, `${root}/mcp`, "POST", { name: "reload-witness", config: mcpConfig })).status).toBe(200);
   const used = await turn("added", true);
   expect(used.messages).toContain(nonce);
   expect((await den.mocks.witness.toolCalls({ name: "read_report", sinceIso: used.sinceIso, atLeast: 1 })).length).toBeGreaterThan(0);
   evidence.recordAssertionEvidence("a real OpenWork connection becomes executable on the next v2 call without restarting", "The same session executed the report through native Code Mode and the mock MCP served its independent report nonce after POST /workspace/:id/mcp. The v2 pid remained unchanged.", true);
   expect((await request(desktop, `${v2}/api/mcp/reload-witness`, "PUT", { config: mcpConfig })).status).toBe(403);
+  expect((await request(desktop, `${root}/mcp`, "POST", { name: "reload-witness",
+    config: { ...mcpConfig, headers: { Authorization: "Bearer eval-mcp-second" } } })).status).toBe(200);
+  const updated = await turn("updated", true);
+  const updatedCalls = await den.mocks.witness.toolCalls({ name: "read_report", sinceIso: updated.sinceIso, atLeast: 1 });
+  const secondToken = createHash("sha256").update("eval-mcp-second").digest("hex").slice(0, 12);
+  expect(updatedCalls.length).toBeGreaterThan(0);
+  expect(updatedCalls.every((call) => call.tokenId === secondToken)).toBe(true);
+  const workspaces = (await request(desktop, "/workspaces")).json;
+  const current = record(workspaces) && Array.isArray(workspaces.items)
+    ? workspaces.items.find((item) => record(item) && item.id === workspaceId) : undefined;
+  if (!record(current) || typeof current.path !== "string") throw new Error("Missing workspace path");
+  const other = await createAndSelectWorkspace(desktop, { path: `${current.path}-unrelated` });
+  expect(JSON.stringify((await request(desktop, `/workspace/${other.workspaceId}/opencode2/api/mcp`)).json)).not.toContain("reload-witness");
+  expect(JSON.stringify((await request(desktop, `${v2}/api/mcp`)).json)).toContain("reload-witness");
+  evidence.recordAssertionEvidence("credential replacement stays scoped to the original workspace", "Updating the existing connection through OpenWork caused the next call to use only the replacement credential fingerprint. A separately created workspace did not receive this MCP, while the original workspace retained it and the same v2 process.", true);
   expect((await request(desktop, `${root}/mcp/reload-witness`, "DELETE")).status).toBe(200);
   const removed = await turn("removed", true);
   expect(await den.mocks.witness.toolCalls({ name: "read_report", sinceIso: removed.sinceIso })).toHaveLength(0);
