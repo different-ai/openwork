@@ -69,6 +69,21 @@ test("v2 uses an MCP added through OpenWork on the next call and removes it in t
   const data = record(created.json) ? created.json.data : undefined;
   if (!record(data) || typeof data.id !== "string") throw new Error("Missing v2 session");
   const sessionId = data.id;
+  if (live) {
+    const catalog = (await api(`${v2}/api/mcp`)).json;
+    const cloud = record(catalog) && Array.isArray(catalog.data) ? catalog.data.find((item) => record(item) && item.name === "openwork-cloud") : null;
+    expect(record(cloud) && record(cloud.status) ? cloud.status.status : null).toBe("connected");
+    const discovery = await liveV2Turn(api, v2, sessionId,
+      "Use OpenWork Cloud to discover whether any Slack capabilities are available to me, then summarize availability. "
+      + "Check the connected integration before answering. Do not read Slack messages, send anything, or use files or shell commands.");
+    const messages: unknown = JSON.parse(discovery.messages);
+    const parts = Array.isArray(messages) ? messages.filter(record).flatMap((message) => Array.isArray(message.content) ? message.content.filter(record) : []) : [];
+    expect(parts.some((part) => part.type === "tool" && part.name === "execute" && record(part.state)
+      && part.state.status === "completed" && record(part.state.metadata) && Array.isArray(part.state.metadata.toolCalls)
+      && part.state.metadata.toolCalls.some((call) => record(call) && call.tool === "openwork-cloud.search_capabilities" && call.status === "completed"))).toBe(true);
+    evidence.recordAssertionEvidence("the real model discovers OpenWork Cloud capabilities through the managed connection",
+      `${modelId} received the openwork-cloud connection created by normal sign-in and actually completed its discovery tool through native Code Mode when asked about Slack. This isolated organization does not establish access to a real user's Slack account; no Slack messages were read or sent.`, true);
+  }
   let executions = 0;
   const toolCode = 'return await tools["reload-witness"].read_report({});';
   async function turn(stage: string, useTool: boolean) {
@@ -87,12 +102,11 @@ test("v2 uses an MCP added through OpenWork on the next call and removes it in t
     const reply = `DONE-${stage}-${Date.now()}`;
     const prior = stage === "removed" ? (await api(`${v2}/api/session/${sessionId}/message`)).json : null;
     const priorIds = new Set(record(prior) && Array.isArray(prior.data) ? prior.data.filter(record).map((message) => message.id) : []);
-    const code = stage === "removed" ? 'return typeof tools["reload-witness"];' : toolCode;
     if (useTool) executions++;
     const setup = await fetch(`${den.mocks.witness.url}/admin/agent-workloads`, {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ workloads: [{ promptMarker: marker, finalReply: reply,
-        steps: useTool ? Array.from({ length: executions }, () => ({ tool: "execute", arguments: { code } })) : [] }] }),
+        steps: useTool ? Array.from({ length: executions }, () => ({ tool: "execute", arguments: { code: toolCode } })) : [] }] }),
     });
     expect(setup.ok).toBe(true);
     const sinceIso = new Date().toISOString();
@@ -121,8 +135,9 @@ test("v2 uses an MCP added through OpenWork on the next call and removes it in t
       const state = executions[0]?.state;
       if (!record(state)) throw new Error("Missing post-removal Code Mode result");
       expect(state.status).toBe("completed");
-      expect(record(state.metadata) && state.metadata.error === true).toBe(false);
-      expect(Array.isArray(state.content) ? state.content.filter(record).filter((part) => part.type === "text").map((part) => part.text) : []).toEqual(["undefined"]);
+      expect(record(state.metadata) && state.metadata.error === true).toBe(true);
+      const output = Array.isArray(state.content) ? state.content.filter(record).filter((part) => part.type === "text").map((part) => part.text).join("\n") : "";
+      expect(output).toContain("Unknown tool 'reload-witness.read_report'");
     }
     const next = (await request(desktop, "/experimental/engine-v2-preview/status")).json;
     expect(record(next) ? next.pid : null).toBe(pid);
@@ -188,5 +203,5 @@ test("v2 uses an MCP added through OpenWork on the next call and removes it in t
       `${modelId} made unscripted model/tool calls from the Daytona v2 process after managed credential delivery. Two reconnect/disable/enable cycles served actual MCP calls only while enabled, with the original session and process. The credential was absent from all observed public responses.`, true);
   }
   expect((await request(desktop, `${root}/opencode/global/health`)).status).toBe(200);
-  evidence.recordAssertionEvidence("removal reaches the next call and v1 remains available", (live ? "Real OpenAI reported UNAVAILABLE after DELETE; " : "A fresh, successfully completed Code Mode execution returned typeof tools[\"reload-witness\"] as undefined after DELETE; ") + "the native catalog no longer contained the connection and the original conversation served no new MCP calls. The same v2 process and the v1 health endpoint remained available. Direct v2 MCP mutation was denied.", true);
+  evidence.recordAssertionEvidence("removal reaches the next call and v1 remains available", (live ? "Real OpenAI reported UNAVAILABLE after DELETE; " : "A fresh Code Mode attempt to invoke the removed tool returned the explicit Unknown tool 'reload-witness.read_report' error after DELETE; ") + "the native catalog no longer contained the connection and the original conversation served no new MCP calls. The same v2 process and the v1 health endpoint remained available. Direct v2 MCP mutation was denied.", true);
 });
