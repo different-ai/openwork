@@ -51,7 +51,6 @@ const refreshTokens = new Set();
 const requests = [];
 const drafts = [];
 let agentWorkloads = [];
-let agentRequiredHeader = null;
 let configuredTools = [];
 
 const gmailThreadId = "thread-q3-launch";
@@ -200,22 +199,8 @@ function validateAgentWorkloads(value) {
       }
       return { tool: step.tool.trim(), arguments: structuredClone(step.arguments), argumentsFrom: step.argumentsFrom };
     });
-    const quietCompletions = workload.quietCompletions ?? 0;
-    if (!Number.isInteger(quietCompletions) || quietCompletions < 0) {
-      throw new Error(`agent workload ${promptMarker} quietCompletions must be a non-negative integer`);
-    }
-    return { promptMarker, finalReply, finalReplyChunkSize, steps, quietCompletions, mainCompletions: 0 };
+    return { promptMarker, finalReply, finalReplyChunkSize, steps };
   });
-}
-
-function agentQuietStream(res, model) {
-  res.writeHead(200, {
-    "access-control-allow-origin": "*",
-    "content-type": "text/event-stream",
-    "cache-control": "no-cache",
-    connection: "keep-alive",
-  });
-  res.write(`data: ${JSON.stringify(agentChunk(model, { role: "assistant" }))}\n\n`);
 }
 
 function finalReplyChunks(workload) {
@@ -299,11 +284,6 @@ async function handleAgentCompletion(req, res, entry) {
     .map((workload) => workload.promptMarker);
   const completedTools = messages.filter((message) => message && typeof message === "object" && message.role === "tool").length;
   const baseRequest = { model, matchedMarkers, completedTools };
-  if (agentRequiredHeader && req.headers[agentRequiredHeader.name.toLowerCase()] !== agentRequiredHeader.value) {
-    entry.agentCompletion = { ...baseRequest, kind: "error", promptMarker: matchedMarkers[0] ?? null, toolName: null, arguments: {} };
-    json(res, 401, { error: { message: "provider authentication handler was bypassed" } });
-    return;
-  }
 
   if (!Array.isArray(body.tools) || body.tools.length === 0) {
     entry.agentCompletion = { ...baseRequest, kind: "utility", promptMarker: matchedMarkers[0] ?? null, toolName: null, arguments: {} };
@@ -321,12 +301,6 @@ async function handleAgentCompletion(req, res, entry) {
   }
   const workload = agentWorkloads.find((candidate) => candidate.promptMarker === matchedMarkers[0]);
   if (!workload) throw new Error("matched agent workload disappeared");
-  workload.mainCompletions += 1;
-  if (workload.mainCompletions <= workload.quietCompletions) {
-    entry.agentCompletion = { ...baseRequest, kind: "quiet", promptMarker: workload.promptMarker, toolName: null, arguments: {} };
-    agentQuietStream(res, model);
-    return;
-  }
   if (completedTools >= workload.steps.length) {
     entry.agentCompletion = { ...baseRequest, kind: "final", promptMarker: workload.promptMarker, toolName: null, arguments: {} };
     agentStream(res, model, [
@@ -913,11 +887,6 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/admin/agent-workloads" && req.method === "POST") {
       const body = await readJson(req);
       agentWorkloads = validateAgentWorkloads(body?.workloads);
-      const header = body?.requiredHeader;
-      if (header !== undefined && (!header || typeof header.name !== "string" || !header.name.trim() || typeof header.value !== "string")) {
-        throw new Error("requiredHeader must contain a name and value");
-      }
-      agentRequiredHeader = header ?? null;
       json(res, 200, { configured: agentWorkloads.length });
       return;
     }

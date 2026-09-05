@@ -91,8 +91,8 @@ import { QueuedMessagesPanel } from "@/react-app/domains/session/modals/queued-m
 import { deriveOpenTargets, sameOpenTargets, selectAutoOpenTarget, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { usePanelTabStore } from "@/react-app/domains/session/panel/panel-tab-store";
 import {
-  deriveRunSyncHealth,
   markSessionSnapshotFetchStart,
+  reconcileFailureDegradedThreshold,
   seedSessionState,
   snapshotKey as reactSnapshotKey,
   statusKey as reactStatusKey,
@@ -665,19 +665,6 @@ function resolveFindOwnerSessionId() {
   }
 
   return firstMountedSessionSurfaceId();
-}
-
-function subscribeNetworkOnline(onChange: () => void) {
-  window.addEventListener("online", onChange);
-  window.addEventListener("offline", onChange);
-  return () => {
-    window.removeEventListener("online", onChange);
-    window.removeEventListener("offline", onChange);
-  };
-}
-
-function readNetworkOnline() {
-  return window.navigator.onLine !== false;
 }
 
 function statusLabel(snapshot: OpenworkSessionSnapshot | undefined, busy: boolean) {
@@ -1303,19 +1290,15 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // A busy status is a claim that decays: the sync layer revalidates it
   // continuously against /session/status, and once that validation keeps
   // failing (network drop, sleep, dead engine) the transcript must present
-  // "reconnecting" instead of a confidently ticking Working row. A local
-  // engine keeps answering that poll while the machine itself is offline, so
-  // the browser's own connectivity is part of the same judgement: its model
-  // request cannot progress without a network either.
+  // "reconnecting" instead of a confidently ticking Working row.
   const syncStreamKey = workspaceSyncStreamKey({ workspaceId: props.workspaceId, baseUrl: props.opencodeBaseUrl });
   const syncReconcileHealth = useWorkspaceSyncStreamStore(
     (state) => state.reconcileHealthByKey[syncStreamKey],
   );
-  const networkOnline = useSyncExternalStore(subscribeNetworkOnline, readNetworkOnline, () => true);
-  const runSyncHealth = useMemo(
-    () => deriveRunSyncHealth({ networkOnline, health: syncReconcileHealth }),
-    [networkOnline, syncReconcileHealth],
-  );
+  const runSyncHealth = useMemo(() => ({
+    degraded: (syncReconcileHealth?.consecutiveFailures ?? 0) >= reconcileFailureDegradedThreshold,
+    lastConfirmedAt: syncReconcileHealth?.lastSuccessAt ?? null,
+  }), [syncReconcileHealth]);
 
   useEffect(() => {
     if (!chatStreaming) setSteering(false);
