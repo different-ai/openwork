@@ -1379,6 +1379,7 @@ async function handleExternalMcpOAuthCallback(input: {
   const completeAuthorization = statePayload.version === 2
     ? completeExternalMcpAuth
     : completeLegacyExternalMcpAuth
+  let validatedResponseIssuer: string | undefined
   if (statePayload.version === 2) {
     const responseIssuer = url.searchParams.has("iss")
       ? (url.searchParams.get("iss") ?? "")
@@ -1398,6 +1399,9 @@ async function handleExternalMcpOAuthCallback(input: {
               ? "pinned-transaction"
               : "response-issuer",
       })
+      // Preserve the isolated-callback defense for providers whose unadvertised
+      // issuer was explicitly ignored; otherwise pass the validated value to the SDK.
+      validatedResponseIssuer = validation.ignoredResponseIssuer === undefined ? responseIssuer : undefined
       if (validation.ignoredResponseIssuer !== undefined) {
         logger.warn("external_mcp_connect_callback_untrusted_issuer_ignored", {
           connection_id: connection.id,
@@ -1475,6 +1479,7 @@ async function handleExternalMcpOAuthCallback(input: {
       member,
       input.requestId,
       state,
+      validatedResponseIssuer,
     )
   } catch (error) {
     try {
