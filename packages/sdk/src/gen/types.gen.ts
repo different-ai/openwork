@@ -797,6 +797,17 @@ export type DesktopPolicyResponse = {
   };
 };
 
+export type DenDesktopPolicyValue = {
+  allowCustomProviders?: boolean;
+  allowZenModel?: boolean;
+  allowMultipleWorkspaces?: boolean;
+  allowControlSettings?: boolean;
+  allowManageExtensions?: boolean;
+  allowBuiltInExtensions?: boolean;
+  allowAlphaUpdates?: boolean;
+  showWelcomePage?: boolean;
+};
+
 export type DenDesktopPolicyDocumentWrite = {
   allowCustomProviders?: boolean;
   allowZenModel?: boolean;
@@ -806,6 +817,10 @@ export type DenDesktopPolicyDocumentWrite = {
   allowBuiltInExtensions?: boolean;
   allowAlphaUpdates?: boolean;
   showWelcomePage?: boolean;
+  access?: {
+    mode: "custom" | "locked";
+    capabilities: DenDesktopPolicyValue;
+  };
   onboardingPrompts?: Array<string> | null;
   onboardingPromptDescriptions?: Array<string> | null;
 };
@@ -8333,6 +8348,7 @@ export type GetV1WorkflowsByConfigObjectIdResponses = {
       description: string | null;
       status: "active" | "retired";
       activeRevisionId: string | null;
+      useInWorkflow?: boolean;
       revisions: Array<{
         id: string;
         artifactViewId: string;
@@ -8369,6 +8385,278 @@ export type GetV1WorkflowsByConfigObjectIdResponses = {
 export type GetV1WorkflowsByConfigObjectIdResponse =
   GetV1WorkflowsByConfigObjectIdResponses[keyof GetV1WorkflowsByConfigObjectIdResponses];
 
+export type GetV1AppsData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/apps";
+};
+
+export type GetV1AppsResponses = {
+  /**
+   * Saved apps returned.
+   */
+  200: {
+    enabled: boolean;
+    items: Array<{
+      view: {
+        id: string;
+        configObjectId: string;
+        title: string;
+        description: string | null;
+        status: "active" | "retired";
+        activeRevisionId: string | null;
+        useInWorkflow?: boolean;
+        revisions: Array<{
+          id: string;
+          artifactViewId: string;
+          resourceUri: string;
+          buildStatus: "ready" | "failed";
+          sourceDigest: string;
+          resourceDigest: string | null;
+          outputSchemaDigest: string;
+          csp: {
+            connectDomains: Array<string>;
+            resourceDomains: Array<string>;
+            frameDomains: Array<string>;
+            baseUriDomains: Array<string>;
+          };
+          diagnostics: Array<{
+            level: "error" | "warning";
+            message: string;
+            line: number | null;
+            column: number | null;
+          }>;
+          compilerName: string;
+          compilerVersion: string;
+          reactVersion: string;
+          compiledHtmlBytes: number | null;
+          retiredAt: string | null;
+          createdAt: string;
+        }>;
+        createdAt: string;
+        updatedAt: string;
+      };
+      workflowTitle: string;
+      canManage: boolean;
+      onDashboard: boolean;
+    }>;
+  };
+};
+
+export type GetV1AppsResponse = GetV1AppsResponses[keyof GetV1AppsResponses];
+
+export type GetV1AppsByAppIdData = {
+  body?: never;
+  path: {
+    appId: string;
+  };
+  query?: {
+    revisionId?: string;
+    receiptId?: string;
+  };
+  url: "/v1/apps/{appId}";
+};
+
+export type GetV1AppsByAppIdResponses = {
+  /**
+   * App preview returned.
+   */
+  200: {
+    view: {
+      id: string;
+      configObjectId: string;
+      title: string;
+      description: string | null;
+      status: "active" | "retired";
+      activeRevisionId: string | null;
+      useInWorkflow?: boolean;
+      revisions: Array<{
+        id: string;
+        artifactViewId: string;
+        resourceUri: string;
+        buildStatus: "ready" | "failed";
+        sourceDigest: string;
+        resourceDigest: string | null;
+        outputSchemaDigest: string;
+        csp: {
+          connectDomains: Array<string>;
+          resourceDomains: Array<string>;
+          frameDomains: Array<string>;
+          baseUriDomains: Array<string>;
+        };
+        diagnostics: Array<{
+          level: "error" | "warning";
+          message: string;
+          line: number | null;
+          column: number | null;
+        }>;
+        compilerName: string;
+        compilerVersion: string;
+        reactVersion: string;
+        compiledHtmlBytes: number | null;
+        retiredAt: string | null;
+        createdAt: string;
+      }>;
+      createdAt: string;
+      updatedAt: string;
+    };
+    workflowTitle: string;
+    canManage: boolean;
+    onDashboard: boolean;
+    revision: {
+      id: string;
+      artifactViewId: string;
+      resourceUri: string;
+      buildStatus: "ready" | "failed";
+      sourceDigest: string;
+      resourceDigest: string | null;
+      outputSchemaDigest: string;
+      csp: {
+        connectDomains: Array<string>;
+        resourceDomains: Array<string>;
+        frameDomains: Array<string>;
+        baseUriDomains: Array<string>;
+      };
+      diagnostics: Array<{
+        level: "error" | "warning";
+        message: string;
+        line: number | null;
+        column: number | null;
+      }>;
+      compilerName: string;
+      compilerVersion: string;
+      reactVersion: string;
+      compiledHtmlBytes: number | null;
+      retiredAt: string | null;
+      createdAt: string;
+    } | null;
+    html: string | null;
+    payload: {
+      schemaVersion: "1";
+      artifact: {
+        title: string;
+        description: string | null;
+        pluginId: string;
+        configObjectId: string;
+        configObjectVersionId: string;
+        receiptId: string;
+        automationRunId: string | null;
+        source: "manual" | "scheduled";
+        generatedAt: string;
+        resultDigest: string;
+        rendererVersion: "codemode-markdown-v1";
+        freshness:
+          | {
+              state: "never_run";
+            }
+          | {
+              state: "fresh";
+              ageMs: number;
+            }
+          | {
+              state: "stale";
+              ageMs: number;
+              maxAgeMs: number;
+            }
+          | {
+              state: "needs_attention";
+              ageMs: number | null;
+              lastSuccessfulReceiptId: string | null;
+              reason: string;
+            };
+      };
+      data: unknown;
+    } | null;
+    previewNotice: string | null;
+  };
+};
+
+export type GetV1AppsByAppIdResponse = GetV1AppsByAppIdResponses[keyof GetV1AppsByAppIdResponses];
+
+export type PostV1AppsByAppIdDashboardData = {
+  body: {
+    added: boolean;
+  };
+  path: {
+    appId: string;
+  };
+  query?: never;
+  url: "/v1/apps/{appId}/dashboard";
+};
+
+export type PostV1AppsByAppIdDashboardResponses = {
+  /**
+   * Dashboard updated.
+   */
+  200: {
+    ok: true;
+  };
+};
+
+export type PostV1AppsByAppIdDashboardResponse =
+  PostV1AppsByAppIdDashboardResponses[keyof PostV1AppsByAppIdDashboardResponses];
+
+export type PostV1AppsByAppIdSaveData = {
+  body: {
+    revisionId: string;
+    title: string;
+    useInWorkflow: boolean;
+    expectedActiveRevisionId: string | null;
+  };
+  path: {
+    appId: string;
+  };
+  query?: never;
+  url: "/v1/apps/{appId}/save";
+};
+
+export type PostV1AppsByAppIdSaveResponses = {
+  /**
+   * App saved.
+   */
+  200: {
+    id: string;
+    configObjectId: string;
+    title: string;
+    description: string | null;
+    status: "active" | "retired";
+    activeRevisionId: string | null;
+    useInWorkflow?: boolean;
+    revisions: Array<{
+      id: string;
+      artifactViewId: string;
+      resourceUri: string;
+      buildStatus: "ready" | "failed";
+      sourceDigest: string;
+      resourceDigest: string | null;
+      outputSchemaDigest: string;
+      csp: {
+        connectDomains: Array<string>;
+        resourceDomains: Array<string>;
+        frameDomains: Array<string>;
+        baseUriDomains: Array<string>;
+      };
+      diagnostics: Array<{
+        level: "error" | "warning";
+        message: string;
+        line: number | null;
+        column: number | null;
+      }>;
+      compilerName: string;
+      compilerVersion: string;
+      reactVersion: string;
+      compiledHtmlBytes: number | null;
+      retiredAt: string | null;
+      createdAt: string;
+    }>;
+    createdAt: string;
+    updatedAt: string;
+  };
+};
+
+export type PostV1AppsByAppIdSaveResponse = PostV1AppsByAppIdSaveResponses[keyof PostV1AppsByAppIdSaveResponses];
+
 export type GetV1WorkflowsByConfigObjectIdViewsData = {
   body?: never;
   path: {
@@ -8390,6 +8678,7 @@ export type GetV1WorkflowsByConfigObjectIdViewsResponses = {
       description: string | null;
       status: "active" | "retired";
       activeRevisionId: string | null;
+      useInWorkflow?: boolean;
       revisions: Array<{
         id: string;
         artifactViewId: string;
@@ -8447,6 +8736,7 @@ export type PostV1ArtifactViewsByArtifactViewIdRevisionsByRevisionIdActivateResp
     description: string | null;
     status: "active" | "retired";
     activeRevisionId: string | null;
+    useInWorkflow?: boolean;
     revisions: Array<{
       id: string;
       artifactViewId: string;
@@ -8502,6 +8792,7 @@ export type PostV1ArtifactViewsByArtifactViewIdRetireResponses = {
     description: string | null;
     status: "active" | "retired";
     activeRevisionId: string | null;
+    useInWorkflow?: boolean;
     revisions: Array<{
       id: string;
       artifactViewId: string;

@@ -115,6 +115,8 @@ import type {
   GetV1AdminUsersResponses,
   GetV1ApiKeysErrors,
   GetV1ApiKeysResponses,
+  GetV1AppsByAppIdResponses,
+  GetV1AppsResponses,
   GetV1AppVersionResponses,
   GetV1AuthBootstrapStatusResponses,
   GetV1AuthLoginOptionsErrors,
@@ -411,6 +413,8 @@ import type {
   PostV1AdminUsersByUserIdInferenceUsageResetResponses,
   PostV1ApiKeysErrors,
   PostV1ApiKeysResponses,
+  PostV1AppsByAppIdDashboardResponses,
+  PostV1AppsByAppIdSaveResponses,
   PostV1ArtifactViewsByArtifactViewIdRetireResponses,
   PostV1ArtifactViewsByArtifactViewIdRevisionsByRevisionIdActivateResponses,
   PostV1AuthBootstrapVerifyErrors,
@@ -2813,6 +2817,118 @@ export class DenClient extends HeyApiClient {
       url: "/v1/workflows/{configObjectId}",
       ...options,
       ...params,
+    });
+  }
+
+  /**
+   * List saved reusable apps
+   */
+  public getV1Apps<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<GetV1AppsResponses, unknown, ThrowOnError>({
+      url: "/v1/apps",
+      ...options,
+    });
+  }
+
+  /**
+   * Open an app or an exact draft preview
+   */
+  public getV1AppsByAppId<ThrowOnError extends boolean = false>(
+    parameters: {
+      appId: string;
+      revisionId?: string;
+      receiptId?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "appId" },
+            { in: "query", key: "revisionId" },
+            { in: "query", key: "receiptId" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<GetV1AppsByAppIdResponses, unknown, ThrowOnError>({
+      url: "/v1/apps/{appId}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Add or remove an app on your personal dashboard
+   */
+  public postV1AppsByAppIdDashboard<ThrowOnError extends boolean = false>(
+    parameters: {
+      appId: string;
+      added?: boolean;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "appId" },
+            { in: "body", key: "added" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<PostV1AppsByAppIdDashboardResponses, unknown, ThrowOnError>({
+      url: "/v1/apps/{appId}/dashboard",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Save an exact app revision for reuse
+   */
+  public postV1AppsByAppIdSave<ThrowOnError extends boolean = false>(
+    parameters: {
+      appId: string;
+      revisionId?: string;
+      title?: string;
+      useInWorkflow?: boolean;
+      expectedActiveRevisionId?: string | null;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "appId" },
+            { in: "body", key: "revisionId" },
+            { in: "body", key: "title" },
+            { in: "body", key: "useInWorkflow" },
+            { in: "body", key: "expectedActiveRevisionId" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<PostV1AppsByAppIdSaveResponses, unknown, ThrowOnError>({
+      url: "/v1/apps/{appId}/save",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     });
   }
 
