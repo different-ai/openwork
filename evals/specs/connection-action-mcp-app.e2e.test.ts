@@ -87,12 +87,12 @@ test("gateway discovery renders a connection card and checks live authorization 
     until: text => text.includes("Waiting for you to finish"),
   });
   await webUser.see({ testId: "guided-connection-setup" }, { timeoutMs: 60_000 });
-  await webUser.see("Bring Notes into your work");
-  await webUser.notSee("You’re connected");
+  await webUser.see({ text: "Bring Notes into your work" });
+  await webUser.notSee({ text: "You’re connected" });
   await webUser.screenshot();
   evidence.recordAssertionEvidence("The selected connector opens a guided setup in Den", "Bring Notes into your work; not connected before authorization", true);
   await webUser.click({ role: "button", text: "Continue to Notes" });
-  await webUser.see("You’re connected", { timeoutMs: 90_000 });
+  await webUser.see({ text: "You’re connected" }, { timeoutMs: 90_000 });
   await webUser.screenshot();
   evidence.recordAssertionEvidence("Den confirms authorization from its sign-in button", "You’re connected", true);
   const connected = await probe.eventually(() => cardDocument(world.app), {
