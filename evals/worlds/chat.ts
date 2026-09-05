@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join, resolve } from "node:path";
 import { evalIn } from "@openwork/behaviors";
@@ -546,6 +546,8 @@ export const streamedMarkdownAnswer = [
   "const streamed = \"delta\";",
   "```",
   "",
+  "[Play video](clip.mp4)",
+  "",
   "Closing paragraph epsilon.",
 ].join("\n");
 
@@ -578,6 +580,16 @@ export async function streamedMarkdown(seed: Seed) {
       },
     },
   });
+  // A tiny H.264 clip, served through the same authenticated file endpoint as user files.
+  await seed.evalIn(app, `async (workspaceId, dataBase64) => {
+    const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
+    const response = await fetch(base + "/workspace/" + encodeURIComponent(workspaceId) + "/files/raw", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token"), "Content-Type": "application/json" },
+      body: JSON.stringify({ path: "clip.mp4", dataBase64 }),
+    });
+    if (!response.ok) throw new Error("Video fixture write failed: " + response.status);
+  }`, { args: [workspace.workspaceId, (await readFile(new URL("../fixtures/assistant-video.mp4", import.meta.url))).toString("base64")], awaitPromise: true });
   const engine = resolveEvalEngine();
   const ready = await seed.evalIn(app, `async (workspaceId, engine, providerId, modelId) => {
     const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
@@ -599,7 +611,17 @@ export async function streamedMarkdown(seed: Seed) {
   }`, { args: [workspace.workspaceId, engine, providerId, modelId], awaitPromise: true, timeoutMs: 65000 });
   if (ready !== true) throw new Error(`Selected ${engine} engine was not ready for the streaming journey`);
   const session = await seedSessionRetry(seed, app);
-  return { app, den, workspace, session };
+  return { app, den, workspace, session,
+    async videoState(play = false) {
+      return seed.evalIn(app, `async (play) => {
+        const video = document.querySelector('video[data-openwork-video-path="clip.mp4"]');
+        if (!video) return null;
+        if (play) await video.play();
+        return { controls: video.controls, autoplay: video.autoplay, ready: video.readyState >= 2,
+          paused: video.paused, time: video.currentTime, error: video.error?.message ?? null };
+      }`, { args: [play], awaitPromise: true });
+    },
+  };
 }
 
 const htmlToolName = "explode_html";

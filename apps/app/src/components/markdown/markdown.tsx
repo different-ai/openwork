@@ -114,10 +114,15 @@ function MarkdownBlockInner({
   ...props
 }: MarkdownBlockInnerProps) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const videoCleanups = useRef(new Map<HTMLVideoElement, () => void>());
   const codeCopyResetTimers = useRef(new Map<HTMLButtonElement, number>());
   const codeWrapStates = useRef(new Map<number, boolean>());
-  const { openTargets, onOpenTarget } = useOpenTargets();
+  const { openTargets, onOpenTarget, client, workspaceId } = useOpenTargets();
   const openArtifactPath = useOpenArtifactPath();
+  useEffect(() => () => {
+    videoCleanups.current.forEach((cleanup) => cleanup());
+    videoCleanups.current.clear();
+  }, [client, workspaceId]);
   const [linkMenu, setLinkMenu] = useState<{ target: OpenTarget; rect: DOMRect } | null>(null);
   const [imagePreview, setImagePreview] = useState<{ src: string; alt: string } | null>(null);
   const [streamingRenderer] = useState(() => createStreamingMarkdownRenderer("chat"));
@@ -237,6 +242,50 @@ function MarkdownBlockInner({
       syncCodeWrapStates();
     });
   }, [highlightQuery, rendered]);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    for (const [video, cleanup] of videoCleanups.current) {
+      if (!root.contains(video)) {
+        cleanup();
+        videoCleanups.current.delete(video);
+      }
+    }
+    for (const video of root.querySelectorAll("video[data-openwork-video-path]")) {
+      if (!(video instanceof HTMLVideoElement)) continue;
+      if (videoCleanups.current.has(video)) continue;
+      let cancelled = false;
+      let objectUrl: string | null = null;
+      const href = video.dataset.openworkVideoPath ?? "";
+      const showError = () => {
+        const notice = video.parentElement?.querySelector("[data-openwork-video-error]");
+        if (notice instanceof HTMLElement) notice.hidden = false;
+      };
+      video.addEventListener("error", showError);
+      videoCleanups.current.set(video, () => {
+        cancelled = true;
+        video.removeEventListener("error", showError);
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+      });
+      if (/^https?:/i.test(href)) continue;
+      const path = localPathFromHref(href);
+      if (!client || !workspaceId || !path) {
+        showError();
+        continue;
+      }
+      const target = openTargetForHref(href, openTargets);
+      void client.downloadWorkspaceFile(workspaceId, target?.value ?? path).then((result) => {
+        if (cancelled) return;
+        const extension = path.split(".").pop()?.toLowerCase();
+        const fallbackType = extension === "webm" ? "video/webm" : extension === "ogv" ? "video/ogg" : extension === "mov" ? "video/quicktime" : "video/mp4";
+        const contentType = result.contentType && result.contentType !== "application/octet-stream" ? result.contentType : fallbackType;
+        const url = URL.createObjectURL(new Blob([result.data], { type: contentType }));
+        objectUrl = url;
+        video.src = url;
+      }).catch(() => { if (!cancelled) showError(); });
+    }
+  }, [client, workspaceId, openTargets, rendered]);
 
   useEffect(() => {
     const root = rootRef.current;
