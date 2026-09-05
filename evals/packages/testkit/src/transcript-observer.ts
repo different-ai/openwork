@@ -3,8 +3,8 @@ import type { Probe } from "./spec/types.ts";
 /** Observe rendered transcript text across frames, including gaps between eventual assertions. */
 export async function observeTranscript(probe: Probe, entries: readonly { role: "user" | "assistant"; text: string }[]) {
   const key = `transcript-observer-${crypto.randomUUID()}`;
-  await probe.eval(`(() => {
-    const entries = ${JSON.stringify(entries)};
+  await probe.eval(`(key, entriesJson) => {
+    const entries = JSON.parse(entriesJson);
     const state = { frames: 0, seen: entries.map(() => false), violations: [], stopped: false };
     let frame;
     const started = performance.now();
@@ -22,19 +22,19 @@ export async function observeTranscript(probe: Probe, entries: readonly { role: 
     };
     frame = requestAnimationFrame(sample);
     const timer = setTimeout(() => { cancelAnimationFrame(frame); state.stopped = true; }, 180000);
-    window[${JSON.stringify(key)}] = { state, stop() { clearTimeout(timer); cancelAnimationFrame(frame); } };
-  })()`);
+    window[key] = { state, stop() { clearTimeout(timer); cancelAnimationFrame(frame); } };
+  }`, { args: [key, JSON.stringify(entries)] });
   return {
     async finish() {
-      const result = await probe.eval(`(() => {
-        const observer = window[${JSON.stringify(key)}];
+      const result = await probe.eval(`(key) => {
+        const observer = window[key];
         if (!observer) throw new Error("Transcript observer was lost before verification");
-        observer.stop(); delete window[${JSON.stringify(key)}]; return observer.state;
-      })()`);
+        observer.stop(); delete window[key]; return observer.state;
+      }`, { args: [key] });
       return result;
     },
     async [Symbol.asyncDispose]() {
-      await probe.eval(`(() => { window[${JSON.stringify(key)}]?.stop(); delete window[${JSON.stringify(key)}]; })()`);
+      await probe.eval(`(key) => { window[key]?.stop(); delete window[key]; }`, { args: [key] });
     },
   };
 }
