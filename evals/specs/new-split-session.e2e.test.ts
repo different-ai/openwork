@@ -132,6 +132,11 @@ test("new split creates fresh same-workspace secondary sessions without moving t
     // Hold the primary's HTTP acknowledgement so the secondary must send
     // while the primary request is pending. Both requests still hit the engine.
     await probe.eval(`(() => {
+      for (const pane of ["primary", "secondary"]) {
+        const editor = document.querySelector('[data-workbench-pane="' + pane + '"] [contenteditable="true"][data-lexical-editor="true"]');
+        if (!editor) throw new Error("Missing " + pane + " composer");
+        editor.setAttribute("data-testid", pane + "-split-composer");
+      }
       const originalFetch = window.fetch;
       let release;
       const held = new Promise((resolve) => { release = resolve; });
@@ -151,9 +156,9 @@ test("new split creates fresh same-workspace secondary sessions without moving t
       return true;
     })()`);
     try {
-      await user.type({ role: "textbox", nth: 0 }, world.primaryPrompt);
+      await user.type({ testId: "primary-split-composer" }, world.primaryPrompt);
       await user.press("Enter");
-      await user.type({ role: "textbox", nth: 1 }, world.secondaryPrompt);
+      await user.type({ testId: "secondary-split-composer" }, world.secondaryPrompt);
       await user.press("Enter");
       await user.see({ text: "Secondary split received" }, { timeoutMs: 30_000 });
     } finally {
