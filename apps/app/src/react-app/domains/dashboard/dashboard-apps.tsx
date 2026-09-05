@@ -66,10 +66,10 @@ export function DashboardApps({ onCreateApp }: { onCreateApp: CreateDashboardApp
           </div>)}</div>
           {!matching.length ? <p className="text-sm text-muted-foreground">{apps.length ? "No apps match your search." : "There are no saved apps to choose from yet. Create one with OpenWork to get started."}</p> : null}
         </div> : <div className="space-y-3 py-2">
-          <button type="button" className="flex w-full items-start gap-3 rounded-xl border p-4 text-left hover:bg-muted/50 disabled:opacity-50" onClick={() => void create()} disabled={creating}>
+          <button type="button" aria-label="Create with OpenWork" className="flex w-full items-start gap-3 rounded-xl border p-4 text-left hover:bg-muted/50 disabled:opacity-50" onClick={() => void create()} disabled={creating}>
             {creating ? <Loader2 className="mt-0.5 size-5 animate-spin" /> : <Sparkles className="mt-0.5 size-5" />}<span><span className="block text-sm font-medium">{creating ? "Opening conversation…" : "Create with OpenWork"}</span><span className="mt-1 block text-sm text-muted-foreground">Describe what you want. Build and refine it with a preview beside your conversation.</span></span>
           </button>
-          <button type="button" className="flex w-full items-start gap-3 rounded-xl border p-4 text-left hover:bg-muted/50" disabled={creating} onClick={() => { setSearch(""); setChooser("existing"); }}>
+          <button type="button" aria-label="Choose an existing app" className="flex w-full items-start gap-3 rounded-xl border p-4 text-left hover:bg-muted/50" disabled={creating} onClick={() => { setSearch(""); setChooser("existing"); }}>
             <Blocks className="mt-0.5 size-5" /><span><span className="block text-sm font-medium">Choose an existing app</span><span className="mt-1 block text-sm text-muted-foreground">Add a saved app you already have access to.</span></span>
           </button>
         </div>}
