@@ -169,15 +169,19 @@ test("openwork-server persists structured, credential-free logs when OPENWORK_SE
   }
 });
 
-for (const code of ["ENOSPC", "EDQUOT"]) {
-  for (const mode of ["sync", "async"]) {
-    test(`openwork-server keeps serving requests after ${mode} stdout ${code}`, async ({ evidence }) => {
+for (const { code, stream } of [
+  ...["ENOSPC", "EDQUOT", "EIO"].map((code) => ({ code, stream: "stdout" })),
+  { code: "EIO", stream: "stderr" },
+]) {
+  for (const mode of stream === "stderr" ? ["async"] : ["sync", "async"]) {
+    test(`openwork-server keeps serving requests after ${mode} ${stream} ${code}`, async ({ evidence }) => {
       const root = mkdtempSync(join(tmpdir(), "openwork-stdout-storage-spec-"));
       const logFile = join(root, "server.log");
       const server = bootServer({
         OPENWORK_SERVER_LOG_FILE: logFile,
         OPENWORK_TEST_STDOUT_ERROR: code,
         OPENWORK_TEST_STDOUT_MODE: mode,
+        OPENWORK_TEST_STDOUT_STREAM: stream,
       }, root, "storage-fault-test-token", join(repoRoot, "evals/packages/labs/src/fixtures/stdout-storage-fault.mjs"));
       try {
         const port = await eventually(() => listeningPort(server.output()), { within: 60_000, intervalMs: 250 });
@@ -186,9 +190,9 @@ for (const code of ["ENOSPC", "EDQUOT"]) {
         await eventually(() => server.output(), {
           within: 5_000,
           intervalMs: 50,
-          until: (output) => output.includes(`stdout-storage-fault:${code}`),
+          until: (output) => output.includes(`${stream}-storage-fault:${code}`),
         });
-        // A second request proves the failed stdout cannot kill the server or
+        // A second request proves the failed output cannot kill the server or
         // prevent the independent structured file sink from recording requests.
         expect((await fetch(url)).status).toBe(200);
         const requests = await eventually(() => jsonLines(logFile).filter((entry) => String(entry.body).includes("GET /health 200")), {
@@ -198,10 +202,10 @@ for (const code of ["ENOSPC", "EDQUOT"]) {
         });
         expect(requests).toHaveLength(2);
         expect(server.child.exitCode).toBeNull();
-        expect(server.output().split(`stdout-storage-fault:${code}`)).toHaveLength(2);
+        expect(server.output().split(`${stream}-storage-fault:${code}`)).toHaveLength(2);
         evidence.recordAssertionEvidence(
-          `Requests survive ${mode} stdout ${code}`,
-          "Two real HTTP health requests returned 200; the injected stdout failure occurred exactly once, the process stayed alive, and both requests reached the independent JSON file sink.",
+          `Requests survive ${mode} ${stream} ${code}`,
+          `Two real HTTP health requests returned 200; the injected ${stream} failure occurred exactly once, the process stayed alive, and both requests reached the independent JSON file sink.`,
           true,
         );
       } finally {
