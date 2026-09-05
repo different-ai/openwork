@@ -68,7 +68,7 @@ test("v2 refreshes OpenWork skill instructions just in time in an existing conve
   const entryPath = `${v2}/api/session/${sessionId}/instructions/entries`;
   let reads = 0;
   let expectedCode: string | null = null;
-  async function turn(stage: string, readSkill: boolean) {
+  async function turn(stage: string, readSkill: boolean, removedId?: string) {
     let messages: string;
     if (live) {
       const result = await liveV2Turn(api, v2, sessionId,
@@ -80,13 +80,17 @@ test("v2 refreshes OpenWork skill instructions just in time in an existing conve
       else expect(result.text).toMatch(/unavailable/i);
       messages = result.messages;
     } else {
+    const prior = removedId ? (await api(`${v2}/api/session/${sessionId}/message`)).json : null;
+    const priorIds = new Set(record(prior) && Array.isArray(prior.data) ? prior.data.filter(record).map((message) => message.id) : []);
     const marker = `SKILL-${stage}-${Date.now()}`;
     const reply = `DONE-${stage}-${Date.now()}`;
-    if (readSkill) reads++;
+    if (readSkill || removedId) reads++;
     const setup = await fetch(`${den.mocks.witness.url}/admin/agent-workloads`, {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ workloads: [{ promptMarker: marker, finalReply: reply,
-        steps: readSkill ? Array.from({ length: reads }, () => ({ tool: "skill", argumentsFrom: "skill-catalog", arguments: { skill: skillName } })) : [] }] }),
+        steps: readSkill || removedId ? Array.from({ length: reads }, () => removedId
+          ? { tool: "skill", arguments: { id: removedId } }
+          : { tool: "skill", argumentsFrom: "skill-catalog", arguments: { skill: skillName } }) : [] }] }),
     });
     expect(setup.ok).toBe(true);
     const prompt = `Use the report skill if available. Request ${marker}.`;
@@ -101,6 +105,11 @@ test("v2 refreshes OpenWork skill instructions just in time in an existing conve
       }
       return JSON.stringify((await request(desktop, `${v2}/api/session/${sessionId}/message`)).json);
     }, { within: 90_000, intervalMs: 500, label: `${stage} reply`, until: (text) => text.includes(reply) });
+    if (removedId) {
+      const payload: unknown = JSON.parse(messages);
+      messages = JSON.stringify(record(payload) && Array.isArray(payload.data) ? payload.data.filter(record).filter((message) => !priorIds.has(message.id)) : []);
+      expect(messages).toContain(`Unable to load skill ${removedId}`);
+    }
     }
     const entries = (await request(desktop, entryPath)).json;
     if (!record(entries) || !Array.isArray(entries.data)) throw new Error("Missing instruction entries");
@@ -117,6 +126,10 @@ test("v2 refreshes OpenWork skill instructions just in time in an existing conve
   expectedCode = first;
   expect((await request(desktop, `${root}/skills`, "POST", { name: skillName, description: "Use for report requests", content: `The current report code is ${first}.` })).status).toBe(200);
   expect(await turn("added", true)).toContain(first);
+  const nativeAdded = (await api(`${v2}/api/skill`)).json;
+  const installed = record(nativeAdded) && Array.isArray(nativeAdded.data) ? nativeAdded.data.find((skill) => record(skill) && skill.name === skillName) : null;
+  if (!record(installed) || typeof installed.id !== "string") throw new Error("Native skill did not expose its ID");
+  const nativeId = installed.id;
   evidence.recordAssertionEvidence("a skill installed through OpenWork is discovered and read on the next v2 call", "The baseline native instruction entry lacked the skill. After the real skill-install route, the same conversation read its independent content nonce using the native skill tool with an ID derived exclusively from the current skill catalog. The user prompt contained no file path or answer.", true);
   const second = `SKILL-CONTENT-B-${Date.now()}`;
   expectedCode = second;
@@ -125,7 +138,13 @@ test("v2 refreshes OpenWork skill instructions just in time in an existing conve
   expect((await request(desktop, `${entryPath}/openwork.context`, "PUT", { value: "replace the server instructions" })).status).toBe(403);
   expect((await request(desktop, `${root}/skills/${skillName}`, "DELETE")).status).toBe(200);
   expectedCode = null;
-  await turn("removed", false);
+  const removedMessages = await turn("removed", false, nativeId);
+  expect(removedMessages).not.toContain(first);
+  expect(removedMessages).not.toContain(second);
+  expect((await api(`${v2}/api/session/${sessionId}/skill`, "POST", { skill: nativeId, resume: false })).status).toBe(404);
+  evidence.recordAssertionEvidence("deleted skills cannot be activated from the original conversation",
+    live ? "The real model returned UNAVAILABLE with no prior skill contents, and an explicit activation of the previously observed native skill ID returned 404."
+      : "A forced native skill-tool call using the previously observed ID returned Unable to load skill with no prior content; explicit native session activation also returned 404.", true);
   const nativeAfterRemoval = await request(desktop, `${v2}/api/skill`);
   expect(nativeAfterRemoval.status).toBe(200);
   expect(JSON.stringify(nativeAfterRemoval.json)).not.toContain(skillName);
@@ -140,10 +159,11 @@ test("v2 refreshes OpenWork skill instructions just in time in an existing conve
       expectedCode = null;
       await turn(`removed-again-${cycle}`, false);
       expect(JSON.stringify((await api(`${v2}/api/skill`)).json)).not.toContain(skillName);
+      expect((await api(`${v2}/api/session/${sessionId}/skill`, "POST", { skill: nativeId, resume: false })).status).toBe(404);
     }
     evidence.recordAssertionEvidence("real OpenAI follows current OpenWork skill instructions across repeated reloads",
       `${modelId} independently discovered and loaded skills from the Daytona v2 process, named OpenWork as its app, and returned the fresh code in its final answer. Two additional reinstall/remove cycles used new unseen codes; removal produced UNAVAILABLE. The same session/process and single managed context entry were retained, with no live credential in observed public responses.`, true);
   }
   expect((await request(desktop, `${root}/opencode/global/health`)).status).toBe(200);
-  evidence.recordAssertionEvidence("updates replace the native entry and removals disappear without engine restart", "The next read returned the second content nonce. Deletion removed the skill from the native v2 catalog and the single managed instruction entry; the real skill endpoint returned 404. All turns used the original session and v2 pid; direct instruction replacement was denied and v1 remained healthy.", true);
+  evidence.recordAssertionEvidence("updates replace the native entry and removals disappear without engine restart", "The next read returned the second content nonce. Deletion removed the skill from the native v2 catalog and the single managed instruction entry; the native session skill-activation endpoint and the workspace skill endpoint both returned 404. All turns used the original session and v2 pid; direct instruction replacement was denied and v1 remained healthy.", true);
 });
