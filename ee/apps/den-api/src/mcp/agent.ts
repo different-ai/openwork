@@ -86,6 +86,8 @@ import {
 import { registerAgentSkillCreatedApp } from "./skill-created-app.js"
 import {
   connectedConnectionActionPayload,
+  connectionActionSearchCard,
+  connectionActionPayloadSchema,
   connectionActionPayloadFromStatus,
   registerAgentConnectionActionApp,
 } from "./connection-action-app.js"
@@ -160,6 +162,7 @@ const capabilityMatchOutputSchema = z.object({
 
 export const SEARCH_CAPABILITIES_OUTPUT_SCHEMA = z.object({
   matches: z.array(capabilityMatchOutputSchema),
+  connectionAction: connectionActionPayloadSchema.optional(),
   hint: z.string().optional(),
 })
 
@@ -232,10 +235,16 @@ export function capabilitySearchToolResult<T extends CapabilityMatch>(matches: T
     ...(matches.length === 0 ? ["No matches. Try broader or different keywords."] : []),
     ...(coverageHint ? [coverageHint] : []),
   ].join(" ")
-  const result = hint ? { matches, hint } : { matches }
+  const card = connectionActionSearchCard(matches)
+  const result = {
+    matches,
+    ...(hint ? { hint } : {}),
+    ...(card ? { connectionAction: card.connectionAction } : {}),
+  }
   return {
     content: textContent(JSON.stringify(result, null, 2)),
     structuredContent: result,
+    ...(card ? { _meta: card.meta } : {}),
   }
 }
 

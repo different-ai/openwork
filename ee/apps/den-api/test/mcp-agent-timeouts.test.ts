@@ -296,6 +296,20 @@ test("capability search results include structured output alongside text compati
 
   expect(result.structuredContent).toEqual({ matches })
   expect(JSON.parse(result.content[0]?.text ?? "{}")).toEqual({ matches })
+  const connectionStatus = {
+    version: 1, kind: "connection_action", source: "openwork-cloud",
+    layer: "mcp_connection", errorCode: "not_connected", authType: "oauth", credentialMode: "per_member",
+    connectionId: "emc_notes", connectionName: "Notes", state: "needs_connection",
+    actor: "member", message: "Connect your notes account.",
+    action: { type: "connect", label: "Connect Notes", surface: "openwork_your_connections", retry: "search_capabilities" },
+  }
+  const blocked = [{ ...matches[0], kind: "connection_status", connectionStatus }]
+  const actionable = agentModule.capabilitySearchToolResult(blocked)
+  expect(actionable.structuredContent.matches).toEqual(blocked)
+  expect(actionable.structuredContent.connectionAction?.connectionId).toBe("emc_notes")
+  expect(actionable._meta?.["openwork/mcpApp"].arguments).toEqual({ connectionId: "emc_notes" })
+  expect(agentModule.SEARCH_CAPABILITIES_OUTPUT_SCHEMA.safeParse(actionable.structuredContent).success).toBe(true)
+  expect(result._meta).toBeUndefined()
 })
 
 test("capability search preserves the bounded-fanout coverage warning", () => {
