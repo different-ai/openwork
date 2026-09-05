@@ -1,29 +1,89 @@
-import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { expect } from "vitest";
-import { test } from "@openwork/testkit";
+import { eventually, localMysqlIsRunning, localRedisIsRunning, needs, server, SkipError, test } from "@openwork/testkit";
 
-const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
+const maxBytes = 32 * 1024 * 1024;
 
-test("the Den Web proxy bounds request bodies and rejects oversized ones before contacting Den", async ({ evidence }) => {
-  const unit = spawnSync("pnpm", [
-    "--dir",
-    "ee/apps/den-web",
-    "exec",
-    "bun",
-    "--conditions=development",
-    "test",
-    "app/api/_lib/upstream-proxy.test.mjs",
-  ], { cwd: repoRoot, encoding: "utf8" });
-  const output = `${unit.stdout}${unit.stderr}`;
-  expect(unit.error, output).toBeUndefined();
-  expect(unit.status, output).toBe(0);
-  expect(output).toContain(" 23 pass");
-  expect(output).toContain(" 0 fail");
+function postBody(url: URL, requestId: string, declared: boolean): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-request-id": requestId,
+        ...(declared ? { "content-length": String(maxBytes + 1) } : { "transfer-encoding": "chunked" }),
+      },
+      signal: AbortSignal.timeout(60_000),
+    }, (response) => {
+      const chunks: Buffer[] = [];
+      response.on("data", (chunk: Buffer) => chunks.push(chunk));
+      response.on("error", reject);
+      response.on("end", () => {
+        resolve(new Response(Buffer.concat(chunks), { status: response.statusCode }));
+        request.destroy();
+      });
+    });
+    request.on("error", reject);
+    if (declared) {
+      // Reject the declaration without waiting for its advertised payload.
+      request.flushHeaders();
+    } else {
+      request.end(Buffer.alloc(maxBytes + 1, "x"));
+    }
+  });
+}
 
+test("the auth proxy rejects oversized bodies before Den while ordinary sign-in still works", { timeout: 300_000 }, async ({ evidence, place }) => {
+  needs({ commands: ["bun"] });
+  if (place.kind === "local" && !await localMysqlIsRunning()) {
+    throw new SkipError("local MySQL on 127.0.0.1:3306");
+  }
+  if (place.kind === "local" && !await localRedisIsRunning()) {
+    throw new SkipError("local Redis on 127.0.0.1:6379");
+  }
+  await using den = await server({ place, web: true, org: { name: "Proxy body limit" } });
+  const nonce = `${Date.now().toString(36)}-${process.pid}`;
+  const declaredId = `proxy-declared-${nonce}`;
+  const chunkedId = `proxy-chunked-${nonce}`;
+  const acceptedId = `proxy-accepted-${nonce}`;
+  const url = new URL("/api/auth/sign-in/email", den.ref.webUrl);
+
+  const declared = await postBody(url, declaredId, true);
+  expect(declared.status).toBe(413);
+  expect(await declared.json()).toMatchObject({
+    error: "request_too_large", requestId: declaredId, maxBytes, declaredBytes: maxBytes + 1,
+  });
+
+  const chunked = await postBody(url, chunkedId, false);
+  expect(chunked.status).toBe(413);
+  expect(await chunked.json()).toMatchObject({
+    error: "request_too_large", requestId: chunkedId, maxBytes, observedBytes: maxBytes + 1,
+  });
+
+  const accepted = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-request-id": acceptedId, origin: den.ref.webUrl },
+    body: JSON.stringify({ email: den.admin.email, password: den.admin.password }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  expect(accepted.status).toBe(200);
+  expect(accepted.headers.get("set-cookie")).toContain("session_token");
+
+  // Observe the accepted control before using absence to prove non-delivery.
+  await eventually(async () => (await den.apiLog()).includes(acceptedId), { within: 10_000 });
+  const log = await den.apiLog();
+  expect(log).toContain(acceptedId);
+  expect(log).not.toContain(declaredId);
+  expect(log).not.toContain(chunkedId);
   evidence.recordAssertionEvidence(
-    "Oversized request bodies are rejected with structured 413 responses and Den is never contacted",
-    "The proxy suite passed: declared and chunked oversized bodies returned request_too_large with request ids and CORS headers while the upstream server observed zero requests, bodies at and immediately below the limit proxied byte-for-byte, ordinary multipart uploads continued, and rejection logs carried sizes without credentials or file contents.",
-    true,
+    "Declared and chunked oversized bodies stop at the web boundary without contacting Den",
+    "Both real auth-proxy requests returned structured 413 responses; the API log contained the accepted control request and neither rejection id.",
+    !log.includes(declaredId) && !log.includes(chunkedId) && log.includes(acceptedId),
+  );
+  evidence.recordAssertionEvidence(
+    "An ordinary sign-in still reaches Den and returns its session cookie",
+    `HTTP ${accepted.status}; session cookie present: ${Boolean(accepted.headers.get("set-cookie")?.includes("session_token"))}`,
+    accepted.status === 200 && Boolean(accepted.headers.get("set-cookie")?.includes("session_token")),
   );
 });
