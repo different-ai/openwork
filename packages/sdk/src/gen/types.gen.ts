@@ -3831,6 +3831,10 @@ export type WorkerInstance = {
   provider: string;
   region: string | null;
   url: string | null;
+  /**
+   * How the instance endpoint behaves. Anything other than stable means only Den's lifecycle route is durable.
+   */
+  endpointKind: "signed-expiring" | "stable" | "den-tunnel";
   status: string;
   createdAt: string;
   updatedAt: string;
