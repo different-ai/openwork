@@ -28,6 +28,24 @@ async function mint(session: DenSession, scopes: string[]) {
 test("a seven-day cloud trial starts without a card, provisions the first task once, and expires without charging", { timeout: 300_000 }, async ({ place, evidence, skip }) => {
   needs({ placement: "local" });
   if (!available) skip("needs: local MySQL and Redis");
+  {
+    await using rolloutDisabled = await server({
+      place, web: false,
+      org: { name: "Cloud Trial Rollout" },
+      env: { DEN_OPENWORK_WEB_ENABLED: "true", DEN_OPENWORK_CLOUD_TRIAL_ENABLED: "false" },
+    });
+    const headers = { authorization: `Bearer ${rolloutDisabled.admin.token}` };
+    const offer = await denFetch(rolloutDisabled.admin, "/v1/billing/web-trial", { headers });
+    expect(offer.response.status, offer.text).toBe(200);
+    expect(record(record(offer.body).trial).status).toBe("ineligible");
+    const start = await denFetch(rolloutDisabled.admin, "/v1/billing/web-trial", { method: "POST", headers });
+    expect(start.response.status, start.text).toBe(409);
+    expect(record(start.body).error).toBe("trial_unavailable");
+    const rolloutDatabase = rolloutDisabled.database;
+    if (!rolloutDatabase) throw new Error("Expected isolated rollout database");
+    expect(await queryDenDatabase(rolloutDatabase.url, "SELECT organization_id FROM org_cloud_trials")).toEqual([]);
+    evidence.recordAssertionEvidence("New trials stay unavailable before compatible-client rollout", "With Web enabled but the trial rollout disabled, no offer is eligible, a start returns trial_unavailable, and no trial row is created.", true);
+  }
   await using witness = await startCloudRuntimeWitness();
   await using den = await server({
     place,
@@ -39,6 +57,7 @@ test("a seven-day cloud trial starts without a card, provisions the first task o
       DAYTONA_USE_DEPRECATED_POLLING: "true", DAYTONA_HEALTHCHECK_TIMEOUT_MS: "120000",
       WORKER_PROVISIONING_RECONCILE_INTERVAL_MS: "0", CLOUD_IDLE_LOOP_SECONDS: "0",
       DEN_OPENWORK_WEB_ENABLED: "true",
+      DEN_OPENWORK_CLOUD_TRIAL_ENABLED: "true",
       OPENWORK_DEV_MODE: "1", RESEND_API_KEY: "", SMTP_HOST: "",
       OPENWORK_CLOUD_TRIAL_POLL_MS: "1000",
       STRIPE_OPENWORK_WEB_PRICE_ID: "price_first_use_witness",

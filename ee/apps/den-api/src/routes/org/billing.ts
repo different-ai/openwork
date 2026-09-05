@@ -141,7 +141,7 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
       getCloudTrial(payload.organization.id), hasUsedCloudTrial(userId),
       getOpenWorkWebBillingSummary(payload.organization.id),
     ])
-    return c.json({ trial: serializeCloudTrial(trial, !used && !billing.subscription && !billing.hasAccess, billing.accessSource === "subscription" || billing.accessSource === "complimentary") })
+    return c.json({ trial: serializeCloudTrial(trial, env.openworkCloudTrialEnabled && !used && !billing.subscription && !billing.hasAccess, billing.accessSource === "subscription" || billing.accessSource === "complimentary") })
   })
 
   app.post("/v1/billing/web-trial", describeRoute({
@@ -159,6 +159,7 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
     if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
     const [existing, billing] = await Promise.all([getCloudTrial(payload.organization.id), getOpenWorkWebBillingSummary(payload.organization.id)])
     if (existing) return c.json({ trial: serializeCloudTrial(existing, false, billing.accessSource === "subscription" || billing.accessSource === "complimentary") })
+    if (!env.openworkCloudTrialEnabled) return c.json({ error: "trial_unavailable", message: "Free cloud trials are not available for this deployment yet." }, 409)
     if (billing.subscription || billing.hasAccess) {
       return c.json({ error: "trial_unavailable", message: "This workspace already has cloud access or has had a cloud subscription." }, 409)
     }
