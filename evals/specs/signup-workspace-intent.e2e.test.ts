@@ -308,7 +308,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await mobileUser.see({ role: "link", label: "Try OpenWork Web" });
     expect(await probe.eval(mobile, "document.documentElement.scrollWidth <= window.innerWidth")).toBe(true);
     expect(await connectionsFor(flexibleId)).toEqual(toolsBefore);
-    await mobileUser.hover({ role: "heading", label: "OpenWork Desktop" });
+    await mobileUser.hover({ role: "button", label: "Email me the download link" });
     await mobileUser.looks(["The mobile OpenWork Desktop card shows its complete heading, OpenWork mark, explanatory copy, and Email me the download link button in a restrained neutral card"]);
     await mobileUser.hover({ role: "link", label: "Try OpenWork Web" });
     await mobileUser.looks(["The mobile OpenWork Web card shows its complete heading, OpenWork mark, access-and-plans explanation, and Try OpenWork Web link without horizontal clipping"]);
