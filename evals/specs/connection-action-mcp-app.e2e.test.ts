@@ -15,11 +15,11 @@ test("desktop connects an account directly with the provider and confirms author
   expect(discoveryCalls.filter(call => call.kind === "tool")).toHaveLength(1);
   await user.screenshot();
   evidence.recordAssertionEvidence("Ordinary discovery of an unconnected service stays quiet", "Dashboard capability search completed without a connection card, catalog, Connect button, or provider authorization request", true);
-  await user.click({ role: "button", label: "New task" });
+  await user.click({ role: "button", label: "New session" });
   await user.see({ text: "Try one of these:" });
   expect(connectionActionPrompt).not.toContain(world.connection.id);
   await agent.send(connectionActionPrompt);
-  await user.see({ text: connectionActionReply, ordinaryDiscoveryPrompt, ordinaryDiscoveryReply }, { timeoutMs: 120_000 });
+  await user.see({ text: connectionActionReply }, { timeoutMs: 120_000 });
   await user.see({ testId: "desktop-connection-card" });
   await user.see({ role: "button", label: "Connect Notion" });
   await user.notSee({ text: "Connected" });

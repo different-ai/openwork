@@ -35,13 +35,23 @@ test("chat suggests Slack setup and lets an admin browse every quick-add connect
     () => appProbe.eval(`document.querySelector('button[aria-label="Set up Slack"]')?.disabled === false`),
     { within: 15_000, label: "admin setup action is enabled", until: value => value === true },
   );
+  expect(await world.browserUrls.opened()).toEqual([]);
   await appUser.click({ role: "button", label: "Set up Slack" });
   await appUser.notSee({ role: "alert" });
 
-  // Continue the external-browser handoff in the signed-in browser surface.
-  const setupUrl = new URL("/dashboard/mcp-connections", world.den.ref.webUrl);
-  setupUrl.searchParams.set("quickAdd", "slack");
-  await webUser.navigate(setupUrl.toString());
+  // Observe the URL Electron actually handed to the OS before bridging that
+  // exact handoff into our signed-in browser. A no-op or wrong URL fails here.
+  const openedUrls = await probe.eventually(() => world.browserUrls.opened(), {
+    within: 30_000, label: "Slack setup asks the OS to open its destination", until: urls => urls.length > 0,
+  });
+  expect(openedUrls).toHaveLength(1);
+  const openedUrl = openedUrls[0];
+  if (!openedUrl) throw new Error("Slack setup did not open a URL");
+  const setupUrl = new URL(openedUrl);
+  expect(setupUrl.origin).toBe(new URL(world.den.ref.webUrl).origin);
+  expect(setupUrl.pathname).toBe("/dashboard/mcp-connections");
+  expect([...setupUrl.searchParams.entries()]).toEqual([["quickAdd", "slack"]]);
+  await webUser.navigate(openedUrl);
   await webUser.see({ text: "OAuth app" }, { timeoutMs: 90_000 });
   await webUser.see({ text: "Client ID (optional for now)" });
   await webUser.see({ text: "Client secret (optional for now)" });
@@ -50,7 +60,7 @@ test("chat suggests Slack setup and lets an admin browse every quick-add connect
   expect(calls.filter(call => call.kind === "tool")).toHaveLength(1);
   expect(calls.filter(call => call.kind === "tool").every(call => call.toolName?.endsWith("search_capabilities"))).toBe(true);
   expect((await world.den.mocks.connector.requests()).filter(request => request.path === "/authorize")).toHaveLength(0);
-  await appUser.click({ role: "button", label: "New task" });
+  await appUser.click({ role: "button", label: "New session" });
   await appUser.see({ text: "Try one of these:" });
   await agent.on(world.app).send(allConnectorsPrompt);
   await appUser.see({ text: allConnectorsReply }, { timeoutMs: 120_000 });
@@ -61,5 +71,5 @@ test("chat suggests Slack setup and lets an admin browse every quick-add connect
   expect(listed).toEqual(world.expectedIds);
   await appUser.screenshot();
   evidence.recordAssertionEvidence("Asking for all quick adds immediately opens the complete catalog", JSON.stringify(listed), true);
-  evidence.recordAssertionEvidence("Filtering selects Slack and its setup destination opens the OAuth client form", "Slack quickAdd deep link renders client fields; the agent only searched and did not execute setup or authorize an account", true);
+  evidence.recordAssertionEvidence("Filtering selects Slack and its setup destination opens the OAuth client form", "Clicking Set up Slack emitted exactly one OS browser request for the expected Den origin, connector page, and quickAdd=slack. Navigating that captured URL renders client fields; the agent only searched and did not execute setup or authorize an account", true);
 });
