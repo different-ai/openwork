@@ -46,13 +46,16 @@ if web:
             if str((proc / "cwd").resolve()) != root + "/ee/apps/den-web": continue
             if pid is not None: raise RuntimeError("Multiple Next servers; refusing an ambiguous update")
             pid = int(proc.name)
-            env = dict(item.decode().split("=", 1) for item in (proc / "environ").read_bytes().split(b"\0") if b"=" in item)
+            running = dict(item.decode().split("=", 1) for item in (proc / "environ").read_bytes().split(b"\0") if b"=" in item)
+            allowed = {"PATH", "HOME", "PNPM_HOME", "DEN_WEB_PORT", "DEN_API_BASE", "DEN_AUTH_ORIGIN", "DEN_AUTH_FALLBACK_BASE", "NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL", "DEN_ORG_MODE", "OPENWORK_DEV_MODE", "DEN_WEB_ALLOWED_DEV_ORIGINS"}
+            env = {key: value for key, value in running.items() if key in allowed}
         except (FileNotFoundError, PermissionError): continue
     if pid is None: raise RuntimeError("No running preview web server")
 subprocess.run(["git", "fetch", "origin", ref], cwd=root, check=True)
 subprocess.run(["git", "checkout", "--detach", "FETCH_HEAD"], cwd=root, check=True)
+install_env = {key: value for key, value in os.environ.items() if key in {"PATH", "HOME", "PNPM_HOME"}}
 with open("/tmp/preview-update.log", "w") as log:
-    subprocess.run(["pnpm", "install", "--frozen-lockfile"], cwd=root, stdout=log, stderr=subprocess.STDOUT, check=True)
+    subprocess.run(["pnpm", "install", "--frozen-lockfile"], cwd=root, env=install_env, stdout=log, stderr=subprocess.STDOUT, check=True)
     if web:
         subprocess.run(["pnpm", "--filter", "@openwork-ee/den-web", "build"], cwd=root, env=env, stdout=log, stderr=subprocess.STDOUT, check=True)
 if web:
@@ -74,7 +77,14 @@ for sandbox, web in targets:
         parser.error("Invalid sandbox ID in receipt")
     program = remote.replace("REF", repr(args.ref)).replace("WEB", repr(web))
     subprocess.run(["daytona", "exec", sandbox, "--", "python3", "-c", shlex.quote(program)], check=True)
+# Never resurrect a receipt whose lifetime ended while the build was running.
+current = json.loads(receipt.read_text())
+if current["pid"] != state["pid"]:
+    raise RuntimeError("Preview ownership changed during update")
+os.kill(current["pid"], 0)
 # Keep boot ref distinct: the API/Electron main still run that version.
-outputs["frontendRef"] = args.ref
-receipt.write_text(json.dumps(state, indent=2) + "\n")
+current["outputs"]["frontendRef"] = args.ref
+with receipt.open("r+") as handle:
+    handle.write(json.dumps(current, indent=2) + "\n")
+    handle.truncate()
 print("Frontend update complete. Reopen the existing preview and verify the changed screen.")

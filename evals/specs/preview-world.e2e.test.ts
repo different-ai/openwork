@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { main, readScriptWorldSnapshot } from "@openwork/world";
+import { main, isProcessAlive, readScriptWorldSnapshot } from "@openwork/world";
 import { denFetch, signIn } from "@openwork/behaviors";
 import { attachSurface, evaluateOnSurface } from "@openwork/cdp";
 import { screenshot } from "@openwork/test-evidence";
@@ -34,7 +34,7 @@ test("preview worlds expose Den and real Electron, preserve progress on frontend
   process.env.OPENWORK_WORLD_SNAPSHOT_DIR = snapshots;
   const stage = `proof-${Date.now()}`;
   const options = { cwd: root, worldsDirectory: join(root, "worlds"), print: (line: string) => console.error(line) };
-  const up = (name: string, scenario: string) => main(["up", name, "--stage", stage, "--place", "daytona", "--detach", "--timeout", "600000", "--", "--scenario", scenario, "--lifetime", "30"], options);
+  const up = (name: string, scenario: string, lifetime = "30") => main(["up", name, "--stage", stage, "--place", "daytona", "--detach", "--timeout", "600000", "--", "--scenario", scenario, "--lifetime", lifetime], options);
   const down = (name: string) => main(["down", name, "--stage", stage], options);
   const snapshot = async (name: string) => {
     const value = await readScriptWorldSnapshot(join(snapshots, `${name}--${stage}.json`));
@@ -85,21 +85,35 @@ test("preview worlds expose Den and real Electron, preserve progress on frontend
     await screenshot(surface);
     evidence.recordAssertionEvidence("Desktop preview reaches real Electron through noVNC", "The viewer returns 200, its WebSocket speaks RFB, and the Electron renderer is on a workspace route. Restricted policy matches Den definitions; two team connectors use unconnected individual accounts.", true);
 
+    const buildId = async () => (await exec("daytona", ["exec", desktop.outputs.denSandbox, "--", "cat", "/workspace/ee/apps/den-web/.next/BUILD_ID"], { timeout: 30000 })).stdout.trim();
+    const previousBuild = await buildId();
+    assert.ok((await (await fetch(desktop.outputs.denWeb)).text()).includes(previousBuild));
     assert.ok(process.env.OPENWORK_EVAL_REF);
     await exec("python3", [join(root, ".opencode/skills/preview-my-work/scripts/update-preview.py"), "preview-desktop", "--stage", stage, "--ref", process.env.OPENWORK_EVAL_REF], { cwd: root, timeout: 300000, maxBuffer: 2_000_000 });
     await eventually(async () => (await fetch(desktop.outputs.denWeb)).status === 200, { within: 60000, intervalMs: 1000, label: "updated Den web responds" });
+    const nextBuild = await buildId();
+    assert.notEqual(nextBuild, previousBuild);
+    assert.ok((await (await fetch(desktop.outputs.denWeb)).text()).includes(nextBuild), "Den must serve the rebuilt frontend, not the old process");
     const after = await denFetch(ref, "/v1/mcp-connections?scope=manageable", { headers });
     assert.ok(record(after.body) && Array.isArray(after.body.connections));
     assert.deepEqual(after.body.connections, savedConnections);
     assert.equal(await evaluateOnSurface(surface, "localStorage.getItem('preview-proof')"), "preserved");
     assert.equal((await snapshot("preview-desktop")).pid, desktop.pid);
-    evidence.recordAssertionEvidence("Frontend update preserves the preview", "The real updater rebuilds Den web and updates the desktop checkout; the existing session still reads the same connectors, Electron retains its localStorage marker, and world ownership stays unchanged.", true);
+    evidence.recordAssertionEvidence("Frontend update preserves the preview", "The live HTTP response contains the new Next build ID, which differs from the previous build; the existing session still reads the same connectors, Electron retains its localStorage marker, and world ownership stays unchanged.", true);
     await surface[Symbol.asyncDispose]();
+    assert.equal(await down("preview-den"), 0);
+    assert.equal(await up("preview-den", "fresh", "1"), 0);
+    const reset = await snapshot("preview-den");
+    assert.notEqual(reset.outputs.denSandbox, den.outputs.denSandbox);
+    assert.equal((await fetch(reset.outputs.preview)).status, 200);
     assert.equal(await down("preview-desktop"), 0);
     assert.equal(await readScriptWorldSnapshot(join(snapshots, `preview-desktop--${stage}.json`)), undefined);
-    assert.equal((await fetch(den.outputs.preview)).status, 200);
-    assert.equal((await snapshot("preview-den")).pid, den.pid);
-    evidence.recordAssertionEvidence("Stopping desktop leaves the other preview intact", "Desktop teardown removes its receipt; the separate Den preview still responds and retains its original owner process.", true);
+    assert.equal((await fetch(reset.outputs.preview)).status, 200);
+    assert.equal((await snapshot("preview-den")).pid, reset.pid);
+    evidence.recordAssertionEvidence("Reset and stop are scoped to their stage", "Reset creates a new Den sandbox. Desktop teardown removes its receipt while the reset Den preview still responds and retains its owner process.", true);
+    await eventually(async () => !await readScriptWorldSnapshot(join(snapshots, `preview-den--${stage}.json`)), { within: 90000, intervalMs: 1000, label: "preview expires after its one-minute session lifetime" });
+    await eventually(() => !isProcessAlive(reset.pid), { within: 60000, intervalMs: 1000, label: "expired preview finishes disposal" });
+    evidence.recordAssertionEvidence("Session lifetime ends the preview", "A one-minute preview removes its live receipt and its owning process finishes disposal automatically without another down command.", true);
   } finally {
     for (const name of ["preview-desktop", "preview-den"]) {
       if (await readScriptWorldSnapshot(join(snapshots, `${name}--${stage}.json`))) await down(name);

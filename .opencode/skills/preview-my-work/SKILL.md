@@ -29,7 +29,9 @@ Use a unique stage such as `pr-1234` to keep previews separate. First inspect
 An existing matching world should be reopened, not recreated. Compare its
 recorded scenario and ref before adopting it. A stage is not a git ref.
 
-Push the intended commit so Daytona can fetch it. Then:
+Use reviewed repository code: previews execute that ref’s build scripts. Do not
+load production credentials or attach shared secrets volumes. Push the intended
+commit and use its full SHA so Daytona can fetch it. Then:
 
 ```sh
 OPENWORK_EVAL_REF=<pushed-sha> infisical run --silent --env dev -- pnpm world up preview-den --stage pr-1234 --place daytona --detach --timeout 600000 -- --scenario fresh --lifetime 120
