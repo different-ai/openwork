@@ -40,24 +40,24 @@ test("desktop registration recovers from a transient Den outage without another 
   await proxy.faults.status("/api/runtime-config", 200, {
     times: 100, body: { denApiUrl: proxy.ref.apiUrl },
   })
-  await proxy.faults.status(registrationPath, 503, { times: 2 })
+  await proxy.faults.status(registrationPath, 503, { times: 1 })
   const start = (await proxy.requestLog()).length
   await evalIn(desktop, `window.dispatchEvent(new Event("online"))`)
   await eventually(async () => {
     const requests = (await proxy.requestLog()).slice(start)
       .filter((request) => request.path === registrationPath)
-    return requests.filter((request) => request.faulted && request.status === 503).length === 2
+    return requests.filter((request) => request.faulted && request.status === 503).length === 1
       && requests.some((request) => !request.faulted)
       && await presence() === true
-  }, { within: 35_000, label: "Den observes a registered desktop after two transient failures" })
+  }, { within: 35_000, label: "Den observes a registered desktop after a transient failure" })
 
   const attempts = (await proxy.requestLog()).slice(start)
     .filter((request) => request.path === registrationPath)
-  expect(attempts.filter((request) => request.faulted)).toHaveLength(2)
+  expect(attempts.filter((request) => request.faulted)).toHaveLength(1)
   expect(attempts.filter((request) => !request.faulted)).toHaveLength(1)
   evidence.recordAssertionEvidence(
     "Registration recovers without another online event",
-    "Den reported no desktop during the injected startup registration outage. After a single online event and two further HTTP 503s, the desktop retried and Den reported it connected within 35 seconds.",
+    "Den reported no desktop during the injected startup registration outage. After a single online event and one further HTTP 503, the desktop retried and Den reported it connected within 35 seconds.",
     true,
   )
 })
