@@ -225,7 +225,14 @@ function offeredAgentTool(body, wanted) {
 }
 
 function skillCatalogArguments(messages, skillName) {
-  const system = messages.filter((message) => message.role === "system").map(agentContentText).join("\n");
+  // The pinned AI SDK path preserves chronological instruction updates as
+  // XML-escaped system-update blocks. Ordinary user text is not discovery.
+  const system = messages.flatMap((message) => {
+    const text = agentContentText(message);
+    if (message.role === "system") return [text];
+    const update = message.role === "user" ? text.match(/^<system-update>\n([\s\S]*)\n<\/system-update>$/) : null;
+    return update ? [update[1].replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")] : [];
+  }).join("\n");
   if (!system.includes("You are OpenWork.")) throw new Error("The model did not receive OpenWork operating instructions");
   const entries = [...system.matchAll(/<skill>([\s\S]*?)<\/skill>/g)];
   const entry = entries.reverse().find((match) => match[1].includes(`<name>${skillName}</name>`));
