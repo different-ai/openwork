@@ -44,8 +44,12 @@ test("desktop registration recovers from a transient Den outage without another 
 })
 
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
 function record(value: unknown): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Expected response object")
+  if (!isRecord(value)) throw new Error("Expected response object")
   return value
 }
 
