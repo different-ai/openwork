@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { DatabaseError } from "@planetscale/database"
 import { createDenDb, isTransientDbConnectionError } from "../src/client.js"
+import { createRetryingPlanetScaleFetch } from "../src/transient-retry.js"
 
 function successfulQueryResponse(): Response {
   return new Response(
@@ -105,5 +106,64 @@ test("PlanetScale surfaces the second transient read failure", async () => {
   } finally {
     globalThis.fetch = originalFetch
     console.warn = originalWarn
+  }
+})
+
+
+test("PlanetScale releases the first response before retry and preserves the second error body", async () => {
+  const originalFetch = globalThis.fetch
+  let cancelled = false
+  let attempts = 0
+  globalThis.fetch = async () => {
+    attempts += 1
+    if (attempts === 1) return new Response(new ReadableStream({ cancel() { cancelled = true } }), { status: 503 })
+    assert.equal(cancelled, true)
+    return unavailableResponse()
+  }
+  try {
+    const response = await createRetryingPlanetScaleFetch()("https://example.test", { body: JSON.stringify({ query: "select 1" }) })
+    assert.equal(attempts, 2)
+    assert.equal(response.status, 503)
+    assert.match(await response.text(), /Service Unavailable/)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test("PlanetScale preserves non-transient responses and malformed request bodies without retry", async () => {
+  const originalFetch = globalThis.fetch
+  try {
+    for (const body of [undefined, "{", JSON.stringify({}), JSON.stringify({ query: 1 }), JSON.stringify({ query: "insert into example values (1)" })]) {
+      let attempts = 0
+      globalThis.fetch = async () => { attempts += 1; return unavailableResponse() }
+      const response = await createRetryingPlanetScaleFetch()("https://example.test", { body })
+      assert.equal(response.status, 503)
+      assert.equal(attempts, 1)
+    }
+    for (const status of [400, 401, 403, 404, 422]) {
+      let attempts = 0
+      globalThis.fetch = async () => { attempts += 1; return new Response("denied", { status }) }
+      const response = await createRetryingPlanetScaleFetch()("https://example.test", { body: JSON.stringify({ query: "select 1" }) })
+      assert.equal(response.status, status)
+      assert.equal(await response.text(), "denied")
+      assert.equal(attempts, 1)
+    }
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test("PlanetScale retries nested transport failures only for reads and only once", async () => {
+  const originalFetch = globalThis.fetch
+  const fault = new TypeError("fetch failed", { cause: { code: "UND_ERR_SOCKET" } })
+  try {
+    for (const query of ["select 1", "insert into example values (1)"]) {
+      let attempts = 0
+      globalThis.fetch = async () => { attempts += 1; throw fault }
+      await assert.rejects(createRetryingPlanetScaleFetch()("https://example.test", { body: JSON.stringify({ query }) }), (error) => error === fault)
+      assert.equal(attempts, query === "select 1" ? 2 : 1)
+    }
+  } finally {
+    globalThis.fetch = originalFetch
   }
 })

@@ -92,6 +92,8 @@ export function createRetryingPlanetScaleFetch(): PlanetScaleFetch {
       firstAttempt = false
       const response = await globalThis.fetch(input, init)
       if (shouldRetryResponse && TRANSIENT_DB_HTTP_STATUSES.has(response.status)) {
+        // Release the discarded response before issuing the bounded retry.
+        await response.body?.cancel()
         throw response
       }
       return response
