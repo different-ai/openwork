@@ -39,7 +39,6 @@ export interface MockAgentWorkload {
 }
 
 export interface MockAgentRequest {
-  offeredTools?: string[];
   model: string;
   promptMarker: string | null;
   matchedMarkers: string[];
@@ -413,7 +412,6 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
         promptMarker: marker,
         matchedMarkers: completion.matchedMarkers.filter((value): value is string => typeof value === "string"),
         completedTools: completion.completedTools,
-        offeredTools: Array.isArray(completion.offeredTools) ? completion.offeredTools.filter((name: unknown): name is string => typeof name === "string") : [],
         kind,
         toolName: typeof completion.toolName === "string" ? completion.toolName : null,
         arguments: isRecord(completion.arguments) ? completion.arguments : {},

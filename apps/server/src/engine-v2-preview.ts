@@ -268,7 +268,8 @@ function catalogModelIds(payload: unknown, mirroredProviderIds: string[]): strin
 }
 
 /** Translate only fields supported by the pinned v2 MCP API. */
-export function mapRuntimeMcpToV2(value: Record<string, unknown>): Record<string, unknown> | undefined {
+export function mapRuntimeMcpToV2(value: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(value)) return undefined;
   if (value.enabled === false || value.disabled === true) return undefined;
   const shared = {
     ...(typeof value.codemode === "boolean" ? { codemode: value.codemode } : {}),

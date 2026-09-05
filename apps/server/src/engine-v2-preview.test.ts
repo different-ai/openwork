@@ -6,11 +6,24 @@ import { join } from "node:path";
 import {
   createEngineV2Preview,
   mapRuntimeProvidersToV2Specs,
+  mapRuntimeMcpToV2,
   readEngineV2PreviewState,
   resolveInitialEngineV2PreviewState,
   writeEngineV2PreviewState,
 } from "./engine-v2-preview.js";
 import type { ServerConfig } from "./types.js";
+
+test("maps enabled MCP transports without retaining unknown runtime fields", () => {
+  expect(mapRuntimeMcpToV2({ type: "remote", url: "https://example.test/mcp", oauth: false,
+    headers: { Authorization: "Bearer fixture", ignored: 3 }, timeout: 2000, enabled: true, privateMetadata: "omit" }))
+    .toEqual({ type: "remote", url: "https://example.test/mcp", oauth: false,
+      headers: { Authorization: "Bearer fixture" }, timeout: { startup: 2000, catalog: 2000, execution: 2000 } });
+  expect(mapRuntimeMcpToV2({ type: "local", command: ["node", "fixture.mjs"], environment: { FIXTURE: "value" } }))
+    .toEqual({ type: "local", command: ["node", "fixture.mjs"], environment: { FIXTURE: "value" } });
+  for (const value of [null, { type: "remote", url: "file:///secret" }, { type: "local", command: [] },
+    { type: "remote", url: "https://example.test/mcp", enabled: false },
+    { type: "remote", url: "https://example.test/mcp", disabled: true }]) expect(mapRuntimeMcpToV2(value)).toBeUndefined();
+});
 
 function testConfig(root: string): ServerConfig {
   return {

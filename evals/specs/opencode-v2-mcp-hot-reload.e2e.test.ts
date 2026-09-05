@@ -62,24 +62,35 @@ test("v2 uses an MCP added through OpenWork on the next call and removes it in t
   const data = record(created.json) ? created.json.data : undefined;
   if (!record(data) || typeof data.id !== "string") throw new Error("Missing v2 session");
   const sessionId = data.id;
-  const toolName = "reload-witness_read_report";
+  let executions = 0;
+  const toolCode = 'return await tools["reload-witness"].read_report({});';
   async function turn(stage: string, useTool: boolean) {
     const marker = `RELOAD-${stage}-${Date.now()}`;
     const reply = `DONE-${stage}-${Date.now()}`;
+    if (useTool) executions++;
     const setup = await fetch(`${den.mocks.witness.url}/admin/agent-workloads`, {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ workloads: [{ promptMarker: marker, finalReply: reply,
-        steps: useTool ? [{ tool: "read_report", arguments: {} }] : [] }] }),
+        steps: useTool ? Array.from({ length: executions }, () => ({ tool: "execute", arguments: { code: toolCode } })) : [] }] }),
     });
     expect(setup.ok).toBe(true);
     const sinceIso = new Date().toISOString();
     expect((await request(desktop, `${v2}/api/session/${sessionId}/prompt`, "POST", { text: `Read the current report if available. Request ${marker}.` })).status).toBe(200);
-    const messages = await eventually(async () => JSON.stringify((await request(desktop, `${v2}/api/session/${sessionId}/message`)).json), {
+    const messages = await eventually(async () => {
+      const permissions = (await request(desktop, `${v2}/api/session/${sessionId}/permission`)).json;
+      if (record(permissions) && Array.isArray(permissions.data)) for (const permission of permissions.data) {
+        if (record(permission) && typeof permission.id === "string") {
+          const approved = await request(desktop, `${v2}/api/session/${sessionId}/permission/${permission.id}/reply`, "POST", { reply: "once" });
+          expect([200, 204]).toContain(approved.status);
+        }
+      }
+      return JSON.stringify((await request(desktop, `${v2}/api/session/${sessionId}/message`)).json);
+    }, {
       within: 90_000, intervalMs: 500, label: `${stage} reply`, until: (text) => text.includes(reply),
     });
     const calls = await den.mocks.witness.agentRequests({ promptMarker: marker, sinceIso, atLeast: 1 });
     expect(calls.some((call) => call.kind === "error")).toBe(false);
-    expect(calls.some((call) => call.offeredTools?.some((name) => name.endsWith("read_report")))).toBe(useTool);
+    expect(calls.some((call) => call.kind === "tool" && call.toolName?.endsWith("execute"))).toBe(useTool);
     const next = (await request(desktop, "/experimental/engine-v2-preview/status")).json;
     expect(record(next) ? next.pid : null).toBe(pid);
     return { messages, sinceIso };
@@ -90,12 +101,12 @@ test("v2 uses an MCP added through OpenWork on the next call and removes it in t
   const used = await turn("added", true);
   expect(used.messages).toContain(nonce);
   expect((await den.mocks.witness.toolCalls({ name: "read_report", sinceIso: used.sinceIso, atLeast: 1 })).length).toBeGreaterThan(0);
-  evidence.recordAssertionEvidence("a real OpenWork connection becomes executable on the next v2 call without restarting", "The initial model request had no report tool; the same session then advertised it and the mock MCP served its independent report nonce after POST /workspace/:id/mcp. The v2 pid remained unchanged.", true);
+  evidence.recordAssertionEvidence("a real OpenWork connection becomes executable on the next v2 call without restarting", "The same session executed the report through native Code Mode and the mock MCP served its independent report nonce after POST /workspace/:id/mcp. The v2 pid remained unchanged.", true);
   expect((await request(desktop, `${v2}/api/mcp/reload-witness`, "PUT", { config: mcpConfig })).status).toBe(403);
   expect((await request(desktop, `${root}/mcp/reload-witness`, "DELETE")).status).toBe(200);
-  const removed = await turn("removed", false);
+  const removed = await turn("removed", true);
   expect(await den.mocks.witness.toolCalls({ name: "read_report", sinceIso: removed.sinceIso })).toHaveLength(0);
-  expect(JSON.stringify((await request(desktop, `${v2}/api/mcp`)).json)).not.toContain(toolName);
+  expect(JSON.stringify((await request(desktop, `${v2}/api/mcp`)).json)).not.toContain("reload-witness");
   expect((await request(desktop, `${root}/opencode/global/health`)).status).toBe(200);
-  evidence.recordAssertionEvidence("removal reaches the next call and v1 remains available", "After DELETE through OpenWork, the next model request in the original conversation contained no report tool and the MCP served no new calls. The same v2 process and the v1 health endpoint remained available. Direct v2 MCP mutation was denied.", true);
+  evidence.recordAssertionEvidence("removal reaches the next call and v1 remains available", "After DELETE through OpenWork, the native catalog no longer contained the connection and an attempted Code Mode execution in the original conversation served no new MCP calls. The same v2 process and the v1 health endpoint remained available. Direct v2 MCP mutation was denied.", true);
 });
