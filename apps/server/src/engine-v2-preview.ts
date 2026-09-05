@@ -16,6 +16,8 @@ import {
   isEngineGlobalRuntimeConfigId,
   onRuntimeOpencodeConfigWrite,
   readGlobalRuntimeOpencodeConfig,
+  readEffectiveRuntimeOpencodeConfig,
+  runtimeMcpMap,
   runtimeProviderMap,
 } from "./runtime-opencode-config-store.js";
 import type { EnvService } from "./env-file.js";
@@ -58,6 +60,7 @@ export interface EngineV2Preview {
   setChatRouting(chatRouting: boolean): Promise<EngineV2PreviewStatus>;
   connection(): { url: string; username: string; password: string } | undefined;
   ensureWorkspaceReady(directory: string): Promise<void>;
+  syncWorkspaceMcp(workspaceId: string, directory: string): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -264,6 +267,31 @@ function catalogModelIds(payload: unknown, mirroredProviderIds: string[]): strin
   return [...ids].sort((left, right) => left.localeCompare(right));
 }
 
+/** Translate only fields supported by the pinned v2 MCP API. */
+export function mapRuntimeMcpToV2(value: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (value.enabled === false || value.disabled === true) return undefined;
+  const shared = {
+    ...(typeof value.codemode === "boolean" ? { codemode: value.codemode } : {}),
+    ...(typeof value.timeout === "number" && value.timeout > 0
+      ? { timeout: { startup: value.timeout, catalog: value.timeout, execution: value.timeout } } : {}),
+  };
+  const strings = (input: unknown) => isRecord(input)
+    ? Object.fromEntries(Object.entries(input).filter((entry): entry is [string, string] => typeof entry[1] === "string")) : {};
+  if (value.type === "local" && Array.isArray(value.command)
+    && value.command.length > 0 && value.command.every((part) => typeof part === "string" && part.trim())) {
+    return { type: "local", command: value.command, environment: strings(value.environment),
+      ...(typeof value.cwd === "string" ? { cwd: value.cwd } : {}), ...shared };
+  }
+  if (value.type !== "remote" || typeof value.url !== "string" || !/^https?:\/\//i.test(value.url)) return undefined;
+  const oauth = isRecord(value.oauth) ? {
+    ...(typeof value.oauth.clientId === "string" ? { client_id: value.oauth.clientId } : {}),
+    ...(typeof value.oauth.clientSecret === "string" ? { client_secret: value.oauth.clientSecret } : {}),
+    ...(typeof value.oauth.scope === "string" ? { scope: value.oauth.scope } : {}),
+  } : value.oauth === false ? false : undefined;
+  return { type: "remote", url: value.url, headers: strings(value.headers),
+    ...(oauth === undefined ? {} : { oauth }), ...shared };
+}
+
 export function createEngineV2Preview(options: { config: ServerConfig; env?: Pick<EnvService, "list" | "onChange"> }): EngineV2Preview {
   const { config } = options;
   const rootDir = join(runtimeStorageDir(config), "opencode-v2", "state");
@@ -288,6 +316,48 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
   let mirrorDirty = false;
   const workspaceReadiness = new Map<string, Promise<void>>();
   let mirroredSpecs: OpencodeV2ProviderSpec[] = [];
+  const workspaceMcp = new Map<string, Map<string, string>>();
+  const mcpInFlight = new Map<string, Promise<void>>();
+
+  async function syncWorkspaceMcp(workspaceId: string, directory: string): Promise<void> {
+    // Serialize each location, then re-read authoritative state. A queued call
+    // must not reuse a snapshot taken before a removal or credential update.
+    const previous = mcpInFlight.get(directory);
+    const pending = (async () => {
+      if (previous) await previous.catch(() => undefined);
+      const active = sidecar;
+      if (!active) throw new Error("OpenCode v2 is not running");
+      const runtime = runtimeMcpMap(await readEffectiveRuntimeOpencodeConfig(config, workspaceId));
+      const desired = new Map(Object.entries(runtime).flatMap(([name, value]) => {
+        const mapped = mapRuntimeMcpToV2(value);
+        return mapped ? [[name, mapped] as const] : [];
+      }));
+      const applied = workspaceMcp.get(directory) ?? new Map<string, string>();
+      workspaceMcp.set(directory, applied);
+      // Remove first so a failed replacement cannot leave an old credential or
+      // revoked tool active. Only touch registrations owned by this mirror.
+      for (const [name, fingerprint] of applied) {
+        if (desired.has(name) && JSON.stringify(desired.get(name)) === fingerprint) continue;
+        const result = await active.fetchJson(`/api/mcp/${encodeURIComponent(name)}`, {
+          method: "DELETE", directory, timeoutMs: 15_000,
+        });
+        if (result.status !== 204 && result.status !== 404) throw new Error(`OpenCode v2 MCP removal failed (${result.status})`);
+        applied.delete(name);
+      }
+      for (const [name, mcpConfig] of desired) {
+        const fingerprint = JSON.stringify(mcpConfig);
+        if (applied.get(name) === fingerprint) continue;
+        const result = await active.fetchJson(`/api/mcp/${encodeURIComponent(name)}`, {
+          method: "PUT", body: { config: mcpConfig }, directory, timeoutMs: 30_000,
+        });
+        if (result.status !== 204) throw new Error(`OpenCode v2 MCP registration failed (${result.status})`);
+        applied.set(name, fingerprint);
+      }
+    })();
+    mcpInFlight.set(directory, pending);
+    try { await pending; }
+    finally { if (mcpInFlight.get(directory) === pending) mcpInFlight.delete(directory); }
+  }
 
   function status(): EngineV2PreviewStatus {
     return {
@@ -362,6 +432,7 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
     const active = sidecar;
     workspaceReadiness.clear();
     sidecar = undefined;
+    workspaceMcp.clear();
     running = false;
     version = undefined;
     pid = undefined;
@@ -503,5 +574,5 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
   }
 
   if (enabled) void start().catch(recordStartError);
-  return { status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, stop };
+  return { status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, syncWorkspaceMcp, stop };
 }

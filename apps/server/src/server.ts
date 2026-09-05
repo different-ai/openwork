@@ -1119,6 +1119,9 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
           proxyService = "opencode";
           proxyBaseUrl = connection.url;
           await engineV2Preview.ensureWorkspaceReady(workspace.path);
+          // Reconcile through v2's runtime MCP API before the next call. The
+          // ordinary connection routes remain authoritative; v1 is untouched.
+          await engineV2Preview.syncWorkspaceMcp(workspace.id, workspace.path);
           const response = await proxyOpencodeV2Request({
             config,
             request,
@@ -1356,6 +1359,9 @@ async function proxyOpencodeV2Request(input: {
   // renderer uses the catalog/status APIs; it must not read or mutate this file.
   if (/^\/api\/config(?:\/|$)/.test(decodeURIComponent(forwardedPath))) {
     throw new ApiError(403, "engine_config_private", "Engine configuration is private");
+  }
+  if (method !== "GET" && method !== "HEAD" && /^\/api\/mcp(?:\/|$)/.test(decodeURIComponent(forwardedPath))) {
+    throw new ApiError(403, "engine_mcp_managed", "Manage connections through OpenWork");
   }
   const target = new URL(input.connection.url);
   target.pathname = forwardedPath;

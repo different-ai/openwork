@@ -325,7 +325,9 @@ async function handleAgentCompletion(req, res, entry) {
     .filter((workload) => conversationText.includes(workload.promptMarker))
     .map((workload) => workload.promptMarker);
   const completedTools = messages.filter((message) => message && typeof message === "object" && message.role === "tool").length;
-  const baseRequest = { model, matchedMarkers, completedTools };
+  const offeredTools = Array.isArray(body.tools) ? body.tools.flatMap((tool) =>
+    typeof tool?.function?.name === "string" ? [tool.function.name] : []) : [];
+  const baseRequest = { model, matchedMarkers, completedTools, offeredTools };
 
   if (!Array.isArray(body.tools) || body.tools.length === 0) {
     entry.agentCompletion = { ...baseRequest, kind: "utility", promptMarker: matchedMarkers[0] ?? null, toolName: null, arguments: {} };
