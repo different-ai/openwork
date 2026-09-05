@@ -592,6 +592,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   );
 
   const routeStateRef = useRef({
+    checkDesktopRestriction,
     activeClient: null as Client | null,
     providerBaseUrl: "",
     selectedWorkspaceId: "",
@@ -669,6 +670,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const opencodeBaseUrl = selectedWorkspaceEndpoint?.opencodeBaseUrl ?? "";
 
   routeStateRef.current = {
+    checkDesktopRestriction,
     activeClient,
     providerBaseUrl: opencodeBaseUrl,
     selectedWorkspaceId,
@@ -741,6 +743,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const connectionsStore = useMemo(
     () =>
       createConnectionsStore({
+        checkDesktopAppRestriction: (input) => routeStateRef.current.checkDesktopRestriction(input),
         client: () => routeStateRef.current.activeClient,
         setClient: setActiveClient,
         projectDir: () => routeStateRef.current.selectedWorkspaceRoot,
@@ -804,6 +807,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const extensionsStore = useMemo(
     () =>
       createExtensionsStore({
+        checkDesktopAppRestriction: (input) => routeStateRef.current.checkDesktopRestriction(input),
         client: () => routeStateRef.current.activeClient,
         projectDir: () => routeStateRef.current.selectedWorkspaceRoot,
         selectedWorkspaceId: () => routeStateRef.current.selectedWorkspaceId,

@@ -1,4 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { MCP_QUICK_CONNECT, getMcpServerName, isBuiltInOpenWorkExtension } from "../src/app/constants";
+import { createOpenworkServerClient } from "../src/app/lib/openwork-server";
+import { createOpenworkServerStore } from "../src/react-app/domains/connections/openwork-server-store";
+import { createConnectionsStore } from "../src/react-app/domains/connections/store";
+import { createExtensionsStore } from "../src/react-app/domains/settings/state/extensions-store";
 
 import {
   applyRestrictedDesktopPolicy,
@@ -158,5 +163,149 @@ describe("explicit team access limits", () => {
     });
     expect(result.access).toEqual(access);
     expect(calculateEffectiveDesktopPolicy({ orgPolicyCount: 2, defaultPolicy: desktopPolicyDefaults, assignedPolicies: [result] }).allowCustomProviders).toBe(false);
+  });
+});
+
+
+describe("desktop extension mutation boundaries", () => {
+  function fixture() {
+    let blocked = false;
+    let builtInsBlocked = false;
+    let writes = 0;
+    const errors: string[] = [];
+    const checkDesktopAppRestriction: DesktopAppRestrictionChecker = ({ restriction }) =>
+      restriction === "allowBuiltInExtensions" ? builtInsBlocked : blocked;
+    const server = createOpenworkServerStore({
+      startupPreference: () => "server",
+      documentVisible: () => true,
+      developerMode: () => false,
+      runtimeWorkspaceId: () => "policy-workspace",
+      activeClient: () => null,
+      selectedWorkspaceDisplay: () => ({
+        id: "policy-workspace", name: "Policy", path: "/tmp/policy", preset: "starter", workspaceType: "local",
+      }),
+      restartLocalServer: async () => false,
+      createRemoteWorkspaceFlow: async () => false,
+    });
+    const recordWrite = async () => {
+      writes += 1;
+      throw new Error("Mutation boundary reached");
+    };
+    const client = {
+      ...createOpenworkServerClient({ baseUrl: "http://127.0.0.1:1" }),
+      addPlugin: recordWrite,
+      removePlugin: recordWrite,
+      upsertSkill: recordWrite,
+      deleteSkill: recordWrite,
+      installClaudePlugin: recordWrite,
+      removeCloudPlugin: recordWrite,
+      addMcp: recordWrite,
+      removeMcp: recordWrite,
+      setMcpEnabled: recordWrite,
+    };
+    const getSnapshot: typeof server.getSnapshot = () => ({
+      ...server.getSnapshot(), openworkServerStatus: "connected", openworkServerClient: client,
+    });
+    const options = {
+      checkDesktopAppRestriction,
+      client: () => null,
+      projectDir: () => "/tmp/policy",
+      selectedWorkspaceId: () => "policy-workspace",
+      selectedWorkspaceRoot: () => "/tmp/policy",
+      workspaceType: (): "local" | "remote" => "remote",
+      openworkServer: { ...server, getSnapshot },
+      runtimeWorkspaceId: () => "policy-workspace",
+    };
+    const extensions = createExtensionsStore({
+      ...options,
+      setBusy: () => undefined,
+      setBusyLabel: () => undefined,
+      setBusyStartedAt: () => undefined,
+      setError: (message) => { if (message) errors.push(message); },
+    });
+    const connections = createConnectionsStore({
+      ...options,
+      setClient: () => undefined,
+      developerMode: () => false,
+    });
+    return {
+      extensions, connections, errors,
+      writes: () => writes,
+      restrict: (value: boolean) => { blocked = value; },
+      restrictBuiltIns: (value: boolean) => { builtInsBlocked = value; },
+    };
+  }
+
+  test("direct extension handlers refuse local writes and use the current policy", async () => {
+    const f = fixture();
+    await f.extensions.addPlugin("example-plugin");
+    expect(f.writes()).toBe(1);
+    f.restrict(true);
+    await f.extensions.addPlugin("example-plugin");
+    await f.extensions.removePlugin("example-plugin");
+    await f.extensions.importLocalSkill();
+    await f.extensions.installSkillCreator();
+    await f.extensions.uninstallSkill("example-skill");
+    await f.extensions.saveSkill({ name: "example-skill", content: "changed" });
+    await f.extensions.installClaudePlugin("https://example.com/plugin");
+    await f.extensions.removeCloudOrgPlugin("plugin-id");
+    await f.extensions.importCloudOrgPlugin(null, {
+      id: "plugin-id", name: "Example", description: null, status: "active",
+      memberCount: 1, updatedAt: null, componentCounts: {},
+    });
+    expect(f.writes()).toBe(1);
+    expect(f.errors).toEqual(Array(9).fill(desktopRestrictionNotice("allowManageExtensions")));
+    f.restrict(false);
+    await f.extensions.saveSkill({ name: "example-skill", content: "allowed" });
+    expect(f.writes()).toBe(2);
+  });
+
+  test("direct MCP mutations are blocked after a live policy change and restored after unlocking", async () => {
+    const f = fixture();
+    await f.connections.setMcpEnabled("example-mcp", true);
+    expect(f.writes()).toBe(1);
+    f.restrict(true);
+    const result = await f.connections.connectMcp({
+      name: "Example", serverName: "example-mcp", description: "", oauth: false,
+      type: "remote", url: "https://example.com/mcp",
+    });
+    await f.connections.removeMcp("example-mcp");
+    await f.connections.setMcpEnabled("example-mcp", true);
+    expect(result).toEqual({ ok: false, error: desktopRestrictionNotice("allowManageExtensions") });
+    expect(f.connections.getSnapshot().mcpStatus).toBe(desktopRestrictionNotice("allowManageExtensions"));
+    expect(f.writes()).toBe(1);
+    f.restrict(false);
+    await f.connections.removeMcp("example-mcp");
+    expect(f.writes()).toBe(2);
+  });
+
+  test("existing MCP sign-in remains available while local installation is blocked", async () => {
+    const f = fixture();
+    f.restrict(true);
+    await f.connections.authorizeMcp({
+      name: "approved-mcp", config: { type: "remote", url: "https://example.com/mcp", oauth: {} },
+    });
+    expect(f.connections.getSnapshot().mcpAuthModalOpen).toBe(true);
+    expect(f.connections.getSnapshot().mcpAuthEntry?.url).toBe("https://example.com/mcp");
+    expect(f.writes()).toBe(0);
+  });
+
+  test("built-in configuration obeys its own permission while custom installation is blocked", async () => {
+    const f = fixture();
+    const builtIn = MCP_QUICK_CONNECT.find(isBuiltInOpenWorkExtension);
+    if (!builtIn) throw new Error("Expected a built-in MCP in the catalog");
+    f.restrict(true);
+    await f.connections.setMcpEnabled(getMcpServerName(builtIn), true);
+    expect(f.writes()).toBe(1);
+    const forged = await f.connections.connectMcp({
+      ...builtIn, name: "Forged built-in", serverName: "custom-mcp", url: "https://example.com/mcp",
+    });
+    expect(forged).toEqual({ ok: false, error: desktopRestrictionNotice("allowManageExtensions") });
+    f.restrictBuiltIns(true);
+    const result = await f.connections.connectMcp(builtIn);
+    await f.connections.removeMcp(getMcpServerName(builtIn));
+    await f.connections.setMcpEnabled(getMcpServerName(builtIn), true);
+    expect(result).toEqual({ ok: false, error: desktopRestrictionNotice("allowBuiltInExtensions") });
+    expect(f.writes()).toBe(1);
   });
 });

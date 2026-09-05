@@ -66,6 +66,37 @@ export async function teamAccess(seed: Seed) {
     },
   });
   if (!den.members.jordan || !den.members.casey) throw new Error("Missing ordinary member sessions");
+  // Publish a deterministic catalog before desktop boot, as in the cloud
+  // provider sync world. An empty organization leaves the launch model
+  // unavailable and legitimately opens model recovery when Custom restores
+  // provider access. This journey exercises permissions, not inference.
+  const provider = await seed.api(den.admin, "/v1/llm-providers", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "Team access model",
+      source: "custom",
+      customConfig: {
+        id: "team-access-eval-provider",
+        name: "Team access model",
+        npm: "@ai-sdk/openai-compatible",
+        env: ["TEAM_ACCESS_EVAL_PROVIDER_API_KEY"],
+        models: [{ id: "team-access-eval-model", name: "Team access model" }],
+      },
+      apiKey: "sk-openwork-team-access-eval-only",
+      allMembers: true,
+      memberIds: [],
+      teamIds: [],
+    }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const llmProvider = isRecord(provider.body) && isRecord(provider.body.llmProvider) ? provider.body.llmProvider : null;
+  if (provider.response.status !== 201 || typeof llmProvider?.id !== "string") {
+    throw new Error(`Organization model setup failed: HTTP ${provider.response.status}`);
+  }
+  const connected = await seed.api(den.members.jordan, `/v1/llm-providers/${encodeURIComponent(llmProvider.id)}/connect`, {
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (connected.response.status !== 200) throw new Error(`Member model entitlement setup failed: HTTP ${connected.response.status}`);
   const flags = {
     allowCustomProviders: true, allowZenModel: true, allowMultipleWorkspaces: true,
     allowControlSettings: true, allowManageExtensions: true, allowBuiltInExtensions: true,
