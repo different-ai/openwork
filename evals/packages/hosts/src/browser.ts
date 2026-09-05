@@ -82,7 +82,7 @@ export async function captureExternalBrowserUrls(handle: SurfaceHandle): Promise
   }
   const sandbox = handle.sandboxId;
   async function python(source: string): Promise<string> {
-    const result = await execInSandbox(defaultDaytonaExec, sandbox, `python3 - <<'OPENWORK_CAPTURE_PY'\n${source}\nOPENWORK_CAPTURE_PY`, {
+    const result = await execInSandbox(defaultDaytonaExec, sandbox, `printf %s ${Buffer.from(source).toString("base64")} | base64 -d | python3`, {
       timeoutMs: 30_000,
       context: "desktop external-browser URL witness",
     });
