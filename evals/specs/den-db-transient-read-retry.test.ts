@@ -32,21 +32,34 @@ test("MCP database read recovery preserves authentication and surfaces persisten
     signal: AbortSignal.timeout(20_000),
   });
 
-  database.respondWith([503, 200]);
+  database.respondWith([200]);
+  database.resetNextConnection();
   const recovered = await request();
   expect(recovered.status).toBe(401);
   expect(await recovered.json()).toMatchObject({ error: "invalid_mcp_token" });
-  expect(database.queries).toHaveLength(2);
+  expect(database.resets).toBe(1);
+  expect(database.queries).toHaveLength(1);
   expect(database.queries[0]).toMatch(/^select\b/i);
-  expect(database.queries[1]).toBe(database.queries[0]);
-  evidence.recordAssertionEvidence("A transient read recovers without granting access", "POST /mcp/agent reached the real Den/Drizzle/PlanetScale path: synthetic HTTP 503 then 200 produced exactly two identical SELECT requests and the correct invalid-token 401, never a successful tool response.", true);
+  evidence.recordAssertionEvidence("A transient read recovers without granting access", "POST /mcp/agent reached the real Den/Drizzle/PlanetScale path: one synthetic TCP reset followed by a successful database response and the correct invalid-token 401, never a successful tool response.", true);
 
-  database.respondWith([503, 503]);
+  database.respondWith([503]);
   const unavailable = await request();
   expect(unavailable.status).toBe(500);
   expect(unavailable.headers.get("www-authenticate")).toBeNull();
-  expect(database.queries).toHaveLength(2);
-  evidence.recordAssertionEvidence("Retry exhaustion remains an infrastructure failure", "Two synthetic database 503 responses produced HTTP 500 after exactly two attempts, without an authentication challenge or a disconnected result.", true);
+  expect(database.queries).toHaveLength(1);
+  evidence.recordAssertionEvidence("Database overload is not retried", "A database 503 produced HTTP 500 after exactly one attempt, without an authentication challenge or a disconnected result.", true);
+
+  database.respondWith([429]);
+  const limited = await request();
+  expect(limited.status).toBe(500);
+  expect(database.queries).toHaveLength(1);
+  evidence.recordAssertionEvidence("Database throttling remains single-pass", "A database 429 caused one SELECT attempt and HTTP 500; no immediate overload retry was sent.", true);
+
+  database.respondWith(Array.from({ length: 20 }, () => 503));
+  const burst = await Promise.all(Array.from({ length: 20 }, () => request()));
+  expect(burst.every((response) => response.status === 500)).toBe(true);
+  expect(database.queries).toHaveLength(20);
+  evidence.recordAssertionEvidence("Concurrent overload does not amplify database attempts", "Twenty simultaneous MCP requests encountering database 503 responses produced exactly twenty token SELECT attempts and twenty HTTP 500 responses, with no retries or successful authorization.", true);
 
   database.respondWith([403]);
   const forbidden = await request();

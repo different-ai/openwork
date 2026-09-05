@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { createServer as createTcpServer, connect, type Socket } from "node:net";
 import { startEnterpriseTlsReverseEdge } from "./egress.ts";
 
 /** Synthetic PlanetScale wire witness; never forwards queries to a database. */
@@ -27,8 +28,36 @@ export async function mockPlanetScale(queryPattern: RegExp) {
   const address = upstream.address();
   if (!address || typeof address === "string") throw new Error("Missing mock database port");
   const edge = await startEnterpriseTlsReverseEdge({ upstream: `http://127.0.0.1:${address.port}` });
+  const edgeUrl = new URL(edge.candidateUrl);
+  const sockets = new Set<Socket>();
+  let resetNext = false;
+  let resets = 0;
+  const front = createTcpServer((socket) => {
+    if (resetNext) {
+      resetNext = false;
+      resets++;
+      socket.destroy();
+      return;
+    }
+    const upstream = connect(Number(edgeUrl.port), "127.0.0.1");
+    sockets.add(socket);
+    sockets.add(upstream);
+    socket.on("close", () => { sockets.delete(socket); upstream.destroy(); });
+    upstream.on("close", () => { sockets.delete(upstream); socket.destroy(); });
+    socket.on("error", () => upstream.destroy());
+    upstream.on("error", () => socket.destroy());
+    socket.pipe(upstream).pipe(socket);
+  });
+  await new Promise<void>((resolve) => front.listen(0, "127.0.0.1", resolve));
+  const frontAddress = front.address();
+  if (!frontAddress || typeof frontAddress === "string") throw new Error("Missing TCP witness port");
   return {
-    host: new URL(edge.candidateUrl).host,
+    host: `localhost:${frontAddress.port}`,
+    get resets() { return resets; },
+    resetNextConnection() {
+      for (const socket of sockets) socket.destroy();
+      resetNext = true;
+    },
     caPath: edge.rootPemPath,
     queries,
     respondWith(next: number[], query = queryPattern) {
@@ -37,6 +66,8 @@ export async function mockPlanetScale(queryPattern: RegExp) {
       statuses = [...next];
     },
     async [Symbol.asyncDispose]() {
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>((resolve) => front.close(() => resolve()));
       await edge.stop();
       upstream.closeAllConnections();
       await new Promise<void>((resolve, reject) => upstream.close((error) => error ? reject(error) : resolve()));
