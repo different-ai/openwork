@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { accessSync, appendFileSync, constants, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -8,7 +8,7 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 if (process.platform !== "linux") throw new Error("The fast packaged smoke gate currently targets Linux.");
 const output = resolve(process.env.OPENWORK_PACKAGED_SMOKE_DIR || join(tmpdir(), `openwork-packaged-smoke-${process.pid}`));
 mkdirSync(output, { recursive: true });
-const report = { commit: process.env.GITHUB_SHA ?? null, phases: [], passed: false };
+const report = { commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim(), phases: [], passed: false };
 const started = performance.now();
 
 function run(name, command, args, timeout, extraEnv = {}, cwd = repo) {

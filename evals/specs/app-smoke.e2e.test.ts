@@ -19,8 +19,8 @@ test("app boots with a control route and meaningful visible content", async ({ w
   } else {
     expect(world.workspace?.workspaceId).toBeTruthy();
     await user.looks([
-    "A ready OpenWork workspace composer with meaningful visible content is on screen",
-    "No generic error or 'Something went wrong' crash message is visible",
+      "A ready OpenWork workspace composer with meaningful visible content is on screen",
+      "No generic error or 'Something went wrong' crash message is visible",
     ]);
   }
 });
