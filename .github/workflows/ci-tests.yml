@@ -70,34 +70,13 @@ jobs:
 
   native-google-refresh:
     needs: classify-changes
-    # PR-only: comparison witnesses must never execute in a default-branch cache context.
-    if: needs.classify-changes.outputs.lane == 'full' && github.event_name == 'pull_request'
+    if: needs.classify-changes.outputs.lane == 'full'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        variant: [head, dev-control]
     steps:
-      - name: Checkout PR head
-        if: matrix.variant == 'head' && github.event_name == 'pull_request'
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
-      - name: Checkout clean dev control
-        if: matrix.variant == 'dev-control'
-        uses: actions/checkout@v6
-        with:
-          ref: dev
-      - name: Overlay only compatibility witnesses onto clean dev
-        if: matrix.variant == 'dev-control' && github.event_name == 'pull_request'
-        env:
-          PROOF_HEAD: ${{ github.event.pull_request.head.sha }}
-        run: |
-          git fetch origin "$PROOF_HEAD"
-          git show "$PROOF_HEAD:evals/specs/native-google-refresh-recovery.test.ts" > evals/specs/native-google-refresh-recovery.test.ts
-          git show "$PROOF_HEAD:evals/packages/labs/src/mock-google-server.ts" > evals/packages/labs/src/mock-google-server.ts
-          git rev-parse HEAD
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/setup-tests
       - name: Prepare native Google refresh boundary
         run: |
@@ -108,7 +87,6 @@ jobs:
       - name: Verify native Google refresh recovery
         env:
           OPENWORK_EVAL_NATIVE_GOOGLE_REFRESH: '1'
-          OPENWORK_EVAL_NATIVE_REFRESH_COMPATIBILITY_ONLY: ${{ matrix.variant == 'dev-control' && '1' || '0' }}
         run: |
           pnpm evals:pr specs/native-google-refresh-recovery.test.ts
           node --input-type=module <<'NODE'
@@ -122,7 +100,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: native-google-refresh-${{ matrix.variant }}-${{ github.run_attempt }}
+          name: native-google-refresh-${{ github.run_attempt }}
           path: evals/results/test-runs/**
           retention-days: 7
 
@@ -342,9 +320,7 @@ jobs:
 
           case "$LANE" in
             full)
-              GOOGLE_REFRESH_EXPECTED=skipped
-              if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then GOOGLE_REFRESH_EXPECTED=success; fi
-              [ "$CORE_RESULT" = "success" ] && [ "$BUILD_RESULT" = "success" ] && [ "$GOOGLE_REFRESH_RESULT" = "$GOOGLE_REFRESH_EXPECTED" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] && [ "$DOCS_RESULT" = "skipped" ] || exit 1
+              [ "$CORE_RESULT" = "success" ] && [ "$BUILD_RESULT" = "success" ] && [ "$GOOGLE_REFRESH_RESULT" = "success" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] && [ "$DOCS_RESULT" = "skipped" ] || exit 1
               ;;
             snapshot)
               [ "$SNAPSHOT_RESULT" = "success" ] && [ "$CORE_RESULT" = "skipped" ] && [ "$BUILD_RESULT" = "skipped" ] && [ "$GOOGLE_REFRESH_RESULT" = "skipped" ] && [ "$DOCS_RESULT" = "skipped" ] || exit 1
