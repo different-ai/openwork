@@ -698,7 +698,7 @@ export function parseOrgListPayload(payload: unknown): {
   }
 
   const orgs = payload.orgs
-    .map((entry) => {
+    .map((entry): DenOrgSummary | null => {
       if (!isRecord(entry)) {
         return null;
       }
