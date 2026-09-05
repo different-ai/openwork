@@ -244,7 +244,7 @@ export function CommandPalette(props: CommandPaletteProps) {
           title: "Open as side chat…",
           detail: "Choose any session, including one from another workspace",
           meta: "Workbench",
-          searchText: "split view side by side session workspace",
+          searchText: "side chat split side by side session workspace",
           group: ACTIONS_GROUP,
           action: () => {
             setMode("split-sessions");

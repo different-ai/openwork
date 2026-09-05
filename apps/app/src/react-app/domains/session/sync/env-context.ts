@@ -26,7 +26,6 @@ function normalizeEnvKeys(keys: string[]): string[] {
 export async function buildOpenworkEnvSystemContext(
   client: OpenworkServerClient | null,
   options: {
-    workspaceId?: string;
     cacheKey?: string;
     runtimeKey?: string | null;
     readPendingChanges?: () => boolean;

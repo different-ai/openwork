@@ -326,7 +326,7 @@ function WorkbenchPaneHeader(props: {
             <Button
               variant="ghost"
               size="icon-xs"
-              aria-label={`Close ${props.pane} chat pane`}
+              aria-label={props.pane === "secondary" ? "Close side chat" : "Close main chat"}
               onClick={props.onClose}
             >
               <X data-icon="inline-start" />
