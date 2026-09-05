@@ -988,7 +988,8 @@ export async function managedVaultWorld(_seed: Seed, { place }: { place: Place }
 export async function backgroundUpdateWorld(seed: Seed) {
   const app = await seed.desktop({ name: "background-update", signIn: false });
   const workspace = await seed.workspace(app, seed.tmpPath("background-update"));
-  await evalIn(app, `(() => {
+  await evalIn(app, `(async () => {
+    const { currentVersion } = await window.__OPENWORK_ELECTRON__.updater.getChannel();
     const now = Date.now.bind(Date);
     const state = { checks: 0, downloads: 0, installs: 0, offset: 0, finishDownload: null, intervalCheck: null };
     window.__backgroundUpdateWitness = state;
@@ -1004,11 +1005,11 @@ export async function backgroundUpdateWorld(seed: Seed) {
     window.__openworkApplyDesktopConfig?.({});
     window.__openworkSetDesktopConfigRefreshResult?.({});
     window.__openworkUpdaterEvalBridge = {
-      getChannel: async () => ({ channel: "stable", currentVersion: "0.18.0" }),
-      setChannel: async (channel) => ({ channel, currentVersion: "0.18.0" }),
+      getChannel: async () => ({ channel: "stable", currentVersion }),
+      setChannel: async (channel) => ({ channel, currentVersion }),
       check: async () => {
         state.checks++;
-        return { available: state.checks >= 3, channel: "stable", currentVersion: "0.18.0", latestVersion: state.checks >= 3 ? "9.9.9" : "0.18.0" };
+        return { available: state.checks >= 3, channel: "stable", currentVersion, latestVersion: state.checks >= 3 ? "9.9.9" : currentVersion };
       },
       download: async () => {
         state.downloads++;
@@ -1019,7 +1020,7 @@ export async function backgroundUpdateWorld(seed: Seed) {
     };
     state.offset += 16 * 60 * 1000;
     window.dispatchEvent(new Event("focus"));
-  })()`);
+  })()`, { awaitPromise: true });
   return {
     app,
     snapshot: () => evalIn(app, `(() => {
