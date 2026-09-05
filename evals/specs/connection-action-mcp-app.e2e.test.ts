@@ -64,7 +64,7 @@ test("gateway discovery renders a connection card and checks live authorization 
     until: text => text.includes("Check connection") && text.includes("Not connected"),
   });
   expect(initial).toContain("Connect Notes");
-  const calls = await world.den.mocks.agent.agentRequests({ promptMarker: connectionActionPrompt });
+  const calls = await world.den.mocks.connector.agentRequests({ promptMarker: connectionActionPrompt });
   expect(calls.filter(call => call.kind === "tool").every(call => call.toolName?.endsWith("search_capabilities"))).toBe(true);
   expect(calls.filter(call => call.kind === "tool")).toHaveLength(1);
   await user.screenshot();

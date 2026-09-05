@@ -899,8 +899,7 @@ export async function connectionActionMcpApp(seed: Seed) {
   const den = await seed.den({
     org: { name: `Connection Action ${Date.now()}`, admin: { name: "Connection Admin" } },
     mocks: {
-      connector: seed.mock(),
-      agent: seed.mock({ port: 3980, agentWorkloads: [{
+      connector: seed.mock({ agentWorkloads: [{
         promptMarker: connectionActionPrompt,
         finalReply: connectionActionReply,
         steps: [{ tool: "search_capabilities", arguments: { query: "Notes", type: "mcp" } }],
@@ -927,7 +926,7 @@ export async function connectionActionMcpApp(seed: Seed) {
   const workspace = await seed.workspace(app, seed.tmpPath("connection-action-mcp-app"));
   await configureWorkspaceModel(seed, {
     app, workspaceId: workspace.workspaceId, providerId, modelId,
-    fixtureUrl: den.mocks.agent.url, denApiUrl: den.ref.apiUrl, mcpToken, appHostToken,
+    fixtureUrl: den.mocks.connector.url, denApiUrl: den.ref.apiUrl, mcpToken, appHostToken,
   });
   await reloadConfiguredApp(app);
   await seed.session(app);
