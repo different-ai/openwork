@@ -26,6 +26,7 @@ import { SignInFallbackNotice } from "@/react-app/domains/cloud/signin-fallback-
 import { CloudAccountSection } from "../cloud/cloud-account-section";
 import { useCloudSession } from "../cloud/cloud-session-provider";
 import { CloudDevMode } from "../cloud/dev-mode";
+import { TeamMembersSection } from "../cloud/team-members-section";
 import type { useDenSession } from "../cloud/use-den-session";
 import {
   SettingsInset,
@@ -230,7 +231,7 @@ function AppPermissionsView() {
 }
 
 export function CloudAccountView({ developerMode, session }: CloudAccountViewProps) {
-  const { activeOrganization, isSignedIn, statusMessage } = useCloudSession();
+  const { activeOrganization, isSignedIn, statusMessage, user } = useCloudSession();
   const navigate = useNavigate();
 
   React.useEffect(() => {
@@ -322,9 +323,11 @@ export function CloudAccountView({ developerMode, session }: CloudAccountViewPro
     <Tabs defaultValue="account" className="w-full max-w-3xl gap-y-6">
       <TabsList variant="line" aria-label="Account pages">
         <TabsTrigger value="account">Account</TabsTrigger>
+        {activeOrganization ? <TabsTrigger value="people">People</TabsTrigger> : null}
         <TabsTrigger value="permissions">App permissions</TabsTrigger>
       </TabsList>
       <TabsContent value="account">{accountContent}</TabsContent>
+      {activeOrganization ? <TabsContent value="people"><TeamMembersSection key={`${user?.id}:${activeOrganization.id}`} orgId={activeOrganization.id} onConfirmSignIn={() => session.onOpenBrowserAuth("sign-in")} /></TabsContent> : null}
       <TabsContent value="permissions"><AppPermissionsView /></TabsContent>
     </Tabs>
   );
