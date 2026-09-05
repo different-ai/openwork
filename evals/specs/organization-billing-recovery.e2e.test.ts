@@ -66,7 +66,10 @@ test("organization billing survives selection and blocks destructive deletion", 
 
     expect((await request("/v1/me/active-organization", empty.id, "POST", { organizationId: empty.id })).response.ok).toBe(true);
     await using browser = await chrome({ host: place.host(), startUrl: den.ref.webUrl, headless: true });
-    await eventually(() => evaluateOnSurface(browser, "document.readyState"), { within: 30_000, until: (state) => state === "complete" });
+    await navigate(browser.client, den.ref.webUrl);
+    await eventually(() => evaluateOnSurface(browser, `location.origin === ${JSON.stringify(new URL(den.ref.webUrl).origin)} && document.readyState !== "loading"`), {
+      within: 60_000, until: (ready) => ready === true,
+    });
     await callFunctionOnSurface(browser, `(token) => { localStorage.setItem("openwork:web:auth-token", token); return true; }`, [den.admin.token]);
     await navigate(browser.client, new URL("/dashboard/billing", den.ref.webUrl).toString());
     const emptyBilling = await eventually(() => evaluateOnSurface(browser, "document.body.innerText"), {
