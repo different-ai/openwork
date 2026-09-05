@@ -179,7 +179,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     evidence.recordAssertionEvidence("Partial invitation failure preserves the unsuccessful address and retries it without resending successful invitations or granting admin access", JSON.stringify({ invitations, recipientCounts: [1, 1], personalInvitations: 0 }), true);
   });
 
-  await step("team signup prepares Restricted for explicit review, then persists it", async () => {
+  await step("Restricted setup applies desktop policy before opening optional invitations", async () => {
     await user.navigate(new URL("/organization", world.den.ref.webUrl).toString());
     await user.click({ role: "button", label: "+ Create New Organization" });
     await user.click({ text: "Create a team" });
@@ -187,26 +187,36 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await user.see({ text: "How should your team’s desktop app work?" });
     await user.click({ text: "Flexible" });
     await user.see({ role: "button", label: "Continue" });
-    await user.click({ text: "Set up Restricted" });
-    await user.looks(["Team setup uses neutral cards with a selected Restricted option and clearly explains the Enterprise requirement and saving step"]);
-    await user.click({ role: "button", label: "Create team & review policy" });
-    await user.see({ text: "Review your team’s desktop access" }, { timeoutMs: 90_000 });
-    await user.see({ text: /unsaved draft/ });
-    await user.see({ text: /Locked by Restricted mode/ });
+    await user.click({ text: "Restricted" });
+    await user.see({ text: "Restricted requires Enterprise. We’ll apply the team’s desktop restrictions when you continue. You can change them later in Settings." });
+    await user.looks(["Team setup uses subdued neutral cards with Restricted selected, without heavy black card outlines, and explains that restrictions apply on Continue"]);
+    await user.click({ role: "button", label: "Continue" });
+    await user.see({ text: "Bring your people." }, { timeoutMs: 90_000 });
+    expect(await world.pathname()).toMatch(/\/onboarding\/people$/);
+    await user.notSee({ text: "Review your team’s desktop access" });
+    await user.notSee({ role: "button", label: "Save changes" });
     const memberships = await orgs();
     expect(memberships).toHaveLength(3);
     const team = memberships.find((entry) => entry.name === "Focused team");
     if (typeof team?.id !== "string") throw new Error("Created team missing");
-    const before = await policyFor(team.id);
-    expect(before.allowMultipleWorkspaces).toBe(true);
-    expect(before.allowManageExtensions).toBe(true);
+    const saved = await policyFor(team.id);
+    for (const key of ["allowCustomProviders", "allowZenModel", "allowMultipleWorkspaces", "allowControlSettings", "allowManageExtensions", "allowBuiltInExtensions", "allowAlphaUpdates"]) expect(saved[key]).toBe(false);
+    expect(saved.showWelcomePage).toBe(true);
     await user.reload();
-    await user.see({ text: "Review your team’s desktop access" }, { timeoutMs: 90_000 });
-    await user.click({ role: "button", label: "Save changes" });
     await user.see({ text: "Bring your people." }, { timeoutMs: 90_000 });
-    const after = await policyFor(team.id);
-    for (const key of ["allowCustomProviders", "allowZenModel", "allowMultipleWorkspaces", "allowControlSettings", "allowManageExtensions", "allowBuiltInExtensions", "allowAlphaUpdates"]) expect(after[key]).toBe(false);
-    expect(after.showWelcomePage).toBe(true);
+    expect(await world.pathname()).toMatch(/\/onboarding\/people$/);
+    expect(await policyFor(team.id)).toEqual(saved);
+    const policies = await probe.api(world.den.admin, "/v1/desktop-policies", { headers: { "x-openwork-org-id": team.id } });
+    expect(policies.response.ok).toBe(true);
+    if (!isRecord(policies.body) || !Array.isArray(policies.body.desktopPolicies)) throw new Error("Expected desktop policies");
+    const defaultPolicy = policies.body.desktopPolicies.filter(isRecord).find((entry) => entry.isDefault === true);
+    if (typeof defaultPolicy?.id !== "string") throw new Error("Expected default desktop policy id");
+    await user.navigate(new URL(`/dashboard/desktop-policies/${encodeURIComponent(defaultPolicy.id)}?setup=restricted`, world.den.ref.webUrl).toString());
+    await user.see({ text: "Bring your people." }, { timeoutMs: 90_000 });
+    expect(await world.pathname()).toMatch(/\/onboarding\/people$/);
+    await user.notSee({ text: "Review your team’s desktop access" });
+    await user.notSee({ role: "button", label: "Save changes" });
+    expect(await policyFor(team.id)).toEqual(saved);
     expect(await policyFor(personalId)).toEqual(personalPolicy);
     expect(await policyFor(flexibleId)).toEqual(personalPolicy);
     expect(await orgs()).toHaveLength(3);
@@ -215,7 +225,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await user.see({ testId: "marketplace-onboarding" }, { timeoutMs: 90_000 });
     expect(await invitationsFor(team.id)).toEqual([]);
     expect(await invitationsFor(flexibleId)).toHaveLength(2);
-    evidence.recordAssertionEvidence("Restricted stays a draft through reload until explicit save, persists the real desktop booleans, and leaves the personal organization unchanged", JSON.stringify({ before, after, personalPolicy, orgCount: 3 }), true);
+    evidence.recordAssertionEvidence("Restricted setup saves the real desktop policy before opening People, survives reload, and leaves other organizations unchanged", JSON.stringify({ saved, retainedAfterReload: true, legacySetupContinuesToPeople: true, personalPolicy, orgCount: 3, restrictedInvitations: 0, flexibleInvitations: 2 }), true);
   });
   await step("the public signup also fits a narrow screen", async () => {
     const mobile = await seed.web({ den: world.den, startPath: "/", headless: true, viewport: { width: 390, height: 844 } });

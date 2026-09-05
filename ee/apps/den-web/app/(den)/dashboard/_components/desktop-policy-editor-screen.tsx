@@ -16,7 +16,7 @@ import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-templ
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenTextarea } from "../../_components/ui/textarea";
-import { getOnboardingPeopleRoute, getDesktopPoliciesRoute, getMembersRoute, getTeamRoute, getOrgAccessFlags } from "../../_lib/den-org";
+import { getDesktopPoliciesRoute, getMembersRoute, getTeamRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
   createDesktopPolicy,
@@ -218,7 +218,7 @@ function policyDocumentFromDraft(draft: PolicyDraft): DesktopPolicyDocumentWrite
   };
 }
 
-export function DesktopPolicyEditorScreen({ desktopPolicyId, setupRestricted = false }: { desktopPolicyId?: string; setupRestricted?: boolean }) {
+export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId?: string }) {
   const router = useRouter();
   const { orgId, orgSlug, orgContext, runReauthableAction } = useOrgDashboard();
   const { definitions, desktopPolicies, busy, error, reloadPolicies } = useOrgDesktopPolicies(orgId);
@@ -239,12 +239,9 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId, setupRestricted = f
       return;
     }
     if (policy) {
-      const initial = draftFromPolicy(policy);
-      setDraft(setupRestricted && policy.isDefault && !policy.policy.access
-        ? { ...initial, mode: "restricted", policy: applyRestrictedDesktopPolicy(initial.policy) }
-        : initial);
+      setDraft(draftFromPolicy(policy));
     }
-  }, [desktopPolicyId, policy, setupRestricted]);
+  }, [desktopPolicyId, policy]);
 
   const access = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
@@ -319,7 +316,7 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId, setupRestricted = f
           await createDesktopPolicy(payload);
         }
         await reloadPolicies();
-        router.push(setupRestricted && isDefault ? getOnboardingPeopleRoute(orgSlug) : listRoute);
+        router.push(listRoute);
       });
     } catch (saveError) {
       setPageError(saveError instanceof Error ? saveError.message : "Failed to save desktop policy.");
@@ -374,11 +371,6 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId, setupRestricted = f
         </Link>
       </div>
 
-      {setupRestricted && isDefault ? <section className="mb-6 rounded-xl border border-gray-200 bg-white p-5" aria-label="Finish team setup">
-        <h2 className="font-semibold text-gray-950">Review your team’s desktop access</h2>
-        <p className="mt-2 text-sm leading-6 text-gray-600">Restricted is prepared below as an unsaved draft. Review the capabilities and save to apply them before inviting members. Saving continues to optional teammate invitations.</p>
-        <p className="mt-2 text-xs leading-5 text-gray-500">This changes organization desktop defaults. Additional team grants and restrictions still apply. Cloud roles and existing files are unchanged.</p>
-      </section> : null}
       {orgContext && !orgContext.entitlements.desktopPolicies ? <EnterprisePlanNotice feature="Desktop policy management" /> : null}
       {pageError ? (
         <div role="alert" className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700">{pageError}</div>

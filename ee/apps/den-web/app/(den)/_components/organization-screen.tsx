@@ -4,14 +4,13 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { LogOut, Settings } from "lucide-react";
 import { getErrorMessage, requestJson } from "../_lib/den-flow";
-import { type DenOrgSummary, formatRoleLabel, getDesktopPolicyRoute, getJoinOrgRoute, getOnboardingPeopleRoute, getOrgDashboardRoute, parseOrgListPayload } from "../_lib/den-org";
+import { type DenOrgSummary, formatRoleLabel, getJoinOrgRoute, getOnboardingPeopleRoute, getOrgDashboardRoute, parseOrgListPayload } from "../_lib/den-org";
 import { useOrgListWindow } from "../_lib/use-org-list-window";
 import { useDenFlow } from "../_providers/den-flow-provider";
 
 import { DesktopSetupChoices, WorkspaceIntentChoices, type DesktopSetup, type WorkspaceIntent } from "./workspace-intent";
-import { parseDesktopPolicyList } from "../dashboard/_components/desktop-policy-data";
+import { applyRestrictedSetup } from "../_lib/restricted-setup";
 import { SetupFrame } from "./setup-frame";
-import { ORG_SCOPE_HEADER } from "../_lib/org-scope";
 
 type SettingsTab = "profile" | "organizations";
 
@@ -150,14 +149,7 @@ export function OrganizationScreen() {
         setCreatedOrg(nextOrg);
       }
       if (intent === "team" && desktopSetup === "restricted") {
-        const { response, payload } = await requestJson("/v1/desktop-policies", {
-          headers: { [ORG_SCOPE_HEADER]: nextOrg.id },
-        });
-        if (!response.ok) throw new Error("Your team was created. Retry to open desktop policy setup; no restriction has been saved yet.");
-        const policy = parseDesktopPolicyList(payload).desktopPolicies.find((entry) => entry.isDefault);
-        if (!policy) throw new Error("Your team was created, but its default policy is not available yet. Retry setup.");
-        router.push(`${getDesktopPolicyRoute(nextOrg.slug, policy.id)}?setup=restricted`);
-        return;
+        await applyRestrictedSetup(nextOrg.id);
       }
       router.push(getOnboardingPeopleRoute(nextOrg.slug));
     } catch (err) {
@@ -180,9 +172,10 @@ export function OrganizationScreen() {
       {intent === "team" ? <DesktopSetupChoices mode={desktopSetup} onChange={setDesktopSetup} disabled={createBusy || Boolean(createdOrg)} /> : <p className="text-sm leading-6 text-gray-500">Start with your own tools. Creating this organization does not upload the files in your desktop workspaces.</p>}
     </> : null}
     {createError ? <p role="alert" className="text-sm text-rose-600">{createError}</p> : null}
-    {createdOrg && intent === "team" && desktopSetup === "restricted" ? <p role="status" className="text-sm text-gray-600">Your team is created. Finish desktop policy setup before inviting members.</p> : null}
+    {createdOrg && createError && desktopSetup === "restricted" ? <button type="button" onClick={() => { setDesktopSetup("flexible"); setCreateError(null); }} className="justify-self-start text-sm text-neutral-500 underline underline-offset-4 hover:text-neutral-900">Use Flexible instead</button> : null}
+    {createdOrg && intent === "team" && desktopSetup === "restricted" ? <p role="status" className="text-sm text-gray-600">Your team is saved. We’ll finish applying its settings before continuing.</p> : null}
     <button type="submit" disabled={createBusy || !intent || (intent === "join" ? !invitationLink.trim() : createName.trim().length < 2 || (intent === "team" && !desktopSetup))} className="w-full rounded-xl bg-gray-950 px-5 py-3.5 text-sm font-medium text-white hover:bg-gray-800 focus-visible:ring-2 focus-visible:ring-gray-600 focus-visible:ring-offset-2 disabled:opacity-50">
-      {createBusy ? "Setting up…" : createdOrg ? "Retry policy setup" : intent === "join" ? "Review invitation" : intent === "team" && desktopSetup === "restricted" ? "Create team & review policy" : "Continue"}
+      {createBusy ? "Setting up…" : createdOrg && desktopSetup === "restricted" ? "Retry setup" : intent === "join" ? "Review invitation" : "Continue"}
     </button>
   </form>;
 

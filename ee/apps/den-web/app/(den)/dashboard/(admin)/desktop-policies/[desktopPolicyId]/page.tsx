@@ -1,3 +1,4 @@
+import { RestrictedOnboardingScreen } from "../../../_components/restricted-onboarding-screen";
 import { DesktopPolicyEditorScreen } from "../../../_components/desktop-policy-editor-screen";
 
 export default async function EditDesktopPolicyPage({
@@ -9,5 +10,6 @@ export default async function EditDesktopPolicyPage({
 }) {
   const { desktopPolicyId } = await params;
   const { setup } = await searchParams;
-  return <DesktopPolicyEditorScreen desktopPolicyId={desktopPolicyId} setupRestricted={setup === "restricted"} />;
+  if (setup === "restricted") return <RestrictedOnboardingScreen desktopPolicyId={desktopPolicyId} />;
+  return <DesktopPolicyEditorScreen desktopPolicyId={desktopPolicyId} />;
 }
