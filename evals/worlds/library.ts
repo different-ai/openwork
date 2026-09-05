@@ -890,84 +890,48 @@ async function reloadConfiguredApp(app: import("@openwork/cdp").Surface): Promis
 }
 
 export const connectionActionResourceUri = "ui://openwork/connection-action/v1/view.html";
-export const connectionActionReply = "Connect your Acme Tracker account, then ask again.";
+export const connectionActionReply = "Connect your Notes account to continue.";
+export const connectionActionPrompt = "Find my recent notes.";
 
 export async function connectionActionMcpApp(seed: Seed) {
   const providerId = "connection-action-mcp-app-provider";
   const modelId = "connection-action-mcp-app-model";
-  const counters = { executeCalls: 0 };
-  const searchQueries = ["Stripe revenue", "Stripe balance payments revenue", "list Stripe charges subscriptions invoices", "Stripe charges"];
-  let realCapability = "";
-  const fixture = createServer((request, response) => {
-    void (async () => {
-      const url = new URL(request.url ?? "/", "http://127.0.0.1");
-      if (request.method === "GET" && url.pathname === "/v1/models") {
-        sendJson(response, 200, { object: "list", data: [{ id: modelId, object: "model" }] });
-        return;
-      }
-      if (request.method === "POST" && url.pathname.endsWith("/chat/completions")) {
-        const payload: unknown = JSON.parse(await readBody(request));
-        if (!isRecord(payload)) throw new Error("The provider request was not an object.");
-        const completed = completedToolCount(payload);
-        if (completed >= searchQueries.length + 1) {
-          sendStream(response, [streamChunk(modelId, { role: "assistant" }), streamChunk(modelId, { content: connectionActionReply }), streamChunk(modelId, {}, "stop")]);
-          return;
-        }
-        const searching = completed < searchQueries.length;
-        const toolName = projectedTool(payload, searching ? "_search_capabilities" : "_execute_capability");
-        if (!toolName) throw new Error("The capability gateway tool was not projected.");
-        if (!searching) counters.executeCalls += 1;
-        sendStream(response, [
-          streamChunk(modelId, { role: "assistant" }),
-          streamChunk(modelId, {
-            tool_calls: [{
-              index: 0,
-              id: searching ? `call_search_${completed}` : "call_execute",
-              type: "function",
-              function: {
-                name: toolName,
-                arguments: JSON.stringify(searching ? { query: searchQueries[completed] } : { name: realCapability }),
-              },
-            }],
-          }),
-          streamChunk(modelId, {}, "tool_calls"),
-        ]);
-        return;
-      }
-      sendJson(response, 404, { error: { message: "not found" } });
-    })().catch((error: unknown) => sendJson(response, 500, { error: String(error) }));
+  const den = await seed.den({
+    org: { name: `Connection Action ${Date.now()}`, admin: { name: "Connection Admin" } },
+    mocks: {
+      connector: seed.mock(),
+      agent: seed.mock({ agentWorkloads: [{
+        promptMarker: connectionActionPrompt,
+        finalReply: connectionActionReply,
+        steps: [{ tool: "search_capabilities", arguments: { query: "Notes", type: "mcp" } }],
+      }] }),
+    },
   });
-  const fixtureUrl = await listen(fixture);
-  try {
-    const den = await seed.den({ org: { name: `Connection Action ${Date.now()}`, admin: { name: "Avery" } } });
-    const organizationId = await activeOrganizationId(seed, den.admin);
-    const connection = await seed.orgConnection(den.admin, {
-      name: "Acme Tracker (E2E)",
-      url: "https://acme-tracker.invalid/mcp",
-      authType: "oauth",
-      credentialMode: "per_member",
-      access: { orgWide: true },
-    });
-    realCapability = `mcp:${connection.id}:list_charges`;
-    const mcpSession = await mintMcpSession(seed, den, organizationId);
-    const app = await seed.desktop({ name: "connection-action-mcp-app" });
-    const workspace = await seed.workspace(app, seed.tmpPath("connection-action-mcp-app"));
-    await configureWorkspaceModel(seed, {
-      app,
-      workspaceId: workspace.workspaceId,
-      providerId,
-      modelId,
-      fixtureUrl,
-      denApiUrl: den.ref.apiUrl,
-      mcpToken: mcpSession.token,
-    });
-    await reloadConfiguredApp(app);
-    await seed.session(app);
-    return withDispose({ app, workspaceId: workspace.workspaceId, counters }, async () => closeServer(fixture));
-  } catch (error) {
-    await closeServer(fixture);
-    throw error;
-  }
+  const organizationId = await activeOrganizationId(seed, den.admin);
+  const connection = await seed.orgConnection(den.admin, {
+    name: "Notes",
+    url: den.mocks.connector.mcpUrl,
+    authType: "oauth",
+    credentialMode: "per_member",
+    access: { orgWide: true },
+  });
+  const tokenResult = await seed.api(den.admin, "/v1/mcp/token", {
+    method: "POST",
+    headers: { "x-openwork-org-id": organizationId },
+    body: JSON.stringify({ scopes: ["mcp:read", "mcp:write"] }),
+  });
+  const mcpToken = stringField(tokenResult.body, "token");
+  const appHostToken = stringField(tokenResult.body, "appHostToken");
+  if (!mcpToken || !appHostToken || mcpToken === appHostToken) throw new Error("Distinct model and app-host tokens were not minted.");
+  const app = await seed.desktop({ den, as: "admin", name: "connection-action-mcp-app" });
+  const workspace = await seed.workspace(app, seed.tmpPath("connection-action-mcp-app"));
+  await configureWorkspaceModel(seed, {
+    app, workspaceId: workspace.workspaceId, providerId, modelId,
+    fixtureUrl: den.mocks.agent.url, denApiUrl: den.ref.apiUrl, mcpToken, appHostToken,
+  });
+  await reloadConfiguredApp(app);
+  await seed.session(app);
+  return { app, den, connection, organizationId, mcpSession: { ...den.admin, token: mcpToken } };
 }
 
 export const skillCreatedResourceUri = "ui://openwork/skill-created/v1/view.html";
