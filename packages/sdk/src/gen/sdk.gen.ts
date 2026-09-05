@@ -123,6 +123,8 @@ import type {
   GetV1AuthLoginOptionsResponses,
   GetV1AutomationRunnersEventsResponses,
   GetV1AutomationRunnerWorkResponses,
+  GetV1BillingWebTrialErrors,
+  GetV1BillingWebTrialResponses,
   GetV1BrandAssetsByOrganizationIdByKindByVersionErrors,
   GetV1BrandAssetsByOrganizationIdByKindByVersionResponses,
   GetV1CapabilitiesGoogleWorkspaceCalendarEventsErrors,
@@ -423,6 +425,8 @@ import type {
   PostV1AutomationRunsByIdCompleteResponses,
   PostV1AutomationRunsByIdEventsResponses,
   PostV1AutomationRunsByIdHeartbeatResponses,
+  PostV1BillingWebTrialErrors,
+  PostV1BillingWebTrialResponses,
   PostV1BootstrapClaimsAcceptErrors,
   PostV1BootstrapClaimsAcceptResponses,
   PostV1BootstrapWorkspaceErrors,
@@ -2665,6 +2669,30 @@ export class DenClient extends HeyApiClient {
         ...params.headers,
       },
     });
+  }
+
+  /**
+   * Get this workspace’s free cloud trial
+   */
+  public getV1BillingWebTrial<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<
+      GetV1BillingWebTrialResponses,
+      GetV1BillingWebTrialErrors,
+      ThrowOnError
+    >({ url: "/v1/billing/web-trial", ...options });
+  }
+
+  /**
+   * Start an optional seven-day cloud trial without a card
+   *
+   * Admin-only. One trial per workspace and starting account. Retries return the original dates. Does not create a paid subscription or grant model credits.
+   */
+  public postV1BillingWebTrial<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).post<
+      PostV1BillingWebTrialResponses,
+      PostV1BillingWebTrialErrors,
+      ThrowOnError
+    >({ url: "/v1/billing/web-trial", ...options });
   }
 
   /**

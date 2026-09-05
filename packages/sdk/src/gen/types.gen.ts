@@ -649,13 +649,26 @@ export type OrganizationApiKeyNotFoundError = {
   error: "api_key_not_found";
 };
 
-export type OrgStripeBillingResponse = {
-  [key: string]: unknown;
+export type CloudTrialResponse = {
+  trial: {
+    status: "eligible" | "active" | "expired" | "ineligible";
+    startedAt: string | null;
+    expiresAt: string | null;
+  };
 };
 
 export type OpenWorkWebUnavailableError = {
   error: "openwork_web_not_available";
   message: string;
+};
+
+export type CloudTrialUnavailable = {
+  error: "trial_unavailable";
+  message: string;
+};
+
+export type OrgStripeBillingResponse = {
+  [key: string]: unknown;
 };
 
 export type OrgStripeCheckoutResponse = {
@@ -7844,6 +7857,72 @@ export type PostV1ApiKeysResponses = {
 };
 
 export type PostV1ApiKeysResponse = PostV1ApiKeysResponses[keyof PostV1ApiKeysResponses];
+
+export type GetV1BillingWebTrialData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/billing/web-trial";
+};
+
+export type GetV1BillingWebTrialErrors = {
+  /**
+   * Sign in to view the trial.
+   */
+  401: UnauthorizedError;
+  /**
+   * Cloud is unavailable.
+   */
+  404: OpenWorkWebUnavailableError;
+};
+
+export type GetV1BillingWebTrialError = GetV1BillingWebTrialErrors[keyof GetV1BillingWebTrialErrors];
+
+export type GetV1BillingWebTrialResponses = {
+  /**
+   * Trial status; no subscription or payment created.
+   */
+  200: CloudTrialResponse;
+};
+
+export type GetV1BillingWebTrialResponse = GetV1BillingWebTrialResponses[keyof GetV1BillingWebTrialResponses];
+
+export type PostV1BillingWebTrialData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/billing/web-trial";
+};
+
+export type PostV1BillingWebTrialErrors = {
+  /**
+   * Sign in to start the trial.
+   */
+  401: UnauthorizedError;
+  /**
+   * A workspace admin is required.
+   */
+  403: ForbiddenError;
+  /**
+   * Cloud is unavailable.
+   */
+  404: OpenWorkWebUnavailableError;
+  /**
+   * Trial already used or subscription exists.
+   */
+  409: CloudTrialUnavailable;
+};
+
+export type PostV1BillingWebTrialError = PostV1BillingWebTrialErrors[keyof PostV1BillingWebTrialErrors];
+
+export type PostV1BillingWebTrialResponses = {
+  /**
+   * Original or newly started trial.
+   */
+  200: CloudTrialResponse;
+};
+
+export type PostV1BillingWebTrialResponse = PostV1BillingWebTrialResponses[keyof PostV1BillingWebTrialResponses];
 
 export type GetV1BrandAssetsByOrganizationIdByKindByVersionData = {
   body?: never;
