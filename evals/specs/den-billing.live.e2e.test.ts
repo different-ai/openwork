@@ -14,6 +14,11 @@ async function openCheckout(world: Awaited<ReturnType<typeof liveBillingBrowser>
   await user.click({ role: "button", label: "Sign in" });
   await user.see({ testId: "den-org-sidebar" }, { timeoutMs: 60_000 });
   await user.navigate(`${world.den.webUrl}/dashboard/inference`);
+  const before = await world.request("/v1/inference");
+  expect(before.response.status).toBe(200);
+  const inference = recordField(before.body, "inference");
+  expect(inference?.subscribed).toBe(false);
+  expect(inference?.enabled).toBe(false);
   await user.click({ role: "button", label: "Subscribe" });
 }
 
@@ -33,10 +38,14 @@ test(".live canceling Stripe Checkout leaves the workspace unsubscribed", async 
   expect(billing.response.status).toBe(200);
   expect(recordField(recordField(billing.body, "billing"), "stripe")?.hasActiveSubscription).toBe(false);
   expect((await world.checkout()).subscription).toBeNull();
+  const inference = await world.request("/v1/inference");
+  expect(inference.response.status).toBe(200);
+  expect(recordField(inference.body, "inference")?.subscribed).toBe(false);
+  expect(recordField(inference.body, "inference")?.enabled).toBe(false);
   evidence.recordAssertionEvidence("Checkout cancellation", "Subscribe opened real Stripe Checkout; its Back link returned to Den without a Stripe subscription or active Den entitlement.", true);
 });
 
-test(".live a 100%-discounted Stripe subscription activates the workspace and survives reload", async ({ world, user, probe, evidence }) => {
+test(".live production coupon checkout automatically unlocks Models and survives reload", async ({ world, user, probe, evidence }) => {
   await openCheckout(world, user);
   await probe.eventually(() => world.location(), {
     within: 45_000, until: (url) => url.hostname === "checkout.stripe.com", label: "Stripe hosted Checkout",
@@ -55,6 +64,7 @@ test(".live a 100%-discounted Stripe subscription activates the workspace and su
   const completed = await probe.eventually(() => world.checkout(), {
     within: 90_000, until: (session) => session.status === "complete", label: "Stripe subscription completion",
   });
+  expect(completed.livemode).toBe(true);
   expect(completed.amount_total).toBe(0);
   expect(["paid", "no_payment_required"]).toContain(completed.payment_status);
   const subscription = recordField(completed, "subscription");
@@ -69,9 +79,21 @@ test(".live a 100%-discounted Stripe subscription activates the workspace and su
     return recordField(recordField(result.body, "billing"), "stripe");
   }, { within: 90_000, until: (value) => value?.hasActiveSubscription === true, label: "Den paid entitlement" });
   expect(billing?.hasActiveSubscription).toBe(true);
+  expect(recordField(billing, "subscription")?.stripeSubscriptionId).toBe(subscription?.id);
+  // Never manually sync checkout, seed an entitlement, or click Enable: the real
+  // production billing handler must activate Models for this exact subscription.
+  const access = await probe.eventually(async () => {
+    const result = await world.request("/v1/inference");
+    expect(result.response.status).toBe(200);
+    return recordField(result.body, "inference");
+  }, { within: 90_000, until: (value) => value?.subscribed === true && value.enabled === true, label: "automatic paid Models activation" });
+  expect(access?.subscribed).toBe(true);
+  expect(access?.enabled).toBe(true);
+  expect(access?.upstreamProviderConfigured).toBe(true);
   await user.navigate(`${world.den.webUrl}/dashboard/inference`);
   await user.reload();
-  await user.see({ role: "button", label: /manage subscription|enable/i });
+  await user.see({ role: "button", label: "Manage subscription" });
+  await user.notSee({ role: "button", label: "Enable" });
   await user.notSee({ role: "button", label: "Subscribe" });
-  evidence.recordAssertionEvidence("Zero-cost subscription activation", "The owned permanent 100% promotion reduced checkout to zero; Stripe completed a subscription with a zero-paid invoice; Den activated it and retained the subscribed UI after reload.", true);
+  evidence.recordAssertionEvidence("Production purchase-to-access", "Models started unsubscribed and disabled. The owned permanent 100% promotion completed live Stripe checkout with a zero-paid invoice. Den recorded that exact subscription and automatically enabled Models with a configured upstream provider. Reload retained Manage subscription, without an Enable or Subscribe action.", true);
 });

@@ -27,6 +27,17 @@ failed assertions, and cleanup errors all fail the nightly command.
 | Checkout cancellation | Models Subscribe opens Stripe; Back returns without subscription/entitlement |
 | Subscription activation | Owned 100% forever coupon, zero total before submit, completed subscription and zero invoice, Den entitlement and subscribed UI after reload |
 
+Production coupon checkout is a required part of this suite. It is not replaced
+by staging payment tests: it exercises the live Stripe account, real Checkout,
+Den subscription persistence and automatic Models activation. Before checkout,
+Models must be unsubscribed and disabled. After checkout, the exact Stripe
+subscription must be recorded and Models enabled with an upstream provider,
+without a test-side sync call, manual entitlement or Enable click. A visible
+success page or an active Stripe subscription alone is insufficient.
+
+A separate real-task completion journey and sandbox tests for declines, 3DS,
+renewals and retries remain complementary work; they are not claimed here.
+
 ## Configuration
 
 Set these **GitHub Actions secrets** before enabling the nightly workflow:
@@ -35,7 +46,7 @@ Set these **GitHub Actions secrets** before enabling the nightly workflow:
 - `OPENWORK_EVAL_LIVE_ADMIN_TOKEN`: an admin bearer session for the target Den, used
   only by the runner for guarded user deletion. Preflight checks it before signup.
   It never enters the browser. An expired token fails the run before creating accounts.
-- `OPENWORK_EVAL_LIVE_STRIPE_SECRET_KEY`: matches the Stripe account/mode used by
+- `OPENWORK_EVAL_LIVE_STRIPE_SECRET_KEY`: a live-mode key matching the Stripe account used by
   the target Den; needs customers, Checkout sessions, coupons, promotion codes,
   subscriptions, and invoice read access plus creation/cleanup permissions.
 
@@ -66,7 +77,9 @@ Checkout completion creates a one-redemption, one-hour coupon with a permanent
 Before submitting, the Stripe witness requires an owned discount and exact zero
 total. It never enters a real card. If the target's Checkout still requires a card
 at zero total, this journey fails and needs a compatible zero-payment checkout
-configuration; a coupon alone does not guarantee card-free subscription signup.
+configuration. Stripe supports this with `payment_method_collection=if_required`:
+https://docs.stripe.com/api/checkout/sessions/create . This is a supported
+zero-total checkout flow, not a reason to omit production billing validation.
 This is a zero-cost subscription lifecycle test, not proof of a real card charge.
 Stripe REST witnesses pin the same API version as Den (`2026-04-22.dahlia`).
 

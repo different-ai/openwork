@@ -9,6 +9,9 @@ export const liveBillingNeeds = {
 /** Stripe is a witness and cleanup boundary; Checkout itself is driven in the UI. */
 export async function liveBillingBrowser() {
   const key = requiredEnv("OPENWORK_EVAL_LIVE_STRIPE_SECRET_KEY");
+  if (!/^(sk|rk)_live_/.test(key)) {
+    throw new Error("Production coupon checkout requires a live-mode Stripe key; sandbox success cannot prove this journey");
+  }
   const world = await liveAccountBrowser();
   let couponId: string | undefined;
   let promotionId: string | undefined;
@@ -87,7 +90,7 @@ export async function liveBillingBrowser() {
       if (!couponId || !promotionId) throw new Error("No owned discount");
       const session = await this.checkout();
       const discounts = session.discounts;
-      if (session.status !== "open" || session.amount_total !== 0 || session.mode !== "subscription"
+      if (session.livemode !== true || session.status !== "open" || session.amount_total !== 0 || session.mode !== "subscription"
         || !Array.isArray(discounts) || !discounts.some((discount) => isRecord(discount)
           && id(discount.coupon) === couponId && id(discount.promotion_code) === promotionId)) {
         throw new Error("Refusing checkout: amount must be zero with the owned 100% forever promotion applied");
