@@ -1,7 +1,11 @@
 import { expect } from "vitest";
 import { denFetch } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
-import { server, test } from "@openwork/testkit";
+import { localMysqlIsRunning, localRedisIsRunning, server, test } from "@openwork/testkit";
+
+const remote = process.env.OPENWORK_EVAL_DAYTONA?.trim() === "1" || Boolean(process.env.OPENWORK_EVAL_DEN_API_URL?.trim());
+const databaseReady = remote || (await localMysqlIsRunning() && await localRedisIsRunning());
+const missing = databaseReady ? "" : " skipped — needs MySQL and Redis";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -14,7 +18,7 @@ function record(value: unknown): Record<string, unknown> {
 
 // The API is available before desktop adoption: an administrator can provision
 // browser permissions, while existing clients keep using the same request keys.
-test("an administrator provisions browser policy through the API while existing client requests remain compatible", { timeout: 300_000 }, async ({ evidence, place }) => {
+test.skipIf(!databaseReady)(`an administrator provisions browser policy through the API while existing client requests remain compatible${missing}`, { timeout: 300_000 }, async ({ evidence, place }) => {
   const name = `Browser policy API ${Date.now()}`;
   await using den = await server({
     place, web: false,

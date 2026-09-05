@@ -17,6 +17,7 @@ const capabilityLabels: Record<(typeof capabilities)[number]["id"], string> = {
   allowControlSettings: "Change app settings",
   allowManageExtensions: "Add and manage local tools, skills & MCP servers",
   allowBuiltInExtensions: "Use built-in extensions",
+  allowBrowserLoginImport: "Import browser logins",
   allowAlphaUpdates: "Try experimental updates",
   showWelcomePage: "Show welcome page",
 };
