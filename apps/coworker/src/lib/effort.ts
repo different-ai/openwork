@@ -166,7 +166,7 @@ export function describeEffortStop(stop: EffortStop): string {
     case "thorough":
       return "More thinking on real work, and quick asks get a proper look. Workers take more steps.";
     case "all-in":
-      return "The most thinking the model offers on anything that matters, and long Workers. Slower and costlier.";
+      return "Prioritizes deeper thinking and gives Workers more steps. Can take longer and use more of your allowance.";
   }
 }
 

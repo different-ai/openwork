@@ -791,6 +791,7 @@ function DiscussionWelcome({
         summary={summary}
         onOpenSummary={onOpenSummary}
         effortStop={coworker.effortPreference}
+        fixedVariant={coworker.modelVariant}
         onEffortChange={(stop) => void coworkerBridge.coworkers.update(coworker.slug, { effortPreference: stop }).then(onCoworkerChanged).catch(() => undefined)}
       />
     </section>
@@ -2024,6 +2025,7 @@ function ThreadView({
           summary={summary}
           onOpenSummary={onOpenSummary}
           effortStop={coworker.effortPreference}
+          fixedVariant={coworker.modelVariant}
           onEffortChange={(stop) => void coworkerBridge.coworkers.update(coworker.slug, { effortPreference: stop }).then(onCoworkerChanged).catch(() => undefined)}
         />
       ) : kind === "worker" ? (
@@ -2753,6 +2755,7 @@ function DiscussionComposer({
   summary = null,
   onOpenSummary,
   effortStop,
+  fixedVariant = "",
   onEffortChange,
   offerStartingPoints = false,
 }: {
@@ -2778,6 +2781,7 @@ function DiscussionComposer({
   onOpenSummary?: (kind: SummaryKind) => void;
   /** The effort dial's stop, and the change the person makes on it; absent, no dial is shown. */
   effortStop?: EffortStop;
+  fixedVariant?: string;
   onEffortChange?: (stop: EffortStop) => void;
 }) {
   const value = assignmentMode ? assignment : message;
@@ -2794,39 +2798,51 @@ function DiscussionComposer({
       <div className="mx-auto max-w-3xl">
         {error ? <div className="mb-2"><ErrorNote>{error}</ErrorNote></div> : null}
         {assignmentMode ? (
-          <p className="mb-1.5 px-12 text-[11px] text-mist" data-testid="coworker-assignment-mode">
+          <p className="mb-2 px-2 text-[11px] text-mist" data-testid="coworker-assignment-mode">
             Something {coworkerName} should own, separate from this chat
           </p>
         ) : null}
-        <div className="flex items-end gap-2">
-          {/* One quiet control beside the field: turn the message into an assignment, or come back to chat. */}
-          <button
-            type="button"
-            aria-pressed={assignmentMode}
-            className={`mb-0.5 flex size-8 shrink-0 items-center justify-center rounded-full border text-lg leading-none transition-colors ${
-              assignmentMode ? "border-spark/50 bg-spark/15 text-spark" : "border-line text-mist hover:border-spark/40 hover:text-snow"
-            }`}
-            title={modeLabel}
-            onClick={() => onAssignmentModeChange(!assignmentMode)}
-          >
-            <PlusIcon className={`size-4 transition-transform ${assignmentMode ? "rotate-45" : ""}`} />
-            <span className="sr-only">{modeLabel}</span>
-          </button>
-          <div className={`flex min-w-0 flex-1 items-end gap-1 rounded-[20px] border bg-panel/60 py-1 pl-4 pr-1 transition-colors focus-within:border-spark/50 ${assignmentMode ? "border-spark/35" : "border-line"}`}>
-            <textarea
-              ref={fieldRef}
-              aria-label={assignmentMode ? "Assignment outcome" : `Message ${coworkerName}`}
-              rows={1}
-              className="min-h-[30px] min-w-0 flex-1 resize-none bg-transparent py-1 text-sm leading-relaxed text-snow outline-none placeholder:text-mist/65"
-              placeholder={assignmentMode ? `What should ${coworkerName} own?` : `Message ${coworkerName}`}
-              value={value}
-              onChange={(event) => assignmentMode ? onAssignmentChange(event.target.value) : onMessageChange(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
-                event.preventDefault();
-                if (canSubmit) submit();
-              }}
-            />
+        <div className={`rounded-[24px] border bg-panel/60 p-3 transition-colors focus-within:border-spark/50 ${assignmentMode ? "border-spark/35" : "border-line"}`} data-testid="coworker-input-surface">
+          <textarea
+            ref={fieldRef}
+            aria-label={assignmentMode ? "Assignment outcome" : `Message ${coworkerName}`}
+            rows={1}
+            className="block min-h-[56px] w-full resize-none bg-transparent px-1 pb-3 pt-1 text-sm leading-relaxed text-snow outline-none placeholder:text-mist/65"
+            placeholder={assignmentMode ? `What should ${coworkerName} own?` : `Message ${coworkerName}`}
+            value={value}
+            onChange={(event) => assignmentMode ? onAssignmentChange(event.target.value) : onMessageChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+              event.preventDefault();
+              if (canSubmit) submit();
+            }}
+          />
+          <div className="flex items-end gap-2" data-testid="coworker-composer-actions">
+            <button
+              type="button"
+              aria-pressed={assignmentMode}
+              className={`flex size-8 shrink-0 items-center justify-center rounded-full border text-lg leading-none transition-colors ${
+                assignmentMode ? "border-spark/50 bg-spark/15 text-spark" : "border-line text-mist hover:border-spark/40 hover:text-snow"
+              }`}
+              title={modeLabel}
+              onClick={() => onAssignmentModeChange(!assignmentMode)}
+            >
+              <PlusIcon className={`size-4 transition-transform ${assignmentMode ? "rotate-45" : ""}`} />
+              <span className="sr-only">{modeLabel}</span>
+            </button>
+            <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-x-3 gap-y-2 pb-0.5">
+              {offerStartingPoints && !assignmentMode && !held && !working && !value.trim() ? (
+                <PopoverDisclosure label="Starting points" title="A useful first step" testId="coworker-starting-points" align="start" className="mr-auto text-[11px] text-mist">
+                  {[
+                    { label: "Turn a goal into a plan", prompt: "Help me turn a goal into a practical plan. Ask what I want to achieve and when I need it, then help me create a short working document with next steps." },
+                    { label: "Work through a document", prompt: "Help me improve a document. Ask me to share it and tell you who it is for, then identify the most useful changes before drafting a revision." },
+                    { label: "Take recurring work off my plate", prompt: "Help me choose one recurring task you can take off my plate. Ask about the task, the apps it needs, and when I want the result. Propose a responsibility for me to review before scheduling it." },
+                  ].map((starter) => <button key={starter.label} type="button" className="block w-full rounded-lg px-2 py-2 text-left text-xs text-snow hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/45" onClick={() => { onMessageChange(starter.prompt); fieldRef.current?.focus(); }}>{starter.label}</button>)}
+                  <p className="pt-2 text-[11px] text-mist">Choose a starting point, edit it, then send.</p>
+                </PopoverDisclosure>
+              ) : null}
+              {effortStop && onEffortChange ? <EffortDial stop={effortStop} onChange={onEffortChange} coworkerName={coworkerName} fixedVariant={fixedVariant} /> : null}
+            </div>
             {stopping && onStop ? (
               <SendButton label="Stop" busy={false} disabled={false} stop onClick={onStop} />
             ) : (
@@ -2834,7 +2850,7 @@ function DiscussionComposer({
             )}
           </div>
         </div>
-        <div className="mt-1.5 flex items-center justify-between gap-3 px-12 text-[9px] text-mist/65">
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-2 text-[10px] text-mist/65">
           <span className="hidden sm:inline" data-testid="coworker-composer-hint">
             {waiting && !busy
               ? `${waiting}…`
@@ -2842,20 +2858,7 @@ function DiscussionComposer({
                 ? "Enter sends it next · Shift Enter for a new line"
                 : `Enter to ${assignmentMode ? "create" : "send"} · Shift Enter for a new line`}
           </span>
-          <span className="flex min-w-0 items-center gap-3">
-            {offerStartingPoints && !assignmentMode && !held && !working && !value.trim() ? (
-              <PopoverDisclosure label="Starting points" title="A useful first step" testId="coworker-starting-points" align="end">
-                {[
-                  { label: "Turn a goal into a plan", prompt: "Help me turn a goal into a practical plan. Ask what I want to achieve and when I need it, then help me create a short working document with next steps." },
-                  { label: "Work through a document", prompt: "Help me improve a document. Ask me to share it and tell you who it is for, then identify the most useful changes before drafting a revision." },
-                  { label: "Take recurring work off my plate", prompt: "Help me choose one recurring task you can take off my plate. Ask about the task, the apps it needs, and when I want the result. Propose a responsibility for me to review before scheduling it." },
-                ].map((starter) => <button key={starter.label} type="button" className="block w-full rounded-lg px-2 py-2 text-left text-xs text-snow hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/45" onClick={() => { onMessageChange(starter.prompt); fieldRef.current?.focus(); }}>{starter.label}</button>)}
-                <p className="pt-2 text-[11px] text-mist">Choose a starting point, edit it, then send.</p>
-              </PopoverDisclosure>
-            ) : null}
-            {effortStop && onEffortChange ? <EffortDial stop={effortStop} onChange={onEffortChange} coworkerName={coworkerName} /> : null}
-            <SummaryLine summary={summary} onOpen={onOpenSummary} />
-          </span>
+          <SummaryLine summary={summary} onOpen={onOpenSummary} />
         </div>
       </div>
     </div>
@@ -2908,7 +2911,7 @@ export function SendButton({ label, busy, disabled, title, onClick, testId = "co
       title={title || label}
       data-testid={testId}
       data-role={stop ? "stop" : "send"}
-      className={`mb-0.5 flex size-7 shrink-0 items-center justify-center rounded-full transition-colors ${
+      className={`flex size-8 shrink-0 items-center justify-center rounded-full transition-colors ${
         disabled ? "bg-white/8 text-mist/60" : stop ? "bg-white/12 text-snow hover:bg-white/18" : "bg-spark text-white hover:bg-spark/90"
       } disabled:cursor-not-allowed`}
       onClick={onClick}
@@ -2956,12 +2959,12 @@ function MessageComposer({
   return (
     <div className="bg-ink px-5 pb-2 pt-2" data-testid="coworker-composer" data-working={working ? "true" : "false"}>
       <div className="mx-auto max-w-3xl">
-        <div className="flex min-w-0 items-end gap-1 rounded-[20px] border border-line bg-panel/60 py-1 pl-4 pr-1 transition-colors focus-within:border-spark/50">
+        <div className="rounded-[24px] border border-line bg-panel/60 p-3 transition-colors focus-within:border-spark/50">
           <textarea
             ref={fieldRef}
             aria-label={placeholder.replace("…", "")}
             rows={1}
-            className="min-h-[30px] min-w-0 flex-1 resize-none bg-transparent py-1 text-sm leading-relaxed text-snow outline-none placeholder:text-mist/65"
+            className="block min-h-[56px] w-full resize-none bg-transparent px-1 pb-3 pt-1 text-sm leading-relaxed text-snow outline-none placeholder:text-mist/65"
             placeholder={placeholder}
             value={value}
             onChange={(event) => onChange(event.target.value)}
@@ -2971,11 +2974,13 @@ function MessageComposer({
               if (canSubmit) onSubmit();
             }}
           />
-          {stopping && onStop ? (
-            <SendButton label="Stop" busy={false} disabled={false} stop onClick={onStop} />
-          ) : (
-            <SendButton label={working ? "Next" : "Send"} busy={false} disabled={!canSubmit} onClick={onSubmit} />
-          )}
+          <div className="flex justify-end" data-testid="coworker-composer-actions">
+            {stopping && onStop ? (
+              <SendButton label="Stop" busy={false} disabled={false} stop onClick={onStop} />
+            ) : (
+              <SendButton label={working ? "Next" : "Send"} busy={false} disabled={!canSubmit} onClick={onSubmit} />
+            )}
+          </div>
         </div>
         {summary ? (
           <div className="mt-1.5 flex items-center justify-end px-1 text-[9px] text-mist/65">
