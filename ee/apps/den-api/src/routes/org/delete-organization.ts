@@ -351,7 +351,6 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
           eq(OrgSubscriptionTable.organization_id, organizationId),
           notInArray(OrgSubscriptionTable.status, ["canceled", "incomplete_expired", "expired"]),
         ))
-        .limit(1)
       if (subscriptions.length > 0) {
         return c.json({
           error: "organization_has_subscriptions",
