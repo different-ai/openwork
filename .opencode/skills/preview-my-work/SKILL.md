@@ -57,6 +57,9 @@ Wait for world readiness and verify the preview responds before reporting it
 ready. If testing behavior, follow `run-tests`; a manually booted world is not a
 passing test. Do not print secret outputs or put them in a PR. Test account
 passwords are masked; read the owner-only receipt privately when signing in.
+For seeded Den scenarios, use the available browser controls to sign in with
+that test account before handing the preview to the user. Leave fresh Den at
+signup. The desktop team/workspace scenarios already sign in automatically.
 Mail stays in this world's development outbox; never send real invitations.
 
 ## Update without losing progress
