@@ -1,4 +1,4 @@
-export type OpenWorkWebAccessSource = "subscription" | "complimentary" | null
+export type OpenWorkWebAccessSource = "subscription" | "complimentary" | "trial" | null
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -48,6 +48,7 @@ export function resolveOpenWorkWebAccess(input: {
   deploymentAvailable: boolean
   hasEligibleSubscription: boolean
   complimentaryAccess: boolean
+  trialExpiresAt?: Date | null
 }): {
   hasAccess: boolean
   accessSource: OpenWorkWebAccessSource
@@ -57,7 +58,9 @@ export function resolveOpenWorkWebAccess(input: {
     ? "subscription"
     : input.complimentaryAccess
       ? "complimentary"
-      : null
+      : input.deploymentAvailable && input.trialExpiresAt && input.trialExpiresAt.getTime() > Date.now()
+        ? "trial"
+        : null
 
   return {
     hasAccess: accessSource !== null,

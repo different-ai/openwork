@@ -1,4 +1,5 @@
-import type { Seed } from "@openwork/env";
+import { queryDenDatabase, type Seed } from "@openwork/env";
+import { defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
 import { isRecord, records } from "./library.ts";
 
 /** The witness MCP App every tile in this world launches: one tool, required `jql` input. */
@@ -54,4 +55,37 @@ export async function emptyDashboardWithOneApp(seed: Seed) {
   });
 
   return { den, web, connection, catalogTools, dashboardId, dashboardName };
+}
+
+/** A new team can opt into cloud access without a payment provider. */
+export async function optionalCloudTrial(seed: Seed) {
+  const den = await seed.den({
+    org: { name: `Cloud trial ${Date.now()}`, admin: { name: "Trial Owner" } },
+    env: {
+      DEN_OPENWORK_WEB_ENABLED: "true", OPENWORK_DEV_MODE: "1",
+      RESEND_API_KEY: "", SMTP_HOST: "", STRIPE_SECRET_KEY: "",
+      OPENWORK_CLOUD_TRIAL_POLL_MS: "1000",
+    },
+  });
+  const organizations = await seed.api(den.admin, "/v1/me/orgs");
+  const orgId = isRecord(organizations.body) ? records(organizations.body.orgs)[0]?.id : undefined;
+  if (typeof orgId !== "string") throw new Error("Expected isolated trial organization");
+  const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/onboarding", headless: true, viewport: { width: 1280, height: 1100 } });
+  return {
+    den, web, orgId,
+    async expireTrial() {
+      const statement = "UPDATE org_cloud_trials SET started_at = DATE_SUB(NOW(3), INTERVAL 8 DAY), expires_at = DATE_SUB(NOW(3), INTERVAL 1 DAY) WHERE organization_id = ";
+      if (den.database) {
+        await queryDenDatabase(den.database.url, `${statement}?`, [orgId]);
+        return;
+      }
+      if (den.placement?.kind !== "daytona") throw new Error("Trial aging needs an isolated Den database");
+      // Daytona's isolated fixture database uses the documented test credentials.
+      // Hex encoding keeps the identity out of shell and SQL quoting contexts.
+      const identity = Buffer.from(orgId).toString("hex");
+      await execInSandbox(defaultDaytonaExec, den.placement.sandboxId,
+        `mysql -uroot -ppassword openwork_den -e "${statement}0x${identity}"`,
+        { timeoutMs: 30_000, context: "age only the trial fixture organization" });
+    },
+  };
 }

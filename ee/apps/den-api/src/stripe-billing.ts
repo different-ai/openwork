@@ -1,4 +1,5 @@
 import Stripe from "stripe"
+import { getCloudTrial } from "./cloud-trials.js"
 import { and, eq, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   MemberTable,
@@ -925,10 +926,11 @@ function serializeOpenWorkWebSubscription(row: Awaited<ReturnType<typeof findWeb
 }
 
 async function loadOpenWorkWebBillingSummary(organizationId: OrgId) {
-  const [row, memberCount, complimentaryAccess] = await Promise.all([
+  const [row, memberCount, complimentaryAccess, trial] = await Promise.all([
     findWebSubscriptionByOrg(organizationId),
     joinedMemberCount(organizationId),
     organizationOpenWorkWebComplimentaryAccess(organizationId),
+    getCloudTrial(organizationId),
   ])
   const billing = calculateOpenWorkWebBilling({ joinedMemberCount: memberCount })
   const hasEligibleSubscription = isEligibleOpenWorkWebSubscriptionRow(row)
@@ -936,6 +938,7 @@ async function loadOpenWorkWebBillingSummary(organizationId: OrgId) {
     deploymentAvailable: isOpenWorkWebAvailable(),
     hasEligibleSubscription,
     complimentaryAccess,
+    trialExpiresAt: trial?.expires_at,
   })
   return {
     row,
@@ -957,14 +960,16 @@ async function loadOpenWorkWebBillingSummary(organizationId: OrgId) {
 }
 
 export async function getOpenWorkWebAccess(organizationId: OrgId) {
-  const [row, complimentaryAccess] = await Promise.all([
+  const [row, complimentaryAccess, trial] = await Promise.all([
     findWebSubscriptionByOrg(organizationId),
     organizationOpenWorkWebComplimentaryAccess(organizationId),
+    getCloudTrial(organizationId),
   ])
   return resolveOpenWorkWebAccess({
     deploymentAvailable: isOpenWorkWebAvailable(),
     hasEligibleSubscription: isEligibleOpenWorkWebSubscriptionRow(row),
     complimentaryAccess,
+    trialExpiresAt: trial?.expires_at,
   })
 }
 

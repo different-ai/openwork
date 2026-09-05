@@ -20,6 +20,7 @@ import {
   type StripeWebBilling,
 } from "../_lib/stripe-web-billing";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { CloudTrialCard } from "../_components/cloud-trial-card";
 
 export type WebPageAccessState = "loading" | "not-found" | "error" | "unsubscribed" | "confirming" | "eligible";
 
@@ -130,6 +131,7 @@ export default function WebPage() {
   const checkoutStartingRef = useRef(false);
   const syncedSessionsRef = useRef(new Map<string, Promise<boolean>>());
   const mountedRef = useRef(true);
+  const expiredTrialOrgsRef = useRef(new Set<string>());
   currentOrgIdRef.current = orgId;
 
   const billing = billingRecord?.orgId === orgId ? billingRecord.billing : null;
@@ -156,9 +158,13 @@ export default function WebPage() {
       const parsed = parseStripeWebBilling(payload);
       if (!parsed) throw new Error("OpenWork Web billing response was incomplete.");
       if (!mountedRef.current || currentOrgIdRef.current !== expectedOrgId) return null;
-      setBillingRecord({ orgId: expectedOrgId, billing: parsed });
+      // A response started before expiry must not briefly restore trial access.
+      const currentBilling: StripeWebBilling = parsed.accessSource === "trial" && expiredTrialOrgsRef.current.has(expectedOrgId)
+        ? { ...parsed, hasAccess: false, accessSource: null }
+        : parsed;
+      setBillingRecord({ orgId: expectedOrgId, billing: currentBilling });
       setErrorRecord(null);
-      return parsed;
+      return currentBilling;
     } catch (error) {
       if (!quiet && mountedRef.current && currentOrgIdRef.current === expectedOrgId) {
         setErrorRecord({
@@ -287,7 +293,7 @@ export default function WebPage() {
       setErrorRecord({ orgId, message: "OpenWork Web billing is not configured for this deployment." });
       return;
     }
-    if (billing.hasAccess || hasOngoingWebSubscription(billing)) return;
+    if ((billing.hasAccess && billing.accessSource !== "trial") || hasOngoingWebSubscription(billing)) return;
 
     checkoutStartingRef.current = true;
     setCheckoutBusy(true);
@@ -355,9 +361,18 @@ export default function WebPage() {
     <DashboardPageTemplate
       icon={Globe}
       title="OpenWork Web"
-      description="Use OpenWork in your browser with an organization subscription."
+      description="Use OpenWork in your browser. Start an optional cloud trial or choose a paid plan."
       colors={["#EFF6FF", "#0F172A", "#2563EB", "#BAE6FD"]}
     >
+      <CloudTrialCard paidPlanHref="#openwork-web-purchase" onAccessChange={(expectedOrgId, reason) => {
+        if (reason === "expired") {
+          expiredTrialOrgsRef.current.add(expectedOrgId);
+          setBillingRecord((current) => current?.orgId === expectedOrgId && current.billing.accessSource === "trial"
+            ? { ...current, billing: { ...current.billing, hasAccess: false, accessSource: null } }
+            : current);
+        }
+        void requestWebBilling(expectedOrgId, true);
+      }} />
       <div data-testid="openwork-web-access" data-access-state={accessState} data-access-source={billing?.accessSource ?? "none"}>
         {accessState === "error" ? (
           <DenCard size="spacious" data-testid="openwork-web-error">
@@ -383,8 +398,8 @@ export default function WebPage() {
           </DenCard>
         ) : null}
 
-        {accessState === "unsubscribed" && billing ? (
-          <DenCard size="spacious" data-testid="openwork-web-purchase">
+        {(accessState === "unsubscribed" || (accessState === "eligible" && billing?.accessSource === "trial")) && billing ? (
+          <DenCard id="openwork-web-purchase" size="spacious" data-testid="openwork-web-purchase">
             <p className="text-[12px] font-semibold uppercase tracking-[0.12em] text-blue-600">OpenWork Web</p>
             <h2 className="mt-2 text-[22px] font-semibold tracking-[-0.03em] text-gray-950">Browser access for your organization</h2>
             <p className="mt-3 text-[14px] leading-6 text-gray-600">{OPENWORK_WEB_QUANTITY_EXPLANATION}</p>
@@ -425,7 +440,7 @@ export default function WebPage() {
           </DenCard>
         ) : null}
 
-        {accessState === "eligible" && billing ? (
+        {accessState === "eligible" && billing && billing.accessSource !== "trial" ? (
           <DenCard size="spacious" data-testid="openwork-web-eligible">
             <p className="text-[12px] font-semibold uppercase tracking-[0.12em] text-emerald-700">
               {billing.accessSource === "complimentary" ? "Complimentary access" : "Subscription active"}

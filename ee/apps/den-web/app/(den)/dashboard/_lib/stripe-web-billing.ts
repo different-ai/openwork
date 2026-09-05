@@ -4,7 +4,7 @@ export const OPENWORK_WEB_UNIT_AMOUNT = 5000;
 export const OPENWORK_WEB_CURRENCY = "usd";
 export const OPENWORK_WEB_INTERVAL = "month";
 
-export type OpenWorkWebAccessSource = "subscription" | "complimentary" | null;
+export type OpenWorkWebAccessSource = "subscription" | "complimentary" | "trial" | null;
 
 export type StripeWebSubscription = {
   status: string;
@@ -68,7 +68,7 @@ export function parseStripeWebBilling(payload: unknown): StripeWebBilling | null
 
   const value = payload.billing.stripe.web;
   const subscription = parseSubscription(value.subscription);
-  const accessSource: OpenWorkWebAccessSource | undefined = value.accessSource === "subscription" || value.accessSource === "complimentary"
+  const accessSource: OpenWorkWebAccessSource | undefined = value.accessSource === "subscription" || value.accessSource === "complimentary" || value.accessSource === "trial"
     ? value.accessSource
     : value.accessSource === null
       ? null

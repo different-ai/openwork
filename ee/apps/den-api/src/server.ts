@@ -1,3 +1,4 @@
+import { startCloudTrialNotificationLoop } from "./cloud-trial-notifications.js"
 import { serve } from "@hono/node-server"
 import app from "./app.js"
 import { env } from "./env.js"
@@ -10,6 +11,7 @@ import { startGithubSyncWorker } from "./workers/github-sync.js"
 import { externalMcpClientRuntimeName } from "./capability-sources/external-mcp-client-runtime.js"
 import { startAutomationSchedulerLoop } from "./automations/scheduler-loop.js"
 
+const stopCloudTrialNotifications = startCloudTrialNotificationLoop()
 const stopScimMaintenanceLoop = startScimMaintenanceLoop()
 const stopCloudIdleStopLoop = startCloudIdleStopLoop()
 const stopWorkerProvisioningReconcileLoop = startWorkerProvisioningReconcileLoop()
@@ -73,6 +75,7 @@ async function closeServer() {
 
 async function stopBackgroundLoops() {
   const results = await Promise.allSettled([
+    stopCloudTrialNotifications(),
     stopScimMaintenanceLoop(),
     stopCloudIdleStopLoop(),
     stopWorkerProvisioningReconcileLoop(),

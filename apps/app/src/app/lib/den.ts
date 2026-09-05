@@ -431,7 +431,7 @@ export type DenBillingSummary = {
   benefitId: string | null;
 };
 
-export type DenOpenWorkWebAccessSource = "subscription" | "complimentary" | null;
+export type DenOpenWorkWebAccessSource = "subscription" | "complimentary" | "trial" | null;
 
 export type DenOpenWorkWebAccess = {
   hasAccess: boolean;
@@ -2769,7 +2769,7 @@ export function parseDenOpenWorkWebAccess(payload: unknown): DenOpenWorkWebAcces
 
   const web = stripe.web;
   const accessSource: DenOpenWorkWebAccessSource | undefined =
-    web.accessSource === "subscription" || web.accessSource === "complimentary"
+    web.accessSource === "subscription" || web.accessSource === "complimentary" || web.accessSource === "trial"
       ? web.accessSource
       : web.accessSource === null
         ? null
