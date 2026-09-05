@@ -8,11 +8,9 @@ function record(value: unknown): Record<string, unknown> {
   return value;
 }
 
-// The control executes only unchanged behavior against clean dev product code.
 // Google and Microsoft both use the real default resolver, never an injected token.
 test("native Google refresh and Microsoft compatibility preserve reconnect and disconnect boundaries", { timeout: 300_000 }, async ({ evidence, place }) => {
   needs({ placement: "local", optIn: ["OPENWORK_EVAL_NATIVE_GOOGLE_REFRESH"] });
-  const compatibilityOnly = process.env.OPENWORK_EVAL_NATIVE_REFRESH_COMPATIBILITY_ONLY === "1";
   await using google = await startMockGoogle({ accounts: ["mailbox@example.test"], port: 0 });
   await using den = await server({ place, web: false, org: { members: {} }, env: {
     DEN_GOOGLE_OAUTH_AUTHORIZE_URL: google.authorizeUrl,
@@ -86,7 +84,7 @@ test("native Google refresh and Microsoft compatibility preserve reconnect and d
     }
     await control({ refreshError: null, holdRefresh: false });
 
-    if (!compatibilityOnly) {
+    {
       await control({ refreshError: "invalid_grant" });
       await connect();
       const before = Number((await control()).attempts);
@@ -135,9 +133,7 @@ test("native Google refresh and Microsoft compatibility preserve reconnect and d
     expect(concurrentTokens).toContain((await requests(providerPath)).at(-1)?.tokenId);
     proved("Concurrent successful refreshes retain a usable successor", "Two held successful refresh responses completed concurrently; both waiting reads succeeded. A later read succeeded without another refresh and used a credential fingerprint observed on the concurrent mailbox reads.");
 
-    // Run the success path on both clean dev and the PR. The rejection variant
-    // checks the new handler only; clean dev is known to throw on invalid_grant.
-    for (const refreshError of compatibilityOnly ? [null] : [null, "invalid_grant"]) {
+    for (const refreshError of [null, "invalid_grant"]) {
       await connect();
       await control({ refreshError, holdRefresh: true });
       const lateRead = read();
