@@ -445,7 +445,12 @@ test("new split creates fresh same-workspace secondary sessions without moving t
         && parseSplitFacts(value).secondaryPaneCount === 1,
     }));
     await user.screenshot();
-    await user.click({ role: "button", label: "Expand side chat" });
+    expect(await probe.eval(`(() => {
+      const button = document.querySelector('[data-workbench-pane-header="secondary"] button[aria-label="Expand side chat"]');
+      if (!(button instanceof HTMLButtonElement)) return false;
+      button.click();
+      return true;
+    })()`)).toBe(true);
     await probe.eventually(() => world.splitFacts(), {
       within: 30_000,
       label: "Expand makes the side conversation the full-width main chat",

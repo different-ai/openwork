@@ -13,6 +13,7 @@ import {
   Columns2,
   FolderPlus,
   LayoutGrid,
+  Maximize2,
   MoreHorizontal,
   Pencil,
   Pin,
@@ -885,7 +886,7 @@ function SidebarSplitPill({ workspaceSessionGroups, onOpenSession }: SidebarSpli
                   }
                 }}
               >
-                <X className="size-3.5" />
+                {pane === "primary" ? <Maximize2 className="size-3.5" /> : <X className="size-3.5" />}
               </button>
             </div>
           );
