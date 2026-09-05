@@ -301,9 +301,9 @@ export async function connectorBranding(seed: Seed) {
   return { app };
 }
 
-export async function connectorsQuickAdd(seed: Seed) {
+export async function connectorCatalogManagement(seed: Seed) {
   const den = await seed.den({
-    org: { name: `Connectors Quick Add ${Date.now()}`, admin: { name: "Catalog Admin" }, members: { member: { name: "Catalog Member" } } },
+    org: { name: `Connector Catalog ${Date.now()}`, admin: { name: "Catalog Admin" }, members: { member: { name: "Catalog Member" } } },
     mocks: { connector: seed.mock() },
   });
   const connection = await seed.orgConnection(den.admin, {

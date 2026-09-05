@@ -1060,7 +1060,7 @@ export function McpConnectionsScreen({ view = "catalog", connectorId }: { view?:
             />
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="min-w-0">
-                <h1 className="flex flex-wrap items-center gap-2.5 text-[28px] font-medium leading-[34px] tracking-[-0.5px] text-gray-950">
+                <h1 data-testid="connector-detail-title" className="flex flex-wrap items-center gap-2.5 text-[28px] font-medium leading-[34px] tracking-[-0.5px] text-gray-950">
                   {detailIdentity.name}
                   {detailConnection ? (
                     <DenChip tone="neutral" size="sm" data-testid="connector-detail-state">
