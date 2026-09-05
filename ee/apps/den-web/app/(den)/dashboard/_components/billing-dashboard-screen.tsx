@@ -13,7 +13,7 @@ import { DenSectionHeader } from "../../_components/ui/section-header";
 import { DenUsageMeter } from "../../_components/ui/usage-meter";
 import { formatMoneyMinor, formatSubscriptionStatus, getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
-import { getInferenceRoute, getMembersRoute, getOrgAccessFlags, getWebRoute } from "../../_lib/den-org";
+import { getBillingRoute, getInferenceRoute, getMembersRoute, getOrgAccessFlags, getWebRoute } from "../../_lib/den-org";
 import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import {
@@ -165,7 +165,7 @@ function parsePolarBilling(payload: unknown): PolarBilling | null {
 export function BillingDashboardScreen() {
   const router = useRouter();
   const { runtimeConfig, runtimeConfigLoaded, sessionHydrated, user } = useDenFlow();
-  const { activeOrg, orgContext, runReauthableAction } = useOrgDashboard();
+  const { activeOrg, orgContext, orgDirectory, runReauthableAction } = useOrgDashboard();
   const activeOrgId = orgContext?.organization.id ?? null;
   const [stripeBillingValue, setStripeBillingValue] = useState<StripeBilling | null>(null);
   const [stripeBillingOrgId, setStripeBillingOrgId] = useState<string | null>(null);
@@ -391,6 +391,15 @@ export function BillingDashboardScreen() {
           : "Team seats and built-in AI model access are separate purchases. Your expected monthly total reflects the subscriptions shown below."}
         colors={["#F5F3FF", "#312E81", "#635BFF", "#C4B5FD"]}
       >
+      <DenNotice
+        className="mb-6"
+        message={`Organization subscriptions belong to ${orgContext?.organization.name ?? activeOrg?.name ?? "the selected organization"}. Switching organizations does not move paid access. Legacy account billing is shown separately below.`}
+      />
+      {orgDirectory.filter((org) => org.id !== activeOrgId && org.hasSubscriptions).map((org) => (
+        <a key={org.id} href={getBillingRoute(org.slug)} className="mb-4 block text-sm underline">
+          Open Billing for {org.name} — subscriptions in this organization
+        </a>
+      ))}
       {stripeError && stripeBilling ? (
         <DenNotice message={stripeError} className="mb-6" />
       ) : null}

@@ -1,5 +1,5 @@
-import { eq } from "@openwork-ee/den-db/drizzle"
-import { AuthAccountTable, AuthUserTable, RateLimitTable } from "@openwork-ee/den-db/schema"
+import { and, eq, inArray, notInArray } from "@openwork-ee/den-db/drizzle"
+import { AuthAccountTable, AuthUserTable, OrgSubscriptionTable, RateLimitTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { desktopConfigSchema } from "@openwork/types/den/desktop-policies"
 import type { Hono } from "hono"
@@ -30,6 +30,7 @@ const meOrganizationsResponseSchema = z.object({
   orgs: z.array(z.object({
     id: denTypeIdSchema("organization"),
     isActive: z.boolean(),
+    hasSubscriptions: z.boolean(),
   }).passthrough()),
   activeOrgId: denTypeIdSchema("organization").nullable(),
   activeOrgSlug: z.string().nullable(),
@@ -193,12 +194,21 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
       },
     }),
     orgMemberRoute({ useUserOrganizations: true }),
-    (c) => {
+    async (c) => {
     const orgs: UserOrganizationsContext["userOrganizations"] = c.get("userOrganizations") ?? []
+    const subscriptions = orgs.length === 0 ? [] : await db
+      .select({ organizationId: OrgSubscriptionTable.organization_id })
+      .from(OrgSubscriptionTable)
+      .where(and(
+        inArray(OrgSubscriptionTable.organization_id, orgs.map((org) => org.id)),
+        notInArray(OrgSubscriptionTable.status, ["canceled", "incomplete_expired", "expired"]),
+      ))
+    const subscribedOrganizations = new Set(subscriptions.map((entry) => entry.organizationId))
 
     return c.json({
       orgs: orgs.map((org) => ({
         ...org,
+        hasSubscriptions: subscribedOrganizations.has(org.id),
         isActive: org.id === c.get("activeOrganizationId"),
       })),
       activeOrgId: c.get("activeOrganizationId") ?? null,
