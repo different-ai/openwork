@@ -1,8 +1,8 @@
 import { expect } from "vitest";
-import { control, evalIn, go, waitFor } from "@openwork/behaviors";
+import { evalIn, go, waitFor } from "@openwork/behaviors";
 import type { Surface } from "@openwork/cdp";
 import { screenshot } from "@openwork/test-evidence";
-import { spec, sleep } from "@openwork/testkit";
+import { spec } from "@openwork/testkit";
 import type { User } from "@openwork/testkit";
 import { bootCrossWorkspaceSplitView } from "../../worlds/cross-workspace-split-view.ts";
 
@@ -21,11 +21,6 @@ const test = spec.world(async (_seed, { place }) => {
     throw error;
   }
 }, { timeout: 600_000 });
-
-type WorkspaceListing = {
-  ids: string[];
-  activeId: string | null;
-};
 
 type SplitCandidate = {
   workspaceId: string;
@@ -57,16 +52,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function parseWorkspaceListing(value: unknown): WorkspaceListing {
-  if (!isRecord(value) || value.ok !== true || !Array.isArray(value.ids)) {
-    throw new Error(`Invalid workspace listing: ${JSON.stringify(value)}`);
-  }
-  return {
-    ids: value.ids.filter((id): id is string => typeof id === "string"),
-    activeId: typeof value.activeId === "string" ? value.activeId : null,
-  };
-}
-
 function parseSplitFacts(value: unknown): SplitFacts {
   if (!isRecord(value)) throw new Error(`Invalid split facts: ${JSON.stringify(value)}`);
   const text = (key: string) => typeof value[key] === "string" ? value[key] : "";
@@ -89,66 +74,6 @@ function parseSplitFacts(value: unknown): SplitFacts {
     primaryUnavailable: value.primaryUnavailable === true,
     secondaryUnavailable: value.secondaryUnavailable === true,
   };
-}
-
-async function listWorkspaces(app: Surface): Promise<WorkspaceListing> {
-  return parseWorkspaceListing(await evalIn(app, `(async () => {
-    const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
-    if (!info?.running || !info.baseUrl) return { ok: false, ids: [], activeId: null };
-    const response = await fetch(String(info.baseUrl).replace(/\\\/+$/, "") + "/workspaces", {
-      headers: { Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? "") },
-      signal: AbortSignal.timeout(15000),
-    });
-    const body = await response.json();
-    const items = Array.isArray(body?.items) ? body.items : [];
-    return {
-      ok: response.ok,
-      ids: items.map((item) => String(item?.id ?? "")).filter(Boolean),
-      activeId: typeof body?.activeId === "string" ? body.activeId : null,
-    };
-  })()`, { awaitPromise: true, timeoutMs: 20_000 }));
-}
-
-async function createWorkspace(app: Surface, path: string): Promise<string> {
-  const before = await listWorkspaces(app);
-  await control(app, "workspace.create", { path }, { timeoutMs: 90_000 });
-  await waitFor(app, `(() => {
-    const active = localStorage.getItem("openwork.react.activeWorkspace") ?? "";
-    return Boolean(active) && active !== ${JSON.stringify(before.activeId ?? "")};
-  })()`, { timeoutMs: 90_000, label: `workspace ${path} selected` });
-  const after = await listWorkspaces(app);
-  const created = after.ids.find((id) => !before.ids.includes(id)) ?? after.activeId;
-  if (!created) throw new Error(`workspace.create produced no workspace id for ${path}`);
-  return created;
-}
-
-async function createSessionInWorkspace(app: Surface, workspaceId: string, title: string): Promise<SplitCandidate> {
-  await go(app, `/workspace/${workspaceId}/session`, { timeoutMs: 60_000 });
-  await waitFor(app, `(localStorage.getItem("openwork.react.activeWorkspace") ?? "") === ${JSON.stringify(workspaceId)}`, {
-    timeoutMs: 60_000,
-    label: `workspace ${workspaceId} active before creating ${title}`,
-  });
-  const deadline = Date.now() + 90_000;
-  let created: unknown = null;
-  let lastError: unknown = null;
-  while (Date.now() < deadline) {
-    try {
-      created = await control(app, "session.create_task", undefined, { timeoutMs: 30_000 });
-      if (typeof created === "string" && created.startsWith("ses_")) break;
-      lastError = new Error(`session.create_task returned ${JSON.stringify(created)}`);
-    } catch (error) {
-      lastError = error;
-    }
-    await sleep(500);
-  }
-  if (typeof created !== "string" || !created.startsWith("ses_")) {
-    const detail = lastError instanceof Error ? lastError.message : String(lastError);
-    throw new Error(`session.create_task did not return a session id for ${title}: ${detail}`);
-  }
-  await control(app, "session.rename", { sessionId: created, title }, { timeoutMs: 30_000 });
-  const candidate = { workspaceId, sessionId: created, title };
-  await waitForSessionRow(app, candidate);
-  return candidate;
 }
 
 async function waitForSessionRow(app: Surface, candidate: SplitCandidate): Promise<void> {
@@ -241,7 +166,7 @@ async function readSplitFacts(app: Surface, primary: SplitCandidate, secondary: 
   })()`));
 }
 
-test("same-workspace and cross-workspace split sessions retain visible ownership", async ({ world, user, evidence }) => {
+test("same-workspace and cross-workspace split sessions retain visible ownership", async ({ world, seed, user, evidence }) => {
     const { app, runId } = world;
     const crossWorkspaceTitle = `Secondary workspace peer ${runId}`;
     const workspaceA = app.workspaceId;
@@ -254,8 +179,8 @@ test("same-workspace and cross-workspace split sessions retain visible ownership
     }
     const primary = { workspaceId: workspaceA, ...seededPrimary };
     const sameWorkspacePeer = { workspaceId: workspaceA, ...seededSameWorkspacePeer };
-    const workspaceB = await createWorkspace(app, `/tmp/openwork-cross-workspace-split-${runId}-b`);
-    const crossWorkspacePeer = await createSessionInWorkspace(app, workspaceB, crossWorkspaceTitle);
+    const { workspaceId: workspaceB } = await seed.workspace(app, `/tmp/openwork-cross-workspace-split-${runId}-b`);
+    const crossWorkspacePeer = { workspaceId: workspaceB, ...await seed.session(app, { title: crossWorkspaceTitle }) };
     expect(primary.workspaceId).not.toBe(crossWorkspacePeer.workspaceId);
 
     await openSessionRoute(app, primary);
@@ -326,7 +251,6 @@ test("same-workspace and cross-workspace split sessions retain visible ownership
 
     await openContextMenuForSession(app, user, crossWorkspacePeer);
     expect(await splitMenuVisible(app)).toBe(true);
-    await user.press("Escape");
     await openCrossWorkspaceSplitFromPalette(app, user, crossWorkspacePeer);
     await waitFor(app, `Boolean(document.querySelector(
       '[data-workbench-pane="secondary"][data-workbench-workspace-id="${workspaceB}"] [data-session-surface-id="${crossWorkspacePeer.sessionId}"]'
