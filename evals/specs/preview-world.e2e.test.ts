@@ -42,6 +42,17 @@ test("preview worlds expose Den and real Electron, preserve progress on frontend
     return value;
   };
   try {
+    const pinnedRef = process.env.OPENWORK_EVAL_REF;
+    assert.ok(pinnedRef);
+    try {
+      process.env.OPENWORK_EVAL_REF = "dev";
+      assert.equal(await up("preview-den", "fresh"), 1);
+      assert.equal(await readScriptWorldSnapshot(join(snapshots, `preview-den--${stage}.json`)), undefined);
+    } finally {
+      process.env.OPENWORK_EVAL_REF = pinnedRef;
+    }
+    await assert.rejects(exec("python3", [join(root, ".opencode/skills/preview-my-work/scripts/update-preview.py"), "preview-den", "--stage", stage, "--ref", "dev"], { cwd: root, timeout: 10000 }), (error: unknown) => record(error) && error.code === 2 && typeof error.stderr === "string" && error.stderr.includes("full 40-character commit SHA"));
+    evidence.recordAssertionEvidence("Mutable refs are rejected before preview execution", "Launch with a branch name fails without a live receipt; the updater rejects a branch name before reading a receipt or invoking Daytona.", true);
     assert.equal(await up("preview-den", "fresh"), 0);
     const den = await snapshot("preview-den");
     assert.equal(den.outputs.scenario, "fresh");
