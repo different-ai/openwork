@@ -83,11 +83,14 @@ test("v2 uses an MCP added through OpenWork on the next call and removes it in t
     }
     const marker = `RELOAD-${stage}-${Date.now()}`;
     const reply = `DONE-${stage}-${Date.now()}`;
+    const prior = stage === "removed" ? (await api(`${v2}/api/session/${sessionId}/message`)).json : null;
+    const priorIds = new Set(record(prior) && Array.isArray(prior.data) ? prior.data.filter(record).map((message) => message.id) : []);
+    const code = stage === "removed" ? 'return typeof tools["reload-witness"];' : toolCode;
     if (useTool) executions++;
     const setup = await fetch(`${den.mocks.witness.url}/admin/agent-workloads`, {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ workloads: [{ promptMarker: marker, finalReply: reply,
-        steps: useTool ? Array.from({ length: executions }, () => ({ tool: "execute", arguments: { code: toolCode } })) : [] }] }),
+        steps: useTool ? Array.from({ length: executions }, () => ({ tool: "execute", arguments: { code } })) : [] }] }),
     });
     expect(setup.ok).toBe(true);
     const sinceIso = new Date().toISOString();
@@ -107,6 +110,18 @@ test("v2 uses an MCP added through OpenWork on the next call and removes it in t
     const calls = await den.mocks.witness.agentRequests({ promptMarker: marker, sinceIso, atLeast: 1 });
     expect(calls.some((call) => call.kind === "error")).toBe(false);
     expect(calls.some((call) => call.kind === "tool" && call.toolName?.endsWith("execute"))).toBe(useTool);
+    if (stage === "removed") {
+      const payload: unknown = JSON.parse(messages);
+      const fresh = record(payload) && Array.isArray(payload.data) ? payload.data.filter(record).filter((message) => !priorIds.has(message.id)) : [];
+      const executions = fresh.flatMap((message) => Array.isArray(message.content) ? message.content.filter(record) : [])
+        .filter((part) => part.type === "tool" && part.name === "execute");
+      expect(executions).toHaveLength(1);
+      const state = executions[0]?.state;
+      if (!record(state)) throw new Error("Missing post-removal Code Mode result");
+      expect(state.status).toBe("completed");
+      expect(record(state.metadata) && state.metadata.error === true).toBe(false);
+      expect(Array.isArray(state.content) ? state.content.filter(record).filter((part) => part.type === "text").map((part) => part.text) : []).toEqual(["undefined"]);
+    }
     const next = (await request(desktop, "/experimental/engine-v2-preview/status")).json;
     expect(record(next) ? next.pid : null).toBe(pid);
     return { messages, sinceIso };
@@ -171,5 +186,5 @@ test("v2 uses an MCP added through OpenWork on the next call and removes it in t
       `${modelId} made unscripted model/tool calls from the Daytona v2 process after managed credential delivery. Two reconnect/disable/enable cycles served actual MCP calls only while enabled, with the original session and process. The credential was absent from all observed public responses.`, true);
   }
   expect((await request(desktop, `${root}/opencode/global/health`)).status).toBe(200);
-  evidence.recordAssertionEvidence("removal reaches the next call and v1 remains available", (live ? "Real OpenAI reported UNAVAILABLE after DELETE; " : "After an explicit Code Mode attempt following DELETE; ") + "the native catalog no longer contained the connection and the original conversation served no new MCP calls. The same v2 process and the v1 health endpoint remained available. Direct v2 MCP mutation was denied.", true);
+  evidence.recordAssertionEvidence("removal reaches the next call and v1 remains available", (live ? "Real OpenAI reported UNAVAILABLE after DELETE; " : "A fresh, successfully completed Code Mode execution returned typeof tools[\"reload-witness\"] as undefined after DELETE; ") + "the native catalog no longer contained the connection and the original conversation served no new MCP calls. The same v2 process and the v1 health endpoint remained available. Direct v2 MCP mutation was denied.", true);
 });
