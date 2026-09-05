@@ -31,7 +31,8 @@ recorded scenario and ref before adopting it. A stage is not a git ref.
 
 Use reviewed repository code: previews execute that ref’s build scripts. Do not
 load production credentials or attach shared secrets volumes. Push the intended
-commit and use its full SHA so Daytona can fetch it. Then:
+commit and use its full 40-character SHA so Daytona can fetch it. Both launch
+and update reject mutable branch names. Then:
 
 ```sh
 OPENWORK_EVAL_REF=<pushed-sha> infisical run --silent --env dev -- pnpm world up preview-den --stage pr-1234 --place daytona --detach --timeout 600000 -- --scenario fresh --lifetime 120

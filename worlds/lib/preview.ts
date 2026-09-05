@@ -66,6 +66,10 @@ async function setupTeam(den: Den, restricted: boolean): Promise<void> {
 /** Owned, disposable infrastructure only. Never attach a preview to an existing test or production sandbox. */
 export async function bootPreview(stack: AsyncDisposableStack, place: Place, surface: PreviewSurface, scenario: PreviewScenario) {
   if (place.kind !== "daytona") throw new Error("Interactive previews require --place daytona.");
+  const base = place.denBase();
+  if (base.kind !== "daytona" || !/^[0-9a-f]{40}$/.test(base.ref)) {
+    throw new Error("Set OPENWORK_EVAL_REF to the reviewed, pushed full 40-character commit SHA before booting a preview.");
+  }
   if (["OPENWORK_EVAL_DEN_API_URL", "OPENWORK_EVAL_DAYTONA_DEN_SANDBOX", "OPENWORK_EVAL_DAYTONA_DESKTOP_SANDBOX", "OPENWORK_EVAL_DAYTONA_SANDBOX"].some((key) => process.env[key]?.trim())) {
     throw new Error("Preview worlds require isolated infrastructure. Remove existing sandbox/reuse overrides before starting.");
   }
@@ -82,7 +86,7 @@ export async function bootPreview(stack: AsyncDisposableStack, place: Place, sur
     denApi: output(den.ref.apiUrl, { group: "Services" }),
     emailOutbox: output(`${den.ref.apiUrl}/v1/dev/emails`, { group: "Services", note: "Test mail only; no messages leave this world" }),
     scenario: output(scenario, { group: "World" }),
-    ref: output(process.env.OPENWORK_EVAL_REF?.trim() || process.env.GITHUB_SHA?.trim() || "dev", { group: "World" }),
+    ref: output(base.ref, { group: "World" }),
   };
   if (den.placement?.kind === "daytona") outputs.denSandbox = output(den.placement.sandboxId, { group: "World" });
   if (!fresh) {

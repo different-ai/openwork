@@ -11,12 +11,12 @@ import subprocess
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("world", choices=["preview-den", "preview-desktop"])
 parser.add_argument("--stage", required=True)
-parser.add_argument("--ref", required=True, help="Pushed branch or full commit SHA")
+parser.add_argument("--ref", required=True, help="Reviewed, pushed full 40-character commit SHA")
 args = parser.parse_args()
 if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._-]*", args.stage):
     parser.error("Use the normalized stage name from world outputs.")
-if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9/._-]*", args.ref):
-    parser.error("Use a pushed git ref or commit SHA.")
+if not re.fullmatch(r"[0-9a-f]{40}", args.ref):
+    parser.error("Use a reviewed, pushed full 40-character commit SHA; branch names are mutable.")
 root = Path(__file__).resolve().parents[4]
 receipt_dir = Path(os.environ.get("OPENWORK_WORLD_SNAPSHOT_DIR", root / "evals/results/.worlds/scripts"))
 receipt = receipt_dir / f"{args.world}--{args.stage}.json"
@@ -52,7 +52,9 @@ if web:
         except (FileNotFoundError, PermissionError): continue
     if pid is None: raise RuntimeError("No running preview web server")
 subprocess.run(["git", "fetch", "origin", ref], cwd=root, check=True)
-subprocess.run(["git", "checkout", "--detach", "FETCH_HEAD"], cwd=root, check=True)
+fetched = subprocess.check_output(["git", "rev-parse", "FETCH_HEAD"], cwd=root, text=True).strip()
+if fetched != ref: raise RuntimeError("Fetched commit does not match the requested SHA")
+subprocess.run(["git", "checkout", "--detach", ref], cwd=root, check=True)
 install_env = {key: value for key, value in os.environ.items() if key in {"PATH", "HOME", "PNPM_HOME"}}
 with open("/tmp/preview-update.log", "w") as log:
     subprocess.run(["pnpm", "install", "--frozen-lockfile"], cwd=root, env=install_env, stdout=log, stderr=subprocess.STDOUT, check=True)
