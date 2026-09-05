@@ -240,6 +240,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     await world.open(dashboardAppPath);
     await user.click("Delete Team briefing");
     await user.see({ text: "Delete “Team briefing”?" });
+    await user.see({ text: "This removes the saved app from everyone’s dashboards and the app list. Its workflow and past results stay available." });
     await user.screenshot();
     await user.click("Cancel");
     expect((await readApp()).onDashboard).toBe(true);
