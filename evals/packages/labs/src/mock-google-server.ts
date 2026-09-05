@@ -24,6 +24,7 @@ interface Account {
 }
 
 interface RequestEntry {
+  tokenId?: string;
   method: string;
   path: string;
   url: string;
@@ -221,8 +222,10 @@ function accountForRequest(state: MockGoogleState, request: IncomingMessage): Ac
 }
 
 function recordRequest(state: MockGoogleState, request: IncomingMessage, url: URL): void {
+  const credential = bearerToken(request);
   state.requests.push({
     method: method(request),
+    ...(credential ? { tokenId: tokenId(credential) } : {}),
     path: url.pathname,
     url: `${url.pathname}${url.search}`,
     at: new Date().toISOString(),
@@ -670,6 +673,15 @@ async function handleRequest(state: MockGoogleState, request: IncomingMessage, r
   }
   if (requestMethod === "GET" && url.pathname === "/userinfo") {
     userinfo(state, request, response);
+    return;
+  }
+  // Minimal Graph-compatible mail boundary for the shared native OAuth journey.
+  if (requestMethod === "GET" && url.pathname === "/v1.0/me/messages") {
+    if (!accountForRequest(state, request)) {
+      sendJson(response, 401, { error: { code: "InvalidAuthenticationToken" } });
+      return;
+    }
+    sendJson(response, 200, { value: [] });
     return;
   }
   if (requestMethod === "GET" && url.pathname === "/gmail/v1/users/me/profile") {
