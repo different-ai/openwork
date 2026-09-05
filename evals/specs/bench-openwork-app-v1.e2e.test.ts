@@ -414,6 +414,51 @@ async function v1EngineSessionCount(info: ServerInfo, workspaceId: string): Prom
   return value.length;
 }
 
+async function observeExecutionEvents(info: ServerInfo, workspaceId: string, conflictingDirectory: string) {
+  const abort = new AbortController();
+  const url = new URL(`${info.baseUrl}/workspace/${encodeURIComponent(workspaceId)}/opencode2/api/event`);
+  url.searchParams.set("location[directory]", conflictingDirectory);
+  const response = await fetch(url, { headers: authHeaders(info), signal: abort.signal });
+  if (!response.ok || !response.body) throw new Error(`Event stream returned ${response.status}`);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const events: Array<{ type: string; sessionID: string; directory: string }> = [];
+  let failure: unknown;
+  const finished = (async () => {
+    let buffer = "";
+    try {
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        buffer += decoder.decode(chunk.value, { stream: true });
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data:")) continue;
+          let event: unknown = JSON.parse(line.slice(5));
+          if (typeof event === "string") event = JSON.parse(event);
+          if (!isRecord(event) || typeof event.type !== "string" || !event.type.startsWith("session.execution.")) continue;
+          if (!isRecord(event.data) || typeof event.data.sessionID !== "string"
+            || !isRecord(event.location) || typeof event.location.directory !== "string") {
+            throw new Error("Execution event lacks verified session ownership");
+          }
+          events.push({ type: event.type, sessionID: event.data.sessionID, directory: event.location.directory });
+        }
+      }
+    } catch (error) {
+      if (!abort.signal.aborted) failure = error;
+    }
+  })();
+  return {
+    snapshot() { if (failure) throw failure; return [...events]; },
+    async [Symbol.asyncDispose]() {
+      abort.abort();
+      await reader.cancel().catch(() => undefined);
+      await finished;
+    },
+  };
+}
+
 async function pollExpression(
   app: Surface,
   expression: string,
@@ -1064,6 +1109,8 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence, place }) =
             await createNewSession(app);
           }
           const bNonces: string[] = [];
+          await using aEvents = serverInfo ? await observeExecutionEvents(serverInfo, workspaceA.workspaceId, workspaceBPath) : null;
+          await using bEvents = serverInfo ? await observeExecutionEvents(serverInfo, workspaceBId, workspaceAPath) : null;
           const setupNonce = `bench-b-setup-${witnessNonce}`;
           bNonces.push(setupNonce);
           const setup = await sendMessage(app, setupNonce, witnessNonce);
@@ -1091,6 +1138,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence, place }) =
               && messageRun.assistantText.includes(`token 20 ${witnessNonce}`);
             messageCompletions.push(messageComplete);
             expect(messageComplete).toBe(true);
+            expect(messageRun.timing.complete, "warm reply finishes without waiting for the reconciliation timer").toBeLessThan(10_000);
 
             await createNewSession(app);
             if (benchEngine === "v2") {
@@ -1113,8 +1161,24 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence, place }) =
               && longRun.assistantText.includes(`token 20 ${witnessNonce}`);
             longMessageChecks.push(longComplete);
             expect(longComplete).toBe(true);
+            expect(longRun.timing.complete, "long reply finishes without waiting for the reconciliation timer").toBeLessThan(10_000);
             latestBChat = { workspaceId: workspaceBId, sessionId: longRun.sessionId, title: `workspace B long ${warmIndex}` };
             latestBMarker = longMessage.marker;
+          }
+
+          if (aEvents && bEvents) {
+            await eventually(() => bEvents.snapshot(), {
+              within: 5_000, intervalMs: 50, label: "workspace B completion lifecycle event",
+              until: (events) => events.some((event) => event.type === "session.execution.succeeded" && event.sessionID === latestBChat.sessionId),
+            });
+            await sleep(500);
+            expect(bEvents.snapshot().every((event) => event.directory === workspaceBPath)).toBe(true);
+            expect(aEvents.snapshot()).toEqual([]);
+            evidence.recordAssertionEvidence(
+              "Execution events without an engine-supplied directory are forwarded only after session ownership is verified",
+              "Real workspace B prompts produced completion events with B's verified directory on B's authenticated stream; A's concurrent stream received no execution event. Both streams supplied conflicting directory hints. Warm and long replies completed within 10 seconds instead of waiting for reconciliation.",
+              true,
+            );
           }
 
           const workspaceAChat: Chat = {

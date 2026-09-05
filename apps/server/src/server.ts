@@ -1434,14 +1434,36 @@ async function proxyOpencodeV2Request(input: {
         const parsed = frames.push(chunk);
         if (parsed.overflow) throw new Error("OpenCode v2 event frame exceeded the size limit");
         for (const frame of parsed.frames) {
+          let scopedFrame = frame;
           let payload = parseSsePayload(frame);
           if (typeof payload === "string") {
             try { payload = JSON.parse(payload); } catch { continue; }
           }
+          // v2 execution lifecycle events omit location. Resolve their session
+          // through the daemon before forwarding; the event's session ID alone
+          // is not proof of workspace ownership.
+          if (isRecord(payload) && payload.location === undefined
+            && typeof payload.type === "string"
+            && /^session\.execution\.(started|succeeded|failed|interrupted)$/.test(payload.type)
+            && isRecord(payload.data) && typeof payload.data.sessionID === "string"
+            && payload.data.sessionID.startsWith("ses_")) {
+            const sessionUrl = new URL(input.connection.url);
+            sessionUrl.pathname = `/api/session/${encodeURIComponent(payload.data.sessionID)}`;
+            const ownedSession: unknown = await loopbackFetch(sessionUrl.toString(), {
+              headers: { authorization: `Basic ${Buffer.from(`opencode:${input.connection.password}`).toString("base64")}` },
+              signal: AbortSignal.any([input.request.signal, AbortSignal.timeout(5_000)]),
+            }).then(async (result) => result.ok ? result.json() : null).catch(() => null);
+            const data = isRecord(ownedSession) && isRecord(ownedSession.data) ? ownedSession.data : ownedSession;
+            const session = isRecord(data) && isRecord(data.info) ? data.info : data;
+            if (isRecord(session) && isRecord(session.location)) {
+              payload = { ...payload, location: session.location };
+              scopedFrame = `data: ${JSON.stringify(payload)}`;
+            }
+          }
           const location = isRecord(payload) && isRecord(payload.location) ? payload.location : null;
           const directory = location && typeof location.directory === "string" ? location.directory : null;
           if (!directory || await realpath(directory).catch(() => null) !== expected) continue;
-          controller.enqueue(encoder.encode(`${frame}\n\n`));
+          controller.enqueue(encoder.encode(`${scopedFrame}\n\n`));
         }
       },
     }));
