@@ -125,11 +125,13 @@ export default function App() {
     try {
       const list = await coworkerBridge.coworkers.list();
       const info = await coworkerBridge.runtimeInfo();
-      setRuntime(info);
-      setBots(list);
       // A fresh window runs no group turn, so any still recorded as running was cut off: settle it first.
       await coworkerBridge.groups.recoverInterrupted().catch(() => []);
-      setGroups(await coworkerBridge.groups.list().catch(() => []));
+      const groups = await coworkerBridge.groups.list().catch(() => []);
+      // Publish the saved team and its selection together, keeping the loader up until both are ready.
+      setRuntime(info);
+      setBots(list);
+      setGroups(groups);
       setSelectedSlug((current) =>
         current && list.some((coworker) => coworker.slug === current) ? current : (list[0]?.slug ?? ""),
       );

@@ -43,8 +43,10 @@ const STUB_REPLY = "Hello from the stub server.";
  * a tags list, a models list, and streamed chat completions with one fixed
  * reply. Only reachable when the app runs on this machine.
  */
-async function startStubModelServer(): Promise<{ port: number; chatCalls: () => number; close: () => Promise<void> }> {
+async function startStubModelServer(): Promise<{ port: number; chatCalls: () => number; holdReplies: () => void; releaseReplies: () => void; close: () => Promise<void> }> {
   let chatCalls = 0;
+  let replyGate: Promise<void> | undefined;
+  let releaseReplies = () => {};
   const server = http.createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     const json = (status: number, body: unknown) => {
@@ -63,7 +65,7 @@ async function startStubModelServer(): Promise<{ port: number; chatCalls: () => 
       chatCalls += 1;
       let body = "";
       request.on("data", (chunk: Buffer) => { body += chunk.toString("utf8"); });
-      request.on("end", () => {
+      request.on("end", async () => {
         let stream = false;
         let model: string = STUB_MODELS[0] ?? "stub";
         try {
@@ -75,6 +77,7 @@ async function startStubModelServer(): Promise<{ port: number; chatCalls: () => 
         } catch {
           // An unreadable body still gets the fixed reply.
         }
+        await replyGate;
         if (!stream) {
           json(200, { id: "chatcmpl-stub", object: "chat.completion", created: 1, model, choices: [{ index: 0, message: { role: "assistant", content: STUB_REPLY }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 5, total_tokens: 6 } });
           return;
@@ -98,7 +101,9 @@ async function startStubModelServer(): Promise<{ port: number; chatCalls: () => 
   return {
     port: address.port,
     chatCalls: () => chatCalls,
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    holdReplies: () => { replyGate = new Promise<void>((resolve) => { releaseReplies = resolve; }); },
+    releaseReplies: () => { releaseReplies(); replyGate = undefined; },
+    close: () => { releaseReplies(); return new Promise<void>((resolve) => server.close(() => resolve())); },
   };
 }
 
@@ -872,14 +877,28 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   })()`);
   // A coworker that has never held or finished anything gets no summary line under its first message.
   expect(composerFacts).toEqual({ present: true, hasModelControl: false, mentionsModel: false, brandLine: false, summaryLine: false });
-  // The effort dial sits at the foot of the conversation: a pill naming the stop (Balanced to start), a popover with the
-  // stop's name, one line of meaning, and a five-stop slider; moving it is kept on the record and shown at once.
+  const integratedComposer = await evalIn(app, `(() => {
+    const surface = document.querySelector('[data-testid="coworker-input-surface"]');
+    const actions = surface?.querySelector('[data-testid="coworker-composer-actions"]');
+    const field = surface?.querySelector('textarea');
+    const effort = actions?.querySelector('[data-testid="effort-dial-pill"]');
+    const send = actions?.querySelector('[data-testid="coworker-send"]');
+    const assignment = actions?.querySelector('button[aria-pressed]');
+    if (!(surface instanceof HTMLElement) || !(field instanceof HTMLElement) || !(actions instanceof HTMLElement)) return null;
+    const bounds = surface.getBoundingClientRect();
+    return { controlsInside: Boolean(effort && send && assignment), separateWritingArea: field.getBoundingClientRect().bottom <= actions.getBoundingClientRect().top + 1, fits: [effort, send, assignment].every((control) => control instanceof HTMLElement && control.getBoundingClientRect().left >= bounds.left && control.getBoundingClientRect().right <= bounds.right), fieldHeight: field.getBoundingClientRect().height };
+  })()`);
+  expect(integratedComposer).toMatchObject({ controlsInside: true, separateWritingArea: true, fits: true });
+  if (!isRecord(integratedComposer) || typeof integratedComposer.fieldHeight !== "number") throw new Error("Composer geometry unavailable.");
+  expect(integratedComposer.fieldHeight).toBeGreaterThanOrEqual(56);
+  await screenshot(app);
+  // Dynamic effort is a task-sensitive preference. The control shows its current setting and how it adapts.
   const dialBefore = await evalIn(app, `(() => {
     const dial = document.querySelector('[data-testid="coworker-composer"] [data-testid="effort-dial"]');
     const pill = dial?.querySelector('[data-testid="effort-dial-pill"]');
     return dial instanceof HTMLElement && pill instanceof HTMLElement ? { stop: dial.dataset.stop, pill: pill.textContent?.trim(), open: Boolean(document.querySelector('[data-testid="effort-dial-panel"]')) } : null;
   })()`);
-  expect(dialBefore).toEqual({ stop: "balanced", pill: "Effort Balanced ⌄", open: false });
+  expect(dialBefore).toEqual({ stop: "balanced", pill: "Dynamic effort Balanced ⌄", open: false });
   await evalIn(app, `document.querySelector('[data-testid="coworker-composer"] [data-testid="effort-dial-pill"]').click(); true`);
   const panel = await waitFor(app, `(() => {
     const panel = document.querySelector('[data-testid="effort-dial-panel"]');
@@ -888,14 +907,15 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     return { stop: panel.querySelector('[data-testid="effort-dial-stop"]')?.textContent?.trim(), meaning: panel.querySelector('[data-testid="effort-dial-meaning"]')?.textContent?.trim(), stops: range instanceof HTMLInputElement ? Number(range.max) + 1 : 0, reset: Boolean(panel.querySelector('[data-testid="effort-dial-reset"]')) };
   })()`, { timeoutMs: 10_000, label: "the effort dial's popover" });
   expect(panel).toEqual({ stop: "Balanced", meaning: "The usual: quick questions get quick answers, real work and Workers think harder.", stops: 5, reset: false });
-  await evalIn(app, `(() => {
-    const range = document.querySelector('[data-testid="effort-dial-range"]');
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
-    setter.call(range, "3");
-    range.dispatchEvent(new Event("input", { bubbles: true }));
-    range.dispatchEvent(new Event("change", { bubbles: true }));
-    return true;
-  })()`);
+  await screenshot(app);
+  await evalIn(app, `document.querySelector('[data-testid="effort-explainer"]').click(); true`);
+  const adaptationBefore = await evalIn(app, `Array.from(document.querySelectorAll('[data-testid="effort-adapts-preview"] [aria-label]')).map((node) => node.getAttribute('aria-label'))`);
+  expect(adaptationBefore).toEqual(["Quick questions: 2 of 6 thinking levels", "Planning & research: 4 of 6 thinking levels", "Background work: 4 of 6 thinking levels"]);
+  await screenshot(app);
+  expect(await evalIn(app, `getComputedStyle(document.querySelector('[data-testid="effort-dial-range"]')).appearance`)).toBe("none");
+  await evalIn(app, `document.querySelector('[data-testid="effort-dial-range"]').focus(); true`);
+  await app.client.send("Input.dispatchKeyEvent", { type: "keyDown", key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39 });
+  await app.client.send("Input.dispatchKeyEvent", { type: "keyUp", key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39 });
   await waitFor(app, `window.__COWORKER__.invoke("coworkers.get", { slug: "scout" }).then((response) => response.result?.effortPreference === "thorough")`, { awaitPromise: true, timeoutMs: 15_000, label: "the dial's stop kept on the record" });
   const dialAfter = await waitFor(app, `(() => {
     const panel = document.querySelector('[data-testid="effort-dial-panel"]');
@@ -903,7 +923,69 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     if (!(panel instanceof HTMLElement) || !(pill instanceof HTMLElement)) return false;
     return panel.querySelector('[data-testid="effort-dial-stop"]')?.textContent?.trim() === "Thorough" ? { pill: pill.textContent?.trim(), reset: Boolean(panel.querySelector('[data-testid="effort-dial-reset"]')) } : false;
   })()`, { timeoutMs: 10_000, label: "the dial showing Thorough" });
-  expect(dialAfter).toEqual({ pill: "Effort Thorough ⌄", reset: true });
+  expect(dialAfter).toEqual({ pill: "Dynamic effort Thorough ⌄", reset: true });
+  const adaptationAfter = await evalIn(app, `Array.from(document.querySelectorAll('[data-testid="effort-adapts-preview"] [aria-label]')).map((node) => node.getAttribute('aria-label'))`);
+  expect(adaptationAfter).toEqual(["Quick questions: 4 of 6 thinking levels", "Planning & research: 5 of 6 thinking levels", "Background work: 5 of 6 thinking levels"]);
+  const stableEffortBounds = await evalIn(app, `(() => {
+    const rect = document.querySelector('[data-testid="effort-dial-panel"]').closest('[role="dialog"]').getBoundingClientRect();
+    return { top: rect.top, height: rect.height };
+  })()`);
+  const sliderAlignment = [];
+  for (const [position, stop] of ["light", "steady", "balanced", "thorough", "all-in"].entries()) {
+    const key = position === 0 ? "Home" : "ArrowRight";
+    const keyCode = position === 0 ? 36 : 39;
+    await app.client.send("Input.dispatchKeyEvent", { type: "keyDown", key, code: key, windowsVirtualKeyCode: keyCode });
+    await app.client.send("Input.dispatchKeyEvent", { type: "keyUp", key, code: key, windowsVirtualKeyCode: keyCode });
+    await waitFor(app, `document.querySelector('[data-testid="effort-dial-panel"]')?.getAttribute('data-stop') === ${JSON.stringify(stop)}`, { timeoutMs: 10_000, label: `slider at ${stop}` });
+    const alignment = await evalIn(app, `(() => {
+      const input = document.querySelector('[data-testid="effort-dial-range"]');
+      const track = document.querySelector('[data-testid="effort-dial-track"]').getBoundingClientRect();
+      const fill = document.querySelector('[data-testid="effort-dial-fill"]').getBoundingClientRect();
+      const range = input.getBoundingClientRect();
+      const thumbRight = range.left + track.height + (range.width - track.height) * Number(input.value) / Number(input.max);
+      return { capSharesThumbCenter: Math.abs(fill.right - thumbRight) < 0.6, verticallyCentered: Math.abs(track.top + track.height / 2 - range.top - range.height / 2) < 0.6, sameDiameter: fill.height === track.height, insideTrack: fill.right <= track.right + 0.6 };
+    })()`);
+    expect(alignment, stop).toEqual({ capSharesThumbCenter: true, verticallyCentered: true, sameDiameter: true, insideTrack: true });
+    expect(await evalIn(app, `(() => {
+      const rect = document.querySelector('[data-testid="effort-dial-panel"]').closest('[role="dialog"]').getBoundingClientRect();
+      return { top: rect.top, height: rect.height };
+    })()`), `effort popup stays in place at ${stop}`).toEqual(stableEffortBounds);
+    sliderAlignment.push({ stop, alignment });
+  }
+  await app.client.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "no-preference" }] });
+  await waitFor(app, `getComputedStyle(document.querySelector('.effort-slider-particle')).opacity === '1'`, { timeoutMs: 5_000, label: "full effort light settled" });
+  expect(await evalIn(app, `getComputedStyle(document.querySelector('.effort-slider-aurora')).animationName`)).toBe("effort-aurora");
+  expect(await evalIn(app, `getComputedStyle(document.querySelector('.effort-slider-particle')).animationName`)).toBe("effort-light-drift");
+  await waitFor(app, `getComputedStyle(document.querySelector('.effort-slider-full-effects')).opacity === '1'`, { timeoutMs: 5_000, label: "All in star glints visible" });
+  expect(await evalIn(app, `getComputedStyle(document.querySelector('.effort-slider-star')).animationName`)).toBe("effort-star-glint");
+  expect(await evalIn(app, `getComputedStyle(document.querySelector('.effort-slider-sweep')).animationName`)).toBe("effort-light-sweep");
+  const stableEffect = await evalIn(app, `new Promise((resolve) => {
+    const composer = document.querySelector('[data-testid="coworker-input-surface"]');
+    const panel = document.querySelector('[data-testid="effort-dial-panel"]');
+    const started = performance.now();
+    let frames = 0;
+    let continuous = true;
+    const sample = () => {
+      frames++;
+      continuous &&= composer === document.querySelector('[data-testid="coworker-input-surface"]') && panel === document.querySelector('[data-testid="effort-dial-panel"]') && composer?.isConnected && panel?.isConnected;
+      if (performance.now() - started >= 1200) resolve({ frames, continuous });
+      else requestAnimationFrame(sample);
+    };
+    requestAnimationFrame(sample);
+  })`, { awaitPromise: true, timeoutMs: 5_000 });
+  expect(stableEffect).toMatchObject({ continuous: true });
+  evidence.recordAssertionEvidence("Changing effort keeps the popup in place and its effect preserves the visible composer", JSON.stringify({ stableEffortBounds, stableEffect }), true);
+  await screenshot(app);
+  await app.client.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
+  const reducedMotion = await evalIn(app, `Array.from(document.querySelectorAll('.effort-slider-aurora, .effort-slider-particle, .effort-slider-full-effects, .effort-slider-star, .effort-slider-sweep')).every(node => getComputedStyle(node).animationName === 'none' && getComputedStyle(node).transitionDuration === '0s')`);
+  expect(reducedMotion).toBe(true);
+  await app.client.send("Emulation.setEmulatedMedia", { features: [] });
+  await evalIn(app, `document.querySelector('[data-testid="effort-dial-reset"]').click(); true`);
+  await waitFor(app, `getComputedStyle(document.querySelector('.effort-slider-full-effects')).opacity === '0'`, { timeoutMs: 5_000, label: "star effects fade away below All in" });
+  expect(await evalIn(app, `Array.from(document.querySelectorAll('.effort-slider-star, .effort-slider-sweep')).every(node => getComputedStyle(node).animationName === 'none')`)).toBe(true);
+  evidence.recordAssertionEvidence("All in adds animated star glints and a light sweep; returning to Balanced hides and stops both effects", "Stars and sweep visible and animated only at All in; reduced motion disables every decorative animation.", true);
+  evidence.recordAssertionEvidence("The slider stays aligned at every stop; high effort adds light and reduced motion keeps it still", JSON.stringify({ sliderAlignment, reducedMotion }), true);
+  evidence.recordAssertionEvidence("The input contains its actions, and Dynamic effort explains its changing task preferences", JSON.stringify({ integratedComposer, adaptationBefore, adaptationAfter }), true);
   await evalIn(app, `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); true`);
   await waitFor(app, `!document.querySelector('[data-testid="effort-dial-panel"]')`, { timeoutMs: 5_000, label: "the popover closed" });
   // Back to Balanced so the rest of the journey reads the defaults.
@@ -915,7 +997,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   })()`, { timeoutMs: 10_000, label: "context panel open and settled" });
   evidence.recordAssertionEvidence(
     "The Activity view leads with what is happening, holds Documents, Workers, and Assignments as levels, and the composer carries no model controls or brand line",
-    "Once opened, Scout's Activity view showed one quiet note, three flat rows (Documents, Workers, Assignments) with no card, no second settings control, and no footer links, while the header carried the only Ready — plain text, no dot; the Assignments row opened its level with New assignment, an empty once list, and a single compact Add assignment empty state (Nothing on a schedule yet.); the Workers row opened a level with Workers only and New Worker; the panel and composer contained no model, thinking-effort, or engine vocabulary, and the composer carried neither a brand line nor a summary line for a coworker that has nothing yet. Its effort dial read Effort Balanced; the popover showed the stop's name, its one-line meaning, a five-stop slider and no Reset; moving it to Thorough was kept on Scout's record, renamed the pill, and offered Reset; Escape closed it.",
+    "Once opened, Scout's Activity view showed one quiet note, three flat rows (Documents, Workers, Assignments) with no card, no second settings control, and no footer links, while the header carried the only Ready — plain text, no dot; the Assignments row opened its level with New assignment, an empty once list, and a single compact Add assignment empty state (Nothing on a schedule yet.); the Workers row opened a level with Workers only and New Worker; the panel and composer contained no model, thinking-effort, or engine vocabulary, and the composer carried neither a brand line nor a summary line for a coworker that has nothing yet. Its control read Dynamic effort Balanced; the popover showed the stop's name, its one-line meaning, a five-stop slider and no Reset; moving it to Thorough was kept on Scout's record, renamed the pill, and offered Reset; Escape closed it.",
     true,
   );
 
@@ -1311,7 +1393,31 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     avatarGlasses: "round",
   });
   expect(secondCoworker).toMatchObject({ ok: true, result: { slug: "nova" } });
-  await evalIn(app, "location.reload(); true");
+  const startupScript = await app.client.send("Page.addScriptToEvaluateOnNewDocument", { source: `(() => {
+    const state = { observations: 0, wrongScreenObservations: 0, ready: false };
+    window.__coworkerStartupProbe = state;
+    const sample = () => {
+      state.observations++;
+      if (document.querySelector('[data-testid="new-coworker"], [data-testid="onboarding-launcher"]')) state.wrongScreenObservations++;
+      state.ready = Boolean(document.querySelector('[data-testid="coworker-rail"]'));
+      if (state.ready) observer.disconnect();
+    };
+    const observer = new MutationObserver(sample);
+    observer.observe(document, { childList: true, subtree: true });
+    sample();
+  })();` });
+  if (typeof startupScript.identifier !== "string") throw new Error("Startup observation was not installed.");
+  let startupScreens: unknown;
+  try {
+    await app.client.send("Emulation.setCPUThrottlingRate", { rate: 6 });
+    await evalIn(app, "location.reload(); true");
+    startupScreens = await waitFor(app, `window.__coworkerStartupProbe?.ready ? window.__coworkerStartupProbe : false`, { timeoutMs: 120_000, label: "saved team restored without the creation screen" });
+  } finally {
+    await app.client.send("Emulation.setCPUThrottlingRate", { rate: 1 });
+    await app.client.send("Page.removeScriptToEvaluateOnNewDocument", { identifier: startupScript.identifier });
+  }
+  expect(startupScreens).toMatchObject({ wrongScreenObservations: 0, ready: true });
+  evidence.recordAssertionEvidence("Restoring an existing team never flashes onboarding or Add a coworker, including under slower rendering", JSON.stringify(startupScreens), true);
   await waitForText(app, "Nova", { timeoutMs: 120_000 });
   const railAvatars = await waitFor(app, `(() => {
     const avatars = [...document.querySelectorAll("aside nav svg.coworker-avatar")];
@@ -1639,7 +1745,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   if (sameMachine) expect(modelsPage).toContain("Stub box");
   evidence.recordAssertionEvidence(
     "Global OpenWork settings open as a full-window workspace with their own left navigation and plain AI language",
-    "The discreet bottom-left OpenWork control hid the mounted coworker workspace, its rail, and its context-panel resizer, replacing them with a full-width settings shell, a 252px left settings sidebar, and four destinations named General, Account, AI models, and AI & local setup. The pages showed Local mode, AI is ready, and Scout's selected Big Pickle model without the word engine anywhere.",
+    "The discreet bottom-left OpenWork control hid the mounted coworker workspace, its rail, and its context-panel resizer, replacing them with a full-width settings shell, a 252px left settings sidebar, and five destinations named All Hands, General, Account, AI models, and AI & local setup. The pages showed Local mode, AI is ready, and Scout's selected Big Pickle model without the word engine anywhere.",
     true,
   );
 
@@ -1660,6 +1766,11 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     coworkerWorkspaceDisplay: "flex",
     selectedCoworker: true,
   });
+  // Model choice was verified above. Execute local scheduled work with the
+  // already connected fixture so this journey does not depend on a live free model.
+  if (sameMachine && stub) {
+    expect(await invokeCoworker(app, "coworkers.update", { slug: "scout", patch: { model: "custom-stub-box/stub-large", modelVariant: "" } })).toMatchObject({ ok: true });
+  }
   // Scheduled work is added from Activity › Assignments.
   await openActivityLevel(app, "assignments");
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-assignments"]'))`, { timeoutMs: 30_000, label: "the Assignments level" });
@@ -1737,6 +1848,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     threadId: expect.stringMatching(/^ses_/),
     error: "",
   });
+  if (sameMachine && stub) expect(completedRun).toMatchObject({ summary: STUB_REPLY });
   // The row in Assignments reads the outcome in plain words…
   const rowAfterRun = await waitFor(app, `(() => {
     const row = document.querySelector('[data-testid="responsibility-row"]');
@@ -1886,6 +1998,9 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   const longerId = byName.get("Longer readiness check");
   const secondId = byName.get("Second readiness check");
   if (!longerId || !secondId) throw new Error(`Responsibilities were not both listed: ${JSON.stringify([...byName.keys()])}`);
+  // Hold the fixture's reply until the waiting row is visible, independently of
+  // model speed or the Assignments list's refresh interval.
+  stub?.holdReplies();
   const admissions = await evalIn(app, `Promise.all([
     window.__COWORKER__.invoke("localResponsibilities.runNow", { slug: "scout", id: ${json(longerId)} }),
     window.__COWORKER__.invoke("localResponsibilities.runNow", { slug: "scout", id: ${json(secondId)} }),
@@ -1913,6 +2028,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   })()`, { timeoutMs: 30_000, label: "queued responsibility row" });
   expect(String(queuedRow)).toContain("Waiting its turn");
   expect(String(queuedRow)).not.toMatch(/slot|Queued/);
+  stub?.releaseReplies();
   const drained = await waitFor(app, `window.__COWORKER__.invoke("localResponsibilities.list", { slug: "scout" })
     .then((response) => {
       const items = response.ok ? response.result : [];

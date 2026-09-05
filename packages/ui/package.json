@@ -7,7 +7,23 @@
       "types": "./src/react/index.ts",
       "development": "./src/react/index.ts",
       "default": "./src/react/index.ts"
-    }
+    },
+    "./coworker-option": {
+      "types": "./src/react/coworker-option.tsx",
+      "development": "./src/react/coworker-option.tsx",
+      "default": "./src/react/coworker-option.tsx"
+    },
+    "./coworker": {
+      "types": "./src/react/coworker-avatar.tsx",
+      "development": "./src/react/coworker-avatar.tsx",
+      "default": "./src/react/coworker-avatar.tsx"
+    },
+    "./coworker-effort": {
+      "types": "./src/react/coworker-effort-slider.tsx",
+      "development": "./src/react/coworker-effort-slider.tsx",
+      "default": "./src/react/coworker-effort-slider.tsx"
+    },
+    "./coworker-effort.css": "./src/react/coworker-effort.css"
   },
   "files": [
     "dist",

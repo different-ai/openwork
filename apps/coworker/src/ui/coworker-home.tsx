@@ -1053,8 +1053,7 @@ function CoworkerSettings({
           compact
         />
         <div className="mt-4" data-testid="coworker-effort-settings">
-          <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">How hard to work</h4>
-          <EffortDial stop={coworker.effortPreference} onChange={(stop) => void updateEffort(stop)} coworkerName={coworker.name} compact={false} />
+          <EffortDial stop={coworker.effortPreference} onChange={(stop) => void updateEffort(stop)} coworkerName={coworker.name} fixedVariant={coworker.modelVariant} compact={false} />
         </div>
         <p className="mt-3 text-xs leading-relaxed text-mist" data-testid="coworker-model-note">
           {coworker.modelMode === "auto"

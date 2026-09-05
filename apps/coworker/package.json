@@ -33,6 +33,7 @@
     "@openwork/headless-threads": "workspace:*",
     "@openwork/paths": "workspace:*",
     "@openwork/types": "workspace:*",
+    "@openwork/ui": "workspace:*",
     "better-sqlite3": "^13.0.2",
     "dompurify": "^3.4.13",
     "drizzle-orm": "^0.45.2",

@@ -787,7 +787,7 @@ export function GroupChat({
       <div className="px-5 pb-4 pt-2" data-testid="coworker-composer">
         <div className="mx-auto max-w-3xl">
           {assignmentMode ? (
-            <p className="mb-1.5 px-12 text-[11px] text-mist" data-testid="group-assignment-mode">Something one of them should own, separate from this chat</p>
+            <p className="mb-2 px-2 text-[11px] text-mist" data-testid="group-assignment-mode">Something one of them should own, separate from this chat</p>
           ) : null}
           {queue.map((item) => (
             <div key={item.clientMessageId} className="mb-1.5 flex items-center gap-2 px-4 text-[11px] text-mist" data-testid="group-queued">
@@ -796,24 +796,7 @@ export function GroupChat({
               <button type="button" className="rounded-full px-1.5 text-mist hover:text-snow" aria-label="Do not send this" onClick={() => dequeueGroupMessage(group.id, item.clientMessageId)}>×</button>
             </div>
           ))}
-          <div className="relative flex items-end gap-2">
-            <button
-              type="button"
-              aria-pressed={assignmentMode}
-              data-testid="group-assignment-toggle"
-              className={`mb-0.5 flex size-8 shrink-0 items-center justify-center rounded-full border text-lg leading-none transition-colors ${
-                assignmentMode ? "border-spark/50 bg-spark/15 text-spark" : "border-line text-mist hover:border-spark/40 hover:text-snow"
-              }`}
-              title={assignmentMode ? "Back to chat" : "Create assignment"}
-              onClick={() => {
-                setAssignmentMode((current) => !current);
-                setPendingAssignment(null);
-                requestAnimationFrame(() => composerRef.current?.focus());
-              }}
-            >
-              <PlusIcon className={`size-4 transition-transform ${assignmentMode ? "rotate-45" : ""}`} />
-              <span className="sr-only">{assignmentMode ? "Back to chat" : "Create assignment"}</span>
-            </button>
+          <div className={`relative rounded-[24px] border bg-panel/60 p-3 transition-colors focus-within:border-spark/50 ${assignmentMode ? "border-spark/35" : "border-line"}`} data-testid="coworker-input-surface">
             {mention && mentionOptions.length > 0 && !assignmentMode ? (
               <ul
                 role="listbox"
@@ -841,13 +824,13 @@ export function GroupChat({
                 ))}
               </ul>
             ) : null}
-            <div className={`flex min-w-0 flex-1 items-end gap-1 rounded-[20px] border bg-panel/60 py-1 pl-4 pr-1 transition-colors focus-within:border-spark/50 ${assignmentMode ? "border-spark/35" : "border-line"}`}>
+            <div>
               <textarea
                 ref={composerRef}
                 aria-label={assignmentMode ? "Assignment outcome" : `Message ${group.name}`}
                 data-testid="group-composer"
                 rows={1}
-                className="min-h-[30px] min-w-0 flex-1 resize-none bg-transparent py-1 text-sm leading-relaxed text-snow outline-none placeholder:text-mist/65"
+                className="block min-h-[56px] w-full resize-none bg-transparent px-1 pb-3 pt-1 text-sm leading-relaxed text-snow outline-none placeholder:text-mist/65"
                 placeholder={assignmentMode ? "What should one of them own?" : `Message ${members.map((member) => member.name).join(", ")}`}
                 value={assignmentMode ? assignment : message}
                 disabled={!runtime.engineManaged}
@@ -893,15 +876,35 @@ export function GroupChat({
                   }
                 }}
               />
-              {live && !assignmentMode ? <Button variant="ghost" className="mb-0.5 rounded-full px-3 py-1 text-xs" onClick={() => void stopGroupRun(group.id)}>Stop</Button> : null}
-              {assignmentMode ? (
-                <SendButton label="Create assignment" busy={false} disabled={!assignment.trim() || !runtime.engineManaged || Boolean(pendingAssignment)} onClick={proposeAssignment} testId="group-send" />
-              ) : (
-                <SendButton label={live ? "Next" : "Send"} busy={false} disabled={!message.trim() || !runtime.engineManaged} onClick={send} testId="group-send" />
-              )}
+              <div className="flex items-center gap-2" data-testid="coworker-composer-actions">
+                <button
+                  type="button"
+                  aria-pressed={assignmentMode}
+                  data-testid="group-assignment-toggle"
+                  className={`flex size-8 shrink-0 items-center justify-center rounded-full border text-lg leading-none transition-colors ${
+                    assignmentMode ? "border-spark/50 bg-spark/15 text-spark" : "border-line text-mist hover:border-spark/40 hover:text-snow"
+                  }`}
+                  title={assignmentMode ? "Back to chat" : "Create assignment"}
+                  onClick={() => {
+                    setAssignmentMode((current) => !current);
+                    setPendingAssignment(null);
+                    requestAnimationFrame(() => composerRef.current?.focus());
+                  }}
+                >
+                  <PlusIcon className={`size-4 transition-transform ${assignmentMode ? "rotate-45" : ""}`} />
+                  <span className="sr-only">{assignmentMode ? "Back to chat" : "Create assignment"}</span>
+                </button>
+                <span className="min-w-0 flex-1 text-[11px] text-mist/75">{assignmentMode ? "Create an assignment" : "@name to choose who answers"}</span>
+                {live && !assignmentMode ? <Button variant="ghost" className="mb-0.5 rounded-full px-3 py-1 text-xs" onClick={() => void stopGroupRun(group.id)}>Stop</Button> : null}
+                {assignmentMode ? (
+                  <SendButton label="Create assignment" busy={false} disabled={!assignment.trim() || !runtime.engineManaged || Boolean(pendingAssignment)} onClick={proposeAssignment} testId="group-send" />
+                ) : (
+                  <SendButton label={live ? "Next" : "Send"} busy={false} disabled={!message.trim() || !runtime.engineManaged} onClick={send} testId="group-send" />
+                )}
+              </div>
             </div>
           </div>
-          <div className="mt-1.5 flex items-center justify-between gap-3 px-12 text-[9px] text-mist/65">
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-2 text-[10px] text-mist/65">
             <p className="min-w-0 truncate">
               {assignmentMode ? "Enter to choose who owns it · Shift Enter for a new line" : "Enter to send · Shift Enter for a new line · @name chooses who answers, @everyone asks all"}
             </p>
