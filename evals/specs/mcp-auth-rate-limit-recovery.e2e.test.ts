@@ -58,8 +58,28 @@ test("MCP requests keep valid credentials after the public auth rate limit is ex
   expect(registration.status).toBe(201);
   const clientId = stringField(await registration.json(), "client_id");
   const verifier = randomBytes(32).toString("base64url");
-  const resource = `${den.ref.apiUrl}/mcp/agent`;
+  const challenge = await request("/mcp/agent");
+  expect(challenge.status).toBe(401);
+  const metadataUrl = challenge.headers.get("www-authenticate")?.match(/resource_metadata="([^"]+)"/)?.[1];
+  expect(metadataUrl).toBe(`${den.ref.apiUrl}/.well-known/oauth-protected-resource/mcp/agent`);
+  await challenge.arrayBuffer();
+  if (!metadataUrl) throw new Error("Missing protected-resource discovery URL");
+  const discovery = await request(new URL(metadataUrl).pathname);
+  expect(discovery.status).toBe(200);
+  const metadata: unknown = await discovery.json();
+  const resource = stringField(metadata, "resource");
+  expect(resource).toBe(`${den.ref.apiUrl}/mcp/agent`);
+  expect(metadata).toMatchObject({ authorization_servers: [`${den.ref.apiUrl}/api/auth`], bearer_methods_supported: ["header"] });
   const authorize = new URLSearchParams({ client_id: clientId, response_type: "code", redirect_uri: redirectUri, scope, resource, code_challenge: createHash("sha256").update(verifier).digest("base64url"), code_challenge_method: "S256", prompt: "consent" });
+  for (const resources of [[], ["https://unrelated.example/mcp"], [resource, resource]]) {
+    const rejectedQuery = new URLSearchParams(authorize);
+    rejectedQuery.delete("resource");
+    for (const value of resources) rejectedQuery.append("resource", value);
+    const rejected = await request(`/api/auth/oauth2/authorize?${rejectedQuery}`, { headers: { cookie } });
+    expect(rejected.status).toBe(400);
+    expect(rejected.headers.has("location")).toBe(false);
+    expect(await rejected.json()).toMatchObject({ error: "invalid_target" });
+  }
   const authorization = await request(`/api/auth/oauth2/authorize?${authorize}`, { headers: { cookie } });
   expect(authorization.status).toBe(302);
   const consentLocation = authorization.headers.get("location");
@@ -73,6 +93,21 @@ test("MCP requests keep valid credentials after the public auth rate limit is ex
   const callback = new URL(stringField(await consent.json(), "url"));
   const code = callback.searchParams.get("code");
   if (!code) throw new Error("Missing authorization code");
+  for (const resources of [[], ["https://unrelated.example/mcp"], [resource, resource]]) {
+    const rejectedBody = new URLSearchParams({ grant_type: "authorization_code", client_id: clientId, code, code_verifier: verifier, redirect_uri: redirectUri });
+    for (const value of resources) rejectedBody.append("resource", value);
+    const rejected = await request("/api/auth/oauth2/token", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: rejectedBody,
+    });
+    expect(rejected.status).toBe(400);
+    expect(rejected.headers.get("cache-control")).toBe("no-store");
+    const error: unknown = await rejected.json();
+    expect(error).toMatchObject({ error: "invalid_target" });
+    expect(error).not.toHaveProperty("access_token");
+    expect(error).not.toHaveProperty("refresh_token");
+  }
   const exchange = await request("/api/auth/oauth2/token", {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -81,6 +116,11 @@ test("MCP requests keep valid credentials after the public auth rate limit is ex
   expect(exchange.status).toBe(200);
   const token = stringField(await exchange.json(), "access_token");
   expect(token.split(".")).toHaveLength(3);
+  evidence.recordAssertionEvidence(
+    "Protected-resource discovery supports a synthetic OAuth client without accepting invalid resources",
+    "The unauthenticated challenge led to agent metadata. Missing, unknown, and repeated resources returned invalid_target at authorization and code exchange; no redirect or token was issued. The same code then exchanged successfully with the discovered resource.",
+    true,
+  );
 
   // This also proves the server is running with production rate limits enabled.
   const burstStarted = Date.now();
