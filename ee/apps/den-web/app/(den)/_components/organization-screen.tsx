@@ -3,13 +3,14 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { LogOut, Settings } from "lucide-react";
-import { getErrorMessage, normalizeAuthIntentParam, PENDING_AUTH_INTENT_STORAGE_KEY, requestJson } from "../_lib/den-flow";
-import { type DenOrgSummary, formatRoleLabel, getDesktopPolicyRoute, getJoinOrgRoute, getInferenceRoute, getMarketplaceOnboardingRoute, getOrgDashboardRoute, parseOrgListPayload } from "../_lib/den-org";
+import { getErrorMessage, requestJson } from "../_lib/den-flow";
+import { type DenOrgSummary, formatRoleLabel, getDesktopPolicyRoute, getJoinOrgRoute, getOnboardingPeopleRoute, getOrgDashboardRoute, parseOrgListPayload } from "../_lib/den-org";
 import { useOrgListWindow } from "../_lib/use-org-list-window";
 import { useDenFlow } from "../_providers/den-flow-provider";
 
 import { DesktopSetupChoices, WorkspaceIntentChoices, type DesktopSetup, type WorkspaceIntent } from "./workspace-intent";
 import { parseDesktopPolicyList } from "../dashboard/_components/desktop-policy-data";
+import { SetupFrame } from "./setup-frame";
 import { ORG_SCOPE_HEADER } from "../_lib/org-scope";
 
 type SettingsTab = "profile" | "organizations";
@@ -158,15 +159,7 @@ export function OrganizationScreen() {
         router.push(`${getDesktopPolicyRoute(nextOrg.slug, policy.id)}?setup=restricted`);
         return;
       }
-      const nextSlug = nextOrg.slug;
-      const pendingIntent = normalizeAuthIntentParam(window.sessionStorage.getItem(PENDING_AUTH_INTENT_STORAGE_KEY));
-      if (pendingIntent === "models") {
-        window.sessionStorage.removeItem(PENDING_AUTH_INTENT_STORAGE_KEY);
-        router.push(getInferenceRoute(nextSlug));
-        return;
-      }
-
-      router.push(getMarketplaceOnboardingRoute(nextSlug));
+      router.push(getOnboardingPeopleRoute(nextOrg.slug));
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : "Failed to create organization.");
       setCreateBusy(false);
@@ -188,7 +181,7 @@ export function OrganizationScreen() {
     </> : null}
     {createError ? <p role="alert" className="text-sm text-rose-600">{createError}</p> : null}
     {createdOrg && intent === "team" && desktopSetup === "restricted" ? <p role="status" className="text-sm text-gray-600">Your team is created. Finish desktop policy setup before inviting members.</p> : null}
-    <button type="submit" disabled={createBusy || !intent || (intent === "join" ? !invitationLink.trim() : createName.trim().length < 2 || (intent === "team" && !desktopSetup))} className="justify-self-start rounded-xl bg-gray-950 px-5 py-3 text-sm font-medium text-white hover:bg-gray-800 focus-visible:ring-2 focus-visible:ring-gray-600 focus-visible:ring-offset-2 disabled:opacity-50">
+    <button type="submit" disabled={createBusy || !intent || (intent === "join" ? !invitationLink.trim() : createName.trim().length < 2 || (intent === "team" && !desktopSetup))} className="w-full rounded-xl bg-gray-950 px-5 py-3.5 text-sm font-medium text-white hover:bg-gray-800 focus-visible:ring-2 focus-visible:ring-gray-600 focus-visible:ring-offset-2 disabled:opacity-50">
       {createBusy ? "Setting up…" : createdOrg ? "Retry policy setup" : intent === "join" ? "Review invitation" : intent === "team" && desktopSetup === "restricted" ? "Create team & review policy" : "Continue"}
     </button>
   </form>;
@@ -203,6 +196,21 @@ export function OrganizationScreen() {
         <p className="text-sm text-gray-500">Loading organizations...</p>
       </div>
     );
+  }
+
+  if (!isSingleOrgMode && (showDirectCreateFlow || showCreate)) {
+    return <SetupFrame step="space" title="Make it yours." description="A space for your tools, your team, and whatever comes next.">
+      <div className="mb-6">
+        <h2 className="text-[23px] font-semibold tracking-[-.035em]">A little about your work.</h2>
+        <p className="mt-2 text-[13px] leading-6 text-gray-500">Choose a starting point. You can invite people in the next step.</p>
+      </div>
+      {error ? <p role="alert" className="mb-4 text-sm text-rose-600">{error}</p> : null}
+      {creationForm}
+      <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-5 text-xs text-gray-500">
+        <span className="max-w-[260px] truncate">{user?.email}</span>
+        {!createBusy && !createdOrg && orgs.length > 0 ? <button type="button" className="font-medium text-gray-700" onClick={() => { setShowCreate(false); setCreateName(""); setIntent(null); setDesktopSetup(null); setCreateError(null); }}>Cancel</button> : <button type="button" disabled={createBusy} onClick={() => void signOut()} className="font-medium text-gray-700">Log out</button>}
+      </div>
+    </SetupFrame>;
   }
 
   return (
@@ -270,35 +278,7 @@ export function OrganizationScreen() {
           </div>
         ) : null}
 
-        {showDirectCreateFlow ? (
-          <div className="mx-auto max-w-2xl">
-            <section className="rounded-[1.75rem] border border-gray-200 bg-white p-5 shadow-sm sm:p-7 md:rounded-[2rem] md:p-10">
-              <div className="mb-6 flex flex-col gap-4 sm:mb-8 sm:flex-row sm:items-start">
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#011627] text-sm font-semibold uppercase tracking-[0.08em] text-white sm:h-14 sm:w-14">
-                  {userInitials}
-                </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-medium uppercase tracking-[0.18em] text-gray-400">OpenWork Cloud</p>
-                  <h1 className="mt-2 text-[2rem] font-semibold leading-none tracking-[-0.04em] text-gray-950 sm:text-3xl">
-                    Make room for your work.
-                  </h1>
-                  <p className="mt-3 max-w-xl text-[13px] leading-6 text-gray-500 sm:text-sm">
-                    Your organization stores shared tools and access. Desktop workspaces organize folders on your computer. No credit card required.
-                  </p>
-                </div>
-              </div>
-
-              {error ? (
-                <div className="mb-6 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
-                  {error}
-                </div>
-              ) : null}
-
-              {creationForm}
-
-            </section>
-          </div>
-        ) : !isSingleOrgMode ? (
+        {!isSingleOrgMode ? (
           <div className="mx-auto max-w-5xl">
             <div className="mb-6 sm:mb-8">
               <h1 className="text-2xl font-semibold tracking-tight text-gray-900">Settings</h1>
@@ -414,14 +394,6 @@ export function OrganizationScreen() {
                     </button>
                   </div>
                 </div>
-
-                {showCreate ? (
-                  <div className="mb-6 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm sm:mb-8 sm:p-6">
-                    <h2 className="mb-4 text-lg font-medium text-gray-900">Create an Organization</h2>
-                    {creationForm}
-                    {!createBusy && !createdOrg ? <button type="button" className="mt-4 text-sm text-gray-500 hover:text-gray-900" onClick={() => { setShowCreate(false); setCreateName(""); setIntent(null); setDesktopSetup(null); setCreateError(null); }}>Cancel</button> : null}
-                  </div>
-                ) : null}
 
                 <div className="grid gap-3 md:hidden">
                   {visibleOrgs.map((org) => (

@@ -3,11 +3,11 @@ import { spec } from "@openwork/testkit";
 import { signupWorkspace } from "../worlds/signup-workspace.ts";
 
 // New journey: an account with no organization makes its first personal/team
-// choice, then reviews and persists desktop access before inviting anyone.
+// choice, optionally invites people, then reviews the ready workspace.
 const test = spec.world(signupWorkspace, { timeout: 600_000 });
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 
-test("signup distinguishes joining, personal work, and restricted team setup without changing another organization", async ({ world, user, probe, evidence, step }) => {
+test("signup distinguishes joining, personal work, and restricted team setup without changing another organization", async ({ world, user, probe, seed, evidence, step }) => {
   const orgs = async () => {
     const result = await probe.api(world.den.admin, "/v1/me/orgs");
     expect(result.response.ok).toBe(true);
@@ -23,9 +23,38 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     return policy.policy;
   };
 
+  const invitationsFor = async (id: string) => {
+    const result = await probe.api(world.den.admin, "/v1/org", { headers: { "x-openwork-org-id": id } });
+    expect(result.response.ok).toBe(true);
+    if (!isRecord(result.body) || !Array.isArray(result.body.invitations)) throw new Error("Expected invitations");
+    return result.body.invitations.filter(isRecord).map(({ email, role, status }) => ({ email, role, status }));
+  };
+  const inviteEmails = async () => {
+    const result = await probe.api(world.den.admin, "/v1/dev/emails?template=organizationInvite");
+    expect(result.response.ok).toBe(true);
+    if (!isRecord(result.body) || !Array.isArray(result.body.emails)) throw new Error("Expected development email outbox");
+    return result.body.emails.filter(isRecord).map((entry) => entry.to);
+  };
+
+  await step("a person arrives at signup and creates their actual account", async () => {
+    await user.see({ text: "Good work starts here." }, { timeoutMs: 90_000 });
+    await user.see({ role: "textbox", label: "Email" });
+    await user.notSee({ role: "textbox", label: "Team name" });
+    await user.looks(["The signup landing shows Good work starts here alongside a clear email entry form within a restrained black-and-white setup frame"]);
+    await user.type({ role: "textbox", label: "Email" }, world.owner.email);
+    await user.click({ role: "button", label: "Next" });
+    await user.type({ role: "textbox", label: "Name" }, world.owner.name);
+    await user.type({ role: "textbox", label: "Password" }, world.owner.password);
+    await user.click({ role: "button", label: "Sign up" });
+    await user.see({ text: "Make it yours." }, { timeoutMs: 90_000 });
+    await world.adoptSignedInOwner();
+    expect(await orgs()).toEqual([]);
+    evidence.recordAssertionEvidence("Signup begins at the public account screen and account creation does not create an organization", "The visible email/name/password form created the account; its organization list remained empty before choosing how to work.", true);
+  });
+
   await step("a fresh account can review joining without creating an organization", async () => {
-    await user.see({ text: "Make room for your work." }, { timeoutMs: 90_000 });
-    await user.see({ text: "How will you use OpenWork?" });
+    await user.see({ text: "Make it yours." }, { timeoutMs: 90_000 });
+    await user.see({ text: "A little about your work." });
     await user.notSee({ role: "textbox", label: "Organization name" });
     expect(await orgs()).toEqual([]);
     await user.click({ text: "Join a team" });
@@ -42,14 +71,14 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
 
   let personalId = "";
   let personalPolicy: Record<string, unknown> = {};
-  await step("personal work creates one organization and continues to tools", async () => {
+  await step("personal work creates one organization and can skip inviting without sending anything", async () => {
     await user.navigate(new URL("/organization", world.den.ref.webUrl).toString());
-    await user.see({ text: "Make room for your work." }, { timeoutMs: 90_000 });
+    await user.see({ text: "Make it yours." }, { timeoutMs: 90_000 });
     await user.click({ text: "On my own" });
     await user.notSee({ text: "How should your team’s desktop app work?" });
     await user.type({ role: "textbox", label: "Organization name" }, "Personal work");
     await user.click({ role: "button", label: "Continue" });
-    await user.see({ testId: "marketplace-onboarding" }, { timeoutMs: 90_000 });
+    await user.see({ text: "Bring your people." }, { timeoutMs: 90_000 });
     const memberships = await orgs();
     expect(memberships).toHaveLength(1);
     const personal = memberships.find((entry) => entry.name === "Personal work");
@@ -58,7 +87,15 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     personalPolicy = await policyFor(personalId);
     expect(personalPolicy.allowMultipleWorkspaces).toBe(true);
     expect(personalPolicy.allowManageExtensions).toBe(true);
-    evidence.recordAssertionEvidence("Personal setup creates one organization and preserves desktop workspace and tool defaults", JSON.stringify({ memberships: memberships.length, personalPolicy }), true);
+    expect(await invitationsFor(personalId)).toEqual([]);
+    const outboxBeforeSkip = await inviteEmails();
+    await user.type({ role: "textbox", label: "Teammate email 1" }, "unsent@openwork.test");
+    await user.click({ role: "button", label: "Do this later" });
+    await user.see({ testId: "marketplace-onboarding" }, { timeoutMs: 90_000 });
+    await user.looks(["The final setup screen shows a clear desktop download and model setup path in the same restrained black-and-white design"]);
+    expect(await invitationsFor(personalId)).toEqual([]);
+    expect(await inviteEmails()).toEqual(outboxBeforeSkip);
+    evidence.recordAssertionEvidence("Personal setup preserves desktop defaults and explicit skip never submits a typed invitation", JSON.stringify({ memberships: memberships.length, personalPolicy, invitations: [], emailsUnchanged: true }), true);
   });
 
   let flexibleId = "";
@@ -69,7 +106,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await user.type({ role: "textbox", label: "Team name" }, "Flexible team");
     await user.click({ text: "Flexible" });
     await user.click({ role: "button", label: "Continue" });
-    await user.see({ testId: "marketplace-onboarding" }, { timeoutMs: 90_000 });
+    await user.see({ text: "Bring your people." }, { timeoutMs: 90_000 });
     await user.notSee({ text: "Review your team’s desktop access" });
     const memberships = await orgs();
     expect(memberships).toHaveLength(2);
@@ -78,7 +115,51 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     flexibleId = flexible.id;
     expect(await policyFor(flexibleId)).toEqual(personalPolicy);
     expect(await policyFor(personalId)).toEqual(personalPolicy);
-    evidence.recordAssertionEvidence("Flexible team creation continues directly to tools and leaves both its defaults and the existing personal organization unchanged", JSON.stringify({ count: memberships.length, policy: personalPolicy }), true);
+    evidence.recordAssertionEvidence("Flexible team creation continues to optional invitations and leaves both its defaults and the existing personal organization unchanged", JSON.stringify({ count: memberships.length, policy: personalPolicy }), true);
+  });
+
+  await step("optional invitations reject duplicates and retry only an unsuccessful row", async () => {
+    // Arrange a real server rejection for one row, without replacing product APIs.
+    const limited = await seed.api(world.den.admin, "/v1/org", {
+      method: "PATCH", headers: { "x-openwork-org-id": flexibleId },
+      body: JSON.stringify({ allowedEmailDomains: ["openwork.test"] }),
+    });
+    expect(limited.response.ok).toBe(true);
+    expect(await invitationsFor(flexibleId)).toEqual([]);
+    const outboxBefore = await inviteEmails();
+    await user.type({ role: "textbox", label: "Teammate email 1" }, world.invitees[0]);
+    await user.type({ role: "textbox", label: "Teammate email 2" }, world.invitees[0].toUpperCase());
+    await user.click({ role: "button", label: "Send invitations" });
+    await user.see({ text: "Use a different email address for each person." });
+    expect(await invitationsFor(flexibleId)).toEqual([]);
+    expect(await inviteEmails()).toEqual(outboxBefore);
+    evidence.recordAssertionEvidence("Duplicate invitation emails are refused before any request is saved or sent", "Case-insensitive duplicate rows produced a visible error, zero invitations, and an unchanged development outbox.", true);
+
+    await user.type({ role: "textbox", label: "Teammate email 2" }, world.rejectedEmail, { replace: true });
+    await user.click({ role: "button", label: "Send invitations" });
+    await user.see({ text: "Invitation sent" });
+    await user.see({ text: "This workspace only allows openwork.test email addresses." });
+    await user.see({ role: "textbox", label: "Teammate email 2" }, { value: world.rejectedEmail, editable: true });
+    expect(await invitationsFor(flexibleId)).toEqual([{ email: world.invitees[0], role: "member", status: "pending" }]);
+    expect((await inviteEmails()).filter((email) => email === world.invitees[0])).toHaveLength(1);
+    expect((await inviteEmails()).includes(world.rejectedEmail)).toBe(false);
+    await user.screenshot();
+
+    await user.type({ role: "textbox", label: "Teammate email 2" }, world.invitees[1], { replace: true });
+    await user.click({ role: "button", label: "Send invitations" });
+    await user.see({ text: "2 invitations sent." });
+    const invitations = await invitationsFor(flexibleId);
+    expect(invitations).toHaveLength(2);
+    for (const email of world.invitees) {
+      expect(invitations).toContainEqual({ email, role: "member", status: "pending" });
+      expect((await inviteEmails()).filter((recipient) => recipient === email)).toHaveLength(1);
+    }
+    expect(await invitationsFor(personalId)).toEqual([]);
+    expect(await policyFor(personalId)).toEqual(personalPolicy);
+    await user.looks(["The optional people setup shows two completed invitations and a clear Continue action within the same neutral onboarding frame"]);
+    await user.click({ role: "button", label: "Continue" });
+    await user.see({ testId: "marketplace-onboarding" }, { timeoutMs: 90_000 });
+    evidence.recordAssertionEvidence("Partial invitation failure preserves the unsuccessful address and retries it without resending successful invitations or granting admin access", JSON.stringify({ invitations, recipientCounts: [1, 1], personalInvitations: 0 }), true);
   });
 
   await step("team signup prepares Restricted for explicit review, then persists it", async () => {
@@ -105,13 +186,18 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await user.reload();
     await user.see({ text: "Review your team’s desktop access" }, { timeoutMs: 90_000 });
     await user.click({ role: "button", label: "Save changes" });
-    await user.see({ testId: "marketplace-onboarding" }, { timeoutMs: 90_000 });
+    await user.see({ text: "Bring your people." }, { timeoutMs: 90_000 });
     const after = await policyFor(team.id);
     for (const key of ["allowCustomProviders", "allowZenModel", "allowMultipleWorkspaces", "allowControlSettings", "allowManageExtensions", "allowBuiltInExtensions", "allowAlphaUpdates"]) expect(after[key]).toBe(false);
     expect(after.showWelcomePage).toBe(true);
     expect(await policyFor(personalId)).toEqual(personalPolicy);
     expect(await policyFor(flexibleId)).toEqual(personalPolicy);
     expect(await orgs()).toHaveLength(3);
+    expect(await invitationsFor(team.id)).toEqual([]);
+    await user.click({ role: "button", label: "Do this later" });
+    await user.see({ testId: "marketplace-onboarding" }, { timeoutMs: 90_000 });
+    expect(await invitationsFor(team.id)).toEqual([]);
+    expect(await invitationsFor(flexibleId)).toHaveLength(2);
     evidence.recordAssertionEvidence("Restricted stays a draft through reload until explicit save, persists the real desktop booleans, and leaves the personal organization unchanged", JSON.stringify({ before, after, personalPolicy, orgCount: 3 }), true);
   });
 });

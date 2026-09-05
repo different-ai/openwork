@@ -3,11 +3,10 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Check, KeyRound } from "lucide-react";
+import { Check, KeyRound, ArrowUpRight } from "lucide-react";
 import { DownloadOpenWorkCard, type DownloadCardInstallers } from "@openwork/ui/react";
 import { DenBadge } from "../../_components/ui/badge";
-import { DenChoiceCard } from "../../_components/ui/choice-card";
-import { DenSectionHeader } from "../../_components/ui/section-header";
+import { SetupFrame } from "../../_components/setup-frame";
 import {
   getCustomLlmProvidersRoute,
   getInferenceRoute,
@@ -15,7 +14,6 @@ import {
 } from "../../_lib/den-org";
 import { requestJson } from "../../_lib/den-flow";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { LlmProviderLogos } from "./llm-provider-logos";
 
 const APP_INSTALLED_KEY = "openwork:onboarding:app-installed";
 
@@ -79,96 +77,89 @@ export function MarketplaceOnboardingScreen({
   const [appInstalled, setAppInstalled] = useLocalStorageFlag(APP_INSTALLED_KEY);
 
   const orgName = activeOrg?.name ?? "your team";
-  const requiredDone = appInstalled && modelsEnabled;
 
   return (
-    <div className="mx-auto max-w-4xl px-4 pb-16 pt-12 sm:px-6" data-testid="marketplace-onboarding">
-      <header className="mx-auto max-w-xl text-center">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-gray-500">Get started</p>
-        <h1 className="mt-3 text-[30px] font-semibold leading-[1.15] tracking-[-0.04em] text-gray-950 sm:text-[34px]">
-          {requiredDone ? `${orgName} is ready.` : `Get the OpenWork app`}
-        </h1>
-        <p className="mx-auto mt-3 max-w-lg text-[15px] leading-6 text-gray-500">
-          {requiredDone
-            ? "The desktop app is installed and models are available. Jump into your dashboard whenever you're ready."
-            : "OpenWork runs on the desktop app. Install it, sign in, and this workspace syncs automatically."}
-        </p>
-      </header>
+    <SetupFrame
+      step="ready"
+      embedded
+      title="Your next step: the desktop."
+      description={`OpenWork is where the work happens. Install the app, then sign in to ${orgName}.`}
+    >
+      <div className="grid gap-8" data-testid="marketplace-onboarding">
+        <section aria-labelledby="setup-download-heading" className="grid gap-4">
+          <div className="flex items-start gap-3">
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-full border border-[var(--dls-border)] text-xs font-medium text-[var(--dls-text-secondary)]">1</span>
+            <div>
+              <h2 id="setup-download-heading" className="text-base font-semibold tracking-tight text-[var(--dls-text-primary)]">Get the OpenWork app</h2>
+              <p className="mt-1 text-sm leading-6 text-[var(--dls-text-secondary)]">Your files, conversations, and tools in one place.</p>
+            </div>
+          </div>
+          <DownloadOpenWorkCard installers={installers} releaseTag={releaseTag} />
+          <div className="flex items-center justify-between gap-3 text-xs text-[var(--dls-text-secondary)]">
+            {appInstalled ? (
+              <span className="inline-flex items-center gap-2" role="status">
+                <Check className="size-3.5" aria-hidden /> Installation marked complete
+              </span>
+            ) : (
+              <button
+                type="button"
+                data-testid="onboarding-app-installed"
+                onClick={() => setAppInstalled(true)}
+                className="rounded text-sm font-medium underline-offset-4 hover:text-[var(--dls-text-primary)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--dls-text-primary)]"
+              >
+                I&apos;ve already installed it →
+              </button>
+            )}
+            <span>Sign in with the same account.</span>
+          </div>
+        </section>
 
-      <section className="mt-8 grid gap-4">
-        <DownloadOpenWorkCard installers={installers} releaseTag={releaseTag} />
-        <div className="flex justify-center">
-          {appInstalled ? (
-            <DenBadge tone="success" icon={Check}>
-              Installed
-            </DenBadge>
-          ) : (
-            <button
-              type="button"
-              data-testid="onboarding-app-installed"
-              onClick={() => setAppInstalled(true)}
-              className="text-[13px] font-medium text-gray-500 transition hover:text-gray-950"
-            >
-              I&apos;ve already installed it →
-            </button>
-          )}
-        </div>
-      </section>
+        <section aria-labelledby="setup-models-heading" className="grid gap-4 border-t border-[var(--dls-border)] pt-7">
+          <div className="flex items-start gap-3">
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-full border border-[var(--dls-border)] text-xs font-medium text-[var(--dls-text-secondary)]">2</span>
+            <div className="min-w-0 flex-1">
+              <h2 id="setup-models-heading" className="text-base font-semibold tracking-tight text-[var(--dls-text-primary)]">Choose what powers your work</h2>
+              <p className="mt-1 text-sm leading-6 text-[var(--dls-text-secondary)]" role="status">
+                {modelsLoading
+                  ? "Checking OpenWork Models…"
+                  : modelsEnabled
+                    ? "OpenWork Models are on for this workspace."
+                    : "Use OpenWork Models or connect your own provider. You can do this later."}
+              </p>
+            </div>
+            {modelsEnabled ? <DenBadge icon={Check}>Models on</DenBadge> : null}
+          </div>
+          <div className="divide-y divide-[var(--dls-border)] overflow-hidden rounded-2xl border border-[var(--dls-border)]">
+            <div className="flex items-start gap-3 p-4 sm:p-5" data-testid="onboarding-choice-openwork-models">
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[var(--dls-hover)]"><OpenWorkMark /></div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-sm font-semibold text-[var(--dls-text-primary)]">OpenWork Models</h3>
+                <p className="mt-1 text-[13px] leading-5 text-[var(--dls-text-secondary)]">Managed models, billed per member. No API keys to look after.</p>
+                <Link href={getInferenceRoute(orgSlug)} className="mt-3 inline-flex items-center gap-1.5 rounded text-sm font-medium text-[var(--dls-text-primary)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--dls-text-primary)]">
+                  {modelsEnabled ? "Manage models" : "Turn on models"}<ArrowUpRight className="size-3.5" aria-hidden />
+                </Link>
+              </div>
+            </div>
+            <div className="flex items-start gap-3 p-4 sm:p-5" data-testid="onboarding-choice-byok">
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[var(--dls-hover)]"><KeyRound className="size-[18px] text-[var(--dls-text-secondary)]" aria-hidden /></div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-sm font-semibold text-[var(--dls-text-primary)]">Bring your Own Keys</h3>
+                <p className="mt-1 text-[13px] leading-5 text-[var(--dls-text-secondary)]">Connect your provider or gateway. Keep your own billing and model choices.</p>
+                <Link href={getCustomLlmProvidersRoute(orgSlug)} className="mt-3 inline-flex items-center gap-1.5 rounded text-sm font-medium text-[var(--dls-text-primary)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--dls-text-primary)]">
+                  Add a provider<ArrowUpRight className="size-3.5" aria-hidden />
+                </Link>
+              </div>
+            </div>
+          </div>
+        </section>
 
-      <section className="mt-12 grid gap-5">
-        <DenSectionHeader
-          align="center"
-          title="Then bring your own keys, or use OpenWork Models"
-          description={
-            modelsLoading
-              ? "Checking whether OpenWork Models are already on…"
-              : modelsEnabled
-                ? "OpenWork Models are on for this workspace."
-                : "Pick one now, change it whenever — both live under Models."
-          }
-          action={
-            modelsEnabled ? (
-              <DenBadge tone="success" icon={Check}>
-                Models on
-              </DenBadge>
-            ) : null
-          }
-        />
-        <div className="grid gap-4 lg:grid-cols-2">
-          <DenChoiceCard
-            testId="onboarding-choice-openwork-models"
-            icon={<OpenWorkMark />}
-            title="OpenWork Models"
-            subtitle="No API keys, nothing to configure"
-            badge={<DenBadge tone="info">Recommended</DenBadge>}
-            description="Hand-picked frontier and open models, billed per member. Turn it on and everyone has models in the app immediately."
-            href={getInferenceRoute(orgSlug)}
-            ctaLabel={modelsEnabled ? "Manage models" : "Turn on models"}
-            ctaVariant="primary"
-          />
-          <DenChoiceCard
-            testId="onboarding-choice-byok"
-            icon={<KeyRound className="h-[18px] w-[18px] text-gray-700" aria-hidden />}
-            title="Bring your Own Keys"
-            subtitle="Your providers, your billing"
-            description="Connect Anthropic, OpenAI, Azure, Mistral or your own gateway, and choose exactly which models the team sees."
-            href={getCustomLlmProvidersRoute(orgSlug)}
-            ctaLabel="Add a provider"
-            ctaVariant="secondary"
-          >
-            <LlmProviderLogos />
-          </DenChoiceCard>
-        </div>
-      </section>
-
-      <footer className="mt-12 border-t border-gray-100 pt-5 text-center">
-        <p className="text-[13px] text-gray-500">
-          Already set up?{" "}
-          <Link href={getOrgDashboardRoute(orgSlug)} className="font-medium text-gray-900 underline-offset-2 hover:underline">
+        <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--dls-border)] pt-5 text-sm">
+          <span className="text-[var(--dls-text-secondary)]">Keep setting up at your own pace.</span>
+          <Link href={getOrgDashboardRoute(orgSlug)} className="rounded font-medium text-[var(--dls-text-primary)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--dls-text-primary)]">
             Go to dashboard →
           </Link>
-        </p>
-      </footer>
-    </div>
+        </footer>
+      </div>
+    </SetupFrame>
   );
 }
