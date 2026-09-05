@@ -429,8 +429,44 @@ test("new side chat creates fresh same-workspace secondary sessions without movi
     });
     expect(afterFocusedPrimary).toHaveLength(afterFocusedSecondary.length + 1);
   });
+  await step("two main sessions restore their own side chats independently", async () => {
+    const otherMain = parseSplitFacts(await world.splitFacts()).primarySessionId;
+    await user.press(paletteShortcut);
+    await user.type(paletteInput, "new side chat", { replace: true });
+    await user.press("Enter");
+    const otherValue = await probe.eventually(() => world.splitFacts(), {
+      within: 60_000,
+      label: "the other main session has its own side chat",
+      until: (value) => parseSplitFacts(value).primarySessionId === otherMain
+        && parseSplitFacts(value).secondaryPaneCount === 1,
+    });
+    const otherSide = parseSplitFacts(otherValue).secondarySessionId;
+    expect(otherSide).not.toBe(focusedSecondaryFacts.secondarySessionId);
+    for (const [main, side] of [[primarySessionId, focusedSecondaryFacts.secondarySessionId], [otherMain, otherSide]]) {
+      await agent.run("workbench.session.focus", { sessionId: main });
+      await probe.eventually(() => world.splitFacts(), {
+        within: 15_000,
+        label: "each main session restores only its associated side chat",
+        until: (value) => parseSplitFacts(value).primarySessionId === main
+          && parseSplitFacts(value).secondarySessionId === side,
+      });
+    }
+    await probe.eval(`document.querySelector('[data-workbench-pane="secondary"] button[aria-label="Close side chat"]')?.setAttribute("data-testid", "close-owned-side-chat")`);
+    await user.click({ testId: "close-owned-side-chat" });
+    await probe.eventually(() => world.splitFacts(), {
+      within: 15_000, label: "the current side chat closes",
+      until: (value) => parseSplitFacts(value).secondaryPaneCount === 0,
+    });
+    await agent.run("workbench.session.focus", { sessionId: primarySessionId });
+    await probe.eventually(() => world.splitFacts(), {
+      within: 15_000, label: "closing another side chat preserves the first session's side chat",
+      until: (value) => parseSplitFacts(value).primarySessionId === primarySessionId
+        && parseSplitFacts(value).secondarySessionId === focusedSecondaryFacts.secondarySessionId,
+    });
+    evidence.recordAssertionEvidence("Two main sessions restore separate side chats; closing one does not close the other", JSON.stringify({ primarySessionId, otherMain, otherSide }), true);
+  });
   evidence.recordAssertionEvidence(
-    "New side chats preserve the primary, and New session replaces only the focused pane",
+    "Side chats belong to their main session",
     "Context-menu and command-palette splits each created one distinct same-workspace secondary session. A new primary had no side chat; returning to the original primary restored its own side chat.",
     true,
   );
