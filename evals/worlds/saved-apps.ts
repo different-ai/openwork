@@ -102,6 +102,12 @@ export async function savedAppCreation(seed: Seed) {
   const providerId = "saved-app-model";
   const modelId = "saved-app-model";
   const proxy = await seed.faultProxy(den);
+  // Keep runtime API discovery on the same proxy as the simulated old server.
+  const resetProxy = async () => {
+    await proxy.faults.clear();
+    await proxy.faults.status("/api/runtime-config", 200, { times: 1000, body: { denApiUrl: proxy.ref.apiUrl } });
+  };
+  await resetProxy();
   const app = await seed.desktop({ den: { ...den, ref: proxy.ref }, name: "saved-app-creation", model: `${providerId}/${modelId}` });
   const workspace = await seed.workspace(app, seed.tmpPath("saved-app-creation"));
   await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
@@ -122,7 +128,7 @@ export async function savedAppCreation(seed: Seed) {
     finally { client.close(); }
   };
   return {
-    app, den, proxy, workspace, configObjectId, dashboardId, rpc, run,
+    app, den, proxy, resetProxy, workspace, configObjectId, dashboardId, rpc, run,
     open: (path: string) => go(app, path),
     previewText: async () => String(await inPreview("return appDocument.body.innerText")),
     showDetails: () => inPreview('appDocument.querySelector("button")?.click()'),

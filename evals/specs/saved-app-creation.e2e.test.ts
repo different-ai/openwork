@@ -15,9 +15,9 @@ test("create, preview, save and reopen an app without changing already-open resu
       await world.open("/dashboard");
       await user.reload();
       await user.see({ role: "button", label: "Add" });
-      await user.notSee({ role: "button", label: "Share" });
       expect((await world.proxy.requestLog()).some((request) => request.path.endsWith("/v1/apps") && request.faulted)).toBe(true);
-      await world.proxy.faults.clear();
+      await user.notSee({ role: "button", label: "Share" });
+      await world.resetProxy();
     }
     await user.reload();
     await user.see({ role: "button", label: "Share" });
