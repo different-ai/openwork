@@ -591,7 +591,8 @@ this Mac.
 ## A team that grows
 
 The chooser uses full-width recommendation rows so names, roles, and missions
-remain readable beside the existing avatars. Eight optional profession presets
+remain readable beside the existing avatars. The recommendation chooser and
+custom identity form are separate steps, so the form stays short. Eight optional profession presets
 (marketing, sales, founders, product and engineering, consulting, customer
 success, people, and education) suggest small teams with concrete responsibilities
 and a reviewable workflow. All roles and names remain editable; a preset grants

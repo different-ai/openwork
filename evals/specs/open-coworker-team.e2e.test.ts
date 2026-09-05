@@ -706,11 +706,13 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
     true,
   );
   await evalIn(app, `document.querySelector('button[title="New coworker"], button[aria-label="New coworker"]').click(); true`);
+  await clickButton(app, "Start from scratch");
   await waitFor(app, `Boolean(document.querySelector('[data-testid="new-coworker-step-identity"]'))`, { label: "custom coworker form" });
   await fill(app, 'input[placeholder="Scout"]', "Willow");
   await evalIn(app, `document.querySelector('button[aria-label="Sand"]').click(); true`);
   await clickButton(app, "Oval");
   expect(await evalIn(app, `document.querySelectorAll('.avatar-stage .coworker-avatar__glasses ellipse').length`)).toBe(2);
+  await waitFor(app, `document.querySelector('[data-testid="new-coworker-step-identity"]') && !document.querySelector('[data-testid="new-coworker-suggested"]') && [...document.querySelectorAll("button")].some((button) => button.textContent?.trim() === "Add coworker" && button.getBoundingClientRect().bottom <= innerHeight)`, { label: "custom form separates recommendations and keeps its create button visible" });
   await screenshot(app);
   await clickButton(app, "Add coworker");
   await waitForConversation(app, "Willow");
