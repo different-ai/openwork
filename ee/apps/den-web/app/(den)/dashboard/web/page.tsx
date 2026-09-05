@@ -362,7 +362,7 @@ export default function WebPage() {
       icon={Globe}
       title="OpenWork Web"
       description="Use OpenWork in your browser. Start an optional cloud trial or choose a paid plan."
-      colors={["#EFF6FF", "#0F172A", "#2563EB", "#BAE6FD"]}
+      colors={["#E5E5E5", "#171717", "#525252", "#A3A3A3"]}
     >
       <CloudTrialCard paidPlanHref="#openwork-web-purchase" onAccessChange={(expectedOrgId, reason) => {
         if (reason === "expired") {
@@ -387,7 +387,7 @@ export default function WebPage() {
         {accessState === "confirming" ? (
           <DenCard size="spacious" data-testid="openwork-web-confirming">
             <div className="flex items-start gap-4">
-              <Loader2 className="mt-1 size-5 animate-spin text-blue-600" aria-hidden="true" />
+              <Loader2 className="mt-1 size-5 animate-spin text-neutral-600" aria-hidden="true" />
               <div>
                 <p className="text-[18px] font-medium text-gray-950">Confirming your OpenWork Web subscription</p>
                 <p className="mt-2 text-[14px] leading-6 text-gray-500">
@@ -400,7 +400,7 @@ export default function WebPage() {
 
         {(accessState === "unsubscribed" || (accessState === "eligible" && billing?.accessSource === "trial")) && billing ? (
           <DenCard id="openwork-web-purchase" size="spacious" data-testid="openwork-web-purchase">
-            <p className="text-[12px] font-semibold uppercase tracking-[0.12em] text-blue-600">Optional paid plan</p>
+            <p className="text-[12px] font-semibold uppercase tracking-[0.12em] text-neutral-600">Optional paid plan</p>
             <h2 className="mt-2 text-[22px] font-semibold tracking-[-0.03em] text-gray-950">Browser access for your organization</h2>
             <p className="mt-3 text-[14px] leading-6 text-gray-600">{billing.accessSource === "trial" ? "If you upgrade, the plan covers every joined member. Pending invitations are not billed." : OPENWORK_WEB_QUANTITY_EXPLANATION}</p>
             <div className="mt-5 rounded-2xl border border-gray-200 bg-gray-50 p-4" data-testid="openwork-web-price-breakdown">
