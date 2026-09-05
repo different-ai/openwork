@@ -23,6 +23,7 @@ test("chat suggests Slack setup and lets an admin browse every quick-add connect
   await appUser.click({ role: "button", label: `Browse all ${world.expectedIds.length}` });
   await appUser.see({ role: "textbox", label: "Filter connectors" });
   expect(await visibleIds()).toEqual(world.expectedIds);
+  await appUser.see({ role: "button", label: "Set up Linear" });
   await appUser.screenshot();
   evidence.recordAssertionEvidence("Browse all includes the complete Den preset catalog and both productivity suites", JSON.stringify(world.expectedIds), true);
   await appUser.type({ role: "textbox", label: "Filter connectors" }, "no such connector", { replace: true });
@@ -49,13 +50,14 @@ test("chat suggests Slack setup and lets an admin browse every quick-add connect
   expect(calls.filter(call => call.kind === "tool")).toHaveLength(1);
   expect(calls.filter(call => call.kind === "tool").every(call => call.toolName?.endsWith("search_capabilities"))).toBe(true);
   expect((await world.den.mocks.connector.requests()).filter(request => request.path === "/authorize")).toHaveLength(0);
+  await appUser.click({ role: "button", label: "New task" });
   await agent.on(world.app).send(allConnectorsPrompt);
   await appUser.see({ text: allConnectorsReply }, { timeoutMs: 120_000 });
   const listed = await appProbe.eval(`(() => {
     const cards = Array.from(document.querySelectorAll('[data-testid="connector-catalog"]'));
-    return { count: cards.length, ids: Array.from(cards.at(-1)?.querySelectorAll('[data-connector-preset]') ?? [], entry => entry.getAttribute('data-connector-preset')) };
+    return Array.from(cards.at(-1)?.querySelectorAll('[data-connector-preset]') ?? [], entry => entry.getAttribute('data-connector-preset'));
   })()`);
-  expect(listed).toEqual({ count: 2, ids: world.expectedIds });
+  expect(listed).toEqual(world.expectedIds);
   await appUser.screenshot();
   evidence.recordAssertionEvidence("Asking for all quick adds immediately opens the complete catalog", JSON.stringify(listed), true);
   evidence.recordAssertionEvidence("Filtering selects Slack and its setup destination opens the OAuth client form", "Slack quickAdd deep link renders client fields; the agent only searched and did not execute setup or authorize an account", true);

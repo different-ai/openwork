@@ -18,10 +18,16 @@ const SETUP_LABELS: Record<ConnectorCatalog["entries"][number]["setup"], string>
 }
 
 function ConnectorIcon({ entry }: { entry: ConnectorCatalog["entries"][number] }) {
-  const [failed, setFailed] = useState(false)
-  const icon = libraryConnectorIconUrls({ id: entry.id, name: entry.name, serviceUrl: entry.serviceUrl, iconSlug: entry.id })[0]
+  const [iconIndex, setIconIndex] = useState(0)
+  const icons = libraryConnectorIconUrls({
+    id: entry.id, name: entry.name, serviceUrl: entry.serviceUrl,
+    iconSrc: entry.id === "google-workspace" ? "/ext-google-workspace.svg" : undefined,
+    iconSlug: entry.id === "microsoft-365" ? "microsoft365" : entry.id,
+    faviconDomain: entry.id === "microsoft-365" ? "microsoft.com" : undefined,
+  })
+  const icon = icons[iconIndex]
   return <span aria-hidden="true" className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted/40 text-xs font-medium">
-    {icon && !failed ? <img src={icon} alt="" className="size-5 object-contain" onError={() => setFailed(true)} /> : entry.name.charAt(0)}
+    {icon ? <img src={icon} alt="" className="size-5 object-contain" onError={() => setIconIndex(index => index + 1)} /> : entry.name.charAt(0)}
   </span>
 }
 
@@ -62,7 +68,7 @@ export function ConnectorCatalogCard({ catalog }: { catalog: ConnectorCatalog })
     {showAll ? <div className="relative mb-2"><Search className="pointer-events-none absolute left-2 top-2 size-3.5 text-muted-foreground" /><Input aria-label="Filter connectors" value={query} onChange={event => setQuery(event.target.value)} placeholder="Find a connector…" className="h-8 border-0 bg-background/70 pl-7 text-xs shadow-none" /></div> : null}
     <div className="max-h-80 overflow-y-auto">
       {entries.map(entry => {
-        const added = Boolean(entry.serviceUrl && connectorIdentities.some(identity => identity.serviceUrl === entry.serviceUrl))
+        const added = Boolean(entry.serviceUrl && connectorIdentities.some(identity => identity.connectionId && identity.serviceUrl === entry.serviceUrl))
         return <div key={entry.id} data-connector-preset={entry.id} className="flex items-center gap-2.5 rounded-lg px-1 py-2">
           <ConnectorIcon entry={entry} />
           <div className="min-w-0 flex-1"><p className="truncate text-[13px] font-medium">{entry.name}</p><p className="text-[11px] text-muted-foreground">{added ? "Added to your organization" : SETUP_LABELS[entry.setup]}</p></div>
