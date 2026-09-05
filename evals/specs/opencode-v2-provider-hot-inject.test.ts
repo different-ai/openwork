@@ -52,7 +52,14 @@ test("opencode v2 injects providers at runtime without an engine reload", { time
   const binary = await resolveOpencodeV2Bin();
   const nonce = `WITNESS-OK-${randomBytes(12).toString("hex")}`;
   const requests: WitnessRequest[] = [];
+  let impersonatorRequests = 0;
   const witness = createServer(async (request, response) => {
+    if (request.url === "/api/health") {
+      impersonatorRequests += 1;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ healthy: true, version: "fake", pid: process.pid }));
+      return;
+    }
     if (request.method !== "POST" || (request.url !== "/v1/chat/completions" && request.url !== "/chat/completions")) {
       response.writeHead(404, { "content-type": "application/json" });
       response.end(JSON.stringify({ error: "not found" }));
@@ -98,6 +105,24 @@ test("opencode v2 injects providers at runtime without an engine reload", { time
 
   try {
     const opencodeModelsUrl = await resolveOpencodeModelsUrl();
+    let occupiedPortRejected = false;
+    try {
+      const impostor = await createManagedOpencodeV2Server({
+        bin: binary, rootDir: join(rootDir, "occupied-port"), port: witnessAddress.port,
+        bootTimeoutMs: 10_000,
+        env: { OPENCODE_CONFIG: baseConfig, OPENCODE_MODELS_URL: opencodeModelsUrl },
+      });
+      await impostor.close();
+    } catch {
+      occupiedPortRejected = true;
+    }
+    expect(occupiedPortRejected).toBe(true);
+    expect(impersonatorRequests).toBe(0);
+    evidence.recordAssertionEvidence(
+      "an occupied port cannot impersonate the sidecar or receive its credential",
+      "A pre-bound fake healthy listener caused startup to reject; it received zero health requests. The normal boot below uses the child-announced OS-assigned port.",
+      true,
+    );
     const catalogStartedAt = Date.now();
     server = await createManagedOpencodeV2Server({
       bin: binary,
@@ -111,6 +136,8 @@ test("opencode v2 injects providers at runtime without an engine reload", { time
     const initialHealth = await server.health();
     const pid0 = initialHealth.pid;
     expect(initialHealth.healthy).toBe(true);
+    expect(pid0).toBe(server.childPid);
+    expect(Number(new URL(server.url).port)).toBeGreaterThan(0);
     if (process.platform === "linux") {
       const environment = await readFile(`/proc/${pid0}/environ`, "utf8");
       const names = environment.split("\0").map((entry) => entry.split("=")[0]);

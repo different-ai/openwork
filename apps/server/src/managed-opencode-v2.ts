@@ -3,7 +3,6 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, rename, writeFile } from "node:fs/promises";
-import { createServer } from "node:net";
 import { join } from "node:path";
 
 export { installOpencodeV2Binary } from "./opencode-v2-binary.js";
@@ -61,25 +60,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function freePort(hostname: string): Promise<number> {
-  return await new Promise<number>((resolve, reject) => {
-    const server = createServer();
-    server.once("error", reject);
-    server.listen(0, hostname, () => {
-      const address = server.address();
-      if (address === null || typeof address === "string") {
-        server.close();
-        reject(new Error("Failed to allocate a free TCP port"));
-        return;
-      }
-      server.close((error) => {
-        if (error) reject(error);
-        else resolve(address.port);
-      });
-    });
-  });
-}
-
 function diagnostics(exitCode: number | null, stdout: string, stderr: string): Error {
   const tail = (value: string) => value.slice(-4_000);
   return new Error(
@@ -91,12 +71,12 @@ export async function createManagedOpencodeV2Server(
   options: ManagedOpencodeV2ServerOptions,
 ): Promise<ManagedOpencodeV2Server> {
   const hostname = options.hostname ?? "127.0.0.1";
-  const port = options.port ?? await freePort(hostname);
+  const port = options.port ?? 0;
   const bootTimeoutMs = options.bootTimeoutMs ?? 60_000;
   const configDir = join(options.rootDir, "config");
   const password = randomBytes(24).toString("base64url");
   const username = "opencode";
-  const url = `http://${hostname}:${port}`;
+  let url = "";
   const providers = new Map<string, OpencodeV2ProviderSpec>();
   const opencodeModelsUrl = (options.env?.OPENCODE_MODELS_URL ?? process.env.OPENCODE_MODELS_URL)?.replace(/\/+$/, "");
   // v2 runs its own plugin/catalog bootstrap; the v1 pure-mode escape hatch must not reach the sidecar.
@@ -141,6 +121,7 @@ export async function createManagedOpencodeV2Server(
     path: string,
     init: { method?: string; body?: unknown; directory?: string; timeoutMs?: number } = {},
   ): Promise<{ status: number; json: unknown }> {
+    if (!url) throw new Error("OpenCode v2 has not announced its listener");
     const separator = path.includes("?") ? "&" : "?";
     const requestPath = init.directory === undefined
       ? path
@@ -173,6 +154,7 @@ export async function createManagedOpencodeV2Server(
     if (typeof healthy !== "boolean" || typeof version !== "string" || typeof pid !== "number") {
       throw new Error("OpenCode v2 health returned an invalid payload");
     }
+    if (pid !== child.pid) throw new Error("OpenCode v2 health did not match the spawned child");
     return { healthy, version, pid };
   }
 
@@ -218,7 +200,7 @@ export async function createManagedOpencodeV2Server(
   }
 
   const managed: ManagedOpencodeV2Server = {
-    url,
+    get url() { return url; },
     username,
     password,
     childPid: child.pid,
@@ -254,6 +236,22 @@ export async function createManagedOpencodeV2Server(
       throw new Error(`Failed to start OpenCode v2 server: ${spawnError.message}`);
     }
     if (child.exitCode !== null || child.signalCode !== null) throw diagnostics(child.exitCode, stdout, stderr);
+    // Only the child can write its stdout pipe. Do not send the generated
+    // credential to a probed port before that child confirms it has bound.
+    if (!url) {
+      const announced = stdout.match(/server listening on (http:\/\/[^\s]+)/)?.[1];
+      if (announced) {
+        const endpoint = new URL(announced);
+        if (endpoint.hostname !== hostname || !endpoint.port || endpoint.port === "0"
+          || endpoint.username || endpoint.password || endpoint.pathname !== "/"
+          || endpoint.search || endpoint.hash
+          || (port !== 0 && Number(endpoint.port) !== port)) {
+          await close();
+          throw new Error("OpenCode v2 announced an unexpected listener");
+        }
+        url = endpoint.origin;
+      }
+    }
     try {
       const state = await health();
       if (state.healthy) return managed;
