@@ -1,5 +1,6 @@
 "use memo";
 
+import { VisualizationTool } from "@/components/tools/visualization-tool"
 import * as React from "react"
 import {
   AlertTriangle,
@@ -211,6 +212,10 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
         </div>
       </div>
     )
+  }
+
+  if (part.type === "dynamic-tool" && part.toolName === "openwork_visualization") {
+    return <VisualizationTool part={part} />
   }
 
   if (isBashToolPart(part)) {
