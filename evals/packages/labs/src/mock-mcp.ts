@@ -24,7 +24,7 @@ export interface MockToolCall {
 
 export interface MockAgentToolStep {
   /** Derive the handoff from the actual model input instead of fixture arguments. */
-  argumentsFrom?: "computer-mention";
+  argumentsFrom?: "computer-mention" | "capability-search";
   tool: string;
   arguments: Record<string, unknown>;
 }
@@ -34,6 +34,8 @@ export interface MockAgentWorkload {
   latestUserTurn?: boolean;
   promptMarker: string;
   finalReply: string;
+  /** Return text actually delivered by the engine after its last tool invocation. */
+  finalReplyFrom?: "last-tool-text";
   /** Stream the final reply as consecutive content deltas of this many characters instead of one. */
   finalReplyChunkSize?: number;
   /** Hold the final response before sending headers, to exercise loading transitions. */

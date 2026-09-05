@@ -161,6 +161,39 @@ test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeo
     assert.deepEqual(JSON.parse(call.function.arguments), { name: "remote-session:create", body: { target, prompt: task } });
   }
 
+  const discoveryWorkload = await fetch(`${origin}/admin/agent-workloads`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workloads: [{ promptMarker: "Find the assigned skill", finalReply: "unused fixture reply",
+      finalReplyFrom: "last-tool-text", steps: [
+        { tool: "search_capabilities", arguments: { query: "Assigned skill" } },
+        { tool: "execute_capability", arguments: {}, argumentsFrom: "capability-search" },
+      ],
+    }] }),
+  });
+  assert.equal(discoveryWorkload.status, 200);
+  const modelRequest = async (toolResults) => {
+    const response = await fetch(`${origin}/v1/chat/completions`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "discovery-model", messages: [
+        { role: "user", content: "Find the assigned skill" },
+        ...toolResults.map(content => ({ role: "tool", content })),
+      ], tools: ["search_capabilities", "execute_capability"].map(name => ({ type: "function", function: { name } })) }),
+    });
+    const body = await response.text();
+    return { status: response.status, frames: body.split("\n").filter(line => line.startsWith("data: {")).map(line => JSON.parse(line.slice(6))) };
+  };
+  for (const name of ["plugin:first:skill", "plugin:second:skill"]) {
+    const result = await modelRequest([JSON.stringify({ matches: [{ name }] })]);
+    assert.equal(result.status, 200);
+    const call = result.frames.flatMap(frame => frame.choices[0].delta.tool_calls ?? [])[0];
+    assert.deepEqual(JSON.parse(call.function.arguments), { name });
+  }
+  const missing = await modelRequest([JSON.stringify({ matches: [] })]);
+  assert.equal(missing.status, 500);
+  const final = await modelRequest([JSON.stringify({ matches: [{ name: "plugin:first:skill" }] }), "unique text returned by the real tool"]);
+  assert.equal(final.status, 200);
+  assert.equal(final.frames.map(frame => frame.choices[0].delta.content ?? "").join(""), "unique text returned by the real tool");
+
   const failedResponse = await fetch(`${origin}/admin/agent-workloads`, {
     method: "POST",
     headers: { "content-type": "application/json" },

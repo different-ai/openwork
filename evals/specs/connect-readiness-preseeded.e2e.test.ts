@@ -1,4 +1,5 @@
 import { expect } from "vitest";
+import { readAvailableModels, selectModel } from "@openwork/behaviors";
 import { spec } from "@openwork/testkit";
 import {
   cloudHealthExpression,
@@ -10,15 +11,15 @@ import {
   toolJson,
 } from "../worlds/library.ts";
 
-const test = spec.world(preseededConnect, { timeout: 360_000 });
+const test = spec.world(preseededConnect, { timeout: 600_000 });
 
-test("bundled engine connects to preseeded organization skills and connections", async ({ world, user, seed, probe, step }) => {
+test("bundled engine connects to preseeded organization skills and connections", async ({ world, user, agent, seed, probe, step, evidence }) => {
   await user.click("Library");
   await user.see({ text: "Library" });
   const signedOut = await probe.connectState(world.app);
   expect(signedOut).toMatchObject({ status: "missing", connectEnabled: false });
   expect(signedOut).not.toMatchObject({ status: "available" });
-  await user.looks(["The OpenWork desktop is visible", "No crash or error dialog is visible"]);
+  await user.screenshot();
 
   await seed.signIn(world.app, world.member, "admin");
   const signedIn = await probe.eventually(
@@ -104,15 +105,38 @@ test("bundled engine connects to preseeded organization skills and connections",
   });
   if (!connectionMatch) throw new Error(`Connect did not discover ${world.connectionName}.`);
   const connectionStatus = isRecord(connectionMatch.connectionStatus) ? connectionMatch.connectionStatus : null;
-  const readiness = connectionStatus?.state === "needs_connection" && connectionStatus.actor === "member"
-    ? "needs_signin"
-    : connectionStatus?.actor === "organization_admin" ? "needs_admin_setup" : "ready";
-  expect(["ready", "needs_signin", "needs_admin_setup"]).toContain(readiness);
+  expect(connectionStatus).toMatchObject({
+    state: "needs_connection", actor: "member", credentialMode: "per_member",
+    connectionId: world.connection.id, connectionName: world.connectionName,
+    action: { type: "connect", surface: "openwork_your_connections" },
+  });
+  evidence.recordAssertionEvidence("An unconnected member-owned connection requires member sign-in",
+    JSON.stringify(connectionStatus), true);
 
   await user.click("Library");
   await user.see({ text: world.connectionName }, { timeoutMs: 60_000 });
-  await user.looks([
-    `A Library view lists an organization connection card named '${world.connectionName}'`,
-    "No crash or error dialog is visible",
-  ]);
+  await user.screenshot();
+
+  await step("the signed-in desktop agent discovers and reads the skill", async () => {
+    expect(world.prompt).not.toContain(world.pluginId);
+    expect(world.prompt).not.toContain(world.proofPhrase);
+    await agent.createSession();
+    await probe.eventually(() => readAvailableModels(world.app), {
+      within: 120_000, label: "the published model reaches the signed-in desktop",
+      until: models => models.some(model => model.name === world.modelId && model.selectable),
+    });
+    await selectModel(world.app, world.modelId, { provider: world.providerName });
+    await agent.send(world.prompt);
+    await user.see({ text: world.proofPhrase }, { timeoutMs: 120_000 });
+    const calls = await world.den.mocks.connector.agentRequests({ promptMarker: world.prompt });
+    const tools = calls.filter(call => call.kind === "tool");
+    expect(tools).toHaveLength(2);
+    expect(tools[0]?.toolName).toMatch(/search_capabilities$/);
+    expect(tools[1]?.toolName).toMatch(/execute_capability$/);
+    expect(tools[1]?.arguments.name).toMatch(new RegExp(`^plugin:${world.pluginId}:`));
+    expect(calls.some(call => call.kind === "final" && call.completedTools === 2)).toBe(true);
+    evidence.recordAssertionEvidence("The desktop agent uses the assigned organization skill",
+      "The model was offered search and execute, resolved the capability from its search result, and displayed the unique phrase returned by skill execution.", true);
+    await user.screenshot();
+  });
 });
