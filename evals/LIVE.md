@@ -40,6 +40,37 @@ renewals and retries remain complementary work; they are not claimed here.
 
 ## Configuration
 
+### Synthetic accounts and business metrics
+
+Deploy migration `0092_synthetic_accounts.sql` before the updated Den API, then
+deploy Den web before enabling the nightly suite. No new secret is needed.
+The existing admin credential registers each exact test email through
+`POST /v1/admin/synthetic-accounts` before signup. Registration is restricted to
+the live-test namespace, rejects existing accounts, and cannot be performed by
+ordinary users. Missing registration support stops the runner before signup.
+
+The server copies the registered run ID into `user.synthetic_run_id` at creation
+and into the workspace created by that user. It is not a client-writable auth
+field and changing the email does not remove it. The registration record remains
+after teardown for historical classification; it is not a recovery queue.
+
+Admin business totals exclude synthetic users/workspaces: signups, verified and
+active users, recurrence, invites, workers and customer billing counts. Admin
+user lists still include these accounts, expose `syntheticRunId`, and retain
+operational pagination totals so cleanup can find them. Authenticated Den web
+business events are suppressed for synthetic profiles, including sign-out.
+CDP blocking still covers anonymous events before authentication and automatic
+browser collection.
+
+Production creates Stripe Checkout sessions and subscriptions with
+`synthetic=true` and `live_eval_run`; newly created checkout customers receive
+the same metadata. The live test witnesses these tags rather than adding them.
+Custom Stripe/warehouse reports must exclude records with `synthetic=true`
+(or join invoices to their tagged customer/subscription). Built-in Stripe
+dashboards are not automatically filtered by this change. No external dashboard
+configuration or historical data backfill is claimed. For database exports,
+business users/workspaces have `synthetic_run_id IS NULL`.
+
 Set these **GitHub Actions secrets** before enabling the nightly workflow:
 
 - `AGENTMAIL_API_KEY`: creates disposable inboxes and reads verification/reset/invite mail.

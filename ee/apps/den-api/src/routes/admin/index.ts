@@ -5,6 +5,7 @@ import {
   AuthApiKeyTable,
   AuthSessionTable,
   AuthUserTable,
+  SyntheticAccountTable,
   ConnectedAccountTable,
   DesktopHandoffGrantTable,
   ExternalIdentityTable,
@@ -408,7 +409,7 @@ function shouldReplaceBillingStatus(current: AdminBillingStatus, candidate: Admi
   return billingTime(candidate.currentPeriodEnd) > billingTime(current.currentPeriodEnd)
 }
 
-type AdminUserBaseRow = Pick<typeof AuthUserTable.$inferSelect, "id" | "name" | "email" | "emailVerified" | "createdAt" | "updatedAt">
+type AdminUserBaseRow = Pick<typeof AuthUserTable.$inferSelect, "id" | "name" | "email" | "emailVerified" | "createdAt" | "updatedAt" | "syntheticRunId">
 
 type AdminUserRow = AdminUserBaseRow & {
   lastSeenAt: Date | string | null
@@ -550,6 +551,7 @@ async function selectUserPage(request: AdminPageRequest) {
       name: AuthUserTable.name,
       email: AuthUserTable.email,
       emailVerified: AuthUserTable.emailVerified,
+      syntheticRunId: AuthUserTable.syntheticRunId,
       createdAt: AuthUserTable.createdAt,
       updatedAt: AuthUserTable.updatedAt,
     })
@@ -596,7 +598,7 @@ export async function loadAdminUsersPage(request: AdminPageRequest, includeBilli
   const users = await shapeAdminUserRows(rows, includeBilling)
   const billingCounts = users.reduce(
     (accumulator, user) => {
-      if (!user.billing) {
+      if (user.syntheticRunId || !user.billing) {
         return accumulator
       }
       if (user.billing.status === "paid") {
@@ -1001,6 +1003,12 @@ function buildDeferredOverviewSummary(adminCount: number, totalUsers: number, to
   }
 }
 
+// Business metrics exclude synthetic identities; operational user lists retain them for cleanup.
+function businessUser(userId: SQL): SQL {
+  return sql`not exists (select 1 from ${AuthUserTable} where ${AuthUserTable.id} = ${userId}
+    and ${AuthUserTable.syntheticRunId} is not null)`
+}
+
 export async function loadAdminMetricsSummary(): Promise<AdminSummary> {
   const activityWindowDays = 90
   const seriesWindowDays = 30
@@ -1021,8 +1029,8 @@ export async function loadAdminMetricsSummary(): Promise<AdminSummary> {
         recentUsers7d: sql<number>`sum(case when ${AuthUserTable.createdAt} >= ${recent7dStart} then 1 else 0 end)`,
         recentUsers30d: sql<number>`sum(case when ${AuthUserTable.createdAt} >= ${recent30dStart} then 1 else 0 end)`,
       })
-      .from(AuthUserTable),
-    selectOrganizationCount(undefined),
+      .from(AuthUserTable).where(isNull(AuthUserTable.syntheticRunId)),
+    selectOrganizationCount(isNull(OrganizationTable.syntheticRunId)),
     db.select({ adminCount: sql<number>`count(*)` }).from(AdminAllowlistTable),
     db
       .select({
@@ -1031,17 +1039,17 @@ export async function loadAdminMetricsSummary(): Promise<AdminSummary> {
         localWorkers: sql<number>`sum(case when ${WorkerTable.destination} = 'local' then 1 else 0 end)`,
         usersWithWorkers: sql<number>`count(distinct ${WorkerTable.created_by_user_id})`,
       })
-      .from(WorkerTable),
+      .from(WorkerTable).where(businessUser(sql`${WorkerTable.created_by_user_id}`)),
     db
       .select({ userId: AuthSessionTable.userId, day: sessionDayExpr })
       .from(AuthSessionTable)
-      .where(gte(AuthSessionTable.createdAt, activityWindowStart))
+      .where(and(gte(AuthSessionTable.createdAt, activityWindowStart), businessUser(sql`${AuthSessionTable.userId}`)))
       .groupBy(AuthSessionTable.userId, sessionDayExpr),
     db
       .select({ userId: MemberTable.userId, day: telemetryDayExpr })
       .from(TelemetryEventTable)
       .innerJoin(MemberTable, eq(TelemetryEventTable.member_id, MemberTable.id))
-      .where(and(isNotNull(MemberTable.userId), gte(TelemetryEventTable.event_timestamp, activityWindowStart)))
+      .where(and(businessUser(sql`${MemberTable.userId}`), gte(TelemetryEventTable.event_timestamp, activityWindowStart)))
       .groupBy(MemberTable.userId, telemetryDayExpr)
       .catch(() => []),
     db
@@ -1049,7 +1057,7 @@ export async function loadAdminMetricsSummary(): Promise<AdminSummary> {
       .from(TelemetryEventTable)
       .innerJoin(MemberTable, eq(TelemetryEventTable.member_id, MemberTable.id))
       .where(and(
-        isNotNull(MemberTable.userId),
+        businessUser(sql`${MemberTable.userId}`),
         gte(TelemetryEventTable.event_timestamp, activityWindowStart),
         inArray(TelemetryEventTable.event_type, ["task.started", "task.completed", "task.failed"]),
         isNotNull(TelemetryEventTable.session_id),
@@ -1059,7 +1067,7 @@ export async function loadAdminMetricsSummary(): Promise<AdminSummary> {
     db
       .select({ day: signupDayExpr, signups: sql<number>`count(*)` })
       .from(AuthUserTable)
-      .where(gte(AuthUserTable.createdAt, seriesWindowStart))
+      .where(and(gte(AuthUserTable.createdAt, seriesWindowStart), isNull(AuthUserTable.syntheticRunId)))
       .groupBy(signupDayExpr),
     db
       .select({
@@ -1069,6 +1077,7 @@ export async function loadAdminMetricsSummary(): Promise<AdminSummary> {
       })
       .from(InvitationTable)
       .innerJoin(AuthUserTable, eq(InvitationTable.inviterId, AuthUserTable.id))
+      .where(isNull(AuthUserTable.syntheticRunId))
       .groupBy(InvitationTable.inviterId, AuthUserTable.createdAt),
   ])
 
@@ -1219,7 +1228,7 @@ type AdminOverviewViewer = {
 }
 
 export async function loadAdminInitialOverviewPayload(user: AdminOverviewViewer, pageRequest: AdminPageRequest) {
-  const [admins, userPage, organizationTotal] = await Promise.all([
+  const [admins, userPage, organizationTotal, businessUserTotal, businessOrgTotal] = await Promise.all([
     db
       .select({
         id: AdminAllowlistTable.id,
@@ -1231,8 +1240,10 @@ export async function loadAdminInitialOverviewPayload(user: AdminOverviewViewer,
       .orderBy(asc(AdminAllowlistTable.email)),
     loadAdminUsersPage(pageRequest, false),
     selectOrganizationCount(undefined),
+    selectUserCount(isNull(AuthUserTable.syntheticRunId)),
+    selectOrganizationCount(isNull(OrganizationTable.syntheticRunId)),
   ])
-  const summary = buildDeferredOverviewSummary(admins.length, userPage.page.total, organizationTotal)
+  const summary = buildDeferredOverviewSummary(admins.length, businessUserTotal, businessOrgTotal)
 
   return {
     viewer: {
@@ -1252,6 +1263,26 @@ export async function loadAdminInitialOverviewPayload(user: AdminOverviewViewer,
 
 
 export function registerAdminRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
+  app.post("/v1/admin/synthetic-accounts", adminRoute(), async (c) => {
+    const body = z.object({
+      email: z.string().trim().toLowerCase().email().max(255)
+        .regex(/^openwork-live-\d+(?:-[a-z0-9]+)*(?:\+[a-z0-9-]+)?@[^@\s]+$/),
+      runId: z.string().regex(/^openwork-live-[a-z0-9-]+$/).max(128),
+    }).strict().safeParse(await c.req.json().catch(() => null))
+    if (!body.success) return c.json({ error: "invalid_request" }, 400)
+    const { email, runId } = body.data
+    const [existing] = await db.select({ id: AuthUserTable.id }).from(AuthUserTable)
+      .where(eq(AuthUserTable.email, email)).limit(1)
+    if (existing) return c.json({ error: "account_already_exists" }, 409)
+    // Idempotent only for the same run; never reclassify an existing customer.
+    await db.insert(SyntheticAccountTable).values({ email, runId })
+      .onDuplicateKeyUpdate({ set: { email } })
+    const [registration] = await db.select().from(SyntheticAccountTable)
+      .where(eq(SyntheticAccountTable.email, email)).limit(1)
+    if (registration?.runId !== runId) return c.json({ error: "run_conflict" }, 409)
+    return c.json({ synthetic: true, runId }, 201)
+  })
+
   app.post(
     "/v1/admin/admins",
     adminRoute(),

@@ -1,7 +1,7 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { liveAccountBrowser, liveBrowserNeeds, liveSignupBrowser } from "../worlds/live-den-browser.ts";
-import { verificationCode } from "../worlds/live-den-api.ts";
+import { recordField, verificationCode } from "../worlds/live-den-api.ts";
 
 const signup = spec.world(liveSignupBrowser, { needs: liveBrowserNeeds, timeout: 240_000 });
 const account = spec.world(liveAccountBrowser, { needs: liveBrowserNeeds, timeout: 240_000 });
@@ -23,6 +23,15 @@ signup(".live signup verifies delivered email before allowing workspace access",
   await user.notSee({ text: "Verification code" });
   const session = await world.authenticate();
   expect(session.email).toBe(world.inbox.email);
+  const me = await world.request("/v1/me");
+  expect(me.response.status).toBe(200);
+  expect(recordField(me.body, "user")?.syntheticRunId).toBe(world.run);
+  const denied = await world.request("/v1/admin/synthetic-accounts", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email: world.inbox.email, runId: world.run }),
+  });
+  expect(denied.response.status).toBe(403);
+  evidence.recordAssertionEvidence("Trusted synthetic identity", "The registered signup retains its run classification in the authenticated profile; the ordinary account cannot register synthetic identities.", true);
   await world.deleteAccount();
   evidence.recordAssertionEvidence("Owned account deletion", "Admin cleanup found only the fresh exact test email with no memberships/workers, deleted it, and verified its absence.", true);
   evidence.recordAssertionEvidence("Verified signup", "The UI required the delivered OTP before leaving verification; the same account then authenticated through Den.", true);

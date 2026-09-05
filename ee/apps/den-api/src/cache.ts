@@ -52,6 +52,7 @@ export type CachedAuthSession = {
     id: DenTypeId<"user">
     name: string
     email: string
+    syntheticRunId?: string | null
     emailVerified: boolean
     image: string | null
     createdAt: Date
@@ -461,6 +462,7 @@ async function loadAuthSession(token: string, now: Date): Promise<CachedAuthSess
         name: AuthUserTable.name,
         email: AuthUserTable.email,
         emailVerified: AuthUserTable.emailVerified,
+        syntheticRunId: AuthUserTable.syntheticRunId,
         image: AuthUserTable.image,
         createdAt: AuthUserTable.createdAt,
         updatedAt: AuthUserTable.updatedAt,

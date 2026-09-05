@@ -719,11 +719,7 @@ async function createOpenWorkWebCheckoutSession(input: {
     organizationId: input.organizationId,
     email: input.email,
     name: input.name,
-    metadata: {
-      org_id: input.organizationId,
-      created_by_org_member_id: input.orgMemberId,
-      openwork_product: "openwork_web",
-    },
+    metadata: input.metadata,
   })
 
   const subscriptions = await stripe().subscriptions.list({
@@ -805,7 +801,11 @@ export async function createOrgSubscriptionCheckoutSession(input: {
     : input.subscriptionType === WEB_SUBSCRIPTION_TYPE
       ? "openwork_web"
       : "openwork_models"
+  const [billingOrg] = await db.select({ run: OrganizationTable.syntheticRunId })
+    .from(OrganizationTable).where(eq(OrganizationTable.id, input.organizationId)).limit(1)
+  const syntheticMetadata: Stripe.MetadataParam = billingOrg?.run ? { synthetic: "true", live_eval_run: billingOrg.run } : { synthetic: "false" }
   const metadata = {
+    ...syntheticMetadata,
     org_id: input.organizationId,
     created_by_org_member_id: input.orgMemberId,
     openwork_product: openworkProduct,
@@ -828,11 +828,7 @@ export async function createOrgSubscriptionCheckoutSession(input: {
     organizationId: input.organizationId,
     email: input.email,
     name: input.name,
-    metadata: {
-      org_id: input.organizationId,
-      created_by_org_member_id: input.orgMemberId,
-      openwork_product: openworkProduct,
-    },
+    metadata,
   })
 
   if (input.subscriptionType === SEAT_SUBSCRIPTION_TYPE) {

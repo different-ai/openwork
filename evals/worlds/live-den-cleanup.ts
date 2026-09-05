@@ -42,3 +42,15 @@ export async function checkLiveCleanupAccess(den: DenRef): Promise<void> {
   });
   if (!result.response.ok) throw new Error(`Live cleanup requires a working admin credential before signup: HTTP ${result.response.status}`);
 }
+
+/** Reserve an exact identity before signup; only the runner holds the admin credential. */
+export async function registerLiveAccount(den: DenRef, email: string, runId: string): Promise<void> {
+  const result = await denFetch(den, "/v1/admin/synthetic-accounts", {
+    method: "POST",
+    headers: { authorization: `Bearer ${requiredEnv("OPENWORK_EVAL_LIVE_ADMIN_TOKEN")}`, "content-type": "application/json" },
+    body: JSON.stringify({ email, runId }),
+  });
+  if (result.response.status !== 201 || !isRecord(result.body) || result.body.synthetic !== true || result.body.runId !== runId) {
+    throw new Error(`Synthetic registration failed before signup: HTTP ${result.response.status}`);
+  }
+}

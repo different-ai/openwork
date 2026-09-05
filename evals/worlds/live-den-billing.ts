@@ -16,7 +16,6 @@ export async function liveBillingBrowser() {
   let couponId: string | undefined;
   let promotionId: string | undefined;
   let checkoutId: string | undefined;
-  let checkoutTagged = false;
   const testMetadata = { "metadata[synthetic]": "true", "metadata[live_eval_run]": world.run };
 
   async function stripe(path: string, method = "GET", values?: Record<string, string>) {
@@ -79,10 +78,11 @@ export async function liveBillingBrowser() {
       const matching = sessions.filter((session) => session.client_reference_id === world.organizationId);
       if (matching.length !== 1) throw new Error("Expected exactly one owned Checkout session");
       checkoutId = id(matching[0]);
-      if (!checkoutTagged) {
-        await stripe(`/customers/${id(owned[0])}`, "POST", testMetadata);
-        await stripe(`/checkout/sessions/${checkoutId}`, "POST", testMetadata);
-        checkoutTagged = true;
+      for (const resource of [owned[0], matching[0]]) {
+        const metadata = recordField(resource, "metadata");
+        if (metadata?.synthetic !== "true" || metadata.live_eval_run !== world.run) {
+          throw new Error("Production must classify Stripe objects at creation, before the test observes them");
+        }
       }
       return stripe(`/checkout/sessions/${checkoutId}?expand[]=discounts.coupon&expand[]=subscription.latest_invoice`);
     },

@@ -13,7 +13,7 @@ import type { AgentMailInbox } from "../worlds/live-den-api.ts";
 // infisical run -- pnpm evals:pr specs/prod-den-signup-invites.live.test.ts
 
 
-import { checkLiveCleanupAccess, deleteLiveAccount } from "../worlds/live-den-cleanup.ts";
+import { checkLiveCleanupAccess, deleteLiveAccount, registerLiveAccount } from "../worlds/live-den-cleanup.ts";
 
 const MAX_AGENTMAIL_INBOXES = 2;
 const requirements: TestNeeds = {
@@ -76,6 +76,9 @@ test(title, { timeout: 240_000 }, async ({ evidence }) => {
       neverInvited: `${runPrefix}-never-invited@${ownerInbox.email.slice(at + 1)}`,
     };
     identity = createdIdentity;
+    for (const email of [createdIdentity.owner, ...createdIdentity.invitees]) {
+      await registerLiveAccount(den, email, runPrefix);
+    }
 
     const signUp = await denFetch(den, "/api/auth/sign-up/email", {
       method: "POST",

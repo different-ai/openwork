@@ -8,7 +8,7 @@ import {
   deleteCreatedOrganization, requiredEnv, verificationCode, waitForAgentMailMessage,
 } from "./live-den-api.ts";
 
-import { checkLiveCleanupAccess, deleteLiveAccount } from "./live-den-cleanup.ts";
+import { checkLiveCleanupAccess, deleteLiveAccount, registerLiveAccount } from "./live-den-cleanup.ts";
 
 export const liveBrowserNeeds = {
   optIn: ["OPENWORK_EVAL_LIVE"],
@@ -72,6 +72,12 @@ export async function liveSignupBrowser() {
   const run = `openwork-live-${Date.now()}-${randomBytes(4).toString("hex")}`;
   try {
     const inbox = await createAgentMailInbox(mailKey, run);
+    try {
+      await registerLiveAccount(browser.den, inbox.email, run);
+    } catch (error) {
+      await deleteAgentMailInbox(mailKey, inbox);
+      throw error;
+    }
     let password = `Live!${randomBytes(20).toString("hex")}9`;
     let session: DenSession | undefined;
     let organizationId: string | undefined;
@@ -90,6 +96,13 @@ export async function liveSignupBrowser() {
       async authenticate() {
         session = await signIn(browser.den, { email: inbox.email, password });
         return session;
+      },
+      async syntheticReport() {
+        const result = await denFetch(browser.den, `/v1/admin/users?search=${encodeURIComponent(inbox.email)}&limit=2&includeBilling=true`, {
+          headers: { authorization: `Bearer ${requiredEnv("OPENWORK_EVAL_LIVE_ADMIN_TOKEN")}` },
+        });
+        if (result.response.status !== 200) throw new Error("Synthetic report lookup failed");
+        return result.body;
       },
       async deleteAccount() {
         await deleteLiveAccount(browser.den, inbox.email, startedAt);

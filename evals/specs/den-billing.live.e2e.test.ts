@@ -68,6 +68,8 @@ test(".live production coupon checkout automatically unlocks Models and survives
   expect(completed.amount_total).toBe(0);
   expect(["paid", "no_payment_required"]).toContain(completed.payment_status);
   const subscription = recordField(completed, "subscription");
+  expect(recordField(subscription, "metadata")?.synthetic).toBe("true");
+  expect(recordField(subscription, "metadata")?.live_eval_run).toBe(world.run);
   expect(subscription?.status).toBe("active");
   const invoice = recordField(subscription, "latest_invoice");
   expect(invoice?.amount_paid).toBe(0);
@@ -90,6 +92,11 @@ test(".live production coupon checkout automatically unlocks Models and survives
   expect(access?.subscribed).toBe(true);
   expect(access?.enabled).toBe(true);
   expect(access?.upstreamProviderConfigured).toBe(true);
+  const report = await world.syntheticReport();
+  expect(recordField(report, "page")?.total).toBe(1);
+  expect(recordField(report, "billing")?.paidUsers).toBe(0);
+  expect(recordField(report, "billing")?.unpaidUsers).toBe(0);
+  expect(recordField(report, "billing")?.billingUnavailableUsers).toBe(0);
   await user.navigate(`${world.den.webUrl}/dashboard/inference`);
   await user.reload();
   await user.see({ role: "button", label: "Manage subscription" });
