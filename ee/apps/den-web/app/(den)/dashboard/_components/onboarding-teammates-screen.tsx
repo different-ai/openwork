@@ -7,12 +7,10 @@ import { z } from "zod";
 import { SetupFrame } from "../../_components/setup-frame";
 import {
   getRequestError,
-  normalizeAuthIntentParam,
-  PENDING_AUTH_INTENT_STORAGE_KEY,
   requestJson,
   WORKSPACE_REAUTH_SECURITY_MESSAGE,
 } from "../../_lib/den-flow";
-import { getInferenceRoute, getMarketplaceOnboardingRoute, getOrgAccessFlags } from "../../_lib/den-org";
+import { getOnboardingToolsRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -147,14 +145,7 @@ function TeammatesForm({ orgId, orgSlug, organizationName, selfEmail, selfName, 
 
   function continueSetup() {
     if (sendingRef.current) return;
-    const pendingIntent = normalizeAuthIntentParam(window.sessionStorage.getItem(PENDING_AUTH_INTENT_STORAGE_KEY));
-    if (pendingIntent === "models") {
-      window.sessionStorage.removeItem(PENDING_AUTH_INTENT_STORAGE_KEY);
-      router.push(getInferenceRoute(orgSlug));
-      void refreshOrgData();
-      return;
-    }
-    router.push(getMarketplaceOnboardingRoute(orgSlug));
+    router.push(getOnboardingToolsRoute(orgSlug));
     // The admin layout unmounts its children during a full organization refresh.
     // Refresh only after leaving this form, so sent and failed rows survive retries.
     void refreshOrgData();

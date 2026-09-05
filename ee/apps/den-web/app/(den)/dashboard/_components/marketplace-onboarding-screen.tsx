@@ -11,6 +11,8 @@ import {
   getCustomLlmProvidersRoute,
   getInferenceRoute,
   getOrgDashboardRoute,
+  getOnboardingToolsRoute,
+  getYourConnectionsRoute,
 } from "../../_lib/den-org";
 import { requestJson } from "../../_lib/den-flow";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -82,10 +84,14 @@ export function MarketplaceOnboardingScreen({
     <SetupFrame
       step="ready"
       embedded
-      title="Your next step: the desktop."
-      description={`OpenWork is where the work happens. Install the app, then sign in to ${orgName}.`}
+      title="Put your tools to work."
+      description={`Build dashboards, run workflows, and bring ${orgName}’s shared tools to OpenWork or your preferred AI app.`}
     >
       <div className="grid gap-8" data-testid="marketplace-onboarding">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-neutral-50 px-4 py-3 text-xs text-neutral-500">
+          <span>More useful with your team’s tools.</span>
+          <Link href={getOnboardingToolsRoute(orgSlug)} className="font-medium text-neutral-900 underline-offset-4 hover:underline">Choose team tools →</Link>
+        </div>
         <section aria-labelledby="setup-download-heading" className="grid gap-4">
           <div className="flex items-start gap-3">
             <span className="flex size-7 shrink-0 items-center justify-center rounded-full border border-[var(--dls-border)] text-xs font-medium text-[var(--dls-text-secondary)]">1</span>
@@ -153,6 +159,11 @@ export function MarketplaceOnboardingScreen({
           </div>
         </section>
 
+        <div className="rounded-2xl bg-neutral-50 p-5 text-sm leading-6 text-neutral-600">
+          <h3 className="font-medium text-neutral-950">One connection. Your team’s tools.</h3>
+          <p className="mt-1 text-[13px]">OpenWork’s MCP gateway brings shared tools into compatible AI apps. Each person uses their own connected accounts and team permissions.</p>
+          <Link href={getYourConnectionsRoute(orgSlug)} className="mt-3 inline-block font-medium text-neutral-900 underline-offset-4 hover:underline">Connect your accounts →</Link>
+        </div>
         <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--dls-border)] pt-5 text-sm">
           <span className="text-[var(--dls-text-secondary)]">Keep setting up at your own pace.</span>
           <Link href={getOrgDashboardRoute(orgSlug)} className="rounded font-medium text-[var(--dls-text-primary)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--dls-text-primary)]">

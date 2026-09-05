@@ -1,45 +1,86 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { ArrowUpRight, Check, FileText, Folder, Layers, Plus, Users } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Check, ChevronRight, FileText, Folder, LayoutDashboard, MessageSquare, Monitor, Network, Play, Plug, Search, Users, Workflow } from "lucide-react";
 import styles from "./setup-frame.module.css";
 
 const steps = [
   { id: "account", label: "Account" },
   { id: "space", label: "Your space" },
   { id: "people", label: "People" },
+  { id: "tools", label: "Tools" },
   { id: "ready", label: "Get to work" },
 ];
 
-export type SetupStep = "account" | "space" | "people" | "ready";
+export type SetupStep = "account" | "space" | "people" | "tools" | "ready";
 
 function WorkPreview({ step }: { step: SetupStep }) {
+  const gateway = step === "tools" || step === "ready";
+  const label = gateway ? "One gateway. The tools you already use."
+    : step === "space" ? "A useful workflow, ready to reuse."
+    : step === "people" ? "Share the tools. Keep individual access."
+    : "Go from a conversation to a working dashboard.";
   return (
-    <div className={styles.preview} aria-hidden="true">
-      <div className={styles.object}><i /><i /><i /></div>
-      {step === "people" ? (
-        <div className={styles.peoplePreview}>
-          <div className={styles.faces}><span>Y</span><span>A</span><span>M</span><span><Plus size={18} /></span></div>
-          <div className={styles.previewHeading}>Good work is better together.</div>
-          <div className={styles.personRow}><span className={styles.smallAvatar}>Y</span><span>You</span><small>Owner</small></div>
-          <div className={styles.personRow}><span className={styles.smallAvatar}>A</span><span>Your teammate</span><small>Member</small></div>
-          <div className={styles.inviteLine}><Plus size={14} /> Room for your people</div>
+    <figure className={styles.preview} aria-label={`Product example: ${label}`}>
+      <div className={styles.previewLabel}><span>OPENWORK, IN PRACTICE</span><span>Example</span></div>
+      <div className={styles.appWindow} aria-hidden="true">
+        <div className={styles.appTitlebar}>
+          <img src="/openwork-mark.svg" alt="" width={13} height={13} />
+          <span>OpenWork</span><span className={styles.appWindowLabel}>{gateway ? "Connect" : step === "space" ? "Workflows" : step === "people" ? "Team library" : "Design studio"}</span>
         </div>
-      ) : (
-        <>
-          <div className={styles.backCard}><Folder size={15} /><span>{step === "space" ? "A space for your team" : "Monday, with a head start"}</span><span className={styles.previewDots}>···</span></div>
-          <div className={styles.workCard}>
-            <div className={styles.promptLine}><span className={styles.promptIcon}><Layers size={17} /></span><span>{step === "space" ? "Your tools. In one place." : "Turn these notes into a plan."}</span><ArrowUpRight size={16} /></div>
-            <div className={styles.paper}>
-              <div className={styles.paperTop}><FileText size={18} /><span>{step === "space" ? "Team workspace" : "The week ahead"}</span><small>{step === "space" ? "YOUR SPACE" : "DRAFT"}</small></div>
-              <div className={styles.paperRule} />
-              {(step === "space" ? ["Tools your team can use", "Access you can manage", "Files that stay yours"] : ["A clear set of priorities", "The decisions that matter", "A useful place to start"]).map((line) => <div key={line} className={styles.paperRow}><Check size={13} /><span>{line}</span></div>)}
-            </div>
-            <div className={styles.cardFoot}><span><FileText size={12} /> Your files</span><span><Users size={12} /> Your context</span><span className={styles.previewArrow}><ArrowUpRight size={14} /></span></div>
+        {gateway ? (
+          <div className={styles.gatewayCanvas}>
+            <div className={styles.gatewaySources}><span><FileText size={12} /> Team skills</span><span><Plug size={12} /> Connections</span></div>
+            <div className={styles.gatewayStem} />
+            <div className={styles.gatewayHub}><span className={styles.gatewayMark}><img src="/openwork-mark.svg" alt="" width={19} height={19} /></span><div><strong>OpenWork gateway</strong><small>One MCP connection</small></div><Network size={18} /></div>
+            <div className={styles.gatewayBranches}><i /><i /><i /></div>
+            <div className={styles.gatewayClients}><span><Monitor size={16} />Desktop</span><span><span className={styles.clientGlyph}>⌘</span>Codex</span><span><span className={styles.clientGlyph}>✳</span>Claude Code</span></div>
+            <p className={styles.gatewayNote}>Your team’s tools, available in your agent.</p>
           </div>
-        </>
-      )}
-    </div>
+        ) : (
+          <div className={styles.appBody}>
+            <div className={styles.appSidebar}><MessageSquare size={14} /><LayoutDashboard size={14} /><Workflow size={14} /><Users size={14} /><span /></div>
+            <div className={styles.appContent}>
+              {step === "space" ? (
+                <>
+                  <div className={styles.appBreadcrumb}>Workflows <ChevronRight size={10} /> Team brief</div>
+                  <div className={styles.previewSectionTitle}>Weekly team brief <span>Reusable</span></div>
+                  <div className={styles.workflowNode}><span><Search size={13} /></span><div><strong>Gather project updates</strong><small>From connected tools</small></div></div>
+                  <div className={styles.workflowLine} />
+                  <div className={styles.workflowNode}><span><MessageSquare size={13} /></span><div><strong>Summarize what changed</strong><small>Priorities, decisions, next steps</small></div></div>
+                  <div className={styles.workflowLine} />
+                  <div className={styles.workflowNode}><span><FileText size={13} /></span><div><strong>Create a team brief</strong><small>A document you can share</small></div></div>
+                  <div className={styles.workflowFooter}><span>Inputs → work → result</span><span><Play size={9} /> Run workflow</span></div>
+                </>
+              ) : step === "people" ? (
+                <>
+                  <div className={styles.appBreadcrumb}>Library <ChevronRight size={10} /> Shared with your team</div>
+                  <div className={styles.previewSectionTitle}>A common starting point</div>
+                  <div className={styles.libraryRow}><span><FileText size={15} /></span><div><strong>Write a project brief</strong><small>Skill · Your team’s way of working</small></div><ArrowUpRight size={12} /></div>
+                  <div className={styles.libraryRow}><span><Plug size={15} /></span><div><strong>Project knowledge</strong><small>Connection · Access managed by your team</small></div><ArrowUpRight size={12} /></div>
+                  <div className={styles.libraryRow}><span><LayoutDashboard size={15} /></span><div><strong>Launch overview</strong><small>Dashboard · Shared with the team</small></div><ArrowUpRight size={12} /></div>
+                  <div className={styles.libraryPeople}><span>Y</span><span>A</span><span>M</span><small>Shared tools. Individual accounts.</small></div>
+                </>
+              ) : (
+                <>
+                  <div className={styles.appBreadcrumb}><Folder size={10} /> Launch planning</div>
+                  <div className={styles.previewPrompt}>Create a launch dashboard from my project files.<span><ArrowUpRight size={12} /></span></div>
+                  <div className={styles.previewResponse}><img src="/openwork-mark.svg" alt="" width={12} height={12} /> A dashboard you can keep working with.</div>
+                  <div className={styles.dashboardPreview}>
+                    <div className={styles.dashboardHeading}><LayoutDashboard size={12} /><strong>Launch overview</strong><span>App preview</span></div>
+                    <div className={styles.dashboardChart}><div><small>Milestones</small><strong>12 <span>/ 16</span></strong></div><svg viewBox="0 0 140 48" fill="none"><path d="M2 43 23 36 43 38 63 25 83 29 104 14 122 17 138 4" stroke="#252525" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M2 43 23 36 43 38 63 25 83 29 104 14 122 17 138 4V48H2Z" fill="#252525" fillOpacity=".04" /></svg></div>
+                    <div className={styles.dashboardRow}><span><i /> Product page</span><small>Ready for review</small></div>
+                    <div className={styles.dashboardRow}><span><i /> Launch checklist</span><small>In progress</small></div>
+                  </div>
+                  <div className={styles.previewInput}>Ask for a change…<ArrowRight size={12} /></div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+      <figcaption>{label}</figcaption>
+    </figure>
   );
 }
 
@@ -72,7 +113,7 @@ export function SetupFrame({ step, title, description, children, aside, panelVis
             <p className={styles.description}>{description}</p>
           </div>
           {aside ? <div className={styles.customPreview}>{aside}</div> : <WorkPreview step={step} />}
-          <p className={styles.storyNote}>{step === "people" ? "A shared space. Individual accounts. Everyone brings their own perspective." : "Documents, research, and the work in between. Start with what you want to get done."}</p>
+          <p className={styles.storyNote}>{step === "tools" || step === "ready" ? "Connect once. Discover the right capability when your work needs it." : "Build dashboards, reuse workflows, and bring your team’s tools into the conversation."}</p>
         </aside>
         <div className={styles.panel} key={step}>
           {panelVisual ? <div className={styles.panelVisual}>{panelVisual}</div> : null}

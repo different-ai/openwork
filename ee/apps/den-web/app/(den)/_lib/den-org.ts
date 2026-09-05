@@ -499,6 +499,10 @@ export function getMarketplaceOnboardingRoute(_orgSlug?: string | null): string 
   return `${getOrgDashboardRoute(_orgSlug)}/onboarding`;
 }
 
+export function getOnboardingToolsRoute(orgSlug?: string | null): string {
+  return `${getMarketplaceOnboardingRoute(orgSlug)}/tools`;
+}
+
 export function getOnboardingPeopleRoute(orgSlug?: string | null): string {
   return `${getMarketplaceOnboardingRoute(orgSlug)}/people`;
 }

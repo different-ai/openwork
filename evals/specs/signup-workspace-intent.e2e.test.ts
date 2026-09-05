@@ -29,6 +29,15 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     if (!isRecord(result.body) || !Array.isArray(result.body.invitations)) throw new Error("Expected invitations");
     return result.body.invitations.filter(isRecord).map(({ email, role, status }) => ({ email, role, status }));
   };
+  const connectionsFor = async (id: string) => {
+    const result = await probe.api(world.den.admin, "/v1/mcp-connections?scope=manageable", { headers: { "x-openwork-org-id": id } });
+    expect(result.response.ok).toBe(true);
+    if (!isRecord(result.body) || !Array.isArray(result.body.connections)) throw new Error("Expected MCP connection list");
+    return result.body.connections.filter(isRecord).map(({ id, name, authType, credentialMode, connectedForMe, access }) => ({
+      id, name, authType, credentialMode, connectedForMe,
+      orgWide: isRecord(access) ? access.orgWide : undefined,
+    }));
+  };
   const inviteEmails = async () => {
     const result = await probe.api(world.den.admin, "/v1/dev/emails?template=organizationInvite");
     expect(result.response.ok).toBe(true);
@@ -93,7 +102,14 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     const outboxBeforeSkip = await inviteEmails();
     await user.type({ role: "textbox", label: "Teammate email 1" }, "unsent@openwork.test");
     await user.click({ role: "button", label: "Do this later" });
+    await user.see({ text: "Give your team a head start." }, { timeoutMs: 90_000 });
+    const connectionsBeforeSkip = await connectionsFor(personalId);
+    expect(connectionsBeforeSkip).toEqual([]);
+    await user.click({ role: "checkbox", label: "Add Notion" });
+    await user.click({ role: "button", label: "Do this later" });
     await user.see({ testId: "marketplace-onboarding" }, { timeoutMs: 90_000 });
+    expect(await connectionsFor(personalId)).toEqual(connectionsBeforeSkip);
+    evidence.recordAssertionEvidence("Skipping optional tools does not save even a selected connection", "Notion was selected, then Do this later continued to Ready; the personal organization's connection inventory stayed empty.", true);
     await user.click({ text: "Other platforms and versions" });
     await user.see({ text: "macOS" });
     await user.see({ text: "Windows" });
@@ -175,8 +191,37 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     expect(await policyFor(personalId)).toEqual(personalPolicy);
     await user.looks(["The optional people setup shows two completed invitations and a clear Continue action within the same neutral onboarding frame"]);
     await user.click({ role: "button", label: "Continue" });
-    await user.see({ testId: "marketplace-onboarding" }, { timeoutMs: 90_000 });
+    await user.see({ text: "Give your team a head start." }, { timeoutMs: 90_000 });
     evidence.recordAssertionEvidence("Partial invitation failure preserves the unsuccessful address and retries it without resending successful invitations or granting admin access", JSON.stringify({ invitations, recipientCounts: [1, 1], personalInvitations: 0 }), true);
+  });
+
+  await step("optional tools add shared availability without authorizing anyone's account", async () => {
+    expect(await world.pathname()).toMatch(/\/onboarding\/tools$/);
+    expect(await connectionsFor(flexibleId)).toEqual([]);
+    await user.see({ text: "Adding a tool makes it available to your team. Each teammate connects their own account before accessing private information." });
+    await user.click({ role: "checkbox", label: "Add Notion" });
+    await user.click({ role: "checkbox", label: "Add Linear" });
+    await user.click({ role: "button", label: "Add to team" });
+    await user.see({ role: "button", label: "Continue" }, { timeoutMs: 90_000 });
+    const added = await probe.eventually(() => connectionsFor(flexibleId), {
+      within: 30_000, label: "both selected OAuth presets are configured in the team", until: (items) => items.length === 2,
+    });
+    for (const name of ["Notion", "Linear"]) {
+      expect(added.find((connection) => connection.name === name)).toMatchObject({
+        authType: "oauth", credentialMode: "per_member", connectedForMe: false, orgWide: true,
+      });
+    }
+    expect(await connectionsFor(personalId)).toEqual([]);
+    await user.see({ text: "Added to team" });
+    await user.looks(["The optional Tools screen shows Notion and Linear added for the team while explaining that each person still signs in to their own account, with a clear Continue action"]);
+    await user.reload();
+    await user.see({ text: "Give your team a head start." }, { timeoutMs: 90_000 });
+    expect(await connectionsFor(flexibleId)).toEqual(added);
+    await user.see({ text: "Already added" });
+    await user.click({ role: "button", label: "Continue" });
+    await user.see({ testId: "marketplace-onboarding" }, { timeoutMs: 90_000 });
+    expect(await connectionsFor(flexibleId)).toEqual(added);
+    evidence.recordAssertionEvidence("Selected tools become organization-wide configuration without authorizing member accounts or creating duplicates on reload", JSON.stringify({ added, personalConnections: [], sameConnectionsAfterReload: true }), true);
   });
 
   await step("Restricted setup applies desktop policy before opening optional invitations", async () => {
@@ -222,7 +267,12 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     expect(await orgs()).toHaveLength(3);
     expect(await invitationsFor(team.id)).toEqual([]);
     await user.click({ role: "button", label: "Do this later" });
+    await user.see({ text: "Give your team a head start." }, { timeoutMs: 90_000 });
+    expect(await connectionsFor(team.id)).toEqual([]);
+    await user.click({ role: "button", label: "Do this later" });
     await user.see({ testId: "marketplace-onboarding" }, { timeoutMs: 90_000 });
+    expect(await connectionsFor(team.id)).toEqual([]);
+    expect(await connectionsFor(personalId)).toEqual([]);
     expect(await invitationsFor(team.id)).toEqual([]);
     expect(await invitationsFor(flexibleId)).toHaveLength(2);
     evidence.recordAssertionEvidence("Restricted setup saves the real desktop policy before opening People, survives reload, and leaves other organizations unchanged", JSON.stringify({ saved, retainedAfterReload: true, legacySetupContinuesToPeople: true, personalPolicy, orgCount: 3, restrictedInvitations: 0, flexibleInvitations: 2 }), true);
