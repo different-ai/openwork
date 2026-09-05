@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 import { createHash } from "node:crypto";
-import { control, evalIn } from "@openwork/behaviors";
+import { control, evalIn, assertNoLiveSecret, liveOpenAiEnabled, liveOpenAiModel, provisionLiveOpenAi, liveProviderId, liveV2Turn } from "@openwork/behaviors";
 import type { Surface } from "@openwork/cdp";
 import { app, eventually, mcpMock, needs, server, test } from "@openwork/testkit";
 
@@ -28,11 +28,13 @@ async function request(surface: Surface, path: string, method = "GET", body?: un
     return { status: response.status, json };
   })()`, { awaitPromise: true, timeoutMs: 65_000 });
   if (!record(result) || typeof result.status !== "number") throw new Error("Invalid server response");
+  assertNoLiveSecret(result.json);
   return { status: result.status, json: result.json };
 }
 
 test("v2 uses an MCP added through OpenWork on the next call and removes it in the same conversation", { timeout: 20 * 60_000 }, async ({ place, evidence }) => {
-  needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"] });
+  const live = liveOpenAiEnabled();
+  needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"], ...(live ? { env: ["OPENAI_API_KEY"], daytona: true } : {}) });
   const nonce = `REPORT-${Date.now()}`;
   await using den = await server({
     place,
@@ -42,11 +44,15 @@ test("v2 uses an MCP added through OpenWork on the next call and removes it in t
       result: { content: [{ type: "text", text: nonce }] },
     }] }) },
   });
+  await using managed = await provisionLiveOpenAi(den.admin);
   await using desktop = await app({ den, as: "member", place });
+  const api = (path: string, method?: string, body?: unknown) => request(desktop, path, method, body);
+  const providerId = live ? await liveProviderId(api, managed.id) : "reload-witness";
+  const modelId = live ? liveOpenAiModel() : "mock-agent-workload-model";
   const workspaceId = desktop.workspaceId;
   const root = `/workspace/${workspaceId}`;
   const v2 = `${root}/opencode2`;
-  expect((await request(desktop, `${root}/config`, "PATCH", { opencode: { provider: {
+  if (!live) expect((await request(desktop, `${root}/config`, "PATCH", { opencode: { provider: {
     "reload-witness": { npm: "@ai-sdk/openai-compatible", name: "Reload Witness",
       options: { baseURL: `${den.mocks.witness.url}/v1`, apiKey: "eval-only-key" },
       models: { "mock-agent-workload-model": { name: "Reload Witness", tool_call: true } } },
@@ -54,11 +60,11 @@ test("v2 uses an MCP added through OpenWork on the next call and removes it in t
   expect((await request(desktop, "/experimental/engine-v2-preview", "PUT", { enabled: true, chatRouting: true })).status).toBe(200);
   const status = await eventually(async () => (await request(desktop, "/experimental/engine-v2-preview/status")).json, {
     within: 180_000, intervalMs: 1_000, label: "v2 provider and process ready",
-    until: (value) => record(value) && value.running === true && Array.isArray(value.mirroredProviderIds) && value.mirroredProviderIds.includes("reload-witness"),
+    until: (value) => record(value) && value.running === true && Array.isArray(value.mirroredProviderIds) && value.mirroredProviderIds.includes(providerId),
   });
   if (!record(status) || typeof status.pid !== "number") throw new Error("Missing v2 process identity");
   const pid = status.pid;
-  const created = await request(desktop, `${v2}/api/session`, "POST", { model: { providerID: "reload-witness", id: "mock-agent-workload-model" } });
+  const created = await request(desktop, `${v2}/api/session`, "POST", { model: { providerID: providerId, id: modelId } });
   expect(created.status).toBe(200);
   const data = record(created.json) ? created.json.data : undefined;
   if (!record(data) || typeof data.id !== "string") throw new Error("Missing v2 session");
@@ -66,6 +72,15 @@ test("v2 uses an MCP added through OpenWork on the next call and removes it in t
   let executions = 0;
   const toolCode = 'return await tools["reload-witness"].read_report({});';
   async function turn(stage: string, useTool: boolean) {
+    if (live) {
+      const result = await liveV2Turn(api, v2, sessionId,
+        "Get the current verification report using the connected report tool. Discover the currently available tools yourself. "
+        + "Fetch fresh data; never reuse a report from earlier messages. If the report tool is unavailable, say UNAVAILABLE. "
+        + "Do not use files, shell, environment variables, or the internet. Return the report code briefly.");
+      const next = (await api("/experimental/engine-v2-preview/status")).json;
+      expect(record(next) ? next.pid : null).toBe(pid);
+      return result;
+    }
     const marker = `RELOAD-${stage}-${Date.now()}`;
     const reply = `DONE-${stage}-${Date.now()}`;
     if (useTool) executions++;
@@ -96,7 +111,8 @@ test("v2 uses an MCP added through OpenWork on the next call and removes it in t
     expect(record(next) ? next.pid : null).toBe(pid);
     return { messages, sinceIso };
   }
-  await turn("before", false);
+  const before = await turn("before", false);
+  if (live) expect(before.messages).not.toContain(nonce);
   const mcpConfig = { type: "remote", url: den.mocks.witness.mcpUrl, oauth: false,
     headers: { Authorization: "Bearer eval-mcp-first" } };
   expect((await request(desktop, `${root}/mcp`, "POST", { name: "reload-witness", config: mcpConfig })).status).toBe(200);
@@ -108,6 +124,7 @@ test("v2 uses an MCP added through OpenWork on the next call and removes it in t
   expect((await request(desktop, `${root}/mcp`, "POST", { name: "reload-witness",
     config: { ...mcpConfig, headers: { Authorization: "Bearer eval-mcp-second" } } })).status).toBe(200);
   const updated = await turn("updated", true);
+  expect(updated.messages).toContain(nonce);
   const updatedCalls = await den.mocks.witness.toolCalls({ name: "read_report", sinceIso: updated.sinceIso, atLeast: 1 });
   const secondToken = createHash("sha256").update("eval-mcp-second").digest("hex").slice(0, 12);
   expect(updatedCalls.length).toBeGreaterThan(0);
@@ -134,6 +151,25 @@ test("v2 uses an MCP added through OpenWork on the next call and removes it in t
   const removed = await turn("removed", true);
   expect(await den.mocks.witness.toolCalls({ name: "read_report", sinceIso: removed.sinceIso })).toHaveLength(0);
   expect(JSON.stringify((await request(desktop, `${v2}/api/mcp`)).json)).not.toContain("reload-witness");
+  if (live) {
+    expect(removed.messages).toMatch(/unavailable/i);
+    for (let cycle = 0; cycle < 2; cycle++) {
+      expect((await api(`${root}/mcp`, "POST", { name: "reload-witness", config: mcpConfig })).status).toBe(200);
+      const recovered = await turn(`reconnected-${cycle}`, true);
+      expect(recovered.messages).toContain(nonce);
+      expect((await den.mocks.witness.toolCalls({ name: "read_report", sinceIso: recovered.sinceIso, atLeast: 1 })).length).toBeGreaterThan(0);
+      expect((await api(`${root}/mcp/reload-witness/enabled`, "POST", { enabled: false })).status).toBe(200);
+      const disabled = await turn(`disabled-${cycle}`, false);
+      expect(disabled.messages).toMatch(/unavailable/i);
+      expect(await den.mocks.witness.toolCalls({ name: "read_report", sinceIso: disabled.sinceIso })).toHaveLength(0);
+      expect((await api(`${root}/mcp/reload-witness/enabled`, "POST", { enabled: true })).status).toBe(200);
+      const enabled = await turn(`enabled-${cycle}`, true);
+      expect((await den.mocks.witness.toolCalls({ name: "read_report", sinceIso: enabled.sinceIso, atLeast: 1 })).length).toBeGreaterThan(0);
+      expect((await api(`${root}/mcp/reload-witness`, "DELETE")).status).toBe(200);
+    }
+    evidence.recordAssertionEvidence("real OpenAI discovers live MCP changes across repeated lifecycle cycles",
+      `${modelId} made unscripted model/tool calls from the Daytona v2 process after managed credential delivery. Two reconnect/disable/enable cycles served actual MCP calls only while enabled, with the original session and process. The credential was absent from all observed public responses.`, true);
+  }
   expect((await request(desktop, `${root}/opencode/global/health`)).status).toBe(200);
-  evidence.recordAssertionEvidence("removal reaches the next call and v1 remains available", "After DELETE through OpenWork, the native catalog no longer contained the connection and an attempted Code Mode execution in the original conversation served no new MCP calls. The same v2 process and the v1 health endpoint remained available. Direct v2 MCP mutation was denied.", true);
+  evidence.recordAssertionEvidence("removal reaches the next call and v1 remains available", (live ? "Real OpenAI reported UNAVAILABLE after DELETE; " : "After an explicit Code Mode attempt following DELETE; ") + "the native catalog no longer contained the connection and the original conversation served no new MCP calls. The same v2 process and the v1 health endpoint remained available. Direct v2 MCP mutation was denied.", true);
 });
