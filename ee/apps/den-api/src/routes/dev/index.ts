@@ -11,6 +11,7 @@ function normalizeEmailTemplate(value: string | null): EmailTemplate | null | un
   }
 
   switch (value) {
+    case "cloudTrial":
     case "verification":
     case "passwordReset":
     case "organizationInvite":

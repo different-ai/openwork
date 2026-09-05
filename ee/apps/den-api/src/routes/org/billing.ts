@@ -1,3 +1,6 @@
+import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { getCloudTrial, hasUsedCloudTrial, serializeCloudTrial, startCloudTrial } from "../../cloud-trials.js"
+import { isOpenWorkWebAvailable } from "../../openwork-web-availability.js"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
@@ -11,6 +14,12 @@ import { ORGANIZATION_SUPER_ADMIN_ROLE, organizationRoleValueSatisfies } from ".
 import { isOpenWorkWebAvailableForOrganization } from "../../openwork-web-availability.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { ensureOrganizationAdmin, ensureOrganizationSuperAdmin, orgAccessFailureStatus } from "./shared.js"
+
+const cloudTrialResponseSchema = z.object({ trial: z.object({
+  status: z.enum(["eligible", "active", "expired", "ineligible"]),
+  startedAt: z.string().nullable(), expiresAt: z.string().nullable(),
+}) }).meta({ ref: "CloudTrialResponse" })
+const trialUnavailableSchema = z.object({ error: z.literal("trial_unavailable"), message: z.string() }).meta({ ref: "CloudTrialUnavailable" })
 
 const stripeBillingResponseSchema = z.object({}).passthrough().meta({ ref: "OrgStripeBillingResponse" })
 const stripeCheckoutRequestSchema = z.object({ type: z.enum(["inference", "seat", "web"]).optional() })
@@ -119,6 +128,46 @@ function openWorkWebCheckoutCancelUrl(c: { req: { raw: Request } }) {
 }
 
 export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
+  app.get("/v1/billing/web-trial", describeRoute({
+    tags: ["Organizations"], summary: "Get this workspace’s free cloud trial",
+    responses: { 200: jsonResponse("Trial status; no subscription or payment created.", cloudTrialResponseSchema),
+      401: jsonResponse("Sign in to view the trial.", unauthorizedSchema),
+      404: jsonResponse("Cloud is unavailable.", openWorkWebUnavailableSchema) },
+  }), orgRoleRoute(["member"]), async (c) => {
+    const payload = c.get("organizationContext")
+    if (!isOpenWorkWebAvailableForOrganization(payload.organization.metadata)) return c.json(openWorkWebUnavailableResponse(), 404)
+    const userId = normalizeDenTypeId("user", c.get("user").id)
+    const [trial, used, billing] = await Promise.all([
+      getCloudTrial(payload.organization.id), hasUsedCloudTrial(userId),
+      getOpenWorkWebBillingSummary(payload.organization.id),
+    ])
+    return c.json({ trial: serializeCloudTrial(trial, env.openworkCloudTrialEnabled && !used && !billing.subscription && !billing.hasAccess, billing.accessSource === "subscription" || billing.accessSource === "complimentary") })
+  })
+
+  app.post("/v1/billing/web-trial", describeRoute({
+    tags: ["Organizations"], summary: "Start an optional seven-day cloud trial without a card",
+    description: "Admin-only. One trial per workspace and starting account. Retries return the original dates. Does not create a paid subscription or grant model credits.",
+    responses: { 200: jsonResponse("Original or newly started trial.", cloudTrialResponseSchema),
+      401: jsonResponse("Sign in to start the trial.", unauthorizedSchema),
+      403: jsonResponse("A workspace admin is required.", forbiddenSchema),
+      404: jsonResponse("Cloud is unavailable.", openWorkWebUnavailableSchema),
+      409: jsonResponse("Trial already used or subscription exists.", trialUnavailableSchema) },
+  }), orgRoleRoute(["admin"]), async (c) => {
+    const payload = c.get("organizationContext")
+    if (!isOpenWorkWebAvailable()) return c.json(openWorkWebUnavailableResponse(), 404)
+    const admin = ensureOrganizationAdmin(c, "Only workspace owners and admins can start a cloud trial.")
+    if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
+    const [existing, billing] = await Promise.all([getCloudTrial(payload.organization.id), getOpenWorkWebBillingSummary(payload.organization.id)])
+    if (existing) return c.json({ trial: serializeCloudTrial(existing, false, billing.accessSource === "subscription" || billing.accessSource === "complimentary") })
+    if (!env.openworkCloudTrialEnabled) return c.json({ error: "trial_unavailable", message: "Free cloud trials are not available for this deployment yet." }, 409)
+    if (billing.subscription || billing.hasAccess) {
+      return c.json({ error: "trial_unavailable", message: "This workspace already has cloud access or has had a cloud subscription." }, 409)
+    }
+    const trial = await startCloudTrial(payload.organization.id, normalizeDenTypeId("user", c.get("user").id))
+    if (!trial) return c.json({ error: "trial_unavailable", message: "This account has already used its free cloud trial." }, 409)
+    return c.json({ trial: serializeCloudTrial(trial, false) })
+  })
+
   app.get(
     "/v1/billing/web",
     describeRoute({

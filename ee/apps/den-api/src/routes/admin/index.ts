@@ -1,3 +1,5 @@
+import { getCloudTrial } from "../../cloud-trials.js"
+import { OrgCloudTrialTable } from "@openwork-ee/den-db/schema"
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import type { SQL } from "@openwork-ee/den-db/drizzle"
 import {
@@ -291,6 +293,7 @@ function readAdminVisibleOrganizationCapabilities(metadata: Record<string, unkno
 function readAdminOpenWorkWebAccess(
   metadata: Record<string, unknown> | string | null | undefined,
   subscription: AdminOpenWorkWebSubscription | null,
+  trialExpiresAt?: Date | null,
 ) {
   const complimentaryAccess = hasOpenWorkWebComplimentaryAccess(metadata)
   const hasEligibleSubscription = Boolean(
@@ -304,6 +307,7 @@ function readAdminOpenWorkWebAccess(
     deploymentAvailable: isOpenWorkWebAvailable(),
     hasEligibleSubscription,
     complimentaryAccess,
+    trialExpiresAt,
   })
   return {
     ...access,
@@ -924,7 +928,7 @@ async function shapeAdminOrganizationRows(rows: Array<Pick<typeof OrganizationTa
   }
 
   const organizationIds = rows.map((row) => row.id)
-  const [memberRows, webSubscriptionRows] = await Promise.all([
+  const [memberRows, webSubscriptionRows, trialRows] = await Promise.all([
     db
       .select({ organizationId: MemberTable.organizationId, memberCount: sql<number>`count(*)` })
       .from(MemberTable)
@@ -942,11 +946,13 @@ async function shapeAdminOrganizationRows(rows: Array<Pick<typeof OrganizationTa
         inArray(OrgSubscriptionTable.organization_id, organizationIds),
         eq(OrgSubscriptionTable.type, "web"),
       )),
+    db.select().from(OrgCloudTrialTable).where(inArray(OrgCloudTrialTable.organization_id, organizationIds)),
   ])
   const memberCountByOrg = new Map<string, number>()
   for (const row of memberRows) {
     memberCountByOrg.set(row.organizationId, toNumber(row.memberCount))
   }
+  const trialExpiryByOrg = new Map(trialRows.map((row) => [row.organization_id, row.expires_at]))
   const webSubscriptionByOrg = new Map(webSubscriptionRows.map((row) => [row.organizationId, row]))
 
   return rows.map((entry) => {
@@ -966,7 +972,7 @@ async function shapeAdminOrganizationRows(rows: Array<Pick<typeof OrganizationTa
       seatsFreeAdditional: seatCounts.additionalFree,
       billableSeatCount: seatCounts.chargeable,
       capabilities: readAdminVisibleOrganizationCapabilities(metadata),
-      openworkWebAccess: readAdminOpenWorkWebAccess(metadata, webSubscriptionByOrg.get(entry.id) ?? null),
+      openworkWebAccess: readAdminOpenWorkWebAccess(metadata, webSubscriptionByOrg.get(entry.id) ?? null, trialExpiryByOrg.get(entry.id)),
     }
   })
 }
@@ -1757,7 +1763,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         ok: true,
         organization: {
           id: organizationId,
-          openworkWebAccess: readAdminOpenWorkWebAccess(result.metadata, result.webSubscription),
+          openworkWebAccess: readAdminOpenWorkWebAccess(result.metadata, result.webSubscription, (await getCloudTrial(organizationId))?.expires_at),
         },
       })
     },

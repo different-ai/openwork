@@ -135,7 +135,7 @@ type AdminOrganizationCapabilities = {
 
 type AdminOpenWorkWebAccess = {
   hasAccess: boolean;
-  accessSource: "subscription" | "complimentary" | null;
+  accessSource: "subscription" | "complimentary" | "trial" | null;
   complimentaryAccess: boolean;
   hasEligibleSubscription: boolean;
   hasOngoingSubscription: boolean;
@@ -260,7 +260,7 @@ function parseAdminOpenWorkWebAccess(value: unknown): AdminOpenWorkWebAccess {
     };
   }
 
-  const accessSource = value.accessSource === "subscription" || value.accessSource === "complimentary"
+  const accessSource = value.accessSource === "subscription" || value.accessSource === "complimentary" || value.accessSource === "trial"
     ? value.accessSource
     : null;
   return {

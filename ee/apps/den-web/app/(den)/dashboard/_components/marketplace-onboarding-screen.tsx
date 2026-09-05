@@ -16,6 +16,7 @@ import {
 import { requestJson } from "../../_lib/den-flow";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { LlmProviderLogos } from "./llm-provider-logos";
+import { CloudTrialCard } from "./cloud-trial-card";
 
 const APP_INSTALLED_KEY = "openwork:onboarding:app-installed";
 
@@ -94,6 +95,8 @@ export function MarketplaceOnboardingScreen({
             : "OpenWork runs on the desktop app. Install it, sign in, and this workspace syncs automatically."}
         </p>
       </header>
+
+      <CloudTrialCard dismissible />
 
       <section className="mt-8 grid gap-4">
         <DownloadOpenWorkCard installers={installers} releaseTag={releaseTag} />

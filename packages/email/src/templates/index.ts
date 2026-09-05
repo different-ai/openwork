@@ -1,3 +1,4 @@
+import { CloudTrialEmail, type CloudTrialEmailProps } from "./cloud-trial.js"
 import { createElement, type ReactElement } from "react"
 import { DownloadLinkEmail, type DownloadLinkEmailProps } from "./download-link.js"
 import { FeedbackEmail, type FeedbackEmailProps } from "./feedback.js"
@@ -12,6 +13,7 @@ export type { PasswordResetEmailProps } from "./password-reset.js"
 export type { VerificationEmailProps } from "./verification.js"
 
 export type EmailTemplateProps = {
+  cloudTrial: CloudTrialEmailProps
   verification: VerificationEmailProps
   passwordReset: PasswordResetEmailProps
   organizationInvite: OrganizationInviteEmailProps
@@ -22,6 +24,7 @@ export type EmailTemplateProps = {
 export type EmailTemplate = keyof EmailTemplateProps
 
 export const emailSubjects: { [Template in EmailTemplate]: (props: EmailTemplateProps[Template]) => string } = {
+  cloudTrial: ({ phase }) => phase === "ending" ? "Your OpenWork cloud trial ends soon" : "Your OpenWork cloud trial has ended",
   verification: ({ verificationCode }) => `Your OpenWork verification code is ${verificationCode}`,
   passwordReset: () => "Reset your OpenWork password",
   organizationInvite: ({ organizationName }) => `You're invited to join ${organizationName} on OpenWork`,
@@ -30,6 +33,7 @@ export const emailSubjects: { [Template in EmailTemplate]: (props: EmailTemplate
 }
 
 export const emailReplyTo: { [Template in EmailTemplate]: (props: EmailTemplateProps[Template]) => string | undefined } = {
+  cloudTrial: () => undefined,
   verification: () => undefined,
   passwordReset: () => undefined,
   organizationInvite: () => undefined,
@@ -38,6 +42,7 @@ export const emailReplyTo: { [Template in EmailTemplate]: (props: EmailTemplateP
 }
 
 const emailRenderers: { [Template in EmailTemplate]: (props: EmailTemplateProps[Template]) => ReactElement } = {
+  cloudTrial: (props) => createElement(CloudTrialEmail, props),
   verification: (props) => createElement(VerificationEmail, props),
   passwordReset: (props) => createElement(PasswordResetEmail, props),
   organizationInvite: (props) => createElement(OrganizationInviteEmail, props),

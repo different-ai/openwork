@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { CloudTrialCard } from "./cloud-trial-card";
 import { useRouter } from "next/navigation";
 import { Check, CreditCard, RefreshCw } from "lucide-react";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
@@ -359,6 +360,7 @@ export function BillingDashboardScreen() {
   const webSubscribed = Boolean(webSubscription);
   const webEligible = webBilling?.hasAccess === true;
   const webAccessSource = webBilling?.accessSource ?? null;
+  const webTrial = webAccessSource === "trial";
   const webComplimentary = webAccessSource === "complimentary";
   const webPrice = webBilling ? formatMoneyMinor(webBilling.unitAmount, webBilling.currency) : null;
   const webChargeMinor = webBilling?.expectedMonthlyTotal ?? 0;
@@ -497,6 +499,8 @@ export function BillingDashboardScreen() {
               description={
                 !webBilling
                   ? "Billing details are unavailable · browser access remains locked"
+                  : webTrial
+                    ? "7-day free cloud trial · no subscription or automatic charges"
                   : webComplimentary
                     ? `${getOpenWorkWebQuantityDescription(webBilling.quantity)} covered · complimentary access`
                   : !webConfigured
@@ -506,9 +510,11 @@ export function BillingDashboardScreen() {
                       : `${getOpenWorkWebQuantityDescription(webBilling.quantity)} · not subscribed`
               }
               value={webComplimentary ? formatMoneyMinor(0, webBilling?.currency ?? "usd") : webCountsTowardTotal ? webChargeLabel ?? "" : formatMoneyMinor(0, webBilling?.currency ?? "usd")}
-              valueCaption={webComplimentary ? "no charge" : `per ${webBilling?.interval ?? "month"}`}
+              valueCaption={webComplimentary || webTrial ? "no charge" : `per ${webBilling?.interval ?? "month"}`}
               badge={
-                webComplimentary
+                webTrial
+                  ? <DenBadge tone="neutral">Free trial</DenBadge>
+                : webComplimentary
                   ? <DenBadge tone="success" icon={Check}>Complimentary</DenBadge>
                   : !webBilling || !webConfigured
                   ? <DenBadge tone="neutral">Not billed</DenBadge>
@@ -561,11 +567,15 @@ export function BillingDashboardScreen() {
         <DenCard className="mb-6" data-testid="billing-openwork-web-card">
           <DenSectionHeader
             title="OpenWork Web"
-            description={webComplimentary
+            description={webTrial
+              ? "Seven days of cloud access. No payment will be taken when the trial ends."
+              : webComplimentary
               ? "Browser access is included for every joined organization member at no charge."
               : "Browser access for your organization — $50 per joined member each month."}
             action={
-              webComplimentary
+              webTrial
+                ? <DenBadge tone="neutral">Free trial</DenBadge>
+              : webComplimentary
                 ? <DenBadge tone="success" icon={Check}>Complimentary</DenBadge>
                 : !webBilling || !webConfigured
                 ? <DenBadge tone="neutral">Not billed</DenBadge>
@@ -581,7 +591,9 @@ export function BillingDashboardScreen() {
             }
           />
 
-          {!webBilling ? (
+          {webTrial ? (
+            <div className="mt-5"><CloudTrialCard onAccessChange={() => void refreshStripeBilling(true)} /></div>
+          ) : !webBilling ? (
             <DenNotice
               className="mt-5"
               message="OpenWork Web billing details are unavailable. Browser access remains locked until the subscription can be confirmed."
