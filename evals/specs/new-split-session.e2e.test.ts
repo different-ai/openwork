@@ -484,6 +484,29 @@ test("new split creates fresh same-workspace secondary sessions without moving t
     expect(remainingIds).toContain(beforeClose.primarySessionId);
     expect(remainingIds).toContain(beforeClose.secondarySessionId);
     expect(remainingIds).toContain(reopened.secondarySessionId);
+    await user.click({ role: "button", label: "Open a second chat" });
+    await probe.eventually(() => world.splitFacts(), {
+      within: 60_000,
+      label: "another second chat opens beside the promoted conversation",
+      until: (value) => parseSplitFacts(value).primarySessionId === reopened.secondarySessionId
+        && parseSplitFacts(value).secondaryPaneCount === 1,
+    });
+    const beforePaneClose = (await agent.list()).map((session) => session.sessionId).sort();
+    expect(await probe.eval(`(() => {
+      const button = document.querySelector('[data-workbench-pane-header="secondary"] button[aria-label="Back to main chat"]');
+      if (!(button instanceof HTMLButtonElement)) return false;
+      button.click();
+      return true;
+    })()`)).toBe(true);
+    await probe.eventually(() => world.splitFacts(), {
+      within: 30_000,
+      label: "the pane return button keeps the main conversation open",
+      until: (value) => parseSplitFacts(value).layoutKind === "single"
+        && parseSplitFacts(value).primarySessionId === reopened.secondarySessionId
+        && parseSplitFacts(value).secondaryPaneCount === 0,
+    });
+    expect((await agent.list()).map((session) => session.sessionId).sort()).toEqual(beforePaneClose);
+    evidence.recordAssertionEvidence("Back to main chat works from the second-pane header without deleting conversations", JSON.stringify({ primarySessionId: reopened.secondarySessionId, savedSessionCount: beforePaneClose.length }), true);
     evidence.recordAssertionEvidence(
       "Side chat controls close, create, and expand without deleting either conversation",
       "The sidebar changes from Back to main chat to Open a second chat; closing preserves all session IDs, creating preserves the main pane, and Expand promotes the side conversation while retaining both saved chats.",
