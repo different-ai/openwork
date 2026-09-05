@@ -6,6 +6,7 @@ import { chmod, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/p
 import { isIP, type LookupFunction } from "node:net";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { openworkServerConfigPath } from "@openwork/paths";
+import { z } from "zod";
 import {
   Agent,
   fetch as undiciFetch,
@@ -95,9 +96,9 @@ export const GOOGLE_WORKSPACE_EXTENSION_ACTIONS = [
     inputSchema: {
       type: "object",
       properties: {
-        timeMin: { type: "string", description: "Inclusive ISO datetime lower bound." },
-        timeMax: { type: "string", description: "Exclusive ISO datetime upper bound." },
-        maxResults: { type: "number", description: "Maximum events to return." },
+        timeMin: { type: "string", format: "date-time", description: "Exclusive lower bound for event end times. RFC 3339 with Z or a UTC offset, e.g. 2026-09-01T09:00:00+02:00." },
+        timeMax: { type: "string", format: "date-time", description: "Exclusive upper bound for event start times. RFC 3339 with Z or a UTC offset; must be later than timeMin." },
+        maxResults: { type: "integer", description: "Maximum events to return. Defaults to 10; clamped to 1–50." },
       },
       required: ["timeMin", "timeMax"],
       additionalProperties: false,
@@ -1424,11 +1425,20 @@ async function googleWorkspaceDownloadAttachment(config: ServerConfig, args: Rec
   };
 }
 
+const calendarReadTimestamp = z.string().trim().datetime({ offset: true, message: "Use an RFC 3339 datetime with Z or a UTC offset." });
+const calendarReadArgs = z.object({
+  timeMin: calendarReadTimestamp,
+  timeMax: calendarReadTimestamp,
+  maxResults: z.number().int().default(10),
+}).refine((args) => Date.parse(args.timeMax) > Date.parse(args.timeMin), {
+  path: ["timeMax"], message: "timeMax must be later than timeMin.",
+});
+
 async function googleWorkspaceListEvents(config: ServerConfig, args: Record<string, unknown>) {
-  const timeMin = readStringField(args, "timeMin");
-  const timeMax = readStringField(args, "timeMax");
-  if (!timeMin || !timeMax) throw new ApiError(400, "invalid_payload", "timeMin and timeMax are required");
-  const maxResults = Math.min(Math.max(Number(args.maxResults ?? 10), 1), 50);
+  const parsed = calendarReadArgs.safeParse(args);
+  if (!parsed.success) throw new ApiError(400, "invalid_payload", parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join(" "));
+  const { timeMin, timeMax } = parsed.data;
+  const maxResults = Math.min(Math.max(parsed.data.maxResults, 1), 50);
   const { accessToken } = await googleWorkspaceAccessToken(config);
   const url = new URL("https://www.googleapis.com/calendar/v3/calendars/primary/events");
   url.searchParams.set("timeMin", timeMin);
