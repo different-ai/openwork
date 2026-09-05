@@ -1,7 +1,7 @@
 export const denDropdownFieldBaseClass = [
   "w-full border border-gray-200 bg-white",
   "h-[42px] px-4 pr-10 text-[14px] leading-5 text-gray-900",
-  "outline-none transition-all focus:border-gray-300 focus:ring-2 focus:ring-gray-900/5",
+  "outline-hidden transition-all focus:border-gray-300 focus:ring-2 focus:ring-gray-900/5",
 ].join(" ");
 
 export const denDropdownFieldOpenClass = "border-gray-300 ring-2 ring-gray-900/5";

@@ -227,7 +227,7 @@ export function OrganizationScreen() {
       <main className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-12">
         {isSingleOrgMode && orgs.length === 0 ? (
           <div className="mx-auto max-w-2xl">
-            <section className="rounded-[1.75rem] border border-gray-200 bg-white p-5 shadow-sm sm:p-7 md:rounded-[2rem] md:p-10">
+            <section className="rounded-[1.75rem] border border-gray-200 bg-white p-5 shadow-xs sm:p-7 md:rounded-[2rem] md:p-10">
               <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start">
                 <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#011627] text-sm font-semibold uppercase tracking-[0.08em] text-white sm:h-14 sm:w-14">
                   {userInitials}
@@ -310,7 +310,7 @@ export function OrganizationScreen() {
             ) : null}
 
             {activeTab === "profile" ? (
-              <section className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+              <section className="rounded-2xl border border-gray-200 bg-white p-6 shadow-xs">
                 <div className="mb-6 flex items-start gap-4">
                   <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-[#011627] text-sm font-semibold uppercase tracking-[0.08em] text-white">
                     {userInitials}
@@ -328,7 +328,7 @@ export function OrganizationScreen() {
                       type="text"
                       value={user?.name ?? ""}
                       readOnly
-                      className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-900 outline-none"
+                      className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-900 outline-hidden"
                     />
                   </label>
 
@@ -338,7 +338,7 @@ export function OrganizationScreen() {
                       type="email"
                       value={user?.email ?? ""}
                       readOnly
-                      className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-900 outline-none"
+                      className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-900 outline-hidden"
                     />
                   </label>
 
@@ -348,7 +348,7 @@ export function OrganizationScreen() {
                       type="text"
                       value={user?.id ?? ""}
                       readOnly
-                      className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-900 outline-none"
+                      className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-900 outline-hidden"
                     />
                   </label>
 
@@ -358,7 +358,7 @@ export function OrganizationScreen() {
                       type="text"
                       value={activeOrg?.name ?? "No active organization"}
                       readOnly
-                      className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-900 outline-none"
+                      className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-900 outline-hidden"
                     />
                   </label>
                 </div>
@@ -376,7 +376,7 @@ export function OrganizationScreen() {
                         value={orgQuery}
                         onChange={(event) => setOrgQuery(event.target.value)}
                         placeholder="Search organizations"
-                        className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 outline-none transition focus:border-gray-400 focus:ring-4 focus:ring-gray-900/5"
+                        className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 outline-hidden transition focus:border-gray-400 focus:ring-4 focus:ring-gray-900/5"
                       />
                     ) : null}
                     <button
@@ -390,7 +390,7 @@ export function OrganizationScreen() {
 
                 <div className="grid gap-3 md:hidden">
                   {visibleOrgs.map((org) => (
-                    <section key={org.id} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                    <section key={org.id} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-xs">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <h2 className="truncate text-[15px] font-semibold text-gray-950">{org.name}</h2>
@@ -407,7 +407,7 @@ export function OrganizationScreen() {
                       <div className="mt-4 flex gap-2">
                         <button
                           onClick={() => handleSwitch(org.slug)}
-                          className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50"
+                          className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm font-medium text-gray-700 shadow-xs transition hover:bg-gray-50"
                         >
                           {org.isActive ? "Open" : "Switch"}
                         </button>
@@ -423,7 +423,7 @@ export function OrganizationScreen() {
                   ))}
                 </div>
 
-                <div className="hidden overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm md:block">
+                <div className="hidden overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xs md:block">
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-sm">
                       <thead className="border-b border-gray-200 bg-gray-50/50">
@@ -453,7 +453,7 @@ export function OrganizationScreen() {
                               ) : (
                                 <button
                                   onClick={() => handleSwitch(org.slug)}
-                                  className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm transition hover:bg-gray-50"
+                                  className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-xs transition hover:bg-gray-50"
                                 >
                                   Switch
                                 </button>
@@ -485,7 +485,7 @@ export function OrganizationScreen() {
                     <button
                       type="button"
                       onClick={showMoreOrgs}
-                      className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50 sm:w-auto"
+                      className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 shadow-xs transition hover:bg-gray-50 sm:w-auto"
                     >
                       Show more
                     </button>

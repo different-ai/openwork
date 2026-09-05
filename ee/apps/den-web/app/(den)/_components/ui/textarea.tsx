@@ -38,7 +38,7 @@ export function DenTextarea({
       className={[
         "w-full rounded-lg border border-gray-200 bg-white",
         "px-4 py-2.5 text-[14px] text-gray-900",
-        "outline-none transition-all placeholder:text-gray-400",
+        "outline-hidden transition-all placeholder:text-gray-400",
         "focus:border-gray-300 focus:ring-2 focus:ring-gray-900/5",
         "resize-none",
         disabled ? "cursor-not-allowed opacity-60" : "",

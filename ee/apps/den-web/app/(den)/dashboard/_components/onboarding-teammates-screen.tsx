@@ -23,7 +23,7 @@ type InvitationRow = {
 };
 
 const emailSchema = z.string().email();
-const buttonClass = "inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl px-5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-900 focus-visible:ring-offset-4 disabled:cursor-not-allowed disabled:opacity-40";
+const buttonClass = "inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl px-5 text-sm font-medium transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-neutral-900 focus-visible:ring-offset-4 disabled:cursor-not-allowed disabled:opacity-40";
 const description = "Invite a few teammates to share tools and get work done together. This part is optional — you can always invite people later.";
 
 export function OnboardingTeammatesScreen() {
@@ -182,7 +182,7 @@ function TeammatesForm({ orgId, orgSlug, organizationName, selfEmail, selfName, 
                   ref={(element) => { if (element) inputRefs.current.set(row.id, element); else inputRefs.current.delete(row.id); }}
                   disabled={sending || row.status === "sent"} aria-invalid={row.status === "error"} aria-describedby={row.error ? `teammate-error-${row.id}` : undefined}
                   onChange={(event) => updateRow(row.id, { email: event.target.value, status: "draft", error: null })}
-                  className={`min-h-14 w-full rounded-2xl border bg-white px-4 py-3 pr-11 text-sm text-neutral-900 outline-none transition focus:border-neutral-900 focus:ring-4 focus:ring-neutral-900/5 disabled:bg-neutral-50 disabled:text-neutral-500 ${row.status === "error" ? "border-red-400" : "border-neutral-200"}`} />
+                  className={`min-h-14 w-full rounded-2xl border bg-white px-4 py-3 pr-11 text-sm text-neutral-900 outline-hidden transition focus:border-neutral-900 focus:ring-4 focus:ring-neutral-900/5 disabled:bg-neutral-50 disabled:text-neutral-500 ${row.status === "error" ? "border-red-400" : "border-neutral-200"}`} />
                 {row.status === "sending" ? <LoaderCircle aria-hidden className="absolute right-4 top-5 h-4 w-4 animate-spin text-neutral-500 motion-reduce:animate-none" /> : null}
                 {row.status === "sent" ? <Check aria-hidden className="absolute right-4 top-5 h-4 w-4 text-neutral-700" /> : null}
               </div>

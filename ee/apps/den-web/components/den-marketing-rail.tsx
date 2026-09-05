@@ -129,8 +129,8 @@ export function DenMarketingRail({ compact = false }: DenMarketingRailProps) {
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.08fr)_minmax(300px,0.92fr)] xl:items-start">
         <div className="grid gap-4 sm:grid-cols-3 xl:grid-cols-1">
           {useCaseCards.slice(0, compact ? 2 : useCaseCards.length).map((card) => (
-            <article key={card.label} className="rounded-[1.7rem] border border-slate-200/80 bg-white/88 p-5 shadow-[0_24px_60px_-42px_rgba(15,23,42,0.35)] backdrop-blur">
-              <div className={`mb-4 h-3.5 w-3.5 rounded-full bg-gradient-to-br ${card.accent}`} />
+            <article key={card.label} className="rounded-[1.7rem] border border-slate-200/80 bg-white/88 p-5 shadow-[0_24px_60px_-42px_rgba(15,23,42,0.35)] backdrop-blur-sm">
+              <div className={`mb-4 h-3.5 w-3.5 rounded-full bg-linear-to-br/srgb ${card.accent}`} />
               <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">{card.label}</div>
               <h2 className="text-[1.35rem] font-medium leading-[1.08] tracking-[-0.035em] text-[#011627]">{card.title}</h2>
               <p className="mt-3 text-[14px] leading-7 text-slate-600">{card.body}</p>
