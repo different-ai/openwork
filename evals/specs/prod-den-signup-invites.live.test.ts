@@ -7,17 +7,18 @@ import { auth, createAgentMailInbox, createOrganization, deleteAgentMailInbox, d
 import type { AgentMailInbox } from "../worlds/live-den-api.ts";
 
 // Live lane: the production Den is attached and never owned by this spec. The
-// timestamped user, organization, and invitations are launched onto it, so the
-// spec owns their cleanup. den-api does not enable Better Auth's self-service
-// account deletion endpoint, so the retained account is reported as residue.
+// timestamped user, organization, and invitations are owned by this spec.
+// Account deletion uses the existing admin API after organization cleanup.
 // AGENTMAIL_API_KEY lives in Infisical. Invoke this spec with:
 // infisical run -- pnpm evals:pr specs/prod-den-signup-invites.live.test.ts
 
 
+import { checkLiveCleanupAccess, deleteLiveAccount } from "../worlds/live-den-cleanup.ts";
+
 const MAX_AGENTMAIL_INBOXES = 2;
 const requirements: TestNeeds = {
   optIn: ["OPENWORK_EVAL_LIVE"],
-  env: ["OPENWORK_EVAL_LIVE_DEN_API_URL", "AGENTMAIL_API_KEY"],
+  env: ["OPENWORK_EVAL_LIVE_DEN_API_URL", "AGENTMAIL_API_KEY", "OPENWORK_EVAL_LIVE_ADMIN_TOKEN"],
 };
 const missingRequirements = unmetNeeds(requirements, process.env);
 const title = missingRequirements.length > 0
@@ -36,6 +37,7 @@ test(title, { timeout: 240_000 }, async ({ evidence }) => {
   const agentMailApiKey = requiredEnv("AGENTMAIL_API_KEY");
   const webUrl = apiUrl === "https://api.openworklabs.com" ? "https://app.openworklabs.com" : apiUrl;
   const den: DenRef = { apiUrl, webUrl };
+  await checkLiveCleanupAccess(den);
   const runStartedAt = new Date().toISOString();
   const timestamp = runStartedAt.replace(/\D/g, "");
   const runPrefix = `openwork-live-${timestamp}`;
@@ -165,6 +167,12 @@ test(title, { timeout: 240_000 }, async ({ evidence }) => {
         cleanupError = error;
       }
     }
+    if (identity) {
+      for (const email of [identity.owner, ...identity.invitees]) {
+        try { await deleteLiveAccount(den, email, runStartedAt); }
+        catch (error) { agentMailResidue.push(`Account ${email}: ${errorMessage(error)}`); }
+      }
+    }
     for (const inbox of [...agentMailInboxes].reverse()) {
       try {
         await deleteAgentMailInbox(agentMailApiKey, inbox);
@@ -174,7 +182,7 @@ test(title, { timeout: 240_000 }, async ({ evidence }) => {
       }
     }
     console.info(
-      `[live-lane] owner=${identity?.owner ?? "not-created"} invitees=${identity?.invitees.join(",") ?? "not-created"} neverInvited=${identity?.neverInvited ?? "not-created"} org=${organizationName} orgDeleted=${String(organizationDeleted)} accountCreated=${String(accountCreated)} accountDeletion=self-service-disabled agentMailCreated=${agentMailInboxes.map((inbox) => `${inbox.email}(${inbox.inboxId})`).join(",") || "none"} agentMailDeleted=${agentMailDeleted.join(",") || "none"} agentMailResidue=${agentMailResidue.join(" | ") || "none"}`,
+      `[live-lane] owner=${identity?.owner ?? "not-created"} invitees=${identity?.invitees.join(",") ?? "not-created"} neverInvited=${identity?.neverInvited ?? "not-created"} org=${organizationName} orgDeleted=${String(organizationDeleted)} accountCreated=${String(accountCreated)} accountDeletion=admin-cleanup-attempted agentMailCreated=${agentMailInboxes.map((inbox) => `${inbox.email}(${inbox.inboxId})`).join(",") || "none"} agentMailDeleted=${agentMailDeleted.join(",") || "none"} agentMailResidue=${agentMailResidue.join(" | ") || "none"}`,
     );
   }
 

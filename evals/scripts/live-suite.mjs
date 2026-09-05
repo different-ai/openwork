@@ -12,7 +12,7 @@ export function reportPassed(report) {
 function main() {
 
   const cwd = fileURLToPath(new URL("..", import.meta.url));
-  const required = ["OPENWORK_EVAL_LIVE_DEN_API_URL", "OPENWORK_EVAL_LIVE_DEN_WEB_URL", "AGENTMAIL_API_KEY", "OPENWORK_EVAL_LIVE_STRIPE_SECRET_KEY"];
+  const required = ["OPENWORK_EVAL_LIVE_DEN_API_URL", "OPENWORK_EVAL_LIVE_DEN_WEB_URL", "AGENTMAIL_API_KEY", "OPENWORK_EVAL_LIVE_STRIPE_SECRET_KEY", "OPENWORK_EVAL_LIVE_ADMIN_TOKEN"];
   const missing = required.filter((name) => !process.env[name]?.trim());
   if (process.env.OPENWORK_EVAL_LIVE !== "1") missing.unshift("OPENWORK_EVAL_LIVE=1");
   if (missing.length) {

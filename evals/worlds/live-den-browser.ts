@@ -2,15 +2,17 @@ import { randomBytes } from "node:crypto";
 import { denFetch, signIn } from "@openwork/behaviors";
 import type { DenRef, DenSession } from "@openwork/behaviors";
 import { chrome, localHost } from "@openwork/hosts";
-import { evaluateOnSurface } from "@openwork/cdp";
+import { evaluateOnSurface, navigate } from "@openwork/cdp";
 import {
   auth, createAgentMailInbox, createOrganization, deleteAgentMailInbox,
   deleteCreatedOrganization, requiredEnv, verificationCode, waitForAgentMailMessage,
 } from "./live-den-api.ts";
 
+import { checkLiveCleanupAccess, deleteLiveAccount } from "./live-den-cleanup.ts";
+
 export const liveBrowserNeeds = {
   optIn: ["OPENWORK_EVAL_LIVE"],
-  env: ["OPENWORK_EVAL_LIVE_DEN_API_URL", "OPENWORK_EVAL_LIVE_DEN_WEB_URL", "AGENTMAIL_API_KEY"],
+  env: ["OPENWORK_EVAL_LIVE_DEN_API_URL", "OPENWORK_EVAL_LIVE_DEN_WEB_URL", "AGENTMAIL_API_KEY", "OPENWORK_EVAL_LIVE_ADMIN_TOKEN"],
 };
 
 export function liveDen(): DenRef {
@@ -28,9 +30,24 @@ export async function liveSignedOutBrowser() {
   const den = liveDen();
   const host = localHost();
   try {
-    const web = await chrome({ host, headless: true, startUrl: den.webUrl });
+    const web = await chrome({ host, headless: true, startUrl: "about:blank" });
+    // Install before the first app document, including anonymous pageviews.
+    await web.client.send("Network.enable");
+    await web.client.send("Network.setBlockedURLs", { urls: [
+      `${den.webUrl}/ow*`, "*://*.posthog.com/*", "*://posthog.com/*",
+    ] });
+    await navigate(web.client, den.webUrl);
     return {
       den, web,
+      async analyticsIsolation() {
+        return evaluateOnSurface(web, `(async () => {
+          const app = await fetch("/", { cache: "no-store" });
+          let collectorBlocked = false;
+          try { await fetch("/ow/static/array.js", { cache: "no-store" }); }
+          catch { collectorBlocked = true; }
+          return { appReachable: app.ok, collectorBlocked };
+        })()`, { awaitPromise: true });
+      },
       async location() {
         const value = await evaluateOnSurface(web, "location.href");
         if (typeof value !== "string") throw new Error("Browser location unavailable");
@@ -48,6 +65,8 @@ export async function liveSignedOutBrowser() {
 
 /** Owns only a unique mailbox, account, and explicitly created organization. */
 export async function liveSignupBrowser() {
+  await checkLiveCleanupAccess(liveDen());
+  const startedAt = new Date().toISOString();
   const browser = await liveSignedOutBrowser();
   const mailKey = requiredEnv("AGENTMAIL_API_KEY");
   const run = `openwork-live-${Date.now()}-${randomBytes(4).toString("hex")}`;
@@ -56,7 +75,7 @@ export async function liveSignupBrowser() {
     let password = `Live!${randomBytes(20).toString("hex")}9`;
     let session: DenSession | undefined;
     let organizationId: string | undefined;
-    let accountCreated = false;
+    let accountDeleted = false;
     return {
       ...browser, inbox, run,
       get password() { return password; },
@@ -70,8 +89,11 @@ export async function liveSignupBrowser() {
       },
       async authenticate() {
         session = await signIn(browser.den, { email: inbox.email, password });
-        accountCreated = true;
         return session;
+      },
+      async deleteAccount() {
+        await deleteLiveAccount(browser.den, inbox.email, startedAt);
+        accountDeleted = true;
       },
       async createWorkspace() {
         if (!session) throw new Error("Authenticate before creating the owned workspace");
@@ -94,9 +116,10 @@ export async function liveSignupBrowser() {
             await deleteCreatedOrganization({ ...session, password }, organizationId);
           } catch (error) { errors.push(error); }
         }
+        try { await this.deleteAccount(); } catch (error) { errors.push(error); }
         try { await deleteAgentMailInbox(mailKey, inbox); } catch (error) { errors.push(error); }
         try { await browser[Symbol.asyncDispose](); } catch (error) { errors.push(error); }
-        console.info(`[live-lane] run=${run} account=${accountCreated ? "retained (self-service deletion disabled)" : "may exist if signup was interrupted"} cleanupErrors=${errors.length}`);
+        console.info(`[live-lane] run=${run} account=${accountDeleted ? "deleted or never created" : "CLEANUP FAILED"} cleanupErrors=${errors.length}`);
         if (errors.length) throw new AggregateError(errors, `Owned resource cleanup failed for ${run}`);
       },
     };

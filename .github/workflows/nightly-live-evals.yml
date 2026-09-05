@@ -22,6 +22,7 @@ jobs:
       OPENWORK_EVAL_LIVE: "1"
       OPENWORK_EVAL_LIVE_DEN_API_URL: ${{ vars.OPENWORK_EVAL_LIVE_DEN_API_URL || 'https://api.openworklabs.com' }}
       OPENWORK_EVAL_LIVE_DEN_WEB_URL: ${{ vars.OPENWORK_EVAL_LIVE_DEN_WEB_URL || 'https://app.openworklabs.com' }}
+      OPENWORK_EVAL_LIVE_ADMIN_TOKEN: ${{ secrets.OPENWORK_EVAL_LIVE_ADMIN_TOKEN }}
       AGENTMAIL_API_KEY: ${{ secrets.AGENTMAIL_API_KEY }}
       OPENWORK_EVAL_LIVE_STRIPE_SECRET_KEY: ${{ secrets.OPENWORK_EVAL_LIVE_STRIPE_SECRET_KEY }}
 
@@ -37,7 +38,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for key in AGENTMAIL_API_KEY OPENWORK_EVAL_LIVE_STRIPE_SECRET_KEY; do
+          for key in AGENTMAIL_API_KEY OPENWORK_EVAL_LIVE_STRIPE_SECRET_KEY OPENWORK_EVAL_LIVE_ADMIN_TOKEN; do
             if [ -z "${!key}" ]; then
               echo "::error::Missing required live-test secret: $key"
               exit 1

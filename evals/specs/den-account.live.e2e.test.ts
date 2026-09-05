@@ -23,6 +23,8 @@ signup(".live signup verifies delivered email before allowing workspace access",
   await user.notSee({ text: "Verification code" });
   const session = await world.authenticate();
   expect(session.email).toBe(world.inbox.email);
+  await world.deleteAccount();
+  evidence.recordAssertionEvidence("Owned account deletion", "Admin cleanup found only the fresh exact test email with no memberships/workers, deleted it, and verified its absence.", true);
   evidence.recordAssertionEvidence("Verified signup", "The UI required the delivered OTP before leaving verification; the same account then authenticated through Den.", true);
 });
 

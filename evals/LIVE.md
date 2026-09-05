@@ -32,6 +32,9 @@ failed assertions, and cleanup errors all fail the nightly command.
 Set these **GitHub Actions secrets** before enabling the nightly workflow:
 
 - `AGENTMAIL_API_KEY`: creates disposable inboxes and reads verification/reset/invite mail.
+- `OPENWORK_EVAL_LIVE_ADMIN_TOKEN`: an admin bearer session for the target Den, used
+  only by the runner for guarded user deletion. Preflight checks it before signup.
+  It never enters the browser. An expired token fails the run before creating accounts.
 - `OPENWORK_EVAL_LIVE_STRIPE_SECRET_KEY`: matches the Stripe account/mode used by
   the target Den; needs customers, Checkout sessions, coupons, promotion codes,
   subscriptions, and invoice read access plus creation/cleanup permissions.
@@ -70,18 +73,43 @@ Stripe REST witnesses pin the same API version as Den (`2026-04-22.dahlia`).
 Cleanup checks the unique mailbox and organization metadata before touching any
 Stripe customer. It expires open sessions, cancels owned subscriptions without
 proration/invoicing, deletes owned customers, disables promotion codes, deletes
-coupons, then deletes the owned Den organization and mailbox. Cleanup also runs
+coupons, then deletes the owned Den organization, user account, and mailbox. Cleanup also runs
 after an assertion failure and reports failures. Checkout records/invoices remain
 in Stripe's history. Process termination can interrupt cleanup; use the logged
 `openwork-live-…` run identifier to investigate residue, never delete by a broad
 name prefix alone. Coupons expire after an hour and remain 100% off forever for
 an already created subscription, even if cancellation is interrupted.
 
-Den does not expose self-service account deletion, so a full run currently retains
-up to seven uniquely named test accounts per night. The existing invitation test
-uses at most two inboxes; other journeys use one at a time. No customer accounts
-or organization data are reused. A failed run may retain its owned organization
-or Stripe objects and must be investigated.
+Account cleanup uses the existing `/v1/admin/users` search and deletion endpoints.
+It searches each exact generated email (never a broad prefix), checks the account
+was created during this run and has no remaining organizations or workers, then
+deletes it and queries again to verify absence. Any mismatch refuses deletion and
+fails cleanup. The invitation journey also checks its exact invitee addresses in
+case Den created placeholder users. No new public account-deletion endpoint is added.
+
+## Analytics isolation and interrupted runs
+
+Deleting an account does **not** remove events already collected by analytics.
+Every live browser starts on `about:blank`; before loading Den, CDP blocks the
+first-party PostHog proxy (`/ow*`) and direct PostHog hosts. This covers anonymous
+pageviews, auth/conversion events, autocapture and replay requests made through
+those collectors. The public-login journey verifies that the app stays reachable
+while the collector is unreachable, including after reload. It does not test
+analytics delivery, other analytics vendors, or server-side event suppression.
+
+Stripe customers, Checkout sessions and subscriptions are tagged with
+`synthetic=true` and `live_eval_run` before observation/cleanup. Exclude these from
+billing/warehouse reports; Stripe's immutable history, invoices and server logs
+are not erased by deletion. Existing events from earlier runs are not purged by
+this change. Historical PostHog exclusion requires an audit of exact synthetic
+user IDs/events; never delete a whole email domain or broad prefix.
+
+Normal failures execute cleanup, but a killed process or runner loss can interrupt
+it. The logged unique run ID and exact owner/invitee addresses identify residue;
+resolve those exact identities in the admin UI and verify their workspaces are
+removed before deleting accounts. Do not enable unattended runs until cleanup
+has been validated with the admin credential. A durable cross-run cleanup journal
+and sweeper are not implemented here; interrupted runs still require review.
 
 Results: `evals/results/live/results.json`, `junit.xml`, and the job summary.
 The workflow uploads reports for 14 days. Full ambient CDP evidence stays in

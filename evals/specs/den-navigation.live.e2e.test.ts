@@ -7,11 +7,16 @@ const publicPage = spec.world(liveSignedOutBrowser, {
 });
 const account = spec.world(liveAccountBrowser, { needs: liveBrowserNeeds, timeout: 240_000 });
 
-publicPage(".live signed-out visitors can load the email-first login form", async ({ user, evidence }) => {
+publicPage(".live signed-out visitors can load the email-first login form", async ({ world, user, evidence }) => {
   await user.see({ role: "textbox", label: "Email" }, { timeoutMs: 60_000 });
   await user.see({ role: "button", label: "Next" });
   await user.notSee({ role: "textbox", label: "Password" });
   await user.notSee({ testId: "den-org-sidebar" });
+  expect(await world.analyticsIsolation()).toEqual({ appReachable: true, collectorBlocked: true });
+  await user.reload();
+  await user.see({ role: "textbox", label: "Email" });
+  expect(await world.analyticsIsolation()).toEqual({ appReachable: true, collectorBlocked: true });
+  evidence.recordAssertionEvidence("Analytics isolation", "The app remained reachable while its PostHog proxy was blocked, both before and after reload; CDP blocking was installed on about:blank before navigation.", true);
   evidence.recordAssertionEvidence("Public login", "Email and Next render without exposing a password form or an authenticated workspace.", true);
 });
 

@@ -13,6 +13,8 @@ export async function liveBillingBrowser() {
   let couponId: string | undefined;
   let promotionId: string | undefined;
   let checkoutId: string | undefined;
+  let checkoutTagged = false;
+  const testMetadata = { "metadata[synthetic]": "true", "metadata[live_eval_run]": world.run };
 
   async function stripe(path: string, method = "GET", values?: Record<string, string>) {
     const response = await fetch(`https://api.stripe.com/v1${path}`, {
@@ -74,6 +76,11 @@ export async function liveBillingBrowser() {
       const matching = sessions.filter((session) => session.client_reference_id === world.organizationId);
       if (matching.length !== 1) throw new Error("Expected exactly one owned Checkout session");
       checkoutId = id(matching[0]);
+      if (!checkoutTagged) {
+        await stripe(`/customers/${id(owned[0])}`, "POST", testMetadata);
+        await stripe(`/checkout/sessions/${checkoutId}`, "POST", testMetadata);
+        checkoutTagged = true;
+      }
       return stripe(`/checkout/sessions/${checkoutId}?expand[]=discounts.coupon&expand[]=subscription.latest_invoice`);
     },
     async assertFreeCheckout() {
@@ -89,16 +96,22 @@ export async function liveBillingBrowser() {
     },
     async [Symbol.asyncDispose]() {
       const errors: unknown[] = [];
+      async function mark(path: string) {
+        try { await stripe(path, "POST", testMetadata); } catch (error) { errors.push(error); }
+      }
       // Discover by the unique mailbox even when the browser failed before observing a session.
       try {
         for (const customer of await customers()) {
           const customerId = id(customer);
+          await mark(`/customers/${customerId}`);
           for (const session of entries(await stripe(`/checkout/sessions?customer=${customerId}&limit=100`))) {
             if (session.client_reference_id !== world.organizationId) throw new Error("Checkout ownership mismatch");
+            await mark(`/checkout/sessions/${id(session)}`);
             if (session.status === "open") await stripe(`/checkout/sessions/${id(session)}/expire`, "POST");
           }
           for (const subscription of entries(await stripe(`/subscriptions?customer=${customerId}&status=all&limit=100`))) {
             if (stringField(recordField(subscription, "metadata"), "org_id") !== world.organizationId) throw new Error("Subscription ownership mismatch");
+            await mark(`/subscriptions/${id(subscription)}`);
             if (!["canceled", "incomplete_expired"].includes(String(subscription.status))) {
               await stripe(`/subscriptions/${id(subscription)}`, "DELETE", { invoice_now: "false", prorate: "false" });
             }
