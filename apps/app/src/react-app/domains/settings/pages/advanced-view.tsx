@@ -20,6 +20,7 @@ import {
   AdvancedOrganizationServerSection,
   AdvancedRuntimeConfigSourcesSection,
   AdvancedRuntimeSection,
+  AdvancedWorkspaceRunModeSection,
 } from "./advanced-view-sections";
 
 type AdvancedOrganizationServerSession = Pick<
@@ -219,6 +220,8 @@ export function AdvancedView(props: AdvancedViewProps) {
           setEnabled={props.setEngineV2PreviewEnabled}
           setChatRouting={props.setEngineV2PreviewChatRouting}
         />
+
+        <AdvancedWorkspaceRunModeSection />
 
         <AdvancedDeveloperSection
           busy={props.busy}

@@ -69,6 +69,8 @@ export interface Probe {
   eval(surface: Surface, expression: string, options?: ProbeEvalOptions): Promise<unknown>;
   connectState(app: Surface): ReturnType<typeof import("../state.ts").readConnectState>;
   api(session: DenSession, path: string, init?: RequestInit): Promise<DenFetchResult>;
+  /** GET from the bound desktop's local server; authentication stays in the renderer. */
+  desktopApi(path: string): Promise<{ status: number; body: unknown }>;
   toolCalls(mock: MockHandle, options?: Parameters<MockHandle["toolCalls"]>[0]): ReturnType<MockHandle["toolCalls"]>;
   eventually<T>(fn: () => Promise<T> | T, options: EventuallyOptions<T>): Promise<T>;
   on(surface: Surface): Probe;
