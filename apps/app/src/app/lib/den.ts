@@ -3073,6 +3073,11 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         method: "POST", token, organizationId: orgId, body: input,
       }));
     },
+    async deleteApp(orgId: string, appId: string) {
+      await requestJson<unknown>(baseUrls, `/v1/artifact-views/${encodeURIComponent(appId)}/retire`, {
+        method: "POST", token, organizationId: orgId,
+      });
+    },
     async setAppOnDashboard(orgId: string, appId: string, added: boolean) {
       await requestJson<unknown>(baseUrls, `/v1/apps/${encodeURIComponent(appId)}/dashboard`, {
         method: "POST", token, organizationId: orgId, body: { added },

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useSavedApps, useAppsClient } from "../apps/use-apps";
+import { DeleteAppButton } from "../apps/delete-app-button";
 import { GeneratedAppPreview } from "../apps/generated-app-preview";
 
 export type CreateDashboardApp = (prompt: string) => Promise<void>;
@@ -93,6 +94,7 @@ function SavedDashboardApp({ app, onRemove, removing }: { app: SavedAppSummary; 
   return <article className="min-w-0 overflow-hidden rounded-xl border bg-background" data-personal-dashboard-app={app.view.id}>
     <header className="flex items-center gap-2 border-b p-3">
       <button className="min-w-0 flex-1 text-left" aria-label={`Open ${app.view.title}`} onClick={() => navigate(`/dashboard/apps/${app.view.id}`)}><span className="block truncate text-sm font-medium">{app.view.title}</span><span className="text-xs text-muted-foreground">Open app</span></button>
+      {app.canManage ? <DeleteAppButton appId={app.view.id} title={app.view.title} /> : null}
       <Button variant="ghost" size="icon-sm" aria-label={`Remove ${app.view.title} from dashboard`} disabled={removing} onClick={onRemove}><X className="size-4" /></Button>
     </header>
     <div className="max-h-[32rem] overflow-auto px-4 pb-4">

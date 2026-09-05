@@ -53,9 +53,12 @@ export async function savedAppCreation(seed: Seed) {
   });
   const token = field(tokenResponse.body, "token");
   let requestId = 0;
-  const rpc = async (name: string, args: Record<string, unknown>) => {
+  const rpc = async (name: string, args: Record<string, unknown>, session = den.admin) => {
+    const sessionToken = session === den.admin ? token : field((await seed.api(session, "/v1/mcp/token", {
+      method: "POST", headers: { "x-openwork-org-id": orgId }, body: JSON.stringify({ scopes: ["mcp:read", "mcp:write"] }),
+    })).body, "token");
     const response = await fetch(`${den.ref.apiUrl}/mcp/agent`, {
-      method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+      method: "POST", headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
       body: JSON.stringify({ jsonrpc: "2.0", id: ++requestId, method: "tools/call", params: { name, arguments: args } }),
       signal: AbortSignal.timeout(90_000),
     });
