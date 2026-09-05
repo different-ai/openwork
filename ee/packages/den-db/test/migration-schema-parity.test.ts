@@ -536,6 +536,60 @@ test("migrations replay to exported schema and config object version inserts", {
   }
 })
 
+test("cloud runtime migration backfills Daytona instances and preserves rollback rows", { skip: !mysqlUrl, timeout: 120_000 }, async () => {
+  if (!mysqlUrl) return
+
+  const root = await mysql.createConnection(mysqlUrl)
+  const database = scratchDatabaseName()
+  let connection: mysql.Connection | undefined
+
+  try {
+    await root.query(`CREATE DATABASE ${quoteIdentifier(database)}`)
+    connection = await mysql.createConnection(databaseUrlFor(mysqlUrl, database))
+    const exported = splitSqlStatements(await exportCurrentSchemaSql())
+    const legacySchema = exported.filter((statement) =>
+      createTableName(statement) === "daytona_sandbox" || indexTableName(statement) === "daytona_sandbox",
+    )
+    assert.ok(legacySchema.length > 0, "legacy Daytona schema must exist during rollback window")
+    await applyStatements(connection, legacySchema)
+    for (const suffix of ["first", "second"]) {
+      await connection.query(
+        "INSERT INTO daytona_sandbox (id, worker_id, sandbox_id, workspace_volume_id, data_volume_id, signed_preview_url, signed_preview_url_expires_at, region) VALUES (?, ?, ?, ?, ?, ?, '2030-01-02 03:04:05.123', ?)",
+        [`dts_${suffix}`, `wkr_${suffix}`, `sandbox_${suffix}`, `workspace_${suffix}`, `data_${suffix}`, `https://${suffix}.example.test/runtime`, suffix === "first" ? "test-region" : null],
+      )
+    }
+    const before = await queryRecords(connection, "SELECT * FROM daytona_sandbox ORDER BY id")
+    const migrations = (await readdir(migrationsFolder)).filter((entry) => entry.endsWith("_cloud_runtime_instance.sql"))
+    assert.equal(migrations.length, 1, "exactly one neutral-instance migration must be registered")
+    const migration = await readFile(join(migrationsFolder, migrations[0]), "utf8")
+    await applyStatements(connection, splitSqlStatements(migration.replace(/--> statement-breakpoint/g, "")))
+
+    const after = await queryRecords(connection, "SELECT * FROM daytona_sandbox ORDER BY id")
+    assert.deepEqual(after, before, "migration must not alter the previous Den's rollback records")
+    const migrated = await queryRecords(connection,
+      "SELECT id, worker_id, provider_id, JSON_UNQUOTE(JSON_EXTRACT(provider_ref, '$.sandboxId')) AS sandbox_id, workspace_volume_id, data_volume_id, endpoint_url, endpoint_expires_at, endpoint_kind, region, created_at, updated_at FROM cloud_runtime_instance ORDER BY id",
+    )
+    assert.deepEqual(migrated, before.map((row) => ({
+      id: stringField(row, "id").replace(/^dts_/, "cri_"),
+      worker_id: row.worker_id,
+      provider_id: "daytona",
+      sandbox_id: row.sandbox_id,
+      workspace_volume_id: row.workspace_volume_id,
+      data_volume_id: row.data_volume_id,
+      endpoint_url: row.signed_preview_url,
+      endpoint_expires_at: row.signed_preview_url_expires_at,
+      endpoint_kind: "signed-expiring",
+      region: row.region,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+    })))
+  } finally {
+    await connection?.end().catch(() => {})
+    await root.query(`DROP DATABASE IF EXISTS ${quoteIdentifier(database)}`).catch(() => {})
+    await root.end()
+  }
+})
+
 test("0076 migrates workflow table, enums, and legacy data without changing IDs", { skip: !mysqlUrl, timeout: 120_000 }, async () => {
   if (!mysqlUrl) return
 
