@@ -129,7 +129,6 @@ jobs:
           fi
 
           tests="$(echo "$eligible_tests" | jq -c --arg event "$EVENT_NAME" --arg only "$only_filter" --argjson matched "$matched_tests" 'map(select(if $event == "workflow_run" then (. as $test | ($matched | index($test)) != null) else ($only == "" or contains($only)) end))')"
-          tests="$(echo "$tests" | jq -c '[.[] | . as $spec | (if . == "streamed-markdown-answer.e2e.test.ts" then ["v1", "v2"] else ["v1"] end)[] | {spec: $spec, engine: .}]')"
           count="$(echo "$tests" | jq 'length')"
           has_tests=false
           if [ "$count" -gt 0 ]; then
@@ -138,20 +137,18 @@ jobs:
           echo "tests=$tests" >> "$GITHUB_OUTPUT"
           echo "has_tests=$has_tests" >> "$GITHUB_OUTPUT"
           echo "### Daytona E2E plan: $count spec(s)" >> "$GITHUB_STEP_SUMMARY"
-          echo "$tests" | jq -r '.[] | "- `\(.spec)` · \(.engine)"' >> "$GITHUB_STEP_SUMMARY"
+          echo "$tests" | jq -r '.[] | "- `\(.)`"' >> "$GITHUB_STEP_SUMMARY"
 
   e2e:
     needs: plan
     if: needs.plan.outputs.enabled == 'true' && needs.plan.outputs.has_tests == 'true'
-    name: E2E (${{ matrix.spec }}, ${{ matrix.engine }})
+    name: E2E (${{ matrix.spec }})
     environment: ${{ github.event_name == 'workflow_run' && 'pr-slow-specs' || 'scheduled-e2e-regression' }}
     strategy:
       fail-fast: false
       max-parallel: 4
       matrix:
-        include: ${{ fromJSON(needs.plan.outputs.tests) }}
-    env:
-      OPENWORK_EVAL_ENGINE: ${{ matrix.engine }}
+        spec: ${{ fromJSON(needs.plan.outputs.tests) }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 45
     steps:
