@@ -15,7 +15,7 @@ const test = spec.world(async (seed, { place }) => {
       workspacePath: `/tmp/openwork-cross-workspace-split-${runId}-a`,
       sessionTitles: [`Primary workspace anchor ${runId}`, `Primary workspace peer ${runId}`],
     });
-    const { workspaceId: workspaceB } = await seed.workspace(world.desktop, `/tmp/openwork-cross-workspace-split-${runId}-b`);
+    const { workspaceId: workspaceB } = await seed.workspace(world.desktop, `/tmp/openwork-cross-workspace-split-${runId}-b`, { create: true });
     const crossWorkspacePeer = { workspaceId: workspaceB,
       ...await seed.session(world.desktop, { title: `Secondary workspace peer ${runId}` }) };
     return { ...world, app: world.desktop, workspaceB, crossWorkspacePeer, [Symbol.asyncDispose]: () => stack.disposeAsync() };

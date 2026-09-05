@@ -490,9 +490,9 @@ export class SeedChannel implements Seed {
     });
   }
 
-  workspace(app: Surface, path = `/tmp/openwork-spec-${Date.now()}`) {
+  workspace(app: Surface, path = `/tmp/openwork-spec-${Date.now()}`, options: { create?: boolean } = {}) {
     return this.#runtime.call("seed", "workspace", `workspace(${path})`, app, async () => {
-      const result = await import("@openwork/behaviors").then(({ createAndSelectWorkspace }) => createAndSelectWorkspace(app, { path }));
+      const result = await import("@openwork/behaviors").then(({ createAndSelectWorkspace }) => createAndSelectWorkspace(app, { path, ...options }));
       await eventually(() => callFunctionOnSurface(app, `(workspaceId) => {
         const workspace = window.__openwork?.slice?.("route")?.workspaces?.find(item => item.id === workspaceId);
         return workspace ? { exists: true, loading: workspace.loading } : { exists: false };
