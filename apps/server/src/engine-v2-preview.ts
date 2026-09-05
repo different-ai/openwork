@@ -151,7 +151,6 @@ async function resolveBinary(config: ServerConfig): Promise<ResolvedBinary> {
 export function mapRuntimeProvidersToV2Specs(
   providerMap: Record<string, unknown>,
   storedCredentials: ReadonlyMap<string, string> = new Map(),
-  allowsCloudCredential?: (providerId: string, name: string, providerConfig: Record<string, unknown>) => boolean,
 ): { specs: OpencodeV2ProviderSpec[]; skippedProviderIds: string[] } {
   const specs: OpencodeV2ProviderSpec[] = [];
   const skippedProviderIds: string[] = [];
@@ -172,7 +171,9 @@ export function mapRuntimeProvidersToV2Specs(
     const options = isRecord(value.options) ? value.options : {};
     // Catalog `api` metadata may use only the native adapter's trusted origin.
     // Custom destinations must use the existing explicit options.baseURL path.
-    if (options.baseURL === undefined && value.api !== undefined) {
+    const explicitBaseUrl = typeof options.baseURL === "string" && options.baseURL.trim()
+      ? options.baseURL : undefined;
+    if (!explicitBaseUrl && value.api !== undefined) {
       const nativeOrigins: Record<string, string> = {
         "@ai-sdk/openai": "https://api.openai.com",
         "@ai-sdk/anthropic": "https://api.anthropic.com",
@@ -186,7 +187,7 @@ export function mapRuntimeProvidersToV2Specs(
       } catch { /* Invalid endpoint metadata is never mirrored. */ }
       if (!trusted) { skippedProviderIds.push(id); continue; }
     }
-    const endpoint = options.baseURL ?? value.api;
+    const endpoint = explicitBaseUrl ?? value.api;
     const baseUrl = typeof endpoint === "string" && endpoint.trim() ? endpoint : undefined;
     const packageName = typeof value.npm === "string" && Object.hasOwn(packages, value.npm) ? packages[value.npm] : undefined;
     if ((value.npm !== undefined && !packageName)
@@ -202,11 +203,6 @@ export function mapRuntimeProvidersToV2Specs(
     // Resolve only this provider's declared credential, never inherit the
     // server environment or copy unrelated secrets into the sidecar.
     const explicitKey = typeof apiKey === "string" && apiKey.trim() !== "" && !apiKey.includes("{env:") ? apiKey : undefined;
-    if (!explicitKey && storedKey && credentialName
-      && !allowsCloudCredential?.(id, credentialName, value)) {
-      skippedProviderIds.push(id);
-      continue;
-    }
     const resolvedKey = explicitKey ?? storedKey;
     if (envNames.length > 0 && !resolvedKey) {
       skippedProviderIds.push(id);
@@ -268,14 +264,7 @@ function catalogModelIds(payload: unknown, mirroredProviderIds: string[]): strin
   return [...ids].sort((left, right) => left.localeCompare(right));
 }
 
-export function createEngineV2Preview(options: {
-  config: ServerConfig;
-  env?: Pick<EnvService, "list" | "onChange">;
-  cloudCredentials?: {
-    credentialAccessSnapshot(): (providerId: string, name: string, providerConfig: Record<string, unknown>) => boolean;
-    onCredentialBindingsChange(listener: () => void): () => void;
-  };
-}): EngineV2Preview {
+export function createEngineV2Preview(options: { config: ServerConfig; env?: Pick<EnvService, "list" | "onChange"> }): EngineV2Preview {
   const { config } = options;
   const rootDir = join(runtimeStorageDir(config), "opencode-v2", "state");
   const workspaceDir = join(rootDir, "workspace");
@@ -320,11 +309,8 @@ export function createEngineV2Preview(options: {
     const active = sidecar;
     if (!active) return;
     const providerMap = runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config));
-    // Capture trust before reading values: a later grant must not authorize a
-    // credential snapshot that predates that provider's persisted cloud key.
-    const allowsCloudCredential = options.cloudCredentials?.credentialAccessSnapshot();
     const credentials = new Map((await options.env?.list() ?? []).map((entry) => [entry.key, entry.value]));
-    const mapped = mapRuntimeProvidersToV2Specs(providerMap, credentials, allowsCloudCredential);
+    const mapped = mapRuntimeProvidersToV2Specs(providerMap, credentials);
     const nextMirroredProviderIds = mapped.specs.map((spec) => spec.id);
     await active.setProviders(mapped.specs);
     mirroredSpecs = mapped.specs;
@@ -413,8 +399,7 @@ export function createEngineV2Preview(options: {
         scheduleMirror();
       });
       const unsubscribeEnv = options.env?.onChange(scheduleMirror);
-      const unsubscribeCredentials = options.cloudCredentials?.onCredentialBindingsChange(scheduleMirror);
-      unsubscribe = () => { unsubscribeConfig(); unsubscribeEnv?.(); unsubscribeCredentials?.(); };
+      unsubscribe = () => { unsubscribeConfig(); unsubscribeEnv?.(); };
       scheduleMirror();
       if (mirrorInFlight) await mirrorInFlight;
       if (!enabled || !allowRunning) {

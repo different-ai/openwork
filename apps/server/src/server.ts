@@ -1019,7 +1019,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     },
     logger: toManagedProviderAuthLogger(logger),
   });
-  const engineV2Preview = createEngineV2Preview({ config, env, cloudCredentials: cloudProviderSync });
+  const engineV2Preview = createEngineV2Preview({ config, env });
   const routes = createRoutes(
     config,
     approvals,

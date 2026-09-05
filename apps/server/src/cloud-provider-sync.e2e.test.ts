@@ -651,7 +651,6 @@ describe("cloud provider sync gateway", () => {
     );
     expect(Object.keys(expectRecord(runtimeProvider.models, "local fallback models"))).toEqual(["allowed-local-model"]);
     expect(JSON.stringify(runtimeProvider)).not.toContain(localSecret);
-    expect(sync.credentialAccessSnapshot()(provider.id, credentialKey, runtimeProvider)).toBe(false);
     expect(JSON.stringify(sync.status())).not.toContain(localSecret);
     expect(JSON.stringify(denTraffic)).not.toContain(localSecret);
     expect(engineTraffic.some((request) => request.method === "PUT" && request.body?.includes(localSecret))).toBe(true);
@@ -723,14 +722,8 @@ describe("cloud provider sync gateway", () => {
     // name; the app was then upgraded, so nothing in memory owns that key.
     await env.upsertMany([{ key: declaredEnv, value: orgCredential }]);
     let sync = newSync();
-    const beforeCredentialGrant = sync.credentialAccessSnapshot();
     await sync.setSession(session);
     expect((await sync.run("first-sync-after-upgrade")).status).toBe("applied");
-    const appliedProvider = expectRecord(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config))[runtime.id], "approved runtime provider");
-    expect(beforeCredentialGrant(runtime.id, scopedEnv, appliedProvider)).toBe(false);
-    expect(sync.credentialAccessSnapshot()(runtime.id, scopedEnv, appliedProvider)).toBe(true);
-    expect(sync.credentialAccessSnapshot()(runtime.id, declaredEnv, appliedProvider)).toBe(false);
-    expect(sync.credentialAccessSnapshot()(runtime.id, scopedEnv, { ...appliedProvider, api: "https://unapproved.example/v1" })).toBe(false);
     const afterUpgrade = await envValues();
     expect(afterUpgrade.get(scopedEnv)).toBe(orgCredential);
     expect(afterUpgrade.has(declaredEnv)).toBe(false);

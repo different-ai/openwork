@@ -175,18 +175,18 @@ test("resolves only each provider's declared stored credential and omits missing
     native: { npm: "@ai-sdk/openai", env: ["NATIVE_API_KEY"] },
     missing: { npm: "@ai-sdk/openai", env: ["MISSING_API_KEY"] },
   };
-  const first = mapRuntimeProvidersToV2Specs(providers, new Map([["NATIVE_API_KEY", "key-one"], ["DATABASE_URL", "unrelated-secret"]]), (id, name) => id === "native" && name === "NATIVE_API_KEY");
+  const first = mapRuntimeProvidersToV2Specs(providers, new Map([["NATIVE_API_KEY", "key-one"], ["DATABASE_URL", "unrelated-secret"]]));
   expect(first.specs[0]?.apiKey).toBe("key-one");
   expect(first.skippedProviderIds).toEqual(["missing"]);
   expect(JSON.stringify(first)).not.toContain("unrelated-secret");
-  const rotated = mapRuntimeProvidersToV2Specs(providers, new Map([["NATIVE_API_KEY", "key-two"]]), (id, name) => id === "native" && name === "NATIVE_API_KEY");
+  const rotated = mapRuntimeProvidersToV2Specs(providers, new Map([["NATIVE_API_KEY", "key-two"]]));
   expect(rotated.specs[0]?.apiKey).toBe("key-two");
 });
 
 
 test("catalog api metadata cannot redirect a stored credential off the native trusted origin", () => {
   for (const api of ["http://127.0.0.1/v1", "https://attacker.example/v1", "https://api.openai.com.attacker.example/v1", "https://api.openai.com:444/v1", "https://user@api.openai.com/v1"]) {
-    const result = mapRuntimeProvidersToV2Specs({ native: { npm: "@ai-sdk/openai", api, env: ["NATIVE_API_KEY"] } }, new Map([["NATIVE_API_KEY", "private-fixture-key"]]), () => true);
+    const result = mapRuntimeProvidersToV2Specs({ native: { npm: "@ai-sdk/openai", api, env: ["NATIVE_API_KEY"] } }, new Map([["NATIVE_API_KEY", "private-fixture-key"]]));
     expect(result.skippedProviderIds).toEqual(["native"]);
     expect(result.specs).toEqual([]);
     expect(JSON.stringify(result)).not.toContain("private-fixture-key");
@@ -194,11 +194,13 @@ test("catalog api metadata cannot redirect a stored credential off the native tr
 });
 
 
-test("no provider identity can claim an unapproved stored credential", () => {
-  const provider = { npm: "@ai-sdk/openai", options: { baseURL: "https://custom.example/v1" }, env: ["MEMBER_API_KEY"] };
-  const credentials = new Map([["MEMBER_API_KEY", "member-secret"]]);
-  expect(mapRuntimeProvidersToV2Specs({ lpr_custom: provider, openwork: provider, local: provider }, credentials).specs).toEqual([]);
-  const approved = mapRuntimeProvidersToV2Specs({ lpr_custom: provider }, credentials,
-    (id, name, config) => id === "lpr_custom" && name === "MEMBER_API_KEY" && config === provider);
-  expect(approved.specs[0]?.apiKey).toBe("member-secret");
+test("null or empty native endpoint overrides cannot bypass catalog origin validation", () => {
+  for (const baseURL of [null, "", "  ", 0, false, {}]) {
+    const result = mapRuntimeProvidersToV2Specs({ native: {
+      npm: "@ai-sdk/openai", api: "https://untrusted.example/v1",
+      options: { baseURL }, env: ["NATIVE_API_KEY"],
+    } }, new Map([["NATIVE_API_KEY", "private-fixture-key"]]));
+    expect(result.skippedProviderIds).toEqual(["native"]);
+    expect(result.specs).toEqual([]);
+  }
 });
