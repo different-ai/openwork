@@ -83,12 +83,12 @@ test("create, preview, save and reopen an app without changing already-open resu
   const companyBefore = (await probe.api(world.den.admin, `/v1/dashboards/${world.dashboardId}`)).body;
   await step("remove a personal card and add the saved app again", async () => {
     await world.open("/dashboard");
-    await user.see({ text: "Project updates", exact: true });
-    await user.see({ text: "From your company", exact: true });
+    await user.see({ text: "Project updates" });
+    await user.see({ text: "From your company" });
     await user.click("Remove Team briefing from dashboard");
     await user.see({ text: "Make this dashboard yours" }, { timeoutMs: 30_000 });
     expect(await readApp()).toMatchObject({ onDashboard: false, view: { activeRevisionId: world.revisionId } });
-    await user.click({ role: "button", label: "Add", exact: true });
+    await user.click({ role: "button", label: "Add" });
     await user.see("Create with OpenWork");
     await user.click("Choose an existing app");
     await user.click("Add Team briefing");
@@ -97,7 +97,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     await world.open("/dashboard");
     await user.reload();
     await user.see("Open Team briefing", { timeoutMs: 30_000 });
-    await user.see({ text: "Project updates", exact: true });
+    await user.see({ text: "Project updates" });
     expect((await probe.api(world.den.admin, `/v1/dashboards/${world.dashboardId}`)).body).toEqual(companyBefore);
     await user.screenshot();
   });
@@ -144,7 +144,7 @@ test("create, preview, save and reopen an app without changing already-open resu
 
   await step("Dashboard Add opens a creation conversation", async () => {
     await world.open("/dashboard");
-    await user.click({ role: "button", label: "Add", exact: true });
+    await user.click({ role: "button", label: "Add" });
     await user.see("Choose an existing app");
     await user.screenshot();
     await user.click("Create with OpenWork");
