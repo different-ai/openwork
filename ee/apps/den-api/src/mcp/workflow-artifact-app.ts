@@ -434,6 +434,9 @@ export const WORKFLOW_ARTIFACT_APP_HTML = String.raw`<!doctype html>
 
 export function registerAgentWorkflowArtifactApp(input: {
   server: McpServer
+  selectApp?: (request: { configObjectId: string; receiptId: string }) => Promise<{
+    artifactViewId: string; viewRevisionId: string; resourceUri: string; toolName: string
+  } | null>
   load: (request: {
     configObjectId: string
     receiptId?: string
@@ -445,7 +448,26 @@ export function registerAgentWorkflowArtifactApp(input: {
     configObjectId: string
     receiptId?: string
     maxAgeMs?: number
-  }) => workflowArtifactToolResult(await input.load({ configObjectId, receiptId, maxAgeMs }))
+  }) => {
+    const loaded = await input.load({ configObjectId, receiptId, maxAgeMs })
+    const result = workflowArtifactToolResult(loaded)
+    if (!loaded.ok || !input.selectApp) return result
+    const selected = await input.selectApp({ configObjectId, receiptId: loaded.payload.artifact.receiptId })
+    if (!selected) return result
+    return {
+      ...result,
+      _meta: {
+        ...result._meta,
+        artifactViewId: selected.artifactViewId,
+        viewRevisionId: selected.viewRevisionId,
+        "openwork/mcpApp": {
+          toolName: selected.toolName,
+          resourceUri: selected.resourceUri,
+          arguments: { receiptId: loaded.payload.artifact.receiptId },
+        },
+      },
+    }
+  }
 
   registerAppTool(
     input.server,

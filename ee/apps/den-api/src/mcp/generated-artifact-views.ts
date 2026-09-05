@@ -94,7 +94,7 @@ function registerRenderTool(input: {
     input.server,
     toolName,
     {
-      title: `${input.preview ? "Preview" : "Render"} ${input.view.title}`,
+      title: `${input.preview ? "Preview" : "Open"} ${input.view.title}`,
       description: input.preview
         ? "Preview the newest saved custom view revision without changing the active revision."
         : "Render the Workflow's latest successful Artifact data with this Artifact's active custom view revision.",
@@ -136,6 +136,7 @@ function registerRenderTool(input: {
         structuredContent: loaded.payload,
         _meta: {
           artifactViewId: input.view.id,
+          appTitle: input.view.title,
           viewRevisionId: input.revision.id,
           resourceDigest: input.revision.resourceDigest,
           resultDigest: loaded.payload.artifact.resultDigest,
@@ -160,6 +161,7 @@ export function registerAgentGeneratedArtifactViews(input: {
   }) => Promise<GeneratedArtifactView>
   activate: (request: { artifactViewId: string; revisionId: string }) => Promise<GeneratedArtifactView>
   retire: (request: { artifactViewId: string }) => Promise<GeneratedArtifactView>
+  readSource?: (request: { artifactViewId: string }) => Promise<{ view: GeneratedArtifactView; reactSource: string; cssSource: string }>
   notifyCatalogChanged: () => void
 }) {
   const registeredResources = new Map<string, RegisteredResource>()
@@ -196,7 +198,8 @@ export function registerAgentGeneratedArtifactViews(input: {
       }
     }
     const activeRevision = readyRevisions.find((revision) => revision.id === view.activeRevisionId)
-    const previewRevision = readyRevisions.find((revision) => revision.id !== view.activeRevisionId)
+    const newestRevision = readyRevisions[0]
+    const previewRevision = newestRevision?.id !== view.activeRevisionId ? newestRevision : undefined
     syncTool(view, view.status === "active" ? activeRevision : undefined, false)
     syncTool(view, previewRevision, true)
   }
@@ -205,15 +208,25 @@ export function registerAgentGeneratedArtifactViews(input: {
     syncView(view)
   }
 
+  if (input.readSource) {
+    const readSource = input.readSource
+    input.server.registerTool("read_artifact_view", {
+      title: "Read an app for editing",
+      description: "Read the newest draft source of an app you manage before improving it. Use the app id from its render or preview tool name. Editing must keep the existing artifactViewId and configObjectId.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: z.object({ artifactViewId: idSchema }),
+    }, async (request) => ({ content: [{ type: "text", text: JSON.stringify(await readSource(request)) }] }))
+  }
+
   input.server.registerTool(
     "save_artifact_view",
     {
-      title: "Build and save Artifact view",
+      title: "Create or improve an app draft",
       description: [
         "Compile React source into a self-contained immutable MCP App revision bound to one Workflow output schema.",
         "Prerequisite: the Workflow's current version must declare an explicit JSON Schema outputSchema matching its successful result data. If it does not, test and create a new Workflow version with that outputSchema before calling this tool.",
         "Provide a default-exported React component that receives { data, artifact }. React is already injected: use React.useState and other React APIs without imports. Do not import modules, fetch data, access browser globals, or add URL-bearing elements; all render-time data comes from data.",
-        "A first successful revision activates automatically. Editing creates a previewable revision and never changes the active revision.",
+        "Every successful build is a draft. Show the preview so the user can try it and choose Save in OpenWork to keep the workflow and app together on their dashboard. Never activate a draft merely because it built successfully. Editing never changes the saved app.",
         "This management tool does not render a view. After a successful build, call the registered render_artifact_* or preview_artifact_* tool named in the result. A failed build returns artifact_view_build_failed with diagnostics; correct those diagnostics once and retry using the returned artifactViewId.",
       ].join(" "),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
