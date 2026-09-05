@@ -757,7 +757,7 @@ export function AdvancedWorkspaceRunModeSection() {
             Choose when OpenWork asks before acting, using the icon beside attachments. Off by default. Available with the standard desktop engine.
           </LayoutSectionItemDescription>
           <LayoutSectionItemHeaderActions>
-            <Switch aria-label="Show workspace run mode" checked={workspaceRunModeEnabled} disabled={restricted} onCheckedChange={toggleWorkspaceRunMode} />
+            <Switch data-testid="workspace-run-mode-flag" aria-label="Show workspace run mode" checked={workspaceRunModeEnabled} disabled={restricted} onCheckedChange={toggleWorkspaceRunMode} />
           </LayoutSectionItemHeaderActions>
         </LayoutSectionItemHeader>
         <LayoutSectionItemFootnote>

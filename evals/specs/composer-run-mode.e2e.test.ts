@@ -11,7 +11,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 test("workspace run mode is opt-in, confirms Keep going, and preserves policy when hidden", async ({ world, user, probe, step }) => {
   const mount = `/workspace/${encodeURIComponent(world.workspace.workspaceId)}`;
   const trigger = { testId: "workspace-run-mode-trigger" };
-  const flag = { label: "Show workspace run mode" };
+  const flag = { testId: "workspace-run-mode-flag", label: "Show workspace run mode" };
   const confirmation = { text: "Let OpenWork keep going?" };
   const footer = { text: "Applies to every chat in this workspace. Specific workspace rules still apply." };
 
