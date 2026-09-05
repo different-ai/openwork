@@ -66,13 +66,19 @@ export async function liveV2Turn(request: Request, v2: string, sessionId: string
     const permissions = (await request(`${path}/permission`)).json;
     if (record(permissions) && Array.isArray(permissions.data)) for (const permission of permissions.data) {
       if (record(permission) && typeof permission.id === "string") {
-        const allowed = await request(`${path}/permission/${permission.id}/reply`, "POST", { reply: "once" });
+        const relevant = permission.action === "skill" || permission.action === "reload-witness_read_report"
+          || permission.action === "openwork-cloud_search_capabilities";
+        const allowed = await request(`${path}/permission/${permission.id}/reply`, "POST", { reply: relevant ? "once" : "reject" });
         if (![200, 204].includes(allowed.status)) throw new Error("Live tool permission could not be approved");
       }
     }
     const result = (await request(`${path}/message`)).json;
     assertNoLiveSecret(result);
     const messages = record(result) && Array.isArray(result.data) ? result.data.filter(record).filter((message) => message.type === "assistant" && !oldIds.has(message.id)) : [];
+    if (messages.length > 16) {
+      await request(`${path}/interrupt`, "POST", {});
+      throw new Error("Live model exceeded the bounded tool-call budget");
+    }
     if (messages.some((message) => message.error || message.finish === "error")) throw new Error("Live model request failed (inspect redacted engine status)");
     const completed = messages.find((message) => record(message.time) && typeof message.time.completed === "number" && message.finish === "stop");
     if (completed) {
