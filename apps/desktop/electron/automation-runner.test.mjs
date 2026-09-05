@@ -899,7 +899,7 @@ test("a remote-session work item creates a local session and completes with its 
       body: {
         model: { providerID: "provider", modelID: "model" },
         variant: "high",
-        parts: [{ type: "text", text: "Inspect the repo" }],
+        parts: [{ type: "text", text: "Inspect the repo", metadata: { openworkSource: { kind: "remote-session", surface: "desktop" } } }],
       },
       authorization: "Bearer local-client-token",
     },
@@ -1122,7 +1122,7 @@ test("desktop Automation execution creates a normal visible local OpenWork threa
       body: {
         model: { providerID: "opencode", modelID: "big-pickle" },
         variant: "high",
-        parts: [{ type: "text", text: "Prepare the brief" }],
+        parts: [{ type: "text", text: "Prepare the brief", metadata: { openworkSource: { kind: "automation", surface: "desktop", name: "Daily brief" } } }],
       },
     },
   ])

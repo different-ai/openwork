@@ -1,4 +1,5 @@
 /** @jsxImportSource react */
+import { messageSourceMetadata } from "@/lib/message-source";
 import type { UIMessage } from "ai";
 import type { FilePart, Part, ToolPart } from "@opencode-ai/sdk/v2/client";
 
@@ -138,7 +139,7 @@ export function snapshotToUIMessages(snapshot: OpenworkSessionSnapshot): UIMessa
             type: "text",
             text: getTextPartValue(part),
             state: "done" as const,
-            providerMetadata: { opencode: { partId: part.id } },
+            providerMetadata: { opencode: { partId: part.id, ...messageSourceMetadata(part.metadata) } },
           }];
         }
         if (part.type === "reasoning") {

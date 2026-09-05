@@ -798,7 +798,10 @@ async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext
       createdOnEngine = true;
       await postJson(
         `/workspace/${encodeURIComponent(workspace.id)}/opencode/session/${encodeURIComponent(payload.id)}/prompt_async`,
-        { parts: [{ type: "text", text: session.prompt }] },
+        { parts: [{ type: "text", text: session.prompt, metadata: { openworkSource: {
+          kind: "task",
+          ...(context.sessionID ? { sessionId: context.sessionID } : {}),
+        } } }] },
       );
       return {
         ok: true,

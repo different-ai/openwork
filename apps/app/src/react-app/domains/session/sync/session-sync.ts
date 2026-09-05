@@ -1,3 +1,4 @@
+import { messageSourceMetadata } from "@/lib/message-source";
 import type { UIMessage } from "ai";
 import { create } from "zustand";
 import type { FilePart, Part, PermissionRequest, PermissionV2Request, QuestionRequest, Session, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
@@ -712,7 +713,7 @@ function toUIPart(part: Part): UIMessage["parts"][number] | null {
       type: "text",
       text: part.text,
       state: "done",
-      providerMetadata: { opencode: { partId: part.id } },
+      providerMetadata: { opencode: { partId: part.id, ...messageSourceMetadata(part.metadata) } },
     };
   }
   if (part.type === "reasoning") {

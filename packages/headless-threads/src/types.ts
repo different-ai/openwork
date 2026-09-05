@@ -64,7 +64,16 @@ export interface HeadlessThreadUsage {
   cost: number;
 }
 
+/** Display attribution supplied by the caller, never an authorization signal. */
+export interface HeadlessMessageSource {
+  kind: "automation" | "task" | "remote-session";
+  surface?: "desktop" | "cloud";
+  name?: string;
+  sessionId?: string;
+}
+
 export interface CreateThreadInput {
+  source?: HeadlessMessageSource;
   title: string;
   /** Optional first turn. When present the thread starts running immediately. */
   prompt?: string;
@@ -87,6 +96,7 @@ export interface HeadlessThread {
 }
 
 export interface HeadlessThreadTurnInput {
+  source?: HeadlessMessageSource;
   prompt: string;
   model?: HeadlessThreadModel;
   /** Stable engine message id used to make prompt admission idempotent. */

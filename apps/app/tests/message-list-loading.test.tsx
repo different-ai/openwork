@@ -118,3 +118,24 @@ describe("message-list reconnecting feedback", () => {
     expect(reconnectingLastConfirmedLabel(now - 3 * 60_000, now)).not.toBeNull();
   });
 });
+
+
+describe("incoming message attribution", () => {
+  test.each([
+    [{ kind: "automation", surface: "desktop", name: "Daily brief" }, "From automation · Daily brief · Desktop"],
+    [{ kind: "automation", surface: "cloud" }, "From automation · Cloud"],
+    [{ kind: "task" }, "From another task"],
+    [{ kind: "remote-session", surface: "cloud" }, "From remote session · Cloud"],
+    [{ kind: "remote-session", surface: "desktop" }, "From remote session · Desktop"],
+  ])("renders source %j with the OpenWork mark", (source, label) => {
+    const markup = renderList([{ ...userMessage, parts: [{ type: "text", text: "Incoming work", providerMetadata: { opencode: { openworkSource: source } } }] }], "ready");
+    expect(markup).toContain(label);
+    expect(markup).toContain('src="/openwork-mark.svg"');
+    expect(markup).toContain("Incoming work");
+  });
+
+  test("ordinary messages and unknown sources have no attribution", () => {
+    expect(renderList([userMessage], "ready")).not.toContain("data-message-source");
+    expect(renderList([{ ...userMessage, parts: [{ type: "text", text: "From automation", providerMetadata: { opencode: { openworkSource: { kind: "unknown" } } } }] }], "ready")).not.toContain("data-message-source");
+  });
+});

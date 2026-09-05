@@ -1,5 +1,7 @@
 "use memo";
 
+import { getMessageSourceLabel } from "@/lib/message-source";
+
 import * as React from "react"
 import {
   AlertTriangle,
@@ -674,6 +676,7 @@ const UserMessage = React.memo(
       [message.parts],
     )
     const hasContent = inlineParts.length > 0
+    const sourceLabel = getMessageSourceLabel(message)
 
     return (
       <Message
@@ -716,6 +719,12 @@ const UserMessage = React.memo(
                       return null
                     })}
                   </MessageContent>
+                ) : null}
+                {sourceLabel ? (
+                  <div data-message-source className="flex max-w-[85%] items-center gap-1.5 px-3 pt-1 text-xs text-muted-foreground sm:max-w-[75%]">
+                    <img src="/openwork-mark.svg" alt="" aria-hidden="true" className="size-3.5 shrink-0 opacity-60 dark:invert" />
+                    <span className="min-w-0 break-words">{sourceLabel}</span>
+                  </div>
                 ) : null}
                 {!isStreaming && (
                   <MessageActions

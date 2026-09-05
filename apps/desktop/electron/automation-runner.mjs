@@ -163,6 +163,7 @@ export async function executeDesktopAutomation(assignment, options) {
   const client = createWorkspaceSessionClient(local, workspaceId, options.fetchImpl ?? fetch)
   const created = await client.createThread({
     title: `Automation: ${assignment.automationName}`.slice(0, 120),
+    source: { kind: "automation", surface: "desktop", name: assignment.automationName },
     ...(assignment.instructions ? { prompt: assignment.instructions } : {}),
     model: assignment.model,
     signal: options.signal,
@@ -247,6 +248,7 @@ export async function executeDesktopRemoteSession(assignment, options) {
   try {
     const created = await client.createThread({
       title: assignment.title,
+      source: { kind: "remote-session", surface: "desktop" },
       ...(assignment.prompt ? { prompt: assignment.prompt } : {}),
       ...(assignment.model ? { model: assignment.model } : {}),
       signal: options.signal,

@@ -749,3 +749,16 @@ describe("exportTranscript", () => {
     expect(transcript.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
   });
 });
+
+
+test("preserves origin on both initial and follow-up turns without adding it to the prompt", async () => {
+  const double = createOpenworkDouble();
+  const client = createClient(double);
+  await client.createThread({ title: "Scheduled task", prompt: "First turn", source: { kind: "automation", surface: "desktop", name: "Daily brief" } });
+  await client.sendTurn(SESSION_ID, { prompt: "Follow-up", source: { kind: "remote-session", surface: "cloud" } });
+  const prompts = double.requests.filter((request) => request.path.endsWith("/prompt_async"));
+  expect(prompts.map((request) => request.body)).toEqual([
+    { parts: [{ type: "text", text: "First turn", metadata: { openworkSource: { kind: "automation", surface: "desktop", name: "Daily brief" } } }] },
+    { parts: [{ type: "text", text: "Follow-up", metadata: { openworkSource: { kind: "remote-session", surface: "cloud" } } }] },
+  ]);
+});

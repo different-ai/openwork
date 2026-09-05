@@ -231,7 +231,7 @@ function startFakeOpenWorkServer(options: { failPromptText?: string; failSession
 
       if (/^\/workspace\/ws_2\/opencode\/session\/ses_created_\d+\/prompt_async$/.test(url.pathname)) {
         const body = z.object({
-          parts: z.array(z.object({ type: z.literal("text"), text: z.string() }).strict()).length(1),
+          parts: z.array(z.object({ type: z.literal("text"), text: z.string(), metadata: z.object({ openworkSource: z.object({ kind: z.literal("task"), sessionId: z.string().optional() }) }) }).strict()).length(1),
         }).strict().parse(record.body);
         if (body.parts[0]?.text === options.failPromptText) {
           return Response.json({ message: "Prompt failed" }, { status: 503 });
@@ -618,9 +618,9 @@ describe("OpenWorkExtensionsPreview session tools", () => {
       { title: "Look into apple pies" },
     ]));
     expect(promptRequests.map((request) => request.body)).toEqual(expect.arrayContaining([
-      { parts: [{ type: "text", text: "Research dolphins." }] },
-      { parts: [{ type: "text", text: "Research bananas." }] },
-      { parts: [{ type: "text", text: "Research apple pies." }] },
+      { parts: [{ type: "text", text: "Research dolphins.", metadata: { openworkSource: { kind: "task", sessionId: "ses_origin" } } }] },
+      { parts: [{ type: "text", text: "Research bananas.", metadata: { openworkSource: { kind: "task", sessionId: "ses_origin" } } }] },
+      { parts: [{ type: "text", text: "Research apple pies.", metadata: { openworkSource: { kind: "task", sessionId: "ses_origin" } } }] },
     ]));
   });
 

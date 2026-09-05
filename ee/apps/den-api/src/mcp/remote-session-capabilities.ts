@@ -590,6 +590,7 @@ export async function executeRemoteSessionCapability(
     try {
       const thread = await client.createThread({
         title: body.title ?? "Remote session",
+        source: { kind: "remote-session", surface: "cloud" },
         ...(body.prompt === undefined ? {} : { prompt: body.prompt }),
         ...(modelInput(body.model) === undefined ? {} : { model: modelInput(body.model) }),
       })
@@ -612,6 +613,7 @@ export async function executeRemoteSessionCapability(
     try {
       const accepted = await client.sendTurn(body.sessionId, {
         prompt: body.prompt,
+        source: { kind: "remote-session", surface: "cloud" },
         ...(modelInput(body.model) === undefined ? {} : { model: modelInput(body.model) }),
       })
       return jsonResult({

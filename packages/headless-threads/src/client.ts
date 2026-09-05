@@ -215,7 +215,7 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
       const promptPath = `${opencodePath}/session/${encodeURIComponent(session.id)}/prompt_async`;
       const result = await opencode.session.promptAsync({
         sessionID: session.id,
-        parts: [{ type: "text", text: prompt }],
+        parts: [{ type: "text", text: prompt, ...(input.source ? { metadata: { openworkSource: input.source } } : {}) }],
         ...(model === undefined ? {} : { model: { providerID: model.providerId, modelID: model.modelId } }),
         ...(model?.variant === undefined ? {} : { variant: model.variant }),
       }, { signal: requestSignal(input.signal) });
@@ -234,7 +234,7 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     const path = `${opencodePath}/session/${encodeURIComponent(threadId)}/prompt_async`;
     const result = await opencode.session.promptAsync({
       sessionID: threadId,
-      parts: [{ type: "text", text: input.prompt }],
+      parts: [{ type: "text", text: input.prompt, ...(input.source ? { metadata: { openworkSource: input.source } } : {}) }],
       ...(input.messageId === undefined ? {} : { messageID: input.messageId }),
       ...(model === undefined ? {} : { model: { providerID: model.providerId, modelID: model.modelId } }),
       ...(model?.variant === undefined ? {} : { variant: model.variant }),

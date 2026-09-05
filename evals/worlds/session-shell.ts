@@ -469,6 +469,15 @@ export async function externalSessionVisibility(seed: Seed) {
         },
       };
     },
+    async submitAttributedMessage(workspaceId: string, sessionId: string, text: string, source?: Record<string, string>) {
+      const response = await fetch(`${externalServerUrl}/workspace/${encodeURIComponent(workspaceId)}/opencode/session/${encodeURIComponent(sessionId)}/message`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${serverToken}`, "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(30_000),
+        body: JSON.stringify({ noReply: true, parts: [{ type: "text", text, ...(source ? { metadata: { openworkSource: source } } : {}) }] }),
+      });
+      if (!response.ok) throw new Error(`Message submission returned HTTP ${response.status}: ${await response.text()}`);
+    },
     async serverSessionIds(workspaceId: string): Promise<string[]> {
       const response = await engineSessionProbe({ engine: resolveEvalEngine(), serverUrl: externalServerUrl, token: serverToken, workspaceId }).list();
       if (!response.ok) throw new Error(`Session list returned HTTP ${response.status}`);

@@ -533,6 +533,7 @@ export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise
     }
     const accepted = await client.sendTurn(nativeThreadId, {
       prompt: input.action.instructions,
+      source: { kind: "automation", surface: "cloud", name: input.automationName },
       messageId,
       signal,
     })
