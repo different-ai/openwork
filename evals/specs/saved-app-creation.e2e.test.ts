@@ -26,7 +26,7 @@ test("create, preview, save and reopen an app without changing already-open resu
   const appId = field(view, "id");
   if (!Array.isArray(view.revisions) || !view.revisions[0]) throw new Error("The conversation draft has no revision.");
   const revisionId = field(view.revisions[0], "id");
-  const requests = await world.den.mocks.agent.agentRequests({ promptMarker: creationPrompt });
+  const requests = await world.den.mocks.tracker.agentRequests({ promptMarker: creationPrompt });
   expect(requests.some((request) => request.toolName?.endsWith("save_artifact_view"))).toBe(true);
   expect(requests.some((request) => request.toolName?.includes("preview_artifact_"))).toBe(true);
   evidence.recordAssertionEvidence("A submitted Dashboard creation request builds a new app draft and opens its preview", "There were no app drafts before submission. The real conversation called the MCP builder and newly registered preview tool, persisted one revision, and rendered its workflow data in the artifact panel.", true);

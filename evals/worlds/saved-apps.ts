@@ -26,7 +26,6 @@ export async function savedAppCreation(seed: Seed) {
     org: { name: `Saved Apps ${Date.now()}`, members: { colleague: { name: "Colleague" } } },
     mocks: {
       tracker: seed.mock({ allowUnauthenticatedMcp: true, appToolName: "search_issues_using_jql" }),
-      agent: seed.mock({}),
     },
   });
   const connection = await seed.orgConnection(den.admin, {
@@ -86,7 +85,7 @@ export async function savedAppCreation(seed: Seed) {
   const source = (heading: string) => `export default function Briefing({ data }) { const [expanded, setExpanded] = React.useState(false); return <article><h1>${heading}</h1><p>{data.topic}</p><button onClick={() => setExpanded(!expanded)}>{expanded ? "Hide details" : "Show details"}</button>{expanded && <p>Workers: {data.total}</p>}</article> }`;
   // Only the existing workflow is arranged. The desktop conversation must
   // execute these model tool calls to create and display the first app draft.
-  const configured = await fetch(`${den.mocks.agent.url}/admin/agent-workloads`, {
+  const configured = await fetch(`${den.mocks.tracker.url}/admin/agent-workloads`, {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ workloads: [{ promptMarker: creationPrompt, finalReply: creationReply, steps: [
       { tool: "save_artifact_view", arguments: {
@@ -105,7 +104,7 @@ export async function savedAppCreation(seed: Seed) {
   await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
     provider: { [providerId]: {
       npm: "@ai-sdk/openai-compatible", name: "App creation model fixture",
-      options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-app-fixture" },
+      options: { baseURL: `${den.mocks.tracker.url}/v1`, apiKey: "sk-app-fixture" },
       models: { [modelId]: { name: "App creation model fixture", tool_call: true } },
     } },
     mcp: { "openwork-cloud": { type: "remote", url: `${den.ref.apiUrl}/mcp/agent`, enabled: true, oauth: false, headers: { Authorization: `Bearer ${token}` } } },
