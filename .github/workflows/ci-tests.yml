@@ -76,6 +76,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Cache Electron and pinned sidecars
         uses: actions/cache@v5
         with:
@@ -98,9 +100,9 @@ jobs:
         run: pnpm --filter @openwork/desktop typecheck:electron
       - name: Prepare virtual display
         run: |
-          if ! command -v xvfb-run >/dev/null; then
+          if ! command -v xvfb-run >/dev/null || ! command -v xdpyinfo >/dev/null; then
             sudo apt-get update -qq
-            sudo apt-get install -y xvfb
+            sudo apt-get install -y xvfb x11-utils
           fi
       - name: Package and smoke-test the installed desktop
         timeout-minutes: 7
