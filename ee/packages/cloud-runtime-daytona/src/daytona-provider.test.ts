@@ -80,10 +80,12 @@ function fakeSandbox(options: FakeSandboxOptions) {
         return { cmdId: `cmd_${commands.length}` }
       },
       async getSessionCommand() {
+        if (state === "destroyed") throw new DaytonaNotFoundError("sandbox deleted before command result was read")
         const next = exitCodes.length > 1 ? exitCodes.shift() : exitCodes[0]
         return { exitCode: next ?? null }
       },
       async getSessionCommandLogs() {
+        if (state === "destroyed") throw new DaytonaNotFoundError("sandbox deleted before command logs were read")
         return { stdout: "out", stderr: "err" }
       },
     },

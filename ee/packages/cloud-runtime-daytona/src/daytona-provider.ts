@@ -270,7 +270,11 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
     const sandbox = remember(await wrap(() => client.create(createParams(spec), { timeout: seconds(opts.timeoutMs) })))
     try {
       const exec = await execOn(sandbox, { command: `sh -lc ${shellQuote(command)}`, detach: false, timeoutMs: opts.timeoutMs })
-      return exec
+      // The helper's toolbox disappears on deletion; capture the result first.
+      return {
+        exitCode: await exec.exitCode(),
+        logs: await exec.logs().catch(() => ({ stdout: "", stderr: "" })),
+      }
     } finally {
       await wrap(() => sandbox.delete(seconds(opts.timeoutMs))).catch(() => undefined)
       sandboxes.delete(sandbox.id)
@@ -361,14 +365,12 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
         ),
         ...mounts.map((mount) => shellQuote(mount.mountPath)),
       ].join(" ")
-      const exec = await runInHelper(
+      const { exitCode, logs } = await runInHelper(
         { ...helperSpec(slug(`den-daytona-cleanup-${randomSuffix()}`).slice(0, 63), "cleanup", mounts), image: null },
         script,
         opts,
       )
-      const exitCode = await exec.exitCode()
       if (exitCode !== 0) {
-        const logs = await exec.logs().catch(() => ({ stdout: "", stderr: "" }))
         throw new RuntimeProviderError({
           providerId,
           code: "unknown",
@@ -384,7 +386,7 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
       const probe = /[*?]/.test(pattern)
         ? `test -n "$(find ${shellQuote(probeMountPath)} -maxdepth 1 -name ${shellQuote(pattern)} -print -quit 2>/dev/null)"`
         : `test -e ${shellQuote(`${probeMountPath}/${pattern}`)}`
-      const exec = await runInHelper(
+      const result = await runInHelper(
         helperSpec(
           slug(`den-daytona-probe-${randomSuffix()}`).slice(0, 63),
           "checkpoint-probe",
@@ -393,7 +395,7 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
         probe,
         opts,
       )
-      return (await exec.exitCode()) === 0
+      return result.exitCode === 0
     },
   }
 
