@@ -872,8 +872,8 @@ function SidebarSplitPill({ workspaceSessionGroups, onOpenSession }: SidebarSpli
               <button
                 type="button"
                 className="shrink-0 rounded p-0.5 text-sidebar-foreground/50 hover:text-sidebar-foreground"
-                title={t("session_management.close_split_view")}
-                aria-label={t("session_management.close_split_view")}
+                title={t(pane === "primary" ? "session_management.expand_side_chat" : "session_management.close_split_view")}
+                aria-label={t(pane === "primary" ? "session_management.expand_side_chat" : "session_management.close_split_view")}
                 onClick={() => {
                   if (pane === "primary") {
                     // Closing the primary segment promotes the split session
@@ -950,6 +950,8 @@ function isSessionActivityStatus(status: string | undefined): status is SessionA
 }
 
 export function AppSidebar(props: AppSidebarProps) {
+  const sideChatOpen = useWorkbenchStore((state) => state.secondary !== null);
+  const sideChatAction = t(sideChatOpen ? "session_management.close_split_view" : "session_management.new_split");
   // Lives in the UI store (not component state) so the open/closed state of
   // each workspace group survives this sidebar unmounting, e.g. while the
   // user is in Settings.
@@ -1172,13 +1174,17 @@ export function AppSidebar(props: AppSidebarProps) {
                 type="button"
                 data-sidebar-new-split
                 className="text-sidebar-foreground/60"
-                aria-label={t("session_management.split_view")}
-                tooltip={t("session_management.split_view")}
-                disabled={props.newTaskDisabled}
-                onClick={() => props.onCreateSplitTaskInWorkspace(props.selectedWorkspaceId)}
+                aria-label={sideChatAction}
+                tooltip={sideChatOpen ? sideChatAction : t("session_management.side_chat_hint")}
+                isActive={sideChatOpen}
+                disabled={!sideChatOpen && props.newTaskDisabled}
+                onClick={() => {
+                  if (sideChatOpen) useWorkbenchStore.getState().setSplit(null);
+                  else props.onCreateSplitTaskInWorkspace(props.selectedWorkspaceId);
+                }}
               >
                 <Columns2 className="size-4" />
-                <span className="flex-1 truncate">{t("session_management.split_view")}</span>
+                <span className="flex-1 truncate">{sideChatAction}</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
             {props.onOpenSessionSearch ? (

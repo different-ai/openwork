@@ -225,7 +225,7 @@ async function clickOpenSplit(app: Surface): Promise<void> {
 
 async function closeSecondaryPane(app: Surface): Promise<void> {
   const clicked = await evalIn(app, `(() => {
-    const button = document.querySelector('button[aria-label="Close secondary split pane"]');
+    const button = document.querySelector('[data-workbench-pane="secondary"] button[aria-label="Close side chat"]');
     if (!(button instanceof HTMLButtonElement)) return false;
     button.click();
     return true;

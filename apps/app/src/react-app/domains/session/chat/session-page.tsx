@@ -3,7 +3,7 @@ import type { CSSProperties } from "react";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
 import { DesktopUpdateButton } from "../../settings/state/desktop-updater-provider";
-import { ArrowLeft, Cloud, FileText, Globe, Mic2, MoreHorizontal, PanelRight, TextSearch, X, Zap } from "lucide-react";
+import { ArrowLeft, Cloud, FileText, Globe, Maximize2, Mic2, MoreHorizontal, PanelRight, TextSearch, X, Zap } from "lucide-react";
 
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { t } from "../../../../i18n";
@@ -303,38 +303,49 @@ function WorkbenchPaneHeader(props: {
   focused: boolean;
   onFocus: () => void;
   onClose: () => void;
+  onExpand?: () => void;
 }) {
   const title = props.session.title?.trim() || t("session.default_title");
   return (
     <div
       className={cn(
-        "flex h-10 shrink-0 items-center gap-2 border-b border-border px-3",
+        "flex min-h-14 shrink-0 items-center gap-2 border-b border-border px-3 py-2",
         props.focused && "bg-muted/40",
       )}
       data-workbench-pane-header={props.pane}
       data-workbench-pane-workspace-name={props.workspaceTitle}
     >
       <button type="button" className="min-w-0 flex-1 text-left" onClick={props.onFocus}>
+        <span className="block text-[10px] font-medium text-muted-foreground">
+          {t(props.pane === "primary" ? "session_management.main_chat" : "session_management.split_view")}
+        </span>
         <span className="block truncate text-xs font-medium text-foreground">{title}</span>
         {props.showWorkspace ? (
           <span className="block truncate text-[10px] text-muted-foreground">{props.workspaceTitle}</span>
         ) : null}
       </button>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              aria-label={`Close ${props.pane} split pane`}
-              onClick={props.onClose}
-            >
-              <X data-icon="inline-start" />
+      {props.onExpand ? (
+        <Tooltip>
+          <TooltipTrigger render={
+            <Button variant="ghost" size="sm" aria-label={t("session_management.expand_side_chat")} onClick={props.onExpand}>
+              <Maximize2 data-icon="inline-start" />
+              {t("session_management.expand")}
             </Button>
-          }
-        />
-        <TooltipContent>{props.pane === "primary" ? "Keep the other session" : "Close split view"}</TooltipContent>
-      </Tooltip>
+          } />
+          <TooltipContent>{t("session_management.expand_side_chat")}</TooltipContent>
+        </Tooltip>
+      ) : null}
+      {props.pane === "secondary" ? (
+        <Tooltip>
+          <TooltipTrigger render={
+            <Button variant="ghost" size="sm" aria-label={t("session_management.close_split_view")} onClick={props.onClose}>
+              <X data-icon="inline-start" />
+              {t("session_management.close")}
+            </Button>
+          } />
+          <TooltipContent>{t("session_management.close_split_view")}</TooltipContent>
+        </Tooltip>
+      ) : null}
     </div>
   );
 }
@@ -1127,7 +1138,7 @@ export function SessionPage(props: SessionPageProps) {
   })();
   const narrowPaneOptions = useMemo<NarrowPaneOption[]>(() => {
     const options: NarrowPaneOption[] = [{ id: "chat", label: "Chat" }];
-    if (splitSession) options.push({ id: "split", label: "Split chat" });
+    if (splitSession) options.push({ id: "split", label: t("session_management.split_view") });
     if (sidePanelOpen) {
       options.push({
         id: "panel",
@@ -1842,6 +1853,7 @@ export function SessionPage(props: SessionPageProps) {
                               focused={activeWorkbenchPane === "secondary"}
                               onFocus={() => focusWorkbenchPane("secondary")}
                               onClose={closeSecondaryWorkbenchPane}
+                              onExpand={closePrimaryWorkbenchPane}
                             />
                             {splitPaneRuntime.status === "ready" ? (
                               <div className="min-h-0 flex-1">
