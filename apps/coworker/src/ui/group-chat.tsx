@@ -618,7 +618,7 @@ export function GroupChat({
           />
         </div>
         {/* One plain line, no dot: who is replying, or Ready. */}
-        <span data-testid="coworker-top-status" data-tone="mist" className="shrink-0 text-xs text-mist">
+        <span data-testid="coworker-top-status" data-tone={live ? "mist" : "ready"} className={`shrink-0 text-xs ${live ? "text-mist" : "text-ready"}`}>
           {statusLine}
         </span>
       </header>

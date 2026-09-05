@@ -287,10 +287,10 @@ function relativeTime(timestamp: number): string {
   return new Date(timestamp).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-function threadTone(status: ThreadListItem["status"]): "spark" | "amber" | "mint" {
+function threadTone(status: ThreadListItem["status"]): "spark" | "amber" | "ready" {
   if (status === "busy") return "spark";
   if (status === "retry") return "amber";
-  return "mint";
+  return "ready";
 }
 
 export function ThreadsPanel({
