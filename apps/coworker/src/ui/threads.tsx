@@ -1334,6 +1334,13 @@ function ThreadView({
     let refreshTimer: number | undefined;
     /** The turn ended without a reply: settle what the person sees, in this order — fall back, retry later, or say so. */
     const settleFailure = async (message: string, retryable: boolean | null, engineKnows: boolean) => {
+      // Cancelling an exhausted allowance can settle as an abort, an error, or
+      // a timeout. Keep the reason we cancelled instead of the transport result.
+      const stall = stallRef.current;
+      if (stall && turnStateRef.current.pending?.stoppedAt === null) {
+        setFailure(stall.reason);
+        return;
+      }
       if (await fallBack(message)) return;
       if (retryLater(message, retryable)) return;
       // The engine's own reply carries the words; only a failure it never saw needs remembering here.
