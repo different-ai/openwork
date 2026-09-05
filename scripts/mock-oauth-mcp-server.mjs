@@ -285,6 +285,45 @@ function computerMentionArguments(messages) {
   return { name: "remote-session:create", body: { target, prompt } };
 }
 
+// Native OpenAI Responses witness for plain-text workloads. Unsupported tool
+// scripts fail explicitly instead of pretending they executed.
+async function handleAgentResponse(req, res, entry) {
+  const body = await readJson(req);
+  const text = agentContentText(body.input);
+  const matched = agentWorkloads.filter((workload) => text.includes(workload.promptMarker));
+  const model = body.model;
+  const workload = matched[0];
+  const base = { model, matchedMarkers: matched.map((item) => item.promptMarker), completedTools: 0, promptMarker: workload?.promptMarker ?? null, toolName: null, arguments: {} };
+  if (agentRequiredHeader && req.headers[agentRequiredHeader.name.toLowerCase()] !== agentRequiredHeader.value) {
+    entry.agentCompletion = { ...base, kind: "error" };
+    json(res, 401, { error: { message: "provider authentication handler was bypassed" } });
+    return;
+  }
+  if (matched.length > 1 || (workload && workload.steps.length)) {
+    entry.agentCompletion = { ...base, kind: "error" };
+    json(res, 400, { error: { message: "Responses witness requires one plain-text workload" } });
+    return;
+  }
+  entry.agentCompletion = { ...base, kind: workload ? "final" : "utility" };
+  const reply = workload?.finalReply ?? "Active session workload";
+  const item = { id: `msg_${randomUUID()}`, type: "message", role: "assistant", status: "completed", content: [{ type: "output_text", text: reply, annotations: [] }] };
+  const response = { id: `resp_${randomUUID()}`, object: "response", created_at: Math.floor(Date.now() / 1000), model, status: "completed", output: [item], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 0 } } };
+  if (!body.stream) { json(res, 200, response); return; }
+  res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+  const events = [
+    { type: "response.created", response: { ...response, status: "in_progress", output: [] } },
+    { type: "response.output_item.added", output_index: 0, item: { ...item, status: "in_progress", content: [] } },
+    { type: "response.content_part.added", item_id: item.id, output_index: 0, content_index: 0, part: { type: "output_text", text: "", annotations: [] } },
+    { type: "response.output_text.delta", item_id: item.id, output_index: 0, content_index: 0, delta: reply },
+    { type: "response.output_text.done", item_id: item.id, output_index: 0, content_index: 0, text: reply },
+    { type: "response.content_part.done", item_id: item.id, output_index: 0, content_index: 0, part: item.content[0] },
+    { type: "response.output_item.done", output_index: 0, item },
+    { type: "response.completed", response },
+  ];
+  for (const [sequence_number, event] of events.entries()) res.write(`event: ${event.type}\ndata: ${JSON.stringify({ ...event, sequence_number })}\n\n`);
+  res.end();
+}
+
 async function handleAgentCompletion(req, res, entry) {
   const body = await readJson(req);
   if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -922,6 +961,11 @@ const server = http.createServer(async (req, res) => {
         object: "list",
         data: [{ id: "mock-agent-workload-model", object: "model", owned_by: "openwork-testkit" }],
       });
+      return;
+    }
+
+    if (req.method === "POST" && (url.pathname === "/v1/responses" || url.pathname === "/responses")) {
+      await handleAgentResponse(req, res, entry);
       return;
     }
 

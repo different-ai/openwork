@@ -100,10 +100,11 @@ test("maps runtime provider fields and models to an OpenCode v2 spec", () => {
       id: "example",
       name: "Example Provider",
       baseUrl: "https://example.test/v1",
+      package: "@opencode-ai/ai/providers/openai-compatible",
       apiKey: "secret",
       models: [
-        { id: "model-a", name: "Model A" },
-        { id: "model-b", name: "model-b" },
+        { id: "model-a", name: "Model A", config: { name: "Model A" } },
+        { id: "model-b", name: "model-b", config: {} },
       ],
     }],
     skippedProviderIds: [],
@@ -144,4 +145,26 @@ test("sorts mapped and skipped provider IDs deterministically", () => {
   });
   expect(result.specs.map((spec) => spec.id)).toEqual(["alpha", "zebra"]);
   expect(result.skippedProviderIds).toEqual(["beta", "yak"]);
+});
+
+
+test("native organization providers retain their transport without an endpoint override", () => {
+  const result = mapRuntimeProvidersToV2Specs({
+    lpr_openai: { npm: "@ai-sdk/openai", options: { apiKey: "fixture-key" }, models: { coding: { id: "wire-model", name: "Coding", tool_call: false, limit: { context: 1000000, output: 64000 }, modalities: { input: ["text", "image", "pdf"], output: ["text"] } } } },
+    lpr_anthropic: { npm: "@ai-sdk/anthropic" },
+    lpr_router: { npm: "@openrouter/ai-sdk-provider" },
+    unknown: { npm: "untrusted-package", options: { baseURL: "https://example.test" } },
+  });
+  expect(result.skippedProviderIds).toEqual(["unknown"]);
+  expect(result.specs.map((spec) => spec.package)).toEqual([
+    "@opencode-ai/ai/providers/anthropic", "@opencode-ai/ai/providers/openai", "@opencode-ai/ai/providers/openrouter",
+  ]);
+  expect(result.specs.every((spec) => spec.baseUrl === undefined)).toBe(true);
+  expect(result.specs[1]?.models[0]?.config).toMatchObject({ id: "wire-model", tool_call: false, limit: { context: 1000000, output: 64000 } });
+});
+
+test("native provider api endpoint and headers survive conversion", () => {
+  expect(mapRuntimeProvidersToV2Specs({ native: {
+    npm: "@ai-sdk/openai", api: "https://example.test/v1", options: { apiKey: "fixture", headers: { "x-tenant": "fixture" } },
+  } }).specs[0]).toMatchObject({ baseUrl: "https://example.test/v1", package: "@opencode-ai/ai/providers/openai", headers: { "x-tenant": "fixture" } });
 });

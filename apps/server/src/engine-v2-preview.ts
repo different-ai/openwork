@@ -152,31 +152,45 @@ export function mapRuntimeProvidersToV2Specs(
   const skippedProviderIds: string[] = [];
 
   for (const [id, value] of Object.entries(providerMap)) {
-    if (!isRecord(value) || !isRecord(value.options)) {
+    if (!isRecord(value)) {
       skippedProviderIds.push(id);
       continue;
     }
-    const baseUrl = value.options.baseURL;
-    if (typeof baseUrl !== "string" || baseUrl.trim() === "") {
+    // Only built-in adapters: do not turn organization configuration into a
+    // request to install an arbitrary runtime package.
+    const packages: Record<string, string> = {
+      "@ai-sdk/openai": "@opencode-ai/ai/providers/openai",
+      "@ai-sdk/anthropic": "@opencode-ai/ai/providers/anthropic",
+      "@openrouter/ai-sdk-provider": "@opencode-ai/ai/providers/openrouter",
+      "@ai-sdk/openai-compatible": "@opencode-ai/ai/providers/openai-compatible",
+    };
+    const options = isRecord(value.options) ? value.options : {};
+    const endpoint = options.baseURL ?? value.api;
+    const baseUrl = typeof endpoint === "string" && endpoint.trim() ? endpoint : undefined;
+    const packageName = typeof value.npm === "string" && Object.hasOwn(packages, value.npm) ? packages[value.npm] : undefined;
+    if ((value.npm !== undefined && !packageName)
+      || (!baseUrl && (!packageName || value.npm === "@ai-sdk/openai-compatible"))) {
       skippedProviderIds.push(id);
       continue;
     }
-
+    const { apiKey, baseURL, headers, ...settings } = options;
     const models = isRecord(value.models)
       ? Object.entries(value.models)
         .map(([modelId, model]) => ({
           id: modelId,
           name: isRecord(model) && typeof model.name === "string" ? model.name : modelId,
+          ...(isRecord(model) ? { config: model } : {}),
         }))
         .sort((left, right) => left.id.localeCompare(right.id))
       : [];
     specs.push({
       id,
       name: typeof value.name === "string" ? value.name : id,
-      baseUrl,
-      apiKey: typeof value.options.apiKey === "string" && value.options.apiKey !== ""
-        ? value.options.apiKey
-        : UNSET_API_KEY,
+      ...(baseUrl ? { baseUrl } : {}),
+      ...(packageName ? { package: packageName } : {}),
+      ...(Object.keys(settings).length ? { settings } : {}),
+      ...(isRecord(headers) ? { headers } : {}),
+      apiKey: typeof apiKey === "string" && apiKey !== "" ? apiKey : UNSET_API_KEY,
       models,
     });
   }

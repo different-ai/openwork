@@ -1,8 +1,8 @@
 import { expect, onTestFinished } from "vitest";
-import { denFetch, evalIn, go, readAvailableModels, waitFor } from "@openwork/behaviors";
+import { control, denFetch, evalIn, go, readAvailableModels, selectModel, writeComposerText, waitFor } from "@openwork/behaviors";
 import type { DenSession, ModelFacts } from "@openwork/behaviors";
 import { screenshot, validate } from "@openwork/test-evidence";
-import { app, eventually, needs, server, sleep, test, unmetNeeds } from "@openwork/testkit";
+import { app, eventually, mcpMock, needs, server, sleep, test, unmetNeeds } from "@openwork/testkit";
 import type { TestNeeds } from "@openwork/testkit";
 
 /**
@@ -218,7 +218,7 @@ async function engineV2Status(surface: Parameters<typeof evalIn>[0], enabled?: b
     if (!port || !token) return { specProbeError: "missing local server credentials" };
     const enabled = ${String(enabled)};
     const response = await fetch("http://127.0.0.1:" + port + "/experimental/engine-v2-preview" + (enabled === undefined ? "/status" : ""), {
-      ...(enabled === undefined ? {} : { method: "PUT", body: JSON.stringify({ enabled }) }),
+      ...(enabled === undefined ? {} : { method: "PUT", body: JSON.stringify({ enabled, chatRouting: enabled }) }),
       headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
     });
     if (!response.ok) return { specProbeError: "HTTP " + response.status + " " + (await response.text()).slice(0, 200) };
@@ -275,8 +275,14 @@ function connectLogEntries(logText: string): ConnectLogEntry[] {
 test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, async ({ evidence, place }) => {
   needs(requirements);
 
+  const promptMarker = `NATIVE-SYNC-${Date.now()}`;
+  const finalReply = `NATIVE-REPLY-${Date.now()}`;
   await using den = await server({
     place,
+    mocks: { agent: mcpMock({
+      agentWorkloads: [{ promptMarker, finalReply, steps: [] }],
+      agentRequiredHeader: { name: "authorization", value: "Bearer sk-openwork-sync-contract-eval-only" },
+    }) },
     org: {
       name: ORGANIZATION_NAME,
       admin: { name: "Sync Admin" },
@@ -295,10 +301,11 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
     customConfig: {
       id: CUSTOM_PROVIDER_KEY,
       name: CUSTOM_PROVIDER_NAME,
-      npm: "@ai-sdk/openai-compatible",
-      options: { baseURL: "https://gateway.example.test/v1" },
+      npm: "@ai-sdk/openai",
+      api: `${den.mocks.agent.url}/v1`,
       env: ["SYNC_CONTRACT_PROVIDER_API_KEY"],
-      models: [{ id: CUSTOM_MODEL_ID, name: "Sync Contract Custom Model" }],
+      models: [{ id: CUSTOM_MODEL_ID, name: "Sync Contract Custom Model", tool_call: true,
+        limit: { context: 1050000, output: 128000 }, modalities: { input: ["text", "image", "pdf"], output: ["text"] } }],
     },
     apiKey: "sk-openwork-sync-contract-eval-only",
     allMembers: true,
@@ -422,6 +429,24 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
     label: "model picker dialog closed",
   });
 
+  await go(desktopApp, `/workspace/${desktopApp.workspaceId}/session`);
+  await selectModel(desktopApp, CATALOG_MODEL_ID, { provider: CATALOG_PROVIDER_NAME });
+  const chosenDefault = await evalIn(desktopApp, `localStorage.getItem("openwork.defaultModel")`);
+  expect(typeof chosenDefault).toBe("string");
+  expect(String(chosenDefault)).toContain(CATALOG_MODEL_ID);
+  await evalIn(desktopApp, `(() => {
+    window.__modelSelectionProof = { changes: 0, loops: 0, unavailable: false };
+    window.addEventListener("openwork.defaultModelChanged", () => window.__modelSelectionProof.changes++);
+    const original = console.error;
+    console.error = (...args) => {
+      if (args.some((arg) => String(arg).includes("Maximum update depth"))) window.__modelSelectionProof.loops++;
+      original.apply(console, args);
+    };
+    new MutationObserver(() => {
+      if (document.body.innerText.includes("Model no longer available")) window.__modelSelectionProof.unavailable = true;
+    }).observe(document.body, { childList: true, subtree: true });
+  })()`);
+
   // ── Claim 3: loud skips — a dropped provider must name itself ───────────
   // The schema (apps/server/src/cloud-provider-sync.ts:38-69) carries no
   // per-provider skipped/errored state: its only error carrier is
@@ -518,10 +543,34 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
     desktopApp,
     (status) => status.mirroredProviderIds.includes(customRuntime.providerId)
       && status.catalogModelIds.includes(CUSTOM_MODEL_ID)
-      && (status.mirroredProviderIds.includes(catalogRuntime.providerId)
-        || status.skippedProviderIds.includes(catalogRuntime.providerId)),
-    V2_MIRROR_BUDGET_MS, "initial Den providers to be mirrored or explicitly skipped by v2",
+      && status.mirroredProviderIds.includes(catalogRuntime.providerId)
+      && !status.skippedProviderIds.includes(catalogRuntime.providerId)
+      && status.catalogModelIds.includes(CATALOG_MODEL_ID),
+    V2_MIRROR_BUDGET_MS, "custom and native Den providers to appear in the v2 catalog",
   );
+  await go(desktopApp, `/workspace/${desktopApp.workspaceId}/session`);
+  await sleep(16_000); // includes the renderer's engine-routing refresh interval
+  expect(await evalIn(desktopApp, `localStorage.getItem("openwork.defaultModel")`)).toBe(chosenDefault);
+  expect(await evalIn(desktopApp, `window.__modelSelectionProof`)).toEqual({ changes: 0, loops: 0, unavailable: false });
+  evidence.recordAssertionEvidence(
+    "native organization model selection survives v1 to v2 without false unavailability or a React loop",
+    "The selected catalog provider/model stayed unchanged through Settings, cloud refresh, native v2 mirroring and routing refresh; zero default writes, unavailable warnings or maximum-depth errors were observed.", true,
+  );
+  await selectModel(desktopApp, CUSTOM_MODEL_ID, { provider: CUSTOM_PROVIDER_NAME });
+  await writeComposerText(desktopApp, `Reply to the request marked ${promptMarker}.`);
+  await control(desktopApp, "composer.send", undefined, { timeoutMs: 120_000 });
+  await waitFor(desktopApp, `Array.from(document.querySelectorAll('[data-message-role="assistant"]')).some((row) => row.textContent.includes(${JSON.stringify(finalReply)}))`, { timeoutMs: 120_000, label: "native provider reply in the v2 transcript" });
+  const nativeRequests = await den.mocks.agent.agentRequests({ promptMarker, atLeast: 1, timeoutMs: 10_000 });
+  expect(nativeRequests.some((request) => request.model === CUSTOM_MODEL_ID && request.kind === "final")).toBe(true);
+  expect(nativeRequests.some((request) => request.model !== CUSTOM_MODEL_ID || request.kind === "error")).toBe(false);
+  expect((await den.mocks.agent.requests()).some((request) => request.path.endsWith("/responses"))).toBe(true);
+  evidence.recordAssertionEvidence(
+    "native OpenAI inference completes through the selected v2 model",
+    "The signed-in desktop rendered the independent reply nonce; the authenticated witness saw the selected model on the native Responses endpoint, with no wrong-model or authentication-error requests.", true,
+  );
+  await go(desktopApp, `/workspace/${desktopApp.workspaceId}/session`);
+  await selectModel(desktopApp, CATALOG_MODEL_ID, { provider: CATALOG_PROVIDER_NAME });
+  const changesBeforeSync = await evalIn(desktopApp, `window.__modelSelectionProof.changes`);
   const thirdPublishedAt = Date.now();
   const thirdProviderId = await createProvider(den.admin, orgId, {
     name: "Sync Contract Third Models",
@@ -557,7 +606,7 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
     V2_MIRROR_BUDGET_MS, "third Den provider to hot-mirror into v2",
   );
   const mirrorLatencyMs = Date.now() - thirdPublishedAt;
-  const catalogOutcome = initialV2.mirroredProviderIds.includes(catalogRuntime.providerId) ? "mirrored" : "skipped (no baseURL)";
+  const catalogOutcome = "mirrored with its declared model and native default endpoint";
   const hotMirrored = initialV2.running && initialV2.pid === pid0
     && thirdV2.running && thirdV2.pid === pid0;
   evidence.recordAssertionEvidence(
@@ -565,6 +614,36 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
     `baseURL providers ${customRuntime.providerId} and ${thirdRuntime.providerId} mirrored with models ${CUSTOM_MODEL_ID} and ${THIRD_MODEL_ID}; catalog provider ${catalogRuntime.providerId} was ${catalogOutcome}; third-provider latency=${mirrorLatencyMs}ms; sidecar stayed at pid ${pid0}.`,
     hotMirrored,
   );
+  expect(await evalIn(desktopApp, `localStorage.getItem("openwork.defaultModel")`)).toBe(chosenDefault);
+  expect(await evalIn(desktopApp, `window.__modelSelectionProof.changes`)).toBe(changesBeforeSync);
+  // Remove the selected assignment in the fixture organization, then use the
+  // real server sync boundary. A missing model must settle into recovery.
+  await deleteProvider(den.admin, orgId, catalogProviderId);
+  const syncResult = await evalIn(desktopApp, `(async () => {
+    const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+    const port = localStorage.getItem("openwork.server.port");
+    const response = await fetch("http://127.0.0.1:" + port + "/cloud-provider-sync/run", {
+      method: "POST", headers: { Authorization: "Bearer " + (info.ownerToken ?? info.clientToken), "Content-Type": "application/json" }, body: "{}"
+    });
+    return response.status;
+  })()`, { awaitPromise: true, timeoutMs: 90_000 });
+  expect(syncResult).toBe(200);
+  await go(desktopApp, `/workspace/${desktopApp.workspaceId}/session`);
+  await waitFor(desktopApp, `document.body.innerText.includes("Model no longer available")`, { timeoutMs: 90_000, label: "revoked model recovery" });
+  const changesAfterRevocation = await evalIn(desktopApp, `window.__modelSelectionProof.changes`);
+  await sleep(5_000);
+  expect(await evalIn(desktopApp, `localStorage.getItem("openwork.defaultModel")`)).toBe(chosenDefault);
+  expect(await evalIn(desktopApp, `window.__modelSelectionProof.changes`)).toBe(changesAfterRevocation);
+  expect(await evalIn(desktopApp, `window.__modelSelectionProof.loops`)).toBe(0);
+  await selectModel(desktopApp, CUSTOM_MODEL_ID, { provider: CUSTOM_PROVIDER_NAME });
+  await waitFor(desktopApp, `!document.body.innerText.includes("Model no longer available")`, { timeoutMs: 30_000, label: "explicit model recovery" });
+  const recoveredDefault = await evalIn(desktopApp, `localStorage.getItem("openwork.defaultModel")`);
+  evidence.recordAssertionEvidence("a genuinely revoked model settles and recovers only after an explicit selection", "Revoking the selected assignment surfaced recovery while preserving its identity for five seconds with no repeated default writes or React loop; selecting an available model cleared the warning.", true);
   await engineV2Status(desktopApp, false);
+  await go(desktopApp, `/workspace/${desktopApp.workspaceId}/session`);
+  await sleep(16_000);
+  expect(await evalIn(desktopApp, `localStorage.getItem("openwork.defaultModel")`)).toBe(recoveredDefault);
+  expect(await evalIn(desktopApp, `window.__modelSelectionProof.loops`)).toBe(0);
+  evidence.recordAssertionEvidence("selected model survives cloud sync and return to v1", "The exact selected provider/model remained after another Den provider was published, the normal cloud sync completed, and routing returned to v1; no React update loop occurred.", true);
   expect(hotMirrored, `Initial v2 status: ${JSON.stringify(initialV2)}; third v2 status: ${JSON.stringify(thirdV2)}`).toBe(true);
 });

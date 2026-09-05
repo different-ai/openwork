@@ -12,12 +12,16 @@ import { loopbackFetch } from "./server-fetch.js";
 export interface OpencodeV2ModelSpec {
   id: string;
   name: string;
+  config?: Record<string, unknown>;
 }
 
 export interface OpencodeV2ProviderSpec {
   id: string;
   name: string;
-  baseUrl: string;
+  baseUrl?: string;
+  package?: string;
+  settings?: Record<string, unknown>;
+  headers?: Record<string, unknown>;
   apiKey: string;
   models: OpencodeV2ModelSpec[];
 }
@@ -172,16 +176,33 @@ export async function createManagedOpencodeV2Server(
     for (const provider of providers.values()) {
       const models: Record<string, unknown> = {};
       for (const model of provider.models) {
+        const config = model.config ?? {};
+        const modalities = isRecord(config.modalities) ? config.modalities : {};
         models[model.id] = {
           name: model.name,
-          capabilities: { tools: true, input: ["text"], output: ["text"] },
-          limit: { context: 128_000, output: 8_192 },
+          ...(typeof config.id === "string" ? { modelID: config.id } : {}),
+          capabilities: {
+            tools: typeof config.tool_call === "boolean" ? config.tool_call : true,
+            input: modalities.input ?? ["text"],
+            output: modalities.output ?? ["text"],
+          },
+          limit: config.limit ?? { context: 128_000, output: 8_192 },
+          ...(typeof config.family === "string" ? { family: config.family } : {}),
+          ...(isRecord(config.options) ? { settings: config.options } : {}),
+          ...(isRecord(config.headers) ? { headers: config.headers } : {}),
+          ...(config.status === "deprecated" ? { disabled: true } : {}),
         };
       }
       providerConfig[provider.id] = {
         name: provider.name,
-        package: "@opencode-ai/ai/providers/openai-compatible",
-        settings: { baseURL: provider.baseUrl, apiKey: provider.apiKey, name: provider.id },
+        package: provider.package ?? "@opencode-ai/ai/providers/openai-compatible",
+        settings: {
+          ...provider.settings,
+          ...(provider.baseUrl ? { baseURL: provider.baseUrl } : {}),
+          apiKey: provider.apiKey,
+          name: provider.id,
+        },
+        ...(provider.headers ? { headers: provider.headers } : {}),
         models,
       };
     }
