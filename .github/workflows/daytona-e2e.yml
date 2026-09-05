@@ -129,10 +129,6 @@ jobs:
           fi
 
           tests="$(echo "$eligible_tests" | jq -c --arg event "$EVENT_NAME" --arg only "$only_filter" --argjson matched "$matched_tests" 'map(select(if $event == "workflow_run" then (. as $test | ($matched | index($test)) != null) else ($only == "" or contains($only)) end))')"
-          # The chat contract must also run when its implementation changes.
-          if [ "$EVENT_NAME" = "workflow_run" ] && git diff --name-only "$BASE_SHA...$HEAD_SHA" | grep -E '^(apps/app/src/app/lib/opencode-v2-adapter|apps/app/src/react-app/domains/session/|apps/app/src/components/chat/|evals/worlds/chat|evals/packages/testkit/src/transcript-observer)' >/dev/null; then
-            tests="$(echo "$tests" | jq -c '. + ["streamed-markdown-answer.e2e.test.ts"] | unique')"
-          fi
           tests="$(echo "$tests" | jq -c '[.[] | . as $spec | (if . == "streamed-markdown-answer.e2e.test.ts" then ["v1", "v2"] else ["v1"] end)[] | {spec: $spec, engine: .}]')"
           count="$(echo "$tests" | jq 'length')"
           has_tests=false
