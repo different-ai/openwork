@@ -57,7 +57,6 @@ function TeammatesForm({ orgId, orgSlug, organizationName, selfEmail, selfName, 
   ]);
   const [sending, setSending] = useState(false);
   const [focusId, setFocusId] = useState<number | null>(null);
-  const [refreshError, setRefreshError] = useState<string | null>(null);
   const nextId = useRef(3);
   const sendingRef = useRef(false);
   const alive = useRef(true);
@@ -116,8 +115,6 @@ function TeammatesForm({ orgId, orgSlug, organizationName, selfEmail, selfName, 
     }
     sendingRef.current = true;
     setSending(true);
-    setRefreshError(null);
-    let anySent = false;
     try {
       for (const row of normalized.filter((entry) => entry.email && entry.status !== "sent")) {
         if (!alive.current) break;
@@ -135,19 +132,13 @@ function TeammatesForm({ orgId, orgSlug, organizationName, selfEmail, selfName, 
             if (!response.ok) throw getRequestError(payload, response, "Could not send this invitation. Try again.");
           });
           updateRow(row.id, { email: row.email, status: "sent", error: null });
-          anySent = true;
         } catch (error) {
           const message = error instanceof Error ? error.message : "Could not send this invitation. Try again.";
           updateRow(row.id, { status: "error", error: message });
           if (message === WORKSPACE_REAUTH_SECURITY_MESSAGE) break;
         }
       }
-      if (anySent && alive.current) {
-        // Refresh failures do not turn already delivered invitations into retry
-        // candidates. Each success is recorded before the shared view refreshes.
-        try { await refreshOrgData(); }
-        catch { if (alive.current) setRefreshError("Your invitations were sent. The people list could not refresh yet; you can continue."); }
-      }
+
     } finally {
       sendingRef.current = false;
       if (alive.current) setSending(false);
@@ -160,9 +151,13 @@ function TeammatesForm({ orgId, orgSlug, organizationName, selfEmail, selfName, 
     if (pendingIntent === "models") {
       window.sessionStorage.removeItem(PENDING_AUTH_INTENT_STORAGE_KEY);
       router.push(getInferenceRoute(orgSlug));
+      void refreshOrgData();
       return;
     }
     router.push(getMarketplaceOnboardingRoute(orgSlug));
+    // The admin layout unmounts its children during a full organization refresh.
+    // Refresh only after leaving this form, so sent and failed rows survive retries.
+    void refreshOrgData();
   }
 
   const preview = <div className="rounded-[28px] border border-neutral-200 bg-white p-6 sm:p-7">
@@ -209,7 +204,6 @@ function TeammatesForm({ orgId, orgSlug, organizationName, selfEmail, selfName, 
         <button type="button" disabled={sending || rows.length >= 5} onClick={() => { const id = nextId.current++; setRows((current) => [...current, { id, email: "", status: "draft", error: null }]); setFocusId(id); }} className="mt-4 inline-flex min-h-10 items-center gap-2 rounded-xl text-sm text-neutral-500 hover:text-neutral-900 focus-visible:ring-2 focus-visible:ring-neutral-900 disabled:opacity-40"><Plus className="h-4 w-4" />Add another person</button>
         <p className="mt-5 max-w-md text-xs leading-5 text-neutral-500">Invite up to five people now. Everyone joins as a member. An owner can change roles later.</p>
         {sentCount > 0 ? <p role="status" className="mt-5 text-sm font-medium text-neutral-900">{sentCount} {sentCount === 1 ? "invitation sent." : "invitations sent."}</p> : null}
-        {refreshError ? <p role="status" className="mt-3 text-sm text-neutral-500">{refreshError}</p> : null}
         <div className="mt-8 flex flex-wrap items-center gap-3">
           {pendingRows.length > 0 || sentCount === 0 ? <button type="submit" disabled={sending || pendingRows.length === 0} className={`${buttonClass} bg-neutral-950 text-white hover:bg-neutral-800`}>{sending ? "Sending invitations…" : "Send invitations"}<ArrowRight className="h-4 w-4" /></button> : null}
           <button type="button" disabled={sending} onClick={continueSetup} className={`${buttonClass} ${sentCount > 0 && pendingRows.length === 0 ? "bg-neutral-950 text-white hover:bg-neutral-800" : sentCount > 0 ? "border border-neutral-200 bg-white text-neutral-900 hover:bg-neutral-50" : "text-neutral-500 hover:text-neutral-900"}`}>{sentCount > 0 ? "Continue" : "Do this later"}</button>

@@ -92,6 +92,12 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await user.type({ role: "textbox", label: "Teammate email 1" }, "unsent@openwork.test");
     await user.click({ role: "button", label: "Do this later" });
     await user.see({ testId: "marketplace-onboarding" }, { timeoutMs: 90_000 });
+    await user.click({ text: "Other platforms and versions" });
+    await user.see({ text: "macOS" });
+    await user.see({ text: "Windows" });
+    await user.see({ text: "Linux" });
+    expect(await probe.eval("document.querySelectorAll('[data-testid=download-openwork-card] details a[href]').length")).toBe(8);
+    await user.click({ text: "Other platforms and versions" });
     await user.looks(["The final setup screen shows a clear desktop download and model setup path in the same restrained black-and-white design"]);
     expect(await invitationsFor(personalId)).toEqual([]);
     expect(await inviteEmails()).toEqual(outboxBeforeSkip);
