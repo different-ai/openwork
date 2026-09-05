@@ -1358,10 +1358,6 @@ async function proxyOpencodeV2Request(input: {
   if (/^\/api\/config(?:\/|$)/.test(decodeURIComponent(forwardedPath))) {
     throw new ApiError(403, "engine_config_private", "Engine configuration is private");
   }
-  if (method !== "GET" && method !== "HEAD"
-    && decodeURIComponent(forwardedPath).endsWith(`/instructions/entries/${OPENWORK_V2_INSTRUCTION_KEY}`)) {
-    throw new ApiError(403, "engine_instructions_managed", "OpenWork instructions are managed by the server");
-  }
   const target = new URL(input.connection.url);
   target.pathname = forwardedPath;
   target.search = input.url.search;
@@ -1410,6 +1406,11 @@ async function proxyOpencodeV2Request(input: {
     if (!actual || actual !== expected) {
       throw new ApiError(404, "session_not_found", "Session not found");
     }
+  }
+
+  if (method !== "GET" && method !== "HEAD"
+    && decodeURIComponent(forwardedPath).endsWith(`/instructions/entries/${OPENWORK_V2_INSTRUCTION_KEY}`)) {
+    throw new ApiError(403, "engine_instructions_managed", "OpenWork instructions are managed by the server");
   }
 
   if (method === "POST" && sessionId && /^\/api\/session\/[^/]+\/(?:prompt|command|generate)$/.test(forwardedPath)) {
