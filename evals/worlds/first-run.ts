@@ -984,3 +984,50 @@ export async function managedVaultWorld(_seed: Seed, { place }: { place: Place }
     },
   };
 }
+
+export async function backgroundUpdateWorld(seed: Seed) {
+  const app = await seed.desktop({ name: "background-update", signIn: false });
+  const workspace = await seed.workspace(app, seed.tmpPath("background-update"));
+  await evalIn(app, `(() => {
+    const now = Date.now.bind(Date);
+    const state = { checks: 0, downloads: 0, installs: 0, offset: 0, finishDownload: null };
+    window.__backgroundUpdateWitness = state;
+    Date.now = () => now() + state.offset;
+    window.__openworkReadDesktopVersionMetadataEval = () => ({
+      minAppVersion: "0.1.0", latestAppVersion: "9.9.9", publishedDesktopVersions: ["9.9.9"],
+    });
+    window.__openworkApplyDesktopConfig?.({});
+    window.__openworkSetDesktopConfigRefreshResult?.({});
+    window.__openworkUpdaterEvalBridge = {
+      getChannel: async () => ({ channel: "stable", currentVersion: "0.18.0" }),
+      setChannel: async (channel) => ({ channel, currentVersion: "0.18.0" }),
+      check: async () => {
+        state.checks++;
+        return { available: true, channel: "stable", currentVersion: "0.18.0", latestVersion: "9.9.9" };
+      },
+      download: async () => {
+        state.downloads++;
+        return new Promise(resolve => { state.finishDownload = () => resolve({ ok: true }); });
+      },
+      installAndRestart: async () => { state.installs++; return { ok: true }; },
+      onDownloadProgress: () => () => {},
+    };
+    state.offset += 16 * 60 * 1000;
+    window.dispatchEvent(new Event("focus"));
+  })()`);
+  return {
+    app,
+    snapshot: () => evalIn(app, `(() => {
+      const { checks, downloads, installs } = window.__backgroundUpdateWitness;
+      return { checks, downloads, installs, route: location.hash };
+    })()`),
+    finishDownload: () => evalIn(app, `window.__backgroundUpdateWitness.finishDownload()`),
+    returnToApp: () => evalIn(app, `(() => {
+      window.__backgroundUpdateWitness.offset += 16 * 60 * 1000;
+      window.dispatchEvent(new Event("focus"));
+      window.dispatchEvent(new Event("online"));
+    })()`),
+    openSettings: () => go(app, `/workspace/${workspace.workspaceId}/settings/updates`),
+    openWorkspace: () => go(app, `/workspace/${workspace.workspaceId}/session`),
+  };
+}

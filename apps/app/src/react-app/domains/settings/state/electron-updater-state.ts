@@ -160,6 +160,10 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       : { supported: false, reason: ELECTRON_UPDATER_UNSUPPORTED_REASON },
   });
   const { appVersion, updateEnv } = envState;
+  const updateStatusRef = useRef(updateStatus);
+  updateStatusRef.current = updateStatus;
+  const lastAutoCheckAtRef = useRef(0);
+  const autoCheckInFlightRef = useRef(false);
   const autoCheckKeyRef = useRef<string | null>(null);
   const checkRequestRef = useRef(0);
   const releaseChannelRequestRef = useRef(0);
@@ -520,20 +524,41 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
   }, [appVersion, downloadUpdate, onReleaseChannelChange, refreshDesktopConfig, releaseChannel, resolvePolicyReleaseChannel, setError, updateAutoDownload]);
 
   const checkForUpdates = useCallback(
-    (channelOverride?: ReleaseChannel) => runCheckForUpdates(channelOverride, true),
+    (channelOverride?: ReleaseChannel) => {
+      const state = updateStatusRef.current?.state;
+      if (!channelOverride && (state === "downloading" || state === "ready")) return Promise.resolve();
+      return runCheckForUpdates(channelOverride, true);
+    },
     [runCheckForUpdates],
   );
 
   useEffect(() => {
-    const key = `${policyReleaseChannel}:${appVersion ?? "unknown"}`;
-    if (!shouldScheduleElectronUpdateAutoCheck({
-      updateAutoCheck,
-      updateEnv,
-      autoCheckKey: autoCheckKeyRef.current,
-      nextAutoCheckKey: key,
-    })) return;
-    autoCheckKeyRef.current = key;
-    void runCheckForUpdates(undefined, false);
+    if (!updateAutoCheck || updateEnv?.supported === false || !appVersion) return;
+    const key = `${policyReleaseChannel}:${appVersion}`;
+    const interval = 15 * 60 * 1000;
+    const check = () => {
+      const state = updateStatusRef.current?.state;
+      if (autoCheckInFlightRef.current || state === "checking" || state === "downloading" || state === "ready") return;
+      if (autoCheckKeyRef.current === key && Date.now() - lastAutoCheckAtRef.current < interval) return;
+      autoCheckKeyRef.current = key;
+      lastAutoCheckAtRef.current = Date.now();
+      autoCheckInFlightRef.current = true;
+      void runCheckForUpdates(undefined, false).finally(() => {
+        autoCheckInFlightRef.current = false;
+      });
+    };
+    const onVisible = () => { if (document.visibilityState === "visible") check(); };
+    check();
+    const timer = window.setInterval(check, interval);
+    window.addEventListener("focus", check);
+    window.addEventListener("online", check);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", check);
+      window.removeEventListener("online", check);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [appVersion, policyReleaseChannel, runCheckForUpdates, updateAutoCheck, updateEnv?.supported]);
 
   // Run a check when the native "Check for Updates..." menu item was used.

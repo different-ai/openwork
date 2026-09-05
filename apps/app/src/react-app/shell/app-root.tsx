@@ -42,6 +42,7 @@ import {
 } from "./control/control-provider";
 import { OpenworkContextPublisher } from "./openwork-context-publisher";
 import { SessionRoute } from "./session-route";
+import { DesktopUpdaterProvider } from "../domains/settings/state/desktop-updater-provider";
 import { SettingsRoute } from "./settings-route";
 import { ShellConfigProvider } from "./shell-config";
 import { WelcomeRoute } from "./welcome-route";
@@ -376,6 +377,7 @@ export function AppRoot() {
   return (
     <>
       <DevProfiler id="AppRoot">
+        <DesktopUpdaterProvider>
         <ShellConfigProvider>
         <AppMenuProvider>
         <OpenworkControlProvider>
@@ -510,6 +512,7 @@ export function AppRoot() {
         </OpenworkControlProvider>
         </AppMenuProvider>
         </ShellConfigProvider>
+        </DesktopUpdaterProvider>
       </DevProfiler>
       {/*
         DevProfilerOverlay sits OUTSIDE the AppRoot <Profiler> zone on
