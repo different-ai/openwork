@@ -671,6 +671,20 @@ export function getMcpConnectionsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/mcp-connections`;
 }
 
+export function getConfiguredMcpConnectionsRoute(orgSlug?: string | null, connectionId?: string | null): string {
+  const base = `${getMcpConnectionsRoute(orgSlug)}/configured`;
+  return connectionId ? `${base}?connectionId=${encodeURIComponent(connectionId)}` : base;
+}
+
+/**
+ * Detail page for one connector. `connectorId` is a configured connection id
+ * or, for connectors nobody has added yet, the catalog id (`gmail`, `notion`,
+ * `microsoft-365`) so the page can explain the connector and start setup.
+ */
+export function getMcpConnectionRoute(orgSlug: string | null | undefined, connectorId: string): string {
+  return `${getMcpConnectionsRoute(orgSlug)}/${encodeURIComponent(connectorId)}`;
+}
+
 export function getYourConnectionsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/your-connections`;
 }

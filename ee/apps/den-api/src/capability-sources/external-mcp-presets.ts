@@ -35,6 +35,14 @@ export const externalMcpPresetListResponseSchema = z.object({
 
 export const EXTERNAL_MCP_PRESETS: ExternalMcpPreset[] = [
   {
+    presetId: "github",
+    displayName: "GitHub",
+    description: "Triage PRs, issues, CI, and publish flows. GitHub has no automatic app registration — paste your GitHub OAuth app's client once; each person then connects their own account.",
+    url: "https://api.githubcopilot.com/mcp/",
+    authType: "oauth",
+    requiresOAuthClient: true,
+  },
+  {
     presetId: "notion",
     displayName: "Notion",
     description: "Pages, databases, and project docs in sync.",

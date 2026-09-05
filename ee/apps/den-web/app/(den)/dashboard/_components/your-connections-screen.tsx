@@ -302,7 +302,7 @@ function YourConnectionRow({
             </DenButton>
           ) : null}
           {needsReconnect || needsMyConnect || needsAdminConnect ? (
-            <DenButton variant="primary" size="sm" loading={connecting || polling} onClick={onConnect}>
+            <DenButton variant="primary" size="sm" loading={connecting || polling} onClick={onConnect} data-testid={`connect-my-mcp-account-${connection.id}`}>
               {needsReconnect ? "Reconnect" : "Connect"}
             </DenButton>
           ) : null}

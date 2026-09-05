@@ -62,6 +62,7 @@ export interface Probe {
   text(): Promise<string>;
   has(text: string): Promise<boolean>;
   composer(): ReturnType<typeof import("@openwork/behaviors").readComposerState>;
+  connectorCatalog(): ReturnType<typeof import("@openwork/behaviors").readConnectorCatalog>;
   storage(key: string): Promise<unknown>;
   storage<T>(key: string, pick: (value: unknown) => T): Promise<T>;
   hash(): Promise<string>;
