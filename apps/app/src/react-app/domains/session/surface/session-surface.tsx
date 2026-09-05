@@ -2821,6 +2821,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                 <OpenTargetProvider
                   client={props.client}
                   workspaceId={props.workspaceId}
+                  workspaceRoot={props.workspaceRoot}
                   openTargets={verifiedOpenTargets}
                   onOpenTarget={handleOpenTarget}
                 >

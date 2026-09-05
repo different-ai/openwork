@@ -117,12 +117,12 @@ function MarkdownBlockInner({
   const videoCleanups = useRef(new Map<HTMLVideoElement, () => void>());
   const codeCopyResetTimers = useRef(new Map<HTMLButtonElement, number>());
   const codeWrapStates = useRef(new Map<number, boolean>());
-  const { openTargets, onOpenTarget, client, workspaceId } = useOpenTargets();
+  const { openTargets, onOpenTarget, client, workspaceId, workspaceRoot } = useOpenTargets();
   const openArtifactPath = useOpenArtifactPath();
   useEffect(() => () => {
     videoCleanups.current.forEach((cleanup) => cleanup());
     videoCleanups.current.clear();
-  }, [client, workspaceId]);
+  }, [client, workspaceId, workspaceRoot]);
   const [linkMenu, setLinkMenu] = useState<{ target: OpenTarget; rect: DOMRect } | null>(null);
   const [imagePreview, setImagePreview] = useState<{ src: string; alt: string } | null>(null);
   const [streamingRenderer] = useState(() => createStreamingMarkdownRenderer("chat"));
@@ -269,7 +269,11 @@ function MarkdownBlockInner({
         if (objectUrl) URL.revokeObjectURL(objectUrl);
       });
       if (/^https?:/i.test(href)) continue;
-      const path = localPathFromHref(href);
+      let path = localPathFromHref(href);
+      try { if (!/^file:/i.test(href)) path = decodeURIComponent(path); } catch { /* Keep literal percent signs in filenames. */ }
+      const rootPath = workspaceRoot?.replace(/\\/g, "/").replace(/\/+$/, "");
+      path = path.replace(/\\/g, "/");
+      if (rootPath && path.startsWith(`${rootPath}/`)) path = path.slice(rootPath.length + 1);
       if (!client || !workspaceId || !path) {
         showError();
         continue;
@@ -285,7 +289,7 @@ function MarkdownBlockInner({
         video.src = url;
       }).catch(() => { if (!cancelled) showError(); });
     }
-  }, [client, workspaceId, openTargets, rendered]);
+  }, [client, workspaceId, workspaceRoot, openTargets, rendered]);
 
   useEffect(() => {
     const root = rootRef.current;
