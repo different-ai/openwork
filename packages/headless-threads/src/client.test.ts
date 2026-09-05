@@ -47,7 +47,7 @@ function serverUrl(server: Server): string {
 
 function reply(id: string, role: string, text?: string, parentID?: string): MessageWire {
   return {
-    info: { id, role, time: { created: 1 }, ...(parentID ? { parentID } : {}) },
+    info: { id, role, time: { created: 1, ...(role === "assistant" ? { completed: 2 } : {}) }, ...(parentID ? { parentID } : {}) },
     parts: text === undefined ? [] : [{ id: `prt_${id}`, type: "text", text }],
   };
 }
@@ -613,6 +613,7 @@ describe("waitForThread", () => {
     const double = createOpenworkDouble({
       beats: [
         { status: { type: "idle" }, messages: [reply("msg_1", "user")] },
+        { status: { type: "idle" }, messages: [reply("msg_1", "user"), { info: { id: "msg_2", role: "assistant", time: { created: 1 } }, parts: [] }] },
         { status: { type: "busy" }, messages: [reply("msg_1", "user")] },
         { status: { type: "retry", attempt: 1, message: "rate limited", next: 5 }, messages: [reply("msg_1", "user")] },
         { status: { type: "idle" }, messages: [reply("msg_1", "user"), reply("msg_2", "assistant", "Answer.")] },
@@ -622,9 +623,9 @@ describe("waitForThread", () => {
     const result = await createClient(double).waitForThread(SESSION_ID, { timeoutMs: 10_000, pollIntervalMs: 100 });
 
     expect(result.outcome).toBe("settled");
-    expect(result.polls).toBe(4);
+    expect(result.polls).toBe(5);
     expect(result.observedRunning).toBe(true);
-    expect(result.waitedMs).toBe(300);
+    expect(result.waitedMs).toBe(400);
     expect(result.snapshot.status).toEqual({ type: "idle" });
   });
 
