@@ -867,7 +867,8 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
           throw new Error(`OPENWORK_EVAL_ELECTRON_BINARY does not exist: ${packagedBinary}`);
         });
         log(`Starting local Electron surface ${name} from packaged binary ${packagedBinary} (CDP :${cdpPort})...`);
-        spawned = spawnDetached(packagedBinary, [], { cwd: options.repoRoot, env, logPath });
+        // An installed artifact must not resolve assets from the checkout's cwd.
+        spawned = spawnDetached(packagedBinary, [], { cwd: profileRoot, env, logPath });
       } else {
         log(`Starting local Electron surface ${name} (Vite :${port}, CDP :${cdpPort})...`);
         spawned = spawnDetached(pnpmCommand(), [opts.devCommand ?? "dev:electron"], { cwd: options.repoRoot, env, logPath });

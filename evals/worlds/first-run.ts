@@ -68,9 +68,27 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export async function appSmokeWorld(seed: Seed) {
-  const app = await seed.desktop({ name: "app-smoke" });
+  const packaged = Boolean(process.env.OPENWORK_EVAL_ELECTRON_BINARY);
+  const app = packaged
+    ? await desktop({ name: "app-smoke", prepareSharedResources: false, timeoutMs: 60_000,
+      env: { OPENWORK_DEV_MODE: "0", OPENWORK_ELECTRON_START_URL: "", ELECTRON_START_URL: "" } })
+    : await seed.desktop({ name: "app-smoke" });
   const workspace = await seed.workspace(app, seed.tmpPath("app-smoke"));
-  return { app, workspace };
+  return {
+    app, workspace, packaged,
+    async packagedRuntime() {
+      return evalIn(app, `(async () => {
+        const bridge = window.__OPENWORK_ELECTRON__;
+        if (typeof bridge?.invokeDesktop !== "function") return { bridge: false };
+        const info = await bridge.invokeDesktop("openworkServerInfo");
+        const health = await fetch(info.baseUrl + "/health", { signal: AbortSignal.timeout(5000) });
+        return { bridge: true, protocol: location.protocol, health: health.status,
+          composer: Boolean(document.querySelector('[contenteditable="true"][data-lexical-editor="true"]')),
+          crash: /Something went wrong|Cannot find module|Maximum update depth exceeded/.test(document.body.innerText) };
+      })()`, { awaitPromise: true });
+    },
+    async [Symbol.asyncDispose]() { await app[Symbol.asyncDispose](); },
+  };
 }
 
 export async function bareFirstRunWorld(seed: Seed, { place }: { place: Place }) {

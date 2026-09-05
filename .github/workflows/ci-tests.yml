@@ -76,6 +76,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+      - name: Cache Electron and pinned sidecars
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+            apps/desktop/resources/sidecars
+          key: ${{ runner.os }}-${{ runner.arch }}-desktop-smoke-${{ hashFiles('constants.json', 'pnpm-lock.yaml', 'apps/desktop/scripts/prepare-sidecar.mjs') }}
       - name: Setup tests
         id: setup
         uses: ./.github/actions/setup-tests
@@ -88,6 +96,28 @@ jobs:
           pnpm --filter openwork-server build
       - name: Typecheck Electron main against the IPC contract
         run: pnpm --filter @openwork/desktop typecheck:electron
+      - name: Prepare virtual display
+        run: |
+          if ! command -v xvfb-run >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y xvfb
+          fi
+      - name: Package and smoke-test the installed desktop
+        timeout-minutes: 7
+        env:
+          OPENWORK_PACKAGED_SMOKE_DIR: ${{ runner.temp }}/openwork-packaged-smoke
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: node apps/desktop/scripts/packaged-smoke.mjs --server-built
+      - name: Upload packaged smoke evidence and timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaged-desktop-smoke-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/openwork-packaged-smoke/timing.json
+            ${{ runner.temp }}/openwork-packaged-smoke/profiles/**/electron.log
+            evals/results/test-runs/**
+          retention-days: 7
 
   # Broad tests, source-layout guards, and test-framework checks remain visible
   # here without blocking unrelated PRs. No retries or ignored failures.

@@ -51,7 +51,10 @@ run(nodeCmd, [resolve(__dirname, "prepare-computer-use-helper.mjs"), "--force", 
 run(nodeCmd, [resolve(__dirname, "prepare-runtime-node-modules.mjs"), "--outdir", packagedRuntimeRoot], desktopRoot);
 writeSentryBuildConfig();
 // Build the server TS → JS so Electron can import it in-process
-run(pnpmCmd, ["--filter", "openwork-server", "build"], repoRoot);
+// CI already compiles this exact checkout in the required build job.
+if (!process.argv.includes("--server-built")) {
+  run(pnpmCmd, ["--filter", "openwork-server", "build"], repoRoot);
+}
 // automation-runner.mjs imports @openwork/headless-threads through its
 // published "default" export (dist/index.js); build it so plain-node
 // consumers resolve it in packaged layouts.
