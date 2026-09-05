@@ -232,6 +232,8 @@ test("new split creates fresh same-workspace secondary sessions without moving t
     await user.see(paletteInput);
     await user.type(paletteInput, "new split", { replace: true });
     await user.see({ role: "option", label: /^New side chat/ });
+    await user.type(paletteInput, "new side chat", { replace: true });
+    await user.see({ role: "option", label: /^New side chat/ });
     await user.press("Enter");
     await user.see({ text: "Side chat" });
     await user.see({ text: "New session" });
