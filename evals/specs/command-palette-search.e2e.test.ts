@@ -4,7 +4,6 @@ import { commandPaletteSearch } from "../worlds/session-shell.ts";
 
 const test = spec.world(commandPaletteSearch);
 const paletteInput = { placeholder: "Search actions, settings, and sessions…" };
-const paletteShortcut = process.platform === "darwin" ? "Meta+K" : "Control+K";
 
 function stringArray(value: unknown): string[] {
   return Array.isArray(value)
@@ -14,6 +13,8 @@ function stringArray(value: unknown): string[] {
 
 test("command palette searches settings by alias, navigates, records recents, and filters actions", async ({ world, user, probe, step }) => {
   const workspaceId = world.workspace.workspaceId;
+  const macPlatform = await probe.eval(`/Mac|iPhone|iPad|iPod/.test(navigator.platform)`);
+  const paletteShortcut = macPlatform ? "Meta+K" : "Control+K";
 
   await step("the empty palette offers actions and settings without recents", async () => {
     expect(await probe.hash()).toContain(workspaceId);
@@ -22,6 +23,7 @@ test("command palette searches settings by alias, navigates, records recents, an
     await user.see({ text: "Actions" });
     await user.see({ role: "option", label: /^Permissions/ });
     await user.notSee({ text: "Recent" });
+    await user.notSee({ role: "option", label: /^Experimental engine/ });
     await user.screenshot();
   });
 
@@ -104,6 +106,23 @@ test("command palette searches settings by alias, navigates, records recents, an
     expect(hash).toMatch(/\/settings\/appearance$/);
   });
 
+  await step("developer mode surfaces Advanced sections without a search", async () => {
+    await user.press(paletteShortcut);
+    await user.type(paletteInput, "Enable Developer Mode", { replace: true });
+    await user.click({ role: "option", label: /^Enable Developer Mode/ });
+    await user.press(paletteShortcut);
+    await user.see({ role: "option", label: /^Organization server/ });
+    await user.see({ role: "option", label: /^Runtime/ });
+    await user.see({ role: "option", label: /^Agent access diagnostics/ });
+    await user.see({ role: "option", label: /^OpenCode config sources/ });
+    await user.see({ role: "option", label: /^Experimental engine/ });
+    await user.see({ role: "option", label: /^Developer/ });
+    await user.screenshot();
+    await user.type(paletteInput, "Disable Developer Mode", { replace: true });
+    await user.click({ role: "option", label: /^Disable Developer Mode/ });
+    await user.notSee(paletteInput);
+  });
+
   for (const section of [
     { query: "server url", title: "Organization server", id: "organization-server" },
     { query: "connection status", title: "Runtime", id: "runtime" },
@@ -135,21 +154,6 @@ test("command palette searches settings by alias, navigates, records recents, an
     });
   }
 
-  await step("developer mode surfaces Advanced sections without a search", async () => {
-    await user.press(paletteShortcut);
-    await user.type(paletteInput, "Enable Developer Mode", { replace: true });
-    await user.click({ role: "option", label: /^Enable Developer Mode/ });
-    await user.press(paletteShortcut);
-    await user.see({ role: "option", label: /^Organization server/ });
-    await user.see({ role: "option", label: /^Runtime/ });
-    await user.see({ role: "option", label: /^Agent access diagnostics/ });
-    await user.see({ role: "option", label: /^OpenCode config sources/ });
-    await user.see({ role: "option", label: /^Experimental engine/ });
-    await user.see({ role: "option", label: /^Developer/ });
-    await user.screenshot();
-    await user.type(paletteInput, "Disable Developer Mode", { replace: true });
-    await user.click({ role: "option", label: /^Disable Developer Mode/ });
-    await user.notSee(paletteInput);
-  });
+
 
 });
