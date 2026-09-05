@@ -79,6 +79,13 @@ test("v2 refreshes OpenWork skill instructions just in time in an existing conve
       if (expectedCode) expect(result.text).toContain(expectedCode);
       else expect(result.text).toMatch(/unavailable/i);
       messages = result.messages;
+      if (expectedCode) {
+        const code = expectedCode;
+        const fresh: unknown = JSON.parse(messages);
+        const parts = Array.isArray(fresh) ? fresh.filter(record).flatMap((message) => Array.isArray(message.content) ? message.content.filter(record) : []) : [];
+        expect(parts.some((part) => part.type === "tool" && part.name === "skill" && record(part.state)
+          && part.state.status === "completed" && JSON.stringify(part.state.content).includes(code))).toBe(true);
+      }
     } else {
     const prior = removedId ? (await api(`${v2}/api/session/${sessionId}/message`)).json : null;
     const priorIds = new Set(record(prior) && Array.isArray(prior.data) ? prior.data.filter(record).map((message) => message.id) : []);
