@@ -657,7 +657,7 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
     const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
     const port = localStorage.getItem("openwork.server.port");
     const response = await fetch("http://127.0.0.1:" + port + "/cloud-provider-sync/run", {
-      method: "POST", headers: { Authorization: "Bearer " + (info.ownerToken ?? info.clientToken), "Content-Type": "application/json" }, body: "{}"
+      method: "POST", headers: { "x-openwork-host-token": info.hostToken, "Content-Type": "application/json" }, body: "{}"
     });
     return response.status;
   })()`, { awaitPromise: true, timeoutMs: 90_000 });
@@ -689,7 +689,7 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
   const rotationStatus = await evalIn(desktopApp, `(async () => {
     const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
     const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
-    const headers = { Authorization: "Bearer " + (info.ownerToken ?? info.clientToken), "Content-Type": "application/json" };
+    const headers = { "x-openwork-host-token": info.hostToken, "Content-Type": "application/json" };
     const config = await (await fetch(base + "/runtime-config/providers", { headers })).json();
     const names = config.provider[${JSON.stringify(customRuntime.providerId)}]?.env;
     if (!Array.isArray(names) || names.length !== 1) throw new Error("fixture provider must declare one scoped credential");
