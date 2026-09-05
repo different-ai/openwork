@@ -34,6 +34,8 @@ export interface MockAgentWorkload {
   finalReply: string;
   /** Stream the final reply as consecutive content deltas of this many characters instead of one. */
   finalReplyChunkSize?: number;
+  /** Opening chunk followed by silence for the first N completions. */
+  quietCompletions?: number;
   /** Tool calls the agent makes before its final reply; empty answers directly. */
   steps: MockAgentToolStep[];
 }
@@ -43,7 +45,7 @@ export interface MockAgentRequest {
   promptMarker: string | null;
   matchedMarkers: string[];
   completedTools: number;
-  kind: "utility" | "tool" | "final" | "error";
+  kind: "utility" | "tool" | "final" | "error" | "quiet";
   toolName: string | null;
   arguments: Record<string, unknown>;
   at: string;
@@ -97,6 +99,8 @@ export interface StartMockMcpOptions {
   appToolName?: string;
   /** Script deterministic OpenAI-compatible agent turns through this mock. */
   agentWorkloads?: MockAgentWorkload[];
+  /** Require an authentication handler to add this header to model requests. */
+  agentRequiredHeader?: { name: string; value: string };
 }
 
 export type EnterpriseMcpProfileId =
@@ -346,7 +350,7 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
     const response = await fetch(`${url}/admin/agent-workloads`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workloads: options.agentWorkloads }),
+      body: JSON.stringify({ workloads: options.agentWorkloads, requiredHeader: options.agentRequiredHeader }),
       signal: AbortSignal.timeout(15_000),
     });
     if (!response.ok) {
@@ -401,7 +405,7 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
       const at = typeof entry.at === "string" ? entry.at : "";
       if (sinceIso && at < sinceIso) continue;
       const kind = completion.kind;
-      if (kind !== "utility" && kind !== "tool" && kind !== "final" && kind !== "error") continue;
+      if (kind !== "utility" && kind !== "tool" && kind !== "final" && kind !== "error" && kind !== "quiet") continue;
       const marker = typeof completion.promptMarker === "string" ? completion.promptMarker : null;
       if (promptMarker && marker !== promptMarker) continue;
       if (typeof completion.model !== "string"

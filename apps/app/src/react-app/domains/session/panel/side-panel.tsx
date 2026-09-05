@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import * as React from "react";
 import {
+  Blocks,
   ArrowLeft,
   ArrowRight,
   Globe,
@@ -22,6 +23,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 import { ArtifactIcon } from "../artifacts/artifact-icon";
+import { AppArtifact } from "../../apps/app-artifact";
 import { ArtifactPanel } from "../artifacts/artifact-panel";
 import {
   type BrowserPanelTab,
@@ -143,7 +145,7 @@ function SidePanelTab({ tab, active, onSelect, onClose }: SidePanelTabProps) {
             ) : (
               <Globe />
             )
-          ) : (
+          ) : tab.type === "app" ? <Blocks /> : (
             <ArtifactIcon type={tab.preview} />
           )}
           <span className="min-w-0 flex-1 truncate text-left">{tab.label}</span>
@@ -671,6 +673,8 @@ export function SidePanel({
         ) : null}
         {activeTab?.type === "browser" ? (
           <BrowserPanelContent sessionId={sessionId} tab={activeTab} onClose={onClose} />
+        ) : activeTab?.type === "app" ? (
+          <div className="min-h-0 flex-1 overflow-hidden"><AppArtifact key={activeTab.id} appId={activeTab.appId} revisionId={activeTab.revisionId} receiptId={activeTab.receiptId} onClose={onClose} /></div>
         ) : activeTab?.type === "artifact" ? (
           <div className="min-h-0 flex-1 overflow-hidden">
             <ArtifactPanel

@@ -890,8 +890,8 @@ async function reloadConfiguredApp(app: import("@openwork/cdp").Surface): Promis
 }
 
 export const connectionActionResourceUri = "ui://openwork/connection-action/v1/view.html";
-export const connectionActionReply = "Connect your Notes account to continue.";
-export const connectionActionPrompt = "I want to connect Notes.";
+export const connectionActionReply = "Connect your Notion account to continue.";
+export const connectionActionPrompt = "I want to connect Notion.";
 
 export async function connectionActionMcpApp(seed: Seed) {
   const providerId = "connection-action-mcp-app-provider";
@@ -902,13 +902,13 @@ export async function connectionActionMcpApp(seed: Seed) {
       connector: seed.mock({ agentWorkloads: [{
         promptMarker: connectionActionPrompt,
         finalReply: connectionActionReply,
-        steps: [{ tool: "search_capabilities", arguments: { query: "Notes", type: "mcp" } }],
+        steps: [{ tool: "search_capabilities", arguments: { query: "Notion", type: "mcp" } }],
       }] }),
     },
   });
   const organizationId = await activeOrganizationId(seed, den.admin);
   const connection = await seed.orgConnection(den.admin, {
-    name: "Notes",
+    name: "Notion",
     url: den.mocks.connector.mcpUrl,
     authType: "oauth",
     credentialMode: "per_member",
