@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -64,6 +64,17 @@ test("workspace catalog preserves readable siblings and reports permission gaps"
     expect(denied.status).toBe(403);
     expect(await denied.json()).toMatchObject({ code: "workspace_permission_denied" });
     evidence.recordAssertionEvidence("An unreadable workspace root returns a meaningful error", "Real root permission denial returned HTTP 403 workspace_permission_denied, never an empty successful catalog.", true);
+    await chmod(workspace, 0o700);
+    const moved = join(scratch, "moved-workspace");
+    await rename(workspace, moved);
+    try {
+      const missing = await request(catalogPath);
+      expect(missing.status).toBe(404);
+      expect(await missing.json()).toMatchObject({ code: "workspace_not_found" });
+      evidence.recordAssertionEvidence("A missing workspace folder returns a meaningful error", "Moving the workspace root after session creation returned HTTP 404 workspace_not_found instead of a server error or an empty successful catalog.", true);
+    } finally {
+      await rename(moved, workspace);
+    }
   } finally {
     await chmod(workspace, 0o700);
     await chmod(restricted, 0o700);

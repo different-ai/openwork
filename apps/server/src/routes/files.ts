@@ -469,6 +469,9 @@ async function listWorkspaceCatalogEntries(workspaceRoot: string, excludeHeavyDi
         skippedDirectories.push(relative(rootResolved, dirPath).replace(/\\/g, "/"));
         return [];
       }
+      if (dirPath === rootResolved && error instanceof Error && "code" in error && error.code === "ENOENT") {
+        throw new ApiError(404, "workspace_not_found", "The workspace folder no longer exists.");
+      }
       throw error;
     });
     entries.sort((a, b) => a.name.localeCompare(b.name));

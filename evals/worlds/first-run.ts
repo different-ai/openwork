@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { chmod, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { app as startApp, server as startServer } from "@openwork/env";
@@ -155,6 +155,7 @@ export async function artifactCodeBrowserWorld(seed: Seed) {
       },
     );
     const responses = await Promise.all([
+      write("restricted/hidden-proof.ts", "export const restricted = true;"),
       write("src/openwork-artifact-proof.ts", "export const artifactEditor = true;\\n"),
       write("config/openwork-artifact-settings.json", "{\\"artifactEditor\\":true}\\n"),
     ]);
@@ -171,7 +172,19 @@ export async function artifactCodeBrowserWorld(seed: Seed) {
   // TODO(primitive): seed artifact tabs through a first-class artifact fixture.
   const tabs = await seed.evalIn(base.app, `window.__openworkControl.execute("eval.artifact_tabs.seed_overflow", { count: 12 })`, { awaitPromise: true });
   if (!isRecord(tabs) || tabs.ok !== true) throw new Error(`Could not seed artifact tabs: ${JSON.stringify(tabs)}`);
-  return base;
+  return {
+    ...base,
+    async setCatalogFolderRestricted(restricted: boolean) {
+      const path = join(base.workspacePath, "restricted");
+      const mode = restricted ? "000" : "700";
+      const sandbox = base.app.handle.sandboxId;
+      if (sandbox) {
+        await checkedExec(defaultDaytonaExec, remoteCommand(sandbox, `chmod ${mode} ${shellQuote(path)}`), "set synthetic catalog folder permissions");
+      } else {
+        await chmod(path, restricted ? 0 : 0o700);
+      }
+    },
+  };
 }
 
 export async function skillsLocalWorld(seed: Seed) {
