@@ -29,8 +29,8 @@ name = "diff-security-review"
 
 [[skills.triggers]]
 type = "pull_request"
-actions = ["opened", "synchronize", "reopened"]
-draft = false
+# Omitting draft matches both draft and ready PRs.
+actions = ["opened", "synchronize", "reopened", "ready_for_review"]
 
 # Lets developers run `warden` locally on uncommitted changes before pushing.
 [[skills.triggers]]
@@ -43,8 +43,7 @@ name = "confidentiality-review"
 
 [[skills.triggers]]
 type = "pull_request"
-actions = ["opened", "synchronize", "reopened"]
-draft = false
+actions = ["opened", "synchronize", "reopened", "ready_for_review"]
 
 [[skills.triggers]]
 type = "local"
@@ -55,8 +54,7 @@ paths = ["evals/specs/**", "evals/worlds/**"]
 
 [[skills.triggers]]
 type = "pull_request"
-actions = ["opened", "synchronize", "reopened"]
-draft = false
+actions = ["opened", "synchronize", "reopened", "ready_for_review"]
 
 [[skills.triggers]]
 type = "local"
@@ -72,8 +70,7 @@ paths = [
 
 [[skills.triggers]]
 type = "pull_request"
-actions = ["opened", "synchronize", "reopened"]
-draft = false
+actions = ["opened", "synchronize", "reopened", "ready_for_review"]
 
 [[skills.triggers]]
 type = "local"
