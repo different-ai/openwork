@@ -47,7 +47,7 @@ if web:
             if pid is not None: raise RuntimeError("Multiple Next servers; refusing an ambiguous update")
             pid = int(proc.name)
             running = dict(item.decode().split("=", 1) for item in (proc / "environ").read_bytes().split(b"\0") if b"=" in item)
-            allowed = {"PATH", "HOME", "PNPM_HOME", "DEN_WEB_PORT", "DEN_API_BASE", "DEN_AUTH_ORIGIN", "DEN_AUTH_FALLBACK_BASE", "NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL", "DEN_ORG_MODE", "OPENWORK_DEV_MODE", "DEN_WEB_ALLOWED_DEV_ORIGINS"}
+            allowed = {"PATH", "HOME", "PNPM_HOME", "DEN_WEB_PORT", "DEN_BASE_URL", "DEN_API_BASE", "DEN_AUTH_ORIGIN", "DEN_AUTH_FALLBACK_BASE", "NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL", "DEN_ORG_MODE", "OPENWORK_DEV_MODE", "DEN_WEB_ALLOWED_DEV_ORIGINS"}
             env = {key: value for key, value in running.items() if key in allowed}
         except (FileNotFoundError, PermissionError): continue
     if pid is None: raise RuntimeError("No running preview web server")

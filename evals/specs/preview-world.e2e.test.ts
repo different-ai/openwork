@@ -71,6 +71,7 @@ test("preview worlds expose Den and real Electron, preserve progress on frontend
       assert.ok(record(connection));
       assert.equal(connection.credentialMode, "per_member");
       assert.equal(connection.connectedForMe, false);
+      assert.ok(record(connection.access) && connection.access.orgWide === true);
     }
     const policies = await denFetch(ref, "/v1/desktop-policies", { headers });
     assert.ok(record(policies.body) && Array.isArray(policies.body.desktopPolicies) && Array.isArray(policies.body.definitions));
