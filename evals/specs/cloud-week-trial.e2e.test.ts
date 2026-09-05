@@ -63,8 +63,26 @@ test("an optional seven-day cloud trial explains model access, starts without a 
     evidence.recordAssertionEvidence("The visible start action creates one seven-day trial that survives reload without a paid subscription", JSON.stringify({ started, hasAccess: true, subscription: null }), true);
   });
 
+  await step("the owner receives a clear reminder before cloud access pauses", async () => {
+    await world.ageTrial("ending");
+    await probe.eventually(async () => {
+      const result = await probe.api(world.den.admin, "/v1/dev/emails?template=cloudTrial");
+      const entries = record(result.body).emails;
+      if (!Array.isArray(entries)) throw new Error("Expected trial notification outbox");
+      return entries.map(record).some((entry) => entry.subject === "Your OpenWork cloud trial ends soon" && entry.to === world.den.admin.email);
+    }, { within: 30_000, label: "owner receives the final-day reminder", until: Boolean });
+    await user.navigate(new URL("/v1/dev/emails/last?template=cloudTrial", world.den.ref.apiUrl).toString());
+    await user.see({ role: "heading", label: "Your OpenWork cloud trial ends soon" });
+    await user.see({ text: /No payment will be taken/ });
+    await user.looks(["The actual trial reminder email has a readable monochrome OpenWork design, explains when cloud access pauses, reassures that saved work remains, and makes any paid upgrade optional"]);
+    await user.navigate(new URL("/dashboard/web", world.den.ref.webUrl).toString());
+    await user.see({ text: "Your cloud trial ends soon" });
+    expect(await billing()).toMatchObject({ hasAccess: true, subscription: null });
+    evidence.recordAssertionEvidence("The owner is notified before expiry while cloud access remains available", "The persisted trial entered its final day; the real notification worker sent the owner an email and Web still reported active access without a subscription.", true);
+  });
+
   await step("expiry explains the next choice and leaves paid access opt-in", async () => {
-    await world.expireTrial();
+    await world.ageTrial("expired");
     await user.reload();
     await user.see({ text: "Your cloud trial has ended" }, { timeoutMs: 90_000 });
     await user.see({ role: "link", label: "View paid plan" });
@@ -81,6 +99,13 @@ test("an optional seven-day cloud trial explains model access, starts without a 
     expect(emails.filter((entry) => entry.subject === "Your OpenWork cloud trial has ended").map((entry) => entry.to)).toEqual([world.den.admin.email]);
     await user.hover({ testId: "cloud-trial-card" });
     await user.looks(["The expired trial explains that cloud access has ended and that upgrading is an explicit choice, with no automatic charge and retained work explained"]);
+    await user.navigate(new URL("/v1/dev/emails/last?template=cloudTrial", world.den.ref.apiUrl).toString());
+    await user.see({ role: "heading", label: "Your OpenWork cloud trial has ended" });
+    await user.see({ text: /No payment will be taken/ });
+    await user.looks(["The actual expired-trial email clearly says cloud access has paused, saved work is retained, no payment is taken automatically, and offers a calm way to review cloud access"]);
+    await user.click({ role: "link", label: "Review cloud access" });
+    await user.see({ text: "Your cloud trial has ended" }, { timeoutMs: 90_000 });
+    await user.notSee({ role: "button", label: "Start 7-day free trial" });
     await user.click({ role: "link", label: "View paid plan" });
     expect(await probe.eval("window.location.pathname")).toBe("/dashboard/web");
     expect(await billing()).toMatchObject({ hasAccess: false, subscription: null });

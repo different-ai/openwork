@@ -62,7 +62,7 @@ export async function optionalCloudTrial(seed: Seed) {
   const den = await seed.den({
     org: { name: `Cloud trial ${Date.now()}`, admin: { name: "Trial Owner" } },
     env: {
-      DEN_OPENWORK_WEB_ENABLED: "true", OPENWORK_DEV_MODE: "1",
+      DEN_OPENWORK_WEB_ENABLED: "true", DEN_OPENWORK_CLOUD_TRIAL_ENABLED: "true", OPENWORK_DEV_MODE: "1",
       RESEND_API_KEY: "", SMTP_HOST: "", STRIPE_SECRET_KEY: "",
       OPENWORK_CLOUD_TRIAL_POLL_MS: "1000",
     },
@@ -73,8 +73,10 @@ export async function optionalCloudTrial(seed: Seed) {
   const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/onboarding", headless: true, viewport: { width: 1280, height: 1100 } });
   return {
     den, web, orgId,
-    async expireTrial() {
-      const statement = "UPDATE org_cloud_trials SET started_at = DATE_SUB(NOW(3), INTERVAL 8 DAY), expires_at = DATE_SUB(NOW(3), INTERVAL 1 DAY) WHERE organization_id = ";
+    async ageTrial(phase: "ending" | "expired") {
+      const statement = phase === "ending"
+        ? "UPDATE org_cloud_trials SET started_at = DATE_SUB(NOW(3), INTERVAL 6 DAY), expires_at = DATE_ADD(NOW(3), INTERVAL 12 HOUR) WHERE organization_id = "
+        : "UPDATE org_cloud_trials SET started_at = DATE_SUB(NOW(3), INTERVAL 8 DAY), expires_at = DATE_SUB(NOW(3), INTERVAL 1 DAY) WHERE organization_id = ";
       if (den.database) {
         await queryDenDatabase(den.database.url, `${statement}?`, [orgId]);
         return;
