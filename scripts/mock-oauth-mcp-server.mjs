@@ -314,13 +314,16 @@ async function handleAgentResponse(req, res, entry) {
     { type: "response.created", response: { ...response, status: "in_progress", output: [] } },
     { type: "response.output_item.added", output_index: 0, item: { ...item, status: "in_progress", content: [] } },
     { type: "response.content_part.added", item_id: item.id, output_index: 0, content_index: 0, part: { type: "output_text", text: "", annotations: [] } },
-    { type: "response.output_text.delta", item_id: item.id, output_index: 0, content_index: 0, delta: reply },
+    ...Array.from({ length: 3 }, (_, index) => ({ type: "response.output_text.delta", item_id: item.id, output_index: 0, content_index: 0, delta: reply.slice(Math.floor(reply.length * index / 3), Math.floor(reply.length * (index + 1) / 3)) })),
     { type: "response.output_text.done", item_id: item.id, output_index: 0, content_index: 0, text: reply },
     { type: "response.content_part.done", item_id: item.id, output_index: 0, content_index: 0, part: item.content[0] },
     { type: "response.output_item.done", output_index: 0, item },
     { type: "response.completed", response },
   ];
-  for (const [sequence_number, event] of events.entries()) res.write(`event: ${event.type}\ndata: ${JSON.stringify({ ...event, sequence_number })}\n\n`);
+  for (const [sequence_number, event] of events.entries()) {
+    res.write(`event: ${event.type}\ndata: ${JSON.stringify({ ...event, sequence_number })}\n\n`);
+    if (event.type === "response.output_text.delta") await new Promise((resolve) => setTimeout(resolve, 80));
+  }
   res.end();
 }
 

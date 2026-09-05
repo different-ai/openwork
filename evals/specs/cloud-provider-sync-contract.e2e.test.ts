@@ -1,5 +1,5 @@
 import { expect, onTestFinished } from "vitest";
-import { control, denFetch, evalIn, go, readAvailableModels, selectModel, writeComposerText, waitFor } from "@openwork/behaviors";
+import { control, denFetch, evalIn, go, readAvailableModels, selectModel, sendComposerMessage, waitFor } from "@openwork/behaviors";
 import type { DenSession, ModelFacts } from "@openwork/behaviors";
 import { screenshot, validate } from "@openwork/test-evidence";
 import { app, eventually, mcpMock, needs, server, sleep, test, unmetNeeds } from "@openwork/testkit";
@@ -573,9 +573,27 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
     "The selected catalog provider/model stayed unchanged through Settings, cloud refresh, native v2 mirroring and routing refresh; zero default writes, unavailable warnings or maximum-depth errors were observed.", true,
   );
   await selectModel(desktopApp, CUSTOM_MODEL_ID, { provider: CUSTOM_PROVIDER_NAME });
-  await writeComposerText(desktopApp, `Reply to the request marked ${promptMarker}.`);
-  await control(desktopApp, "composer.send", undefined, { timeoutMs: 120_000 });
+  await evalIn(desktopApp, `(() => {
+    window.__responseFrames = [];
+    const record = () => {
+      for (const element of document.querySelectorAll('[data-message-role="assistant"] .prose')) {
+        const text = element.textContent.trim();
+        if (text && window.__responseFrames.at(-1) !== text) window.__responseFrames.push(text);
+      }
+    };
+    window.__responseObserver = new MutationObserver(record);
+    window.__responseObserver.observe(document.body, { subtree: true, childList: true, characterData: true });
+  })()`);
+  await sendComposerMessage(desktopApp, `Reply to the request marked ${promptMarker}.`);
   await waitFor(desktopApp, `Array.from(document.querySelectorAll('[data-message-role="assistant"]')).some((row) => row.textContent.includes(${JSON.stringify(finalReply)}))`, { timeoutMs: 120_000, label: "native provider reply in the v2 transcript" });
+  await sleep(2_000); // includes the streamed-to-persisted message reconciliation
+  const frames = await evalIn(desktopApp, `(() => {
+    window.__responseObserver.disconnect();
+    return window.__responseFrames;
+  })()`);
+  expect(Array.isArray(frames) && frames.length > 0).toBe(true);
+  expect(Array.isArray(frames) && frames.every((frame) => typeof frame === "string" && finalReply.startsWith(frame)), JSON.stringify(frames)).toBe(true);
+  evidence.recordAssertionEvidence("streamed assistant text does not flash a different answer before the saved response", "Every observed assistant text frame was a prefix of the independent witness reply, including two seconds after completion; no unrelated or substituted response appeared.", true);
   const nativeRequests = await den.mocks.agent.agentRequests({ promptMarker, atLeast: 1, timeoutMs: 10_000 });
   expect(nativeRequests.some((request) => request.model === CUSTOM_MODEL_ID && request.kind === "final")).toBe(true);
   expect(nativeRequests.some((request) => request.model !== CUSTOM_MODEL_ID || request.kind === "error")).toBe(false);
@@ -680,8 +698,7 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
   })()`, { awaitPromise: true, timeoutMs: 30_000 });
   expect(rotationStatus).toBe(200);
   await sleep(3_000);
-  await writeComposerText(desktopApp, `Reply to the request marked ${rotatedMarker}.`);
-  await control(desktopApp, "composer.send", undefined, { timeoutMs: 120_000 });
+  await sendComposerMessage(desktopApp, `Reply to the request marked ${rotatedMarker}.`);
   await waitFor(desktopApp, `Array.from(document.querySelectorAll('[data-message-role="assistant"]')).some((row) => row.textContent.includes(${JSON.stringify(rotatedReply)}))`, { timeoutMs: 120_000, label: "reply after credential rotation" });
   const rotatedRequests = await den.mocks.agent.agentRequests({ promptMarker: rotatedMarker, sinceIso: rotatedAt, atLeast: 1 });
   expect(rotatedRequests.some((request) => request.kind === "final" && request.model === CUSTOM_MODEL_ID)).toBe(true);
