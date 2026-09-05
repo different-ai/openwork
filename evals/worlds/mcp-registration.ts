@@ -26,6 +26,7 @@ export async function mcpRegistration(seed: Seed) {
   let entered = gate();
   let release = gate();
   let initializations = 0;
+  const requests: Array<{ method: string; revision: string | null }> = [];
   const wait = async (stage: "model" | "tool" | "initialize") => {
     if (pause !== stage) return;
     entered.release();
@@ -41,13 +42,16 @@ export async function mcpRegistration(seed: Seed) {
       if (request.method !== "POST") return sendJson(response, 405, {});
       const raw = await readBody(request);
       const body: unknown = JSON.parse(raw);
+      const header = request.headers["x-fixture-revision"];
+      const revision = typeof header === "string" ? header : null;
+      if (isRecord(body) && typeof body.method === "string") requests.push({ method: body.method, revision });
       if (isRecord(body) && body.method === "initialize") {
         initializations += 1;
         await wait("initialize");
       }
       if (isRecord(body) && body.method === "tools/call") await wait("tool");
       const upstream = await fetch(witness.mcpUrl, {
-        method: "POST", headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+        method: "POST", headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...(revision === null ? {} : { "x-fixture-revision": revision }) },
         body: raw, signal: AbortSignal.timeout(15_000),
       });
       response.writeHead(upstream.status, Object.fromEntries(upstream.headers));
@@ -97,6 +101,7 @@ export async function mcpRegistration(seed: Seed) {
     return {
       engine: running.engine,
       initializations: () => initializations,
+      requests: () => requests.slice(),
       toolCalls: () => witness.toolCalls(),
       output: () => output,
       pause(stage: "model" | "tool" | "initialize") { pause = stage; entered = gate(); release = gate(); },

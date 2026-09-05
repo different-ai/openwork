@@ -43,6 +43,7 @@ test("runtime MCP synchronization preserves captured and in-flight tools, then a
       within: 10_000, label: "task finishes before idle registration",
       until: (statuses) => isRecord(statuses) && (!isRecord(statuses[id]) || statuses[id].type === "idle"),
     });
+    expect(world.requests().filter((request) => request.method === "tools/call").at(-1)?.revision).toBe(stage === "model" ? null : "original");
     const calls = await world.toolCalls();
     expect(calls.filter((call) => call.name === "ping")).toHaveLength(stage === "model" ? 1 : 2);
     evidence.recordAssertionEvidence(
@@ -52,14 +53,36 @@ test("runtime MCP synchronization preserves captured and in-flight tools, then a
     );
     await world.register(stage === "tool" ? "changed" : "original");
     expect(world.initializations()).toBe(before + 1);
+    expect(world.requests().filter((request) => request.method === "initialize").at(-1)?.revision).toBe(stage === "tool" ? "changed" : "original");
     const after = world.initializations();
     await world.register(stage === "tool" ? "changed" : "original");
     expect(world.initializations()).toBe(after);
   }
+  const changedSession = await world.engine("POST", "/session", {});
+  if (!isRecord(changedSession) || typeof changedSession.id !== "string") throw new Error("Session id missing");
+  await world.engine("POST", `/session/${changedSession.id}/prompt_async`, {
+    model: { providerID: "mock", modelID: "mock" },
+    parts: [{ type: "text", text: "Check the connection." }],
+  });
+  await eventually(() => world.toolCalls(), {
+    within: 15_000, label: "changed connection invokes the connector",
+    until: (calls) => calls.filter((call) => call.name === "ping").length === 3,
+  });
+  expect(world.requests().filter((request) => request.method === "tools/call").at(-1)?.revision).toBe("changed");
+  await eventually(() => world.engine("GET", "/session/status"), {
+    within: 10_000, label: "changed connection task finishes before recovery",
+    until: (statuses) => isRecord(statuses) && (!isRecord(statuses[String(changedSession.id)]) || statuses[String(changedSession.id)].type === "idle"),
+  });
+  evidence.recordAssertionEvidence(
+    "The replacement receives and uses the changed configuration",
+    "The MCP endpoint observed x-fixture-revision=changed on initialization and a subsequent real engine tools/call; earlier active calls retained their previous revision.",
+    true,
+  );
   const beforeRecovery = world.initializations();
   await world.engine("POST", "/mcp/race/disconnect", {});
   await world.register("changed");
   expect(world.initializations()).toBe(beforeRecovery + 1);
+  expect(world.requests().filter((request) => request.method === "initialize").at(-1)?.revision).toBe("changed");
   expect(await world.engine("GET", "/mcp")).toMatchObject({ race: { status: "connected" } });
   evidence.recordAssertionEvidence(
     "Idle changes apply once, unchanged registrations are no-ops, and disconnected clients recover",
@@ -85,8 +108,10 @@ test("runtime MCP synchronization preserves captured and in-flight tools, then a
   expect(admitted).toBe(true);
   await eventually(() => world.toolCalls(), {
     within: 15_000, label: "admitted task invokes the replacement connection",
-    until: (calls) => calls.filter((call) => call.name === "ping").length === 3,
+    until: (calls) => calls.filter((call) => call.name === "ping").length === 4,
   });
+  expect(world.requests().filter((request) => request.method === "initialize").at(-1)?.revision).toBe("admission-check");
+  expect(world.requests().filter((request) => request.method === "tools/call").at(-1)?.revision).toBe("admission-check");
   evidence.recordAssertionEvidence(
     "Managed-engine prompt admission waits for an ongoing connection replacement",
     "The async prompt remained unacknowledged while initialization was paused, was acknowledged after replacement finished, and invoked the connector exactly once.",
