@@ -112,7 +112,7 @@ export function VoicePanel(props: VoicePanelProps) {
         <details className="rounded-lg border p-3 text-xs">
           <summary className="cursor-pointer font-medium">Audio and privacy</summary>
           <div className="mt-3 space-y-3 text-muted-foreground">
-            <label className="block">Audio model<select aria-label="Voice audio model" className="mt-1 w-full rounded border bg-background p-2 text-foreground disabled:opacity-60" value={state.audioModel} disabled={connected || starting} onChange={(e) => session.setAudioModel(e.currentTarget.value)}>
+            <label className="block">Audio model<select aria-label="Voice audio model" data-testid="voice-audio-model" className="mt-1 w-full rounded border bg-background p-2 text-foreground disabled:opacity-60" value={state.audioModel} disabled={connected || starting} onChange={(e) => session.setAudioModel(e.currentTarget.value)}>
               {VOICE_REALTIME_MODELS.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
             </select></label>
             <p>{VOICE_REALTIME_MODELS.find((model) => model.id === state.audioModel)?.description} Your task keeps its selected model. End voice before changing the audio model.</p>
