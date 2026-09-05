@@ -1,3 +1,4 @@
+import { declarativeDeleteSchema, declarativeResponses, externalKeyParamsSchema, isDuplicateEntry, type ResourceActionContext, type ResourceOrganizationContext } from "./declarative.js"
 import { and, asc, desc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import {
   DesktopPolicyMemberTable,
@@ -135,6 +136,7 @@ async function loadDesktopPolicies(organizationId: typeof DesktopPolicyTable.$in
     const policyAssignments = assignments.filter((assignment) => assignment.desktopPolicyId === policy.id)
     return {
       id: policy.id,
+      externalKey: policy.externalKey,
       organizationId: policy.organizationId,
       policyName: policy.policyName,
       isDefault: policy.isDefault === true,
@@ -163,7 +165,334 @@ async function loadDesktopPolicies(organizationId: typeof DesktopPolicyTable.$in
   })
 }
 
+async function createDesktopPolicy(c: ResourceActionContext, payload: ResourceOrganizationContext, input: z.infer<typeof desktopPolicyWriteSchema>, externalKey?: string) {
+  const permission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can manage desktop policies.")
+  if (!permission.ok) {
+    return c.json(permission.response, orgAccessFailureStatus(permission.response))
+  }
+
+  const entitlement = checkEntitlement(payload.organization.metadata, "desktopPolicies")
+  if (!entitlement.ok) {
+    return c.json(entitlement.response, entitlement.status)
+  }
+
+  try {
+    const memberIds = await resolveMemberIds({ organizationId: payload.organization.id, values: input.memberIds })
+    const teamIds = await resolveTeamIds({ organizationId: payload.organization.id, values: input.teamIds })
+    const roles = resolveRoles(input.roles)
+    const desktopPolicyId = createDenTypeId("desktopPolicy")
+    const now = new Date()
+
+    await db.transaction(async (tx) => {
+      await tx.insert(DesktopPolicyTable).values({
+        externalKey,
+        id: desktopPolicyId,
+        organizationId: payload.organization.id,
+        policyName: input.policyName.trim(),
+        isDefault: null,
+        isEnabled: input.isEnabled ?? true,
+        priority: input.priority ?? 0,
+        policy: resolveDesktopPolicyDocumentWrite({ value: input.policy }),
+        createdByOrgMemberId: payload.currentMember.id,
+        createdAt: now,
+        updatedAt: now,
+      })
+
+      const assignmentRows = [
+        ...memberIds.map((orgMemberId) => ({
+          id: createDenTypeId("desktopPolicyMember"),
+          organizationId: payload.organization.id,
+          desktopPolicyId,
+          orgMemberId,
+          teamId: null,
+          role: null,
+          createdAt: now,
+        })),
+        ...teamIds.map((teamId) => ({
+          id: createDenTypeId("desktopPolicyMember"),
+          organizationId: payload.organization.id,
+          desktopPolicyId,
+          orgMemberId: null,
+          teamId,
+          role: null,
+          createdAt: now,
+        })),
+        ...roles.map((role) => ({
+          id: createDenTypeId("desktopPolicyMember"),
+          organizationId: payload.organization.id,
+          desktopPolicyId,
+          orgMemberId: null,
+          teamId: null,
+          role,
+          createdAt: now,
+        })),
+      ]
+
+      if (assignmentRows.length > 0) {
+        await tx.insert(DesktopPolicyMemberTable).values(assignmentRows)
+      }
+    })
+
+    const [desktopPolicy] = await loadDesktopPolicies(payload.organization.id)
+      .then((policies) => policies.filter((policy) => policy.id === desktopPolicyId))
+    return c.json({ desktopPolicy }, 201)
+  } catch (error) {
+    if (error instanceof Error && error.message === "member_not_found") return c.json({ error: "member_not_found" }, 404)
+    if (error instanceof Error && error.message === "team_not_found") return c.json({ error: "team_not_found" }, 404)
+    throw error
+  }
+}
+
+async function updateDesktopPolicy(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string, input: z.infer<typeof desktopPolicyWriteSchema>, replace = false) {
+  const permission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can manage desktop policies.")
+  if (!permission.ok) {
+    return c.json(permission.response, orgAccessFailureStatus(permission.response))
+  }
+
+  const entitlement = checkEntitlement(payload.organization.metadata, "desktopPolicies")
+  if (!entitlement.ok) {
+    return c.json(entitlement.response, entitlement.status)
+  }
+
+  let desktopPolicyId: DesktopPolicyId
+  try {
+    desktopPolicyId = parseDesktopPolicyId(rawId)
+  } catch {
+    return c.json({ error: "desktop_policy_not_found" }, 404)
+  }
+
+  const rows = await db
+    .select()
+    .from(DesktopPolicyTable)
+    .where(and(
+      eq(DesktopPolicyTable.id, desktopPolicyId),
+      eq(DesktopPolicyTable.organizationId, payload.organization.id),
+      isNull(DesktopPolicyTable.deletedAt),
+    ))
+    .limit(1)
+  const existing = rows[0]
+  if (!existing) return c.json({ error: "desktop_policy_not_found" }, 404)
+
+  if (existing.isDefault === true && input.isEnabled === false) {
+    return c.json({ error: "default_policy_required", message: "The default desktop policy cannot be disabled." }, 400)
+  }
+
+  try {
+    const memberIds = await resolveMemberIds({ organizationId: payload.organization.id, values: input.memberIds })
+    const teamIds = await resolveTeamIds({ organizationId: payload.organization.id, values: input.teamIds })
+    const roles = resolveRoles(input.roles)
+    const updatedAt = new Date()
+
+    await db.transaction(async (tx) => {
+      await tx
+        .update(DesktopPolicyTable)
+        .set({
+          policyName: existing.isDefault === true ? existing.policyName : input.policyName.trim(),
+          isEnabled: existing.isDefault === true ? true : input.isEnabled ?? existing.isEnabled,
+          priority: existing.isDefault === true ? 0 : input.priority ?? existing.priority,
+          policy: existing.isDefault === true
+            ? resolveDesktopPolicyDocumentWrite({
+                value: input.policy,
+                existingPolicy: existing.policy,
+                isDefault: true,
+                preserveExistingOnboardingPrompts: !replace,
+              })
+            : resolveDesktopPolicyDocumentWrite({
+                value: input.policy,
+                existingPolicy: existing.policy,
+                preserveExistingOnboardingPrompts: !replace,
+              }),
+          updatedAt,
+        })
+        .where(eq(DesktopPolicyTable.id, existing.id))
+
+      if (existing.isDefault !== true) {
+        await tx.delete(DesktopPolicyMemberTable).where(eq(DesktopPolicyMemberTable.desktopPolicyId, existing.id))
+        const assignmentRows = [
+          ...memberIds.map((orgMemberId) => ({
+            id: createDenTypeId("desktopPolicyMember"),
+            organizationId: payload.organization.id,
+            desktopPolicyId: existing.id,
+            orgMemberId,
+            teamId: null,
+            role: null,
+            createdAt: updatedAt,
+          })),
+          ...teamIds.map((teamId) => ({
+            id: createDenTypeId("desktopPolicyMember"),
+            organizationId: payload.organization.id,
+            desktopPolicyId: existing.id,
+            orgMemberId: null,
+            teamId,
+            role: null,
+            createdAt: updatedAt,
+          })),
+          ...roles.map((role) => ({
+            id: createDenTypeId("desktopPolicyMember"),
+            organizationId: payload.organization.id,
+            desktopPolicyId: existing.id,
+            orgMemberId: null,
+            teamId: null,
+            role,
+            createdAt: updatedAt,
+          })),
+        ]
+        if (assignmentRows.length > 0) {
+          await tx.insert(DesktopPolicyMemberTable).values(assignmentRows)
+        }
+      }
+    })
+
+    const [desktopPolicy] = await loadDesktopPolicies(payload.organization.id)
+      .then((policies) => policies.filter((policy) => policy.id === existing.id))
+    return c.json({ desktopPolicy })
+  } catch (error) {
+    if (error instanceof Error && error.message === "member_not_found") return c.json({ error: "member_not_found" }, 404)
+    if (error instanceof Error && error.message === "team_not_found") return c.json({ error: "team_not_found" }, 404)
+    throw error
+  }
+}
+
+async function deleteDesktopPolicy(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string) {
+  const permission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can manage desktop policies.")
+  if (!permission.ok) {
+    return c.json(permission.response, orgAccessFailureStatus(permission.response))
+  }
+
+  let desktopPolicyId: DesktopPolicyId
+  try {
+    desktopPolicyId = parseDesktopPolicyId(rawId)
+  } catch {
+    return c.json({ error: "desktop_policy_not_found" }, 404)
+  }
+
+  const rows = await db
+    .select()
+    .from(DesktopPolicyTable)
+    .where(and(
+      eq(DesktopPolicyTable.id, desktopPolicyId),
+      eq(DesktopPolicyTable.organizationId, payload.organization.id),
+      isNull(DesktopPolicyTable.deletedAt),
+    ))
+    .limit(1)
+  const existing = rows[0]
+  if (!existing) return c.json({ error: "desktop_policy_not_found" }, 404)
+  if (existing.isDefault === true) {
+    return c.json({ error: "default_policy_required", message: "The default desktop policy cannot be deleted." }, 400)
+  }
+
+  await db
+    .update(DesktopPolicyTable)
+    .set({ deletedAt: new Date(), isEnabled: false, externalKey: null })
+    .where(eq(DesktopPolicyTable.id, existing.id))
+
+  return c.body(null, 204)
+}
+
 export function registerOrgDesktopPolicyRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
+
+  app.get(
+    "/v1/desktop-policies/by-key/:externalKey",
+    describeRoute({ tags: ["Desktop Policies"], summary: "Read desktop-policies by stable key", description: "Reads the desktop policy identified by the stable externalKey assigned through declarative provisioning.", responses: {
+      200: jsonResponse("Resource configuration.", desktopPolicyResponseSchema),
+      404: jsonResponse("Resource not found.", notFoundSchema),
+    } }),
+    orgRoleRoute(["admin"]),
+    paramValidator(externalKeyParamsSchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const [row] = await db.select().from(DesktopPolicyTable).where(and(eq(DesktopPolicyTable.organizationId, payload.organization.id), eq(DesktopPolicyTable.externalKey, c.req.valid("param").externalKey), isNull(DesktopPolicyTable.deletedAt))).limit(1)
+      if (!row) return c.json({ error: "desktop_policy_not_found" }, 404)
+      const value = (await loadDesktopPolicies(payload.organization.id)).find((policy) => policy.id === row.id)
+      if (!value) return c.json({ error: "desktop_policy_not_found" }, 404)
+      return c.json({ desktopPolicy: value })
+    },
+  )
+
+  app.get(
+    "/v1/desktop-policies/:desktopPolicyId",
+    describeRoute({ tags: ["Desktop Policies"], summary: "Read desktop-policies by id", description: "Reads a single desktop policy by id.", responses: {
+      200: jsonResponse("Resource configuration.", desktopPolicyResponseSchema),
+      404: jsonResponse("Resource not found.", notFoundSchema),
+    } }),
+    orgRoleRoute(["admin"]),
+    paramValidator(desktopPolicyParamsSchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const [row] = await db.select().from(DesktopPolicyTable).where(and(eq(DesktopPolicyTable.organizationId, payload.organization.id), eq(DesktopPolicyTable.id, parseDesktopPolicyId(c.req.valid("param").desktopPolicyId)), isNull(DesktopPolicyTable.deletedAt))).limit(1)
+      if (!row) return c.json({ error: "desktop_policy_not_found" }, 404)
+      const value = (await loadDesktopPolicies(payload.organization.id)).find((policy) => policy.id === row.id)
+      if (!value) return c.json({ error: "desktop_policy_not_found" }, 404)
+      return c.json({ desktopPolicy: value })
+    },
+  )
+
+  app.put(
+    "/v1/desktop-policies/by-key/:externalKey",
+    describeRoute({
+      tags: ["Desktop Policies"],
+      summary: "Apply desktop-policies by stable key",
+      description: "Creates or replaces an organization-scoped resource. Names do not identify resources; existing unkeyed resources are never adopted automatically. Assignments are replaced. Omitted write-only secrets are preserved. Concurrent writes are last-write-wins; conditional headers are not supported on this route.",
+      responses: declarativeResponses(desktopPolicyResponseSchema),
+    }),
+    orgRoleRoute(["super-admin"]),
+    paramValidator(externalKeyParamsSchema),
+    jsonValidator(desktopPolicyWriteSchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const permission = ensureOrganizationSuperAdmin(c, "Only owners and super-admins can manage desktop policies.")
+      if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
+      if (c.req.header("If-Match") || c.req.header("If-None-Match")) {
+        return c.json({ error: "unsupported_precondition", message: "This endpoint uses last-write-wins. Serialize configuration writers." }, 400)
+      }
+      const { externalKey } = c.req.valid("param")
+      const input = { ...c.req.valid("json"), priority: c.req.valid("json").priority ?? 0, isEnabled: c.req.valid("json").isEnabled ?? true }
+      const [existing] = await db.select().from(DesktopPolicyTable).where(and(
+        eq(DesktopPolicyTable.organizationId, payload.organization.id),
+        eq(DesktopPolicyTable.externalKey, externalKey), isNull(DesktopPolicyTable.deletedAt),
+      )).limit(1)
+      try {
+        if (existing) return await updateDesktopPolicy(c, payload, existing.id, input, true)
+        return await createDesktopPolicy(c, payload, input, externalKey)
+      } catch (error) {
+        if (!isDuplicateEntry(error)) throw error
+        // A concurrent creator can win between lookup and insert. Retry against
+        // its identity instead of creating a second resource.
+        const [winner] = await db.select().from(DesktopPolicyTable).where(and(
+        eq(DesktopPolicyTable.organizationId, payload.organization.id),
+        eq(DesktopPolicyTable.externalKey, externalKey), isNull(DesktopPolicyTable.deletedAt),
+      )).limit(1)
+        if (winner) return updateDesktopPolicy(c, payload, winner.id, input, true)
+        return c.json({ error: "resource_conflict", message: "The resource name is already in use by another identity." }, 409)
+      }
+    },
+  )
+
+  app.delete(
+    "/v1/desktop-policies/by-key/:externalKey",
+    describeRoute({
+      tags: ["Desktop Policies"],
+      summary: "Delete desktop-policies by stable key",
+      description: "Deletes the desktop policy identified by its stable externalKey. Idempotent: deleting a key that does not exist is reported as already removed.",
+      responses: { 200: jsonResponse("Idempotent deletion result.", declarativeDeleteSchema) },
+    }),
+    orgRoleRoute(["super-admin"]),
+    paramValidator(externalKeyParamsSchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const permission = ensureOrganizationSuperAdmin(c, "Only owners and super-admins can manage desktop policies.")
+      if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
+      const { externalKey } = c.req.valid("param")
+      const [existing] = await db.select().from(DesktopPolicyTable).where(and(
+        eq(DesktopPolicyTable.organizationId, payload.organization.id),
+        eq(DesktopPolicyTable.externalKey, externalKey), isNull(DesktopPolicyTable.deletedAt),
+      )).limit(1)
+      if (!existing) return c.json({ ok: true, deleted: false })
+      const result = await deleteDesktopPolicy(c, payload, existing.id)
+      if (result.status !== 204) return result
+      return c.json({ ok: true, deleted: true })
+    },
+  )
   app.get(
     "/v1/desktop-policies",
     describeRoute({
@@ -199,84 +528,7 @@ export function registerOrgDesktopPolicyRoutes<T extends { Variables: OrgRouteVa
     }),
     orgRoleRoute(["super-admin"]),
     jsonValidator(desktopPolicyWriteSchema),
-    async (c) => {
-      const payload = c.get("organizationContext")
-      const permission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can manage desktop policies.")
-      if (!permission.ok) {
-        return c.json(permission.response, orgAccessFailureStatus(permission.response))
-      }
-
-      const entitlement = checkEntitlement(payload.organization.metadata, "desktopPolicies")
-      if (!entitlement.ok) {
-        return c.json(entitlement.response, entitlement.status)
-      }
-
-      const input = c.req.valid("json")
-      try {
-        const memberIds = await resolveMemberIds({ organizationId: payload.organization.id, values: input.memberIds })
-        const teamIds = await resolveTeamIds({ organizationId: payload.organization.id, values: input.teamIds })
-        const roles = resolveRoles(input.roles)
-        const desktopPolicyId = createDenTypeId("desktopPolicy")
-        const now = new Date()
-
-        await db.transaction(async (tx) => {
-          await tx.insert(DesktopPolicyTable).values({
-            id: desktopPolicyId,
-            organizationId: payload.organization.id,
-            policyName: input.policyName.trim(),
-            isDefault: null,
-            isEnabled: input.isEnabled ?? true,
-            priority: input.priority ?? 0,
-            policy: resolveDesktopPolicyDocumentWrite({ value: input.policy }),
-            createdByOrgMemberId: payload.currentMember.id,
-            createdAt: now,
-            updatedAt: now,
-          })
-
-          const assignmentRows = [
-            ...memberIds.map((orgMemberId) => ({
-              id: createDenTypeId("desktopPolicyMember"),
-              organizationId: payload.organization.id,
-              desktopPolicyId,
-              orgMemberId,
-              teamId: null,
-              role: null,
-              createdAt: now,
-            })),
-            ...teamIds.map((teamId) => ({
-              id: createDenTypeId("desktopPolicyMember"),
-              organizationId: payload.organization.id,
-              desktopPolicyId,
-              orgMemberId: null,
-              teamId,
-              role: null,
-              createdAt: now,
-            })),
-            ...roles.map((role) => ({
-              id: createDenTypeId("desktopPolicyMember"),
-              organizationId: payload.organization.id,
-              desktopPolicyId,
-              orgMemberId: null,
-              teamId: null,
-              role,
-              createdAt: now,
-            })),
-          ]
-
-          if (assignmentRows.length > 0) {
-            await tx.insert(DesktopPolicyMemberTable).values(assignmentRows)
-          }
-        })
-
-        const [desktopPolicy] = await loadDesktopPolicies(payload.organization.id)
-          .then((policies) => policies.filter((policy) => policy.id === desktopPolicyId))
-        return c.json({ desktopPolicy }, 201)
-      } catch (error) {
-        if (error instanceof Error && error.message === "member_not_found") return c.json({ error: "member_not_found" }, 404)
-        if (error instanceof Error && error.message === "team_not_found") return c.json({ error: "team_not_found" }, 404)
-        throw error
-      }
-    },
+    async (c) => createDesktopPolicy(c, c.get("organizationContext"), c.req.valid("json")),
   )
 
   app.patch(
@@ -296,117 +548,7 @@ export function registerOrgDesktopPolicyRoutes<T extends { Variables: OrgRouteVa
     orgRoleRoute(["super-admin"]),
     paramValidator(desktopPolicyParamsSchema),
     jsonValidator(desktopPolicyWriteSchema),
-    async (c) => {
-      const payload = c.get("organizationContext")
-      const permission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can manage desktop policies.")
-      if (!permission.ok) {
-        return c.json(permission.response, orgAccessFailureStatus(permission.response))
-      }
-
-      const entitlement = checkEntitlement(payload.organization.metadata, "desktopPolicies")
-      if (!entitlement.ok) {
-        return c.json(entitlement.response, entitlement.status)
-      }
-
-      let desktopPolicyId: DesktopPolicyId
-      try {
-        desktopPolicyId = parseDesktopPolicyId(c.req.valid("param").desktopPolicyId)
-      } catch {
-        return c.json({ error: "desktop_policy_not_found" }, 404)
-      }
-
-      const rows = await db
-        .select()
-        .from(DesktopPolicyTable)
-        .where(and(
-          eq(DesktopPolicyTable.id, desktopPolicyId),
-          eq(DesktopPolicyTable.organizationId, payload.organization.id),
-          isNull(DesktopPolicyTable.deletedAt),
-        ))
-        .limit(1)
-      const existing = rows[0]
-      if (!existing) return c.json({ error: "desktop_policy_not_found" }, 404)
-
-      const input = c.req.valid("json")
-      if (existing.isDefault === true && input.isEnabled === false) {
-        return c.json({ error: "default_policy_required", message: "The default desktop policy cannot be disabled." }, 400)
-      }
-
-      try {
-        const memberIds = await resolveMemberIds({ organizationId: payload.organization.id, values: input.memberIds })
-        const teamIds = await resolveTeamIds({ organizationId: payload.organization.id, values: input.teamIds })
-        const roles = resolveRoles(input.roles)
-        const updatedAt = new Date()
-
-        await db.transaction(async (tx) => {
-          await tx
-            .update(DesktopPolicyTable)
-            .set({
-              policyName: existing.isDefault === true ? existing.policyName : input.policyName.trim(),
-              isEnabled: existing.isDefault === true ? true : input.isEnabled ?? existing.isEnabled,
-              priority: existing.isDefault === true ? 0 : input.priority ?? existing.priority,
-              policy: existing.isDefault === true
-                ? resolveDesktopPolicyDocumentWrite({
-                    value: input.policy,
-                    existingPolicy: existing.policy,
-                    isDefault: true,
-                    preserveExistingOnboardingPrompts: true,
-                  })
-                : resolveDesktopPolicyDocumentWrite({
-                    value: input.policy,
-                    existingPolicy: existing.policy,
-                    preserveExistingOnboardingPrompts: true,
-                  }),
-              updatedAt,
-            })
-            .where(eq(DesktopPolicyTable.id, existing.id))
-
-          if (existing.isDefault !== true) {
-            await tx.delete(DesktopPolicyMemberTable).where(eq(DesktopPolicyMemberTable.desktopPolicyId, existing.id))
-            const assignmentRows = [
-              ...memberIds.map((orgMemberId) => ({
-                id: createDenTypeId("desktopPolicyMember"),
-                organizationId: payload.organization.id,
-                desktopPolicyId: existing.id,
-                orgMemberId,
-                teamId: null,
-                role: null,
-                createdAt: updatedAt,
-              })),
-              ...teamIds.map((teamId) => ({
-                id: createDenTypeId("desktopPolicyMember"),
-                organizationId: payload.organization.id,
-                desktopPolicyId: existing.id,
-                orgMemberId: null,
-                teamId,
-                role: null,
-                createdAt: updatedAt,
-              })),
-              ...roles.map((role) => ({
-                id: createDenTypeId("desktopPolicyMember"),
-                organizationId: payload.organization.id,
-                desktopPolicyId: existing.id,
-                orgMemberId: null,
-                teamId: null,
-                role,
-                createdAt: updatedAt,
-              })),
-            ]
-            if (assignmentRows.length > 0) {
-              await tx.insert(DesktopPolicyMemberTable).values(assignmentRows)
-            }
-          }
-        })
-
-        const [desktopPolicy] = await loadDesktopPolicies(payload.organization.id)
-          .then((policies) => policies.filter((policy) => policy.id === existing.id))
-        return c.json({ desktopPolicy })
-      } catch (error) {
-        if (error instanceof Error && error.message === "member_not_found") return c.json({ error: "member_not_found" }, 404)
-        if (error instanceof Error && error.message === "team_not_found") return c.json({ error: "team_not_found" }, 404)
-        throw error
-      }
-    },
+    async (c) => updateDesktopPolicy(c, c.get("organizationContext"), c.req.valid("param").desktopPolicyId, c.req.valid("json")),
   )
 
   app.delete(
@@ -423,41 +565,6 @@ export function registerOrgDesktopPolicyRoutes<T extends { Variables: OrgRouteVa
     }),
     orgRoleRoute(["super-admin"]),
     paramValidator(desktopPolicyParamsSchema),
-    async (c) => {
-      const payload = c.get("organizationContext")
-      const permission = ensureOrganizationSuperAdmin(c, "Only workspace owners and super-admins can manage desktop policies.")
-      if (!permission.ok) {
-        return c.json(permission.response, orgAccessFailureStatus(permission.response))
-      }
-
-      let desktopPolicyId: DesktopPolicyId
-      try {
-        desktopPolicyId = parseDesktopPolicyId(c.req.valid("param").desktopPolicyId)
-      } catch {
-        return c.json({ error: "desktop_policy_not_found" }, 404)
-      }
-
-      const rows = await db
-        .select()
-        .from(DesktopPolicyTable)
-        .where(and(
-          eq(DesktopPolicyTable.id, desktopPolicyId),
-          eq(DesktopPolicyTable.organizationId, payload.organization.id),
-          isNull(DesktopPolicyTable.deletedAt),
-        ))
-        .limit(1)
-      const existing = rows[0]
-      if (!existing) return c.json({ error: "desktop_policy_not_found" }, 404)
-      if (existing.isDefault === true) {
-        return c.json({ error: "default_policy_required", message: "The default desktop policy cannot be deleted." }, 400)
-      }
-
-      await db
-        .update(DesktopPolicyTable)
-        .set({ deletedAt: new Date(), isEnabled: false })
-        .where(eq(DesktopPolicyTable.id, existing.id))
-
-      return c.body(null, 204)
-    },
+    async (c) => deleteDesktopPolicy(c, c.get("organizationContext"), c.req.valid("param").desktopPolicyId),
   )
 }

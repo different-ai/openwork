@@ -1,0 +1,61 @@
+name: Generated Den SDK
+
+on:
+  pull_request:
+    paths:
+      - "packages/**"
+      - "ee/apps/den-api/**"
+      - "ee/packages/**"
+      - "package.json"
+      - "pnpm-workspace.yaml"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/ci-sdk.yml"
+  push:
+    branches: [dev]
+    paths:
+      - "packages/**"
+      - "ee/apps/den-api/**"
+      - "ee/packages/**"
+      - "package.json"
+      - "pnpm-workspace.yaml"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/ci-sdk.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  generated-sdk:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: password
+          MYSQL_DATABASE: openwork_sdk_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -ppassword"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      DATABASE_URL: mysql://root:password@127.0.0.1:3306/openwork_sdk_ci
+      DEN_DB_ENCRYPTION_KEY: local-dev-db-encryption-key-please-change-1234567890
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.4.0
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      # Loading the live app initializes OAuth's resource registry.
+      - name: Prepare the isolated schema-export database
+        run: pnpm --filter @openwork-ee/den-db exec drizzle-kit push --force
+        env:
+          NODE_OPTIONS: --conditions=development
+      - run: pnpm sdk:check
+      - run: pnpm sdk:build

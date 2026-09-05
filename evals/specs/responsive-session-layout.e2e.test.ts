@@ -2,6 +2,7 @@ import { expect } from "vitest";
 import { control, evalIn, go, listSessions, seedSessions, waitFor } from "@openwork/behaviors";
 import type { Surface } from "@openwork/cdp";
 import { setViewport } from "@openwork/cdp";
+import { screenshot } from "@openwork/test-evidence";
 import {
   localMysqlIsRunning,
   localRedisIsRunning,
@@ -132,6 +133,33 @@ test.skipIf(!runnable)(
     await waitFor(app, `Boolean(document.querySelector(
       '[data-workbench-pane="secondary"] [data-session-surface-id="${secondary.sessionId}"]'
     ))`, { timeoutMs: 60_000, label: "desktop split session" });
+
+    // Exercise desktop split panes as well as the single-pane mobile layout.
+    for (const width of [1440, 1100, 390, 320]) {
+      await setViewport(app, { width, height: 844, deviceScaleFactor: 1 });
+      await waitFor(app, `(() => {
+        const toolbars = [...document.querySelectorAll('[data-composer-toolbar]')]
+          .filter((toolbar) => toolbar.getBoundingClientRect().width > 0);
+        return toolbars.length > 0 && toolbars.every((toolbar) => {
+          const bounds = toolbar.getBoundingClientRect();
+          const buttons = [...toolbar.querySelectorAll('button')]
+            .map((button) => button.getBoundingClientRect())
+            .filter((rect) => rect.width > 0 && rect.height > 0);
+          return buttons.length >= 4 && buttons.every((rect, index) =>
+            rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1
+            && rect.top >= bounds.top - 1 && rect.bottom <= bounds.bottom + 1
+            && buttons.slice(index + 1).every((other) =>
+              rect.right <= other.left + 1 || other.right <= rect.left + 1
+              || rect.bottom <= other.top + 1 || other.bottom <= rect.top + 1));
+        });
+      })()`, { timeoutMs: 30_000, label: `composer controls fit without overlap at ${width}px` });
+      await screenshot(app);
+      evidence.recordAssertionEvidence(
+        `Composer controls remain contained and do not overlap at ${width}px`,
+        "Measured every visible toolbar button against the toolbar bounds and every other button.",
+        true,
+      );
+    }
 
     await setViewport(app, { width: 390, height: 844, deviceScaleFactor: 1 });
     await waitFor(app, `(() => {

@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { join, resolve } from "node:path";
 import { evalIn } from "@openwork/behaviors";
 import type { Seed } from "@openwork/env";
+import type { MockAgentWorkload } from "@openwork/labs";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
 
@@ -220,6 +221,9 @@ export async function newSplitPrimary(seed: Seed) {
     return {
       layoutKind: layout?.kind ?? "",
       focusedPane: layout?.focused ?? "",
+      focusedComposerSessionId: document.activeElement?.matches('[contenteditable="true"]')
+        ? document.activeElement.closest("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? ""
+        : "",
       primarySessionId: layout?.primarySessionId ?? layout?.sessionId ?? "",
       secondarySessionId: layout?.secondarySessionId ?? "",
       primaryWorkspaceId: layout?.primaryWorkspaceId ?? "",
@@ -233,7 +237,18 @@ export async function newSplitPrimary(seed: Seed) {
       locationHash: window.location.hash,
     };
   })()`);
-  return { app, workspace, session, splitFacts };
+  const agentContextViaServer = () => evalIn(app, `(async () => {
+    const response = await fetch("http://127.0.0.1:" + localStorage.getItem("openwork.server.port") + "/experimental/ui-control/request", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + localStorage.getItem("openwork.server.token"),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ kind: "context" }),
+    });
+    return response.json();
+  })()`, { awaitPromise: true, timeoutMs: 15_000 });
+  return { app, workspace, session, splitFacts, agentContextViaServer };
 }
 
 export async function shimmerChat(seed: Seed) {
@@ -489,6 +504,59 @@ export async function renderCycle(seed: Seed) {
     await close(provider);
     throw error;
   }
+}
+
+export const streamedMarkdownMarker = "STREAM_MARKDOWN_ANSWER";
+/** A multi-block answer: heading, prose, list, table, fenced code, closing prose. */
+export const streamedMarkdownAnswer = [
+  "## Streamed answer heading",
+  "",
+  "Opening paragraph with **bold emphasis** and `inline-code.ts` in it.",
+  "",
+  "- alpha list item",
+  "- beta list item",
+  "",
+  "| Column | Value |",
+  "| --- | --- |",
+  "| gamma row | 42 |",
+  "",
+  "```ts",
+  "const streamed = \"delta\";",
+  "```",
+  "",
+  "Closing paragraph epsilon.",
+].join("\n");
+
+/**
+ * The answer arrives in small content deltas from the shared agent mock, which
+ * the placement boots next to Den so the engine can reach it on Daytona too.
+ */
+export async function streamedMarkdown(seed: Seed) {
+  const providerId = "streamed-markdown-mock";
+  const modelId = "streamed-markdown-model";
+  const mock = seed.mock({
+    agentWorkloads: [{
+      promptMarker: streamedMarkdownMarker,
+      finalReply: streamedMarkdownAnswer,
+      finalReplyChunkSize: 8,
+      steps: [],
+    }],
+  });
+  const den = await seed.den({ mocks: { agent: mock } });
+  const app = await seed.desktop({ den, as: "admin", model: `${providerId}/${modelId}` });
+  const workspace = await seed.workspace(app, seed.tmpPath("streamed-markdown-answer"));
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    provider: {
+      [providerId]: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "Streamed markdown mock",
+        options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-streamed-markdown" },
+        models: { [modelId]: { name: "Streamed markdown model" } },
+      },
+    },
+  });
+  const session = await seedSessionRetry(seed, app);
+  return { app, den, workspace, session };
 }
 
 const htmlToolName = "explode_html";
@@ -1060,7 +1128,10 @@ export async function sessionErrorCard(seed: Seed) {
   const workspace = await seed.workspace(app, seed.tmpPath("session-error-details"));
   const session = await seedSessionRetry(seed, app, { title: "Session error proof" });
   await arrangeControl(seed, app, "eval.session_error.seed");
-  return { app, workspace, session };
+  return {
+    app, workspace, session,
+    seedStorageError: (kind: "disk-full" | "database-error", surface: "transcript" | "banner" = "transcript") => arrangeControl(seed, app, "eval.session_error.seed", { kind, surface }),
+  };
 }
 
 export async function snapshotFailure(seed: Seed) {
@@ -1101,4 +1172,272 @@ export async function unfinishedTools(seed: Seed) {
   const session = await seedSessionRetry(seed, app);
   await arrangeControl(seed, app, "eval.session_lifecycle.seed_unfinished_tools", { lifecycle: "active" });
   return { app, workspace, session };
+}
+
+/** Signed-in chat with a deterministic model and a scheduled desktop task. */
+export async function computerMentions(seed: Seed) {
+  const providerId = "computer-mentions-mock";
+  const modelId = "computer-mentions-model";
+  const mock = seed.mock({
+    allowUnauthenticatedMcp: true,
+    tools: [
+      {
+        name: "search_capabilities",
+        description: "Find a computer task capability.",
+        inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+        result: { content: [{ type: "text", text: JSON.stringify({ items: [{ name: "remote-session:create" }] }) }] },
+      },
+      {
+        name: "execute_capability",
+        description: "Start a task on the selected computer.",
+        inputSchema: { type: "object", properties: { name: { type: "string" }, body: { type: "object", properties: { target: { type: "string", enum: ["cloud", "desktop"] }, prompt: { type: "string" } }, required: ["target", "prompt"] } }, required: ["name", "body"] },
+        result: { content: [{ type: "text", text: JSON.stringify({ state: "queued", commandId: "computer-task-witness" }) }] },
+      },
+    ],
+    agentWorkloads: [
+      ...["cloud", "desktop"].map((target): MockAgentWorkload => ({
+        // Only the app's synthetic instruction contains this marker. Without routing, the model refuses the task.
+        promptMarker: `[The user selected @${target}:`,
+        finalReply: "Received computer task.",
+        steps: [
+          { tool: "computer_witness_search_capabilities", arguments: { query: "remote-session:create" } },
+          { tool: "computer_witness_execute_capability", arguments: {}, argumentsFrom: "computer-mention" },
+        ],
+      })),
+      { promptMarker: "COMPUTER-PLAIN-TASK", finalReply: "Received computer task.", steps: [] },
+    ],
+  });
+  const den = await seed.den({ mocks: { agent: mock }, env: { DEN_AUTOMATIONS_ENABLED: "true" } });
+  const created = await seed.api(den.admin, "/v1/automations", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "Daily project summary",
+      instructions: "Summarize today's project notes.",
+      schedule: { kind: "daily", timezone: "UTC", hour: 23, minute: 59 },
+      model: { providerId: "opencode", modelId: "big-pickle", variant: null },
+    }),
+  });
+  if (created.response.status !== 201) throw new Error(`Automation setup failed: ${created.text}`);
+  const app = await seed.desktop({ den, as: "admin", model: `${providerId}/${modelId}` });
+  const workspace = await seed.workspace(app, seed.tmpPath("computer-mentions"));
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    permission: { "computer_witness_*": "allow" },
+    mcp: { computer_witness: { type: "remote", url: den.mocks.agent.mcpUrl, enabled: true, oauth: false } },
+    provider: {
+      [providerId]: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "Computer mentions mock",
+        options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-computer-mentions" },
+        models: { [modelId]: { name: "Computer mentions model" } },
+      },
+    },
+  });
+  const session = await seedSessionRetry(seed, app, { title: "Computer task mentions" });
+  return {
+    den, app, workspace, session,
+    async submittedParts() {
+      // TODO(primitive): inspect submitted engine parts, including synthetic routing instructions.
+      return seed.evalIn(app, `async (workspaceId) => {
+        const port = localStorage.getItem("openwork.server.port");
+        const token = localStorage.getItem("openwork.server.token");
+        const base = "http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId) + "/opencode/session";
+        const headers = { Authorization: "Bearer " + token };
+        const listed = await fetch(base, { headers });
+        if (!listed.ok) throw new Error("Session list failed: " + listed.status);
+        const sessions = await listed.json();
+        const messages = [];
+        for (const session of sessions) {
+          const response = await fetch(base + "/" + encodeURIComponent(session.id) + "/message", { headers });
+          if (!response.ok) throw new Error("Transcript read failed: " + response.status);
+          messages.push(...await response.json());
+        }
+        messages.sort((a, b) => a.info.time.created - b.info.time.created);
+        return messages.filter((message) => message.info.role === "user").map((message) => ({
+          visible: message.parts.filter((part) => part.type === "text" && !part.synthetic).map((part) => part.text).join("").trim(),
+          routing: message.parts.filter((part) => part.type === "text" && part.synthetic && part.text.includes("remote-session:create")).map((part) => part.text),
+        }));
+      }`, { args: [workspace.workspaceId], awaitPromise: true });
+    },
+  };
+}
+
+export const suspendedTurnPrompt = "Continue the deterministic task that spans a laptop sleep.";
+export const suspendedTurnReply = "The task finished after the computer resumed.";
+
+/**
+ * A model whose first answer goes quiet after its opening chunk and never
+ * ends — what a half-open socket looks like after the machine slept — and
+ * whose later answers complete. The witness records every completion so a
+ * spec can prove the engine re-asked once rather than duplicating work.
+ */
+export async function suspendedTurn(seed: Seed, { place }: { place: import("@openwork/env").Place }) {
+  const providerId = "lpr_suspended_turn";
+  const modelId = "suspended-turn-model";
+  const boot = seed.mock({
+    agentWorkloads: [{
+      promptMarker: suspendedTurnPrompt,
+      finalReply: suspendedTurnReply,
+      quietCompletions: 1,
+      steps: [{
+        tool: "bash",
+        arguments: {
+          command: "printf '%s\\n' 'suspended-turn-resumed'",
+          timeout: 30_000,
+          description: "Acknowledge the resumed turn",
+        },
+      }],
+    }],
+  });
+  const { handle: agent } = await boot.boot(place);
+  try {
+    await place.exposeMock(agent);
+    const app = await seed.desktop({ model: `${providerId}/${modelId}` });
+    const workspace = await seed.workspace(app, seed.tmpPath("suspended-turn"));
+    await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+      provider: {
+        [providerId]: {
+          npm: "@ai-sdk/openai-compatible",
+          name: "Suspended turn mock",
+          options: { baseURL: `${agent.url}/v1`, apiKey: "sk-suspended-turn" },
+          models: { [modelId]: { name: "Suspended turn model" } },
+        },
+      },
+    });
+    const session = await seedSessionRetry(seed, app, { title: "Suspended turn" });
+    const startedAt = new Date().toISOString();
+    return {
+      [Symbol.asyncDispose]: () => agent.stop(),
+      app,
+      workspace,
+      session,
+      /** Kinds of every main completion for this turn, in order. */
+      async completionKinds(): Promise<string[]> {
+        const requests = await agent.agentRequests({ promptMarker: suspendedTurnPrompt, sinceIso: startedAt });
+        return requests.filter((request) => request.kind !== "utility").map((request) => request.kind);
+      },
+      /**
+       * Stop the engine process for `ms` and let it continue: from the engine's
+       * point of view this is the lid closing and opening again.
+       */
+      async suspendEngine(ms: number): Promise<void> {
+        // TODO(primitive): read the managed engine process id from the desktop runtime.
+        const info = await seed.evalIn(app, `window.__OPENWORK_ELECTRON__.invokeDesktop("engineInfo")`, { awaitPromise: true, timeoutMs: 30_000 });
+        const pid = recordValue(info, "pid");
+        if (typeof pid !== "number") throw new Error(`Engine pid unavailable: ${JSON.stringify(info)}`);
+        process.kill(pid, "SIGSTOP");
+        try {
+          await new Promise((resolveWait) => setTimeout(resolveWait, ms));
+        } finally {
+          process.kill(pid, "SIGCONT");
+        }
+      },
+      async transcriptFacts(): Promise<{ prompts: number; replies: number; interruptedCards: number; working: boolean }> {
+        // TODO(primitive): count transcript occurrences and interrupted-run cards.
+        const facts = await seed.evalIn(app, `(prompt, reply) => {
+          const text = document.body.innerText;
+          return {
+            prompts: text.split(prompt).length - 1,
+            replies: text.split(reply).length - 1,
+            working: /Working [0-9]/.test(text),
+            interruptedCards: document.querySelectorAll('[data-testid="session-error-interrupted"]').length,
+          };
+        }`, { args: [suspendedTurnPrompt, suspendedTurnReply] });
+        const working = recordValue(facts, "working");
+        const prompts = recordValue(facts, "prompts");
+        const replies = recordValue(facts, "replies");
+        const interruptedCards = recordValue(facts, "interruptedCards");
+        if (typeof working !== "boolean" || typeof prompts !== "number" || typeof replies !== "number" || typeof interruptedCards !== "number") {
+          throw new Error(`Transcript facts were invalid: ${JSON.stringify(facts)}`);
+        }
+        return { prompts, replies, interruptedCards, working };
+      },
+    };
+  } catch (error) {
+    await agent.stop();
+    throw error;
+  }
+}
+
+export const authenticatedConnectPrompt = "Find my connected apps using Connect.";
+export const authenticatedConnectReply = "Connect is working with my signed-in model.";
+
+/** A real provider auth.loader must supply the transport before Connect can run. */
+export async function authenticatedConnect(seed: Seed, { place }: { place: import("@openwork/env").Place }) {
+  const providerId = "authenticated-connect-witness";
+  const modelId = "authenticated-connect-model";
+  const { handle: agent } = await seed.mock({
+    allowUnauthenticatedMcp: true,
+    agentRequiredHeader: { name: "x-witness-auth", value: "loaded" },
+    tools: [{
+      name: "search_capabilities",
+      description: "Find connected apps.",
+      inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+      result: { content: [{ type: "text", text: "Connected apps are available." }] },
+    }],
+    agentWorkloads: [{
+      promptMarker: authenticatedConnectPrompt,
+      finalReply: authenticatedConnectReply,
+      steps: [{ tool: "openwork-cloud_search_capabilities", arguments: { query: "connected apps" } }],
+    }],
+  }).boot(place);
+  try {
+    await place.exposeMock(agent);
+    const root = seed.tmpPath("authenticated-connect");
+    await mkdir(root, { recursive: true });
+    const pluginPath = join(root, "provider-auth.js");
+    await writeFile(pluginPath, `export const WitnessAuth = async () => ({
+      auth: {
+        provider: ${JSON.stringify(providerId)},
+        methods: [{ type: "api", label: "Witness credentials" }],
+        loader: async () => ({
+          apiKey: "test-only",
+          fetch: async (input, init) => {
+            const headers = new Headers(init?.headers);
+            headers.set("x-witness-auth", "loaded");
+            return fetch(input, { ...init, headers });
+          },
+        }),
+      },
+    });\n`);
+    const app = await seed.desktop({ name: "authenticated-connect", model: `${providerId}/${modelId}` });
+    const workspace = await seed.workspace(app, root);
+    // TODO(primitive): install a synthetic provider credential in the isolated engine profile.
+    const status = await seed.evalIn(app, `async (workspaceId, providerId) => {
+      const port = localStorage.getItem("openwork.server.port");
+      const token = localStorage.getItem("openwork.server.token");
+      const response = await fetch("http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId) + "/opencode/auth/" + providerId, {
+        method: "PUT",
+        headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "api", key: "test-only" }),
+      });
+      return response.status;
+    }`, { args: [workspace.workspaceId, providerId], awaitPromise: true, timeoutMs: 60_000 });
+    if (status !== 200) throw new Error(`Witness credential setup failed: ${String(status)}`);
+    await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+      plugin: [pluginPath],
+      permission: { "openwork-cloud_*": "allow" },
+      mcp: { "openwork-cloud": { type: "remote", url: agent.mcpUrl, enabled: true, oauth: false } },
+      provider: {
+        [providerId]: {
+          npm: "@ai-sdk/openai-compatible",
+          name: "Authenticated Connect witness",
+          options: { baseURL: `${agent.url}/v1`, apiKey: "test-only" },
+          models: { [modelId]: { name: "Authenticated Connect model" } },
+        },
+      },
+    });
+    const session = await seedSessionRetry(seed, app, { title: "Authenticated model uses Connect" });
+    return {
+      app, workspace, session,
+      async completionKinds() {
+        return (await agent.agentRequests({ promptMarker: authenticatedConnectPrompt }))
+          .filter((request) => request.kind !== "utility").map((request) => request.kind);
+      },
+      async connectCalls() { return agent.toolCalls({ name: "search_capabilities" }); },
+      [Symbol.asyncDispose]: () => agent.stop(),
+    };
+  } catch (error) {
+    await agent.stop();
+    throw error;
+  }
 }

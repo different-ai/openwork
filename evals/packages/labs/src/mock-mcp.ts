@@ -23,6 +23,8 @@ export interface MockToolCall {
 }
 
 export interface MockAgentToolStep {
+  /** Derive the handoff from the actual model input instead of fixture arguments. */
+  argumentsFrom?: "computer-mention";
   tool: string;
   arguments: Record<string, unknown>;
 }
@@ -30,6 +32,11 @@ export interface MockAgentToolStep {
 export interface MockAgentWorkload {
   promptMarker: string;
   finalReply: string;
+  /** Stream the final reply as consecutive content deltas of this many characters instead of one. */
+  finalReplyChunkSize?: number;
+  /** Opening chunk followed by silence for the first N completions. */
+  quietCompletions?: number;
+  /** Tool calls the agent makes before its final reply; empty answers directly. */
   steps: MockAgentToolStep[];
 }
 
@@ -38,7 +45,7 @@ export interface MockAgentRequest {
   promptMarker: string | null;
   matchedMarkers: string[];
   completedTools: number;
-  kind: "utility" | "tool" | "final" | "error";
+  kind: "utility" | "tool" | "final" | "error" | "quiet";
   toolName: string | null;
   arguments: Record<string, unknown>;
   at: string;
@@ -67,7 +74,16 @@ export interface MockMcpHandle {
   [Symbol.asyncDispose](): Promise<void>;
 }
 
+export interface MockMcpTool {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  result: { content: { type: "text"; text: string }[] };
+}
+
 export interface StartMockMcpOptions {
+  /** Replace the catalog with deterministic tools; served calls remain observable through toolCalls(). */
+  tools?: MockMcpTool[];
   port?: number;
   scriptPath?: string;
   publicUrl?: string;
@@ -83,6 +99,8 @@ export interface StartMockMcpOptions {
   appToolName?: string;
   /** Script deterministic OpenAI-compatible agent turns through this mock. */
   agentWorkloads?: MockAgentWorkload[];
+  /** Require an authentication handler to add this header to model requests. */
+  agentRequiredHeader?: { name: string; value: string };
 }
 
 export type EnterpriseMcpProfileId =
@@ -318,11 +336,21 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
 
   await waitForHealth(url, () => output, child);
 
+  if (options.tools) {
+    const response = await fetch(`${url}/admin/tools`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ tools: options.tools }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new Error(`Mock tool configuration failed: HTTP ${response.status}`);
+  }
+
   if (options.agentWorkloads) {
     const response = await fetch(`${url}/admin/agent-workloads`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workloads: options.agentWorkloads }),
+      body: JSON.stringify({ workloads: options.agentWorkloads, requiredHeader: options.agentRequiredHeader }),
       signal: AbortSignal.timeout(15_000),
     });
     if (!response.ok) {
@@ -377,7 +405,7 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
       const at = typeof entry.at === "string" ? entry.at : "";
       if (sinceIso && at < sinceIso) continue;
       const kind = completion.kind;
-      if (kind !== "utility" && kind !== "tool" && kind !== "final" && kind !== "error") continue;
+      if (kind !== "utility" && kind !== "tool" && kind !== "final" && kind !== "error" && kind !== "quiet") continue;
       const marker = typeof completion.promptMarker === "string" ? completion.promptMarker : null;
       if (promptMarker && marker !== promptMarker) continue;
       if (typeof completion.model !== "string"

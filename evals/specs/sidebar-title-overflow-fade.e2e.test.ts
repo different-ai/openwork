@@ -18,6 +18,12 @@ interface RowState {
   actionsOpacity: string;
 }
 
+interface ListState {
+  clientWidth: number;
+  scrollLeft: number;
+  scrollWidth: number;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -44,6 +50,27 @@ async function rowStates(probe: Probe): Promise<RowState[]> {
       || typeof row.actionsOpacity !== "string") throw new Error(`Unexpected sidebar row: ${JSON.stringify(row)}`);
     return { title: row.title, titleRight: row.titleRight, actionsLeft: row.actionsLeft, actionsOpacity: row.actionsOpacity };
   });
+}
+
+async function listState(probe: Probe): Promise<ListState> {
+  // TODO(primitive): probe.geometry should read the scroll extents of a visible target.
+  const value = await probe.eval(`(() => {
+    const list = document.querySelector('[data-sidebar="content"]');
+    if (!(list instanceof HTMLElement)) return null;
+    return { clientWidth: list.clientWidth, scrollLeft: list.scrollLeft, scrollWidth: list.scrollWidth };
+  })()`);
+  if (!isRecord(value)
+    || typeof value.clientWidth !== "number"
+    || typeof value.scrollLeft !== "number"
+    || typeof value.scrollWidth !== "number") throw new Error(`Unexpected sidebar list state: ${JSON.stringify(value)}`);
+  return { clientWidth: value.clientWidth, scrollLeft: value.scrollLeft, scrollWidth: value.scrollWidth };
+}
+
+/** Nothing in the sidebar list is hidden sideways, so there is nothing to scroll to. */
+async function expectListFits(probe: Probe): Promise<void> {
+  const list = await listState(probe);
+  expect(list.scrollWidth).toBeLessThanOrEqual(list.clientWidth);
+  expect(list.scrollLeft).toBe(0);
 }
 
 async function titleState(probe: Probe, title: string): Promise<TitleState> {
@@ -73,7 +100,7 @@ async function titleState(probe: Probe, title: string): Promise<TitleState> {
   };
 }
 
-test("the sidebar title fade follows only the edges with hidden text", async ({ world, user, probe, step }) => {
+test("the sidebar title fade follows only the edges with hidden text", async ({ world, user, seed, probe, step }) => {
   const workspaceName = world.workspacePath.split("/").at(-1) ?? world.workspacePath;
   const resting = await probe.eventually(() => titleState(probe, world.longTitle), {
     within: 60_000,
@@ -81,6 +108,63 @@ test("the sidebar title fade follows only the edges with hidden text", async ({ 
     until: (state) => state.scrollWidth > state.clientWidth && state.hiddenEdges === "end",
   });
   expect(resting.maskImage).not.toBe("none");
+
+  await step("collapsing the macOS sidebar aligns the pane with the window controls, and reopening restores its inset", async () => {
+    await user.see({ text: world.longTitle });
+    // Exercise the macOS titlebar layout even when the desktop host is Linux.
+    const platformClasses = await seed.evalIn(world.app, `document.documentElement.className`);
+    if (typeof platformClasses !== "string") throw new Error("Desktop platform classes were not readable.");
+    await seed.evalIn(world.app, `(() => {
+      document.documentElement.classList.remove('openwork-platform-linux', 'openwork-platform-windows');
+      document.documentElement.classList.add('openwork-electron', 'openwork-platform-mac');
+    })()`);
+    // TODO(primitive): probe.geometry should compare a pane and its visible titlebar trigger.
+    const geometry = () => probe.eval(`(() => {
+      const pane = document.querySelector('[data-session-pane]');
+      const header = pane?.querySelector('header');
+      const trigger = [...document.querySelectorAll('[data-sidebar="trigger"]')]
+        .find((element) => element.getBoundingClientRect().width > 0);
+      const sidebar = document.querySelector('[data-slot="sidebar"][data-state]');
+      if (!pane || !header || !trigger || !sidebar) return null;
+      const box = pane.getBoundingClientRect();
+      const headerBox = header.getBoundingClientRect();
+      const triggerBox = trigger.getBoundingClientRect();
+      return {
+        isMac: document.documentElement.classList.contains('openwork-platform-mac'),
+        state: sidebar.getAttribute('data-state'),
+        top: box.top,
+        left: box.left,
+        centerOffset: Math.abs(headerBox.top + headerBox.height / 2 - triggerBox.top - triggerBox.height / 2),
+      };
+    })()`);
+    const expanded = await geometry();
+    expect(expanded).toMatchObject({ state: "expanded", top: 8 });
+    if (!isRecord(expanded) || typeof expanded.isMac !== "boolean") throw new Error("Pane geometry was not readable.");
+    await user.press("Meta+b");
+    const collapsed = await probe.eventually(geometry, {
+      within: 10_000,
+      label: "collapsed pane settles against the macOS window edge",
+      until: (value) => isRecord(value) && value.state === "collapsed" && value.left === (expanded.isMac ? 0 : 8),
+    });
+    expect(collapsed).toMatchObject({ top: expanded.isMac ? 0 : 8, left: expanded.isMac ? 0 : 8 });
+    if (expanded.isMac) {
+      if (!isRecord(collapsed) || typeof collapsed.centerOffset !== "number") throw new Error("Titlebar geometry was not readable.");
+      expect(collapsed.centerOffset).toBeLessThanOrEqual(1);
+    }
+    await user.screenshot();
+    await user.press("Meta+b");
+    await probe.eventually(geometry, {
+      within: 10_000,
+      label: "reopened sidebar restores the original pane inset",
+      until: (value) => isRecord(value) && value.state === "expanded" && value.left === expanded.left,
+    });
+    expect(await geometry()).toMatchObject({ top: expanded.top, left: expanded.left });
+    await seed.evalIn(world.app, `(classes) => { document.documentElement.className = classes; }`, { args: [platformClasses] });
+  });
+
+  await step("the list fits the sidebar and does not scroll sideways", async () => {
+    await expectListFits(probe);
+  });
 
   await step("a fitting workspace row stays fully visible on hover", async () => {
     const fitting = await probe.eventually(() => titleState(probe, workspaceName), {
@@ -140,6 +224,10 @@ test("the sidebar title fade follows only the edges with hidden text", async ({ 
     expect(workspaceAfterResize.hiddenEdges).toBe("none");
     expect(workspaceAfterResize.maskImage).toBe("none");
     await user.screenshot();
+  });
+
+  await step("the widened list still fits and does not scroll sideways", async () => {
+    await expectListFits(probe);
   });
 
   await step("below the hover breakpoint, titles stop before the always-visible row actions", async () => {

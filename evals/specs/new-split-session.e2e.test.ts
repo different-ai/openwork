@@ -8,6 +8,7 @@ const paletteInput = { placeholder: "Search actions, settings, and sessions…" 
 type SplitFacts = {
   layoutKind: string;
   focusedPane: string;
+  focusedComposerSessionId: string;
   primarySessionId: string;
   secondarySessionId: string;
   primaryWorkspaceId: string;
@@ -29,6 +30,7 @@ function parseSplitFacts(value: unknown): SplitFacts {
   return {
     layoutKind: text("layoutKind"),
     focusedPane: text("focusedPane"),
+    focusedComposerSessionId: text("focusedComposerSessionId"),
     primarySessionId: text("primarySessionId"),
     secondarySessionId: text("secondarySessionId"),
     primaryWorkspaceId: text("primaryWorkspaceId"),
@@ -41,7 +43,7 @@ function parseSplitFacts(value: unknown): SplitFacts {
   };
 }
 
-test("new split creates fresh same-workspace secondary sessions without moving the primary; New session replaces the focused pane", async ({ world, user, agent, probe, step, place }) => {
+test("new split creates fresh same-workspace secondary sessions without moving the primary; New session replaces the focused pane", async ({ world, user, agent, probe, step, place, evidence }) => {
   // The key chord belongs to the machine running the app, not the one running the spec.
   const paletteShortcut = place.kind !== "daytona" && process.platform === "darwin" ? "Meta+K" : "Control+K";
   const workspaceId = world.workspace.workspaceId;
@@ -89,6 +91,12 @@ test("new split creates fresh same-workspace secondary sessions without moving t
       },
     });
     const firstFacts = parseSplitFacts(firstValue);
+    await probe.eventually(() => world.splitFacts(), {
+      within: 15_000,
+      label: "new secondary composer receives keyboard focus",
+      until: (candidate) => parseSplitFacts(candidate).focusedComposerSessionId === firstFacts.secondarySessionId,
+    });
+    expect(parseSplitFacts(await world.splitFacts()).focusedComposerSessionId).toBe(firstFacts.secondarySessionId);
     expect(firstFacts.layoutKind).toBe("split");
     expect(firstFacts.primarySessionId).toBe(primarySessionId);
     expect(firstFacts.primaryWorkspaceId).toBe(workspaceId);
@@ -146,6 +154,12 @@ test("new split creates fresh same-workspace secondary sessions without moving t
       },
     });
     const secondFacts = parseSplitFacts(secondValue);
+    await probe.eventually(() => world.splitFacts(), {
+      within: 15_000,
+      label: "new secondary composer receives keyboard focus",
+      until: (candidate) => parseSplitFacts(candidate).focusedComposerSessionId === secondFacts.secondarySessionId,
+    });
+    expect(parseSplitFacts(await world.splitFacts()).focusedComposerSessionId).toBe(secondFacts.secondarySessionId);
     expect(secondFacts.layoutKind).toBe("split");
     expect(secondFacts.primarySessionId).toBe(primarySessionId);
     expect(secondFacts.primaryWorkspaceId).toBe(workspaceId);
@@ -170,6 +184,25 @@ test("new split creates fresh same-workspace secondary sessions without moving t
     expect(afterPalette.map((session) => session.sessionId)).toContain(secondFacts.secondarySessionId);
     await user.screenshot();
     return { secondFacts, afterPalette };
+  });
+
+  await step("the agent's server path sees the same layout", async () => {
+    const currentFacts = parseSplitFacts(await world.splitFacts());
+    const result = await world.agentContextViaServer();
+    if (!isRecord(result)) throw new Error(`Invalid server UI context: ${JSON.stringify(result)}`);
+    const context = isRecord(result.context) ? result.context : null;
+    const conversations = context && isRecord(context.conversations) ? context.conversations : null;
+    const layout = conversations && isRecord(conversations.layout) ? conversations.layout : null;
+    expect(result.ok).toBe(true);
+    expect(layout?.kind).toBe(currentFacts.layoutKind);
+    expect(layout?.primarySessionId).toBe(currentFacts.primarySessionId);
+    expect(layout?.secondarySessionId).toBe(currentFacts.secondarySessionId);
+    expect(layout?.focused).toBe(currentFacts.focusedPane);
+    evidence.recordAssertionEvidence(
+      "Desktop split context reaches the agent through the server mailbox",
+      `The server returned ok=true with kind=${layout?.kind}, primarySessionId=${layout?.primarySessionId}, secondarySessionId=${layout?.secondarySessionId}, and focused=${layout?.focused}, all matching the rendered split.`,
+      true,
+    );
   });
 
   await step("New session replaces the focused secondary pane", async () => {
@@ -205,6 +238,12 @@ test("new split creates fresh same-workspace secondary sessions without moving t
       },
     });
     const focusedSecondaryFacts = parseSplitFacts(value);
+    await probe.eventually(() => world.splitFacts(), {
+      within: 15_000,
+      label: "new secondary composer receives keyboard focus",
+      until: (candidate) => parseSplitFacts(candidate).focusedComposerSessionId === focusedSecondaryFacts.secondarySessionId,
+    });
+    expect(parseSplitFacts(await world.splitFacts()).focusedComposerSessionId).toBe(focusedSecondaryFacts.secondarySessionId);
     expect(focusedSecondaryFacts.layoutKind).toBe("split");
     expect(focusedSecondaryFacts.primarySessionId).toBe(primarySessionId);
     expect(focusedSecondaryFacts.primarySurfaceSessionId).toBe(primarySessionId);
@@ -252,6 +291,12 @@ test("new split creates fresh same-workspace secondary sessions without moving t
       },
     });
     const focusedPrimaryFacts = parseSplitFacts(value);
+    await probe.eventually(() => world.splitFacts(), {
+      within: 15_000,
+      label: "new primary composer receives keyboard focus",
+      until: (candidate) => parseSplitFacts(candidate).focusedComposerSessionId === focusedPrimaryFacts.primarySessionId,
+    });
+    expect(parseSplitFacts(await world.splitFacts()).focusedComposerSessionId).toBe(focusedPrimaryFacts.primarySessionId);
     expect(focusedPrimaryFacts.primarySessionId).toMatch(/^ses_/);
     expect(focusedPrimaryFacts.primarySessionId).not.toBe(primarySessionId);
     expect(focusedPrimaryFacts.locationHash).toContain(`/workspace/${workspaceId}/session/${focusedPrimaryFacts.primarySessionId}`);
@@ -264,4 +309,10 @@ test("new split creates fresh same-workspace secondary sessions without moving t
     });
     expect(afterFocusedPrimary).toHaveLength(afterFocusedSecondary.length + 1);
   });
+  evidence.recordAssertionEvidence(
+    "New splits preserve the primary, and New session replaces only the focused pane",
+    "Context-menu and command-palette splits each created one distinct same-workspace secondary session. The focused-secondary and focused-primary New session actions each preserved the opposite pane and created exactly one session.",
+    true,
+  );
+
 });

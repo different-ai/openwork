@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises"
 import { STATUS_CODES } from "node:http"
 import { dirname, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
+import { parseArgs } from "node:util"
 
 type NormalizationCounts = {
   descriptionsFilled: number
@@ -26,7 +27,7 @@ function seedSnapshotEnv(snapshotVersion: string) {
   setEnvDefault("DATABASE_URL", "mysql://root:password@127.0.0.1:3306/openwork_den")
   setEnvDefault("DEN_DB_ENCRYPTION_KEY", "local-dev-db-encryption-key-please-change-1234567890")
   setEnvDefault("BETTER_AUTH_SECRET", "local-dev-secret-not-for-production-use!!")
-  setEnvDefault("BETTER_AUTH_URL", "http://den.local")
+  setEnvDefault("BETTER_AUTH_URL", "http://localhost:8790")
   // Published contract metadata: `servers[0].url` must point at the hosted API
   // so "Try it" works from the docs, and `info.version` must be deterministic
   // (not a git SHA) so CI can diff the regenerated document against the
@@ -150,7 +151,10 @@ async function main() {
   const counts = normalizeOpenApiDocument(document)
   const scriptDir = dirname(fileURLToPath(import.meta.url))
   const repoRoot = resolve(scriptDir, "../../../..")
-  const outputPath = resolve(repoRoot, "packages/docs/openapi.json")
+  const { values } = parseArgs({ options: { output: { type: "string" } } })
+  const outputPath = values.output
+    ? resolve(values.output)
+    : resolve(repoRoot, "packages/docs/openapi.json")
   await mkdir(dirname(outputPath), { recursive: true })
   await writeFile(outputPath, JSON.stringify(document))
 
@@ -169,6 +173,6 @@ try {
   process.exit(1)
 }
 
-// Importing the app opens database pools and auth timers that keep the event
-// loop alive; the document has been written, so exit explicitly.
+// Importing the app starts background service timers and opens pools that keep
+// the event loop alive; the document has been written, so exit explicitly.
 process.exit(0)

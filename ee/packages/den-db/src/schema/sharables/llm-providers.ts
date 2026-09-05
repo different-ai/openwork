@@ -16,6 +16,7 @@ import { TeamTable } from "../teams"
 export const LlmProviderTable = mysqlTable(
   "llm_provider",
   {
+    externalKey: varchar("external_key", { length: 128 }),
     id: denTypeIdColumn("llmProvider", "id").notNull().primaryKey(),
     organizationId: denTypeIdColumn(
       "organization",
@@ -44,6 +45,7 @@ export const LlmProviderTable = mysqlTable(
       .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
   },
   (table) => [
+    uniqueIndex("llm_provider_org_external_key").on(table.organizationId, table.externalKey),
     index("llm_provider_organization_id").on(table.organizationId),
     index("llm_provider_created_by_org_membership_id").on(
       table.createdByOrgMembershipId,

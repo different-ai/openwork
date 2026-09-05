@@ -29,6 +29,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { ChevronLeftIcon } from "lucide-react";
 import type { ModelOption, ModelRef } from "@/app/types";
+import { useCheckDesktopRestriction } from "../domains/cloud/desktop-config-provider";
 import { usePlatform } from "../kernel/platform";
 import {
   resolveSessionNumberShortcutOs,
@@ -207,6 +208,9 @@ export function CommandPalette(props: CommandPaletteProps) {
     [sessionNumberOs],
   );
   const hasNestedModelPicker = props.modelOptions !== undefined && props.onSelectModel !== undefined;
+  // Organization policy (`allowControlSettings`) can hide desktop settings;
+  // the settings palette entries follow the same allow-list as the settings nav.
+  const checkDesktopRestriction = useCheckDesktopRestriction();
 
   const rootItems = useMemo<PaletteItem[]>(() => [
     {
@@ -380,6 +384,7 @@ export function CommandPalette(props: CommandPaletteProps) {
     () => buildCommandPaletteSettingsItems({
       developerMode: props.developerMode,
       capabilities: platform.capabilities,
+      checkRestriction: checkDesktopRestriction,
       onOpenSettings: (route) => {
         props.onClose();
         props.onOpenSettings(route);
@@ -390,6 +395,7 @@ export function CommandPalette(props: CommandPaletteProps) {
       },
     }),
     [
+      checkDesktopRestriction,
       platform.capabilities,
       props.developerMode,
       props.onClose,

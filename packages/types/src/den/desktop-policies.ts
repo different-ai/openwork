@@ -6,6 +6,11 @@ type DesktopPolicyDefinitionEntry = {
   description: string;
   userNotice: string;
   defaultValue: boolean;
+  /**
+   * Value the Restricted policy mode locks this key to, or `null` when the key
+   * is a display preference that Restricted leaves editable.
+   */
+  restrictedValue: boolean | null;
 };
 
 // Canonical desktop policy catalog.
@@ -13,10 +18,12 @@ type DesktopPolicyDefinitionEntry = {
 // To add a new desktop policy item:
 // 1. Add a matching entry to `desktopPolicyDefinitions` below.
 // 2. Choose a safe `defaultValue` for orgs with missing/older policy data.
-// 3. Wire desktop app behavior to read the key through the desktop config hooks.
-// 4. If the key affects Den web editing copy, update the `name`, `description`,
+// 3. Choose its `restrictedValue`: the value the Restricted policy mode locks
+//    the key to, or `null` for a display preference Restricted leaves alone.
+// 4. Wire desktop app behavior to read the key through the desktop config hooks.
+// 5. If the key affects Den web editing copy, update the `name`, `description`,
 //    and `userNotice` here rather than duplicating that copy elsewhere.
-// 5. Do not manually edit `desktopPolicyValueSchema`; it is generated from the
+// 6. Do not manually edit `desktopPolicyValueSchema`; it is generated from the
 //    IDs in this definition list.
 //
 // Policy booleans usually use allow-style names. For every policy item,
@@ -32,6 +39,7 @@ export const desktopPolicyDefinitions = [
     userNotice:
       "Your organization administrator has disabled adding custom providers.",
     defaultValue: true,
+    restrictedValue: false,
   },
   {
     id: "allowZenModel",
@@ -39,6 +47,7 @@ export const desktopPolicyDefinitions = [
     description: "Allow users to use the built in models provided by OpenCode.",
     userNotice: "Your administrator has disabled access to OpenCode Models.",
     defaultValue: true,
+    restrictedValue: false,
   },
   {
     id: "allowMultipleWorkspaces",
@@ -48,6 +57,7 @@ export const desktopPolicyDefinitions = [
     userNotice:
       "Your organization administrator has restricted access to adding additional workspaces.",
     defaultValue: true,
+    restrictedValue: false,
   },
   {
     id: "allowControlSettings",
@@ -56,6 +66,7 @@ export const desktopPolicyDefinitions = [
     userNotice:
       "Your organization administrator has disabled changing desktop app settings.",
     defaultValue: true,
+    restrictedValue: false,
   },
   {
     id: "allowManageExtensions",
@@ -64,6 +75,7 @@ export const desktopPolicyDefinitions = [
     userNotice:
       "Your organization administrator has disabled local extension management.",
     defaultValue: true,
+    restrictedValue: false,
   },
   {
     id: "allowBuiltInExtensions",
@@ -73,6 +85,7 @@ export const desktopPolicyDefinitions = [
     userNotice:
       "Your organization administrator has disabled built-in OpenWork extensions.",
     defaultValue: true,
+    restrictedValue: false,
   },
   {
     id: "allowAlphaUpdates",
@@ -82,6 +95,7 @@ export const desktopPolicyDefinitions = [
     userNotice:
       "Your organization administrator has disabled Alpha desktop updates.",
     defaultValue: true,
+    restrictedValue: false,
   },
   {
     id: "showWelcomePage",
@@ -90,6 +104,7 @@ export const desktopPolicyDefinitions = [
     userNotice:
       "Your organization administrator has disabled the Getting Started page.",
     defaultValue: true,
+    restrictedValue: null,
   },
 ] as const satisfies readonly DesktopPolicyDefinitionEntry[];
 
@@ -126,8 +141,23 @@ export type OnboardingPromptConfig = {
   onboardingPromptDescriptions?: string[];
 };
 
+// Explicit access limits are applied after legacy grants. Omitted access keeps
+// existing policies' grant semantics unchanged.
+export const teamAccessSchema = z.object({
+  mode: z.enum(["custom", "locked"]),
+  capabilities: desktopPolicyValueSchema,
+});
+export type TeamAccess = z.infer<typeof teamAccessSchema>;
+
+function normalizeTeamAccess(value: unknown): TeamAccess | undefined {
+  const raw = coerceJsonRecord(value);
+  const parsed = teamAccessSchema.safeParse(isRecord(raw) ? raw.access : undefined);
+  return parsed.success ? parsed.data : undefined;
+}
+
 export const desktopPolicyDocumentSchema = desktopPolicyValueSchema
   .extend({
+    access: teamAccessSchema.optional(),
     onboardingPrompts: onboardingPromptsSchema.optional(),
     onboardingPromptDescriptions: onboardingPromptDescriptionsSchema.optional(),
   })
@@ -135,6 +165,7 @@ export const desktopPolicyDocumentSchema = desktopPolicyValueSchema
 
 export const desktopPolicyDocumentWriteSchema = desktopPolicyValueSchema
   .extend({
+    access: teamAccessSchema.optional(),
     onboardingPrompts: onboardingPromptsSchema.nullable().optional(),
     onboardingPromptDescriptions: onboardingPromptDescriptionsSchema
       .nullable()
@@ -147,6 +178,7 @@ export type DesktopPolicyDocumentWrite = z.infer<
   typeof desktopPolicyDocumentWriteSchema
 >;
 export type DefaultDesktopPolicyDocument = Required<DesktopPolicyValue> & {
+  access?: TeamAccess;
   onboardingPrompts?: string[];
   onboardingPromptDescriptions?: string[];
 };
@@ -161,6 +193,48 @@ export const desktopPolicyDefaults = Object.fromEntries(
     definition.defaultValue,
   ]),
 ) as Required<DesktopPolicyValue>;
+
+/** Catalog copy the desktop app shows when a policy blocks a capability. */
+export const desktopPolicyUserNotices = Object.fromEntries(
+  desktopPolicyDefinitions.map((definition) => [
+    definition.id,
+    definition.userNotice,
+  ]),
+) as Record<DesktopPolicyKey, string>;
+
+// ---------------------------------------------------------------------------
+// Restricted policy mode: chat and organization-approved skills only.
+//
+// Restricted is an editor mode, not a stored flag. A policy is Restricted when
+// every key with a `restrictedValue` holds that value; display preferences
+// (`restrictedValue: null`) stay editable in both modes. Because the effective
+// policy is a union of grants, Restricted only locks members down when it is
+// applied to the default policy.
+// ---------------------------------------------------------------------------
+export function applyRestrictedDesktopPolicy(
+  value: Required<DesktopPolicyValue>,
+): Required<DesktopPolicyValue> {
+  return Object.fromEntries(
+    desktopPolicyDefinitions.map((definition) => [
+      definition.id,
+      definition.restrictedValue ?? value[definition.id],
+    ]),
+  ) as Required<DesktopPolicyValue>;
+}
+
+export function isRestrictedDesktopPolicyValue(
+  value: Required<DesktopPolicyValue>,
+): boolean {
+  return desktopPolicyDefinitions.every(
+    (definition) =>
+      definition.restrictedValue === null ||
+      value[definition.id] === definition.restrictedValue,
+  );
+}
+
+export const restrictedDesktopPolicyValue = applyRestrictedDesktopPolicy(
+  desktopPolicyDefaults,
+);
 
 // ---------------------------------------------------------------------------
 // Radix color families that can be used as a brand accent.
@@ -328,8 +402,10 @@ export function normalizeDesktopPolicyDocument(
   const policy = normalizeDesktopPolicyValue(coerced);
   const onboardingPromptConfig = normalizeOnboardingPromptConfig(coerced);
 
+  const access = normalizeTeamAccess(coerced);
   return {
     ...policy,
+    ...(access !== undefined ? { access } : {}),
     ...(onboardingPromptConfig !== undefined ? onboardingPromptConfig : {}),
   };
 }
@@ -348,8 +424,10 @@ export function normalizeDesktopPolicyDocumentWrite(
     onboardingPrompts?.length,
   );
 
+  const access = normalizeTeamAccess(coerced);
   return {
     ...policy,
+    ...(access !== undefined ? { access } : {}),
     ...(rawPrompts === null
       ? { onboardingPrompts: null, onboardingPromptDescriptions: null }
       : onboardingPrompts !== undefined
@@ -398,8 +476,10 @@ export function resolveDesktopPolicyDocumentWrite(input: {
           )
         : undefined;
 
+  const access = write.access ?? normalizeTeamAccess(input.existingPolicy);
   return {
     ...policy,
+    ...(access !== undefined ? { access } : {}),
     ...(onboardingPrompts !== undefined ? { onboardingPrompts } : {}),
     ...(onboardingPromptDescriptions !== undefined
       ? { onboardingPromptDescriptions }
@@ -414,8 +494,10 @@ export function normalizeDefaultDesktopPolicyDocument(
   const policy = normalizeDefaultDesktopPolicyValue(coerced);
   const onboardingPromptConfig = normalizeOnboardingPromptConfig(coerced);
 
+  const access = normalizeTeamAccess(coerced);
   return {
     ...policy,
+    ...(access !== undefined ? { access } : {}),
     ...(onboardingPromptConfig !== undefined ? onboardingPromptConfig : {}),
   };
 }
@@ -449,6 +531,17 @@ export function calculateEffectiveDesktopPolicy(input: {
     for (const key of desktopPolicyKeys) {
       if (policy[key] === true) {
         calculated[key] = true;
+      }
+    }
+  }
+
+  for (const document of [input.defaultPolicy, ...input.assignedPolicies]) {
+    const access = normalizeTeamAccess(document);
+    if (!access) continue;
+    for (const definition of desktopPolicyDefinitions) {
+      if (definition.restrictedValue === null) continue;
+      if (access.mode === "locked" || access.capabilities[definition.id] === false) {
+        calculated[definition.id] = false;
       }
     }
   }

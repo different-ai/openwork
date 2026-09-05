@@ -126,7 +126,7 @@ export function PricingGrid(props: PricingGridProps) {
     {
       id: "team",
       title: "Team",
-      price: "$20",
+      price: "$10",
       priceSub: "per seat / month",
       ctaLabel: "Start team plan",
       href: "https://app.openworklabs.com/dashboard/billing",
@@ -143,7 +143,7 @@ export function PricingGrid(props: PricingGridProps) {
     {
       id: "enterprise",
       title: "Enterprise",
-      price: "$50",
+      price: "$40",
       priceSub: "per user / month",
       ctaLabel: "Talk to us",
       href: props.callUrl,

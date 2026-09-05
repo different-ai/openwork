@@ -1,4 +1,5 @@
 export { control, createDesktopHandoffGrant, evalIn, signInDesktopAs } from "@openwork/behaviors";
+export { requestDenLoopback } from "@openwork/labs";
 export { desktop as relaunchDesktop, electronProfilePaths } from "@openwork/hosts";
 export type { DesktopHandle } from "@openwork/hosts";
 export type { Surface } from "@openwork/cdp";

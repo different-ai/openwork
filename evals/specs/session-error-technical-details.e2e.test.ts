@@ -17,11 +17,11 @@ const detailsPanel = { testId: "session-error-details" };
 const statusLine = { text: /Status: 429/ };
 const requestId = { text: new RegExp(REQUEST_ID) };
 
-test("session error cards expose provider diagnostics only in Developer mode", async ({ user, probe, step }) => {
+test("session error cards expose provider diagnostics only in Developer mode", async ({ user, probe, step, world, place }) => {
   // Toggle Developer mode the way a person does: command palette → "Enable/Disable Developer Mode".
   const toggleDeveloperMode = async (next: "on" | "off") => {
     const label = next === "on" ? /enable developer mode/i : /disable developer mode/i;
-    await user.press(process.platform === "darwin" ? "Meta+K" : "Control+K");
+    await user.press(place.kind !== "daytona" && process.platform === "darwin" ? "Meta+K" : "Control+K");
     await user.click({ role: "option", label });
     await probe.eventually(() => probe.storage("openwork.developerMode"), {
       until: (value) => String(value) === (next === "on" ? "1" : "0"),
@@ -67,4 +67,41 @@ test("session error cards expose provider diagnostics only in Developer mode", a
     await user.notSee(requestId);
     await user.notSee({ text: DEBUG_PANEL_TITLE });
   });
+
+  const storageErrors: Array<"disk-full" | "database-error"> = ["disk-full", "database-error"];
+  for (const kind of storageErrors) {
+    await step(`${kind} shows recovery guidance and keeps the stack trace in Developer mode`, async () => {
+      await world.seedStorageError(kind);
+      const title = kind === "disk-full" ? "Not enough disk space" : "OpenWork couldn’t access its saved data";
+      await user.see({ text: title });
+      await user.see({ text: kind === "disk-full" ? /Free up some disk space/ : /check the available disk space/ });
+      await user.notSee({ text: /effect\/sql\/SqlError/ });
+      await user.notSee({ text: /at runLoop/ });
+      await user.notSee(detailsToggle);
+      if (kind === "database-error") await user.notSee({ text: "Not enough disk space" });
+      await toggleDeveloperMode("on");
+      await user.click(detailsToggle);
+      await user.see({ text: /effect\/sql\/SqlError/ });
+      await user.see({ text: /at runLoop/ });
+      await user.see({ role: "button", label: /copy details/i });
+      await toggleDeveloperMode("off");
+      await user.see({ text: title });
+      await user.notSee(detailsPanel);
+      await user.notSee({ text: /at runLoop/ });
+    });
+    await step(`${kind} banner hides the stack trace outside Developer mode`, async () => {
+      await world.seedStorageError(kind, "banner");
+      const title = kind === "disk-full" ? "Not enough disk space" : "OpenWork couldn’t access its saved data";
+      await user.see({ testId: "session-error-card" });
+      await user.see({ text: title });
+      await user.notSee({ text: /at runLoop/ });
+      await toggleDeveloperMode("on");
+      await user.see({ text: /effect\/sql\/SqlError/ });
+      await user.see({ text: /at runLoop/ });
+      await toggleDeveloperMode("off");
+      await user.see({ text: title });
+      await user.notSee({ text: /at runLoop/ });
+    });
+  }
+
 });

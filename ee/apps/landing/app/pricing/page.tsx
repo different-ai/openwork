@@ -26,42 +26,42 @@ const pricingSchema = {
     {
       "@type": "Offer",
       name: "Team",
-      price: "20",
+      price: "10",
       priceCurrency: "USD",
       url: "https://app.openworklabs.com/dashboard/billing",
       availability: "https://schema.org/InStock",
       priceSpecification: {
         "@type": "UnitPriceSpecification",
-        price: "20",
+        price: "10",
         priceCurrency: "USD",
         unitText: "seat per month"
       },
       description:
-        "$20 per seat per month, up to 100 users. Usage analytics, Extension Marketplace, distributed keys, standard support included."
+        "$10 per seat per month, up to 100 users. Usage analytics, Extension Marketplace, distributed keys, standard support included."
     },
     {
       "@type": "Offer",
       name: "Enterprise",
-      price: "50",
+      price: "40",
       priceCurrency: "USD",
       url: "https://openworklabs.com/enterprise",
       availability: "https://schema.org/InStock",
       priceSpecification: {
         "@type": "UnitPriceSpecification",
-        price: "50",
+        price: "40",
         priceCurrency: "USD",
         unitText: "user per month"
       },
       description:
-        "$50 per user per month, cloud or self-hosted. SSO/SAML and SCIM, desktop policies, OpenWork Web, spend observability, standard SLA support. Volume pricing above 100 users."
+        "$40 per user per month, cloud or self-hosted. SSO/SAML and SCIM, desktop policies, OpenWork Web, spend observability, standard SLA support. Volume pricing above 100 users."
     }
   ]
 };
 
 export const metadata = {
-  title: "OpenWork Pricing — Free up to 5 users, $20 Team, $50 Enterprise",
+  title: "OpenWork Pricing — Free up to 5 users, $10 Team, $40 Enterprise",
   description:
-    "OpenWork is free for up to 5 users. Team is $20 per seat per month up to 100 users. Enterprise is $50 per user per month with SSO, desktop policies, and spend observability — same price cloud or self-hosted, volume pricing above 100 users.",
+    "OpenWork is free for up to 5 users. Team is $10 per seat per month up to 100 users. Enterprise is $40 per user per month with SSO, desktop policies, and spend observability — same price cloud or self-hosted, volume pricing above 100 users.",
   alternates: {
     canonical: "/pricing"
   },

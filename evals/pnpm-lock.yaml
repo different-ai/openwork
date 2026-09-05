@@ -26,6 +26,9 @@ importers:
       '@openwork/matchers':
         specifier: workspace:*
         version: link:packages/matchers
+      '@openwork/sdk':
+        specifier: link:../packages/sdk
+        version: link:../packages/sdk
       '@openwork/test-artifacts':
         specifier: workspace:*
         version: link:packages/test-artifacts

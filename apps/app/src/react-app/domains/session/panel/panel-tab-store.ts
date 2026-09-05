@@ -151,7 +151,8 @@ function isSameTab(left: PanelTab, right: PanelTab) {
       left.favicon === right.favicon &&
       left.status === right.status &&
       left.canGoBack === right.canGoBack &&
-      left.canGoForward === right.canGoForward
+      left.canGoForward === right.canGoForward &&
+      left.ownerSessionId === right.ownerSessionId
     );
   }
 
@@ -194,6 +195,7 @@ function mergePersistedSessions(
         status: "ready",
         canGoBack: false,
         canGoForward: false,
+        ownerSessionId: sessionId,
       }));
 
     sessions[sessionId] = {

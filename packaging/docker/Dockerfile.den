@@ -25,8 +25,10 @@ COPY packages/connect-link/package.json /app/packages/connect-link/package.json
 COPY packages/headless-threads/package.json /app/packages/headless-threads/package.json
 COPY packages/mcp-apps/package.json /app/packages/mcp-apps/package.json
 # apps/desktop/package.json is copied below for version metadata, and it depends
-# on @openwork/paths, so the package must exist for workspace resolution.
+# on @openwork/paths and @openwork/browser-tabs, so those packages must exist for
+# workspace resolution.
 COPY packages/paths/package.json /app/packages/paths/package.json
+COPY packages/browser-tabs/package.json /app/packages/browser-tabs/package.json
 # The root workspace declares the shared evaluator helpers as dev dependencies.
 # Their manifests must be present even though the Den API image does not build
 # or ship their source.
@@ -52,6 +54,7 @@ COPY packages/connect-link /app/packages/connect-link
 COPY packages/headless-threads /app/packages/headless-threads
 COPY packages/mcp-apps /app/packages/mcp-apps
 COPY packages/paths /app/packages/paths
+COPY packages/browser-tabs /app/packages/browser-tabs
 COPY ee/packages/utils /app/ee/packages/utils
 COPY ee/packages/den-db /app/ee/packages/den-db
 COPY ee/packages/telemetry-contracts /app/ee/packages/telemetry-contracts

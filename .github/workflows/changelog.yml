@@ -58,7 +58,7 @@ jobs:
         run: |
           if grep -Fq "[$TAG](https://github.com/different-ai/openwork/compare/" packages/docs/changelog.mdx; then
             echo "documented=true" >> "$GITHUB_OUTPUT"
-            echo "$TAG is already documented; skipping changelog automation."
+            echo "$TAG is already documented; skipping docs generation and only refreshing the release notes."
           else
             echo "documented=false" >> "$GITHUB_OUTPUT"
           fi
@@ -131,7 +131,7 @@ jobs:
           echo "PREV=$PREV" >> "$GITHUB_ENV"
 
       - name: Setup Node
-        if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'
+        if: steps.guard.outputs.stable == 'true'
         uses: actions/setup-node@v6
         with:
           node-version: 24
@@ -197,8 +197,10 @@ jobs:
             --body-file /tmp/pr_body.txt)"
           gh pr merge "$pr_url" --auto --squash --delete-branch
 
+      # Runs for already-documented tags too, so a manual dispatch can repair a
+      # release whose notes were hand-written or whose original dispatch failed.
       - name: Update GitHub Release notes
-        if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'
+        if: steps.guard.outputs.stable == 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
