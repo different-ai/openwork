@@ -225,7 +225,7 @@ function offeredAgentTool(body, wanted) {
 }
 
 function skillCatalogArguments(messages, skillName) {
-  const system = messages.filter((message) => message.role === "system").map(messageContentText).join("\n");
+  const system = messages.filter((message) => message.role === "system").map(agentContentText).join("\n");
   if (!system.includes("You are OpenWork.")) throw new Error("The model did not receive OpenWork operating instructions");
   const entries = [...system.matchAll(/<skill>([\s\S]*?)<\/skill>/g)];
   const entry = entries.reverse().find((match) => match[1].includes(`<name>${skillName}</name>`));
