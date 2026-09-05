@@ -1019,7 +1019,10 @@ export async function backgroundUpdateWorld(seed: Seed) {
     app,
     snapshot: () => evalIn(app, `(() => {
       const { checks, downloads, installs } = window.__backgroundUpdateWitness;
-      return { checks, downloads, installs, route: location.hash };
+      return {
+        checks, downloads, installs, route: location.hash,
+        updateInSidebar: Boolean(document.querySelector('[data-sidebar="footer"] [aria-label="Restart to update"]')),
+      };
     })()`),
     finishDownload: () => evalIn(app, `window.__backgroundUpdateWitness.finishDownload()`),
     returnToApp: () => evalIn(app, `(() => {

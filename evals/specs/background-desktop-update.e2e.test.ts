@@ -10,28 +10,29 @@ test("updates download outside Settings and offer a persistent, optional restart
     until: (value) => typeof value === "object" && value !== null && Reflect.get(value, "downloads") === 1,
   });
   expect(await world.snapshot()).toMatchObject({ checks: 1, downloads: 1, installs: 0 });
-  await user.notSee({ text: "Update ready" });
+  await user.notSee({ text: "Restart to update" });
   await world.returnToApp();
   expect(await world.snapshot()).toMatchObject({ checks: 1, downloads: 1, installs: 0 });
   await world.finishDownload();
-  await user.see({ text: "Installs when you quit. Keep working until then." });
+  await user.see({ text: "Restart to update" });
   await world.openSettings();
-  await user.see({ text: "Installs when you quit. Keep working until then." });
+  await user.see({ text: "Restart to update" });
   await world.openWorkspace();
   await world.returnToApp();
-  await user.see({ text: "Installs when you quit. Keep working until then." });
+  await user.see({ text: "Restart to update" });
   expect(await world.snapshot()).toMatchObject({ checks: 1, downloads: 1, installs: 0 });
-  await user.click("Restart now");
+  expect(await world.snapshot()).toMatchObject({ updateInSidebar: true });
+  await user.click("Restart to update");
   await user.see({ text: "Restart to update?" });
   await user.click("Cancel");
   await user.notSee({ text: "Restart to update?" });
   expect(await world.snapshot()).toMatchObject({ installs: 0 });
-  await user.see({ text: "Installs when you quit. Keep working until then." });
+  await user.see({ text: "Restart to update" });
   await user.looks([
-    "A compact update strip sits below the workspace without covering the composer or navigation",
+    "A quiet Restart to update action appears in the sidebar above the account menu; there is no banner below the workspace",
     "The workspace remains usable and no restart dialog is open",
   ]);
-  await user.click("Restart now");
+  await user.click("Restart to update");
   await user.click("Install & restart");
   await probe.eventually(world.snapshot, {
     within: 5_000, label: "restart only after confirmation",

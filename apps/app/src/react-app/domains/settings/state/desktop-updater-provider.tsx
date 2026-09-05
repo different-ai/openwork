@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
-import { Button } from "../../../../components/ui/button";
+import { ArrowUpCircle } from "lucide-react";
+import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "../../../../components/ui/sidebar";
 import { t } from "../../../../i18n";
 import { useLocal } from "../../../kernel/local-provider";
 import { useDesktopConfig } from "../../cloud/desktop-config-provider";
@@ -59,21 +60,28 @@ export function useDesktopUpdater() {
 
 export function DesktopUpdaterProvider({ children }: { children: ReactNode }) {
   const updater = useUpdater();
+  return <DesktopUpdaterContext.Provider value={updater}>{children}</DesktopUpdaterContext.Provider>;
+}
+
+export function DesktopUpdateAction() {
+  const updater = useContext(DesktopUpdaterContext);
   const [confirmRestart, setConfirmRestart] = useState(false);
+  if (updater?.updateStatus?.state !== "ready") return null;
   return (
-    <DesktopUpdaterContext.Provider value={updater}>
-      <div className="flex h-full min-h-0 flex-col">
-        <div className="min-h-0 flex-1">{children}</div>
-        {updater.updateStatus?.state === "ready" ? (
-          <aside aria-label={t("settings.update_ready_notice")} className="flex shrink-0 items-center justify-end gap-3 border-t border-border bg-background px-4 py-2">
-            <div className="min-w-0">
-              <p className="text-xs font-medium">{t("settings.update_ready_notice")}</p>
-              <p className="text-xs text-muted-foreground">{t("settings.update_install_on_quit")}</p>
-            </div>
-            <Button size="sm" variant="secondary" onClick={() => setConfirmRestart(true)}>{t("settings.update_restart_now")}</Button>
-          </aside>
-        ) : null}
-      </div>
+    <>
+      <SidebarMenu>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            aria-label={t("settings.update_restart_now")}
+            tooltip={{ children: t("settings.update_install_on_quit"), hidden: false }}
+            onClick={() => setConfirmRestart(true)}
+            className="text-muted-foreground"
+          >
+            <ArrowUpCircle aria-hidden="true" />
+            <span>{t("settings.update_restart_now")}</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      </SidebarMenu>
       <ConfirmModal
         open={confirmRestart}
         title={t("settings.update_restart_now_title")}
@@ -86,6 +94,6 @@ export function DesktopUpdaterProvider({ children }: { children: ReactNode }) {
         }}
         onCancel={() => setConfirmRestart(false)}
       />
-    </DesktopUpdaterContext.Provider>
+    </>
   );
 }

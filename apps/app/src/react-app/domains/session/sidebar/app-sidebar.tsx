@@ -35,6 +35,7 @@ import { LazyMotion, Reorder, domMax, m, useDragControls } from "motion/react";
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { WorkspaceInfo } from "../../../../app/lib/desktop";
 import { OpenWorkDenHelpLink } from "../../workspace/openwork-den-help-link";
+import { DesktopUpdateAction } from "../../settings/state/desktop-updater-provider";
 import { NotificationBell } from "../../../shell/notification-center";
 import { useUiStateStore } from "../../../shell/ui-state-store";
 import type {
@@ -1270,6 +1271,7 @@ export function AppSidebar(props: AppSidebarProps) {
         </LazyMotion>
 
         <SidebarFooter className="border-t border-sidebar-border/60 p-1.5 pe-0">
+          <DesktopUpdateAction />
           <AccountStatusMenu {...props.status} onOpenAccountSettings={props.onOpenAccountSettings} />
         </SidebarFooter>
 
