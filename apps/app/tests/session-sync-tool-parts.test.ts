@@ -353,3 +353,37 @@ describe("tool part mapper", () => {
     }
   });
 });
+
+test("live attachment notes render once across repeated updates", () => {
+  const syncInput = { workspaceId: "workspace-video", baseUrl: "http://127.0.0.1:1234", openworkToken: "token" };
+  const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+  const release = trackWorkspaceSessionSync(syncInput, "session-video");
+  try {
+    __applySessionSyncEventForTest(syncInput, {
+      type: "message.updated",
+      properties: { info: { id: "msg-video", role: "user", sessionID: "session-video" } },
+    });
+    const event = {
+      type: "message.part.updated",
+      properties: { part: {
+        id: "note-video", type: "text", synthetic: true,
+        messageID: "msg-video", sessionID: "session-video", text: "Hidden workspace paths",
+        metadata: { openworkAttachments: [
+          { filename: "recording.mp4", mime: "video/mp4", url: "file:///workspace/recording.mp4" },
+          { filename: "recording.mov", mime: "video/quicktime", url: "file:///workspace/recording.mov" },
+        ] },
+      } },
+    };
+    __applySessionSyncEventForTest(syncInput, event);
+    __applySessionSyncEventForTest(syncInput, event);
+    const transcript = getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey("workspace-video", "session-video"));
+    expect(transcript?.[0]?.parts).toMatchObject([
+      { type: "file", filename: "recording.mp4", mediaType: "video/mp4" },
+      { type: "file", filename: "recording.mov", mediaType: "video/quicktime" },
+    ]);
+    expect(transcript?.[0]?.parts).toHaveLength(2);
+  } finally {
+    release();
+    cleanup();
+  }
+});

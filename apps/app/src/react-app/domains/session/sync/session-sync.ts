@@ -12,6 +12,7 @@ import { isGeneratedSessionTitle } from "@/app/lib/session-title";
 import { normalizeEvent } from "@/app/utils";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX, type OpencodeEvent, type PendingPermission, type PendingQuestion } from "@/app/types";
 import {
+  attachmentNoteToUIParts,
   createSessionErrorUIMessage,
   snapshotToUIMessages,
 } from "./usechat-adapter";
@@ -745,6 +746,7 @@ function toUIPart(part: Part): UIMessage["parts"][number] | null {
 }
 
 function toUIParts(part: Part): UIMessage["parts"] {
+  if (part.type === "text" && part.synthetic) return attachmentNoteToUIParts(part);
   if (part.type === "file") return toFileUIParts(part);
   const mapped = toUIPart(part);
   if (!mapped) return [];
