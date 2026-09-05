@@ -53,4 +53,17 @@ test("MCP database read recovery preserves authentication and surfaces persisten
   expect(forbidden.status).toBe(500);
   expect(database.queries).toHaveLength(1);
   evidence.recordAssertionEvidence("Database authorization errors are never retried or converted to missing credentials", "A synthetic provider 403 remained HTTP 500 after one database request.", true);
+
+  database.respondWith([503], /^insert into `user`/i);
+  const signup = await fetch(`${den.ref.apiUrl}/api/auth/sign-up/email`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: den.ref.webUrl },
+    body: JSON.stringify({ name: "Synthetic retry proof", email: "retry-proof@example.test", password: "Synthetic-proof-password-27!" }),
+    signal: AbortSignal.timeout(20_000),
+  });
+  expect(signup.ok).toBe(false);
+  expect(signup.status).toBeGreaterThanOrEqual(400);
+  expect(database.queries).toHaveLength(1);
+  expect(database.queries[0]).toMatch(/^insert into `user`/i);
+  evidence.recordAssertionEvidence("A failed signup write is never replayed", "A synthetic signup reached the real user INSERT and received a database 503; the API rejected the signup after exactly one INSERT attempt, so an uncertain write was not replayed.", true);
 });

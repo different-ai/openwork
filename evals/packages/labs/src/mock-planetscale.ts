@@ -5,6 +5,7 @@ import { startEnterpriseTlsReverseEdge } from "./egress.ts";
 export async function mockPlanetScale(queryPattern: RegExp) {
   const queries: string[] = [];
   let statuses: number[] = [];
+  let matching = queryPattern;
   const upstream = createServer(async (request, response) => {
     let body = "";
     for await (const chunk of request) body += String(chunk);
@@ -14,7 +15,7 @@ export async function mockPlanetScale(queryPattern: RegExp) {
       response.writeHead(400).end();
       return;
     }
-    const matched = queryPattern.test(payload.query);
+    const matched = matching.test(payload.query);
     if (matched) queries.push(payload.query);
     const status = matched ? statuses.shift() ?? 200 : 200;
     response.writeHead(status, { "content-type": "application/json" });
@@ -30,7 +31,8 @@ export async function mockPlanetScale(queryPattern: RegExp) {
     host: new URL(edge.candidateUrl).host,
     caPath: edge.rootPemPath,
     queries,
-    respondWith(next: number[]) {
+    respondWith(next: number[], query = queryPattern) {
+      matching = query;
       queries.length = 0;
       statuses = [...next];
     },
