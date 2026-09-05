@@ -12,7 +12,7 @@ function record(value: unknown): value is Record<string, unknown> {
 test("organization billing survives selection and blocks destructive deletion", { timeout: 420_000 }, async ({ evidence, place }) => {
   needs({ placement: "local", env: ["OPENWORK_EVAL_MYSQL_URL"] });
   await using den = await server({ place, web: true, org: { name: "Billing Recovery", members: { observer: { name: "Synthetic Member" } } }, env: {
-    STRIPE_SECRET_KEY: "", POLAR_ACCESS_TOKEN: "", LINEAR_API_KEY: "", DEN_OPENWORK_WEB_ENABLED: "true",
+    STRIPE_SECRET_KEY: "", STRIPE_OPENWORK_WEB_PRICE_ID: "price_synthetic_web", POLAR_ACCESS_TOKEN: "", LINEAR_API_KEY: "", DEN_OPENWORK_WEB_ENABLED: "true",
   } });
   if (!den.database) throw new Error("This journey requires its own synthetic database");
   const databaseUrl = den.database.url;
@@ -26,7 +26,7 @@ test("organization billing survives selection and blocks destructive deletion", 
   });
   try {
     await queryDenDatabase(databaseUrl,
-      "INSERT INTO org_subscriptions (id, organization_id, type, status, stripe_customer_id, stripe_subscription_id, quantity, current_period_end, cancel_at_period_end) VALUES (?, ?, 'web', 'active', 'cus_synthetic_billing', 'sub_synthetic_billing', 1, DATE_ADD(NOW(), INTERVAL 30 DAY), true)",
+      "INSERT INTO org_subscriptions (id, organization_id, type, status, stripe_customer_id, stripe_subscription_id, stripe_price_id, quantity, current_period_end, cancel_at_period_end) VALUES (?, ?, 'web', 'active', 'cus_synthetic_billing', 'sub_synthetic_billing', 'price_synthetic_web', 1, DATE_ADD(NOW(), INTERVAL 30 DAY), true)",
       ["osub_00000000000000000000000001", subscribed.id]);
 
     const blocked = await request("/v1/org", subscribed.id, "DELETE");
