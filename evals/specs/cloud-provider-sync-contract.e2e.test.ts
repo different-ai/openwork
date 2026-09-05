@@ -437,7 +437,7 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
   expect(typeof chosenDefault).toBe("string");
   expect(String(chosenDefault)).toContain(CATALOG_MODEL_ID);
   await evalIn(desktopApp, `(() => {
-    window.__modelSelectionProof = { changes: 0, loops: 0, unavailable: false };
+    window.__modelSelectionProof = { changes: 0, loops: 0, unavailable: document.body.innerText.includes("Model no longer available") };
     window.addEventListener("openwork.defaultModelChanged", () => window.__modelSelectionProof.changes++);
     const original = console.error;
     console.error = (...args) => {
@@ -448,6 +448,8 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
       if (document.body.innerText.includes("Model no longer available")) window.__modelSelectionProof.unavailable = true;
     }).observe(document.body, { childList: true, subtree: true });
   })()`);
+
+  expect(await evalIn(desktopApp, `window.__modelSelectionProof.unavailable`)).toBe(false);
 
   // ── Claim 3: loud skips — a dropped provider must name itself ───────────
   // The schema (apps/server/src/cloud-provider-sync.ts:38-69) carries no
