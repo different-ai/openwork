@@ -558,7 +558,7 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
         headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") }
       });
       const text = await response.text();
-      results.push({ status: response.status, leaksKey: text.includes("sk-openwork-sync-contract-eval-only") });
+      results.push({ status: response.status, leaksKey: text.includes("sk-openwork-sync-contract-eval-only"), ...(response.ok ? {} : { error: text.replaceAll("sk-openwork-sync-contract-eval-only", "[redacted]") }) });
     }
     return results;
   })()`, { awaitPromise: true });
