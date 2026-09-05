@@ -58,7 +58,8 @@ dmg:
   iconTextSize: 13
   window:
     width: 760
-    height: 500
+    # Keep the final launch step visible even when Finder shows tabs/path/status bars.
+    height: 600
   contents:
     - x: 180
       y: 285
@@ -77,3 +78,14 @@ win:
   icon: resources/icons/icon.ico
   target:
     - nsis
+nsis:
+  oneClick: true
+  perMachine: false
+  installerIcon: resources/icons/icon.ico
+  uninstallerIcon: resources/icons/icon.ico
+  installerHeaderIcon: resources/icons/icon.ico
+  shortcutName: Open Coworker
+  uninstallDisplayName: Open Coworker
+  createDesktopShortcut: false
+  runAfterFinish: true
+  deleteAppDataOnUninstall: false

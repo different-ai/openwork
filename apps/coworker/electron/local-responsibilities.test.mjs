@@ -161,6 +161,9 @@ test("queued runs wait their turn, advance the schedule once, and can be cancell
   assert.equal(cancelled.latestRun.status, "running", "cancelling a queued run never touches the running one");
   const untouched = await cancelQueuedLocalRun(coworkersDir, "scout", created.id, cancelled.latestRun.id);
   assert.equal(untouched.latestRun.status, "running");
+  await assert.rejects(beginLocalResponsibilityRun(coworkersDir, "scout", created.id, { runId: second.latestRun.id }), /cancelled or has already started/);
+  await assert.rejects(beginLocalResponsibilityRun(coworkersDir, "scout", created.id, { runId: started.latestRun.id }), /cancelled or has already started/);
+  assert.deepEqual((await listLocalResponsibilities(coworkersDir, "scout"))[0], untouched, "a stale queue entry never recreates a run");
 });
 
 test("finished runs keep a bounded history with the coworker's summary and can be resumed in their thread", async () => {

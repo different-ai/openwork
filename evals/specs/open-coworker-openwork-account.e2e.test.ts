@@ -249,7 +249,7 @@ function connectionResponse(message: Record<string, unknown>): Record<string, un
           name: SKILL_APP_TOOL,
           title: "Skill studio",
           description: "Browse the skills your team shares.",
-          inputSchema: { type: "object", properties: {}, additionalProperties: false },
+          inputSchema: { type: "object", properties: { topic: { type: "string", description: "What to find in shared skills" } }, required: ["topic"], additionalProperties: false },
           annotations: { readOnlyHint: true, destructiveHint: false },
           _meta: { ui: { resourceUri: SKILL_APP_RESOURCE } },
         }],
@@ -257,6 +257,9 @@ function connectionResponse(message: Record<string, unknown>): Record<string, un
     };
   }
   if (message.method === "tools/call" && params.name === SKILL_APP_TOOL) {
+    if (!isRecord(params.arguments) || params.arguments.topic !== "shared skills") {
+      return { jsonrpc: "2.0", id, result: { isError: true, content: [{ type: "text", text: "A topic is required." }] } };
+    }
     return {
       jsonrpc: "2.0",
       id,
@@ -464,6 +467,8 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
 
   // --- Mock organization model: an OpenAI-compatible endpoint that answers deterministically.
   const completionAuthorizations: string[] = [];
+  let connectedInstructionsSeen = false;
+  let gatewaySearchUnavailable = false;
   const model = createServer((request, response) => {
     const url = request.url ?? "";
     if (request.method === "GET" && url.startsWith("/v1/models")) {
@@ -475,6 +480,14 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
         completionAuthorizations.push(request.headers.authorization ?? "");
         let body: unknown = null;
         try { body = JSON.parse(raw); } catch { body = null; }
+        if (isRecord(body) && Array.isArray(body.messages)) {
+          connectedInstructionsSeen ||= body.messages.some((message: unknown) => isRecord(message)
+            && message.role === "system"
+            && typeof message.content === "string"
+            && message.content.includes("## Working with connected apps")
+            && message.content.includes("search_capabilities")
+            && message.content.includes("An app being connected is not consent to every action."));
+        }
         const prompt = lastUserText(body);
         const reply = prompt.includes("SECOND") ? `SECOND ${REPLY}` : REPLY;
         const chunks = [
@@ -573,7 +586,9 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
             tool: typeof params.name === "string" ? params.name : typeof params.uri === "string" ? params.uri : "",
             authorization,
           });
-          const reply = isGateway ? gatewayResponse(candidate) : connectionResponse(candidate);
+          const reply = isGateway && gatewaySearchUnavailable && candidate.method === "tools/call" && params.name === "search_capabilities"
+            ? { jsonrpc: "2.0", id: candidate.id, result: { isError: true, content: [{ type: "text", text: "Catalog temporarily unavailable" }] } }
+            : isGateway ? gatewayResponse(candidate) : connectionResponse(candidate);
           if (reply) replies.push(reply);
         }
         if (replies.length === 0) {
@@ -803,6 +818,9 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(connectCard).toMatchObject({ route: `${APPS_TOOLS_ROUTE}/connected`, status: `Connected as ${ORG_NAME}`, askEnabled: true, createSkillEnabled: true, detail: "" });
   if (!isRecord(connectCard) || typeof connectCard.text !== "string") throw new Error("Connect card facts were unavailable.");
   expect(connectCard.text).toContain(ORG_NAME);
+  expect(connectCard.text).toContain("Start with a task");
+  expect(connectCard.text).toContain("Just describe the result.");
+  expect(connectCard.text).not.toContain("can use everything");
   expect(connectCard.text.toLowerCase()).not.toContain("mcp");
   expect(mintedTokens).toBeGreaterThanOrEqual(1);
   const gatewayToolLists = gatewayCalls.filter((call) => call.endpoint === "gateway" && call.method === "tools/list");
@@ -823,7 +841,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(connectHealth.present).toEqual(expect.arrayContaining(["openwork-cloud_search_capabilities", "openwork-cloud_execute_capability"]));
   evidence.recordAssertionEvidence(
     "Signing in wires OpenWork Connect into the coworker's workspace",
-    `After sign-in the app minted ${mintedTokens} gateway token(s) and registered the gateway at ${denBaseUrl}/mcp/agent in Scout's workspace; the embedded server reported it usable with both capability tools present, every gateway call carried the minted bearer token, the Apps & tools root row read Connected as ${ORG_NAME}, and the Connected screen led with Ask Scout and Create a skill enabled and no MCP vocabulary.`,
+    `After sign-in the app minted ${mintedTokens} gateway token(s) and registered the gateway at ${denBaseUrl}/mcp/agent in Scout's workspace; the embedded server reported it usable with both capability tools present, every gateway call carried the minted bearer token, the Apps & tools root row read Connected as ${ORG_NAME}, and the Connected screen led with Start with a task and Create a skill enabled and no MCP vocabulary.`,
     true,
   );
 
@@ -880,11 +898,22 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(pluginsRowText).toContain("needs attention");
   expect(connectionsRowText).toContain("Connections");
   expect(connectionsRowText).toContain("2");
-  expect(connectionsRowText).toContain("1 needs you");
+  expect(connectionsRowText).toContain("1 needs attention");
   const searchQueries = gatewayCalls.filter((call) => call.endpoint === "gateway" && call.method === "tools/call" && call.tool === "search_capabilities");
   expect(searchQueries.length).toBeGreaterThanOrEqual(2);
   expect(searchQueries.length).toBeLessThanOrEqual(4);
   expect(gatewayCalls.some((call) => call.endpoint === "gateway" && call.method === "resources/read" && call.tool === SKILL_INDEX_URI)).toBe(true);
+
+  // Browsing an unavailable keyword offers help as a draft, never an implicit execution.
+  const callsBeforeDraft = completionAuthorizations.length;
+  await fill(app, '[data-testid="apps-tools-search"]', "prepare a project handover");
+  await clickTestId(app, "apps-tools-ask-search");
+  expect(String(await evalIn(app, `document.querySelector('textarea[aria-label="Message Scout"]')?.value ?? ""`))).toBe("Help me with this using my connected apps: prepare a project handover\n\nFind what's available and suggest the next step before taking action.");
+  expect(completionAuthorizations.length).toBe(callsBeforeDraft);
+  expect(await evalIn(app, `document.querySelectorAll('[data-message-role="user"]').length`)).toBe(0);
+  await fill(app, 'textarea[aria-label="Message Scout"]', "");
+  await openAppsAndTools(app);
+  await clickTestId(app, "apps-tools-row-connected");
 
   await clickTestId(app, "apps-tools-row-connections");
   const connectionRows = await waitFor(app, `(() => {
@@ -967,15 +996,28 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(appCatalog, `App catalog: ${JSON.stringify(appCatalog)}`).toMatchObject({
     apps: { servers: expect.arrayContaining([expect.objectContaining({ displayName: "Skill studio", connectionId: CONNECTION_ID, reachable: true })]) },
   });
-  await clickCrumb(app, 1);
-  await clickTestId(app, "apps-tools-row-connected");
-  await clickTestId(app, "apps-tools-row-connected-apps");
-  await waitFor(app, `(() => {
+  async function openSkillStudio() {
+    await openAppsAndTools(app);
+    await clickTestId(app, "apps-tools-row-connected");
+    await clickTestId(app, "apps-tools-row-connected-apps");
+    await waitFor(app, `(() => {
     const row = [...document.querySelectorAll('[data-testid="coworker-mcp-app"]')].find((candidate) => (candidate.textContent ?? "").includes("Skill studio"));
     if (!(row instanceof HTMLElement) || !(row.textContent ?? "").includes("OpenWork Connect")) return false;
     row.click();
     return true;
   })()`, { timeoutMs: 120_000, label: "Skill studio App from OpenWork Connect" });
+  }
+  await openSkillStudio();
+  expect(await evalIn(app, `document.querySelector('[data-testid="coworker-mcp-app-detail"] textarea') === null`)).toBe(true);
+  expect(await evalIn(app, `document.querySelector('[data-testid="apps-tools-open-app"]') === null`)).toBe(true);
+  const appCallsBeforeDraft = gatewayCalls.filter((call) => call.endpoint === "connection" && call.method === "tools/call").length;
+  await clickTestId(app, "apps-tools-ask");
+  expect(String(await evalIn(app, `document.querySelector('textarea[aria-label="Message Scout"]')?.value ?? ""`))).toBe("Help me use Skill studio to: ");
+  expect(gatewayCalls.filter((call) => call.endpoint === "connection" && call.method === "tools/call").length).toBe(appCallsBeforeDraft);
+  await fill(app, 'textarea[aria-label="Message Scout"]', "");
+  await openSkillStudio();
+  await clickTestId(app, "apps-tools-advanced-input");
+  await fill(app, '[data-testid="coworker-mcp-app-detail"] textarea', '{"topic":"shared skills"}');
   await clickTestId(app, "apps-tools-open-app");
   await waitFor(app, `document.querySelector(${json(`[data-mcp-app-resource="${SKILL_APP_RESOURCE}"]`)})?.getAttribute("data-mcp-app-ready") === "true"`, {
     timeoutMs: 120_000,
@@ -989,16 +1031,33 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   await clickTestId(app, "coworker-connect-create-skill");
   const skillDraft = String(await waitFor(app, `(() => {
     const composer = document.querySelector('textarea[aria-label="Message Scout"]');
-    return composer instanceof HTMLTextAreaElement && composer.value.includes("create-skill") ? composer.value : false;
+    return composer instanceof HTMLTextAreaElement && composer.value.includes("repeatable task") ? composer.value : false;
   })()`, { timeoutMs: 30_000, label: "create-skill message prefilled" }));
-  expect(skillDraft).toContain('Search capabilities for "create skill"');
+  expect(skillDraft).toBe("Help me turn a repeatable task into a skill for my team. The task is: ");
+  expect(skillDraft).not.toMatch(/search_capabilities|execute_capability|MCP|conn_eval/);
   expect(await evalIn(app, `[...document.querySelectorAll('[data-message-role="user"]')].length`)).toBe(0);
   await fill(app, 'textarea[aria-label="Message Scout"]', "");
   evidence.recordAssertionEvidence(
     "Gateway Apps render and skill creation starts from the Connected screen",
-    `The Skill studio App, published by an organization connection behind the Connect gateway, was listed under Connected › Apps with its OpenWork Connect source line, opened through the connection's own tools/call and resources/read, and mounted in the sandbox; two Backs returned to the Connected screen, where Create a skill prefilled Scout's discussion with a search-first create-skill request without sending it.`,
+    `The Skill studio App, published by an organization connection behind the Connect gateway, was listed under Connected › Apps with its OpenWork Connect source line, opened through the connection's own tools/call and resources/read, and mounted in the sandbox; two Backs returned to the Connected screen, where Create a skill prefilled Scout's discussion with a plain-language request about the repeatable task, without sending it.`,
     true,
   );
+
+  // A failed discovery stays recoverable and cannot be cached as an empty account.
+  await openAppsAndTools(app);
+  gatewaySearchUnavailable = true;
+  await waitFor(app, `(() => { const button = document.querySelector('button[aria-label="Refresh"]'); if (!(button instanceof HTMLButtonElement) || button.disabled) return false; button.click(); return true; })()`, { timeoutMs: 30_000, label: "refresh connected apps" });
+  await waitForText(app, "Some connected apps and skills couldn't be loaded", { timeoutMs: 60_000 });
+  expect(String(await evalIn(app, `document.querySelector('[data-testid="coworker-capabilities"]')?.textContent ?? ""`))).not.toContain("Your organization has not connected any services");
+  gatewaySearchUnavailable = false;
+  await new Promise((resolve) => setTimeout(resolve, 15_100));
+  await evalIn(app, `window.dispatchEvent(new Event("online")); true`);
+  await waitFor(app, `!document.querySelector('[data-testid="apps-tools-connect-problem"]') && document.querySelector('button[aria-label="Refresh"]')?.disabled === false`, { timeoutMs: 60_000, label: "catalog refreshed after the outage" });
+  await clickTestId(app, "apps-tools-row-connected");
+  await clickTestId(app, "apps-tools-row-connections");
+  await waitForText(app, "Notion", { timeoutMs: 30_000 });
+  await backToActivity(app);
+  evidence.recordAssertionEvidence("Connected work starts with a task and discovery errors recover without configuration", "Task and app actions filled ordinary editable discussion drafts without a model request or app execution. An app requiring input showed no JSON editor by default; its advanced path still opened with validated input. A catalog failure showed a retry message and going back online refreshed the connection list without a manual configuration step.", true);
 
   // --- A real discussion turn on that model, with the credential delivered by the server, not the UI.
   const prompt = `Reply with exactly ${REPLY}.`;
@@ -1017,6 +1076,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(String(replyModel)).toContain(MODEL_ID);
   expect(completionAuthorizations.length).toBeGreaterThanOrEqual(1);
   expect(completionAuthorizations.every((value) => value === `Bearer ${PROVIDER_API_KEY}`)).toBe(true);
+  expect(connectedInstructionsSeen).toBe(true);
   await waitFor(app, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready"`, {
     timeoutMs: 60_000,
     label: "coworker settles to Ready after a matched reply",

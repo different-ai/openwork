@@ -42,7 +42,7 @@ export type ConnectRowStatus = PlainStatus & {
 /** The "Connected with OpenWork" row, from the gateway's own state. */
 export function connectRowStatus(state: ConnectState | null, signedIn: boolean, orgName: string): ConnectRowStatus {
   if (!signedIn) {
-    return { label: "Not connected", tone: "mist", detail: "Sign in to OpenWork to bring your organization's apps and tools here.", action: "sign-in" };
+    return { label: "Not connected", tone: "mist", detail: "Sign in to use the apps and tools available through your OpenWork account.", action: "sign-in" };
   }
   if (!state || state.status === "connecting") return { label: "Connecting", tone: "mist", detail: "Setting up OpenWork Connect for this coworker.", action: null };
   if (state.status === "connected") {
@@ -58,18 +58,18 @@ export function connectRowStatus(state: ConnectState | null, signedIn: boolean, 
       return {
         label: "Needs setup by an admin",
         tone: "amber",
-        detail: state.health?.failure?.recommendedAction || "An organization admin needs to allow agent access in OpenWork Cloud.",
+        detail: "Ask your workspace admin to restore access to connected apps in OpenWork.",
         action: null,
       };
     }
     return {
       label: "Needs attention",
       tone: "amber",
-      detail: state.health?.failure?.recommendedAction || state.message || "OpenWork Connect is not ready for this coworker yet.",
+      detail: "Your connected apps aren't ready yet. Try reconnecting; your current work is saved.",
       action: "repair",
     };
   }
-  return { label: "Unavailable", tone: "rose", detail: state.message, action: "repair" };
+  return { label: "Temporarily unavailable", tone: "amber", detail: "Couldn't reach your connected apps. Try reconnecting when you're online.", action: "repair" };
 }
 
 /** The status the gateway's search returns for an organization connection that needs a person. */

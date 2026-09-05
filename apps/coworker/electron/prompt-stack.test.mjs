@@ -65,7 +65,7 @@ test("the fixed instruction stack stays within its budget, and the variable part
   assert.ok(freshTotal <= FIXED_STACK_BUDGET_CHARS, `the fixed stack is ${freshTotal} chars; the budget is ${FIXED_STACK_BUDGET_CHARS}`);
   // The tool catalog is the largest fixed cost; the contract is the second. Both are known quantities.
   const catalog = fresh.find(([name]) => name === "tool catalog")[1];
-  assert.equal(fullCatalog().length, 24);
+  assert.equal(fullCatalog().length, 26);
   assert.ok(catalog.length < 18_000, `the tool catalog is ${catalog.length} chars`);
   assert.ok(fresh.find(([name]) => name === "AGENTS.md")[1].length < 15_000);
 

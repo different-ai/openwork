@@ -3,7 +3,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { clickButton, coworker, evalIn, fill, needs, resolveHost, test, waitFor, waitForText } from "@openwork/testkit";
+import { clickButton, coworker, evalIn, fill, needs, resolveHost, screenshot, test, waitFor, waitForText } from "@openwork/testkit";
 import { expect, onTestFinished } from "vitest";
 
 /**
@@ -448,6 +448,41 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     true,
   );
 
+  // Native appearance must arrive through preload, while accessibility can make
+  // the chrome solid without replacing the mascot or either onboarding action.
+  await waitFor(app, `["none", "vibrancy", "mica"].includes(document.documentElement.dataset.windowMaterial)`, {
+    timeoutMs: 10_000, label: "native window appearance",
+  });
+  await screenshot(app);
+  await app.client.send("Emulation.setEmulatedMedia", { features: [
+    { name: "prefers-reduced-transparency", value: "reduce" },
+    { name: "prefers-reduced-motion", value: "reduce" },
+  ] });
+  try {
+    const accessibleAppearance = await evalIn(app, `(() => {
+      const shell = document.querySelector('.window-shell');
+      const launcher = document.querySelector('[data-testid="onboarding-launcher"]');
+      return {
+        surface: getComputedStyle(shell).backgroundColor,
+        transition: getComputedStyle(shell).transitionDuration,
+        launcherBlur: getComputedStyle(launcher).backdropFilter,
+        brandPreserved: Boolean(document.querySelector('svg[aria-label="Open Coworker"]')),
+        localEnabled: !document.querySelector('[data-testid="onboarding-local-choice"]').disabled,
+        cloudEnabled: !document.querySelector('[data-testid="onboarding-cloud-choice"]').disabled,
+      };
+    })()`);
+    expect(accessibleAppearance).toEqual({
+      surface: "rgb(9, 12, 18)", transition: "0s", launcherBlur: "none",
+      brandPreserved: true, localEnabled: true, cloudEnabled: true,
+    });
+  } finally {
+    await app.client.send("Emulation.setEmulatedMedia", { features: [] });
+  }
+  evidence.recordAssertionEvidence(
+    "Native window polish preserves first-run actions and respects reduced transparency and motion",
+    "The packaged app supplied native appearance through preload. With reduced transparency and motion enabled, the frame was fully opaque, the launcher had no blur, and transitions stopped; the original mascot and both onboarding actions remained available.", true,
+  );
+
   await clickButtonContaining(app, "Use this Mac");
 
   // --- Local mode: exactly what this Mac has, one Connect per row, the free model, and Add another.
@@ -703,6 +738,8 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
       emptyText: empty.innerText.split("\\n").map((line) => line.trim()).filter(Boolean),
       emptyButtons: empty.querySelectorAll("button").length,
       starterCards: [...document.querySelectorAll("main button")].filter((button) => /focus on today|think through a decision|catch me up/i.test(button.textContent ?? "")).length,
+      conversationSurface: getComputedStyle(document.querySelector('.glass-main')).backgroundColor,
+      conversationBlur: getComputedStyle(document.querySelector('.glass-main')).backdropFilter,
     };
   })()`, { timeoutMs: 60_000, label: "conversation-first workspace" });
   expect(conversationFirst).toMatchObject({
@@ -717,6 +754,8 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     headerIconLabels: [],
     emptyButtons: 0,
     starterCards: 0,
+    conversationSurface: "rgb(9, 12, 18)",
+    conversationBlur: "none",
   });
   if (!isRecord(conversationFirst) || !Array.isArray(conversationFirst.emptyText)) throw new Error("Conversation-first facts were unavailable.");
   expect(conversationFirst.emptyText[0]).toBe("Scout");
@@ -736,6 +775,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   })()`, { label: "Activity icon" });
   await waitFor(app, `document.querySelector('[data-testid="context-panel"]')?.dataset.collapsed === "false"`, { timeoutMs: 30_000, label: "details panel open" });
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-activity-summary"]'))`, { timeoutMs: 60_000, label: "Activity view" });
+  await screenshot(app);
 
   // The Activity view is useful as soon as it opens: what is happening now, then what the
   // coworker holds as three flat rows, and no technical vocabulary. The header owns the one

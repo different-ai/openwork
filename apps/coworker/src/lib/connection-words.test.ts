@@ -16,7 +16,7 @@ function health(code: string, recommendedAction = ""): ConnectHealth {
 
 test("the Connected with OpenWork row maps every gateway state to plain words", () => {
   assert.deepEqual(connectRowStatus(null, false, "Acme"), {
-    label: "Not connected", tone: "mist", detail: "Sign in to OpenWork to bring your organization's apps and tools here.", action: "sign-in",
+    label: "Not connected", tone: "mist", detail: "Sign in to use the apps and tools available through your OpenWork account.", action: "sign-in",
   });
   assert.equal(connectRowStatus(null, true, "Acme").label, "Connecting");
   assert.equal(connectRowStatus({ status: "connecting" }, true, "Acme").label, "Connecting");
@@ -33,14 +33,14 @@ test("the Connected with OpenWork row maps every gateway state to plain words", 
   for (const code of ["mcp_membership_revoked", "cloud_mcp_disabled", "wrong_mcp_resource", "cloud_token_org_mismatch"]) {
     const status = connectRowStatus({ status: "attention", health: health(code, "Enable Agent access in Settings → Connect"), message: "x" }, true, "Acme");
     assert.equal(status.label, "Needs setup by an admin", code);
-    assert.equal(status.detail, "Enable Agent access in Settings → Connect");
+    assert.equal(status.detail, "Ask your workspace admin to restore access to connected apps in OpenWork.");
     assert.equal(status.action, null);
   }
   const attention = connectRowStatus({ status: "attention", health: health("opencode_engine_unreachable"), message: "engine down" }, true, "Acme");
   assert.deepEqual([attention.label, attention.tone, attention.action], ["Needs attention", "amber", "repair"]);
-  assert.equal(connectRowStatus({ status: "attention", health: null, message: "Not ready" }, true, "Acme").detail, "Not ready");
+  assert.equal(connectRowStatus({ status: "attention", health: null, message: "Not ready" }, true, "Acme").detail, "Your connected apps aren't ready yet. Try reconnecting; your current work is saved.");
   const unavailable = connectRowStatus({ status: "unavailable", message: "No token" }, true, "Acme");
-  assert.deepEqual(unavailable, { label: "Unavailable", tone: "rose", detail: "No token", action: "repair" });
+  assert.deepEqual(unavailable, { label: "Temporarily unavailable", tone: "amber", detail: "Couldn't reach your connected apps. Try reconnecting when you're online.", action: "repair" });
 });
 
 test("a Cloud connection status names the exact human step and where to take it", () => {

@@ -15,6 +15,7 @@ import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { resolveCoworkerFile } from "./coworkers.mjs";
+import { ASSIGNMENT_TOOL_NAMES, SELF_TOOL_NAMES, TEAM_TOOL_NAMES } from "../src/lib/coworker-tools.ts";
 
 export const WORKERS_DIR = "workers";
 export const WORKERS_REGISTRY_FILE = "workers.json";
@@ -27,6 +28,19 @@ export const MAX_TURN_BUDGET = 100;
 /** The coworker reviews at most once per this window; findings in between batch. */
 export const REVIEW_DEBOUNCE_MS = 60_000;
 export const WORKER_THREAD_TITLE_PREFIX = "Worker: ";
+
+/** Workers use documents and connected tools, but management belongs to the
+ * coworker. Enforce its direct tool boundary in the native session as well as
+ * explaining it in the prompt. Shared workspace files are not a sandbox. */
+export function workerTurnTools() {
+  const management = [
+    "worker_spawn", "worker_steer", "worker_pause", "worker_resume", "worker_cancel",
+    ...ASSIGNMENT_TOOL_NAMES.filter((name) => name !== "assignments_list"),
+    ...SELF_TOOL_NAMES.filter((name) => name !== "self_read"),
+    ...TEAM_TOOL_NAMES.filter((name) => name !== "team_list"),
+  ];
+  return { task: false, ...Object.fromEntries(management.map((name) => [`coworker_${name}`, false])) };
+}
 
 export const WORKER_STATUSES = ["starting", "running", "waiting", "paused", "finished", "cancelled", "failed"];
 const TERMINAL_STATUSES = new Set(["finished", "cancelled", "failed"]);
@@ -163,6 +177,8 @@ function normalizeStoredWorker(raw) {
     endedAt: cleanTimestamp(raw.endedAt),
     lastFindingAt: cleanTimestamp(raw.lastFindingAt),
     steerCount: Number.isFinite(raw.steerCount) ? Math.max(0, Math.floor(raw.steerCount)) : 0,
+    pendingSteers: Array.isArray(raw.pendingSteers) ? raw.pendingSteers.filter((steer) => steer && typeof steer.text === "string" && SPAWNERS.has(steer.by)) : [],
+    pendingTurn: raw.pendingTurn && typeof raw.pendingTurn.messageId === "string" && typeof raw.pendingTurn.prompt === "string" ? raw.pendingTurn : null,
     error: typeof raw.error === "string" ? raw.error : "",
   };
 }
@@ -209,6 +225,8 @@ export async function createWorker(coworkersDir, slug, input, { now = Date.now()
       endedAt: null,
       lastFindingAt: null,
       steerCount: 0,
+      pendingSteers: [],
+      pendingTurn: null,
       error: "",
     };
     await writeMetadata(coworkersDir, worker);
@@ -258,11 +276,15 @@ const updateLocks = new Map();
  * settling can never overwrite a stop that arrived while it ran. A Worker
  * that has finished, stopped, or failed does not change status again.
  */
-export async function updateWorker(coworkersDir, slug, id, patch = {}, { now = Date.now() } = {}) {
+export async function updateWorker(coworkersDir, slug, id, change = {}, { now = Date.now() } = {}) {
   const key = metadataPath(coworkersDir, slug, id);
   const previous = updateLocks.get(key) ?? Promise.resolve();
   const run = previous.catch(() => undefined).then(async () => {
     const current = await getWorker(coworkersDir, slug, id);
+    // Compute lifecycle changes while holding the lock, against the latest
+    // pause, stop, and steering — never a snapshot read before those actions.
+    const patch = typeof change === "function" ? change(current) : change;
+    if (patch === null) return current;
     const next = { ...current, updatedAt: now };
     if (patch.status !== undefined && patch.status !== current.status) {
       if (!WORKER_STATUSES.includes(patch.status)) throw new Error("Unknown Worker status.");
@@ -282,6 +304,8 @@ export async function updateWorker(coworkersDir, slug, id, patch = {}, { now = D
     if (patch.lifespan !== undefined) next.lifespan = normalizeLifespan(patch.lifespan, { now: 0 });
     if (patch.lastFindingAt !== undefined) next.lastFindingAt = cleanTimestamp(patch.lastFindingAt);
     if (patch.steerCount !== undefined) next.steerCount = Math.max(0, Math.floor(Number(patch.steerCount) || 0));
+    if (patch.pendingSteers !== undefined) next.pendingSteers = patch.pendingSteers;
+    if (patch.pendingTurn !== undefined) next.pendingTurn = patch.pendingTurn;
     if (patch.error !== undefined) next.error = cleanText(patch.error, 2_000);
     return writeMetadata(coworkersDir, next);
   });
@@ -291,6 +315,44 @@ export async function updateWorker(coworkersDir, slug, id, patch = {}, { now = D
   } finally {
     if (updateLocks.get(key) === run) updateLocks.delete(key);
   }
+}
+
+/** Steering survives a restart, including while paused or waiting for capacity. */
+export async function queueWorkerSteer(coworkersDir, slug, id, text, by) {
+  const message = cleanText(text, MAX_FINDING_TEXT);
+  if (!message) throw new Error("Say what the Worker should do differently.");
+  if (!SPAWNERS.has(by)) throw new Error("Unknown Worker steering source.");
+  const updated = await updateWorker(coworkersDir, slug, id, (worker) => {
+    if (isWorkerFinished(worker)) throw new Error("This Worker has already stopped.");
+    return {
+      pendingSteers: [...worker.pendingSteers, { by, text: message }],
+      steerCount: worker.steerCount + 1,
+      ...(worker.status === "waiting" ? { waitingFor: "turn" } : {}),
+    };
+  });
+  await appendWorkerEvent(coworkersDir, slug, id, { kind: "steer", text: message, by });
+  return updated;
+}
+
+/** Save a turn before sending it. Recovery reuses its message id and prompt,
+ * so an accepted turn is observed again instead of executing the work twice. */
+export async function prepareWorkerTurn(coworkersDir, slug, id, coworkerName) {
+  return updateWorker(coworkersDir, slug, id, (worker) => {
+    if (isWorkerFinished(worker) || worker.status === "paused") return null;
+    if (worker.status === "waiting" && worker.waitingFor === "decision" && worker.pendingSteers.length === 0) return null;
+    const body = worker.pendingSteers.length > 0
+      ? steerBody(worker.pendingSteers, coworkerName)
+      : worker.threadId ? CONTINUE_BODY : BEGIN_BODY;
+    return {
+      status: "running",
+      waitingFor: "",
+      pendingSteers: worker.pendingTurn ? worker.pendingSteers : [],
+      pendingTurn: worker.pendingTurn ?? {
+        messageId: `msg_${Date.now().toString(16)}${randomUUID().replace(/-/g, "").slice(0, 20)}`,
+        prompt: workerTurnPrompt({ worker, coworkerName, body }),
+      },
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -408,7 +470,7 @@ export async function registerWorkerThread(coworkersDir, slug, threadId) {
 
 export const BEGIN_BODY = "Begin working toward the goal now.";
 export const CONTINUE_BODY = "Continue toward the goal from your last finding.";
-export const RECOVERED_STATUS = "Paused when the app closed; resumes on the next turn.";
+export const RECOVERED_STATUS = "Checking the interrupted step before continuing after the app closed.";
 
 /**
  * Every Worker turn opens with the same frame: who it is, the goal, how long
@@ -494,6 +556,19 @@ export function parseWorkerReport(text) {
     return { kind: "done", text: textOf(done) || (finding ? textOf(finding) : "Done.") };
   }
   return { kind: last.kind, text: textOf(last) || (last.kind === "decision" ? "Needs a decision." : source.slice(0, MAX_FINDING_TEXT)) };
+}
+
+/** Only a completed reply to this admitted turn is a finding. An idle
+ * engine can still hold the partial message left by a crash or interruption. */
+export function workerTurnOutcome(result, transcript, messageId) {
+  if (result.outcome !== "settled" || result.terminalError) {
+    return { kind: "failed", error: result.terminalError?.message || (result.outcome === "timeout" ? "The turn timed out after one hour" : `The turn ${result.outcome}`) };
+  }
+  const reply = transcript.messages.filter((message) => message.role === "assistant" && message.parentId === messageId).at(-1);
+  if (!reply || reply.completedAt === null) {
+    return { kind: "failed", error: "The step was interrupted before it finished. Review its work before starting again." };
+  }
+  return { kind: "settled", report: parseWorkerReport(reply.text) };
 }
 
 /**
@@ -726,7 +801,7 @@ export function workerToolCatalog() {
     },
     {
       name: "worker_spawn",
-      description: `Start a Worker for one goal that outlives this reply: watching something over time, a long research pass, a multi-step job. It works in my workspace with my files and tools, reports a finding after each bounded step, and each finding wakes me to review it. Give it a short name and a goal that says what done looks like. Choose its lifespan — a number of turns, a deadline, or until stopped — or leave it out and the person's effort dial sets the turns (${DEFAULT_TURN_BUDGET} at Balanced). Then tell the person in a sentence what I started. Never start a Worker to answer a quick question, and never from inside a Worker.`,
+      description: `Start a helper for one bounded goal beyond this reply. It takes steps while this Mac and app are on and reports findings for review. Give a name and goal saying what done means. Lifespan: turns, deadline, or until stopped; omit for the effort dial's budget (${DEFAULT_TURN_BUDGET} at Balanced). Use an assignment for timed or recurring checks. Never for a quick question or from inside a Worker. Tell the person what started.`,
       inputSchema: {
         type: "object",
         properties: {
@@ -757,6 +832,16 @@ export function workerToolCatalog() {
         required: ["id", "text"],
         additionalProperties: false,
       },
+    },
+    {
+      name: "worker_pause",
+      description: "Put a Worker on hold when asked. Its current step can finish; steering is kept until Resume. Stop is permanent.",
+      inputSchema: { type: "object", properties: { id: WORKER_ID_SCHEMA }, required: ["id"], additionalProperties: false },
+    },
+    {
+      name: "worker_resume",
+      description: "Continue a paused Worker when asked, keeping its remaining lifespan and steering. Cannot restart a stopped Worker.",
+      inputSchema: { type: "object", properties: { id: WORKER_ID_SCHEMA }, required: ["id"], additionalProperties: false },
     },
     {
       name: "worker_cancel",
@@ -821,7 +906,7 @@ function describeWorkerForModel(worker, now) {
  * Each returns `{ text, structured }`: a plain sentence for the model and the
  * card the app's receipts read.
  */
-export function createWorkerToolHandlers({ coworkersDir, spawn, steer, cancel, now = Date.now }) {
+export function createWorkerToolHandlers({ coworkersDir, spawn, steer, cancel, pause, resume, now = Date.now }) {
   const idOf = (args) => {
     const id = typeof args.id === "string" ? args.id.trim() : "";
     if (!isWorkerId(id)) throw new Error("Name the Worker by its id, as listed by workers_list.");
@@ -874,6 +959,24 @@ export function createWorkerToolHandlers({ coworkersDir, spawn, steer, cancel, n
       return {
         text: `Stopped "${worker.name}". Its findings stay in the Workers view; it will not work again.`,
         structured: { worker: workerCard(worker, { action: "stopped" }) },
+      };
+    },
+    worker_pause: async (slug, args) => {
+      const worker = await pause(slug, idOf(args));
+      return {
+        text: `Paused "${worker.name}". Its current step can finish; no new step starts until it is resumed.`,
+        structured: { worker: workerCard(worker, { action: "paused" }) },
+      };
+    },
+    worker_resume: async (slug, args) => {
+      const before = await getWorker(coworkersDir, slug, idOf(args));
+      if (isWorkerFinished(before)) throw new Error("This Worker has already stopped. Check workers_list before deciding what to do next.");
+      const worker = await resume(slug, before.id);
+      return {
+        text: before.status === "paused"
+          ? `Resumed "${worker.name}". It continues with its remaining lifespan when this Mac has capacity.`
+          : `"${worker.name}" is not paused; its state is unchanged.`,
+        structured: { worker: workerCard(worker, { action: before.status === "paused" ? "resumed" : "unchanged" }) },
       };
     },
     worker_findings: async (slug, args) => {

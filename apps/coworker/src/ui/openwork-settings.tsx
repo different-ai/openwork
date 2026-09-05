@@ -1,3 +1,5 @@
+import { AllHandsPreferences } from "@/ui/all-hands";
+import type { AllHandsSettings } from "@/lib/bridge";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AssignedCoworkers } from "@/ui/assigned-coworkers";
 import {
@@ -21,9 +23,10 @@ import { Button, ErrorNote, StatusDot } from "@/ui/kit";
 import { LocalProviders } from "@/ui/local-providers";
 import { ModelsMembershipCard } from "@/ui/models-membership";
 
-export type SettingsSection = "general" | "account" | "models" | "engine";
+export type SettingsSection = "general" | "account" | "models" | "engine" | "all-hands";
 
 const SECTIONS: Array<{ id: SettingsSection; label: string; detail: string }> = [
+  { id: "all-hands", label: "All Hands", detail: "An optional team conversation and daily briefing" },
   { id: "general", label: "General", detail: "Open Coworker and shared defaults" },
   { id: "account", label: "Account", detail: "OpenWork account and organization" },
   { id: "models", label: "AI models", detail: "What every coworker can use: your account, this Mac, and the free model" },
@@ -112,7 +115,9 @@ export function OpenWorkSettings({
   onRefreshRuntime,
   onRestartRuntime,
   onCoworkerChanged,
+  onAllHandsChanged,
 }: {
+  onAllHandsChanged: (settings: AllHandsSettings) => void;
   active?: boolean;
   runtime: RuntimeInfo;
   session: DenSession | null;
@@ -298,6 +303,7 @@ export function OpenWorkSettings({
         </header>
         <main className="min-h-0 flex-1 overflow-y-auto px-8 py-8">
           <div className="mx-auto w-full max-w-[760px] space-y-6">
+            {section === "all-hands" ? <><AllHandsPreferences key={active ? "open" : "closed"} onChanged={onAllHandsChanged} />{coworkers.length < 2 ? <p className="text-sm text-mist">Add a second coworker to gather your team in All Hands. Your preferences will be ready for them.</p> : null}</> : null}
             {section === "general" ? (
               <>
                 <div>
