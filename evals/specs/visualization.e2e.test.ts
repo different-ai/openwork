@@ -11,7 +11,7 @@ test("a user previews and revises a lightweight design in conversation", async (
   step,
 }) => {
   await user.type("composer", "Sketch a project overview");
-  await user.press("Enter");
+  await user.click("Run task");
   await user.see("Your first sketch is ready.", { timeoutMs: 90_000 });
   await step(
     "the real visualization tool produces a safe inline mockup",
@@ -61,7 +61,7 @@ test("a user previews and revises a lightweight design in conversation", async (
       );
       expect((await probe.composer()).userMessageCount).toBe(before);
       await user.type("composer", "Make it calmer", { replace: false });
-      await user.press("Enter");
+      await user.click("Run task");
       await user.see("Your revised sketch is ready.", { timeoutMs: 90_000 });
       await user.see("Visualization · v2 · Mockup");
       await user.see("Visualization · v1 · Mockup");
