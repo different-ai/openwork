@@ -284,7 +284,7 @@ function SessionMenuContent({
   const canOpenInSplit = Boolean(primary)
     && !isSameWorkbenchSession(sessionRef, primary)
     && !isSameWorkbenchSession(sessionRef, secondary);
-  const canCreateNewSplit = Boolean(primary);
+  const canCreateNewSplit = isSameWorkbenchSession(sessionRef, primary);
   const openInSplitView = () => {
     const tab = {
       workspaceId,
@@ -1157,20 +1157,6 @@ export function AppSidebar(props: AppSidebarProps) {
               >
                 <SquarePen className="size-4" />
                 <span className="flex-1 truncate">{t("session.new_task")}</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                type="button"
-                data-sidebar-new-split
-                className="text-sidebar-foreground/60"
-                aria-label={t("session_management.split_view")}
-                tooltip={t("session_management.split_view")}
-                disabled={props.newTaskDisabled}
-                onClick={() => props.onCreateSplitTaskInWorkspace(props.selectedWorkspaceId)}
-              >
-                <Columns2 className="size-4" />
-                <span className="flex-1 truncate">{t("session_management.split_view")}</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
             {props.onOpenSessionSearch ? (

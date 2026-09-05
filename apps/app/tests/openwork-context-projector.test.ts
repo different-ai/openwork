@@ -106,6 +106,7 @@ describe("OpenWork context projector", () => {
 });
 
 const splitWorkbench: WorkbenchSnapshot = {
+  sideChats: {},
   revision: 5,
   primary: { workspaceId: "workspace-a", workspaceTitle: "Workspace A", sessionId: "session-a", title: "Current plan" },
   tabs: [

@@ -5,12 +5,14 @@ import {
   focusWorkbenchPane,
   openWorkbenchTab,
   setWorkbenchSplit,
+  setWorkbenchSideChat,
   syncWorkbenchSnapshot,
   type WorkbenchSnapshot,
 } from "../src/react-app/domains/session/chat/workbench-store";
 
 const emptyWorkbench: WorkbenchSnapshot = {
   revision: 0,
+  sideChats: {},
   primary: null,
   tabs: [],
   secondary: null,
@@ -156,4 +158,48 @@ describe("workbench store", () => {
     expect(loading.tabs.map((tab) => tab.sessionId)).toEqual(["session-a", "session-b"]);
     expect(loading.secondary?.sessionId).toBe("session-b");
   });
+});
+
+
+test("restores each main session's own side chat and removes closed references", () => {
+  const sessions = ["a", "b", "side-a", "side-b"].map((sessionId) => ({ workspaceId: "workspace", sessionId }));
+  const sync = (state: WorkbenchSnapshot, primarySessionId: string | null) => syncWorkbenchSnapshot(state, {
+    workspaceId: "workspace", primarySessionId, sessionsKnown: true, sessions,
+  });
+  let state = sync(emptyWorkbench, "a");
+  state = openWorkbenchTab(state, sessions[2]!);
+  state = setWorkbenchSplit(state, sessions[2]!);
+  state = sync(state, "b");
+  expect(state.secondary).toBeNull();
+  state = openWorkbenchTab(state, sessions[3]!);
+  state = setWorkbenchSplit(state, sessions[3]!);
+  state = sync(state, "a");
+  expect(state.secondary?.sessionId).toBe("side-a");
+  state = sync(state, "b");
+  expect(state.secondary?.sessionId).toBe("side-b");
+  state = closeWorkbenchTab(state, sessions[2]!);
+  state = sync(state, "a");
+  expect(state.secondary).toBeNull();
+  state = sync(state, null);
+  expect(setWorkbenchSplit(state, sessions[3]!)).toBe(state);
+});
+
+test("a side chat created after navigating attaches to its original owner", () => {
+  const owner = { workspaceId: "workspace", sessionId: "a" };
+  const other = { workspaceId: "workspace", sessionId: "b" };
+  const chat = { workspaceId: "workspace", sessionId: "side-a" };
+  let state = syncWorkbenchSnapshot(emptyWorkbench, {
+    workspaceId: "workspace", primarySessionId: "a", sessionsKnown: true, sessions: [owner, other, chat],
+  });
+  state = syncWorkbenchSnapshot(state, {
+    workspaceId: "workspace", primarySessionId: "b", sessionsKnown: true, sessions: [owner, other, chat],
+  });
+  state = openWorkbenchTab(state, chat);
+  state = setWorkbenchSideChat(state, owner, chat);
+  expect(state.primary?.sessionId).toBe("b");
+  expect(state.secondary).toBeNull();
+  state = syncWorkbenchSnapshot(state, {
+    workspaceId: "workspace", primarySessionId: "a", sessionsKnown: true, sessions: [owner, other, chat],
+  });
+  expect(state.secondary?.sessionId).toBe("side-a");
 });
