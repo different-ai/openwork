@@ -21,6 +21,8 @@ test("large v2 skill catalogs stay inside the native instruction limit", async (
     const value = await buildOpenWorkV2Instructions(testConfig(root), skills, false);
     expect(Buffer.byteLength(JSON.stringify(value), "utf8")).toBeLessThanOrEqual(7 * 1024);
     expect(value.catalogTruncated).toBe(true);
+    expect(value.operatingInstructions).not.toContain("openwork-cloud_search_capabilities");
+    expect(value.operatingInstructions).not.toContain("openwork-cloud_execute_capability");
     expect(value.remoteSkills).toEqual([]);
     expect(value.operatingInstructions).toStartWith("You are OpenWork.");
   } finally { await rm(root, { recursive: true, force: true }); }

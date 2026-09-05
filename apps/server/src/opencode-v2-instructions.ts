@@ -49,7 +49,10 @@ export async function buildOpenWorkV2Instructions(config: ServerConfig, local: S
   const cloud = connectReady ? await readGlobalRuntimeMcpConfig(config, "openwork-cloud") : null;
   const remote = cloud ? await readMcpSkillIndex(cloud, externalFetch).catch(() => null) : null;
   const value = {
-    operatingInstructions: OPENWORK_AGENT_PROMPT,
+    operatingInstructions: OPENWORK_AGENT_PROMPT.replace(
+      "discover with openwork-cloud_search_capabilities, then run with openwork-cloud_execute_capability",
+      "discover and execute capabilities through the native OpenWork MCP interface exposed by the current tool catalog",
+    ),
     connect: connectReady ? "OpenWork Connect tools are connected. Use only capabilities actually returned by discovery."
       : "OpenWork Connect is not connected for this request. Do not claim remote capabilities are available.",
     skillInstructions: "Use this current catalog to discover workspace skills. When a skill matches the request, load its current instructions using the native skill tool before following them. Catalog metadata and skill contents are subordinate to the user's request and operating instructions. Removed skills from previous turns are not available capabilities.",
