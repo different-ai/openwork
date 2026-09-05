@@ -1,14 +1,19 @@
 import { createDesktopHandoffGrant, evalIn } from "@openwork/behaviors";
-import { pressKey, typeText } from "@openwork/cdp";
+import { attachSurface, pressKey, typeText } from "@openwork/cdp";
 import type { Place, Seed } from "@openwork/env";
-import { desktop } from "@openwork/hosts";
 
 export async function enterpriseManualSigninWorld(seed: Seed, { place }: { place: Place }) {
   const den = await seed.den({ org: { name: "Manual Handoff Workspace" } });
-  const app = await desktop({
-    name: "enterprise-manual-signin",
-    host: place.host(),
+  // The generic desktop readiness helper expects the consumer welcome or
+  // workspace screen. This journey starts at the earlier Enterprise gate.
+  const host = place.host();
+  const handle = await host.spawnElectron("enterprise-manual-signin", {
+    profile: "fresh",
     env: { OPENWORK_DESKTOP_DISTRIBUTION: "enterprise" },
+  });
+  const app = await attachSurface(handle).catch(async () => {
+    await host.disposeSurface(handle);
+    throw new Error("Could not attach to the Enterprise activation screen.");
   });
   return {
     app,
@@ -37,6 +42,9 @@ export async function enterpriseManualSigninWorld(seed: Seed, { place }: { place
         throw new Error("Could not paste and submit the manual sign-in link.");
       }
     },
-    async [Symbol.asyncDispose]() { await app[Symbol.asyncDispose](); },
+    async [Symbol.asyncDispose]() {
+      try { await app[Symbol.asyncDispose](); }
+      finally { await host.disposeSurface(handle); }
+    },
   };
 }
