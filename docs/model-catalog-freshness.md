@@ -10,7 +10,10 @@ runs against an explicit base branch. Scheduled runs target `dev`. Both kinds
 of run use the same concurrency group for that branch. The updater validates
 an entire upstream response before replacing the snapshot; an unchanged
 response produces no diff. Updates continue through the existing snapshot PR,
-required checks, approval and deployment process. This is eventual freshness,
+required checks and deployment process. Automatic approval and auto-merge are
+withheld when provider metadata or a model routing override changes, when a
+provider is added or removed, or when no baseline exists. Those snapshots
+remain reviewable PRs requiring human approval. This is eventual freshness,
 not an instant or guaranteed daily deployment: GitHub scheduling, checks,
 merge gates, and the catalog site's deployment must succeed.
 
@@ -44,7 +47,8 @@ certify v2 cache timing or existing installed clients.
 `pnpm evals:pr specs/model-catalog-refresh.test.ts` drives the production updater
 CLI against a loopback HTTP catalog. Synthetic successive snapshots prove
 additions and removals, retained metadata, unchanged output on repeated refresh,
-and preservation of valid output after empty, invalid, or failed responses.
+preservation of valid output after empty, invalid, or failed responses, and
+mandatory human review for changed provider routing or credential mappings.
 The world owns temporary output; it never writes the repository snapshot.
 No existing journey covered the snapshot publication boundary, so this is a
 new journey. It does not dispatch a production workflow or prove a live merge

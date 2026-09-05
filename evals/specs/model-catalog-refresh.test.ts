@@ -20,8 +20,10 @@ function catalog(ids: string[]) {
 
 test("catalog refresh replaces retired models, keeps unchanged models, and rejects bad upstream responses", async ({ world, evidence }) => {
   expect(await world.refresh(catalog(["retired", "retained"]))).toBe(true);
+  expect(await world.automaticApproval()).toBe(false);
   const next = catalog(["new-model", "retained"]);
   expect(await world.refresh(next)).toBe(true);
+  expect(await world.automaticApproval()).toBe(true);
   const saved = await world.snapshot();
   expect(JSON.parse(saved)).toEqual(next);
   expect(saved).not.toContain("retired");
@@ -41,5 +43,25 @@ test("catalog refresh replaces retired models, keeps unchanged models, and rejec
   evidence.recordAssertionEvidence(
     "An empty, malformed, or unavailable upstream cannot replace the last valid snapshot",
     "All four rejected responses left the saved catalog byte-for-byte unchanged; all seven attempts reached the HTTP boundary.", true,
+  );
+  const routingChanges = [
+    { ...next, "new-provider": { ...next["fixture-provider"], id: "new-provider" } },
+    { "fixture-provider": { ...next["fixture-provider"], api: "https://routing.example.test" } },
+    { "fixture-provider": { ...next["fixture-provider"], env: ["FIXTURE_CHANGED_KEY"] } },
+    { "fixture-provider": { ...next["fixture-provider"], npm: "fixture-adapter" } },
+    { "fixture-provider": { ...next["fixture-provider"], models: {
+      ...next["fixture-provider"].models,
+      "new-model": { ...next["fixture-provider"].models["new-model"], provider: { api: "https://routing.example.test" } },
+    } } },
+  ];
+  for (const changed of routingChanges) {
+    expect(await world.refresh(next)).toBe(true);
+    expect(await world.refresh(changed)).toBe(true);
+    expect(JSON.parse(await world.snapshot())).toEqual(changed);
+    expect(await world.automaticApproval()).toBe(false);
+  }
+  evidence.recordAssertionEvidence(
+    "New providers and changed endpoints, credential mappings, adapters, or model routing require human review",
+    "Five structurally valid routing changes produced reviewable snapshots but each emitted safe_to_approve=false. A missing baseline also required review; ordinary model additions and removals emitted true.", true,
   );
 });

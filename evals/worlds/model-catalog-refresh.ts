@@ -31,7 +31,7 @@ export async function modelCatalogRefresh(seed: Seed) {
       try {
         await run(process.execPath, [updater], {
           cwd: root,
-          env: { ...process.env, MODELS_URL: `${url}/api.json`, MODELS_PATH: destination },
+          env: { ...process.env, MODELS_URL: `${url}/api.json`, MODELS_PATH: destination, GITHUB_OUTPUT: join(root, "outputs") },
           timeout: 40_000,
         });
         return true;
@@ -39,6 +39,7 @@ export async function modelCatalogRefresh(seed: Seed) {
         return false;
       }
     },
+    automaticApproval: async () => (await readFile(join(root, "outputs"), "utf8")).trim().split("\n").at(-1) === "safe_to_approve=true",
     snapshot: () => readFile(destination, "utf8"),
     requests: () => requests,
     async [Symbol.asyncDispose]() { await close(upstream); },

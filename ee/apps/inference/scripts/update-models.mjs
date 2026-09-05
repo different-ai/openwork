@@ -1,4 +1,6 @@
-import { writeFile } from "node:fs/promises"
+import { appendFile, readFile, writeFile } from "node:fs/promises"
+
+import { isDeepStrictEqual } from "node:util"
 
 const modelsPath = process.env.MODELS_PATH
 const modelsUrl = process.env.MODELS_URL
@@ -93,4 +95,32 @@ for (const [providerId, provider] of providers) {
   }
 }
 
+// Catalog routing controls where credentials are sent. Unattended refreshes
+// may update model metadata, but new providers or changed routing need review.
+function sameRouting(previous, next) {
+  if (!isRecord(previous)) return false
+  if (!isDeepStrictEqual(Object.keys(previous).sort(), Object.keys(next).sort())) return false
+  for (const [id, provider] of Object.entries(next)) {
+    const old = previous[id]
+    if (!isRecord(old) || !isRecord(old.models)) return false
+    const { models: _oldModels, ...oldProvider } = old
+    const { models: _newModels, ...newProvider } = provider
+    if (!isDeepStrictEqual(oldProvider, newProvider)) return false
+    for (const [modelId, model] of Object.entries(provider.models)) {
+      if (!isDeepStrictEqual(old.models[modelId]?.provider, model.provider)) return false
+    }
+  }
+  return true
+}
+
+let previous
+try {
+  previous = JSON.parse(await readFile(modelsPath, "utf8"))
+} catch {
+  // Without a trusted baseline, require review of the proposed snapshot.
+}
+const safeToApprove = sameRouting(previous, parsed)
 await writeFile(modelsPath, `${JSON.stringify(parsed)}\n`)
+if (process.env.GITHUB_OUTPUT) {
+  await appendFile(process.env.GITHUB_OUTPUT, `safe_to_approve=${safeToApprove}\n`)
+}

@@ -50,6 +50,7 @@ jobs:
           node-version: 24
 
       - name: Download and validate models
+        id: catalog
         run: |
           set -euo pipefail
 
@@ -100,7 +101,7 @@ jobs:
             --base "$BASE_BRANCH" \
             --head "$BRANCH_NAME" \
             --title "chore: update models snapshot" \
-            --body "Updates \`$MODELS_PATH\` from \`$MODELS_URL\`.\n\nThe workflow validated the response before replacing the file and wrote the snapshot as minified JSON.")"
+            --body "Updates \`$MODELS_PATH\` from \`$MODELS_URL\`.\n\nThe workflow validated the response before replacing the file and wrote the snapshot as minified JSON. Automatic approval is allowed only when provider and model routing are unchanged; otherwise human review is required.")"
           {
             echo "pr_url=$pr_url"
             echo "pr_number=$(gh pr view "$pr_url" --json number --jq .number)"
@@ -108,7 +109,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Mint approval token
-        if: steps.changes.outputs.changed == 'true'
+        if: steps.changes.outputs.changed == 'true' && steps.catalog.outputs.safe_to_approve == 'true'
         id: app
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
@@ -116,7 +117,7 @@ jobs:
           private-key: ${{ secrets.WARDEN_PRIVATE_KEY }}
 
       - name: Approve snapshot update
-        if: steps.changes.outputs.changed == 'true'
+        if: steps.changes.outputs.changed == 'true' && steps.catalog.outputs.safe_to_approve == 'true'
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           REPO: ${{ github.repository }}
@@ -145,7 +146,7 @@ jobs:
             -f body="$BODY"
 
       - name: Enable auto-merge
-        if: steps.changes.outputs.changed == 'true'
+        if: steps.changes.outputs.changed == 'true' && steps.catalog.outputs.safe_to_approve == 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           PR_URL: ${{ steps.pr.outputs.pr_url }}
