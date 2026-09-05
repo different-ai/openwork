@@ -82,7 +82,7 @@ jobs:
         with:
           ref: ${{ matrix.variant == 'dev-control' && 'dev' || github.event.pull_request.head.sha || github.sha }}
       - name: Overlay only compatibility witnesses onto clean dev
-        if: matrix.variant == 'dev-control'
+        if: matrix.variant == 'dev-control' && github.event_name == 'pull_request'
         env:
           PROOF_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |

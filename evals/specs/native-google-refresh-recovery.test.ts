@@ -19,8 +19,8 @@ test("native Google refresh and Microsoft compatibility preserve reconnect and d
     DEN_GOOGLE_OAUTH_TOKEN_URL: google.tokenUrl,
     DEN_GOOGLE_OAUTH_USERINFO_URL: google.userinfoUrl,
     DEN_GOOGLE_API_BASE_URL: google.apiUrl,
-    DEN_MICROSOFT_OAUTH_AUTHORIZE_URL: google.authorizeUrl,
-    DEN_MICROSOFT_OAUTH_TOKEN_URL: google.tokenUrl,
+    DEN_MICROSOFT_OAUTH_AUTHORIZE_URL: `${google.authorizeUrl}?tenant={tenantId}`,
+    DEN_MICROSOFT_OAUTH_TOKEN_URL: `${google.tokenUrl}?tenant={tenantId}`,
     DEN_MICROSOFT_GRAPH_BASE_URL: `${google.apiUrl}/v1.0`,
     SENTRY_DSN: "",
   } });
@@ -68,6 +68,7 @@ test("native Google refresh and Microsoft compatibility preserve reconnect and d
       const url = record(started.body).authorizeUrl;
       if (typeof url !== "string") throw new Error("Missing authorize URL");
       expect(new URL(url).origin).toBe(new URL(google.apiUrl).origin);
+      if (microsoft) expect(new URL(url).searchParams.get("tenant")).toBe("example.onmicrosoft.com");
       const result = await fetch(url, { signal: AbortSignal.timeout(15_000) });
       expect(result.status).toBe(200);
       if (microsoft) {
