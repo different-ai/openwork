@@ -202,7 +202,7 @@ export function mapRuntimeProvidersToV2Specs(
     // Resolve only this provider's declared credential, never inherit the
     // server environment or copy unrelated secrets into the sidecar.
     const explicitKey = typeof apiKey === "string" && apiKey.trim() !== "" && !apiKey.includes("{env:") ? apiKey : undefined;
-    if (!explicitKey && storedKey && credentialName && /^lpr_/i.test(id)
+    if (!explicitKey && storedKey && credentialName
       && !allowsCloudCredential?.(id, credentialName, value)) {
       skippedProviderIds.push(id);
       continue;

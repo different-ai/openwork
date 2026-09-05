@@ -571,7 +571,7 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
     results: Array.from({ length: 4 }, () => ({ status: 200, leaksKey: false })),
     model: { limit: { context: 1050000, output: 128000 }, capabilities: { tools: true, input: ["text", "image", "pdf"], output: ["text"] } },
   });
-  evidence.recordAssertionEvidence("native model limits, tools and modalities survive mirroring", "The live v2 catalog retained the fixture's 1,050,000 context and 128,000 output limits, tool support, text/image/PDF inputs and text output.", true);
+  evidence.recordAssertionEvidence("custom native OpenAI model limits, tools and modalities survive mirroring", "The fixture uses the native @ai-sdk/openai adapter; its live v2 catalog entry retained 1,050,000 context and 128,000 output limits, tool support, text/image/PDF inputs and text output.", true);
   await go(desktopApp, `/workspace/${desktopApp.workspaceId}/session`);
   await sleep(16_000); // includes the renderer's engine-routing refresh interval
   expect(await evalIn(desktopApp, `localStorage.getItem("openwork.defaultModel")`)).toBe(chosenDefault);
