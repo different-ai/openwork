@@ -30,6 +30,13 @@ test("voice sends and steers real conversation work, interrupts speech, cancels,
     await user.click("Start voice");
     await capture(1);
     await user.see({ testId: "voice-capture-state" }, { text: "Microphone on" });
+    expect(object(await world.facts()).sessions).toEqual([{ model: "gpt-realtime-2.1" }]);
+    expect(object(await world.facts()).events).toEqual(expect.arrayContaining([expect.objectContaining({
+      type: "session.update", session: expect.objectContaining({
+        include: ["item.input_audio_transcription.logprobs"],
+        audio: expect.objectContaining({ input: expect.objectContaining({ transcription: { model: "gpt-4o-transcribe" } }) }),
+      }),
+    })]));
     await world.fixture("say", ["Create a note in this workspace.", "first"]);
     expect(await waitForUsers(1)).toEqual(["Create a note in this workspace."]);
     expect(await probe.eventually(() => world.file("voice-note.txt"), { within: 60_000, until: (value) => object(value).status === 200, label: "real engine created the requested file" })).toEqual(expect.objectContaining({ body: expect.stringContaining("created by spoken request") }));
@@ -38,7 +45,7 @@ test("voice sends and steers real conversation work, interrupts speech, cancels,
     await probe.eventually(spoken, { within: 15_000, until: replies => replies.some(reply => reply.includes("Your task has a response.")), label: "default speech is only a response notification" });
     expect(JSON.stringify(await spoken())).not.toContain("The note was created in this workspace.");
     expect(JSON.stringify(await spoken())).not.toContain("Create a note in this workspace.");
-    evidence.recordAssertionEvidence("A spoken request uses the selected model and real engine; the other conversation stays empty", JSON.stringify({ userTurns: await waitForUsers(1), file: await world.file("voice-note.txt"), otherConversation: await world.messages(world.b.sessionId), model: await world.providerFacts() }), true);
+    evidence.recordAssertionEvidence("A spoken request uses Realtime 2.1 for audio and the selected task model for real execution; the other conversation stays empty", JSON.stringify({ audioSessions: object(await world.facts()).sessions, userTurns: await waitForUsers(1), file: await world.file("voice-note.txt"), otherConversation: await world.messages(world.b.sessionId), model: await world.providerFacts() }), true);
     await user.screenshot();
   });
   await step("barge-in stops only speech and a follow-up updates the same task", async () => {
@@ -88,12 +95,20 @@ test("voice sends and steers real conversation work, interrupts speech, cancels,
     await world.fixture("disconnect");
     await capture(0);
     expect(object(await world.facts()).liveTracks).toBe(0);
+    await user.click("Audio and privacy");
+    await user.see({ label: "Voice audio model" }, { value: "gpt-realtime-2.1" });
+    await user.click({ label: "Voice audio model" });
+    await user.press("End");
+    await user.press("Enter");
+    await user.see({ label: "Voice audio model" }, { value: "gpt-realtime-2.1-mini" });
     await user.click("Reconnect voice");
     await capture(1);
+    expect(object(await world.facts()).sessions).toEqual([{ model: "gpt-realtime-2.1" }, { model: "gpt-realtime-2.1-mini" }]);
+    await user.click("Audio and privacy");
     await world.fixture("say", ["Old connection callback must not run", "late", -0.05, 0]);
     expect(users(await world.messages(world.a.sessionId))).toHaveLength(4);
     expect(await world.messages(world.b.sessionId)).toEqual([]);
-    evidence.recordAssertionEvidence("Reconnect releases prior capture and ignores old callbacks without replay", "Disconnect left zero live tracks; reconnect restored one; a delayed transcript from peer 0 left conversation A at 4 user turns and B empty.", true);
+    evidence.recordAssertionEvidence("Reconnect uses the chosen Realtime 2.1 Mini audio model without replay or task-model changes", JSON.stringify({ audioSessions: object(await world.facts()).sessions, userTurns: users(await world.messages(world.a.sessionId)), otherConversation: await world.messages(world.b.sessionId), activeTracks: object(await world.facts()).activeTracks }), true);
   });
   await step("switching conversations ends the call and discards delayed callbacks", async () => {
     await agent.run("session.open", { sessionId: world.b.sessionId });
@@ -131,6 +146,13 @@ test("voice sends and steers real conversation work, interrupts speech, cancels,
     evidence.recordAssertionEvidence("Typed fallback remains in the new conversation after voice ends", JSON.stringify({ originalConversationUsers: users(await world.messages(world.a.sessionId)), newConversationUsers: users(await world.messages(world.b.sessionId)), liveTracks: 0 }), true);
   });
   await step("spoken connected-app work preserves discovered connection namespaces", async () => {
+    await user.click("Audio and privacy");
+    await user.see({ label: "Voice audio model" }, { value: "gpt-realtime-2.1" });
+    await user.click({ label: "Voice audio model" });
+    await user.press("End");
+    await user.press("Enter");
+    await user.see({ label: "Voice audio model" }, { value: "gpt-realtime-2.1-mini" });
+    await user.click("Audio and privacy");
     await user.click("Start voice");
     await capture(1);
     await user.click({ role: "checkbox", label: /Read replies aloud/ });
@@ -143,7 +165,8 @@ test("voice sends and steers real conversation work, interrupts speech, cancels,
     await probe.eventually(spoken, { within: 30_000, until: replies => replies.some(reply => reply.includes("The connected app returned Project brief and Release checklist.")), label: "spoken completion follows the connected tool response" });
     expect(users(await world.messages(world.b.sessionId))).toHaveLength(2);
     expect(users(await world.messages(world.a.sessionId))).toHaveLength(4);
-    evidence.recordAssertionEvidence("Voice preserves discovered connection and tool namespaces through normal task execution", JSON.stringify({ calls, playback: await spoken(), originalTaskUsers: users(await world.messages(world.a.sessionId)) }), true);
+    expect(await world.providerFacts()).toEqual(expect.arrayContaining([expect.objectContaining({ model: "voice-task-model" })]));
+    evidence.recordAssertionEvidence("Voice preserves discovered connection and tool namespaces through normal task execution with Mini audio", JSON.stringify({ audioSessions: object(await world.facts()).sessions, calls, playback: await spoken(), originalTaskUsers: users(await world.messages(world.a.sessionId)) }), true);
   });
   await step("voice text and transcripts use the same Cloud and Desktop task routing as the composer", async () => {
     await user.type({ label: "Voice request" }, "@cloud Summarize the project notes.", { replace: true });
@@ -198,4 +221,14 @@ test("voice sends and steers real conversation work, interrupts speech, cancels,
     evidence.recordAssertionEvidence("Voice uses the focused split task and closes audio when focus changes", JSON.stringify({ splitUsers: users(await world.messages(splitId)), originalTaskUsers: users(await world.messages(world.b.sessionId)), liveTracks: 0 }), true);
   });
 
+  await step("a broker model mismatch releases capture without submitting work", async () => {
+    await world.fixture("model", ["gpt-realtime-2"]);
+    await user.click("Start voice");
+    await user.see({ text: "The voice provider returned a different audio model." });
+    await capture(0);
+    expect(object(await world.facts()).liveTracks).toBe(0);
+    expect(users(await world.messages(world.b.sessionId))).toHaveLength(5);
+    expect(users(await world.messages(world.a.sessionId))).toHaveLength(4);
+    evidence.recordAssertionEvidence("An unexpected broker model stops capture and creates no task turn", JSON.stringify({ liveTracks: object(await world.facts()).liveTracks, originalTaskUsers: users(await world.messages(world.a.sessionId)), focusedTaskUsers: users(await world.messages(world.b.sessionId)) }), true);
+  });
 });

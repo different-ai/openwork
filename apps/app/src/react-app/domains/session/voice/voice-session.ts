@@ -1,4 +1,5 @@
 import { buildComposerDraft } from "../surface/composer/build-draft";
+import { VOICE_REALTIME_MODELS } from "@/app/lib/voice-models";
 import { createVoiceRuntime, type VoiceStatus } from "./voice-runtime";
 import { cancelVoiceConversation, readVoiceConversation, type VoiceConversation } from "./voice-conversation";
 
@@ -16,7 +17,7 @@ function mediaError(error: unknown) {
   return "Voice could not connect. Check the host connection, Voice Mode provider setup, and network, then reconnect. You can still type here.";
 }
 
-// Keep the deployed broker/model contract. Apply this configuration on both
+// Keep the supported WebRTC/transcription contract. Apply this configuration on both
 // managed and direct sessions before transmitting audio. The realtime model has
 // no executor; only finalized transcripts enter the normal conversation sender.
 const SESSION_CONFIG = {
@@ -193,6 +194,11 @@ export class VoiceSession {
     this.store.update({ inputDevice: deviceId });
     if (this.connection) this.pause("Microphone changed. Reconnect to use it. Work continues here.");
   };
+  setAudioModel = (model: string) => {
+    const status = this.store.getSnapshot().status;
+    if (this.connection || status === "connecting" || status === "reconnecting") return;
+    if (VOICE_REALTIME_MODELS.some((option) => option.id === model)) this.store.update({ audioModel: model });
+  };
   setOutputDevice = async (deviceId: string) => {
     const connection = this.connection;
     if (!connection || !this.current(connection)) return;
@@ -262,8 +268,13 @@ export class VoiceSession {
       };
       this.status(wasStarted ? "reconnecting" : "connecting", "Connecting voice…");
       // No conversation text or user credentials are sent to the token broker.
-      const session = await this.owner.client.createVoiceRealtimeSession();
+      const model = this.store.getSnapshot().audioModel;
+      const session = await this.owner.client.createVoiceRealtimeSession({ model });
       if (!this.current(owned)) return;
+      if (session.model !== model) {
+        this.fail(owned, "The voice provider returned a different audio model. Check provider setup or choose another model, then reconnect.");
+        return;
+      }
       const offer = await peer.createOffer();
       await peer.setLocalDescription(offer);
       if (!this.current(owned) || !offer.sdp) return;

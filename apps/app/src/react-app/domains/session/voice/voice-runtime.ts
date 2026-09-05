@@ -1,3 +1,5 @@
+import { DEFAULT_VOICE_REALTIME_MODEL } from "@/app/lib/voice-models";
+
 /** One store per mounted conversation. No audio or transcript lives in a global singleton. */
 export type VoiceStatus = "idle" | "connecting" | "reconnecting" | "listening" | "processing" | "speaking" | "muted" | "paused" | "error";
 export type VoiceTimelineEntry = { id: string; role: "user" | "assistant" | "system"; text: string; at: number };
@@ -9,6 +11,7 @@ export type VoiceRuntimeSnapshot = {
   micMuted: boolean;
   working: boolean;
   readRepliesAloud: boolean;
+  audioModel: string;
   pendingText: string;
   assistantPreview: string;
   entries: VoiceTimelineEntry[];
@@ -19,6 +22,7 @@ export type VoiceRuntimeSnapshot = {
 };
 export const initialVoiceRuntimeSnapshot: VoiceRuntimeSnapshot = {
   status: "idle", statusText: "Start speaking in this conversation.",
+  audioModel: DEFAULT_VOICE_REALTIME_MODEL,
   captureActive: false, micMuted: false, working: false, readRepliesAloud: false, pendingText: "", assistantPreview: "",
   entries: [], devices: [], inputDevice: "", outputDevice: "", outputSelectionSupported: false,
 };

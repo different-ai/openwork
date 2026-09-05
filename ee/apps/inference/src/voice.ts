@@ -14,7 +14,7 @@ import { findActiveInferenceKey } from "./keys.js"
 import { ensureUsableBuckets } from "./limits.js"
 import { db } from "./db.js"
 
-const OPENWORK_VOICE_REALTIME_MODEL = "gpt-realtime-2"
+const OPENWORK_VOICE_REALTIME_MODEL = "gpt-realtime-2.1"
 const OPENWORK_VOICE_TRANSCRIPTION_MODEL = "gpt-4o-transcribe"
 
 const OPENWORK_VOICE_REALTIME_TOOLS = [

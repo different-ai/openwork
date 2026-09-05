@@ -107,9 +107,11 @@ export const voiceAudioFixtureSource = String.raw`(() => {
   const peers = [];
   const tracks = [];
   const events = [];
+  const sessions = [];
   const originalFetch = window.fetch.bind(window);
   let sequence = 0;
   let deny = false;
+  let modelOverride;
   let delayCapture = false;
   let pendingCapture = null;
   let context;
@@ -120,7 +122,11 @@ export const voiceAudioFixtureSource = String.raw`(() => {
   window.fetch = async (input, init) => {
     const url = typeof input === "string" ? input : input.url ?? input.toString();
     if (url === "https://api.openai.com/v1/realtime/calls") return new Response("fixture-answer");
-    if (url.endsWith("/voice/realtime/session")) return Response.json({ ok: true, clientSecret: "fixture-ephemeral", model: "fixture-realtime", transcriptionModel: "fixture-transcription", tools: [], expiresAt: null });
+    if (url.endsWith("/voice/realtime/session")) {
+      const request = JSON.parse(init.body);
+      sessions.push(request);
+      return Response.json({ ok: true, clientSecret: "fixture-ephemeral", model: modelOverride ?? request.model, transcriptionModel: "gpt-4o-transcribe", tools: [], expiresAt: null });
+    }
     return originalFetch(input, init);
   };
   media.getUserMedia = async () => {
@@ -177,12 +183,13 @@ export const voiceAudioFixtureSource = String.raw`(() => {
     finish() { current().emit({ type: "output_audio_buffer.stopped", response_id: current().responseId }); },
     disconnect() { current().close(); },
     deny(value) { deny = value; },
+    model(value) { modelOverride = value; },
     delay(value) { delayCapture = value; },
     release() { pendingCapture?.(); pendingCapture = null; delayCapture = false; },
     fail() { current().emit({ type: "error", error: { message: "fixture provider failure" } }); },
     endTrack() { tracks.at(-1).dispatchEvent(new Event("ended")); },
     malicious() { current().emit({ type: "response.function_call_arguments.done", call_id: "untrusted-call", name: "openwork_execute_action", arguments: JSON.stringify({ actionId: "composer.send" }) }); },
-    facts() { return { liveTracks: tracks.filter(t => t.readyState === "live").length, activeTracks: tracks.filter(t => t.readyState === "live" && t.enabled).length, peers: peers.length, events, audioElements: document.querySelectorAll("audio[hidden]").length }; },
+    facts() { return { liveTracks: tracks.filter(t => t.readyState === "live").length, activeTracks: tracks.filter(t => t.readyState === "live" && t.enabled).length, peers: peers.length, events, sessions, audioElements: document.querySelectorAll("audio[hidden]").length }; },
   };
   return true;
 })()`;

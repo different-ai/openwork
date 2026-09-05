@@ -13,6 +13,7 @@ import {
 import { desktopFetch, desktopFetchAgentContextDiagnostics, desktopUploadMultipart, electronLocalPathForFile } from "./desktop";
 import { isOpenworkGatewayRuntime } from "./gateway-runtime";
 import { isDesktopRuntime } from "./runtime-env";
+import { DEFAULT_VOICE_REALTIME_MODEL } from "./voice-models";
 import type { ExecResult, OpencodeConfigFile, WorkspaceInfo, WorkspaceList } from "./desktop";
 import type { DenOrgMarketplace, DenOrgPluginResolved, DenResourceSnapshot } from "./den-types";
 import type { CloudImportedMarketplace, CloudImportedPlugin, CloudImportedProvider } from "../cloud/import-state";
@@ -2409,7 +2410,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         token,
         hostToken,
         method: "POST",
-        body: payload ?? {},
+        body: { ...payload, model: payload?.model ?? DEFAULT_VOICE_REALTIME_MODEL },
         timeoutMs: timeouts.config,
       }),
   };

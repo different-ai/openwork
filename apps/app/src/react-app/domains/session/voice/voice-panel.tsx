@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { ComposerDraft } from "@/app/types";
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
+import { VOICE_REALTIME_MODELS } from "@/app/lib/voice-models";
 import type { CloudMcpSubmissionResult } from "../../connections/cloud-mcp-submit-readiness";
 import { useSessionActivityStore } from "../status/session-activity-store";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
@@ -111,6 +112,10 @@ export function VoicePanel(props: VoicePanelProps) {
         <details className="rounded-lg border p-3 text-xs">
           <summary className="cursor-pointer font-medium">Audio and privacy</summary>
           <div className="mt-3 space-y-3 text-muted-foreground">
+            <label className="block">Audio model<select aria-label="Voice audio model" className="mt-1 w-full rounded border bg-background p-2 text-foreground disabled:opacity-60" value={state.audioModel} disabled={connected || starting} onChange={(e) => session.setAudioModel(e.currentTarget.value)}>
+              {VOICE_REALTIME_MODELS.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
+            </select></label>
+            <p>{VOICE_REALTIME_MODELS.find((model) => model.id === state.audioModel)?.description} Your task keeps its selected model. End voice before changing the audio model.</p>
             <p>Voice uses OpenAI audio through your configured OpenWork Models service or OpenAI key. Audio goes to the voice provider; completed response excerpts are shared only when Read replies aloud is enabled. Accepted transcripts stay in this conversation. OpenWork does not save raw audio.</p>
             <p>Use headphones to reduce echo. If echo cancellation is unavailable, the microphone pauses during speech; use Stop talking to interrupt. For speakers, choose your system output or an output below.</p>
             <p>Approvals and sign-in stay on screen. Never speak passwords, security codes, or other secrets. Background speech cannot approve permission requests. Low-confidence transcripts need review.</p>
