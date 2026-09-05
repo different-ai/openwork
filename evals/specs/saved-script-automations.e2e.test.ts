@@ -224,6 +224,11 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
   const reopened = await appRequest(den.admin, appPath)
   expect(reopened.response.status, reopened.text).toBe(200)
   expect(reopened.body).toMatchObject({ onDashboard: true, revision: { id: revision?.id }, view: { configObjectId } })
+  const listedApps = await appRequest(den.admin, "/v1/apps")
+  expect(listedApps.response.status, listedApps.text).toBe(200)
+  expect(requireRecord(listedApps.body, "saved app list").items).toEqual([
+    expect.objectContaining({ onDashboard: true, view: expect.objectContaining({ id: view.id, activeRevisionId: revision?.id, title: "Saved briefing" }) }),
+  ])
   expect(requireRecord(reopened.body, "reopened app").html).toEqual(requireRecord(draftApp.body, "draft app").html)
   expect((await readWorkflowDetail(den.admin, configObjectId)).script.currentVersion).toEqual(beforeSave.script.currentVersion)
   expect((await appRequest(den.admin, `/v1/workflows/${configObjectId}/snapshots`)).body).toEqual(beforeSnapshots)
