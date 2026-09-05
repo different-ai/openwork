@@ -33,20 +33,24 @@ test("Enterprise activation explains and completes manual sign-in without a deep
     expect((await readDenClientState(world.app)).authTokenPresent).toBe(false);
   });
 
-  await step("Confirming the pasted link activates the intended organization", async () => {
+  await step("Confirming the pasted link signs in and activates the confirmed server", async () => {
     await user.click("Confirm and finish sign-in");
     const state = await probe.eventually(() => readDenClientState(world.app), {
       within: 120_000,
       label: "manual sign-in completed",
-      until: (value) => value.authTokenPresent && value.activeOrgName === "Manual Handoff Workspace",
+      until: (value) => value.authTokenPresent,
     });
     expect(state.authTokenPresent).toBe(true);
-    expect(state.activeOrgName).toBe("Manual Handoff Workspace");
+    expect(await probe.eval(`window.__OPENWORK_ELECTRON__.invokeDesktop("getDesktopBootstrapConfig").then(config =>
+      config.baseUrl === ${JSON.stringify(world.den.ref.webUrl)} &&
+      config.enterpriseActivation?.denBaseUrl === ${JSON.stringify(world.den.ref.webUrl)} &&
+      Boolean(config.enterpriseActivation?.activatedAt)
+    )`, { awaitPromise: true })).toBe(true);
     await user.notSee({ text: "Link this app to your organization" });
   });
   evidence.recordAssertionEvidence(
     "Manual Enterprise handoff is discoverable and completes without a deep-link callback",
-    "The labeled field explains full links and excludes standalone codes. Workspace addresses retain browser confirmation. Pasted links require confirmation before any session exists, then activate the synthetic organization without invoking an OS callback.",
+    "The labeled field explains full links and excludes standalone codes. Workspace addresses retain browser confirmation. Pasted links require confirmation before any session exists, then create a session and persist activation for the confirmed synthetic server without invoking an OS callback.",
     true,
   );
 });
