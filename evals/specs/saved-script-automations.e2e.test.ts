@@ -189,6 +189,28 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
     true,
   )
 
+  const initialDraftSource = "export default function Briefing({ data }) { return <article><h1>Briefing</h1><p>{data.briefing.topic}</p></article> }"
+  const emptyDraft = await agentRpc(den.ref.apiUrl, mcpToken, "tools/call", {
+    name: "save_artifact_view",
+    arguments: { configObjectId, title: "Briefing app", reactSource: initialDraftSource },
+  })
+  expect(emptyDraft.isError).toBe(true)
+  expect(emptyDraft._meta).toBeUndefined()
+  const emptyDraftText = records(emptyDraft.content).find((part) => part.type === "text")?.text
+  if (typeof emptyDraftText !== "string") throw new Error("Missing preview recovery instructions")
+  const emptyDraftError = requireRecord(JSON.parse(emptyDraftText), "empty preview error")
+  expect(emptyDraftError.error).toBe("artifact_view_preview_unavailable")
+  expect(emptyDraftError.reason).toBe("workflow_snapshot_not_found")
+  expect(emptyDraftError.message).toContain("Run the current saved Workflow version")
+  expect(emptyDraftError.artifactViewId).toBeTypeOf("string")
+  const beforeExplicitRun = await readWorkflowDetail(den.admin, configObjectId)
+  expect(beforeExplicitRun.script.latestSuccessfulSnapshot).toBeNull()
+  evidence.recordAssertionEvidence(
+    "An app without a saved Workflow result returns a recovery step instead of an empty ready preview",
+    "An ad-hoc success plus save is insufficient: the builder returns an actionable error and retained draft id, no host preview metadata, and does not execute the workflow implicitly.",
+    emptyDraft.isError === true && emptyDraftError.reason === "workflow_snapshot_not_found",
+  )
+
   const manualResult = await runWorkflow(den.admin, configObjectId, {
     pluginId,
     configObjectVersionId,
@@ -208,12 +230,13 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
   const draft = await agentRpc(den.ref.apiUrl, mcpToken, "tools/call", {
     name: "save_artifact_view",
     arguments: {
-      configObjectId, title: "Briefing app",
-      reactSource: "export default function Briefing({ data }) { return <article><h1>Briefing</h1><p>{data.briefing.topic}</p></article> }",
+      artifactViewId: emptyDraftError.artifactViewId, configObjectId, title: "Briefing app",
+      reactSource: initialDraftSource,
     },
   })
   expect(draft.isError).not.toBe(true)
   const view = requireRecord(requireRecord(draft.structuredContent, "draft result").view, "draft view")
+  expect(view.id).toBe(emptyDraftError.artifactViewId)
   const revision = records(view.revisions)[0]
   expect(revision?.buildStatus).toBe("ready")
   expect(requireRecord(draft._meta, "draft host metadata")["openwork/appDraft"]).toEqual({
