@@ -11,8 +11,17 @@ test("a user previews and revises a lightweight design in conversation", async (
   step,
 }) => {
   await user.type("composer", "Sketch a project overview");
+  await probe.eventually(() => probe.composer(), {
+    within: 30_000,
+    label: "visualization request is ready to send",
+    until: (composer) => composer.runTaskEnabled,
+  });
   await user.click("Run task");
-  await user.see("Your first sketch is ready.", { timeoutMs: 90_000 });
+  try {
+    await user.see("Your first sketch is ready.", { timeoutMs: 90_000 });
+  } finally {
+    await user.screenshot();
+  }
   await step(
     "the real visualization tool produces a safe inline mockup",
     async () => {
