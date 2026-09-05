@@ -2,9 +2,12 @@ import { DesktopPolicyEditorScreen } from "../../../_components/desktop-policy-e
 
 export default async function EditDesktopPolicyPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ desktopPolicyId: string }>;
+  searchParams: Promise<{ setup?: string }>;
 }) {
   const { desktopPolicyId } = await params;
-  return <DesktopPolicyEditorScreen desktopPolicyId={desktopPolicyId} />;
+  const { setup } = await searchParams;
+  return <DesktopPolicyEditorScreen desktopPolicyId={desktopPolicyId} setupRestricted={setup === "restricted"} />;
 }

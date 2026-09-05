@@ -4,9 +4,13 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { LogOut, Settings } from "lucide-react";
 import { getErrorMessage, normalizeAuthIntentParam, PENDING_AUTH_INTENT_STORAGE_KEY, requestJson } from "../_lib/den-flow";
-import { type DenOrgSummary, formatRoleLabel, getInferenceRoute, getMarketplaceOnboardingRoute, getOrgDashboardRoute, parseOrgListPayload } from "../_lib/den-org";
+import { type DenOrgSummary, formatRoleLabel, getDesktopPolicyRoute, getJoinOrgRoute, getInferenceRoute, getMarketplaceOnboardingRoute, getOrgDashboardRoute, parseOrgListPayload } from "../_lib/den-org";
 import { useOrgListWindow } from "../_lib/use-org-list-window";
 import { useDenFlow } from "../_providers/den-flow-provider";
+
+import { DesktopSetupChoices, WorkspaceIntentChoices, type DesktopSetup, type WorkspaceIntent } from "./workspace-intent";
+import { parseDesktopPolicyList } from "../dashboard/_components/desktop-policy-data";
+import { ORG_SCOPE_HEADER } from "../_lib/org-scope";
 
 type SettingsTab = "profile" | "organizations";
 
@@ -19,6 +23,10 @@ export function OrganizationScreen() {
   const [activeTab, setActiveTab] = useState<SettingsTab>("organizations");
   const [showCreate, setShowCreate] = useState(false);
   const [createName, setCreateName] = useState("");
+  const [intent, setIntent] = useState<WorkspaceIntent | null>(null);
+  const [desktopSetup, setDesktopSetup] = useState<DesktopSetup | null>(null);
+  const [invitationLink, setInvitationLink] = useState("");
+  const [createdOrg, setCreatedOrg] = useState<{ id: string; slug: string } | null>(null);
   const [createBusy, setCreateBusy] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -99,31 +107,60 @@ export function OrganizationScreen() {
       return;
     }
 
+    if (intent === "join") {
+      try {
+        const url = new URL(invitationLink.trim(), window.location.origin);
+        const invitationId = url.searchParams.get("invite")?.trim();
+        if (url.origin !== window.location.origin || url.pathname !== "/join-org" || !invitationId) {
+          throw new Error("Paste the invitation link for this OpenWork Cloud. Ask your team owner if you do not have one yet.");
+        }
+        router.push(getJoinOrgRoute(invitationId));
+      } catch (err) {
+        setCreateError(err instanceof Error ? err.message : "Enter a valid invitation link.");
+      }
+      return;
+    }
     const trimmed = createName.trim();
-    if (!trimmed) return;
+    if (!intent || trimmed.length < 2 || (intent === "team" && !desktopSetup)) return;
 
     setCreateBusy(true);
     setCreateError(null);
     try {
-      const { response, payload } = await requestJson("/v1/org", {
-        method: "POST",
-        body: JSON.stringify({ name: trimmed }),
-      });
+      let nextOrg = createdOrg;
+      if (!nextOrg) {
+        const { response, payload } = await requestJson("/v1/org", {
+          method: "POST",
+          body: JSON.stringify({ name: trimmed }),
+        });
 
-      if (!response.ok) {
-        throw new Error(getErrorMessage(payload, "Failed to create organization."));
+        if (!response.ok) {
+          throw new Error(getErrorMessage(payload, "Failed to create organization."));
+        }
+
+        const organization =
+          typeof payload === "object" && payload && "organization" in payload && payload.organization && typeof payload.organization === "object"
+            ? (payload.organization as { id?: unknown; slug?: unknown })
+            : null;
+        const nextSlug = typeof organization?.slug === "string" ? organization.slug : null;
+
+        if (!nextSlug || typeof organization?.id !== "string") {
+          throw new Error("Organization was created, but no slug was returned.");
+        }
+
+        nextOrg = { id: organization.id, slug: nextSlug };
+        setCreatedOrg(nextOrg);
       }
-
-      const organization =
-        typeof payload === "object" && payload && "organization" in payload && payload.organization && typeof payload.organization === "object"
-          ? (payload.organization as { slug?: unknown })
-          : null;
-      const nextSlug = typeof organization?.slug === "string" ? organization.slug : null;
-
-      if (!nextSlug) {
-        throw new Error("Organization was created, but no slug was returned.");
+      if (intent === "team" && desktopSetup === "restricted") {
+        const { response, payload } = await requestJson("/v1/desktop-policies", {
+          headers: { [ORG_SCOPE_HEADER]: nextOrg.id },
+        });
+        if (!response.ok) throw new Error("Your team was created. Retry to open desktop policy setup; no restriction has been saved yet.");
+        const policy = parseDesktopPolicyList(payload).desktopPolicies.find((entry) => entry.isDefault);
+        if (!policy) throw new Error("Your team was created, but its default policy is not available yet. Retry setup.");
+        router.push(`${getDesktopPolicyRoute(nextOrg.slug, policy.id)}?setup=restricted`);
+        return;
       }
-
+      const nextSlug = nextOrg.slug;
       const pendingIntent = normalizeAuthIntentParam(window.sessionStorage.getItem(PENDING_AUTH_INTENT_STORAGE_KEY));
       if (pendingIntent === "models") {
         window.sessionStorage.removeItem(PENDING_AUTH_INTENT_STORAGE_KEY);
@@ -137,6 +174,26 @@ export function OrganizationScreen() {
       setCreateBusy(false);
     }
   }
+
+  const creationForm = <form onSubmit={handleCreate} className="grid gap-5" aria-busy={createBusy}>
+    <WorkspaceIntentChoices intent={intent} disabled={createBusy || Boolean(createdOrg)} onChange={(next) => { setIntent(next); setCreateError(null); }} />
+    {intent === "join" ? <label className="grid gap-2">
+      <span className="text-sm font-medium text-gray-700">Team invitation link</span>
+      <input type="text" value={invitationLink} onChange={(event) => setInvitationLink(event.target.value)} placeholder="Paste your invitation link" required className="rounded-xl border border-gray-200 px-4 py-3 text-sm focus:ring-2 focus:ring-gray-900" />
+      <span className="text-xs leading-5 text-gray-500">You will review the team and invited email before accepting. This does not create another organization.</span>
+    </label> : intent ? <>
+      <label className="grid gap-2">
+        <span className="text-sm font-medium text-gray-700">{intent === "personal" ? "Organization name" : "Team name"}</span>
+        <input type="text" value={createName} onChange={(event) => setCreateName(event.target.value)} placeholder={intent === "personal" ? "My work" : "Design team"} minLength={2} maxLength={120} disabled={createBusy || Boolean(createdOrg)} required className="rounded-xl border border-gray-200 px-4 py-3 text-sm focus:ring-2 focus:ring-gray-900" />
+      </label>
+      {intent === "team" ? <DesktopSetupChoices mode={desktopSetup} onChange={setDesktopSetup} disabled={createBusy || Boolean(createdOrg)} /> : <p className="text-sm leading-6 text-gray-500">Start with your own tools. Creating this organization does not upload the files in your desktop workspaces.</p>}
+    </> : null}
+    {createError ? <p role="alert" className="text-sm text-rose-600">{createError}</p> : null}
+    {createdOrg ? <p role="status" className="text-sm text-gray-600">Your team is created. Finish desktop policy setup before inviting members.</p> : null}
+    <button type="submit" disabled={createBusy || !intent || (intent === "join" ? !invitationLink.trim() : createName.trim().length < 2 || (intent === "team" && !desktopSetup))} className="justify-self-start rounded-xl bg-gray-950 px-5 py-3 text-sm font-medium text-white hover:bg-gray-800 focus-visible:ring-2 focus-visible:ring-gray-600 focus-visible:ring-offset-2 disabled:opacity-50">
+      {createBusy ? "Setting up…" : createdOrg ? "Retry policy setup" : intent === "join" ? "Review invitation" : intent === "team" && desktopSetup === "restricted" ? "Create team & review policy" : "Continue"}
+    </button>
+  </form>;
 
   function handleSwitch(slug: string) {
     router.push(getOrgDashboardRoute(slug));
@@ -225,10 +282,10 @@ export function OrganizationScreen() {
                 <div className="min-w-0">
                   <p className="text-sm font-medium uppercase tracking-[0.18em] text-gray-400">OpenWork Cloud</p>
                   <h1 className="mt-2 text-[2rem] font-semibold leading-none tracking-[-0.04em] text-gray-950 sm:text-3xl">
-                    Name your team.
+                    Make room for your work.
                   </h1>
                   <p className="mt-3 max-w-xl text-[13px] leading-6 text-gray-500 sm:text-sm">
-                    You can rename it later. No credit card required.
+                    Your organization stores shared tools and access. Desktop workspaces organize folders on your computer. No credit card required.
                   </p>
                 </div>
               </div>
@@ -239,33 +296,8 @@ export function OrganizationScreen() {
                 </div>
               ) : null}
 
-              <form onSubmit={handleCreate} className="grid gap-5">
-                <label className="grid gap-2">
-                  <span className="text-sm font-medium text-gray-700">Organization name</span>
-                  <input
-                    type="text"
-                    value={createName}
-                    onChange={(e) => setCreateName(e.target.value)}
-                    placeholder="Acme Corp"
-                    className="w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm text-gray-900 outline-none transition focus:border-gray-400 focus:ring-4 focus:ring-gray-900/5"
-                    autoFocus
-                    required
-                  />
-                </label>
+              {creationForm}
 
-                {createError ? <p className="text-sm font-medium text-rose-600">{createError}</p> : null}
-
-                <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-                  <button
-                    type="submit"
-                    disabled={createBusy || !createName.trim()}
-                    className="w-full rounded-2xl bg-gray-900 px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-gray-800 disabled:opacity-50 sm:w-auto"
-                  >
-                    {createBusy ? "Creating..." : "Continue"}
-                  </button>
-
-                </div>
-              </form>
             </section>
           </div>
         ) : !isSingleOrgMode ? (
@@ -388,43 +420,8 @@ export function OrganizationScreen() {
                 {showCreate ? (
                   <div className="mb-6 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm sm:mb-8 sm:p-6">
                     <h2 className="mb-4 text-lg font-medium text-gray-900">Create an Organization</h2>
-                    <form onSubmit={handleCreate} className="grid max-w-md gap-4">
-                      <label className="grid gap-2">
-                        <span className="text-sm font-medium text-gray-700">Organization Name</span>
-                        <input
-                          type="text"
-                          value={createName}
-                          onChange={(e) => setCreateName(e.target.value)}
-                          placeholder="Acme Corp"
-                          className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 outline-none transition focus:border-gray-400 focus:ring-4 focus:ring-gray-900/5"
-                          autoFocus
-                          required
-                        />
-                      </label>
-
-                      <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setShowCreate(false);
-                            setCreateName("");
-                            setCreateError(null);
-                          }}
-                          className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="submit"
-                          disabled={createBusy || !createName.trim()}
-                          className="rounded-xl bg-gray-900 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-gray-800 disabled:opacity-50"
-                        >
-                          {createBusy ? "Creating..." : "Create"}
-                        </button>
-                      </div>
-
-                      {createError ? <p className="text-sm font-medium text-rose-600">{createError}</p> : null}
-                    </form>
+                    {creationForm}
+                    {!createBusy && !createdOrg ? <button type="button" className="mt-4 text-sm text-gray-500 hover:text-gray-900" onClick={() => { setShowCreate(false); setCreateName(""); setIntent(null); setDesktopSetup(null); setCreateError(null); }}>Cancel</button> : null}
                   </div>
                 ) : null}
 
