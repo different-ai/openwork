@@ -17,7 +17,14 @@ import {
   createLocalManagedMcpGuardedFetch,
   LocalManagedMcpPrivateUrlError,
 } from "./local-managed-mcp-url-guard.js";
-import { diagnoseMcpToolDenies, listMcp } from "./mcp.js";
+import { diagnoseMcpToolDenies, listMcpFromRuntimeSnapshot } from "./mcp.js";
+import { readEffectiveRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
+
+async function listMcp(serverConfig: ServerConfig, workspaceId: string, workspaceRoot: string) {
+  // Account-scoped gateways live in the engine-global runtime layer. Resolve
+  // Apps against the same effective configuration that produced the tool call.
+  return listMcpFromRuntimeSnapshot(workspaceRoot, await readEffectiveRuntimeOpencodeConfig(serverConfig, workspaceId));
+}
 
 const MCP_APP_EXTENSION = "io.modelcontextprotocol/ui";
 const MCP_APP_MIME_TYPE = "text/html;profile=mcp-app";
