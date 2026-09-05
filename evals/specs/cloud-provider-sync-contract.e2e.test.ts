@@ -548,6 +548,15 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
       && status.catalogModelIds.includes(CATALOG_MODEL_ID),
     V2_MIRROR_BUDGET_MS, "custom and native Den providers to appear in the v2 catalog",
   );
+  const catalogPrivacy = await evalIn(desktopApp, `(async () => {
+    const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
+    const response = await fetch(base + ${JSON.stringify(`/workspace/${desktopApp.workspaceId}/opencode2/api/model`)}, {
+      headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") }
+    });
+    const text = await response.text();
+    return { status: response.status, leaksKey: text.includes("sk-openwork-sync-contract-eval-only") };
+  })()`, { awaitPromise: true });
+  expect(catalogPrivacy).toEqual({ status: 200, leaksKey: false });
   await go(desktopApp, `/workspace/${desktopApp.workspaceId}/session`);
   await sleep(16_000); // includes the renderer's engine-routing refresh interval
   expect(await evalIn(desktopApp, `localStorage.getItem("openwork.defaultModel")`)).toBe(chosenDefault);
@@ -639,6 +648,36 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
   await waitFor(desktopApp, `!document.body.innerText.includes("Model no longer available")`, { timeoutMs: 30_000, label: "explicit model recovery" });
   const recoveredDefault = await evalIn(desktopApp, `localStorage.getItem("openwork.defaultModel")`);
   evidence.recordAssertionEvidence("a genuinely revoked model settles and recovers only after an explicit selection", "Revoking the selected assignment surfaced recovery while preserving its identity for five seconds with no repeated default writes or React loop; selecting an available model cleared the warning.", true);
+  const rotatedMarker = `${promptMarker}-rotated`;
+  const rotatedReply = `${finalReply}-rotated`;
+  const rotatedKey = "sk-openwork-sync-contract-rotated-eval-only";
+  const mockUpdate = await fetch(`${den.mocks.agent.url}/admin/agent-workloads`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ workloads: [{ promptMarker: rotatedMarker, finalReply: rotatedReply, steps: [] }], requiredHeader: { name: "authorization", value: `Bearer ${rotatedKey}` } }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  expect(mockUpdate.ok).toBe(true);
+  const rotatedAt = new Date().toISOString();
+  const rotationStatus = await evalIn(desktopApp, `(async () => {
+    const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+    const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
+    const headers = { Authorization: "Bearer " + (info.ownerToken ?? info.clientToken), "Content-Type": "application/json" };
+    const config = await (await fetch(base + "/runtime-config/providers", { headers })).json();
+    const names = config.provider[${JSON.stringify(customRuntime.providerId)}]?.env;
+    if (!Array.isArray(names) || names.length !== 1) throw new Error("fixture provider must declare one scoped credential");
+    const response = await fetch(base + "/env", { method: "PUT", headers, body: JSON.stringify({ entries: [{ key: names[0], value: ${JSON.stringify(rotatedKey)} }] }) });
+    return response.status;
+  })()`, { awaitPromise: true, timeoutMs: 30_000 });
+  expect(rotationStatus).toBe(200);
+  await sleep(3_000);
+  await writeComposerText(desktopApp, `Reply to the request marked ${rotatedMarker}.`);
+  await control(desktopApp, "composer.send", undefined, { timeoutMs: 120_000 });
+  await waitFor(desktopApp, `Array.from(document.querySelectorAll('[data-message-role="assistant"]')).some((row) => row.textContent.includes(${JSON.stringify(rotatedReply)}))`, { timeoutMs: 120_000, label: "reply after credential rotation" });
+  const rotatedRequests = await den.mocks.agent.agentRequests({ promptMarker: rotatedMarker, sinceIso: rotatedAt, atLeast: 1 });
+  expect(rotatedRequests.some((request) => request.kind === "final" && request.model === CUSTOM_MODEL_ID)).toBe(true);
+  expect(rotatedRequests.some((request) => request.kind === "error" || request.model !== CUSTOM_MODEL_ID)).toBe(false);
+  expect((await engineV2Status(desktopApp)).pid).toBe(pid0);
+  evidence.recordAssertionEvidence("stored credential rotation reaches v2 without an engine restart", "Changing only the provider's scoped env-store credential produced an authenticated native reply with the replacement key and same model and sidecar pid; no wrong-key errors or wrong-model requests occurred.", true);
   await engineV2Status(desktopApp, false);
   await go(desktopApp, `/workspace/${desktopApp.workspaceId}/session`);
   await sleep(16_000);

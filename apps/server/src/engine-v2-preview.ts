@@ -18,6 +18,8 @@ import {
   readGlobalRuntimeOpencodeConfig,
   runtimeProviderMap,
 } from "./runtime-opencode-config-store.js";
+import type { EnvService } from "./env-file.js";
+import { selectPrimaryCredentialEnvName } from "./managed-provider-auth.js";
 import type { ServerConfig } from "./types.js";
 
 const OPENCODE_V2_VERSION = constants.opencodeV2Version;
@@ -147,6 +149,7 @@ async function resolveBinary(config: ServerConfig): Promise<ResolvedBinary> {
 
 export function mapRuntimeProvidersToV2Specs(
   providerMap: Record<string, unknown>,
+  storedCredentials: ReadonlyMap<string, string> = new Map(),
 ): { specs: OpencodeV2ProviderSpec[]; skippedProviderIds: string[] } {
   const specs: OpencodeV2ProviderSpec[] = [];
   const skippedProviderIds: string[] = [];
@@ -174,6 +177,18 @@ export function mapRuntimeProvidersToV2Specs(
       continue;
     }
     const { apiKey, baseURL, headers, ...settings } = options;
+    const envNames = Array.isArray(value.env)
+      ? value.env.filter((name): name is string => typeof name === "string") : [];
+    const credentialName = selectPrimaryCredentialEnvName(envNames, storedCredentials.keys());
+    const storedKey = credentialName ? storedCredentials.get(credentialName) : undefined;
+    // Resolve only this provider's declared credential, never inherit the
+    // server environment or copy unrelated secrets into the sidecar.
+    const explicitKey = typeof apiKey === "string" && apiKey.trim() !== "" && !apiKey.includes("{env:") ? apiKey : undefined;
+    const resolvedKey = explicitKey ?? storedKey;
+    if (envNames.length > 0 && !resolvedKey) {
+      skippedProviderIds.push(id);
+      continue;
+    }
     const models = isRecord(value.models)
       ? Object.entries(value.models)
         .map(([modelId, model]) => ({
@@ -190,7 +205,7 @@ export function mapRuntimeProvidersToV2Specs(
       ...(packageName ? { package: packageName } : {}),
       ...(Object.keys(settings).length ? { settings } : {}),
       ...(isRecord(headers) ? { headers } : {}),
-      apiKey: typeof apiKey === "string" && apiKey !== "" ? apiKey : UNSET_API_KEY,
+      apiKey: resolvedKey ?? UNSET_API_KEY,
       models,
     });
   }
@@ -230,7 +245,7 @@ function catalogModelIds(payload: unknown, mirroredProviderIds: string[]): strin
   return [...ids].sort((left, right) => left.localeCompare(right));
 }
 
-export function createEngineV2Preview(options: { config: ServerConfig }): EngineV2Preview {
+export function createEngineV2Preview(options: { config: ServerConfig; env?: Pick<EnvService, "list" | "onChange"> }): EngineV2Preview {
   const { config } = options;
   const rootDir = join(runtimeStorageDir(config), "opencode-v2", "state");
   const workspaceDir = join(rootDir, "workspace");
@@ -273,7 +288,8 @@ export function createEngineV2Preview(options: { config: ServerConfig }): Engine
     const active = sidecar;
     if (!active) return;
     const providerMap = runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config));
-    const mapped = mapRuntimeProvidersToV2Specs(providerMap);
+    const credentials = new Map((await options.env?.list() ?? []).map((entry) => [entry.key, entry.value]));
+    const mapped = mapRuntimeProvidersToV2Specs(providerMap, credentials);
     const nextMirroredProviderIds = mapped.specs.map((spec) => spec.id);
     await active.setProviders(mapped.specs);
     mirroredProviderIds = nextMirroredProviderIds;
@@ -354,10 +370,12 @@ export function createEngineV2Preview(options: { config: ServerConfig }): Engine
       version = health.version;
       pid = health.pid;
       running = health.healthy;
-      unsubscribe = onRuntimeOpencodeConfigWrite((_writeConfig, workspaceId) => {
+      const unsubscribeConfig = onRuntimeOpencodeConfigWrite((_writeConfig, workspaceId) => {
         if (!isEngineGlobalRuntimeConfigId(workspaceId)) return;
         scheduleMirror();
       });
+      const unsubscribeEnv = options.env?.onChange(scheduleMirror);
+      unsubscribe = () => { unsubscribeConfig(); unsubscribeEnv?.(); };
       scheduleMirror();
       if (mirrorInFlight) await mirrorInFlight;
       if (!enabled || !allowRunning) {

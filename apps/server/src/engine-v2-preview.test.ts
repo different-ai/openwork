@@ -168,3 +168,17 @@ test("native provider api endpoint and headers survive conversion", () => {
     npm: "@ai-sdk/openai", api: "https://example.test/v1", options: { apiKey: "fixture", headers: { "x-tenant": "fixture" } },
   } }).specs[0]).toMatchObject({ baseUrl: "https://example.test/v1", package: "@opencode-ai/ai/providers/openai", headers: { "x-tenant": "fixture" } });
 });
+
+
+test("resolves only each provider's declared stored credential and omits missing credentials", () => {
+  const providers = {
+    native: { npm: "@ai-sdk/openai", env: ["NATIVE_API_KEY"] },
+    missing: { npm: "@ai-sdk/openai", env: ["MISSING_API_KEY"] },
+  };
+  const first = mapRuntimeProvidersToV2Specs(providers, new Map([["NATIVE_API_KEY", "key-one"], ["DATABASE_URL", "unrelated-secret"]]));
+  expect(first.specs[0]?.apiKey).toBe("key-one");
+  expect(first.skippedProviderIds).toEqual(["missing"]);
+  expect(JSON.stringify(first)).not.toContain("unrelated-secret");
+  const rotated = mapRuntimeProvidersToV2Specs(providers, new Map([["NATIVE_API_KEY", "key-two"]]));
+  expect(rotated.specs[0]?.apiKey).toBe("key-two");
+});
