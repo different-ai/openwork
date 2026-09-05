@@ -60,7 +60,7 @@ export function ConnectorCatalogCard({ catalog }: { catalog: ConnectorCatalog })
       await openDesktopUrl(expected.toString())
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not open setup.") }
   }
-  return <section data-testid="connector-catalog" aria-label="Quick-add connectors" className="w-full max-w-md rounded-xl bg-muted/30 p-3">
+  return <section data-testid="connector-catalog" aria-label="Quick-add connectors" className="w-96 max-w-full self-start rounded-xl bg-muted/40 p-3">
     <div className="mb-2 flex items-center justify-between gap-3">
       <p className="text-xs font-medium">{showAll ? "Quick-add connectors" : "Suggested connector"}</p>
       {!showAll ? <Button variant="ghost" size="sm" className="h-6 px-1.5 text-xs text-muted-foreground" onClick={() => setShowAll(true)}>Browse all {catalog.entries.length}</Button> : <span className="text-xs text-muted-foreground">{catalog.entries.length} available</span>}
@@ -69,10 +69,10 @@ export function ConnectorCatalogCard({ catalog }: { catalog: ConnectorCatalog })
     <div className="max-h-80 overflow-y-auto">
       {entries.map(entry => {
         const added = Boolean(entry.serviceUrl && connectorIdentities.some(identity => identity.connectionId && identity.serviceUrl === entry.serviceUrl))
-        return <div key={entry.id} data-connector-preset={entry.id} className="flex items-center gap-2.5 rounded-lg px-1 py-2">
+        return <div key={entry.id} data-connector-preset={entry.id} className="flex min-h-14 items-center gap-2.5 rounded-lg px-1 py-2">
           <ConnectorIcon entry={entry} />
           <div className="min-w-0 flex-1"><p className="truncate text-[13px] font-medium">{entry.name}</p><p className="text-[11px] text-muted-foreground">{added ? "Added to your organization" : SETUP_LABELS[entry.setup]}</p></div>
-          {!added ? <Button variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs" disabled={!canManage} onClick={() => void setup(entry)} aria-label={`Set up ${entry.name}`}>Set up<ArrowUpRight className="size-3.5 text-muted-foreground" /></Button> : null}
+          {!added ? <Button variant="ghost" size="sm" className="h-7 w-24 shrink-0 gap-1 px-2 text-xs" disabled={!canManage} onClick={() => void setup(entry)} aria-label={`Set up ${entry.name}`}>Set up<ArrowUpRight className="size-3.5 text-muted-foreground" /></Button> : <span aria-hidden="true" className="w-24 shrink-0" />}
         </div>
       })}
       {entries.length === 0 ? <p className="py-3 text-xs text-muted-foreground">No connectors match your search.</p> : null}

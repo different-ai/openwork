@@ -17,12 +17,16 @@ test("chat suggests Slack setup and lets an admin browse every quick-add connect
   await appUser.notSee({ testId: "desktop-connection-card" });
   const visibleIds = () => appProbe.eval(`Array.from(document.querySelectorAll('[data-connector-preset]'), element => element.getAttribute('data-connector-preset'))`);
   expect(await visibleIds()).toEqual(["slack"]);
+  const suggestedWidth = await appProbe.eval(`document.querySelector('[data-testid="connector-catalog"]')?.getBoundingClientRect().width`);
   await appUser.screenshot();
   evidence.recordAssertionEvidence("A Slack request offers setup without claiming the service is connected", "Only Slack is suggested with Admin setup; no account connection card is shown", true);
 
   await appUser.click({ role: "button", label: `Browse all ${world.expectedIds.length}` });
   await appUser.see({ role: "textbox", label: "Filter connectors" });
   expect(await visibleIds()).toEqual(world.expectedIds);
+  const expandedWidth = await appProbe.eval(`document.querySelector('[data-testid="connector-catalog"]')?.getBoundingClientRect().width`);
+  expect(expandedWidth).toBe(suggestedWidth);
+  evidence.recordAssertionEvidence("Browsing all connectors preserves the suggestion card width", JSON.stringify({ suggestedWidth, expandedWidth }), true);
   await appUser.see({ role: "button", label: "Set up Linear" });
   await appUser.screenshot();
   evidence.recordAssertionEvidence("Browse all includes the complete Den preset catalog and both productivity suites", JSON.stringify(world.expectedIds), true);
