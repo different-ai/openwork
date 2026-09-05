@@ -17,7 +17,8 @@
 .eyebrow { margin: 0 0 22px; font-size: 9px; font-weight: 600; letter-spacing: .19em; color: #787878; }
 .intro h1 { margin: 0; font-size: clamp(42px, 4.5vw, 62px); line-height: 1.04; letter-spacing: -.064em; font-weight: 500; max-width: 440px; text-wrap: balance; }
 .description { font-size: 15px; line-height: 1.75; color: #777; max-width: 350px; margin: 22px 0 0; }
-.panel { min-width: 0; border: 1px solid #e4e4e4; border-radius: 24px; padding: clamp(24px, 3vw, 40px); background: white; box-shadow: 0 4px 6px -5px #00000012, 0 28px 70px -50px #00000024; animation: enter .32s ease-out both; }
+.panel { --panel-padding: clamp(24px, 3vw, 40px); --panel-radius: 24px; min-width: 0; border: 1px solid #e4e4e4; border-radius: var(--panel-radius); padding: var(--panel-padding); background: white; box-shadow: 0 4px 6px -5px #00000012, 0 28px 70px -50px #00000024; animation: enter .32s ease-out both; }
+.panelVisual { height: 100px; margin: calc(-1 * var(--panel-padding)) calc(-1 * var(--panel-padding)) 28px; overflow: hidden; border-radius: calc(var(--panel-radius) - 1px) calc(var(--panel-radius) - 1px) 0 0; }
 .panelEyebrow { display: flex; gap: 10px; align-items: center; font-size: 10px; font-weight: 500; color: #727272; margin-bottom: 28px; }
 .panelEyebrow > span:first-child { color: #222; font-variant-numeric: tabular-nums; }
 .panelRule { flex: 1; height: 1px; background: #ededed; margin-left: 10px; }
@@ -82,7 +83,7 @@
   .grid, .embedded .grid { grid-template-columns: 1fr; margin: 34px auto 36px; gap: 27px; } .story { padding: 0; }
   .intro h1 { font-size: 42px; max-width: 380px; } .eyebrow { margin-bottom: 15px; font-size: 8px; }
   .description { margin-top: 13px; font-size: 13px; max-width: 350px; }
-  .preview, .customPreview, .storyNote { display: none; } .panel { padding: 25px; border-radius: 19px; }
+  .preview, .customPreview, .storyNote { display: none; } .panel { --panel-padding: 25px; --panel-radius: 19px; } .panelVisual { height: 64px; margin-bottom: 23px; }
   .panelEyebrow { margin-bottom: 21px; } .footer > span:last-child { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .object, .panel { animation: none; } .panel button { transition: none; } }

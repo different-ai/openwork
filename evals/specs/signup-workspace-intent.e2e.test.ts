@@ -40,7 +40,9 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await user.see({ text: "Good work starts here." }, { timeoutMs: 90_000 });
     await user.see({ role: "textbox", label: "Email" });
     await user.notSee({ role: "textbox", label: "Team name" });
-    await user.looks(["The signup landing shows Good work starts here alongside a clear email entry form within a restrained black-and-white setup frame"]);
+    await user.see({ testId: "auth-landing-visual" });
+    await probe.eventually(() => probe.eval("Boolean(document.querySelector('[data-testid=auth-landing-visual] canvas'))"), { within: 15000, label: "Paper shader canvas", until: (visible) => visible === true });
+    await user.looks(["The signup landing shows Good work starts here alongside a clear email entry form within a restrained black-and-white setup frame, with a compact black-and-white dithered texture band above the form"]);
     await user.type({ role: "textbox", label: "Email" }, world.owner.email);
     await user.click({ role: "button", label: "Next" });
     await user.type({ role: "textbox", label: "Name" }, world.owner.name);

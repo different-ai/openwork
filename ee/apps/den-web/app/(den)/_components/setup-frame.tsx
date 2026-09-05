@@ -44,12 +44,13 @@ function WorkPreview({ step }: { step: SetupStep }) {
 }
 
 /** A shared visual rhythm from the first auth screen to the first useful task. */
-export function SetupFrame({ step, title, description, children, aside, embedded = false }: {
+export function SetupFrame({ step, title, description, children, aside, panelVisual, embedded = false }: {
   step: SetupStep;
   title: string;
   description: string;
   children: ReactNode;
   aside?: ReactNode;
+  panelVisual?: ReactNode;
   embedded?: boolean;
 }) {
   const current = steps.findIndex((item) => item.id === step);
@@ -74,6 +75,7 @@ export function SetupFrame({ step, title, description, children, aside, embedded
           <p className={styles.storyNote}>{step === "people" ? "A shared space. Individual accounts. Everyone brings their own perspective." : "Documents, research, and the work in between. Start with what you want to get done."}</p>
         </aside>
         <div className={styles.panel} key={step}>
+          {panelVisual ? <div className={styles.panelVisual}>{panelVisual}</div> : null}
           <div className={styles.panelEyebrow}><span>0{current + 1}</span><span>{steps[current]?.label}</span><span className={styles.panelRule} /></div>
           {children}
         </div>
