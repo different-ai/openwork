@@ -400,9 +400,9 @@ export default function WebPage() {
 
         {(accessState === "unsubscribed" || (accessState === "eligible" && billing?.accessSource === "trial")) && billing ? (
           <DenCard id="openwork-web-purchase" size="spacious" data-testid="openwork-web-purchase">
-            <p className="text-[12px] font-semibold uppercase tracking-[0.12em] text-blue-600">OpenWork Web</p>
+            <p className="text-[12px] font-semibold uppercase tracking-[0.12em] text-blue-600">Optional paid plan</p>
             <h2 className="mt-2 text-[22px] font-semibold tracking-[-0.03em] text-gray-950">Browser access for your organization</h2>
-            <p className="mt-3 text-[14px] leading-6 text-gray-600">{OPENWORK_WEB_QUANTITY_EXPLANATION}</p>
+            <p className="mt-3 text-[14px] leading-6 text-gray-600">{billing.accessSource === "trial" ? "If you upgrade, the plan covers every joined member. Pending invitations are not billed." : OPENWORK_WEB_QUANTITY_EXPLANATION}</p>
             <div className="mt-5 rounded-2xl border border-gray-200 bg-gray-50 p-4" data-testid="openwork-web-price-breakdown">
               <p className="text-[22px] font-semibold tracking-[-0.03em] text-gray-950">
                 {getOpenWorkWebQuantityDescription(billing.quantity)} × {unitPrice}
@@ -412,7 +412,9 @@ export default function WebPage() {
               </p>
             </div>
             <p className="mt-5 text-[13px] leading-5 text-gray-600" data-testid="openwork-web-checkout-explainer">
-              Access opens as soon as your payment is confirmed. Billing follows your joined member count automatically as your team changes — pending invitations are never billed.
+              {billing.accessSource === "trial"
+                ? "Choose this plan to keep cloud access after your trial. Billing starts only when you complete checkout."
+                : "Access opens as soon as your payment is confirmed. Billing follows your joined member count automatically as your team changes — pending invitations are never billed."}
             </p>
             {!billing.configured ? (
               <DenNotice className="mt-5" tone="neutral" message="OpenWork Web billing is not configured for this deployment." />
