@@ -1,4 +1,5 @@
-import { spec } from "@openwork/testkit";
+import { expect } from "vitest";
+import { eventually, spec } from "@openwork/testkit";
 import { artifactCodeBrowserWorld } from "../worlds/first-run.ts";
 
 const test = spec.world(artifactCodeBrowserWorld);
@@ -13,7 +14,12 @@ test("artifact editor renders code with Pierre and browses workspace files", asy
     await user.press("Tab");
     await user.press("Enter");
     await user.see("Select tab: openwork-artifact-proof.ts", { timeoutMs: 30_000 });
-    await user.see({ text: /export const artifactEditor = true/ }, { timeoutMs: 30_000 });
+    // Pierre renders code inside a shadow root, outside the generic text locator.
+    const code = await eventually(() => world.visibleArtifactCode(), {
+      within: 30_000,
+      until: (value) => typeof value === "string" && value.includes("export const artifactEditor = true"),
+    });
+    expect(code).toContain("export const artifactEditor = true");
     await user.looks([
       "The artifact panel visibly shows a workspace file tree beside a syntax-highlighted TypeScript code viewer",
       "The code viewer visibly contains the TypeScript declaration export const artifactEditor = true",

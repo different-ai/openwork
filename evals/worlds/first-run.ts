@@ -174,6 +174,17 @@ export async function artifactCodeBrowserWorld(seed: Seed) {
   if (!isRecord(tabs) || tabs.ok !== true) throw new Error(`Could not seed artifact tabs: ${JSON.stringify(tabs)}`);
   return {
     ...base,
+    async visibleArtifactCode() {
+      return seed.evalIn(base.app, `(() => {
+        const root = document.querySelector("[data-artifact-code-view]");
+        if (!root || root.getBoundingClientRect().height === 0) return "";
+        const text = (node) => [...node.childNodes].map((child) =>
+          child.nodeType === Node.TEXT_NODE ? child.textContent :
+          child instanceof Element ? text(child.shadowRoot || child) : ""
+        ).join("");
+        return text(root);
+      })()`);
+    },
     async setCatalogFolderRestricted(restricted: boolean) {
       const path = join(base.workspacePath, "restricted");
       const mode = restricted ? "000" : "700";
