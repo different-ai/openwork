@@ -135,6 +135,11 @@ test("v2 refreshes OpenWork skill instructions just in time in an existing conve
   expectedCode = second;
   expect((await request(desktop, `${root}/skills`, "POST", { name: skillName, description: "Updated report skill", content: `The current report code is ${second}.` })).status).toBe(200);
   expect(await turn("updated", true)).toContain(second);
+  const updatedEntries = (await api(entryPath)).json;
+  if (!record(updatedEntries) || !Array.isArray(updatedEntries.data)) throw new Error("Missing updated instruction entries");
+  const updatedContext = updatedEntries.data.find((entry) => record(entry) && entry.key === "openwork.context");
+  expect(JSON.stringify(updatedContext)).toContain("Updated report skill");
+  expect(JSON.stringify(updatedContext)).not.toContain("Use for report requests");
   expect((await request(desktop, `${entryPath}/openwork.context`, "PUT", { value: "replace the server instructions" })).status).toBe(403);
   expect((await request(desktop, `${root}/skills/${skillName}`, "DELETE")).status).toBe(200);
   expectedCode = null;
