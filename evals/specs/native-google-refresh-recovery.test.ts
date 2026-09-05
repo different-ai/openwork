@@ -39,7 +39,16 @@ test("native Google refresh rejects revoked grants safely and preserves a concur
     expect(new URL(url).origin).toBe(new URL(google.apiUrl).origin);
     const result = await fetch(url, { signal: AbortSignal.timeout(15_000) });
     expect(result.status).toBe(200);
-    expect(await result.text()).toContain("Connection complete");
+    expect(await result.text()).toContain("Choose an account");
+    await google.chooseAccount("mailbox@example.test", { timeoutMs: 15_000 });
+    const status = await denFetch(den.admin, "/v1/oauth-providers/google-workspace/status", { headers });
+    expect(status.response.status, status.text).toBe(200);
+    expect(status.body).toMatchObject({ connected: true });
+  }
+  async function waitForRefreshes(count: number) {
+    const deadline = Date.now() + 8_000;
+    while ((await control()).pending !== count && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25));
+    expect((await control()).pending).toBe(count);
   }
   const read = () => denFetch(den.admin, "/v1/capabilities/google-workspace/gmail-messages", { headers });
   await control({ authorizationExpiresIn: 1, refreshError: "invalid_grant" });
@@ -64,13 +73,24 @@ test("native Google refresh rejects revoked grants safely and preserves a concur
   expect((await control()).attempts).toBe(3);
   evidence.recordAssertionEvidence("Temporary provider failures preserve the grant for retry", "A provider outage remained a server failure, not a false reconnect response; the next request refreshed the same grant successfully without new authorization.", true);
 
+  await connect();
+  await control({ holdRefresh: true });
+  const concurrent = Promise.all([read(), read()]);
+  try {
+    await waitForRefreshes(2);
+  } finally {
+    await control({ holdRefresh: false, release: true });
+  }
+  expect((await concurrent).map(result => result.response.status)).toEqual([200, 200]);
+  expect((await read()).response.status).toBe(200);
+  expect((await control()).attempts).toBe(5);
+  evidence.recordAssertionEvidence("Concurrent successful refreshes preserve a usable successor", "Two held refreshes completed concurrently; both Gmail requests and a later read succeeded with no additional refresh.", true);
+
   await connect(); // Issue another short-lived access token.
   await control({ refreshError: "invalid_grant", holdRefresh: true });
   const lateRead = read();
   try {
-    const deadline = Date.now() + 8_000;
-    while ((await control()).pending !== 1 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25));
-    expect((await control()).pending).toBe(1);
+    await waitForRefreshes(1);
     await control({ authorizationExpiresIn: 3600 });
     await connect();
   } finally {
@@ -79,13 +99,21 @@ test("native Google refresh rejects revoked grants safely and preserves a concur
   const late = await lateRead;
   expect(late.response.status, late.text).toBe(200);
   expect((await read()).response.status).toBe(200);
-  expect((await control()).attempts).toBe(4);
+  expect((await control()).attempts).toBe(6);
   evidence.recordAssertionEvidence("A stale refresh rejection cannot erase a newer reconnect", "Held an old grant's refresh at the provider, completed a new PKCE connection, then released invalid_grant. Both the waiting Gmail read and a later read succeeded without another refresh.", true);
 
+  await control({ authorizationExpiresIn: 1, holdRefresh: true });
   await connect();
-  const disconnected = await denFetch(den.admin, "/v1/oauth-providers/google-workspace/disconnect", { method: "POST", headers });
-  expect(disconnected.response.status, disconnected.text).toBe(200);
+  const disconnectedRead = read();
+  try {
+    await waitForRefreshes(1);
+    const disconnected = await denFetch(den.admin, "/v1/oauth-providers/google-workspace/disconnect", { method: "POST", headers });
+    expect(disconnected.response.status, disconnected.text).toBe(200);
+  } finally {
+    await control({ holdRefresh: false, release: true });
+  }
+  expect((await disconnectedRead).response.status).toBe(409);
   expect((await read()).response.status).toBe(409);
-  expect((await control()).attempts).toBe(4);
-  evidence.recordAssertionEvidence("Explicit disconnect remains disconnected", "After disconnect, Gmail returned needs_connection and did not refresh or recreate credentials.", true);
+  expect((await control()).attempts).toBe(7);
+  evidence.recordAssertionEvidence("Explicit disconnect wins over a stale refresh failure", "Disconnected while a rejected refresh was held. Both the held and subsequent Gmail reads returned needs_connection with no new refresh or recreated credentials.", true);
 });
