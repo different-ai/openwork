@@ -53,7 +53,7 @@ export async function voiceTaskProvider() {
     const contents = updated ? "updated by follow-up" : "created by spoken request";
     const routed = user.match(/\[The user selected @(cloud|desktop):/);
     const connected = user.includes("connected project notes app");
-    const plain = user.includes("person@cloud");
+    const plain = /person\s*@cloud/.test(user);
     let text = !main ? "Voice task" : routed ? "The task request is queued. Its completion has not been confirmed." : connected ? "The connected app returned Project brief and Release checklist." : plain ? "That address is ordinary text." : delayed ? "The slow operation finished." : updated ? "The note now contains the updated text." : "The note was created in this workspace.";
     let call: { name: string; arguments: Record<string, unknown> } | undefined;
     const results = afterUser.filter((m: { role?: string }) => m.role === "tool");

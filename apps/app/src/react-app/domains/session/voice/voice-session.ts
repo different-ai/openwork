@@ -120,7 +120,7 @@ export class VoiceSession {
   end = () => {
     ++this.submissionEpoch;
     this.closeConnection();
-    this.status("idle", "Voice ended. Accepted work continues here; use Cancel operation to request a stop.");
+    this.status("idle", "Voice ended. Work continues in this task.");
   };
   dispose = () => {
     this.disposed = true;
@@ -535,7 +535,7 @@ export class VoiceSession {
       if (!this.current() || epoch !== this.submissionEpoch) return;
       if (result.outcome === "sent" || result.outcome === "accepted") {
         this.store.update({ working: true });
-        this.store.append("system", "Sent to this conversation. Work is in progress; this is not a completion report.");
+        this.store.append("system", "Request sent. Work continues in this task.");
       } else {
         this.store.update({ pendingText: text });
         this.store.append("system", "The request was not sent. Review this conversation’s connection or permission prompt before trying again.");

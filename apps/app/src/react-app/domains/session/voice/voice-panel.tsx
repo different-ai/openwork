@@ -90,7 +90,7 @@ export function VoicePanel(props: VoicePanelProps) {
           <p role="status" aria-live="polite" className="text-sm font-medium">{state.statusText}</p>
           <div className="flex justify-center gap-3 text-xs text-muted-foreground">
             <span data-testid="voice-capture-state">{state.captureActive ? "Microphone on" : "Microphone off"}</span>
-            {working ? <span>Conversation working</span> : null}
+            {working ? <span>Working on this task</span> : null}
           </div>
         </div>
         <div className="grid grid-cols-2 gap-2">
@@ -102,10 +102,10 @@ export function VoicePanel(props: VoicePanelProps) {
         </div>
         <label className="flex items-start gap-2 text-xs">
           <input type="checkbox" className="mt-0.5 accent-primary" checked={state.readRepliesAloud} onChange={(e) => session.setReadRepliesAloud(e.currentTarget.checked)} />
-          <span><span className="font-medium">Read replies aloud</span><span className="mt-1 block text-muted-foreground">Sends completed reply excerpts to OpenAI for speech. Otherwise, Voice gives brief notifications.</span></span>
+          <span><span className="font-medium">Read replies aloud</span><span className="mt-1 block text-muted-foreground">Share reply text with OpenAI for speech.</span></span>
         </label>
-        <p className="text-xs text-muted-foreground">Your microphone audio goes to OpenAI when Voice is on.</p>
-        <p className="text-xs leading-relaxed text-muted-foreground">Mute or End voice affects audio; accepted work continues. Cancel operation requests a stop. Completed changes remain.</p>
+        <p className="text-xs text-muted-foreground">Audio goes to OpenAI while Voice is on.</p>
+        <p className="text-xs leading-relaxed text-muted-foreground">End voice keeps work running. Cancel requests a stop; completed changes remain.</p>
       </div>
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
         <details className="rounded-lg border p-3 text-xs">

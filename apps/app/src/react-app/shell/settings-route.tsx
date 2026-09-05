@@ -1335,7 +1335,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     setVoiceError(null);
     try {
       const session = await openworkClient.createVoiceRealtimeSession();
-      setVoiceStatus(`Realtime ready with ${session.model} (${session.tools.length} OpenWork tools).`);
+      setVoiceStatus(`Audio provider ready with ${session.model}. Tasks use the conversation’s selected model and tools.`);
     } catch (error) {
       setVoiceError(describeRouteError(error));
     } finally {
