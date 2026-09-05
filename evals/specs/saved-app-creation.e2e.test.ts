@@ -40,7 +40,12 @@ test("create, preview, save and reopen an app without changing already-open resu
   });
   evidence.recordAssertionEvidence("The generated app renders workflow data and supports preview interactions", "The sandbox displayed Weekly overview and Launch briefing, and Show details revealed the worker count before saving.", true);
 
-  const workflowBefore = record((await probe.api(world.den.admin, `/v1/workflows/${world.configObjectId}`)).body);
+  const readWorkflow = async () => {
+    const response = await probe.api(world.den.admin, `/v1/workflows/${world.configObjectId}`);
+    expect(response.response.status, response.text).toBe(200);
+    return record(record(response.body).script);
+  };
+  const workflowBefore = await readWorkflow();
   const snapshotsBefore = (await probe.api(world.den.admin, `/v1/workflows/${world.configObjectId}/snapshots`)).body;
   const draftPlacement = await seed.api(world.den.admin, `/v1/apps/${world.appId}/dashboard`, {
     method: "POST", body: JSON.stringify({ added: true }),
@@ -59,7 +64,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     const listed = record((await probe.api(world.den.admin, "/v1/apps")).body);
     expect(listed.items).toHaveLength(1);
     expect(await readApp()).toMatchObject({ onDashboard: true, view: { configObjectId: world.configObjectId } });
-    const workflowAfter = record((await probe.api(world.den.admin, `/v1/workflows/${world.configObjectId}`)).body);
+    const workflowAfter = await readWorkflow();
     expect(record(workflowAfter.currentVersion).id).toBe(record(workflowBefore.currentVersion).id);
     expect(record(workflowAfter.currentVersion).automationReferences).toEqual([]);
     expect((await probe.api(world.den.admin, `/v1/workflows/${world.configObjectId}/snapshots`)).body).toEqual(snapshotsBefore);
