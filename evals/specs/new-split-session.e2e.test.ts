@@ -171,6 +171,35 @@ test("new split creates fresh same-workspace secondary sessions without moving t
       await user.press("Enter");
       await user.see({ text: "Secondary split received" }, { timeoutMs: 30_000 });
       expect(await probe.eval("window.__splitSendHeld === true")).toBe(true);
+      await agent.run("workbench.session.focus", { sessionId: world.switchSession.sessionId });
+      await probe.eventually(() => world.splitFacts(), {
+        within: 15_000,
+        label: "the primary pane switches while its previous request remains pending",
+        until: (value) => parseSplitFacts(value).primarySessionId === world.switchSession.sessionId,
+      });
+      await user.type("composer", world.switchPrompt);
+      await user.press("Enter");
+      await user.see({ text: "Switched session received" }, { timeoutMs: 15_000 });
+      expect(await probe.eval("window.__splitSendHeld === true")).toBe(true);
+      expect(await probe.eval(`(() => {
+        const primary = document.querySelector('[data-workbench-pane="primary"]')?.textContent ?? "";
+        const secondary = document.querySelector('[data-workbench-pane="secondary"]')?.textContent ?? "";
+        return primary.includes("Switched session received")
+          && !primary.includes("Primary split received")
+          && !secondary.includes("Switched session received");
+      })()`)).toBe(true);
+      evidence.recordAssertionEvidence(
+        "Switching sessions during a pending send does not block the new session or cross replies",
+        JSON.stringify({ pendingSessionId: primarySessionId, switchedSessionId: world.switchSession.sessionId }),
+        true,
+      );
+      await agent.run("workbench.session.focus", { sessionId: primarySessionId });
+      await probe.eventually(() => world.splitFacts(), {
+        within: 15_000,
+        label: "return to the original primary without replacing the secondary",
+        until: (value) => parseSplitFacts(value).primarySessionId === primarySessionId
+          && parseSplitFacts(value).secondarySessionId === firstFacts.secondarySessionId,
+      });
     } catch (error) {
       await user.screenshot();
       throw error;

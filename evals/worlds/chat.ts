@@ -213,9 +213,11 @@ export async function newSplitPrimary(seed: Seed) {
   const modelId = "split-send-model";
   const primaryPrompt = "Reply to the primary split message";
   const secondaryPrompt = "Reply to the secondary split message";
+  const switchPrompt = "Reply after switching the primary session";
   const mock = seed.mock({ agentWorkloads: [
     { promptMarker: primaryPrompt, finalReply: "Primary split received", steps: [] },
     { promptMarker: secondaryPrompt, finalReply: "Secondary split received", steps: [] },
+    { promptMarker: switchPrompt, finalReply: "Switched session received", steps: [] },
   ] });
   const den = await seed.den({ mocks: { agent: mock } });
   const app = await seed.desktop({ name: "new-split-session", den, as: "admin", model: `${providerId}/${modelId}` });
@@ -230,6 +232,7 @@ export async function newSplitPrimary(seed: Seed) {
       },
     },
   });
+  const switchSession = await seedSessionRetry(seed, app, { title: "Split switch target" });
   const session = await seedSessionRetry(seed, app, { title: "New split primary" });
   const splitFacts = () => evalIn(app, `(() => {
     const context = window.__openworkControl?.context?.();
@@ -267,7 +270,7 @@ export async function newSplitPrimary(seed: Seed) {
     });
     return response.json();
   })()`, { awaitPromise: true, timeoutMs: 15_000 });
-  return { app, workspace, session, splitFacts, agentContextViaServer, primaryPrompt, secondaryPrompt };
+  return { app, workspace, session, splitFacts, agentContextViaServer, primaryPrompt, secondaryPrompt, switchSession, switchPrompt };
 }
 
 export async function shimmerChat(seed: Seed) {
