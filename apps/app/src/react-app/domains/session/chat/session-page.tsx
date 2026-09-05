@@ -1357,21 +1357,42 @@ export function SessionPage(props: SessionPageProps) {
     }
   };
 
+  // Match the task owning the focused composer, including a split in another
+  // workspace. Moving focus creates a new owner and releases the previous call.
+  const voiceTarget = focusedWorkbenchPane === "secondary" && splitSession
+    ? splitPaneRuntime?.status === "ready" ? {
+      sessionId: splitSession.sessionId,
+      title: sessionTitleForId(props.sidebar.workspaceSessionGroups, splitSession.sessionId, splitSession.workspaceId),
+      runtime: splitPaneRuntime,
+    } : null
+    : props.selectedSessionId && props.surface && props.openworkServerClient && props.runtimeWorkspaceId ? {
+      sessionId: props.selectedSessionId,
+      title: selectedSessionTitle,
+      runtime: {
+        workspaceId: props.selectedWorkspaceId, runtimeWorkspaceId: props.runtimeWorkspaceId,
+        workspaceTitle: workspaceName, workspaceRoot: props.selectedWorkspaceRoot,
+        client: props.openworkServerClient, surface: props.surface,
+        opencodeBaseUrl: reactSessionBaseUrl, openworkToken: reactSessionToken,
+      },
+    } : null;
+
   const sidePanelContent = activeSidePanel === "extensions" && props.settingsSlot ? (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-background">
       {props.settingsSlot}
     </div>
-  ) : activeSidePanel === "voice" && props.openworkServerClient && props.selectedSessionId && props.surface ? (
+  ) : activeSidePanel === "voice" && voiceTarget ? (
     <VoicePanel
-      key={`${props.selectedWorkspaceId}:${props.selectedSessionId}:${reactSessionBaseUrl}`}
-      client={props.openworkServerClient}
-      sessionId={props.selectedSessionId}
-      workspaceId={props.runtimeWorkspaceId ?? props.selectedWorkspaceId}
-      workspaceRoot={props.selectedWorkspaceRoot}
-      needsScreen={Boolean(props.surface.activePermission || props.surface.activeQuestion)}
-      onSendDraft={props.surface.onSendDraft}
-      opencodeBaseUrl={reactSessionBaseUrl}
-      openworkToken={reactSessionToken}
+      key={`${voiceTarget.runtime.workspaceId}:${voiceTarget.sessionId}:${voiceTarget.runtime.opencodeBaseUrl}`}
+      client={voiceTarget.runtime.client}
+      sessionId={voiceTarget.sessionId}
+      taskTitle={voiceTarget.title}
+      workspaceTitle={voiceTarget.runtime.workspaceTitle}
+      workspaceId={voiceTarget.runtime.runtimeWorkspaceId}
+      workspaceRoot={voiceTarget.runtime.workspaceRoot}
+      needsScreen={Boolean(voiceTarget.runtime.surface.activePermission || voiceTarget.runtime.surface.activeQuestion)}
+      onSendDraft={voiceTarget.runtime.surface.onSendDraft}
+      opencodeBaseUrl={voiceTarget.runtime.opencodeBaseUrl}
+      openworkToken={voiceTarget.runtime.openworkToken}
       onClose={closeRightPane}
     />
   ) : activeSidePanel === "panel" ? (

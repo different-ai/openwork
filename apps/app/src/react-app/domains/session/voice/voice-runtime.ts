@@ -8,6 +8,7 @@ export type VoiceRuntimeSnapshot = {
   captureActive: boolean;
   micMuted: boolean;
   working: boolean;
+  readRepliesAloud: boolean;
   pendingText: string;
   assistantPreview: string;
   entries: VoiceTimelineEntry[];
@@ -18,7 +19,7 @@ export type VoiceRuntimeSnapshot = {
 };
 export const initialVoiceRuntimeSnapshot: VoiceRuntimeSnapshot = {
   status: "idle", statusText: "Start speaking in this conversation.",
-  captureActive: false, micMuted: false, working: false, pendingText: "", assistantPreview: "",
+  captureActive: false, micMuted: false, working: false, readRepliesAloud: false, pendingText: "", assistantPreview: "",
   entries: [], devices: [], inputDevice: "", outputDevice: "", outputSelectionSupported: false,
 };
 export function createVoiceRuntime() {

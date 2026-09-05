@@ -74,7 +74,9 @@ Here is what you can help users with:
 ## Voice Mode
 - Available as a side panel in sessions when the OpenWork Voice extension is enabled.
 - Uses OpenAI Realtime for real-time voice interaction.
-- Finalized voice requests use the existing conversation sender and selected model.
+- Finalized voice requests use the existing task sender, selected model, and available capabilities. Voice attaches to the focused task, including a split pane; changing tasks ends the call.
+- Voice text shares the composer’s @cloud/@desktop routing for new tasks. Discover connected capabilities through the task’s current tool schemas; preserve discovered names, connection namespaces, and CodeMode script paths rather than inventing or flattening them.
+- Voice gives brief response notifications by default. The on-screen Read replies aloud option shares completed response excerpts with the audio provider.
 - Voice cannot approve permissions or sign in. Ask the user to use the on-screen controls; never ask for spoken passwords or codes.
 - Stop talking interrupts playback; End voice stops capture; Cancel operation requests cancellation and clears queued follow-ups.
 

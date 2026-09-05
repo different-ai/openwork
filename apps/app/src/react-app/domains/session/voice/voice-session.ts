@@ -1,3 +1,4 @@
+import { buildComposerDraft } from "../surface/composer/build-draft";
 import { createVoiceRuntime, type VoiceStatus } from "./voice-runtime";
 import { cancelVoiceConversation, readVoiceConversation, type VoiceConversation } from "./voice-conversation";
 
@@ -463,6 +464,11 @@ export class VoiceSession {
     } });
   }
 
+  setReadRepliesAloud = (enabled: boolean) => {
+    this.store.update({ readRepliesAloud: enabled });
+    if (!enabled) this.stopTalking();
+  };
+
   toggleMute = async () => {
     const connection = this.connection;
     if (!connection?.ready || !this.current(connection) || this.muting === connection) return;
@@ -523,7 +529,7 @@ export class VoiceSession {
     try {
       // This is the same callback used by Send and Steer in SessionSurface.
       // Call once. A transport exception is ambiguous, never an automatic retry.
-      const delivery = this.owner.submit({ mode: "prompt", text, parts: [{ type: "text", text }], attachments: [] }, this.owner.sessionId);
+      const delivery = this.owner.submit(buildComposerDraft(text), this.owner.sessionId);
       this.delivery = delivery;
       const result = await delivery;
       if (!this.current() || epoch !== this.submissionEpoch) return;
@@ -605,7 +611,7 @@ export class VoiceSession {
       const unresolved = reply.parts.some((part) => part.type === "tool" && (part.state.status === "running" || part.state.status === "pending"));
       if (unresolved) return;
       if (reply.info.error) this.speak(connection, "The conversation reported an error. Please read its details before continuing.");
-      else if (text) this.speak(connection, text);
+      else if (text) this.speak(connection, this.store.getSnapshot().readRepliesAloud ? text : "Your task has a response. Read it in the conversation.");
     } catch {
       if (baseline) this.fail(connection, "Could not verify this conversation before starting voice. Check the connection and reconnect; nothing was sent.");
       else if (this.current(connection)) this.store.update({ statusText: "Could not verify the conversation’s current state. Check the connection; no requests will be resent." });

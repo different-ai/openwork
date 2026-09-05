@@ -1,8 +1,33 @@
 import { createServer } from "node:http";
+import type { MockMcpTool } from "./mock-mcp.ts";
+
+/** Mirror the public discovery/execute boundary, including an allocated connection
+ * namespace and a tool name requiring bracket notation. No real cloud account. */
+export const voiceCapabilityTools: MockMcpTool[] = [
+  { name: "search_capabilities", description: "Discover connected tools and computer task capabilities.",
+    inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+    result: { content: [{ type: "text", text: JSON.stringify({ items: [
+      { name: "mcp:voice-notes:list-notes", scriptPath: 'tools.project_notes_2["list-notes"]' },
+      { name: "remote-session:create" },
+    ] }) }] } },
+  { name: "execute_capability_script", description: "Run a script using exact discovered connection paths.",
+    inputSchema: { type: "object", properties: { code: { type: "string" } }, required: ["code"] },
+    result: { content: [{ type: "text", text: JSON.stringify({ ok: true, value: { notes: ["Project brief", "Release checklist"] } }) }] } },
+  { name: "execute_capability", description: "Start a task on the selected computer.",
+    inputSchema: { type: "object", properties: { name: { type: "string" }, body: { type: "object", properties: { target: { type: "string" }, prompt: { type: "string" } }, required: ["target", "prompt"] } }, required: ["name", "body"] },
+    result: { content: [{ type: "text", text: JSON.stringify({ state: "queued", commandId: "voice-task-witness" }) }] } },
+];
 
 /** Deterministic model witness; execution still goes through the real engine's bash tool. */
 export async function voiceTaskProvider() {
   const requests: { user: string; model: unknown; tools: string[] }[] = [];
+  const discoveredPath = (value: unknown): string | undefined => {
+    if (typeof value === "string") { try { return discoveredPath(JSON.parse(value)); } catch { return undefined; } }
+    if (!value || typeof value !== "object") return undefined;
+    if ("scriptPath" in value && typeof value.scriptPath === "string") return value.scriptPath;
+    for (const entry of Object.values(value)) { const path = discoveredPath(entry); if (path) return path; }
+    return undefined;
+  };
   const server = createServer(async (request, response) => {
     response.setHeader("access-control-allow-origin", "*");
     if (request.url === "/__facts") { response.setHeader("content-type", "application/json"); response.end(JSON.stringify(requests)); return; }
@@ -26,13 +51,38 @@ export async function voiceTaskProvider() {
     const delayed = user.toLowerCase().includes("slow");
     const updated = user.toLowerCase().includes("change");
     const contents = updated ? "updated by follow-up" : "created by spoken request";
-    const text = !main ? "Voice task" : delayed ? "The slow operation finished." : updated ? "The note now contains the updated text." : "The note was created in this workspace.";
-    const delta = main && !toolCompleted && tools.includes("bash") ? {
-      tool_calls: [{ index: 0, id: `call_${requests.length}`, type: "function", function: { name: "bash", arguments: JSON.stringify({
+    const routed = user.match(/\[The user selected @(cloud|desktop):/);
+    const connected = user.includes("connected project notes app");
+    const plain = user.includes("person@cloud");
+    let text = !main ? "Voice task" : routed ? "The task request is queued. Its completion has not been confirmed." : connected ? "The connected app returned Project brief and Release checklist." : plain ? "That address is ordinary text." : delayed ? "The slow operation finished." : updated ? "The note now contains the updated text." : "The note was created in this workspace.";
+    let call: { name: string; arguments: Record<string, unknown> } | undefined;
+    const results = afterUser.filter((m: { role?: string }) => m.role === "tool");
+    if (main && (routed || connected)) {
+      // Discover names from the model's actual tool schemas and result. Voice
+      // must not strip a prefix, allocate a namespace, or invent a script path.
+      const tool = (suffix: string) => tools.find(name => name === "voice_cloud_" + suffix);
+      if (!results.length) {
+        const name = tool("search_capabilities");
+        if (name) call = { name, arguments: { query: routed ? "remote-session:create" : "project notes" } };
+      } else if (results.length === 1) {
+        if (routed) {
+          const name = tool("execute_capability");
+          const prompt = user.replace(/\[The user selected @(?:cloud|desktop):[^\]]*\]/g, "").replace(/@(cloud|desktop)\b/g, "").trim();
+          if (name) call = { name, arguments: { name: "remote-session:create", body: { target: routed[1], prompt } } };
+        } else {
+          const path = discoveredPath(results);
+          const name = tool("execute_capability_script");
+          if (name && path) call = { name, arguments: { code: `return await ${path}({});` } };
+          else text = "The connected capability path was unavailable.";
+        }
+      }
+    } else if (main && !toolCompleted && !plain && tools.includes("bash")) {
+      call = { name: "bash", arguments: {
         command: delayed ? "sleep 30; printf 'finished' > voice-slow.txt" : `printf '%s' '${contents}' > voice-note.txt`,
         description: delayed ? "Create the slow note" : "Write the requested note",
-      }) } }],
-    } : { content: text };
+      } };
+    }
+    const delta = call ? { tool_calls: [{ index: 0, id: `call_${requests.length}`, type: "function", function: { name: call.name, arguments: JSON.stringify(call.arguments) } }] } : { content: text };
     response.writeHead(200, { "content-type": "text/event-stream" });
     const chunk = (delta: unknown, finish_reason: string | null) => `data: ${JSON.stringify({ id: `chatcmpl-${requests.length}`, object: "chat.completion.chunk", choices: [{ index: 0, delta, finish_reason }] })}\n\n`;
     response.write(chunk({ role: "assistant" }, null));

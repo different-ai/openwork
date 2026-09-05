@@ -12,10 +12,21 @@ function users(value: unknown) {
   return value.filter((message) => object(message).role === "user").map((message) => object(message).text);
 }
 
-test("voice sends and steers real conversation work, interrupts speech, cancels, reconnects without replay, and isolates conversations", async ({ world, user, agent, probe, step, evidence }) => {
+test("voice sends and steers real conversation work, interrupts speech, cancels, reconnects without replay, and isolates conversations", async ({ world, user, agent, probe, step, place, evidence }) => {
   const waitForUsers = (count: number) => probe.eventually(() => world.messages(world.a.sessionId).then(users), { within: 45_000, intervalMs: 500, until: (messages) => messages.length === count, label: `${count} accepted user turns in conversation A` });
   const capture = (count: number) => probe.eventually(() => world.facts(), { within: 10_000, until: (facts) => object(facts).activeTracks === count, label: `${count} active microphone tracks` });
+  const spoken = async () => {
+    const events = object(await world.facts()).events;
+    if (!Array.isArray(events)) throw new Error("Missing audio transport witness");
+    return events.filter(event => object(event).type === "response.create").map(event => {
+      const response = object(object(event).response);
+      expect(response.tools).toEqual([]);
+      expect(response.tool_choice).toBe("none");
+      return JSON.stringify(response.input);
+    });
+  };
   await step("start with acknowledged controls and capture a spoken request through real execution", async () => {
+    await user.see({ testId: "voice-task-title" }, { text: "Attached to Voice conversation A" });
     await user.click("Start voice");
     await capture(1);
     await user.see({ testId: "voice-capture-state" }, { text: "Microphone on" });
@@ -24,21 +35,26 @@ test("voice sends and steers real conversation work, interrupts speech, cancels,
     expect(await probe.eventually(() => world.file("voice-note.txt"), { within: 60_000, until: (value) => object(value).status === 200, label: "real engine created the requested file" })).toEqual(expect.objectContaining({ body: expect.stringContaining("created by spoken request") }));
     expect(await world.messages(world.b.sessionId)).toEqual([]);
     expect(await world.providerFacts()).toEqual(expect.arrayContaining([expect.objectContaining({ model: "voice-task-model", tools: expect.arrayContaining(["bash"]) })]));
-    await user.see({ text: "Reading the conversation’s response…" });
+    await probe.eventually(spoken, { within: 15_000, until: replies => replies.some(reply => reply.includes("Your task has a response.")), label: "default speech is only a response notification" });
+    expect(JSON.stringify(await spoken())).not.toContain("The note was created in this workspace.");
+    expect(JSON.stringify(await spoken())).not.toContain("Create a note in this workspace.");
     evidence.recordAssertionEvidence("A spoken request uses the selected model and real engine; the other conversation stays empty", JSON.stringify({ userTurns: await waitForUsers(1), file: await world.file("voice-note.txt"), otherConversation: await world.messages(world.b.sessionId), model: await world.providerFacts() }), true);
     await user.screenshot();
   });
   await step("barge-in stops only speech and a follow-up updates the same task", async () => {
+    await user.click({ role: "checkbox", label: /Read replies aloud/ });
     await world.fixture("say", ["Change the note to the updated text.", "steer"]);
     expect(await waitForUsers(2)).toHaveLength(2);
     const facts = object(await world.facts());
     expect(facts.events).toEqual(expect.arrayContaining([expect.objectContaining({ type: "output_audio_buffer.clear" })]));
     expect(await probe.eventually(() => world.file("voice-note.txt"), { within: 60_000, until: (value) => String(object(value).body).includes("updated by follow-up"), label: "follow-up executed in the original workspace" })).toEqual(expect.objectContaining({ status: 200 }));
+    const playback = await probe.eventually(spoken, { within: 15_000, until: replies => replies.some(reply => reply.includes("The note now contains the updated text.")), label: "playback receives the completed engine response" });
+    expect(JSON.stringify(playback)).not.toContain("Change the note to the updated text.");
     await world.fixture("say", ["Change the note to the updated text.", "steer"]);
     await world.fixture("malicious");
     expect(users(await world.messages(world.a.sessionId))).toHaveLength(2);
     expect(await world.messages(world.b.sessionId)).toEqual([]);
-    evidence.recordAssertionEvidence("Interruption clears playback and the follow-up changes the same workspace without duplicating its user turn", JSON.stringify({ userTurns: users(await world.messages(world.a.sessionId)), file: await world.file("voice-note.txt"), audioCleared: true, otherConversation: await world.messages(world.b.sessionId) }), true);
+    evidence.recordAssertionEvidence("Interruption clears playback and the follow-up changes the same workspace without duplicating its user turn", JSON.stringify({ userTurns: users(await world.messages(world.a.sessionId)), file: await world.file("voice-note.txt"), audioCleared: true, completedResponsePlayback: playback, otherConversation: await world.messages(world.b.sessionId) }), true);
   });
   await step("uncertain and muted audio cannot send or approve a request", async () => {
     await world.fixture("say", ["Uncertain words", "unclear", -3]);
@@ -114,4 +130,72 @@ test("voice sends and steers real conversation work, interrupts speech, cancels,
     expect(object(await world.facts()).liveTracks).toBe(0);
     evidence.recordAssertionEvidence("Typed fallback remains in the new conversation after voice ends", JSON.stringify({ originalConversationUsers: users(await world.messages(world.a.sessionId)), newConversationUsers: users(await world.messages(world.b.sessionId)), liveTracks: 0 }), true);
   });
+  await step("spoken connected-app work preserves discovered connection namespaces", async () => {
+    await user.click("Start voice");
+    await capture(1);
+    await user.click({ role: "checkbox", label: /Read replies aloud/ });
+    await world.fixture("say", ["Find the notes in my connected project notes app.", "connected-notes"]);
+    const calls = await probe.eventually(() => world.capabilityCalls(), { within: 60_000, until: calls => calls.length === 2, label: "search and script reach the MCP witness" });
+    expect(calls.map(({ name, args }) => ({ name, args }))).toEqual([
+      { name: "search_capabilities", args: { query: "project notes" } },
+      { name: "execute_capability_script", args: { code: 'return await tools.project_notes_2["list-notes"]({});' } },
+    ]);
+    await probe.eventually(spoken, { within: 30_000, until: replies => replies.some(reply => reply.includes("The connected app returned Project brief and Release checklist.")), label: "spoken completion follows the connected tool response" });
+    expect(users(await world.messages(world.b.sessionId))).toHaveLength(2);
+    expect(users(await world.messages(world.a.sessionId))).toHaveLength(4);
+    evidence.recordAssertionEvidence("Voice preserves discovered connection and tool namespaces through normal task execution", JSON.stringify({ calls, playback: await spoken(), originalTaskUsers: users(await world.messages(world.a.sessionId)) }), true);
+  });
+  await step("voice text and transcripts use the same Cloud and Desktop task routing as the composer", async () => {
+    await user.type({ label: "Voice request" }, "@cloud Summarize the project notes.", { replace: true });
+    await user.click("Send request");
+    await probe.eventually(() => world.capabilityCalls(), { within: 45_000, until: calls => calls.length === 4, label: "Cloud task handoff reached Connect" });
+    await probe.eventually(spoken, { within: 30_000, until: replies => replies.some(reply => reply.includes("The task request is queued. Its completion has not been confirmed.")), label: "handoff does not announce task completion" });
+    await world.fixture("say", ["@desktop Summarize my local project notes.", "desktop-task"]);
+    const calls = await probe.eventually(() => world.capabilityCalls(), { within: 45_000, until: calls => calls.length === 6, label: "Desktop task handoff reached Connect" });
+    expect(calls.slice(2).map(({ name, args }) => ({ name, args }))).toEqual([
+      { name: "search_capabilities", args: { query: "remote-session:create" } },
+      { name: "execute_capability", args: { name: "remote-session:create", body: { target: "cloud", prompt: "Summarize the project notes." } } },
+      { name: "search_capabilities", args: { query: "remote-session:create" } },
+      { name: "execute_capability", args: { name: "remote-session:create", body: { target: "desktop", prompt: "Summarize my local project notes." } } },
+    ]);
+    const messages = await world.messages(world.b.sessionId);
+    expect(users(messages).slice(-2)).toEqual(["@cloud Summarize the project notes.", "@desktop Summarize my local project notes."]);
+    if (!Array.isArray(messages)) throw new Error("Expected messages");
+    const routing = messages.flatMap(message => object(message).routing);
+    expect(routing).toEqual(expect.arrayContaining([expect.stringContaining('target "cloud"'), expect.stringContaining('target "desktop"')]));
+    await user.type({ label: "Voice request" }, "Explain person@cloud and the word desktop.", { replace: true });
+    await user.click("Send request");
+    await probe.eventually(() => world.messages(world.b.sessionId), { within: 45_000, until: messages => JSON.stringify(messages).includes("That address is ordinary text."), label: "ordinary text finishes without a computer handoff" });
+    expect(await world.capabilityCalls()).toHaveLength(6);
+    expect(users(await world.messages(world.a.sessionId))).toHaveLength(4);
+    evidence.recordAssertionEvidence("Cloud/Desktop routing preserves the intended computer and does not reroute ordinary text", JSON.stringify({ calls, messages: await world.messages(world.b.sessionId), originalTaskUsers: users(await world.messages(world.a.sessionId)) }), true);
+    await user.screenshot();
+  });
+
+  await step("voice follows the focused split task and releases the previous call", async () => {
+    const before = object(await world.facts());
+    await user.press(place.kind !== "daytona" && process.platform === "darwin" ? "Meta+K" : "Control+K");
+    await user.type({ placeholder: "Search actions, settings, and sessions…" }, "new split", { replace: true });
+    await user.see({ role: "option", label: /^New split/ });
+    await user.press("Enter");
+    const layout = object(await probe.eventually(() => world.layout(), { within: 30_000, until: value => object(value).kind === "split" && object(value).focused === "secondary", label: "new task is focused in the split" }));
+    const splitId = layout.secondarySessionId;
+    if (typeof splitId !== "string") throw new Error("Missing secondary task");
+    await capture(0);
+    expect(object(await world.facts()).liveTracks).toBe(0);
+    await world.fixture("say", ["Old task speech must not follow focus", "old-focus", -0.05, Number(before.peers) - 1]);
+    expect(await world.messages(splitId)).toEqual([]);
+    await user.see({ testId: "voice-task-title" }, { text: "Attached to New session" });
+    await user.click("Start voice");
+    await capture(1);
+    await world.fixture("say", ["Create a note in this workspace.", "split-task"]);
+    await probe.eventually(() => world.messages(splitId).then(users), { within: 45_000, until: turns => turns.length === 1, label: "speech submitted only to focused split task" });
+    expect(users(await world.messages(world.b.sessionId))).toHaveLength(5);
+    expect(users(await world.messages(world.a.sessionId))).toHaveLength(4);
+    await agent.run("workbench.session.focus", { sessionId: world.b.sessionId });
+    await capture(0);
+    expect(object(await world.facts()).liveTracks).toBe(0);
+    evidence.recordAssertionEvidence("Voice uses the focused split task and closes audio when focus changes", JSON.stringify({ splitUsers: users(await world.messages(splitId)), originalTaskUsers: users(await world.messages(world.b.sessionId)), liveTracks: 0 }), true);
+  });
+
 });

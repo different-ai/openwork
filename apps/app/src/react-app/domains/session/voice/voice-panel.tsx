@@ -13,6 +13,8 @@ import { VoiceSession } from "./voice-session";
 type VoicePanelProps = {
   client: OpenworkServerClient;
   sessionId: string;
+  taskTitle: string;
+  workspaceTitle: string;
   workspaceId: string;
   workspaceRoot: string;
   opencodeBaseUrl: string;
@@ -74,9 +76,10 @@ export function VoicePanel(props: VoicePanelProps) {
   return (
     <section aria-label="Voice Mode" className="flex h-full min-h-0 flex-col bg-background">
       {actions.map((action) => <Control key={action.id} action={action} />)}
-      <header className="flex shrink-0 items-center justify-between border-b px-4 py-3">
-        <div><h2 className="flex items-center gap-2 text-sm font-semibold"><Radio className="size-4" />Voice Mode</h2>
-          <p className="text-xs text-muted-foreground">Speak and work in this conversation</p></div>
+      <header className="flex shrink-0 items-center justify-between gap-2 border-b px-4 py-3">
+        <div className="min-w-0"><h2 className="flex items-center gap-2 text-sm font-semibold"><Radio className="size-4" />Voice Mode</h2>
+          <p className="truncate text-xs text-muted-foreground" title={props.workspaceTitle}>{props.workspaceTitle}</p>
+          <p data-testid="voice-task-title" className="truncate text-sm" title={props.taskTitle}>Attached to {props.taskTitle}</p></div>
         <Button variant="ghost" size="icon-sm" onClick={() => { session.end(); props.onClose(); }} aria-label="Close Voice Mode"><X /></Button>
       </header>
       <div className="shrink-0 space-y-3 border-b p-4">
@@ -97,13 +100,18 @@ export function VoicePanel(props: VoicePanelProps) {
           <Button variant="outline" onClick={session.stopTalking} disabled={!connected}><VolumeX />Stop talking</Button>
           <Button variant="outline" className="col-span-2" onClick={() => void session.cancel()}>Cancel operation</Button>
         </div>
+        <label className="flex items-start gap-2 text-xs">
+          <input type="checkbox" className="mt-0.5 accent-primary" checked={state.readRepliesAloud} onChange={(e) => session.setReadRepliesAloud(e.currentTarget.checked)} />
+          <span><span className="font-medium">Read replies aloud</span><span className="mt-1 block text-muted-foreground">Sends completed reply excerpts to OpenAI for speech. Otherwise, Voice gives brief notifications.</span></span>
+        </label>
+        <p className="text-xs text-muted-foreground">Your microphone audio goes to OpenAI when Voice is on.</p>
         <p className="text-xs leading-relaxed text-muted-foreground">Mute or End voice affects audio; accepted work continues. Cancel operation requests a stop. Completed changes remain.</p>
       </div>
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
         <details className="rounded-lg border p-3 text-xs">
           <summary className="cursor-pointer font-medium">Audio and privacy</summary>
           <div className="mt-3 space-y-3 text-muted-foreground">
-            <p>Voice uses OpenAI audio through your configured OpenWork Models service or OpenAI key. Audio and response excerpts go to the voice provider. Accepted transcripts stay in this conversation. OpenWork does not save raw audio.</p>
+            <p>Voice uses OpenAI audio through your configured OpenWork Models service or OpenAI key. Audio goes to the voice provider; completed response excerpts are shared only when Read replies aloud is enabled. Accepted transcripts stay in this conversation. OpenWork does not save raw audio.</p>
             <p>Use headphones to reduce echo. If echo cancellation is unavailable, the microphone pauses during speech; use Stop talking to interrupt. For speakers, choose your system output or an output below.</p>
             <p>Approvals and sign-in stay on screen. Never speak passwords, security codes, or other secrets. Background speech cannot approve permission requests. Low-confidence transcripts need review.</p>
             <p>Calls pause after 25 minutes or 5 minutes without speech. Reconnect after a network or system interruption; requests are never automatically replayed.</p>
@@ -116,6 +124,7 @@ export function VoicePanel(props: VoicePanelProps) {
           </div>
         </details>
         <div className="space-y-2">
+          <p className="text-xs text-muted-foreground">Use @cloud or @desktop to request a new task on that computer. Connected apps use this task’s available tools.</p>
           <label htmlFor="voice-text" className="text-sm font-medium">{state.pendingText ? "Review before sending" : "Type a request or follow-up"}</label>
           <textarea id="voice-text" aria-label="Voice request" value={text} onChange={(e) => setText(e.currentTarget.value)} maxLength={8000} rows={3} className="w-full resize-y rounded-lg border bg-background p-3 text-sm" placeholder="Describe what you want OpenWork to do…" onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); }

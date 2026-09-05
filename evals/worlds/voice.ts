@@ -5,14 +5,15 @@ import { readFile } from "node:fs/promises";
 import { ModuleKind, ScriptTarget, transpileModule } from "typescript";
 import { evalIn } from "@openwork/behaviors";
 import type { Place, Seed } from "@openwork/env";
-import { voiceAudioFixtureSource, voiceTaskProvider } from "../packages/labs/src/mock-voice.ts";
+import { voiceAudioFixtureSource, voiceTaskProvider, voiceCapabilityTools } from "../packages/labs/src/mock-voice.ts";
 import { arrangeControl } from "./chat.ts";
 
 function quote(value: string) { return "'" + value.replaceAll("'", "'\"'\"'") + "'"; }
 const exec = promisify(execFile);
 
 export async function voiceConversation(seed: Seed, { place }: { place: Place }) {
-  const app = await seed.desktop({ name: "voice-conversation", model: "voice-task/voice-task-model" });
+  const den = await seed.den({ mocks: { voice: seed.mock({ allowUnauthenticatedMcp: true, tools: voiceCapabilityTools }) } });
+  const app = await seed.desktop({ name: "voice-conversation", model: "voice-task/voice-task-model", den, as: "admin" });
   let provider: { url: string; [Symbol.asyncDispose](): Promise<void> };
   if (place.kind === "daytona") {
     const sandbox = app.handle.sandboxId;
@@ -33,13 +34,14 @@ export async function voiceConversation(seed: Seed, { place }: { place: Place })
   try {
     const providerUrl = new URL(provider.url);
     const workspace = await seed.workspace(app, seed.tmpPath("voice-conversation"));
-    await seed.evalIn(app, `async (workspaceId, providerUrl) => {
+    await seed.evalIn(app, `async (workspaceId, providerUrl, mcpUrl) => {
       const root = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
       const token = localStorage.getItem("openwork.server.token");
       const response = await fetch(root + "/workspace/" + workspaceId + "/config", {
         method: "PATCH", headers: { Authorization: "Bearer " + token, "content-type": "application/json" },
         body: JSON.stringify({ opencode: {
-          permission: { bash: "allow" },
+          permission: { bash: "allow", "voice_cloud_*": "allow" },
+          mcp: { voice_cloud: { type: "remote", url: mcpUrl, enabled: true, oauth: false } },
           provider: { "voice-task": { npm: "@ai-sdk/openai-compatible", name: "Voice task provider", options: { baseURL: providerUrl + "/v1", apiKey: "fixture-key" }, models: { "voice-task-model": { name: "Voice task model", tool_call: true } } } },
         } }),
       });
@@ -52,7 +54,7 @@ export async function voiceConversation(seed: Seed, { place }: { place: Place })
       localStorage.setItem("openwork.extension.enabled.openwork-voice", "1");
       location.reload();
       return true;
-    }`, { args: [workspace.workspaceId, providerUrl.toString().replace(/\/$/, "")], awaitPromise: true, timeoutMs: 120_000 });
+    }`, { args: [workspace.workspaceId, providerUrl.toString().replace(/\/$/, ""), den.mocks.voice.mcpUrl], awaitPromise: true, timeoutMs: 120_000 });
     // Renderer controls appear before the reloaded workspace engine is ready.
     await seed.evalIn(app, `async (workspaceId) => {
       const deadline = Date.now() + 60000;
@@ -88,10 +90,12 @@ export async function voiceConversation(seed: Seed, { place }: { place: Place })
       const response = await fetch(root + "/workspace/" + workspaceId + "/opencode/session/" + sessionId + "/message", { headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") } });
       if (!response.ok) throw new Error("Session witness read failed: " + response.status);
       const messages = await response.json();
-      return messages.map(m => ({ role: m.info.role, text: m.parts.filter(p => p.type === "text").map(p => p.text).join("\n"), tools: m.parts.filter(p => p.type === "tool").map(p => ({ tool: p.tool, status: p.state.status, input: p.state.input, output: p.state.output })) }));
+      return messages.map(m => ({ role: m.info.role, text: m.parts.filter(p => p.type === "text" && !p.synthetic).map(p => p.text).join(""), routing: m.parts.filter(p => p.type === "text" && p.synthetic && p.text.includes("remote-session:create")).map(p => p.text), tools: m.parts.filter(p => p.type === "tool").map(p => ({ tool: p.tool, status: p.state.status, input: p.state.input, output: p.state.output })) }));
     })()`, { awaitPromise: true });
     return {
       app, workspace, a, b, fixture, facts, messages,
+      capabilityCalls: () => den.mocks.voice.toolCalls(),
+      layout: () => evalIn(app, "window.__openworkControl.context().conversations.layout"),
       file: (name: string) => evalIn(app, `(async () => {
         const root = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
         const response = await fetch(root + ${JSON.stringify("/workspace/" + workspace.workspaceId + "/files/content?path=")} + encodeURIComponent(${JSON.stringify(name)}), { headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") } });
