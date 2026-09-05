@@ -1004,7 +1004,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     avatarCount: 1,
     avatarLabel: "Scout",
     avatarCurrent: "true",
-    indicatorTone: "mist",
+    indicatorTone: "ready",
     indicatorAtBottom: true,
     peekRightOfRail: true,
     panelIcons: ["Activity:true", "Memory:false", "Coworker settings:false"],
