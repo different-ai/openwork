@@ -18,19 +18,19 @@ test("a user previews and revises a lightweight design in conversation", async (
   });
   await user.click("Run task");
   try {
-    await user.see("Your first sketch is ready.", { timeoutMs: 90_000 });
+    await user.see({ text: "Your first sketch is ready." }, { timeoutMs: 90_000 });
   } finally {
     await user.screenshot();
   }
   await step(
     "the real visualization tool produces a safe inline mockup",
     async () => {
-      await user.see("Visualization · v1 · Mockup");
-      await user.see("Active projects");
-      await user.see("Website refresh");
-      await user.see("Create project");
-      await user.see("Draft reviewed");
-      await user.see("Cover image");
+      await user.see({ text: "Visualization · v1 · Mockup" });
+      await user.see({ text: "Active projects" });
+      await user.see({ text: "Website refresh" });
+      await user.see({ text: "Create project" });
+      await user.see({ text: "Draft reviewed" });
+      await user.see({ text: "Cover image" });
       expect(await world.preview()).toMatchObject({
         viewport: "desktop",
         cards: 1,
@@ -71,10 +71,10 @@ test("a user previews and revises a lightweight design in conversation", async (
       expect((await probe.composer()).userMessageCount).toBe(before);
       await user.type("composer", "Make it calmer", { replace: false });
       await user.click("Run task");
-      await user.see("Your revised sketch is ready.", { timeoutMs: 90_000 });
-      await user.see("Visualization · v2 · Mockup");
-      await user.see("Visualization · v1 · Mockup");
-      await user.see("A calmer overview");
+      await user.see({ text: "Your revised sketch is ready." }, { timeoutMs: 90_000 });
+      await user.see({ text: "Visualization · v2 · Mockup" });
+      await user.see({ text: "Visualization · v1 · Mockup" });
+      await user.see({ text: "A calmer overview" });
       expect(await world.preview()).toMatchObject({
         cards: 2,
         scripts: 0,
