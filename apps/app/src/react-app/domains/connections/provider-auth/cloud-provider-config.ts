@@ -1,3 +1,4 @@
+import { openWorkModelConfigurations } from "@openwork/types/den/inference";
 import { applyEdits, modify } from "jsonc-parser";
 import type { ProviderConfig } from "@opencode-ai/sdk/v2/client";
 
@@ -179,10 +180,10 @@ export const buildCloudProviderConfig = (
     env: getCloudProviderEnv(provider.providerConfig),
   };
 
-  // OpenWork Models are catalog-backed via OPENCODE_MODELS_URL. Den provisions
-  // the provider + key with zero model rows — writing `models: {}` can prevent
-  // the engine from keeping catalog models, so omit an empty map for openwork.
-  if (Object.keys(models).length > 0 || provider.source !== "openwork") {
+  if (provider.source === "openwork") {
+    next.models = openWorkModelConfigurations();
+    next.whitelist = Object.keys(openWorkModelConfigurations());
+  } else {
     next.models = models;
   }
 
@@ -204,7 +205,7 @@ export const buildCloudProviderConfig = (
   ) {
     next.options = provider.providerConfig.options as Record<string, unknown>;
   }
-  if (Array.isArray(provider.providerConfig.whitelist)) {
+  if (provider.source !== "openwork" && Array.isArray(provider.providerConfig.whitelist)) {
     next.whitelist = getStringList(provider.providerConfig.whitelist);
   }
   if (Array.isArray(provider.providerConfig.blacklist)) {

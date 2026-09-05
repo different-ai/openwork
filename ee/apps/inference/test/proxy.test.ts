@@ -124,7 +124,9 @@ function createTestServer(options: TestServerOptions = {}) {
       body: readInitBody(init?.body),
       headers: new Headers(init?.headers),
     })
-    return Response.json({ ok: true })
+    const request = parseJsonObject(requireBodyText(readInitBody(init?.body)))
+    if (request.stream) return new Response('data: {"choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', { headers: { "content-type": "text/event-stream" } })
+    return Response.json({ choices: [{ index: 0, message: { role: "assistant", content: "Hello" }, finish_reason: "stop" }] })
   })
   const reporter: InferenceReporter = {
     request(report) {
@@ -201,7 +203,7 @@ test("rewrites approved model aliases before forwarding JSON requests", async ()
   const response = await app.fetch(inferenceRequest({
     method: "POST",
     headers: authHeaders("application/json; charset=utf-8"),
-    body: JSON.stringify({ model: "openwork/z-ai/glm-5.2", messages: [] }),
+    body: JSON.stringify({ model: "openwork/z-ai/glm-5.2", messages: [{ role: "user", content: "Hello" }] }),
   }))
 
   assert.equal(response.status, 200)
@@ -228,7 +230,7 @@ test("rewrites approved model aliases before forwarding JSON requests", async ()
   assert.equal(report.openworkRequestId, upstream.headers.get("x-openwork-request-id"))
   assert.equal(report.route, "/api/v1/chat/completions")
   assert.equal(report.method, "POST")
-  assert.equal(report.incomingModel, "openwork/z-ai/glm-5.2")
+  assert.equal(report.incomingModel, "z-ai/glm-5.2")
   assert.equal(report.resolvedUpstreamModel, "z-ai/glm-5.2")
 })
 
@@ -237,7 +239,7 @@ test("returns model_not_found for unknown JSON model aliases", async () => {
   const response = await app.fetch(inferenceRequest({
     method: "POST",
     headers: authHeaders("application/json"),
-    body: JSON.stringify({ model: "openwork/unknown-model", messages: [] }),
+    body: JSON.stringify({ model: "openwork/unknown-model", messages: [{ role: "user", content: "Hello" }] }),
   }))
 
   assert.equal(response.status, 404)
@@ -246,7 +248,7 @@ test("returns model_not_found for unknown JSON model aliases", async () => {
   assert.equal(calls.getOpenRouterProviderKey, 0)
   assert.equal(upstreamRequests.length, 0)
   const report = requireRequestReport(reports)
-  assert.equal(report.incomingModel, "openwork/unknown-model")
+  assert.equal(report.incomingModel, null)
   assert.equal(report.resolvedUpstreamModel, null)
 })
 
@@ -295,69 +297,12 @@ test("summarizes ordinary organization payload shape without message content or 
   assert.deepEqual(payload.roles, ["system", "user"])
 })
 
-test("logs full debug organization payload with recursive credential redaction", async () => {
+test("every organization uses content-free diagnostics", async () => {
   const { app, reports } = createTestServer({ organizationId: "org_01krnrcabhe8htwpbnsw0zk0bw" })
-  const response = await app.fetch(inferenceRequest({
-    method: "POST",
-    headers: authHeaders("application/json"),
-    body: JSON.stringify({
-      model: "z-ai/glm-5.2",
-      api_key: "payload-secret-key",
-      key: "generic-key-secret",
-      private_key: "private-key-secret",
-      client_secret: "client-secret-value",
-      clientKey: "client-key-value",
-      dsn: "dsn-secret",
-      signature: "signature-secret",
-      max_tokens: 128,
-      nested: {
-        password: "payload-password",
-        providerKey: "provider-secret-key",
-        inferenceKeyId: "inference_key_123",
-        api_key_id: "api_key_id_123",
-        provider_key_id: "provider_key_id_123",
-      },
-      messages: [{
-        role: "assistant",
-        content: "debug prompt content",
-        tool_calls: [{
-          type: "function",
-          function: {
-            name: "lookup_customer",
-            arguments: JSON.stringify({
-              password: "argument-password",
-              private_key: "argument-private-key",
-              query: "debug argument content",
-              api_key_id: "argument_api_key_id",
-            }),
-          },
-        }],
-      }],
-    }),
-  }))
-
+  const response = await app.fetch(inferenceRequest({ method: "POST", headers: authHeaders("application/json"), body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [{ role: "user", content: "private prompt" }] }) }))
   assert.equal(response.status, 200)
-  const report = requireRequestReport(reports)
-  assert.equal(report.payloadMode, "full")
-  const payloadText = JSON.stringify(report.payload)
-  assert.ok(payloadText.includes("debug prompt content"))
-  assert.ok(payloadText.includes("debug argument content"))
-  assert.ok(payloadText.includes("inference_key_123"))
-  assert.ok(payloadText.includes("api_key_id_123"))
-  assert.ok(payloadText.includes("provider_key_id_123"))
-  assert.ok(payloadText.includes("argument_api_key_id"))
-  assert.ok(payloadText.includes("128"))
-  assert.ok(!payloadText.includes("payload-secret-key"))
-  assert.ok(!payloadText.includes("generic-key-secret"))
-  assert.ok(!payloadText.includes("private-key-secret"))
-  assert.ok(!payloadText.includes("client-secret-value"))
-  assert.ok(!payloadText.includes("client-key-value"))
-  assert.ok(!payloadText.includes("dsn-secret"))
-  assert.ok(!payloadText.includes("signature-secret"))
-  assert.ok(!payloadText.includes("payload-password"))
-  assert.ok(!payloadText.includes("provider-secret-key"))
-  assert.ok(!payloadText.includes("argument-password"))
-  assert.ok(!payloadText.includes("argument-private-key"))
+  assert.equal(requireRequestReport(reports).payloadMode, "summary")
+  assert.ok(!JSON.stringify(reports).includes("private prompt"))
 })
 
 test("redacts credential-like incoming headers without redacting non-secret IDs", async () => {
@@ -383,29 +328,12 @@ test("redacts credential-like incoming headers without redacting non-secret IDs"
   const response = await app.fetch(inferenceRequest({
     method: "POST",
     headers,
-    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [] }),
+    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [{ role: "user", content: "Hello" }] }),
   }))
 
   assert.equal(response.status, 200)
   const report = requireRequestReport(reports)
-  assert.equal(report.headers.authorization, "[REDACTED]")
-  assert.equal(report.headers.key, "[REDACTED]")
-  assert.equal(report.headers["x-api-key"], "[REDACTED]")
-  assert.equal(report.headers["x-api-key-id"], "api_key_id_123")
-  assert.equal(report.headers["x-provider-key-id"], "provider_key_id_123")
-  assert.equal(report.headers.cookie, "[REDACTED]")
-  assert.equal(report.headers["client-secret"], "[REDACTED]")
-  assert.equal(report.headers["x-private-key"], "[REDACTED]")
-  assert.equal(report.headers["sentry-dsn"], "[REDACTED]")
-  assert.equal(report.headers["x-signature"], "[REDACTED]")
-  assert.equal(report.headers["x-custom-token"], "[REDACTED]")
-  assert.equal(report.headers.forwarded, "[REDACTED]")
-  assert.equal(report.headers["x-forwarded-for"], "[REDACTED]")
-  assert.equal(report.headers["x-real-ip"], "[REDACTED]")
-  assert.equal(report.headers["cf-connecting-ip"], "[REDACTED]")
-  assert.equal(report.headers["true-client-ip"], "[REDACTED]")
-  assert.equal(report.headers["x-inference-key-id"], "inference_key_123")
-  assert.equal(report.headers["x-safe-header"], "safe-value")
+  assert.deepEqual(report.headers, { "content-type": "application/json" })
 })
 
 test("returns usage-limit 429 without reporting a handled error or contacting provider/upstream", async () => {
@@ -416,7 +344,7 @@ test("returns usage-limit 429 without reporting a handled error or contacting pr
     const response = await app.fetch(inferenceRequest({
       method: "POST",
       headers: authHeaders("application/json"),
-      body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [] }),
+      body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [{ role: "user", content: "Hello" }] }),
     }))
 
     assert.equal(response.status, 429)
@@ -443,7 +371,7 @@ test("reports handled upstream errors with searchable request context", async ()
   const response = await app.fetch(inferenceRequest({
     method: "POST",
     headers: authHeaders("application/json"),
-    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [] }),
+    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [{ role: "user", content: "Hello" }] }),
   }))
 
   assert.equal(response.status, 503)
@@ -460,7 +388,7 @@ test("reports handled upstream errors with searchable request context", async ()
   assert.equal(errorReport.status, 503)
 })
 
-test("reports caught upstream fetch exceptions with the original Error object", async () => {
+test("reports upstream connection failures without retaining exception payloads", async () => {
   const upstreamError = new Error("socket hang up")
   const { app, reports } = createTestServer({
     fetch: async () => {
@@ -470,14 +398,14 @@ test("reports caught upstream fetch exceptions with the original Error object", 
   const response = await app.fetch(inferenceRequest({
     method: "POST",
     headers: authHeaders("application/json"),
-    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [] }),
+    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [{ role: "user", content: "Hello" }] }),
   }))
 
   assert.equal(response.status, 502)
   const errorReport = requireHandledErrorReport(reports)
   assert.equal(errorReport.reason, "upstream_unreachable")
-  assert.equal(errorReport.exception, upstreamError)
-  assert.equal(errorReport.error, "socket hang up")
+  assert.equal(errorReport.exception, undefined)
+  assert.equal(errorReport.error, "Upstream connection failed")
   assert.equal(errorReport.organizationId, "organization_123")
   assert.equal(errorReport.inferenceKeyId, "inference_key_123")
 })
@@ -487,7 +415,7 @@ test("blocks an unknown model when Content-Type is omitted", async () => {
   const response = await app.fetch(inferenceRequest({
     method: "POST",
     headers: authHeaders(),
-    body: JSON.stringify({ model: "openwork/unknown-model", messages: [] }),
+    body: JSON.stringify({ model: "openwork/unknown-model", messages: [{ role: "user", content: "Hello" }] }),
   }))
 
   assert.equal(response.status, 415)
@@ -502,7 +430,7 @@ test("blocks an unknown model sent as text/plain", async () => {
   const response = await app.fetch(inferenceRequest({
     method: "POST",
     headers: authHeaders("text/plain"),
-    body: JSON.stringify({ model: "openwork/unknown-model", messages: [] }),
+    body: JSON.stringify({ model: "openwork/unknown-model", messages: [{ role: "user", content: "Hello" }] }),
   }))
 
   assert.equal(response.status, 415)
@@ -517,7 +445,7 @@ test("accepts application/*+json media types", async () => {
   const response = await app.fetch(inferenceRequest({
     method: "POST",
     headers: authHeaders("application/vnd.openwork.request+json; charset=utf-8"),
-    body: JSON.stringify({ model: "openwork/z-ai/glm-5.2", messages: [] }),
+    body: JSON.stringify({ model: "openwork/z-ai/glm-5.2", messages: [{ role: "user", content: "Hello" }] }),
   }))
 
   assert.equal(response.status, 200)
@@ -536,7 +464,7 @@ test("does not forward caller headers or session IDs that can affect routing", a
   const response = await app.fetch(inferenceRequest({
     method: "POST",
     headers,
-    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [], session_id: "caller-session" }),
+    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [{ role: "user", content: "Hello" }], session_id: "caller-session" }),
   }))
 
   assert.equal(response.status, 200)
@@ -557,7 +485,7 @@ for (const [field, value] of [
   test(`rejects the top-level ${field} selector when present`, async () => {
     await expectUnsupportedModelSelection({
       model: "z-ai/glm-5.2",
-      messages: [],
+      messages: [{ role: "user", content: "Hello" }],
       [field]: value,
     })
   })
@@ -566,7 +494,7 @@ for (const [field, value] of [
 test("rejects the Fusion plugin", async () => {
   await expectUnsupportedModelSelection({
     model: "z-ai/glm-5.2",
-    messages: [],
+    messages: [{ role: "user", content: "Hello" }],
     plugins: [{ id: "fusion" }],
   })
 })
@@ -575,7 +503,7 @@ for (const field of ["model", "analysis_models", "allowed_models"]) {
   test(`rejects ${field} in an OpenRouter plugin context`, async () => {
     await expectUnsupportedModelSelection({
       model: "z-ai/glm-5.2",
-      messages: [],
+      messages: [{ role: "user", content: "Hello" }],
       plugins: [{ id: "web", [field]: null }],
     })
   })
@@ -583,7 +511,7 @@ for (const field of ["model", "analysis_models", "allowed_models"]) {
   test(`rejects parameters.${field} in an OpenRouter plugin context`, async () => {
     await expectUnsupportedModelSelection({
       model: "z-ai/glm-5.2",
-      messages: [],
+      messages: [{ role: "user", content: "Hello" }],
       plugins: [{ id: "web", parameters: { [field]: null } }],
     })
   })
@@ -598,7 +526,7 @@ for (const type of [
   test(`rejects the ${type} server tool`, async () => {
     await expectUnsupportedModelSelection({
       model: "z-ai/glm-5.2",
-      messages: [],
+      messages: [{ role: "user", content: "Hello" }],
       tools: [{ type }],
     })
   })
@@ -621,7 +549,7 @@ test("allows ordinary function tools with a model property in their JSON Schema"
   const response = await app.fetch(inferenceRequest({
     method: "POST",
     headers: authHeaders("application/json"),
-    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [], tools }),
+    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [{ role: "user", content: "Hello" }], tools }),
   }))
 
   assert.equal(response.status, 200)
@@ -651,8 +579,8 @@ test("returns the authenticated local model catalog without forwarding", async (
   assert.equal(typeof model.id, "string")
   assert.ok(!model.id.startsWith("openwork/"))
   assert.equal(calls.findActiveInferenceKey, 1)
-  assert.equal(calls.ensureUsableBuckets, 0)
-  assert.equal(calls.getOpenRouterProviderKey, 0)
+  assert.equal(calls.ensureUsableBuckets, 1)
+  assert.equal(calls.getOpenRouterProviderKey, 1)
   assert.equal(upstreamRequests.length, 0)
 })
 
@@ -675,7 +603,7 @@ test("returns model IDs that can be requested as aliases", async () => {
   const chatResponse = await app.fetch(inferenceRequest({
     method: "POST",
     headers: authHeaders("application/json"),
-    body: JSON.stringify({ model: listedModel.id, messages: [] }),
+    body: JSON.stringify({ model: listedModel.id, messages: [{ role: "user", content: "Hello" }] }),
   }))
 
   assert.equal(chatResponse.status, 200)
@@ -727,7 +655,7 @@ test("blocks chat completion query parameters locally", async () => {
     method: "POST",
     headers: authHeaders("application/json"),
     path: "/api/v1/chat/completions?model=attacker/random-model",
-    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [] }),
+    body: JSON.stringify({ model: "z-ai/glm-5.2", messages: [{ role: "user", content: "Hello" }] }),
   }))
 
   assert.equal(response.status, 400)

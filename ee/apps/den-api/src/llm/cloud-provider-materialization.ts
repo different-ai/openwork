@@ -1,3 +1,4 @@
+import { openWorkModelConfigurations } from "@openwork/types/den/inference";
 import { createHash } from "node:crypto"
 import { and, asc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import {
@@ -354,9 +355,8 @@ function buildProviderConfig(provider: CloudProviderMaterializationProvider) {
     env: runtimeProviderEnvNames(provider),
   }
 
-  if (Object.keys(models).length > 0 || provider.source !== "openwork") {
-    config.models = models
-  }
+  config.models = provider.source === "openwork" ? openWorkModelConfigurations() : models
+  if (provider.source === "openwork") config.whitelist = Object.keys(openWorkModelConfigurations())
 
   const npm = readString(provider.providerConfig.npm)
   if (npm) {
@@ -374,7 +374,7 @@ function buildProviderConfig(provider: CloudProviderMaterializationProvider) {
   }
 
   const whitelist = readStringList(provider.providerConfig.whitelist)
-  if (whitelist.length > 0) {
+  if (provider.source !== "openwork" && whitelist.length > 0) {
     config.whitelist = whitelist
   }
 

@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { openWorkModelConfigurations } from "../../../../packages/types/src/den/inference.ts"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const appDir = path.resolve(__dirname, "..")
@@ -28,7 +29,7 @@ function openworkProvider(models, api) {
 
 const isDevMode = process.env.OPENWORK_DEV_MODE === "1"
 const base = await readJson(path.join(sourceDir, "base.json"))
-const openworkModels = await readJson(path.join(sourceDir, "openwork-models.json"))
+const openworkModels = openWorkModelConfigurations()
 const openwork = openworkProvider(openworkModels, isDevMode ? devOpenworkApi : prodOpenworkApi)
 const models = { ...base, ...openwork }
 

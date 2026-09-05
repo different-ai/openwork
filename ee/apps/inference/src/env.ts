@@ -14,6 +14,8 @@ const EnvSchema = z
     DEN_DB_ENCRYPTION_KEY: z.string().trim().min(32),
     INFERENCE_PROXY_BASE_URL: z.string().optional(),
     OPENROUTER_UPSTREAM_URL: z.string().optional(),
+    INFERENCE_UPSTREAM_TIMEOUT_MS: z.coerce.number().int().min(1000).max(900000).default(120000),
+    INFERENCE_STREAM_IDLE_MS: z.coerce.number().int().min(1000).max(900000).default(120000),
     OPENAI_REALTIME_API_KEY: z.string().optional(),
     OPENAI_API_KEY: z.string().optional(),
     INFERENCE_ADMIN_TOKEN: z.string().optional(),
@@ -121,6 +123,8 @@ const planetscale: PlanetScaleCredentials | null =
 
 export const env = {
   port: parsePort(parsed.PORT),
+  upstreamTimeoutMs: parsed.INFERENCE_UPSTREAM_TIMEOUT_MS,
+  streamIdleMs: parsed.INFERENCE_STREAM_IDLE_MS,
   corsOrigins: splitCsv(parsed.CORS_ORIGINS),
   databaseUrl: parsed.DATABASE_URL,
   dbMode: (parsed.DB_MODE ??

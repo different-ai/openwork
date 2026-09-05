@@ -108,7 +108,7 @@ function createWebhookTestServer() {
         outputTokens: input.span.usageMetadata.outputTokens,
         totalTokens: input.span.usageMetadata.totalTokens,
       })
-      return { id: ledgerEntryId }
+      return { id: ledgerEntryId, organizationId, memberId: orgMembershipId, inferenceKeyId, requestId: input.span.openworkRequestId, costAmount: input.costAmount, occurredAt: input.span.occurredAt }
     },
     async chargeBuckets(input) {
       calls.chargeBuckets += 1
@@ -161,7 +161,7 @@ function createWebhookTestServer() {
   return { app, reports, insertedEntries, bucketCharges, calls, organizationId, usagePayload }
 }
 
-test("reports fatal Sentry diagnostics and skips deduction when OpenRouter usage reports an unknown model", async () => {
+test("retains unpriced usage without estimating an entitlement charge for an unknown model", async () => {
   const { app, reports, insertedEntries, bucketCharges, calls, organizationId, usagePayload } = createWebhookTestServer()
   const response = await app.fetch(webhookRequest(usagePayload({
     requestId: "request-unknown",
@@ -174,14 +174,15 @@ test("reports fatal Sentry diagnostics and skips deduction when OpenRouter usage
 
   assert.equal(response.status, 200)
   const payload = await responseJson(response)
-  assert.equal(payload.ingested, 0)
-  assert.equal(payload.skipped, 1)
+  assert.equal(payload.ingested, 1)
+  assert.equal(payload.skipped, 0)
   assert.equal(calls.ensureUsableBuckets, 0)
   assert.equal(calls.findLedgerEntryByExternalEventId, 0)
   assert.equal(calls.findOpenRouterUsageLedgerEntry, 0)
-  assert.equal(calls.insertOpenRouterUsageLedgerEntry, 0)
+  assert.equal(calls.insertOpenRouterUsageLedgerEntry, 1)
   assert.equal(calls.chargeBuckets, 0)
-  assert.equal(insertedEntries.length, 0)
+  assert.equal(insertedEntries.length, 1)
+  assert.equal(insertedEntries[0]?.costAmount, 0)
   assert.equal(bucketCharges.length, 0)
   assert.equal(reports.length, 1)
 

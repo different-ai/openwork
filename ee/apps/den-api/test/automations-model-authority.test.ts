@@ -101,6 +101,10 @@ describe("Automation normalized model authority", () => {
   })
 
   test("resolves enabled OpenWork aliases through the owner's managed provider", async () => {
+    const savedSelection = { ...base, providerId: "openwork", modelId: "z-ai/glm-5.2", variant: "medium" }
+    expect(await resolveAutomationModelAccessWithStore(savedSelection, authorityStore())).toMatchObject({ ok: true })
+    expect(savedSelection.variant).toBe("medium")
+    expect(await resolveAutomationModelAccessWithStore(savedSelection, authorityStore({ async canAccessProvider() { return false } }))).toMatchObject({ ok: false, code: "model_access_lost" })
     const result = await resolveAutomationModelAccessWithStore({
       ...base,
       providerId: "openwork",

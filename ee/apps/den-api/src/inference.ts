@@ -1,6 +1,7 @@
 import { and, eq, inArray, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   InferenceKeyTable,
+  InferenceUsageLedgerEntryTable,
   InferenceOrgLimitPolicyTable,
   InferenceOrgUpstreamProviderKeyTable,
   InferenceOrgUsageBucketTable,
@@ -329,54 +330,57 @@ async function syncInferenceLimitPolicies(input: { organizationId: OrgId; tier: 
       })
   }
 
-  const policies = await db
-    .select({
-      id: InferenceOrgLimitPolicyTable.id,
-      windowType: InferenceOrgLimitPolicyTable.window_type,
-      resetStrategy: InferenceOrgLimitPolicyTable.reset_strategy,
-      anchorAt: InferenceOrgLimitPolicyTable.anchor_at,
-      currentBucketId: InferenceOrgLimitPolicyTable.current_bucket_id,
-    })
-    .from(InferenceOrgLimitPolicyTable)
-    .where(eq(InferenceOrgLimitPolicyTable.organization_id, input.organizationId))
+  await db.transaction(async (tx) => {
+    const policies = await tx
+      .select({
+        id: InferenceOrgLimitPolicyTable.id,
+        windowType: InferenceOrgLimitPolicyTable.window_type,
+        resetStrategy: InferenceOrgLimitPolicyTable.reset_strategy,
+        anchorAt: InferenceOrgLimitPolicyTable.anchor_at,
+        currentBucketId: InferenceOrgLimitPolicyTable.current_bucket_id,
+      })
+      .from(InferenceOrgLimitPolicyTable)
+      .where(eq(InferenceOrgLimitPolicyTable.organization_id, input.organizationId)).for("update")
 
-  for (const policy of policies) {
-    const limitAmount = INFERENCE_TIER_LIMITS[input.tier][policy.windowType] * input.memberCount
-    const currentBucket = policy.currentBucketId
-      ? (await db.select().from(InferenceOrgUsageBucketTable).where(eq(InferenceOrgUsageBucketTable.id, policy.currentBucketId)).limit(1))[0]
-      : null
+    const now = new Date()
+    for (const policy of policies) {
+      const limitAmount = INFERENCE_TIER_LIMITS[input.tier][policy.windowType] * input.memberCount
+      const currentBucket = policy.currentBucketId
+        ? (await tx.select().from(InferenceOrgUsageBucketTable).where(and(eq(InferenceOrgUsageBucketTable.id, policy.currentBucketId), eq(InferenceOrgUsageBucketTable.organization_id, input.organizationId), eq(InferenceOrgUsageBucketTable.policy_id, policy.id))).limit(1))[0]
+        : null
 
-    if (currentBucket && currentBucket.window_start_at <= now && currentBucket.window_end_at > now) {
-      await db
-        .update(InferenceOrgUsageBucketTable)
-        .set({ limit_amount: limitAmount })
-        .where(eq(InferenceOrgUsageBucketTable.id, currentBucket.id))
-      continue
+      if (currentBucket && currentBucket.window_start_at <= now && currentBucket.window_end_at > now) {
+        await tx
+          .update(InferenceOrgUsageBucketTable)
+          .set({ limit_amount: limitAmount })
+          .where(eq(InferenceOrgUsageBucketTable.id, currentBucket.id))
+        continue
+      }
+
+      const window = policy.resetStrategy === "anchored"
+        ? currentWindow({
+            anchorAt: policy.anchorAt,
+            currentEnd: currentBucket?.window_end_at ?? null,
+            windowType: policy.windowType,
+            now,
+          })
+        : { start: now, end: addWindow(now, policy.windowType) }
+      const bucketId = createDenTypeId("inferenceOrgUsageBucket")
+      await tx.insert(InferenceOrgUsageBucketTable).values({
+        id: bucketId,
+        organization_id: input.organizationId,
+        policy_id: policy.id,
+        window_start_at: window.start,
+        window_end_at: window.end,
+        limit_amount: limitAmount,
+        used_amount: 0,
+      })
+      await tx
+        .update(InferenceOrgLimitPolicyTable)
+        .set({ current_bucket_id: bucketId })
+        .where(eq(InferenceOrgLimitPolicyTable.id, policy.id))
     }
-
-    const window = policy.resetStrategy === "anchored"
-      ? currentWindow({
-          anchorAt: policy.anchorAt,
-          currentEnd: currentBucket?.window_end_at ?? null,
-          windowType: policy.windowType,
-          now,
-        })
-      : { start: now, end: addWindow(now, policy.windowType) }
-    const bucketId = createDenTypeId("inferenceOrgUsageBucket")
-    await db.insert(InferenceOrgUsageBucketTable).values({
-      id: bucketId,
-      organization_id: input.organizationId,
-      policy_id: policy.id,
-      window_start_at: window.start,
-      window_end_at: window.end,
-      limit_amount: limitAmount,
-      used_amount: 0,
-    })
-    await db
-      .update(InferenceOrgLimitPolicyTable)
-      .set({ current_bucket_id: bucketId })
-      .where(eq(InferenceOrgLimitPolicyTable.id, policy.id))
-  }
+  })
 }
 
 type OpenRouterKeyCreateResponse = {
@@ -576,12 +580,15 @@ export async function getInferenceStatus(organizationId: OrgId) {
     }
   }
   const buckets = inference?.enabled === true ? await getActiveUsageBuckets(organizationId) : []
+  const [unpriced] = await db.select({ count: sql<number>`count(*)` }).from(InferenceUsageLedgerEntryTable)
+    .where(and(eq(InferenceUsageLedgerEntryTable.organization_id, organizationId), eq(InferenceUsageLedgerEntryTable.event_type, "openrouter_usage_unpriced")))
   return {
     enabled: inference?.enabled === true,
     tier: inference?.tier ?? "tier1",
     memberCount,
     proxyBaseUrl: env.inferenceProxyBaseUrl,
     upstreamProviderConfigured: Boolean(env.openRouterManagementApiKey),
+    unpricedUsageCount: Number(unpriced?.count ?? 0),
     buckets,
   }
 }

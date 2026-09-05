@@ -3,7 +3,7 @@ import { getModelBehaviorSummary } from "@/app/lib/model-behavior"
 import type { ModelOption, ProviderListItem } from "@/app/types"
 import type { AutomationModel } from "@openwork/types/automations"
 import { AUTOMATION_FREE_MODEL } from "@openwork/types/automations"
-import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference"
+import { openWorkModelConfigurations } from "@openwork/types/den/inference"
 
 /** providerId → modelId → the local runtime's model record. */
 export type AutomationProviderCatalog = Record<string, Record<string, ProviderListItem["models"][string]>>
@@ -27,13 +27,12 @@ const freeStarterModel: AutomationModelOption = {
 }
 
 function openWorkManagedModels(provider: DenOrgLlmProvider): AutomationModelOption[] {
-  return Object.entries(INFERENCE_MODEL_ALIASES)
-    .filter(([, model]) => model.enabled)
+  return Object.entries(openWorkModelConfigurations())
     .map(([modelId, model]) => ({
       providerId: "openwork",
       modelId,
       providerName: provider.name,
-      modelName: model.displayName.replace(/^OpenWork:\s*/, ""),
+      modelName: model.name,
       accessKind: "openwork_managed" as const,
     }))
 }

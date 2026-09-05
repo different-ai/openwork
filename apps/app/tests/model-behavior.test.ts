@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import type { ProviderListItem } from "../src/app/types";
 import {
   getModelBehaviorOptions,
+  getModelBehaviorSummary,
   nextModelBehaviorValue,
   previousModelBehaviorValue,
 } from "../src/app/lib/model-behavior";
@@ -66,6 +67,13 @@ const model: ProviderModel = {
 };
 
 describe("model behavior options", () => {
+  test("managed models use verified efforts and preserve unsupported saved choices", () => {
+    const managed = { ...model, id: "z-ai/glm-5.2", providerID: "openwork" };
+    expect(getModelBehaviorOptions("openwork", managed).map((option) => option.value)).toEqual(["high", "xhigh"]);
+    expect(getModelBehaviorSummary("openwork", managed, null).value).toBeNull();
+    expect(getModelBehaviorSummary("openwork", managed, "medium")).toMatchObject({ value: "medium", label: "Medium (unavailable)" });
+    expect(getModelBehaviorOptions("openwork", { ...managed, id: "moonshotai/kimi-k2.7-code" })).toEqual([]);
+  });
   test("uses only the raw effort values reported by the model", () => {
     const options = getModelBehaviorOptions("openai", model);
 

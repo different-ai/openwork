@@ -3,6 +3,7 @@ import {
   bigint,
   index,
   int,
+  json,
   mysqlEnum,
   mysqlTable,
   timestamp,
@@ -123,6 +124,19 @@ export const InferenceUsageLedgerEntryTable = mysqlTable(
     input_tokens: int("input_tokens"),
     output_tokens: int("output_tokens"),
     total_tokens: int("total_tokens"),
+    // Provider facts are separate from the existing entitlement-unit charge.
+    // NULL means historical/unknown, never a zero-cost generation.
+    provider_usage: json("provider_usage").$type<{
+      source: "openrouter_otlp"
+      status: "settled" | "unpriced"
+      requestModel: string | null
+      responseModel: string | null
+      inputCost: number | null
+      outputCost: number | null
+      currency: string | null
+      cacheReadTokens: number | null
+      reasoningTokens: number | null
+    }>(),
     event_type: varchar("event_type", { length: 64 }).notNull(),
     occurred_at: timestamp("occurred_at", { fsp: 3 }).notNull(),
     created_at: timestamps.created_at,

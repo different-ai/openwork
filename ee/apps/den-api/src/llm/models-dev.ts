@@ -1,3 +1,5 @@
+import { openWorkModelConfigurations } from "@openwork/types/den/inference"
+
 const MODELS_DEV_API_URL = "https://models.openworklabs.com/api.json"
 const MODELS_DEV_CACHE_TTL_MS = 1000 * 60 * 10
 
@@ -81,7 +83,9 @@ async function loadModelsDevCatalog() {
 
       const providerId = asString(rawProvider.id) ?? providerKey
       const name = asString(rawProvider.name) ?? providerId
-      const modelsRecord = isRecord(rawProvider.models) ? rawProvider.models : {}
+      const modelsRecord = providerId === "openwork"
+        ? openWorkModelConfigurations()
+        : isRecord(rawProvider.models) ? rawProvider.models : {}
       const { models: _models, ...providerConfig } = rawProvider
       const models = Object.entries(modelsRecord)
         .map(([modelKey, rawModel]) => {

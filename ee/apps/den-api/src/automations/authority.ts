@@ -33,6 +33,7 @@ export type AutomationAuthorityModel = {
 export type AutomationModelSelection = {
   providerId: string
   modelId: string
+  variant?: string | null
 }
 
 export type ResolvedAutomationModel = AutomationModelSelection & {
@@ -184,6 +185,9 @@ export async function resolveAutomationModelAccessWithStore(
   }
 
   if (input.providerId === "openwork") {
+    // Older clients persist reasoning variants. Model access must not change
+    // merely because the catalog no longer offers one of those settings.
+    // Validate execution parameters at the runtime boundary instead.
     const model = enabledOpenWorkModel(input.modelId)
     if (!model) {
       return { ok: false, code: "model_access_lost", message: "The selected OpenWork-managed model is not available." }
@@ -245,6 +249,7 @@ export function resolveAutomationModelAccess(input: {
   ownerMemberId: string
   providerId: string
   modelId: string
+  variant?: string | null
 }): Promise<AutomationAuthorityResult> {
   return resolveAutomationModelAccessWithStore(input, databaseAuthorityStore)
 }

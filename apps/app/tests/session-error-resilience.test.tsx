@@ -26,6 +26,11 @@ afterEach(() => {
 })
 
 describe("session error resilience", () => {
+  test("managed stream failures offer explicit recovery and retain the interruption category", () => {
+    const presentation = presentOpencodeSessionError({ name: "APIError", data: { message: "upstream_incomplete: Connection closed before completion", statusCode: 200, isRetryable: false } });
+    expect(presentation).toMatchObject({ kind: "provider-incomplete", title: "The model response was interrupted" });
+    expect(presentation.description).toContain("Review them before continuing");
+  });
   const freeTierFailure = {
     name: "APIError",
     data: {

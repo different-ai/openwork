@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto"
+import { randomUUID } from "node:crypto"
 import { inferenceBearerKey } from "@openwork-ee/utils/inference-bearer-key"
 import type { Context, Hono } from "hono"
 import { env } from "./env.js"
@@ -12,13 +12,17 @@ import {
 } from "./inference-reporting.js"
 import type { InferenceReporter } from "./inference-reporting.js"
 import { listModelCatalog, resolveModelAlias } from "./model-catalog.js"
+import { INFERENCE_CATALOG_VERIFIED_AT } from "@openwork/types/den/inference"
+import { prepareChatParameters, validateChatRequest } from "./chat-request.js"
+import { completeChatResponse, inferenceError, readResponseJson, relayChatStream, upstreamError } from "./chat-response.js"
 
 type JsonObject = Record<string, unknown>
 type PreparedBody = {
-  body: BodyInit | null
+  body: JsonObject
   incomingModel: string
   modelAlias: string
   upstreamModel: string | null
+  stream: boolean
 }
 type PreparedBodyResult = PreparedBody | {
   error: Response
@@ -189,26 +193,6 @@ async function logUpstreamError(input: {
   upstreamModel: string | null
   reporter: InferenceReporter
 }) {
-  let bodySnippet: string | null = null
-  try {
-    const text = await input.upstream.clone().text()
-    bodySnippet = text.slice(0, 2000)
-  } catch (error) {
-    bodySnippet = `Failed to read upstream error body: ${error instanceof Error ? error.message : String(error)}`
-  }
-
-  logProxyError("Upstream OpenRouter request failed", {
-    openworkRequestId: input.openworkRequestId,
-    organizationId: input.organizationId,
-    orgMembershipId: input.orgMembershipId,
-    inferenceKeyId: input.inferenceKeyId,
-    upstreamUrl: input.upstreamUrl.toString(),
-    status: input.upstream.status,
-    statusText: input.upstream.statusText,
-    modelAlias: input.modelAlias,
-    upstreamModel: input.upstreamModel,
-    bodySnippet,
-  })
   input.reporter.handledError({
     reason: "upstream_failure",
     organizationId: input.organizationId,
@@ -221,42 +205,17 @@ async function logUpstreamError(input: {
     incomingModel: input.incomingModel,
     resolvedUpstreamModel: input.upstreamModel,
     status: input.upstream.status,
-    statusText: input.upstream.statusText,
+    statusText: "Upstream request failed",
     upstreamUrl: input.upstreamUrl.toString(),
   })
 }
 
 function buildRequestId() {
-  return createHash("sha256").update(`${Date.now()}:${Math.random()}`).digest("hex").slice(0, 32)
+  return randomUUID().replaceAll("-", "")
 }
 
 function secondsUntil(date: Date) {
   return Math.max(0, Math.ceil((date.getTime() - Date.now()) / 1000))
-}
-
-function trackStream(body: ReadableStream<Uint8Array> | null, done: () => Promise<void>, fail: () => Promise<void>) {
-  if (!body) return body
-  const reader = body.getReader()
-  return new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      try {
-        const chunk = await reader.read()
-        if (chunk.done) {
-          await done()
-          controller.close()
-          return
-        }
-        controller.enqueue(chunk.value)
-      } catch (error) {
-        await fail()
-        controller.error(error)
-      }
-    },
-    async cancel(reason) {
-      await fail()
-      await reader.cancel(reason)
-    },
-  })
 }
 
 async function prepareBody(request: Request, input: {
@@ -304,7 +263,7 @@ async function prepareBody(request: Request, input: {
   try {
     json = await request.json()
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error)
+    const errorMessage = "Invalid JSON request body"
     const payloadLog = buildUnparsedPayloadLog("invalid_json", request.headers.get("content-type"))
     input.reporter.request({
       organizationId: input.organizationId,
@@ -353,7 +312,7 @@ async function prepareBody(request: Request, input: {
     route: input.route,
     method: input.method,
     headers: input.headers,
-    incomingModel: requestedModel,
+    incomingModel: model ? model.alias : null,
     resolvedUpstreamModel: model ? model.upstreamModel : null,
     payloadMode: payloadLog.mode,
     payload: payloadLog.payload,
@@ -399,11 +358,11 @@ async function prepareBody(request: Request, input: {
       route: input.route,
       method: input.method,
       headers: input.headers,
-      incomingModel: requestedModel,
+      incomingModel: model ? model.alias : null,
       resolvedUpstreamModel: model ? model.upstreamModel : null,
       status: 400,
     })
-    return { error: openAiError(400, "unsupported_model_selection", `OpenWork inference does not allow alternate model selection (${blockedSelection}).`), incomingModel: requestedModel, upstreamModel: model ? model.upstreamModel : null }
+    return { error: openAiError(400, "unsupported_model_selection", `OpenWork inference does not allow alternate model selection (${blockedSelection}).`), incomingModel: model ? model.alias : null, upstreamModel: model ? model.upstreamModel : null }
   }
 
   if (requestedModel === null) {
@@ -436,7 +395,7 @@ async function prepareBody(request: Request, input: {
       organizationId: input.organizationId,
       orgMembershipId: input.orgMembershipId,
       inferenceKeyId: input.inferenceKeyId,
-      requestedModel,
+      requestedModel: "unknown",
     })
     input.reporter.handledError({
       reason: "model_not_found",
@@ -447,12 +406,16 @@ async function prepareBody(request: Request, input: {
       route: input.route,
       method: input.method,
       headers: input.headers,
-      incomingModel: requestedModel,
+      incomingModel: null,
       resolvedUpstreamModel: null,
       status: 404,
     })
-    return { error: openAiError(404, "model_not_found", `Unknown OpenWork model alias: ${requestedModel}`), incomingModel: requestedModel, upstreamModel: null }
+    return { error: openAiError(404, "model_not_found", `Unknown OpenWork model alias: ${requestedModel}`), incomingModel: null, upstreamModel: null }
   }
+
+  const issue = validateChatRequest(body, model)
+  if (issue) return { error: openAiError(400, "unsupported_request", issue), incomingModel: model ? model.alias : null, upstreamModel: model.upstreamModel }
+  prepareChatParameters(body)
 
   body.model = model.upstreamModel
   body.user = input.orgMembershipId
@@ -461,16 +424,18 @@ async function prepareBody(request: Request, input: {
     trace_id: input.openworkRequestId,
     trace_name: "OpenWork Inference",
     generation_name: model.alias,
+    usage_started_at: new Date().toISOString(),
     org_membership_id: input.orgMembershipId,
     inference_key_id: input.inferenceKeyId,
     openwork_request_id: input.openworkRequestId,
   }
 
   return {
-    body: JSON.stringify(body),
-    incomingModel: requestedModel,
+    body,
+    incomingModel: model.alias,
     modelAlias: model.alias,
     upstreamModel: model.upstreamModel,
+    stream: body.stream === true,
   }
 }
 
@@ -482,6 +447,19 @@ function listOpenAiModels() {
       object: "model",
       created: 0,
       owned_by: "openwork",
+      name: model.displayName,
+      context_length: model.capabilities.contextTokens,
+      top_provider: { context_length: model.capabilities.contextTokens, max_completion_tokens: model.capabilities.outputTokens },
+      architecture: { input_modalities: model.capabilities.inputModalities, output_modalities: model.capabilities.outputModalities },
+      supported_parameters: model.capabilities.supportedParameters,
+      reasoning: {
+        mandatory: model.capabilities.reasoning.mandatory,
+        supported_efforts: model.capabilities.reasoning.supportedEfforts,
+        default_effort: model.capabilities.reasoning.defaultEffort,
+        default_enabled: model.capabilities.reasoning.defaultEnabled,
+        supports_max_tokens: model.capabilities.reasoning.supportsTokenBudget,
+      },
+      openwork: { catalog_verified_at: INFERENCE_CATALOG_VERIFIED_AT, access: "organization", routing: "openrouter", realtime_audio: false },
     })),
   }
 }
@@ -500,6 +478,9 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
   const reporter = dependencies.reporter ?? sentryInferenceReporter
 
   async function handleApiRequest(c: Context) {
+    const openworkRequestId = buildRequestId()
+    c.header("x-openwork-request-id", openworkRequestId)
+    c.header("cache-control", "no-store")
     const bearerKey = readInferenceBearerKey(c.req.raw)
     if (!bearerKey) {
       logProxyError("Missing inference API key", { path: c.req.path, method: c.req.method })
@@ -513,6 +494,10 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     }
 
     if (c.req.path === modelsPath && c.req.method === "GET") {
+      const limits = await dependencies.ensureUsableBuckets(inferenceKey.organization_id)
+      if (!limits.ok) return c.json({ ...listOpenAiModels(), data: [], error: { code: "model_access_unavailable", message: "OpenWork Models access is unavailable or its allowance is exhausted. Check Models in your organization settings." } })
+      const provider = await dependencies.getOpenRouterProviderKey(inferenceKey.organization_id)
+      if (!provider) return c.json({ ...listOpenAiModels(), data: [], error: { code: "missing_provider_key", message: "Ask your organization admin to reconnect OpenWork Models." } })
       return c.json(listOpenAiModels())
     }
 
@@ -520,7 +505,6 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
       return localRouteRejection(c.req.path, c.req.method)
     }
 
-    const openworkRequestId = buildRequestId()
     const incomingHeaders = sanitizeIncomingHeaders(c.req.raw.headers)
 
     if (new URL(c.req.url).search) {
@@ -586,9 +570,10 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
         c.header("x-ratelimit-remaining-tokens", "0")
         c.header("x-ratelimit-reset-tokens", `${retryAfter}s`)
       }
+      if (!limitedBucket) return c.json({ error: { code: "inference_access_unavailable", type: "permission_error", message: "OpenWork Models access is not active. Ask your organization admin to check Models settings." } }, 403)
       return c.json({
         error: {
-          message: `Rate limit reached for organization ${inferenceKey.organization_id}.`,
+          message: `OpenWork Models ${limits.windowType.replaceAll("_", " ")} allowance is exhausted. Wait for its reset or choose another connected model.`,
           type: "tokens",
           param: null,
           code: "rate_limit_exceeded",
@@ -621,18 +606,29 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
       return c.json({ error: { message: "No active OpenRouter provider key configured for organization.", type: "invalid_request_error", code: "missing_provider_key" } }, 400)
     }
 
+    if (isJsonObject(prepared.body.trace)) prepared.body.trace.usage_started_at = new Date().toISOString()
     const upstreamPath = c.req.path.replace(/^\/api\/v1/, "")
     const upstreamUrl = new URL(`${env.openRouterUpstreamUrl}${upstreamPath}`)
     let upstream: Response
+    const startedAt = Date.now()
+    const abort = new AbortController()
+    const cancel = () => abort.abort()
+    c.req.raw.signal.addEventListener("abort", cancel, { once: true })
+    if (c.req.raw.signal.aborted) abort.abort()
+    const headerTimeout = setTimeout(() => abort.abort(), env.upstreamTimeoutMs)
     try {
       const upstreamInit: ProxyRequestInit = {
         method: c.req.method,
         headers: sanitizeHeaders(c.req.raw, providerKey.encrypted_api_key, openworkRequestId),
-        body: prepared.body,
+        body: JSON.stringify(prepared.body),
         duplex: "half",
+        signal: abort.signal,
+        redirect: "error",
       }
       upstream = await dependencies.fetch(upstreamUrl, upstreamInit)
-    } catch (error) {
+    } catch {
+      clearTimeout(headerTimeout)
+      c.req.raw.signal.removeEventListener("abort", cancel)
       logProxyError("Failed to reach OpenRouter upstream", {
         openworkRequestId,
         organizationId: inferenceKey.organization_id,
@@ -641,7 +637,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
         upstreamUrl: upstreamUrl.toString(),
         modelAlias: prepared.modelAlias,
         upstreamModel: prepared.upstreamModel,
-        error: error instanceof Error ? error.message : String(error),
+        error: "Upstream connection failed",
       })
       reporter.handledError({
         reason: "upstream_unreachable",
@@ -656,11 +652,11 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
         resolvedUpstreamModel: prepared.upstreamModel,
         status: 502,
         upstreamUrl: upstreamUrl.toString(),
-        error: error instanceof Error ? error.message : String(error),
-        exception: error,
+        error: "Upstream connection failed",
       })
-      return c.json({ error: { message: "Failed to reach OpenRouter upstream.", type: "api_error", code: "upstream_unreachable" } }, 502)
+      return c.json(inferenceError(abort.signal.aborted ? "upstream_timeout" : "upstream_unreachable", c.req.raw.signal.aborted ? "Request cancelled." : "The selected model could not be reached. Your work is preserved; retry when the provider recovers."), 502)
     }
+    clearTimeout(headerTimeout)
 
     if (!upstream.ok) {
       await logUpstreamError({
@@ -680,13 +676,63 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
       })
     }
 
-    const headers = new Headers(upstream.headers)
-    headers.set("x-openwork-request-id", openworkRequestId)
-    return new Response(trackStream(
-      upstream.body,
-      async () => {},
-      async () => {},
-    ), { status: upstream.status, statusText: upstream.statusText, headers })
+    const headers = new Headers({ "x-openwork-request-id": openworkRequestId, "cache-control": "no-store" })
+    const retryAfter = upstream.headers.get("retry-after")
+    if (retryAfter && (/^\d+$/.test(retryAfter) || Number.isFinite(Date.parse(retryAfter)))) headers.set("retry-after", retryAfter)
+    if (!upstream.ok) {
+      let error = upstreamError(upstream.status)
+      // Read only a bounded error envelope to classify context overflow. The
+      // provider's message and metadata never leave this scope or enter logs.
+      if (upstream.status === 400) {
+        const timeout = setTimeout(() => abort.abort(), Math.min(env.upstreamTimeoutMs, 5000))
+        try {
+          const payload = await readResponseJson(upstream.body, 65536)
+          if (isJsonObject(payload) && isJsonObject(payload.error) && (
+            payload.error.code === "context_length_exceeded" ||
+            (typeof payload.error.message === "string" && /maximum context length|context length.*exceed|too many tokens/i.test(payload.error.message))
+          )) error = upstreamError(413)
+        } catch { /* The safe status category remains sufficient. */ }
+        finally { clearTimeout(timeout) }
+      }
+      c.req.raw.signal.removeEventListener("abort", cancel)
+      abort.abort()
+      await upstream.body?.cancel().catch(() => {})
+      return Response.json(error, { status: upstream.status, headers })
+    }
+    const contentType = upstream.headers.get("content-type")?.split(";")[0].trim().toLowerCase()
+    if (prepared.stream) {
+      if (contentType !== "text/event-stream" || !upstream.body) {
+        c.req.raw.signal.removeEventListener("abort", cancel)
+        abort.abort()
+        await upstream.body?.cancel().catch(() => {})
+        return Response.json(inferenceError("upstream_malformed_stream", "The model did not return a response stream. Retry the selected model."), { status: 502, headers })
+      }
+      headers.set("content-type", "text/event-stream; charset=utf-8")
+      headers.set("x-accel-buffering", "no")
+      return new Response(relayChatStream({
+        body: upstream.body, abort, startedAt, idleMs: env.streamIdleMs,
+        onFinish(result) {
+          c.req.raw.signal.removeEventListener("abort", cancel)
+          reporter.completion?.({ ...result, openworkRequestId, organizationId: inferenceKey.organization_id, orgMembershipId: inferenceKey.org_membership_id, modelAlias: prepared.modelAlias })
+        },
+      }), { headers })
+    }
+    // Bound non-streaming bodies too. An HTTP 200 without a terminal choice is
+    // not a completed inference response.
+    const bodyTimeout = setTimeout(() => abort.abort(), env.upstreamTimeoutMs)
+    try {
+      const value = await readResponseJson(upstream.body)
+      if (!completeChatResponse(value)) {
+        return Response.json(inferenceError("upstream_incomplete", "The model returned an incomplete response. Review your work before retrying."), { status: 502, headers })
+      }
+      return Response.json(value, { headers })
+    } catch {
+      return Response.json(inferenceError("upstream_incomplete", "The model response was interrupted or malformed. Review your work before retrying."), { status: 502, headers })
+    } finally {
+      clearTimeout(bodyTimeout)
+      c.req.raw.signal.removeEventListener("abort", cancel)
+      abort.abort()
+    }
   }
 
   app.all("/api/v1", handleApiRequest)

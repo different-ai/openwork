@@ -1,4 +1,4 @@
-import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference"
+import { INFERENCE_MODEL_ALIASES, inferenceModelCapabilities } from "@openwork/types/den/inference"
 
 const OPENWORK_PROVIDER_ID = "openwork"
 
@@ -8,15 +8,20 @@ export type ModelCatalogEntry = {
   displayName: string
   enabled: boolean
   usageFactor: number
+  capabilities: NonNullable<ReturnType<typeof inferenceModelCapabilities>>
 }
 
-const models: ModelCatalogEntry[] = Object.entries(INFERENCE_MODEL_ALIASES).map(([alias, model]) => ({
+const models: ModelCatalogEntry[] = Object.entries(INFERENCE_MODEL_ALIASES).flatMap(([alias, model]) => {
+  const capabilities = inferenceModelCapabilities(alias)
+  if (!capabilities) return []
+  return [{
   alias,
   upstreamModel: model.upstreamModel,
   displayName: model.displayName,
   enabled: model.enabled,
   usageFactor: model.usageFactor,
-}))
+  capabilities,
+}]})
 
 const enabledModels = models.filter((model) => model.enabled)
 
@@ -28,7 +33,8 @@ export function resolveModelAlias(alias: string) {
 }
 
 export function resolveModelByUpstreamModel(upstreamModel: string) {
-  return enabledModels.find((model) => model.upstreamModel === upstreamModel) ?? null
+  // Retired models can still settle requests that started while available.
+  return models.find((model) => model.upstreamModel === upstreamModel) ?? null
 }
 
 export function listModelCatalog() {

@@ -1,3 +1,5 @@
+import capabilitySnapshot from "./inference-capabilities.json" with { type: "json" };
+
 export const INFERENCE_USAGE_CONVERSION_FACTOR = 100_000_000;
 
 export const INFERENCE_WINDOW_TYPES = [
@@ -51,7 +53,7 @@ export const INFERENCE_WINDOW_DURATIONS_MS: Record<
   monthly: 30 * 24 * 60 * 60 * 1000,
 } as const;
 
-// For upstreamModel values, please get from models.dev/api.json provider = openrouter.models.id
+// Upstream identifiers and capabilities are verified against OpenRouter's model API.
 
 export const INFERENCE_MODEL_ALIASES = {
   "z-ai/glm-5.2": {
@@ -111,6 +113,75 @@ export const INFERENCE_MODEL_ALIASES = {
 } as const;
 
 export type InferenceModelAlias = keyof typeof INFERENCE_MODEL_ALIASES;
+
+/** Policy (aliases/allowances) and provider facts are deliberately separate. */
+export const INFERENCE_CATALOG_VERIFIED_AT = capabilitySnapshot.verifiedAt;
+export const INFERENCE_CATALOG_SOURCE = capabilitySnapshot.source;
+
+export type InferenceModelCapabilities = {
+  contextTokens: number;
+  outputTokens: number;
+  inputModalities: ("text" | "image")[];
+  outputModalities: "text"[];
+  /** Provider catalog estimates in USD per million tokens, never allowance charges. */
+  cost: { input: number; output: number; cache_read?: number; cache_write?: number };
+  supportedParameters: string[];
+  interleaved: boolean | { field: string };
+  reasoning: {
+    mandatory: boolean;
+    defaultEnabled: boolean | null;
+    supportedEfforts: string[] | null;
+    defaultEffort: string | null;
+    supportsTokenBudget: boolean;
+  };
+};
+
+export function inferenceModelCapabilities(alias: string): InferenceModelCapabilities | null {
+  const value = Object.entries(capabilitySnapshot.models).find(([id]) => id === alias)?.[1];
+  if (!value) return null;
+  return {
+    ...value,
+    inputModalities: value.inputModalities.filter((modality): modality is "text" | "image" => modality === "text" || modality === "image"),
+    outputModalities: value.outputModalities.filter((modality): modality is "text" => modality === "text"),
+  };
+}
+
+/** Saved selections must fail explicitly instead of becoming engine defaults. */
+export function inferenceModelSelectionIssue(modelId: string, variant?: string | null): string | null {
+  const policy = Object.entries(INFERENCE_MODEL_ALIASES).find(([id]) => id === modelId)?.[1];
+  const capabilities = inferenceModelCapabilities(modelId);
+  if (!policy?.enabled || !capabilities) return "The selected OpenWork model is unavailable. Choose another model explicitly to continue.";
+  if (!variant) return null;
+  const efforts = capabilities.reasoning.supportedEfforts;
+  if (!["none", "minimal", "low", "medium", "high", "xhigh", "max"].includes(variant) || (efforts !== null && !efforts.includes(variant)) || (variant === "none" && capabilities.reasoning.mandatory)) return "The saved reasoning setting is unavailable for this model. Choose Default or a supported reasoning setting to continue.";
+  return null;
+}
+
+/** Public OpenCode configuration and the managed API consume the same facts. */
+export function openWorkModelConfigurations() {
+  return Object.fromEntries(Object.entries(INFERENCE_MODEL_ALIASES).flatMap(([alias, model]) => {
+    const capabilities = inferenceModelCapabilities(alias);
+    if (!model.enabled || !capabilities) return [];
+    return [[alias, {
+      id: alias,
+      name: model.displayName.replace(/^OpenWork:\s*/, ""),
+      attachment: capabilities.inputModalities.includes("image"),
+      reasoning: capabilities.supportedParameters.includes("reasoning"),
+      tool_call: capabilities.supportedParameters.includes("tools"),
+      temperature: capabilities.supportedParameters.includes("temperature"),
+      structured_output: capabilities.supportedParameters.includes("structured_outputs"),
+      interleaved: capabilities.interleaved,
+      cost: capabilities.cost,
+      variants: Object.fromEntries(["none", "minimal", "low", "medium", "high", "xhigh", "max"].map((effort) => [effort,
+        (capabilities.reasoning.supportedEfforts === null || capabilities.reasoning.supportedEfforts.includes(effort)) && !(effort === "none" && capabilities.reasoning.mandatory)
+          ? { reasoning: { effort } }
+          : { disabled: true },
+      ])),
+      modalities: { input: capabilities.inputModalities, output: capabilities.outputModalities },
+      limit: { context: capabilities.contextTokens, output: capabilities.outputTokens },
+    }]];
+  }));
+}
 
 export type InferenceOrganizationMetadata = {
   enabled: true;

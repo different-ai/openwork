@@ -1,6 +1,7 @@
 import type { ProviderListItem } from "../types";
 import type { ModelBehaviorOption } from "../types";
 import { t } from "../../i18n";
+import { inferenceModelCapabilities, inferenceModelSelectionIssue } from "@openwork/types/den/inference";
 
 type ProviderModel = ProviderListItem["models"][string];
 
@@ -187,7 +188,8 @@ export const getModelBehaviorOptions = (
   model: ProviderModel,
   providerName?: string | null,
 ): ModelBehaviorOption[] => {
-  const variantKeys = sortVariantKeys(getVariantKeys(model));
+  const managed = providerID === "openwork" ? inferenceModelCapabilities(model.id) : null;
+  const variantKeys = sortVariantKeys(managed ? (managed.reasoning.supportedEfforts ?? [...WELL_KNOWN_VARIANT_ORDER]).filter((effort) => !(managed.reasoning.mandatory && effort === "none")) : getVariantKeys(model));
   if (!variantKeys.length) return [];
   return variantKeys.map((key) => {
     const label = getVariantLabel(key);
@@ -222,6 +224,16 @@ export const getModelBehaviorSummary = (
   providerName?: string | null,
 ) => {
   const options = getModelBehaviorOptions(providerID, model, providerName);
+  if (providerID === "openwork") {
+    const issue = inferenceModelSelectionIssue(model.id, value);
+    const available = [defaultBehaviorOption(), ...options];
+    return {
+      title: getBehaviorTitle(providerID, model, options.flatMap((option) => option.value ? [option.value] : []), providerName),
+      label: issue ? `${formatGenericBehaviorLabel(value)} (unavailable)` : (available.find((option) => option.value === value)?.label ?? defaultBehaviorOption().label),
+      description: issue ?? (available.find((option) => option.value === value)?.description ?? defaultBehaviorOption().description),
+      value, options: available,
+    };
+  }
   const sanitized = sanitizeModelBehaviorValue(providerID, model, value, providerName);
   const selectedValue = sanitized ?? getDefaultModelBehaviorValue(model);
   const selected = options.find((option) => option.value === selectedValue) ?? options[0] ?? null;

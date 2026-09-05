@@ -8,7 +8,7 @@ import * as Sentry from "@sentry/node"
 import { db } from "./db.js"
 import { env } from "./env.js"
 import { constantTimeEquals } from "./keys.js"
-import { ensureUsableBuckets as ensureUsageBuckets } from "./limits.js"
+import { settlementBuckets as ensureUsageBuckets } from "./limits.js"
 import type { BucketLimitMetadata, BucketMetadata } from "./limits.js"
 import { resolveModelByUpstreamModel } from "./model-catalog.js"
 
@@ -17,12 +17,14 @@ type JsonRecord = Record<string, unknown>
 type OpenRouterUsageMetadata = {
   requestModel: string | null
   responseModel: string | null
-  inputCost: number
-  outputCost: number
-  totalCost: number
+  inputCost: number | null
+  outputCost: number | null
+  totalCost: number | null
   inputTokens: number | null
   outputTokens: number | null
   totalTokens: number | null
+  cacheReadTokens: number | null
+  reasoningTokens: number | null
   generationId: string | null
   spanId: string | null
   traceId: string | null
@@ -55,14 +57,15 @@ type ParsedSpan = {
   reportedModel: string
   requestModel: string | null
   responseModel: string | null
-  inputCost: number
-  outputCost: number
+  inputCost: number | null
+  outputCost: number | null
   usageMetadata: OpenRouterUsageMetadata
 }
 
 type WebhookInferenceKey = {
   id: DenTypeId<"inferenceKey">
   status: string
+  revoked_at?: Date | null
   organization_id: DenTypeId<"organization">
   org_membership_id: DenTypeId<"member">
 }
@@ -76,12 +79,19 @@ type UsageBucketSettlement = {
 
 type UsageLedgerEntryRef = {
   id: DenTypeId<"inferenceUsageLedgerEntry">
+  organizationId: string
+  memberId: string
+  inferenceKeyId: string | null
+  requestId: string
+  costAmount: number
+  occurredAt: Date
 }
 
 type InsertUsageLedgerEntryInput = {
   inferenceKey: WebhookInferenceKey
   span: ParsedSpan
   costAmount: number
+  unpriced?: boolean
 }
 
 type ChargeBucketsInput = {
@@ -141,8 +151,8 @@ function stringAttr(attrs: JsonRecord, keys: string[]) {
 function numberAttr(attrs: JsonRecord, keys: string[]) {
   for (const key of keys) {
     const value = attrs[key]
-    const numberValue = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN
-    if (Number.isFinite(numberValue)) return numberValue
+    const numberValue = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : NaN
+    if (Number.isFinite(numberValue) && numberValue >= 0) return numberValue
   }
   return null
 }
@@ -152,21 +162,32 @@ function spanString(span: JsonRecord, key: string) {
   return typeof value === "string" && value.trim() ? value.trim() : null
 }
 
-function usageUnitsForModel(input: { upstreamModel: string; inputCost: number; outputCost: number }) {
+function tokenAttr(attrs: JsonRecord, keys: string[]) {
+  const value = numberAttr(attrs, keys)
+  return value !== null && Number.isSafeInteger(value) && value <= 2_147_483_647 ? value : null
+}
+
+function usageUnitsForModel(input: { upstreamModel: string; inputCost: number | null; outputCost: number | null }) {
   const model = resolveModelByUpstreamModel(input.upstreamModel)
-  if (!model) return null
-  return Math.max(1, Math.ceil((input.inputCost + input.outputCost) * INFERENCE_USAGE_CONVERSION_FACTOR * model.usageFactor))
+  if (!model || input.inputCost === null || input.outputCost === null) return null
+  const amount = Math.max(1, Math.ceil((input.inputCost + input.outputCost) * INFERENCE_USAGE_CONVERSION_FACTOR * model.usageFactor))
+  return Number.isSafeInteger(amount) ? amount : null
 }
 
 function logWebhookError(message: string, details?: Record<string, unknown>) {
   console.error(`[openrouter-webhook] ${message}`, details ?? {})
 }
 
-function timeFromSpan(span: JsonRecord) {
-  const raw = stringAttr(span, ["endTimeUnixNano", "startTimeUnixNano", "timeUnixNano"])
-  if (!raw) return new Date()
-  const ms = Number(BigInt(raw) / 1_000_000n)
-  return Number.isFinite(ms) ? new Date(ms) : new Date()
+function timeFromSpan(span: JsonRecord, attrs: JsonRecord) {
+  const admittedAt = stringAttr(attrs, ["trace.usage_started_at", "trace.metadata.usage_started_at", "metadata.usage_started_at", "usage_started_at"])
+  if (admittedAt) {
+    const date = new Date(admittedAt)
+    if (Number.isFinite(date.getTime())) return date
+  }
+  const raw = stringAttr(span, ["startTimeUnixNano", "endTimeUnixNano", "timeUnixNano"])
+  if (!raw || !/^\d+$/.test(raw)) return null
+  const date = new Date(Number(BigInt(raw) / 1_000_000n))
+  return Number.isFinite(date.getTime()) ? date : null
 }
 
 function usageMetadataFromSpan(input: {
@@ -174,8 +195,8 @@ function usageMetadataFromSpan(input: {
   attrs: JsonRecord
   requestModel: string | null
   responseModel: string | null
-  inputCost: number
-  outputCost: number
+  inputCost: number | null
+  outputCost: number | null
   generationId: string | null
 }): OpenRouterUsageMetadata {
   return {
@@ -183,10 +204,12 @@ function usageMetadataFromSpan(input: {
     responseModel: input.responseModel,
     inputCost: input.inputCost,
     outputCost: input.outputCost,
-    totalCost: input.inputCost + input.outputCost,
-    inputTokens: numberAttr(input.attrs, ["gen_ai.usage.input_tokens", "gen_ai.usage.prompt_tokens", "llm.usage.prompt_tokens", "prompt_tokens"]),
-    outputTokens: numberAttr(input.attrs, ["gen_ai.usage.output_tokens", "gen_ai.usage.completion_tokens", "llm.usage.completion_tokens", "completion_tokens"]),
-    totalTokens: numberAttr(input.attrs, ["gen_ai.usage.total_tokens", "llm.usage.total_tokens", "total_tokens"]),
+    totalCost: input.inputCost === null || input.outputCost === null ? null : input.inputCost + input.outputCost,
+    inputTokens: tokenAttr(input.attrs, ["gen_ai.usage.input_tokens", "gen_ai.usage.prompt_tokens", "llm.usage.prompt_tokens", "prompt_tokens"]),
+    outputTokens: tokenAttr(input.attrs, ["gen_ai.usage.output_tokens", "gen_ai.usage.completion_tokens", "llm.usage.completion_tokens", "completion_tokens"]),
+    totalTokens: tokenAttr(input.attrs, ["gen_ai.usage.total_tokens", "llm.usage.total_tokens", "total_tokens"]),
+    cacheReadTokens: tokenAttr(input.attrs, ["gen_ai.usage.cached_tokens", "gen_ai.usage.cache_read_input_tokens", "gen_ai.usage.input_tokens_details.cached_tokens"]),
+    reasoningTokens: tokenAttr(input.attrs, ["gen_ai.usage.reasoning_tokens", "gen_ai.usage.output_tokens_details.reasoning_tokens"]),
     generationId: input.generationId,
     spanId: spanString(input.span, "spanId") ?? stringAttr(input.attrs, ["span_id"]),
     traceId: spanString(input.span, "traceId") ?? stringAttr(input.attrs, ["trace_id"]),
@@ -206,19 +229,22 @@ function parseSpan(span: JsonRecord, resourceAttrs: JsonRecord, scopeAttrs: Json
   const reportedModel = responseModel ?? requestModel
   const inputCost = numberAttr(attrs, ["gen_ai.usage.input_cost"])
   const outputCost = numberAttr(attrs, ["gen_ai.usage.output_cost"])
-  if (!orgMembershipId || !inferenceKeyId || !openworkRequestId || !reportedModel || inputCost === null || outputCost === null) {
+  if (!orgMembershipId || !inferenceKeyId || !openworkRequestId || !reportedModel) {
     return null
   }
   const generationId = stringAttr(attrs, ["gen_ai.response.id", "gen_ai.generation.id", "generation_id", "response_id"])
   const externalEventId = stringAttr(attrs, ["event_id", "id", "span_id"]) ?? generationId ?? spanString(span, "spanId")
 
+  const occurredAt = timeFromSpan(span, attrs)
+  const currency = stringAttr(attrs, ["gen_ai.usage.currency", "gen_ai.cost.currency"])
+  if (!occurredAt || (currency !== null && currency !== "USD")) return null
   return {
     orgMembershipId,
     inferenceKeyId,
     openworkRequestId,
     externalEventId,
     generationId,
-    occurredAt: timeFromSpan(span),
+    occurredAt,
     reportedModel,
     requestModel,
     responseModel,
@@ -230,7 +256,8 @@ function parseSpan(span: JsonRecord, resourceAttrs: JsonRecord, scopeAttrs: Json
 
 function parseOtlpSpans(body: unknown) {
   const spans: ParsedSpan[] = []
-  if (!isRecord(body)) return spans
+  let invalidUsage = 0
+  if (!isRecord(body)) return { spans, invalidUsage }
   for (const resourceSpan of values(body.resourceSpans)) {
     if (!isRecord(resourceSpan)) continue
     const resourceAttrs = attributesToRecord(isRecord(resourceSpan.resource) ? resourceSpan.resource.attributes : undefined)
@@ -241,10 +268,11 @@ function parseOtlpSpans(body: unknown) {
         if (!isRecord(span)) continue
         const parsed = parseSpan(span, resourceAttrs, scopeAttrs)
         if (parsed) spans.push(parsed)
+        else if (Object.keys(attributesToRecord(span.attributes)).some((key) => key.startsWith("gen_ai.usage."))) invalidUsage += 1
       }
     }
   }
-  return spans
+  return { spans, invalidUsage }
 }
 
 function isAuthorized(request: Request) {
@@ -273,6 +301,16 @@ const sentryWebhookReporter: OpenRouterUsageWebhookReporter = {
   },
 }
 
+const ledgerSelection = {
+  id: InferenceUsageLedgerEntryTable.id,
+  organizationId: InferenceUsageLedgerEntryTable.organization_id,
+  memberId: InferenceUsageLedgerEntryTable.org_membership_id,
+  inferenceKeyId: InferenceUsageLedgerEntryTable.inference_key_id,
+  requestId: InferenceUsageLedgerEntryTable.external_job_id,
+  costAmount: InferenceUsageLedgerEntryTable.cost_amount,
+  occurredAt: InferenceUsageLedgerEntryTable.occurred_at,
+}
+
 const defaultWebhookDependencies: WebhookDependencies = {
   reporter: sentryWebhookReporter,
   async findInferenceKey(inferenceKeyId) {
@@ -285,13 +323,13 @@ const defaultWebhookDependencies: WebhookDependencies = {
     return ensureUsageBuckets(organizationId, occurredAt)
   },
   async findLedgerEntryByExternalEventId(externalEventId) {
-    const [event] = await db.select({ id: InferenceUsageLedgerEntryTable.id }).from(InferenceUsageLedgerEntryTable)
+    const [event] = await db.select(ledgerSelection).from(InferenceUsageLedgerEntryTable)
       .where(eq(InferenceUsageLedgerEntryTable.external_event_id, externalEventId))
       .limit(1)
     return event ?? null
   },
   async findOpenRouterUsageLedgerEntry(openworkRequestId) {
-    const [existing] = await db.select({ id: InferenceUsageLedgerEntryTable.id }).from(InferenceUsageLedgerEntryTable)
+    const [existing] = await db.select(ledgerSelection).from(InferenceUsageLedgerEntryTable)
       .where(and(eq(InferenceUsageLedgerEntryTable.external_job_id, openworkRequestId), eq(InferenceUsageLedgerEntryTable.event_type, "openrouter_usage"))).limit(1)
     return existing ?? null
   },
@@ -310,17 +348,42 @@ const defaultWebhookDependencies: WebhookDependencies = {
       input_tokens: input.span.usageMetadata.inputTokens,
       output_tokens: input.span.usageMetadata.outputTokens,
       total_tokens: input.span.usageMetadata.totalTokens,
-      event_type: "openrouter_usage",
+      event_type: input.unpriced ? "openrouter_usage_unpriced" : "openrouter_usage",
+      provider_usage: {
+        source: "openrouter_otlp",
+        status: input.unpriced ? "unpriced" : "settled",
+        requestModel: input.span.requestModel,
+        responseModel: input.span.responseModel,
+        inputCost: input.span.inputCost,
+        outputCost: input.span.outputCost,
+        currency: input.span.usageMetadata.currency,
+        cacheReadTokens: input.span.usageMetadata.cacheReadTokens,
+        reasoningTokens: input.span.usageMetadata.reasoningTokens,
+      },
       occurred_at: input.span.occurredAt,
-    })
-    return { id: entryId }
+    }).onDuplicateKeyUpdate({ set: { id: sql`${InferenceUsageLedgerEntryTable.id}` } })
+    const [entry] = await db.select(ledgerSelection).from(InferenceUsageLedgerEntryTable).where(and(
+      eq(InferenceUsageLedgerEntryTable.external_job_id, input.span.openworkRequestId),
+      eq(InferenceUsageLedgerEntryTable.event_type, input.unpriced ? "openrouter_usage_unpriced" : "openrouter_usage"),
+    )).limit(1)
+    if (!entry) throw new Error("Usage event identity conflict")
+    return entry
   },
   async chargeBuckets(input) {
     await db.transaction(async (tx) => {
-      for (const [windowType, bucketId] of Object.entries(input.limits.bucketIds)) {
+      // A per-entry row lock serializes duplicate deliveries, including recovery
+      // after the ledger insert succeeded but the bucket transaction failed.
+      const [entry] = await tx.select(ledgerSelection).from(InferenceUsageLedgerEntryTable)
+        .where(eq(InferenceUsageLedgerEntryTable.id, input.ledgerEntryId)).limit(1).for("update")
+      if (!entry) throw new Error("Usage entry missing")
+      for (const [windowType, bucketId] of Object.entries(input.limits.bucketIds).sort(([left], [right]) => left.localeCompare(right))) {
         if (!bucketId) continue
         const limitAmount = input.limits.bucketLimits[windowType]
         if (limitAmount === undefined) continue
+        const [bucket] = await tx.select({ id: InferenceOrgUsageBucketTable.id }).from(InferenceOrgUsageBucketTable)
+          .where(and(eq(InferenceOrgUsageBucketTable.id, bucketId), eq(InferenceOrgUsageBucketTable.organization_id, entry.organizationId)))
+          .limit(1).for("update")
+        if (!bucket) throw new Error("Usage bucket identity conflict")
         const [charge] = await tx.select({ id: InferenceUsageLedgerBucketChargeTable.id })
           .from(InferenceUsageLedgerBucketChargeTable)
           .where(and(
@@ -336,11 +399,10 @@ const defaultWebhookDependencies: WebhookDependencies = {
           id: createDenTypeId("inferenceUsageLedgerBucketCharge"),
           ledger_entry_id: input.ledgerEntryId,
           bucket_id: bucketId,
-          amount: input.costAmount,
+          amount: entry.costAmount,
         })
         await tx.update(InferenceOrgUsageBucketTable).set({
-          limit_amount: limitAmount,
-          used_amount: sql`${InferenceOrgUsageBucketTable.used_amount} + ${input.costAmount}`,
+          used_amount: sql`${InferenceOrgUsageBucketTable.used_amount} + ${entry.costAmount}`,
         }).where(eq(InferenceOrgUsageBucketTable.id, bucketId))
       }
     })
@@ -348,7 +410,7 @@ const defaultWebhookDependencies: WebhookDependencies = {
 }
 
 function reportUnknownPricedModel(input: { span: ParsedSpan; inferenceKey: WebhookInferenceKey; reporter: OpenRouterUsageWebhookReporter }) {
-  logWebhookError("skipped span for unknown priced model", {
+  logWebhookError("retained unpriced provider usage", {
     reportedModel: input.span.reportedModel,
     organizationId: input.inferenceKey.organization_id,
     openworkRequestId: input.span.openworkRequestId,
@@ -368,7 +430,7 @@ function reportUnknownPricedModel(input: { span: ParsedSpan; inferenceKey: Webho
 
 async function ingestSpan(span: ParsedSpan, dependencies: WebhookDependencies) {
   const inferenceKey = await dependencies.findInferenceKey(span.inferenceKeyId)
-  if (!inferenceKey || inferenceKey.status !== "active") {
+  if (!inferenceKey || (inferenceKey.status !== "active" && (!inferenceKey.revoked_at || span.occurredAt > inferenceKey.revoked_at))) {
     logWebhookError("skipped span for missing or inactive inference key", { inferenceKeyId: span.inferenceKeyId })
     return false
   }
@@ -383,26 +445,25 @@ async function ingestSpan(span: ParsedSpan, dependencies: WebhookDependencies) {
 
   const costAmount = usageUnitsForModel({ upstreamModel: span.reportedModel, inputCost: span.inputCost, outputCost: span.outputCost })
   if (costAmount === null) {
+    const entry = await dependencies.insertOpenRouterUsageLedgerEntry({ inferenceKey, span, costAmount: 0, unpriced: true })
+    if (entry.organizationId !== inferenceKey.organization_id || entry.memberId !== inferenceKey.org_membership_id || entry.inferenceKeyId !== inferenceKey.id || entry.requestId !== span.openworkRequestId) throw new Error("Usage entry identity conflict")
     reportUnknownPricedModel({ span, inferenceKey, reporter: dependencies.reporter })
-    return false
-  }
-
-  const limits = await dependencies.ensureUsableBuckets(inferenceKey.organization_id, span.occurredAt)
-  if (!limits.ok) {
-    logWebhookError("settling usage after limit was exceeded", {
-      inferenceKeyId: span.inferenceKeyId,
-      limitedBy: limits.limitedBy,
-    })
+    return true
   }
 
   if (span.externalEventId) {
     const event = await dependencies.findLedgerEntryByExternalEventId(span.externalEventId)
-    if (event) return false
+    if (event && (event.requestId !== span.openworkRequestId || event.inferenceKeyId !== inferenceKey.id)) throw new Error("Usage event identity conflict")
   }
 
   const existing = await dependencies.findOpenRouterUsageLedgerEntry(span.openworkRequestId)
   const entry = existing ?? await dependencies.insertOpenRouterUsageLedgerEntry({ inferenceKey, span, costAmount })
-  await dependencies.chargeBuckets({ limits, ledgerEntryId: entry.id, costAmount })
+  if (entry.organizationId !== inferenceKey.organization_id || entry.memberId !== inferenceKey.org_membership_id || entry.inferenceKeyId !== inferenceKey.id || entry.requestId !== span.openworkRequestId) throw new Error("Usage entry identity conflict")
+  // The first durable delivery owns request timing. Replays must not charge a
+  // second set of windows if provider timestamps change after rollover.
+  const limits = await dependencies.ensureUsableBuckets(inferenceKey.organization_id, entry.occurredAt)
+  if (!limits.ok) throw new Error("Historical usage windows are unavailable")
+  await dependencies.chargeBuckets({ limits, ledgerEntryId: entry.id, costAmount: entry.costAmount })
   return true
 }
 
@@ -423,13 +484,16 @@ export function registerWebhookRoutes(app: Hono, dependencies: WebhookDependenci
       return c.json({ error: "unauthorized" }, 401)
     }
 
-    const body = await c.req.json().catch((error) => {
-      logWebhookError("failed to parse webhook JSON", { error: error instanceof Error ? error.message : String(error) })
+    const body = await c.req.json().catch(() => {
+      logWebhookError("failed to parse webhook JSON")
       return null
     })
-    const spans = parseOtlpSpans(body)
+    if (!isRecord(body) || !Array.isArray(body.resourceSpans)) return c.json({ error: "invalid_usage_payload" }, 400)
+    const { spans, invalidUsage } = parseOtlpSpans(body)
     let ingested = 0
     let skipped = 0
+    let failed = invalidUsage
+    if (invalidUsage) logWebhookError("Usage spans lack valid attribution or timing; provider must retry", { count: invalidUsage })
     for (const span of spans) {
       try {
         if (await ingestSpan(span, dependencies)) {
@@ -438,10 +502,10 @@ export function registerWebhookRoutes(app: Hono, dependencies: WebhookDependenci
           skipped += 1
         }
       } catch (error) {
-        skipped += 1
-        logWebhookError("failed to ingest OpenRouter usage span", { error: error instanceof Error ? error.message : String(error) })
+        failed += 1
+        logWebhookError("Usage settlement failed; provider must retry", { requestId: span.openworkRequestId })
       }
     }
-    return c.json({ ok: true, ingested, skipped })
+    return c.json({ ok: failed === 0, ingested, skipped, failed }, failed ? 503 : 200)
   })
 }

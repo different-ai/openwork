@@ -4,6 +4,7 @@ import { and, asc, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { MemberTable, WorkerTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { AutomationAction, AutomationError, AutomationUsage } from "@openwork/types/automations"
+import { inferenceModelSelectionIssue } from "@openwork/types/den/inference"
 import { db } from "../db.js"
 import { env } from "../env.js"
 import {
@@ -435,7 +436,12 @@ async function currentAgentAuthority(input: OwnerScope & { action: AgentAction }
     providerId: input.action.model.providerId,
     modelId: input.action.model.modelId,
   })
-  if (access.ok) return null
+  if (access.ok) {
+    const issue = input.action.model.providerId === "openwork"
+      ? inferenceModelSelectionIssue(input.action.model.modelId, input.action.model.variant)
+      : null
+    return issue ? { ok: false, status: "failed", code: "execution_failed", message: issue, retryable: false, needsAttention: true } : null
+  }
   return {
     ok: false,
     status: "failed",
