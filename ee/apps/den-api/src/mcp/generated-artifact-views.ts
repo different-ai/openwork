@@ -226,7 +226,7 @@ export function registerAgentGeneratedArtifactViews(input: {
         "Compile React source into a self-contained immutable MCP App revision bound to one Workflow output schema.",
         "Prerequisite: the Workflow's current version must declare an explicit JSON Schema outputSchema matching its successful result data. If it does not, test and create a new Workflow version with that outputSchema before calling this tool.",
         "Provide a default-exported React component that receives { data, artifact }. React is already injected: use React.useState and other React APIs without imports. Do not import modules, fetch data, access browser globals, or add URL-bearing elements; all render-time data comes from data.",
-        "Every successful build is a draft. Show the preview so the user can try it and choose Save app in OpenWork. Never activate a draft merely because it built successfully. Editing never changes the saved app.",
+        "Every successful build is a draft. Show the preview so the user can try it and choose Save in OpenWork to keep the workflow and app together on their dashboard. Never activate a draft merely because it built successfully. Editing never changes the saved app.",
         "This management tool does not render a view. After a successful build, call the registered render_artifact_* or preview_artifact_* tool named in the result. A failed build returns artifact_view_build_failed with diagnostics; correct those diagnostics once and retry using the returned artifactViewId.",
       ].join(" "),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },

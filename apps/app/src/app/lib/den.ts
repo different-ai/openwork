@@ -3073,6 +3073,11 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         method: "POST", token, organizationId: orgId, body: input,
       }));
     },
+    async setAppOnDashboard(orgId: string, appId: string, added: boolean) {
+      await requestJson<unknown>(baseUrls, `/v1/apps/${encodeURIComponent(appId)}/dashboard`, {
+        method: "POST", token, organizationId: orgId, body: { added },
+      });
+    },
 
     /** Organization-managed dashboards granted to the signed-in member. */
     async listGrantedDashboards(orgId: string): Promise<DenGrantedDashboard[]> {

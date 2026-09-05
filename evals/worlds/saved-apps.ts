@@ -18,9 +18,28 @@ export function field(value: unknown, key: string): string {
 
 export async function savedAppCreation(seed: Seed) {
   const den = await seed.den({
-    env: { DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: "true" },
+    env: { DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: "true", DEN_DASHBOARDS_ENABLED: "true" },
     org: { name: `Saved Apps ${Date.now()}`, members: { colleague: { name: "Colleague" } } },
+    mocks: { tracker: seed.mock({ allowUnauthenticatedMcp: true, appToolName: "search_issues_using_jql" }) },
   });
+  const connection = await seed.orgConnection(den.admin, {
+    name: "Issue tracker", url: den.mocks.tracker.mcpUrl,
+    authType: "none", credentialMode: "shared", access: { orgWide: true },
+  });
+  const catalog = await seed.api(den.admin, `/v1/mcp-connections/${connection.id}/mcp-apps`);
+  const apps = record(catalog.body).apps;
+  if (!Array.isArray(apps) || !apps[0]) throw new Error("The company app catalog is empty.");
+  const companyApp = record(apps[0]);
+  const dashboard = await seed.api(den.admin, "/v1/dashboards", { method: "POST", body: JSON.stringify({
+    name: "Team tools", elements: [{ serverName: "Issue tracker", connectionId: connection.id,
+      toolName: field(companyApp, "toolName"), projectedToolName: field(companyApp, "toolName"),
+      resourceUri: field(companyApp, "resourceUri"), title: "Project updates", launchArguments: { jql: "project = DEMO" },
+    }],
+  }) });
+  if (dashboard.response.status !== 201) throw new Error(`Company dashboard setup failed: ${dashboard.text}`);
+  const dashboardId = field(record(dashboard.body).item, "id");
+  const grant = await seed.api(den.admin, `/v1/dashboards/${dashboardId}/access`, { method: "POST", body: JSON.stringify({ orgWide: true, role: "viewer" }) });
+  if (grant.response.status !== 201) throw new Error(`Company dashboard grant failed: ${grant.text}`);
   const org = await seed.api(den.admin, "/v1/org");
   const orgId = field(record(org.body).organization, "id");
   const tokenResponse = await seed.api(den.admin, "/v1/mcp/token", {
@@ -71,17 +90,17 @@ export async function savedAppCreation(seed: Seed) {
   const inPreview = async (expression: string) => {
     // The opaque sandbox is an out-of-process frame; the parent's DOM snapshot excludes it.
     const targets = await listTargets(app.handle.cdpUrl);
-    const target = targets.find((entry) => entry.type === "iframe" && entry.url === "about:srcdoc");
+    const target = targets.find((entry) => entry.type === "iframe" && (entry.url === "about:srcdoc" || entry.url.includes("/mcp-apps/sandbox.html")));
     if (!target) return "";
     const client = await connect(debuggerUrlFor(app.handle.cdpUrl, target));
-    try { return await evaluate(client, expression); }
+    try { return await evaluate(client, `(() => { const appDocument = document.querySelector("iframe")?.contentDocument ?? document; return (() => { ${expression} })(); })()`); }
     finally { client.close(); }
   };
   return {
-    app, den, workspace, appId, revisionId, rpc, run,
+    app, den, workspace, appId, revisionId, configObjectId, dashboardId, rpc, run,
     open: (path: string) => go(app, path),
-    previewText: async () => String(await inPreview("document.body.innerText")),
-    showDetails: () => inPreview('document.querySelector("button")?.click()'),
+    previewText: async () => String(await inPreview("return appDocument.body.innerText")),
+    showDetails: () => inPreview('appDocument.querySelector("button")?.click()'),
     receiptId: field(firstRun, "receiptId"),
     render: () => rpc("render_workflow_artifact", { configObjectId }),
     async revise() {

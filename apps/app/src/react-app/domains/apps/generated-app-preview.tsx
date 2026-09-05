@@ -1,45 +1,31 @@
-import { useEffect, useRef, useState } from "react";
-import { AppBridge, PostMessageTransport } from "@modelcontextprotocol/ext-apps/app-bridge";
-import type { WorkflowArtifactPayload } from "@openwork/types/workflows";
+import { useMemo } from "react";
+import type { GeneratedArtifactViewRevision, WorkflowArtifactPayload } from "@openwork/types/workflows";
+import { McpAppSandboxView } from "@/components/chat/mcp-app-frame";
+import { useWorkspace } from "@/react-app/shell/workspace-provider";
 
-/** Generated views have no server tools or network access. Their only input is a retained workflow result. */
-export function GeneratedAppPreview({ html, payload, title }: { html: string; payload: WorkflowArtifactPayload; title: string }) {
-  const frame = useRef<HTMLIFrameElement>(null);
-  const [height, setHeight] = useState(360);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    const iframe = frame.current;
-    if (!iframe?.contentWindow) return;
-    let disposed = false;
-    setError(null);
-    const bridge = new AppBridge(null, { name: "OpenWork", version: "1.0.0" }, {}, {
-      hostContext: { theme: document.documentElement.classList.contains("dark") ? "dark" : "light", displayMode: "inline" },
-    });
-    const timer = window.setTimeout(() => { if (!disposed) setError("This preview could not start. Reopen the app to try again."); }, 10_000);
-    const onDiagnostic = (event: MessageEvent<unknown>) => {
-      if (event.source !== iframe.contentWindow || !event.data || typeof event.data !== "object") return;
-      if ("method" in event.data && event.data.method === "ui/notifications/sandbox-diagnostic") {
-        window.clearTimeout(timer);
-        if (!disposed) setError("This app could not render. Ask OpenWork to fix its preview.");
-      }
-    };
-    window.addEventListener("message", onDiagnostic);
-    bridge.oninitialized = () => {
-      window.clearTimeout(timer);
-      void bridge.sendToolResult({ content: [], structuredContent: payload }).catch(() => {
-        if (!disposed) setError("This preview could not load its results.");
-      });
-    };
-    bridge.onsizechange = ({ height: next }) => {
-      if (typeof next === "number" && Number.isFinite(next)) setHeight(Math.max(200, Math.min(800, next)));
-    };
-    void bridge.connect(new PostMessageTransport(iframe.contentWindow, iframe.contentWindow)).then(() => {
-      if (!disposed) iframe.srcdoc = html;
-    }).catch(() => { if (!disposed) setError("This preview could not start."); });
-    return () => { disposed = true; window.clearTimeout(timer); window.removeEventListener("message", onDiagnostic); void bridge.close(); };
-  }, [html, payload]);
-  return <div className="overflow-hidden rounded-xl border bg-background">
-    {error ? <p role="alert" className="p-4 text-sm text-destructive">{error}</p> : null}
-    <iframe ref={frame} title={`${title} preview`} sandbox="allow-scripts" referrerPolicy="no-referrer" className="block w-full border-0" style={{ height }} />
-  </div>;
+const PREVIEW_ARGUMENTS = {};
+
+/** Chat previews and dashboard apps use the same MCP renderer. */
+export function GeneratedAppPreview({ html, payload, title, revision }: {
+  html: string;
+  payload: WorkflowArtifactPayload;
+  title: string;
+  revision: GeneratedArtifactViewRevision;
+}) {
+  const { openworkServerClient, workspaceId } = useWorkspace();
+  const resource = useMemo(() => ({
+    serverName: "openwork",
+    toolName: `render_artifact_${revision.artifactViewId}`,
+    resourceUri: revision.resourceUri,
+    html,
+    csp: revision.csp,
+    prefersBorder: true,
+  }), [html, revision]);
+  const result = useMemo(() => ({ content: [], structuredContent: payload }), [payload]);
+  if (!openworkServerClient || !workspaceId) {
+    return <p role="status" className="text-sm text-muted-foreground">Connect a workspace to open the preview.</p>;
+  }
+  return <McpAppSandboxView app={resource} toolName={title} inputArguments={PREVIEW_ARGUMENTS}
+    result={result} unavailableNotice="This app could not open. Try reopening it, or ask OpenWork to fix the preview."
+    initialHeight={360} readOnly />;
 }

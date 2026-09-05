@@ -1,5 +1,5 @@
 import { and, desc, eq, isNull, isNotNull } from "@openwork-ee/den-db/drizzle"
-import { ArtifactViewRevisionTable, ArtifactViewTable } from "@openwork-ee/den-db/schema"
+import { ArtifactViewRevisionTable, ArtifactViewTable, DashboardAppTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import type { GeneratedArtifactView, GeneratedArtifactViewRevision } from "@openwork/types/workflows"
 import { db } from "./db.js"
@@ -271,6 +271,15 @@ export async function activateArtifactViewRevision(input: {
       ...(saved ? { title: saved.title, use_in_workflow: saved.useInWorkflow } : {}),
     }
     await tx.update(ArtifactViewTable).set(patch).where(eq(ArtifactViewTable.id, view.id))
+    if (saved) {
+      // The existing private Workflow and exact app revision become one reusable
+      // dashboard entry. A failed activation must not leave a dashboard card.
+      await tx.insert(DashboardAppTable).values({
+        organization_id: input.context.organizationContext.organization.id,
+        member_id: input.context.organizationContext.currentMember.id,
+        artifact_view_id: view.id,
+      }).onDuplicateKeyUpdate({ set: { artifact_view_id: view.id } })
+    }
     return { ...current, ...patch, updated_at: new Date() }
   })
   return serializeView(updated, await revisionRows(view.id))

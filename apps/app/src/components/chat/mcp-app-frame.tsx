@@ -241,6 +241,8 @@ export type McpAppSandboxViewProps = {
   initialHeight?: number
   /** Reports app-requested size changes so a host can persist them past this view's lifetime. */
   onHeightChange?: (height: number) => void
+  /** Generated result views cannot call tools or open links. */
+  readOnly?: boolean
 }
 
 /**
@@ -248,7 +250,7 @@ export type McpAppSandboxViewProps = {
  * bridges it to the workspace MCP App host. Chat messages and dashboard tiles
  * share this exact pipeline so rendering and diagnostics stay identical.
  */
-export function McpAppSandboxView({ app, toolName, inputArguments, result, unavailableNotice, onRequestTeardown, initialHeight, onHeightChange }: McpAppSandboxViewProps) {
+export function McpAppSandboxView({ app, toolName, inputArguments, result, unavailableNotice, onRequestTeardown, initialHeight, onHeightChange, readOnly = false }: McpAppSandboxViewProps) {
   const { openworkServerClient, workspaceId } = useWorkspace()
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [height, setHeightState] = useState(initialHeight ?? DEFAULT_HEIGHT)
@@ -310,7 +312,7 @@ export function McpAppSandboxView({ app, toolName, inputArguments, result, unava
     const bridge = new AppBridge(
       null,
       { name: "OpenWork", version: "1.0.0" },
-      { serverTools: {} },
+      readOnly ? {} : { serverTools: {} },
       {
         hostContext: {
           theme: document.documentElement.classList.contains("dark") ? "dark" : "light",
@@ -320,6 +322,7 @@ export function McpAppSandboxView({ app, toolName, inputArguments, result, unava
       },
     )
     bridge.onopenlink = async ({ url }) => {
+      if (readOnly) return { isError: true }
       try {
         await openDesktopUrl(url)
         return {}
@@ -371,6 +374,7 @@ export function McpAppSandboxView({ app, toolName, inputArguments, result, unava
       teardownRef.current?.()
     }
     bridge.oncalltool = async ({ name, arguments: args }) => {
+      if (readOnly) throw new Error("This app displays results and cannot call tools.")
       const request = { serverName: app.serverName, name, resourceUri: app.resourceUri, arguments: args }
       try {
         return mcpToolResult(await openworkServerClient.callMcpAppTool(workspaceId, request))
@@ -531,7 +535,7 @@ export function McpAppSandboxView({ app, toolName, inputArguments, result, unava
         new Promise<void>((resolve) => window.setTimeout(resolve, 500)),
       ]).catch(() => undefined).finally(() => bridge.close().catch(() => undefined))
     }
-  }, [app, inputArguments, openworkServerClient, result, toolName, workspaceId])
+  }, [app, inputArguments, openworkServerClient, result, toolName, workspaceId, readOnly])
 
   if (error) return <McpAppDiagnosticNotice error={error} notice={unavailableNotice} />
   return (

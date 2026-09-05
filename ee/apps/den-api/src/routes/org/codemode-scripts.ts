@@ -44,7 +44,7 @@ import {
   retireArtifactView,
 } from "../../artifact-views.js"
 
-import { getSavedApp, listSavedApps } from "../../saved-apps.js"
+import { getSavedApp, listSavedApps, setAppOnDashboard } from "../../saved-apps.js"
 
 const capabilitySchema = z.object({ capabilityName: z.string(), scriptPath: z.string() })
 const scriptSchema = z.object({
@@ -342,6 +342,25 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
       try {
         const { actorContext } = await contextFor(c)
         return c.json(await getSavedApp({ context: actorContext, appId: c.req.param("appId"), ...c.req.valid("query") }))
+      } catch (error) {
+        const failure = appRouteFailure(error)
+        return c.json(failure.body, failure.status)
+      }
+    },
+  )
+
+  app.post(
+    "/v1/apps/:appId/dashboard",
+    describeRoute({ tags: ["Apps"], summary: "Add or remove an app on your personal dashboard", responses: {
+      200: jsonResponse("Dashboard updated.", z.object({ ok: z.literal(true) })),
+    } }),
+    orgMemberRoute(), jsonValidator(z.object({ added: z.boolean() })),
+    async (c) => {
+      if (!env.generatedArtifactViewsEnabled) return c.json({ error: "artifact_view_not_found" }, 404)
+      try {
+        const { actorContext } = await contextFor(c)
+        await setAppOnDashboard(actorContext, c.req.param("appId"), c.req.valid("json").added)
+        return c.json({ ok: true })
       } catch (error) {
         const failure = appRouteFailure(error)
         return c.json(failure.body, failure.status)

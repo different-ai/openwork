@@ -2,12 +2,41 @@ import type { SavedAppDetail, SavedAppSummary } from "@openwork/types/workflows"
 import { getArtifactView, getGeneratedArtifactViewRevision, listArtifactViews, loadArtifactViewRevision } from "./artifact-views.js"
 import { getWorkflowDetail, getWorkflowSnapshot } from "./workflows.js"
 import type { PluginArchActorContext } from "./routes/org/plugin-system/access.js"
+import { and, eq } from "@openwork-ee/den-db/drizzle"
+import { DashboardAppTable } from "@openwork-ee/den-db/schema"
+import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { db } from "./db.js"
+
+function dashboardScope(context: PluginArchActorContext) {
+  return and(
+    eq(DashboardAppTable.organization_id, context.organizationContext.organization.id),
+    eq(DashboardAppTable.member_id, context.organizationContext.currentMember.id),
+  )
+}
+
+export async function setAppOnDashboard(context: PluginArchActorContext, appId: string, added: boolean) {
+  const id = normalizeDenTypeId("artifactView", appId)
+  if (added) {
+    const view = await getArtifactView({ context, artifactViewId: id })
+    if (view.status !== "active" || !view.activeRevisionId) throw new Error("artifact_view_not_found")
+    await db.insert(DashboardAppTable).values({
+      organization_id: context.organizationContext.organization.id,
+      member_id: context.organizationContext.currentMember.id,
+      artifact_view_id: id,
+    }).onDuplicateKeyUpdate({ set: { artifact_view_id: id } })
+  } else {
+    // Removal remains possible if access to the underlying app was revoked.
+    await db.delete(DashboardAppTable).where(and(dashboardScope(context), eq(DashboardAppTable.artifact_view_id, id)))
+  }
+}
 
 export async function listSavedApps(context: PluginArchActorContext): Promise<SavedAppSummary[]> {
   const views = await listArtifactViews({ context, activeOnly: true, savedOnly: true })
+  const placements = await db.select().from(DashboardAppTable).where(dashboardScope(context))
+  const onDashboard = new Set(placements.map((entry) => entry.artifact_view_id))
   return Promise.all(views.filter((view) => view.activeRevisionId !== null).map(async (view) => {
     const workflow = await getWorkflowDetail({ context, configObjectId: view.configObjectId })
-    return { view, workflowTitle: workflow.title, canManage: workflow.canManage }
+    return { view, workflowTitle: workflow.title, canManage: workflow.canManage, onDashboard: onDashboard.has(normalizeDenTypeId("artifactView", view.id)) }
   }))
 }
 
@@ -25,7 +54,9 @@ export async function getSavedApp(input: {
   const workflow = await getWorkflowDetail({ context: input.context, configObjectId: view.configObjectId })
   const revisionId = input.revisionId ?? view.activeRevisionId
   const revision = view.revisions.find((entry) => entry.id === revisionId) ?? null
-  const base = { view, workflowTitle: workflow.title, canManage: workflow.canManage, revision }
+  const placements = await db.select().from(DashboardAppTable).where(and(dashboardScope(input.context),
+    eq(DashboardAppTable.artifact_view_id, normalizeDenTypeId("artifactView", view.id)))).limit(1)
+  const base = { view, workflowTitle: workflow.title, canManage: workflow.canManage, onDashboard: placements.length > 0, revision }
   if (!revision || revision.buildStatus !== "ready") {
     return { ...base, html: null, payload: null, previewNotice: "This app is still being prepared. Ask OpenWork to finish its preview." }
   }

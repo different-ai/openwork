@@ -23,6 +23,6 @@ export function AppChatArtifact({ appId, revisionId, receiptId, title }: AppRefe
   }, [appId, revisionId, receiptId, sessionId, workspaceId]);
   return <div className="mt-3 overflow-hidden rounded-xl border">
     <div className="flex items-center justify-between gap-3 border-b px-3 py-2"><span className="flex items-center gap-2 text-sm"><Blocks className="size-4" />{title}</span><Button size="sm" variant="ghost" onClick={open}>Open preview</Button></div>
-    <p className="px-3 py-3 text-sm text-muted-foreground">Try this app in the preview, ask for changes here, then choose Save app to use it again.</p>
+    <p className="px-3 py-3 text-sm text-muted-foreground">Try this app in the preview, ask for changes here, then choose Save to use it again.</p>
   </div>;
 }

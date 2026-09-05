@@ -225,6 +225,7 @@ export const savedAppSummarySchema = z.object({
   view: generatedArtifactViewSchema,
   workflowTitle: z.string(),
   canManage: z.boolean(),
+  onDashboard: z.boolean(),
 })
 export type SavedAppSummary = z.infer<typeof savedAppSummarySchema>
 
