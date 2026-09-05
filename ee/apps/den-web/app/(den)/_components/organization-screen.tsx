@@ -187,7 +187,7 @@ export function OrganizationScreen() {
       {intent === "team" ? <DesktopSetupChoices mode={desktopSetup} onChange={setDesktopSetup} disabled={createBusy || Boolean(createdOrg)} /> : <p className="text-sm leading-6 text-gray-500">Start with your own tools. Creating this organization does not upload the files in your desktop workspaces.</p>}
     </> : null}
     {createError ? <p role="alert" className="text-sm text-rose-600">{createError}</p> : null}
-    {createdOrg ? <p role="status" className="text-sm text-gray-600">Your team is created. Finish desktop policy setup before inviting members.</p> : null}
+    {createdOrg && intent === "team" && desktopSetup === "restricted" ? <p role="status" className="text-sm text-gray-600">Your team is created. Finish desktop policy setup before inviting members.</p> : null}
     <button type="submit" disabled={createBusy || !intent || (intent === "join" ? !invitationLink.trim() : createName.trim().length < 2 || (intent === "team" && !desktopSetup))} className="justify-self-start rounded-xl bg-gray-950 px-5 py-3 text-sm font-medium text-white hover:bg-gray-800 focus-visible:ring-2 focus-visible:ring-gray-600 focus-visible:ring-offset-2 disabled:opacity-50">
       {createBusy ? "Setting up…" : createdOrg ? "Retry policy setup" : intent === "join" ? "Review invitation" : intent === "team" && desktopSetup === "restricted" ? "Create team & review policy" : "Continue"}
     </button>
