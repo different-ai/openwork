@@ -428,6 +428,7 @@ function protectedResourceMetadata() {
 function authorizationServerMetadata() {
   return {
     issuer,
+    ...(process.env.MOCK_AUTHORIZATION_RESPONSE_ISSUER === undefined ? {} : { authorization_response_iss_parameter_supported: process.env.MOCK_AUTHORIZATION_RESPONSE_ISSUER === "1" }),
     authorization_endpoint: `${issuer}/authorize`,
     token_endpoint: `${issuer}/token`,
     ...(disableDcr ? {} : { registration_endpoint: `${issuer}/register` }),
@@ -523,6 +524,7 @@ function redirectWithCode(res, params) {
 
   const callback = new URL(redirectUri);
   callback.searchParams.set("code", code);
+  if (process.env.MOCK_AUTHORIZATION_RESPONSE_ISSUER === "1") callback.searchParams.set("iss", issuer);
   const state = params.get("state");
   if (state) callback.searchParams.set("state", state);
 

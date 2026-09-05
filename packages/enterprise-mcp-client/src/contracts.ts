@@ -236,6 +236,8 @@ export type EnterpriseMcpCompleteAuthorizationInput = {
   connection: EnterpriseMcpConnection
   redirectUri: string
   code: string
+  /** The decoded iss parameter from the authorization response, when present. */
+  responseIssuer?: string
   /** The exact signed state returned by the provider callback. */
   authorizationId: string
 }
