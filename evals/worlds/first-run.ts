@@ -989,7 +989,7 @@ export async function backgroundUpdateWorld(seed: Seed) {
   const app = await seed.desktop({ name: "background-update", signIn: false });
   const workspace = await seed.workspace(app, seed.tmpPath("background-update"));
   await evalIn(app, `(async () => {
-    const { currentVersion } = await window.__OPENWORK_ELECTRON__.updater.getChannel();
+    const currentVersion = "0.18.0";
     const now = Date.now.bind(Date);
     const state = { checks: 0, downloads: 0, installs: 0, offset: 0, finishDownload: null, intervalCheck: null };
     window.__backgroundUpdateWitness = state;
@@ -1009,7 +1009,7 @@ export async function backgroundUpdateWorld(seed: Seed) {
       setChannel: async (channel) => ({ channel, currentVersion }),
       check: async () => {
         state.checks++;
-        return { available: state.checks >= 3, channel: "stable", currentVersion, latestVersion: state.checks >= 3 ? "9.9.9" : currentVersion };
+        return { available: state.checks >= 4, channel: "stable", currentVersion, latestVersion: state.checks >= 4 ? "9.9.9" : currentVersion };
       },
       download: async () => {
         state.downloads++;
