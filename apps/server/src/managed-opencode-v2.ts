@@ -2,7 +2,7 @@
 // deliberately has no reload/dispose call, unlike managed-opencode.ts and server.ts reloadOpencodeEngine.
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rename, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { join } from "node:path";
 
@@ -107,7 +107,10 @@ export async function createManagedOpencodeV2Server(
     if (key.startsWith("OPENWORK_")) delete inherited[key];
   }
 
-  await mkdir(configDir, { recursive: true });
+  await mkdir(options.rootDir, { recursive: true, mode: 0o700 });
+  await chmod(options.rootDir, 0o700);
+  await mkdir(configDir, { recursive: true, mode: 0o700 });
+  await chmod(configDir, 0o700);
   const child = spawn(options.bin, ["serve", "--hostname", hostname, "--port", String(port)], {
     env: {
       ...inherited,
@@ -196,7 +199,7 @@ export async function createManagedOpencodeV2Server(
     await writeFile(temporary, `${JSON.stringify({
       $schema: "https://opencode.ai/config.json",
       providers: providerConfig,
-    }, null, 2)}\n`);
+    }, null, 2)}\n`, { mode: 0o600 });
     await rename(temporary, target);
   }
 

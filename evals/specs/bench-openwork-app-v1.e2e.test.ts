@@ -1,10 +1,8 @@
-import { execFile } from "node:child_process";
-import { access, writeFile, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { writeFile, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { ServerResponse } from "node:http";
 import { arch, cpus, platform, tmpdir, totalmem } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { clickButton, createAndSelectWorkspace, evalIn, readComposerState } from "@openwork/behaviors";
 import type { Surface } from "@openwork/cdp";
 import { desktop } from "@openwork/hosts";
@@ -13,7 +11,6 @@ import { eventually, needs, test } from "@openwork/testkit";
 import { timeline } from "../packages/timeline/src/index.ts";
 import { expect } from "vitest";
 
-const execFileAsync = promisify(execFile);
 const enabled = process.env.OPENWORK_EVAL_E2E_TESTS === "1";
 const benchEngine = process.env.OPENWORK_BENCH_ENGINE === "v2" ? "v2" : "v1";
 const title = enabled
@@ -113,40 +110,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function exists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
-async function resolveOpencodeV2Bin(): Promise<string> {
-  const override = process.env.OPENWORK_EVAL_OPENCODE2_BIN;
-  if (typeof override === "string" && override.trim() !== "") return override;
-
-  const constants: unknown = JSON.parse(await readFile(join(import.meta.dirname, "../../constants.json"), "utf8"));
-  if (!isRecord(constants) || typeof constants.opencodeV2Version !== "string") {
-    throw new Error("constants.json must define a string opencodeV2Version");
-  }
-  const cache = join(tmpdir(), "openwork-opencode-v2-cache", constants.opencodeV2Version);
-  const binary = join(cache, "node_modules", ".bin", "opencode2");
-  if (!(await exists(binary))) {
-    await mkdir(cache, { recursive: true });
-    const packageJson = join(cache, "package.json");
-    if (!(await exists(packageJson))) await writeFile(packageJson, '{"private":true}\n');
-    await execFileAsync(
-      "pnpm",
-      ["add", "--ignore-workspace", "--save-exact", `@opencode-ai/cli@${constants.opencodeV2Version}`],
-      { cwd: cache, timeout: 180_000 },
-    );
-  }
-  if (!(await exists(binary))) {
-    throw new Error(`OpenCode v2 binary was not installed at ${binary}; set OPENWORK_EVAL_OPENCODE2_BIN to a working opencode2 binary`);
-  }
-  return binary;
-}
 
 function bodyFromJson(raw: string): unknown {
   try {
@@ -673,12 +637,12 @@ async function activeSessionId(app: Surface): Promise<string> {
 
 async function measurePreparedSend(
   app: Surface,
-  beforeUserCount: number,
   expectedUserMarker: string,
   witnessNonce: string,
 ): Promise<SendFacts> {
-  const beforeAssistantCount = Number(await evalIn(app,
-    `document.querySelectorAll('[data-message-role="assistant"]').length`));
+  const beforeAssistantIds = await evalIn(app,
+    `[...document.querySelectorAll('[data-message-role="assistant"]')].map((message) => message.getAttribute('data-message-id'))`);
+  if (!Array.isArray(beforeAssistantIds)) throw new Error("Invalid assistant message identities.");
   const startedAt = Date.now();
   await clickButton(app, "Run task", { timeoutMs: 30_000 });
   let userRendered: number | undefined;
@@ -691,13 +655,14 @@ async function measurePreparedSend(
       const users = [...document.querySelectorAll('[data-message-role="user"]')];
       const assistants = [...document.querySelectorAll('[data-message-role="assistant"]')];
       const text = assistants[assistants.length - 1]?.innerText ?? "";
-      const newAssistant = assistants.length > ${beforeAssistantCount};
+      const latestAssistant = assistants[assistants.length - 1];
+      const newAssistant = Boolean(latestAssistant)
+        && !${JSON.stringify(beforeAssistantIds)}.includes(latestAssistant?.getAttribute('data-message-id'));
       const sessionId = document.querySelector('[data-session-surface-id]')?.getAttribute('data-session-surface-id');
       const row = [...document.querySelectorAll('[data-sidebar-session-id]')]
         .find((item) => item.getAttribute('data-sidebar-session-id') === sessionId);
       return {
-        userRendered: users.length > ${beforeUserCount}
-          && (users[users.length - 1]?.innerText ?? "").includes(${JSON.stringify(expectedUserMarker)}),
+        userRendered: (users[users.length - 1]?.innerText ?? "").includes(${JSON.stringify(expectedUserMarker)}),
         firstToken: newAssistant && text.includes("token 1 "),
         complete: newAssistant && Boolean(row) && text.includes("token 20")
           && text.includes(${JSON.stringify(witnessNonce)}) && !row.querySelector('[data-session-loading-indicator]'),
@@ -708,12 +673,12 @@ async function measurePreparedSend(
     if (observed.userRendered === true) userRendered ??= elapsed;
     if (observed.firstToken === true) firstToken ??= elapsed;
     if (observed.complete === true) complete ??= elapsed;
-    return userRendered !== undefined && firstToken !== undefined && complete !== undefined;
+    return { ready: userRendered !== undefined && firstToken !== undefined && complete !== undefined, observed, userRendered, firstToken, complete };
   }, {
     within: 60_000,
     intervalMs: pollResolutionMs,
     label: `independent render milestones for ${expectedUserMarker.slice(0, 80)}`,
-    until: (ready) => ready,
+    until: (result) => result.ready,
   });
   if (userRendered === undefined || firstToken === undefined || complete === undefined) {
     throw new Error("Benchmark render milestones were incomplete.");
@@ -740,9 +705,8 @@ async function measurePreparedSend(
 }
 
 async function sendMessage(app: Surface, text: string, witnessNonce: string): Promise<SendFacts> {
-  const before = await readComposerState(app);
   await typeIntoComposer(app, text);
-  return measurePreparedSend(app, before.userMessageCount, text, witnessNonce);
+  return measurePreparedSend(app, text, witnessNonce);
 }
 
 async function createNewSession(app: Surface): Promise<{ sessionId: string; ms: number }> {
@@ -959,7 +923,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence, place }) =
   needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"] });
   const iterations = Number(process.env.OPENWORK_BENCH_ITERATIONS ?? "1");
   expect(Number.isInteger(iterations) && iterations > 0, "OPENWORK_BENCH_ITERATIONS must be a positive integer").toBe(true);
-  const opencodeV2Bin = benchEngine === "v2" && place.kind === "local" ? await resolveOpencodeV2Bin() : undefined;
+  const opencodeV2Bin = benchEngine === "v2" && place.kind === "local" ? process.env.OPENWORK_EVAL_OPENCODE2_BIN?.trim() || undefined : undefined;
   const runNonce = `${Date.now().toString(36)}-${process.pid}`;
   const results: BenchmarkResults = {
     cold_boot_to_composer: [],
@@ -1075,6 +1039,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence, place }) =
             await createNewSession(app);
             if (await ensureBenchModelV2(app)) modelReselectedPerSession = true;
           } else {
+            await createNewSession(app);
             await selectBenchModel(app);
           }
           const bNonces: string[] = [];
@@ -1114,13 +1079,11 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence, place }) =
             }
             const longMessage = deterministicLongMessage(warmIndex, witnessNonce);
             bNonces.push(longMessage.marker);
-            const beforeLong = await readComposerState(app);
             const insertStartedAt = Date.now();
             await typeIntoComposer(app, longMessage.text);
             const insertMs = Date.now() - insertStartedAt;
             const longRun = await measurePreparedSend(
               app,
-              beforeLong.userMessageCount,
               longMessage.marker,
               witnessNonce,
             );

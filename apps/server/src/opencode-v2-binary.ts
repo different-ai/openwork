@@ -21,7 +21,10 @@ export async function installOpencodeV2Binary(cacheRoot: string, version: string
   const name = platform === "windows" ? "opencode2.exe" : "opencode2";
   const binary = join(directory, name);
   try { await access(binary); return binary; } catch { /* First installation. */ }
-  await mkdir(directory, { recursive: true });
+  await mkdir(cacheRoot, { recursive: true, mode: 0o700 });
+  await chmod(cacheRoot, 0o700);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await chmod(directory, 0o700);
   const staging = await mkdtemp(join(directory, ".install-"));
   try {
     const response = await fetch(artifact.url, { redirect: "error", signal: AbortSignal.timeout(180_000) });

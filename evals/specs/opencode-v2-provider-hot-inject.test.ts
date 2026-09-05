@@ -1,10 +1,8 @@
-import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { eventually, test } from "@openwork/testkit";
 import { expect } from "vitest";
 
@@ -15,7 +13,6 @@ import {
 } from "../../apps/server/src/managed-opencode-v2";
 import { resolveOpencodeModelsUrl } from "../../apps/server/src/opencode-models-url";
 
-const execFileAsync = promisify(execFile);
 
 interface WitnessRequest {
   at: number;
@@ -27,14 +24,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-async function exists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 async function resolveOpencodeV2Bin(): Promise<string> {
   const override = process.env.OPENWORK_EVAL_OPENCODE2_BIN;
@@ -59,7 +48,7 @@ function sessionId(payload: unknown): string | undefined {
   return typeof payload.data.id === "string" ? payload.data.id : undefined;
 }
 
-test("opencode v2 injects providers at runtime without an engine reload", async ({ evidence }) => {
+test("opencode v2 injects providers at runtime without an engine reload", { timeout: 240_000 }, async ({ evidence }) => {
   const binary = await resolveOpencodeV2Bin();
   const nonce = `WITNESS-OK-${randomBytes(12).toString("hex")}`;
   const requests: WitnessRequest[] = [];
@@ -171,6 +160,16 @@ test("opencode v2 injects providers at runtime without an engine reload", async 
         until: (result) => result !== undefined && JSON.stringify(result.json).includes("openwork-witness-a"),
       },
     );
+    if (process.platform !== "win32") {
+      for (const path of [rootDir, join(rootDir, "config"), join(rootDir, "config", "opencode.json")]) {
+        expect((await stat(path)).mode & 0o077).toBe(0);
+      }
+      evidence.recordAssertionEvidence(
+        "mirrored provider credentials are readable only by their owner",
+        "The sidecar root, config directory, and provider file have no group or other-user permission bits after live provider injection.",
+        true,
+      );
+    }
     const injectionLatencyMs = Date.now() - injectionStartedAt;
     expect(JSON.stringify(modelsAfterA?.json)).toContain("openwork-witness-a");
     console.info(`[opencode-v2-spec] provider A injection latency: ${injectionLatencyMs}ms`);
@@ -275,4 +274,4 @@ test("opencode v2 injects providers at runtime without an engine reload", async 
     await new Promise<void>((resolve, reject) => witness.close((error) => error ? reject(error) : resolve()));
     await rm(rootDir, { recursive: true, force: true });
   }
-}, 240_000);
+});

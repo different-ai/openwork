@@ -1,9 +1,7 @@
-import { execFile } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 
 import { clickButton, createAndSelectWorkspace, evalIn, go, waitFor } from "@openwork/behaviors";
 import type { Surface } from "@openwork/cdp";
@@ -11,7 +9,6 @@ import { desktop } from "@openwork/hosts";
 import { needs, resolveEvalEngine, test } from "@openwork/testkit";
 import { expect } from "vitest";
 
-const execFileAsync = promisify(execFile);
 const enabled = process.env.OPENWORK_EVAL_E2E_TESTS === "1";
 const title = enabled
   ? "chat routing switches live between OpenCode v1 and the v2 preview sidecar"
@@ -53,40 +50,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function exists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
-async function resolveOpencodeV2Bin(): Promise<string> {
-  const override = process.env.OPENWORK_EVAL_OPENCODE2_BIN;
-  if (typeof override === "string" && override.trim() !== "") return override;
-
-  const constants: unknown = JSON.parse(await readFile(join(import.meta.dirname, "../../constants.json"), "utf8"));
-  if (!isRecord(constants) || typeof constants.opencodeV2Version !== "string") {
-    throw new Error("constants.json must define a string opencodeV2Version");
-  }
-  const cache = join(tmpdir(), "openwork-opencode-v2-cache", constants.opencodeV2Version);
-  const binary = join(cache, "node_modules", ".bin", "opencode2");
-  if (!(await exists(binary))) {
-    await mkdir(cache, { recursive: true });
-    const packageJson = join(cache, "package.json");
-    if (!(await exists(packageJson))) await writeFile(packageJson, '{"private":true}\n');
-    await execFileAsync(
-      "pnpm",
-      ["add", "--ignore-workspace", "--save-exact", `@opencode-ai/cli@${constants.opencodeV2Version}`],
-      { cwd: cache, timeout: 180_000 },
-    );
-  }
-  if (!(await exists(binary))) {
-    throw new Error(`OpenCode v2 binary was not installed at ${binary}; set OPENWORK_EVAL_OPENCODE2_BIN to a working opencode2 binary`);
-  }
-  return binary;
-}
 
 function stringArray(value: unknown, field: string): string[] {
   if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) {
@@ -404,7 +368,7 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place, ski
   needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"] });
 
   const evalEngine = resolveEvalEngine();
-  const binPath = place.kind === "local" ? await resolveOpencodeV2Bin() : undefined;
+  const binPath = place.kind === "local" ? process.env.OPENWORK_EVAL_OPENCODE2_BIN?.trim() || undefined : undefined;
   const witnessRequests: WitnessRequest[] = [];
   const validAuth = new Set([`Bearer ${keyV1}`, `Bearer ${keyV2}`]);
   const witness = createServer((request, response) => {

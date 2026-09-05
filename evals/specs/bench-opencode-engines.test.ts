@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage } from "node:http";
 import { arch, cpus, platform, tmpdir, totalmem } from "node:os";
 import { join } from "node:path";
@@ -104,14 +104,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function exists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 async function readVersions(): Promise<Versions> {
   const constants: unknown = JSON.parse(
@@ -131,7 +123,6 @@ async function readVersions(): Promise<Versions> {
 }
 
 async function provisionBinary(
-  cacheName: string,
   version: string,
   packageName: string,
   binaryName: string,
@@ -143,32 +134,10 @@ async function provisionBinary(
   if (packageName === "@opencode-ai/cli") {
     return installOpencodeV2Binary(join(tmpdir(), "openwork-opencode-v2-verified"), version);
   }
-  const cache = join(tmpdir(), cacheName, version);
-  const binary = join(cache, "node_modules", ".bin", binaryName);
-  if (!(await exists(binary))) {
-    await mkdir(cache, { recursive: true });
-    const packageJson = join(cache, "package.json");
-    if (!(await exists(packageJson))) await writeFile(packageJson, "{\"private\":true}\n");
-    await execFileAsync(
-      "pnpm",
-      ["add", "--ignore-workspace", "--save-exact", `${packageName}@${version}`],
-      { cwd: cache, timeout: 300_000 },
-    );
-  }
-  if (await exists(binary)) {
-    try {
-      await execFileAsync(binary, ["--version"], { cwd: cache, timeout: 15_000 });
-    } catch {
-      await execFileAsync("pnpm", ["exec", "node", "postinstall.mjs"], {
-        cwd: join(cache, "node_modules", packageName),
-        timeout: 300_000,
-      });
-    }
-  }
-  if (!(await exists(binary))) {
-    throw new Error(
-      `${packageName}@${version} did not provide ${binary}; set ${overrideName} to a working binary`,
-    );
+  const binary = join(import.meta.dirname, "../../apps/desktop/resources/sidecars", process.platform === "win32" ? `${binaryName}.exe` : binaryName);
+  const result = await execFileAsync(binary, ["--version"], { timeout: 15_000 });
+  if (result.stdout.trim() !== version) {
+    throw new Error(`Expected bundled ${binaryName} ${version}; run the desktop sidecar preparation or set ${overrideName}`);
   }
   return binary;
 }
@@ -813,21 +782,19 @@ function assertCompleted(results: EngineResults): void {
   assertFiniteSamples(results.compaction, iterations);
 }
 
-test("benchmarks OpenCode v1 and v2 engines with identical client sequences", async ({ evidence }) => {
+test("benchmarks OpenCode v1 and v2 engines with identical client sequences", { timeout: 600_000 }, async ({ evidence }) => {
   if (!Number.isInteger(iterations) || iterations < 1) {
     throw new Error("OPENWORK_BENCH_ITERATIONS must be a positive integer");
   }
 
   const versions = await readVersions();
   const v1Binary = await provisionBinary(
-    "openwork-opencode-v1-cache",
     versions.v1,
     "opencode-ai",
     "opencode",
     "OPENWORK_EVAL_OPENCODE_BIN_V1",
   );
   const v2Binary = await provisionBinary(
-    "openwork-opencode-v2-cache",
     versions.v2,
     "@opencode-ai/cli",
     "opencode2",
@@ -887,4 +854,4 @@ test("benchmarks OpenCode v1 and v2 engines with identical client sequences", as
     .map(([scenario, v1Median, v2Median]) => `${scenario}\t${v1Median}\t${v2Median}`)
     .join("\n");
   console.info(`[bench-opencode-engines] medians (ms)\nscenario\tv1\tv2\n${table}\nresults\t${outputPath}`);
-}, 600_000);
+});
