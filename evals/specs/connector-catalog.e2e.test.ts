@@ -30,6 +30,10 @@ test("chat suggests Slack setup and lets an admin browse every quick-add connect
   expect(await visibleIds()).toEqual([]);
   await appUser.type({ role: "textbox", label: "Filter connectors" }, "slack", { replace: true });
   expect(await visibleIds()).toEqual(["slack"]);
+  await probe.eventually(
+    () => appProbe.eval(`document.querySelector('button[aria-label="Set up Slack"]')?.disabled === false`),
+    { within: 15_000, label: "admin setup action is enabled", until: value => value === true },
+  );
   await appUser.click({ role: "button", label: "Set up Slack" });
   await appUser.notSee({ role: "alert" });
 

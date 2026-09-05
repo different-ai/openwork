@@ -1,13 +1,14 @@
 "use client"
 
 import { useState } from "react"
+import { useQuery } from "@tanstack/react-query"
 import { ArrowUpRight, Search } from "lucide-react"
 import type { ConnectorCatalog } from "@openwork/types/connection-action-app"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { openDesktopUrl } from "@/app/lib/desktop"
-import { readDenSettings } from "@/app/lib/den"
-import { useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider"
+import { createDenClient, readDenSettings } from "@/app/lib/den"
+import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
 import { isConnectAdminRole } from "@/react-app/domains/settings/connect-cloud-readiness"
 import { libraryConnectorIconUrls } from "@/react-app/domains/settings/library-connector-cues"
 import { useMessageList } from "./message-list-provider"
@@ -28,9 +29,19 @@ export function ConnectorCatalogCard({ catalog }: { catalog: ConnectorCatalog })
   const [showAll, setShowAll] = useState(catalog.selectedIds.length === 0)
   const [query, setQuery] = useState("")
   const [error, setError] = useState<string | null>(null)
-  const session = useCloudSession()
+  const auth = useDenAuth()
+  const settings = readDenSettings()
+  const identity = auth.verifiedIdentity
+  const role = useQuery({
+    queryKey: ["connector-catalog-role", settings.baseUrl, identity?.principalId, identity?.organizationId],
+    enabled: auth.isSignedIn && Boolean(identity),
+    queryFn: async () => {
+      const result = await createDenClient({ baseUrl: settings.baseUrl, token: settings.authToken }).listOrgs()
+      return result.orgs.find(org => org.id === identity?.organizationId)?.role ?? null
+    },
+  })
   const { connectorIdentities } = useMessageList()
-  const canManage = isConnectAdminRole(session.activeOrganization?.role)
+  const canManage = auth.isSignedIn && isConnectAdminRole(role.data)
   const entries = catalog.entries.filter(entry => (showAll || catalog.selectedIds.includes(entry.id)) && `${entry.name} ${entry.description}`.toLowerCase().includes(query.toLowerCase()))
   const setup = async (entry: ConnectorCatalog["entries"][number]) => {
     if (!canManage) return
