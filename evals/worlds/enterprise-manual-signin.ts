@@ -26,6 +26,7 @@ export async function enterpriseManualSigninWorld(seed: Seed, { place }: { place
       link.searchParams.set("grant", grant);
       link.searchParams.set("denBaseUrl", den.ref.webUrl);
       try {
+        await pressKey(app, process.platform === "darwin" && place.kind === "local" ? "Meta+A" : "Control+A");
         await typeText(app, link.toString());
         await pressKey(app, "Enter");
         const submitted = await evalIn(app, `(async () => {
