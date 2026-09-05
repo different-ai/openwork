@@ -18,7 +18,7 @@ import { ServerProvider } from "@/react-app/kernel/server-provider";
 import { ArchitectureMismatchGate } from "./architecture-mismatch-gate";
 import { BootStateProvider } from "./boot-state";
 import { DesktopRuntimeBoot } from "./desktop-runtime-boot";
-import { useEnterpriseActivationRequired } from "@/react-app/domains/cloud/enterprise-activation-gate";
+import { EnterpriseActivationGate, useEnterpriseActivationRequired } from "@/react-app/domains/cloud/enterprise-activation-gate";
 import { startDebugLogger, stopDebugLogger } from "./debug-logger";
 import { resolveOpenworkConnection } from "./openwork-connection";
 import { ReloadCoordinatorProvider } from "./reload-coordinator";
@@ -52,7 +52,11 @@ type AppProvidersProps = {
 function EnterpriseAwareAppProviders({ children }: AppProvidersProps) {
   const activationRequired = useEnterpriseActivationRequired();
   if (activationRequired) {
-    return <ConnectLinkProvider>{children}</ConnectLinkProvider>;
+    return (
+      <ConnectLinkProvider>
+        <EnterpriseActivationGate>{children}</EnterpriseActivationGate>
+      </ConnectLinkProvider>
+    );
   }
   return (
     <>
