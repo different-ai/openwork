@@ -306,6 +306,7 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
       api: `${den.mocks.agent.url}/v1`,
       env: ["SYNC_CONTRACT_PROVIDER_API_KEY"],
       models: [{ id: CUSTOM_MODEL_ID, name: "Sync Contract Custom Model", tool_call: true,
+        headers: { "x-private-model-setting": "sk-openwork-sync-contract-eval-only" },
         limit: { context: 1050000, output: 128000 }, modalities: { input: ["text", "image", "pdf"], output: ["text"] } }],
     },
     apiKey: "sk-openwork-sync-contract-eval-only",
@@ -551,7 +552,7 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
   );
   const catalogPrivacy = await evalIn(desktopApp, `(async () => {
     const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
-    const paths = ${JSON.stringify([`/workspace/${desktopApp.workspaceId}/opencode2/api/model`, `/workspace/${desktopApp.workspaceId}/opencode2/api/provider`, `/workspace/${desktopApp.workspaceId}/opencode2/api/provider/${customRuntime.providerId}`])};
+    const paths = ${JSON.stringify([`/workspace/${desktopApp.workspaceId}/opencode2/api/model`, `/workspace/${desktopApp.workspaceId}/opencode2/api/model/default`, `/workspace/${desktopApp.workspaceId}/opencode2/api/provider`, `/workspace/${desktopApp.workspaceId}/opencode2/api/provider/${customRuntime.providerId}`])};
     const results = [];
     for (const path of paths) {
       const response = await fetch(base + path, {
@@ -562,7 +563,7 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
     }
     return results;
   })()`, { awaitPromise: true });
-  expect(catalogPrivacy).toEqual(Array.from({ length: 3 }, () => ({ status: 200, leaksKey: false })));
+  expect(catalogPrivacy).toEqual(Array.from({ length: 4 }, () => ({ status: 200, leaksKey: false })));
   await go(desktopApp, `/workspace/${desktopApp.workspaceId}/session`);
   await sleep(16_000); // includes the renderer's engine-routing refresh interval
   expect(await evalIn(desktopApp, `localStorage.getItem("openwork.defaultModel")`)).toBe(chosenDefault);
