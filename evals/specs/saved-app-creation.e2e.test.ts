@@ -118,21 +118,24 @@ test("create, preview, save and reopen an app without changing already-open resu
     expect(record(header).buttonLabels).not.toContain("Delete");
     await user.screenshot();
     await user.click("App options for Team briefing");
-    await user.see("Run again");
-    await user.see("Ask for changes");
     await user.see("Delete Team briefing");
     await user.screenshot();
     await user.click("App options for Team briefing");
     await seed.evalIn(world.app, `document.querySelector('[data-app-header]').parentElement.style.removeProperty('width')`);
   });
-  evidence.recordAssertionEvidence("The saved app header preserves the title at a 320px panel width", "The real preview header remains under 72px tall with over 180px for the fully visible title. Saved is status text; Run, Ask for changes, and Delete are reachable in the options menu.", true);
+  evidence.recordAssertionEvidence("The saved app header preserves the title at a 320px panel width", "The real preview header remains under 72px tall with over 180px for the fully visible title. Saved is status text and Delete remains reachable in the options menu.", true);
 
   await step("reopen the saved app after a reload", async () => {
     await world.open("/dashboard");
     await user.reload();
     await user.click("Open Team briefing");
     await user.see({ text: "Saved app" }, { timeoutMs: 30_000 });
+    await user.click("App options for Team briefing");
+    await user.see("Run again");
+    await user.see("Ask for changes");
+    await user.see("Delete Team briefing");
     await user.screenshot();
+    await user.click("App options for Team briefing");
   });
 
   const companyBefore = (await probe.api(world.den.admin, `/v1/dashboards/${world.dashboardId}`)).body;
