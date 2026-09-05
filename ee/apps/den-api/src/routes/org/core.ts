@@ -284,6 +284,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     "/v1/org",
     describeRoute({
       tags: ["Organizations"],
+      security: [{ bearerAuth: [] }],
       hide: true,
       summary: "Create organization",
       description: "Creates a new organization for the signed-in user. Billing is enforced only when launching shared cloud workspaces.",
@@ -329,6 +330,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     "/v1/orgs/invitations/preview",
     describeRoute({
       tags: ["Invitations"],
+      security: [],
       summary: "Preview organization invitation",
       description: "Returns invitation preview details so a user can inspect an organization invite before accepting it.",
       responses: {
@@ -355,6 +357,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     "/v1/orgs/invitations/accept",
     describeRoute({
       tags: ["Invitations"],
+      security: [{ bearerAuth: [] }],
       summary: "Accept organization invitation",
       description: "Accepts an organization invitation for the current signed-in user and switches their active organization to the accepted workspace.",
       responses: {
@@ -529,6 +532,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     "/v1/orgs/sso/singleton",
     describeRoute({
       tags: ["Organizations"],
+      security: [],
       hide: true,
       summary: "Resolve singleton organization SSO status",
       description: "Returns whether the singleton organization has SSO configured for single-org deployments.",
@@ -552,6 +556,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
     "/v1/orgs/sso/resolve",
     describeRoute({
       tags: ["Organizations"],
+      security: [],
       hide: true,
       summary: "Resolve sign-in method by email",
       description: "Returns a uniform sign-in routing envelope. SSO routing is resolved by verified domain; non-SSO routing is protected by bot verification and rate limiting.",

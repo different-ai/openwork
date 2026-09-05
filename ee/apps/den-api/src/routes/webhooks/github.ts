@@ -31,6 +31,7 @@ export function registerGithubWebhookRoutes<T extends Env>(app: Hono<T>) {
     pluginArchRoutePaths.githubWebhookIngress,
     describeRoute({
       tags: ["Webhooks"],
+      security: [],
       summary: "GitHub webhook ingress",
       description: "Verifies a GitHub App webhook signature against the raw request body, then records any relevant sync work.",
       responses: {

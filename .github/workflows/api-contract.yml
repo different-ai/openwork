@@ -1,0 +1,112 @@
+name: API Contract
+
+# Keeps packages/docs/openapi.json (the published Den API contract) in sync
+# with the route source and lints it with Spectral. The ruleset and the
+# warning baseline are documented in docs/api-style.md.
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/api-contract.yml"
+      - ".spectral.yaml"
+      - ".spectral-baseline.json"
+      - "scripts/api-lint.mjs"
+      - "packages/docs/openapi.json"
+      - "ee/apps/den-api/**"
+      - "ee/packages/**"
+      - "packages/automations/**"
+      - "packages/codemode/**"
+      - "packages/connect-link/**"
+      - "packages/email/**"
+      - "packages/enterprise-mcp-client/**"
+      - "packages/headless-threads/**"
+      - "packages/install-config/**"
+      - "packages/mcp-apps/**"
+      - "packages/types/**"
+  push:
+    branches:
+      - dev
+    paths:
+      - ".spectral.yaml"
+      - ".spectral-baseline.json"
+      - "scripts/api-lint.mjs"
+      - "packages/docs/openapi.json"
+      - "ee/apps/den-api/**"
+      - "ee/packages/**"
+      - "packages/types/**"
+
+permissions:
+  contents: read
+
+jobs:
+  openapi-snapshot-and-lint:
+    name: OpenAPI snapshot is current and lints clean
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    # Importing the live app initializes Better Auth's OAuth resource registry,
+    # which needs a reachable database even though the snapshot itself never
+    # reads one (same pattern as ci-sdk.yml).
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: password
+          MYSQL_DATABASE: openwork_api_contract_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -ppassword"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      DATABASE_URL: mysql://root:password@127.0.0.1:3306/openwork_api_contract_ci
+      DEN_DB_ENCRYPTION_KEY: local-dev-db-encryption-key-please-change-1234567890
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --filter "@openwork-ee/den-api..." --filter "@different-ai/openwork-workspace"
+
+      - name: Build den-api workspace dependencies
+        run: pnpm --filter @openwork-ee/den-api build:workspace-dependencies
+
+      - name: Prepare the throwaway schema-export database
+        run: pnpm --filter @openwork-ee/den-db exec drizzle-kit push --force
+        env:
+          NODE_OPTIONS: --conditions=development
+
+      - name: Regenerate the OpenAPI snapshot
+        run: pnpm api:snapshot
+
+      - name: Fail if the committed snapshot drifted from the route source
+        run: |
+          set -euo pipefail
+          if ! git diff --exit-code --stat -- packages/docs/openapi.json; then
+            echo "::error::packages/docs/openapi.json is out of date. Run 'pnpm api:snapshot' locally and commit the regenerated document."
+            exit 1
+          fi
+          echo "OpenAPI snapshot is in sync with the route source."
+
+      - name: Lint the regenerated document with Spectral
+        if: ${{ !cancelled() }}
+        run: pnpm api:lint --json tmp/spectral-report.json
+
+      - name: Upload Spectral report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: spectral-report
+          path: tmp/spectral-report.json
+          if-no-files-found: warn

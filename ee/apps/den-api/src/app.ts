@@ -7,7 +7,7 @@ import { cors } from "hono/cors"
 import { Hono } from "hono"
 import type { RequestIdVariables } from "hono/request-id"
 import { requestId } from "hono/request-id"
-import { describeRoute, openAPIRouteHandler, resolver } from "hono-openapi"
+import { describeRoute, generateSpecs, resolver } from "hono-openapi"
 import { z } from "zod"
 import { db } from "./db.js"
 import { env } from "./env.js"
@@ -76,6 +76,29 @@ const openApiDocumentSchema = z.object({
 
 const app = new Hono<{ Variables: AppVariables }>()
 const strictTransportSecurityHeader = "max-age=31536000; includeSubDomains"
+
+// Deny-by-default, mirroring the route guards: every operation requires a
+// session token or an organization API key unless its describeRoute declares
+// its own `security` (an empty array marks a public route). Declared at
+// document level and copied onto every operation that declares none, so tools
+// that ignore document-level security still see it.
+const defaultOperationSecurity: Array<Record<string, string[]>> = [{ bearerAuth: [] }, { denApiKey: [] }]
+const openApiOperationMethods = ["get", "post", "put", "patch", "delete", "head", "options", "trace"] as const
+
+type OpenApiDocument = Awaited<ReturnType<typeof generateSpecs>>
+
+function withExplicitOperationSecurity(document: OpenApiDocument): OpenApiDocument {
+  for (const pathItem of Object.values(document.paths ?? {})) {
+    if (!pathItem) continue
+    for (const method of openApiOperationMethods) {
+      const operation = pathItem[method]
+      if (operation && operation.security === undefined) {
+        operation.security = defaultOperationSecurity
+      }
+    }
+  }
+  return document
+}
 
 registerObservabilityMiddleware(app)
 app.use("*", requestId({
@@ -149,6 +172,7 @@ app.get(
   "/",
   describeRoute({
     tags: ["System"],
+    security: [],
     hide: true,
     summary: "Redirect API root",
     description: "Redirects the API root when DEN_MARKETING_URL is configured; otherwise returns a lightweight service payload.",
@@ -170,6 +194,7 @@ app.get(
   "/health",
   describeRoute({
     tags: ["System"],
+    security: [],
     summary: "Check den-api health",
     description: "Returns a lightweight health payload for den-api.",
     responses: {
@@ -193,6 +218,7 @@ app.get(
   "/ready",
   describeRoute({
     tags: ["System"],
+    security: [],
     summary: "Check den-api readiness",
     description: "Verifies den-api can reach its database dependency.",
     responses: {
@@ -295,10 +321,135 @@ configureCloudWorkflowExecutor(async ({ organizationId, ownerMemberId, automatio
   }
 })
 
+let openApiDocument: OpenApiDocument | undefined
+const openApiOptions: Parameters<typeof generateSpecs>[1] = {
+  documentation: {
+    openapi: "3.1.0",
+    info: {
+      title: "Den API",
+      version: env.serviceVersion,
+      contact: {
+        name: "OpenWork",
+        url: "https://openworklabs.com",
+        email: "team@openworklabs.com",
+      },
+      license: {
+        name: "OpenWork Enterprise Edition License",
+        url: "https://github.com/different-ai/openwork/blob/dev/ee/LICENSE",
+      },
+      description: [
+        "OpenAPI spec for the Den control plane API.",
+        "",
+        "Authentication:",
+        "- Use `Authorization: Bearer <session-token>` for user-authenticated routes that require a Den session.",
+        "- Use `x-api-key: <den-api-key>` for organization API-key calls. API keys resolve to the issuing user and the organization member they were scoped to when created, so they can call ordinary user and organization routes without a separate signed-in session.",
+        "  Example: `curl https://api.openworklabs.com/v1/me -H \"x-api-key: den_...\"`.",
+        "- Session-only flows still require a signed-in user session, including organization creation, invitation acceptance, active-organization switching, and MCP token minting.",
+        "- Public routes like health and documentation do not require authentication.",
+        "",
+        "Swagger tip: use the security schemes in the Authorize dialog to set either `bearerAuth` or `denApiKey` before trying protected endpoints.",
+      ].join("\n"),
+    },
+    servers: env.apiPublicUrl ? [{ url: env.apiPublicUrl }] : [],
+    security: defaultOperationSecurity,
+    // Every tag used by a describeRoute must be registered here; the Spectral
+    // gate (operation-tag-defined) fails otherwise. Protocol adapters (SCIM,
+    // OAuth) are tagged by protocol. Internal is excluded from the published
+    // snapshot (see scripts/generate-openapi-snapshot.ts).
+    tags: [
+      { name: "System", description: "Service health, readiness, API documentation, and desktop version metadata." },
+      { name: "Authentication", description: "Sign-in discovery, administrator bootstrap, OAuth provider connections, and MCP token minting." },
+      { name: "OAuth", description: "OAuth 2.0 / OpenID Connect authorization-server and protected-resource metadata and dynamic client registration (RFC 8414, RFC 9728, RFC 7591), used by MCP clients." },
+      { name: "SCIM", description: "SCIM 2.0 provisioning endpoints for identity providers (RFC 7644) and the organization SCIM connector management routes." },
+      { name: "SSO", description: "Organization single sign-on connector management routes." },
+      { name: "Bootstrap", description: "Agent-first provisional workspace setup routes." },
+      { name: "Users", description: "Current user and membership routes." },
+      { name: "Organizations", description: "Organization creation, context, brand assets, and install links." },
+      { name: "Invitations", description: "Invitation preview, acceptance, creation, and cancellation routes." },
+      { name: "Members", description: "Organization member management routes." },
+      { name: "Roles", description: "Organization custom role management routes." },
+      { name: "Teams", description: "Organization team management routes." },
+      { name: "API Keys", description: "Organization API key management routes." },
+      { name: "Desktop Policies", description: "Desktop app policies applied to the organization, members, or teams." },
+      { name: "LLM Providers", description: "Organization LLM provider catalog, configuration, and access routes." },
+      { name: "Inference", description: "Organization inference settings." },
+      { name: "Cloud", description: "Organization Cloud instance lifecycle and browser gateway resolution." },
+      { name: "Workers", description: "Worker lifecycle, billing, and runtime routes." },
+      { name: "Worker Runtime", description: "Worker runtime inspection and upgrade routes." },
+      { name: "Worker Activity", description: "Worker heartbeat and activity reporting routes." },
+      { name: "Automations", description: "Scheduled Automations, their runs, and desktop runner presence." },
+      { name: "Workflows", description: "Saved Workflows (Code Mode scripts), their versions, snapshots, and views." },
+      { name: "Workflow Runs", description: "Durable Workflow run history." },
+      { name: "Codemode Runs", description: "Generated Artifact views produced by Code Mode runs." },
+      { name: "Config Objects", description: "Versioned configuration objects (skills, workflows, and other plugin content)." },
+      { name: "Plugins", description: "Plugin packages, access grants, and imports." },
+      { name: "Marketplaces", description: "Marketplaces that distribute plugins to members and teams." },
+      { name: "Resources", description: "Aggregated snapshot of the resources and marketplace capabilities available to the caller." },
+      { name: "Dashboards", description: "Shared dashboards and their access grants." },
+      { name: "Capability Sources", description: "Native provider capabilities (Google Workspace, Microsoft 365) and external MCP connections executed as the calling member." },
+      { name: "Direct uploads", description: "Multipart uploads that stream workspace files straight to a provider." },
+      { name: "Connectors", description: "Connector accounts and instances (GitHub and other sources) and their sync state." },
+      { name: "GitHub", description: "GitHub App installation, repository discovery, and plugin import from GitHub." },
+      { name: "Diagnostics", description: "Controlled egress diagnostics for self-hosted deployments." },
+      { name: "Telemetry", description: "Telemetry event ingestion and adoption analytics." },
+      { name: "Webhooks", description: "Signed inbound webhooks from third-party providers." },
+      { name: "Admin", description: "Platform administration routes for allowlisted OpenWork administrators." },
+      { name: "Deprecated", description: "Removed features that answer with 410 or an empty result for old clients." },
+      { name: "Internal", description: "Runner and development-only routes; excluded from the published document." },
+    ],
+    components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: "http",
+          scheme: "bearer",
+          bearerFormat: "session-token",
+          description: "Session token passed as `Authorization: Bearer <session-token>` for user-authenticated Den routes.",
+        },
+        denApiKey: {
+          type: "apiKey",
+          in: "header",
+          name: "x-api-key",
+          description: "Organization API key passed as the `x-api-key` header. The raw key is the header value; do not prefix it with `Bearer`.",
+        },
+        mcpAccessToken: {
+          type: "http",
+          scheme: "bearer",
+          bearerFormat: "JWT",
+          description: "MCP access token issued by the Den OAuth authorization server, passed as `Authorization: Bearer <token>`. Used by MCP transports and the direct-upload routes they call.",
+        },
+        scimBearerToken: {
+          type: "http",
+          scheme: "bearer",
+          description: "SCIM provisioning token issued from `POST /v1/scim/token`, passed by the identity provider as `Authorization: Bearer <token>`.",
+        },
+        automationRunnerToken: {
+          type: "http",
+          scheme: "bearer",
+          description: "Short-lived Automation runner token issued when a desktop runner registers, passed as `Authorization: Bearer <token>`.",
+        },
+        workerHeartbeatToken: {
+          type: "http",
+          scheme: "bearer",
+          description: "Per-worker heartbeat token passed as `Authorization: Bearer <token>` (or the `x-den-worker-heartbeat-token` header).",
+        },
+      },
+    },
+  },
+  includeEmptyPaths: true,
+  exclude: ["/docs", "/openapi.json"],
+  excludeMethods: ["OPTIONS"],
+  defaultOptions: {
+    ALL: {
+      operationId: (route) => buildOperationId(route.method, route.path),
+    },
+  },
+}
+
 app.get(
   "/openapi.json",
   describeRoute({
     tags: ["System"],
+    security: [],
     summary: "Get OpenAPI document",
     description: "Returns the machine-readable OpenAPI 3.1 document for the Den API so humans and tools can inspect the API surface.",
     responses: {
@@ -306,78 +457,17 @@ app.get(
     },
   }),
   publicRoute,
-  openAPIRouteHandler(app, {
-    documentation: {
-      openapi: "3.1.0",
-      info: {
-        title: "Den API",
-        version: "dev",
-        description: [
-          "OpenAPI spec for the Den control plane API.",
-          "",
-          "Authentication:",
-          "- Use `Authorization: Bearer <session-token>` for user-authenticated routes that require a Den session.",
-          "- Use `x-api-key: <den-api-key>` for organization API-key calls. API keys resolve to the issuing user and the organization member they were scoped to when created, so they can call ordinary user and organization routes without a separate signed-in session.",
-          "  Example: `curl https://api.openworklabs.com/v1/me -H \"x-api-key: den_...\"`.",
-          "- Session-only flows still require a signed-in user session, including organization creation, invitation acceptance, active-organization switching, and MCP token minting.",
-          "- Public routes like health and documentation do not require authentication.",
-          "",
-          "Swagger tip: use the security schemes in the Authorize dialog to set either `bearerAuth` or `denApiKey` before trying protected endpoints.",
-        ].join("\n"),
-      },
-      servers: env.apiPublicUrl ? [{ url: env.apiPublicUrl }] : [],
-      tags: [
-        { name: "System", description: "Service health and operational routes." },
-        { name: "Organizations", description: "Top-level organization creation and context routes." },
-        { name: "Invitations", description: "Invitation preview, acceptance, creation, and cancellation routes." },
-        { name: "API Keys", description: "Organization API key management routes." },
-        { name: "SCIM", description: "Organization SCIM connector management routes." },
-        { name: "SSO", description: "Organization single sign-on connector management routes." },
-        { name: "Members", description: "Organization member management routes." },
-        { name: "Roles", description: "Organization custom role management routes." },
-        { name: "Teams", description: "Organization team management routes." },
-        { name: "Templates", description: "Organization shared template routes." },
-        { name: "LLM Providers", description: "Organization LLM provider catalog, configuration, and access routes." },
-        { name: "Workers", description: "Worker lifecycle, billing, and runtime routes." },
-        { name: "Worker Runtime", description: "Worker runtime inspection and upgrade routes." },
-        { name: "Worker Activity", description: "Worker heartbeat and activity reporting routes." },
-        { name: "Telemetry", description: "Telemetry event ingestion and adoption analytics." },
-        { name: "Admin", description: "Administrative reporting routes." },
-        { name: "Users", description: "Current user and membership routes." },
-        { name: "Bootstrap", description: "Agent-first provisional workspace setup routes." },
-      ],
-      components: {
-        securitySchemes: {
-          bearerAuth: {
-            type: "http",
-            scheme: "bearer",
-            bearerFormat: "session-token",
-            description: "Session token passed as `Authorization: Bearer <session-token>` for user-authenticated Den routes.",
-          },
-          denApiKey: {
-            type: "apiKey",
-            in: "header",
-            name: "x-api-key",
-            description: "Organization API key passed as the `x-api-key` header. The raw key is the header value; do not prefix it with `Bearer`.",
-          },
-        },
-      },
-    },
-    includeEmptyPaths: true,
-    exclude: ["/docs", "/openapi.json"],
-    excludeMethods: ["OPTIONS"],
-    defaultOptions: {
-      ALL: {
-        operationId: (route) => buildOperationId(route.method, route.path),
-      },
-    },
-  }),
+  async (c) => {
+    openApiDocument ??= withExplicitOperationSecurity(await generateSpecs(app, openApiOptions, c))
+    return c.json(openApiDocument)
+  },
 )
 
 app.get(
   "/docs",
   describeRoute({
     tags: ["System"],
+    security: [],
     summary: "Serve Swagger UI",
     description: "Serves Swagger UI so developers can browse and try the Den API from a browser.",
     responses: {

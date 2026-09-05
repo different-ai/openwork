@@ -119,6 +119,7 @@ export function registerOrgBrandAssetRoutes<T extends { Variables: OrgRouteVaria
     "/v1/brand-assets/:organizationId/:kind/:version",
     describeRoute({
       tags: ["Organizations"],
+      security: [],
       summary: "Read an immutable organization brand asset",
       description: "Serves a capability-signed, content-addressed organization logo or app icon from this Den deployment.",
       responses: {

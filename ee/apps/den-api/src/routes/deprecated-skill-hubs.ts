@@ -19,6 +19,7 @@ const deprecatedSkillHubResponse = {
 function deprecatedSkillHubRoute(summary: string) {
   return describeRoute({
     tags: ["Deprecated"],
+    security: [],
     deprecated: true,
     summary,
     description: `${summary}. Skill hubs are deprecated; use plugins instead.`,

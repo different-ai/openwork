@@ -715,6 +715,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     "/v1/direct-uploads/google-workspace/drive-files",
     describeRoute({
       tags: ["Direct uploads"],
+      security: [{ mcpAccessToken: [] }],
       summary: "Upload one multipart workspace file directly to Google Drive",
       description: "Authenticated host transport for openwork-cloud-uploads. The route immediately forwards the file to Google and does not persist it or expose its bytes to the model.",
       responses: {
@@ -794,6 +795,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     "/v1/direct-uploads/google-workspace/gmail-drafts",
     describeRoute({
       tags: ["Direct uploads"],
+      security: [{ mcpAccessToken: [] }],
       summary: "Create a Gmail draft with direct multipart workspace attachments",
       description: "Authenticated host transport for openwork-cloud-uploads. The route immediately creates the draft and does not persist attachment bytes or expose them to the model.",
       responses: {

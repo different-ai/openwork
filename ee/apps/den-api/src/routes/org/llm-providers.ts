@@ -1086,7 +1086,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
 
   app.get(
     "/v1/llm-providers/by-key/:externalKey",
-    describeRoute({ tags: ["LLM Providers"], summary: "Read llm-providers by stable key", responses: {
+    describeRoute({ tags: ["LLM Providers"], summary: "Read llm-providers by stable key", description: "Reads the LLM provider identified by the stable externalKey assigned through declarative provisioning.", responses: {
       200: jsonResponse("Resource configuration.", llmProviderResponseSchema),
       404: jsonResponse("Resource not found.", notFoundSchema),
     } }),
@@ -1105,7 +1105,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
 
   app.get(
     "/v1/llm-providers/:llmProviderId",
-    describeRoute({ tags: ["LLM Providers"], summary: "Read llm-providers by id", responses: {
+    describeRoute({ tags: ["LLM Providers"], summary: "Read llm-providers by id", description: "Reads a single LLM provider by id.", responses: {
       200: jsonResponse("Resource configuration.", llmProviderResponseSchema),
       404: jsonResponse("Resource not found.", notFoundSchema),
     } }),
@@ -1168,6 +1168,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
     describeRoute({
       tags: ["LLM Providers"],
       summary: "Delete llm-providers by stable key",
+      description: "Deletes the LLM provider identified by its stable externalKey. Idempotent: deleting a key that does not exist is reported as already removed.",
       responses: { 200: jsonResponse("Idempotent deletion result.", declarativeDeleteSchema) },
     }),
     orgRoleRoute(["admin"]),
