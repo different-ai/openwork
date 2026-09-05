@@ -455,12 +455,22 @@ function normalizeResolvedRelativePath(input: string): string {
   return parts.join("/");
 }
 
-async function listWorkspaceCatalogEntries(workspaceRoot: string, excludeHeavyDirectories = false): Promise<FileSessionCatalogEntry[]> {
+async function listWorkspaceCatalogEntries(workspaceRoot: string, excludeHeavyDirectories = false) {
   const rootResolved = resolve(workspaceRoot);
   const items: FileSessionCatalogEntry[] = [];
+  const skippedDirectories: string[] = [];
 
   const walk = async (dirPath: string) => {
-    const entries = await readdir(dirPath, { withFileTypes: true });
+    const entries = await readdir(dirPath, { withFileTypes: true }).catch((error: unknown) => {
+      if (error instanceof Error && "code" in error && (error.code === "EACCES" || error.code === "EPERM")) {
+        if (dirPath === rootResolved) {
+          throw new ApiError(403, "workspace_permission_denied", "OpenWork does not have permission to list this workspace folder.");
+        }
+        skippedDirectories.push(relative(rootResolved, dirPath).replace(/\\/g, "/"));
+        return [];
+      }
+      throw error;
+    });
     entries.sort((a, b) => a.name.localeCompare(b.name));
 
     for (const entry of entries) {
@@ -496,12 +506,10 @@ async function listWorkspaceCatalogEntries(workspaceRoot: string, excludeHeavyDi
     }
   };
 
-  if (await exists(rootResolved)) {
-    await walk(rootResolved);
-  }
+  await walk(rootResolved);
 
   items.sort((a, b) => a.path.localeCompare(b.path));
-  return items;
+  return { items, skippedDirectories };
 }
 
 
@@ -726,7 +734,7 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     const limit = parseCatalogLimit(ctx.url.searchParams.get("limit"));
     const excludeHeavyDirectories = ctx.url.searchParams.get("excludeHeavyDirectories") === "true";
 
-    const entries = await listWorkspaceCatalogEntries(workspace.path, excludeHeavyDirectories);
+    const { items: entries, skippedDirectories } = await listWorkspaceCatalogEntries(workspace.path, excludeHeavyDirectories);
     const filtered = entries.filter((entry) => {
       if (!includeDirs && entry.kind === "dir") return false;
       if (!matchesCatalogFilter(entry.path, prefix)) return false;
@@ -745,6 +753,8 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
       generatedAt: Date.now(),
       cursor: events.cursor,
       total: filtered.length,
+      incomplete: skippedDirectories.length > 0,
+      skippedDirectories,
       truncated,
       nextAfter,
       items,

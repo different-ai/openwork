@@ -309,6 +309,8 @@ export type OpenworkWorkspaceCatalogEntry = {
 };
 
 export type OpenworkWorkspaceCatalog = {
+  incomplete?: boolean;
+  skippedDirectories?: string[];
   items: OpenworkWorkspaceCatalogEntry[];
   total: number;
   truncated: boolean;
