@@ -12,7 +12,7 @@ reported one missing result for the PR head or its merge commit e322949.
 
 ## Detect
 
-The daily `CodeQL Result Coverage` workflow checks open same-repository PRs
+The daily `CodeQL Result Coverage` workflow checks open same-repository PRs targeting the default branch
 against successful language uploads at the newest scanned default-branch commit. It reports missing successful uploads
 at the current head or merge commit and fails with a PR-specific summary. It does
 not execute PR code, change settings, close PRs, or bypass scanning. Active scans

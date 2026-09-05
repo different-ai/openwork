@@ -37,7 +37,7 @@ async function main() {
   const lines = ["# CodeQL result coverage", "", `Default-branch baseline languages: ${languages.join(", ")}`, ""];
   let failures = 0;
   for (const pull of pulls) {
-    if (pull.state !== "open" || pull.head.repo?.full_name !== repo) continue;
+    if (pull.state !== "open" || pull.head.repo?.full_name !== repo || pull.base.ref !== repository.default_branch) continue;
     const refs = [`refs/pull/${pull.number}/head`, `refs/pull/${pull.number}/merge`];
     const analyses = refs.flatMap((ref) => api(`${prefix}/code-scanning/analyses?ref=${encodeURIComponent(ref)}&tool_name=CodeQL&per_page=100`, true));
     const missing = missingLanguages(languages, analyses, [pull.head.sha, pull.merge_commit_sha].filter(Boolean));
