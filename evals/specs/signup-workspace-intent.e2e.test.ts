@@ -61,6 +61,26 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     evidence.recordAssertionEvidence("Personal setup creates one organization and preserves desktop workspace and tool defaults", JSON.stringify({ memberships: memberships.length, personalPolicy }), true);
   });
 
+  let flexibleId = "";
+  await step("a flexible team keeps existing defaults without opening policy setup", async () => {
+    await user.navigate(new URL("/organization", world.den.ref.webUrl).toString());
+    await user.click({ role: "button", label: "+ Create New Organization" });
+    await user.click({ text: "Create a team" });
+    await user.type({ role: "textbox", label: "Team name" }, "Flexible team");
+    await user.click({ text: "Flexible" });
+    await user.click({ role: "button", label: "Continue" });
+    await user.see({ testId: "marketplace-onboarding" }, { timeoutMs: 90_000 });
+    await user.notSee({ text: "Review your team’s desktop access" });
+    const memberships = await orgs();
+    expect(memberships).toHaveLength(2);
+    const flexible = memberships.find((entry) => entry.name === "Flexible team");
+    if (typeof flexible?.id !== "string") throw new Error("Flexible organization missing");
+    flexibleId = flexible.id;
+    expect(await policyFor(flexibleId)).toEqual(personalPolicy);
+    expect(await policyFor(personalId)).toEqual(personalPolicy);
+    evidence.recordAssertionEvidence("Flexible team creation continues directly to tools and leaves both its defaults and the existing personal organization unchanged", JSON.stringify({ count: memberships.length, policy: personalPolicy }), true);
+  });
+
   await step("team signup prepares Restricted for explicit review, then persists it", async () => {
     await user.navigate(new URL("/organization", world.den.ref.webUrl).toString());
     await user.click({ role: "button", label: "+ Create New Organization" });
@@ -76,7 +96,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await user.see({ text: /unsaved draft/ });
     await user.see({ text: /Locked by Restricted mode/ });
     const memberships = await orgs();
-    expect(memberships).toHaveLength(2);
+    expect(memberships).toHaveLength(3);
     const team = memberships.find((entry) => entry.name === "Focused team");
     if (typeof team?.id !== "string") throw new Error("Created team missing");
     const before = await policyFor(team.id);
@@ -90,7 +110,8 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     for (const key of ["allowCustomProviders", "allowZenModel", "allowMultipleWorkspaces", "allowControlSettings", "allowManageExtensions", "allowBuiltInExtensions", "allowAlphaUpdates"]) expect(after[key]).toBe(false);
     expect(after.showWelcomePage).toBe(true);
     expect(await policyFor(personalId)).toEqual(personalPolicy);
-    expect(await orgs()).toHaveLength(2);
-    evidence.recordAssertionEvidence("Restricted stays a draft through reload until explicit save, persists the real desktop booleans, and leaves the personal organization unchanged", JSON.stringify({ before, after, personalPolicy, orgCount: 2 }), true);
+    expect(await policyFor(flexibleId)).toEqual(personalPolicy);
+    expect(await orgs()).toHaveLength(3);
+    evidence.recordAssertionEvidence("Restricted stays a draft through reload until explicit save, persists the real desktop booleans, and leaves the personal organization unchanged", JSON.stringify({ before, after, personalPolicy, orgCount: 3 }), true);
   });
 });
