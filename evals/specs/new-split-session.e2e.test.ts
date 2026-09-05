@@ -150,7 +150,11 @@ test("new split creates fresh same-workspace secondary sessions without moving t
       window.fetch = async (...args) => {
         const url = args[0] instanceof Request ? args[0].url : String(args[0]);
         const response = await originalFetch.apply(window, args);
-        if (url.includes("/session/" + ${JSON.stringify(primarySessionId)} + "/prompt_async")) await held;
+        if (url.includes("/session/" + ${JSON.stringify(primarySessionId)} + "/prompt_async")) {
+          window.__splitSendHeld = true;
+          await held;
+          delete window.__splitSendHeld;
+        }
         return response;
       };
       return true;
@@ -158,9 +162,18 @@ test("new split creates fresh same-workspace secondary sessions without moving t
     try {
       await user.type({ testId: "primary-split-composer" }, world.primaryPrompt);
       await user.press("Enter");
+      await probe.eventually(() => probe.eval("window.__splitSendHeld === true"), {
+        within: 15_000,
+        label: "primary request is still pending when the secondary sends",
+        until: (value) => value === true,
+      });
       await user.type({ testId: "secondary-split-composer" }, world.secondaryPrompt);
       await user.press("Enter");
       await user.see({ text: "Secondary split received" }, { timeoutMs: 30_000 });
+      expect(await probe.eval("window.__splitSendHeld === true")).toBe(true);
+    } catch (error) {
+      await user.screenshot();
+      throw error;
     } finally {
       await probe.eval("window.__releaseSplitSend?.(); true");
     }
