@@ -66,7 +66,7 @@ export async function suspendedTurn(seed: Seed, { place }: { place: Place }) {
     if (!session || !stoppedSession) throw new Error("Recovery sessions were not created");
     const startedAt = new Date().toISOString();
     // Arrange existing in-flight tasks through the real engine. This isolates
-    // resume and Stop behavior from the Cloud sign-in/model-picker journey.
+    // resume and cancellation from the Cloud sign-in/model-picker journey.
     // TODO(primitive): seed a running turn with an explicit provider and model.
     const statuses = await seed.evalIn(app, `async (workspaceId, providerId, modelId, turnsJson) => {
       const port = localStorage.getItem("openwork.server.port");
@@ -86,7 +86,25 @@ export async function suspendedTurn(seed: Seed, { place }: { place: Place }) {
     if (!Array.isArray(statuses) || statuses.length !== 2 || statuses.some((status) => status !== 204)) {
       throw new Error(`Recovery turn setup failed: ${JSON.stringify(statuses)}`);
     }
-    await arrangeControl(seed, app, "session.open", { sessionId: stoppedSession.sessionId });
+    const quietDeadline = Date.now() + 30_000;
+    for (const promptMarker of [suspendedTurnPrompt, stoppedTurnPrompt]) {
+      while (!(await agent.agentRequests({ promptMarker, sinceIso: startedAt })).some((request) => request.kind === "quiet")) {
+        if (Date.now() >= quietDeadline) throw new Error("Recovery tasks did not start their model streams");
+        await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+      }
+    }
+    // A canceled request is a separate witness: it must not subscribe to
+    // resume events or be reissued when the other task recovers.
+    const canceled = await seed.evalIn(app, `async (workspaceId, sessionId) => {
+      const port = localStorage.getItem("openwork.server.port");
+      const token = localStorage.getItem("openwork.server.token");
+      const response = await fetch("http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId) + "/opencode/session/" + sessionId + "/abort", {
+        method: "POST", headers: { Authorization: "Bearer " + token },
+      });
+      return response.ok && await response.json() === true;
+    }`, { args: [workspace.workspaceId, stoppedSession.sessionId], awaitPromise: true, timeoutMs: 30_000 });
+    if (canceled !== true) throw new Error("Recovery cancellation witness was not aborted");
+    await arrangeControl(seed, app, "session.open", { sessionId: session.sessionId });
     return {
       [Symbol.asyncDispose]: () => agent.stop(),
       app,
