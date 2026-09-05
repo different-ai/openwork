@@ -602,6 +602,8 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
     "native OpenAI inference completes through the selected v2 model",
     "The signed-in desktop rendered the independent reply nonce; the authenticated witness saw the selected model on the native Responses endpoint, with no wrong-model or authentication-error requests.", true,
   );
+  const nativeSessionRoute = await evalIn(desktopApp, `location.hash.slice(1)`);
+  if (typeof nativeSessionRoute !== "string") throw new Error("Native session route was unavailable");
   await go(desktopApp, `/workspace/${desktopApp.workspaceId}/session`);
   await selectModel(desktopApp, CATALOG_MODEL_ID, { provider: CATALOG_PROVIDER_NAME });
   const changesBeforeSync = await evalIn(desktopApp, `window.__modelSelectionProof.changes`);
@@ -676,6 +678,10 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
   await waitFor(desktopApp, `!document.body.innerText.includes("Model no longer available")`, { timeoutMs: 30_000, label: "explicit model recovery" });
   const recoveredDefault = await evalIn(desktopApp, `localStorage.getItem("openwork.defaultModel")`);
   evidence.recordAssertionEvidence("a genuinely revoked model settles and recovers only after an explicit selection", "Revoking the selected assignment surfaced recovery while preserving its identity for five seconds with no repeated default writes or React loop; selecting an available model cleared the warning.", true);
+  // Continue the existing conversation: creating a new task intentionally
+  // reconciles the organization credential, which would replace this isolated
+  // env-store rotation with the fixture organization's unchanged secret.
+  await go(desktopApp, nativeSessionRoute);
   const rotatedMarker = `${promptMarker}-rotated`;
   const rotatedReply = `${finalReply}-rotated`;
   const rotatedKey = "sk-openwork-sync-contract-rotated-eval-only";
