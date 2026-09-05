@@ -21,6 +21,12 @@ test("workspace run mode is opt-in, confirms Keep going, and preserves policy wh
     if (!isRecord(response.body)) throw new Error(`Expected an object from ${path}.`);
     return response.body;
   };
+  // updatedAt includes runtime reattachment on reload, not just permission
+  // edits. Compare configuration values rather than that unrelated clock.
+  const readConfig = async () => {
+    const { opencode, openwork } = await read("config");
+    return { opencode, openwork };
+  };
   const flagEnabled = () => probe.storage("openwork.preferences", (value) => (
     isRecord(value) && isRecord(value.featureFlags) && value.featureFlags.workspaceRunMode === true
   ));
@@ -77,14 +83,14 @@ test("workspace run mode is opt-in, confirms Keep going, and preserves policy wh
   await step("the control is absent until enabled in Advanced, without a policy write", async () => {
     expect(await flagEnabled()).toBe(false);
     await user.notSee(trigger);
-    const before = await read("config");
+    const before = await readConfig();
     await advanced();
     await user.click(flag);
     expect(await probe.eventually(flagEnabled, { within: 5_000, label: "run mode flag enabled" })).toBe(true);
     await user.click("Back to app");
     await menu("Workspace defaults");
     expect(await read("permissions/mode")).toEqual(initialMode);
-    expect(await read("config")).toEqual(before);
+    expect(await readConfig()).toEqual(before);
   });
 
   await step("Ask before actions persists a workspace catch-all and reaches the engine", async () => {
@@ -100,20 +106,20 @@ test("workspace run mode is opt-in, confirms Keep going, and preserves policy wh
 
   await step("opening and cancelling Keep going leaves saved and effective permissions unchanged", async () => {
     const beforeMode = await read("permissions/mode");
-    const beforeConfig = await read("config");
+    const beforeConfig = await readConfig();
     const beforeMcp = await mcpRow();
     await menu("Ask before actions");
     await user.click({ testId: "run-mode-run-everything" });
     await user.see(confirmation);
     await user.see({ role: "button", label: "Enable Keep going" });
     expect(await read("permissions/mode")).toEqual(beforeMode);
-    expect(await read("config")).toEqual(beforeConfig);
+    expect(await readConfig()).toEqual(beforeConfig);
     expect(await mcpRow()).toEqual(beforeMcp);
     await user.click({ role: "button", label: "Cancel" });
     await confirmationClosed();
     await user.see({ ...trigger, label: "Workspace run mode: Ask before actions" });
     expect(await read("permissions/mode")).toEqual(beforeMode);
-    expect(await read("config")).toEqual(beforeConfig);
+    expect(await readConfig()).toEqual(beforeConfig);
     expect(await mcpRow()).toEqual(beforeMcp);
   });
 
@@ -150,7 +156,7 @@ test("workspace run mode is opt-in, confirms Keep going, and preserves policy wh
     await user.click({ testId: "run-mode-approve" });
     const beforeMode = await modeIs("approve", "ask");
     await mcpIs("ask");
-    const beforeConfig = await read("config");
+    const beforeConfig = await readConfig();
     const beforeMcp = await mcpRow();
     await advanced();
     await user.click(flag);
@@ -165,7 +171,7 @@ test("workspace run mode is opt-in, confirms Keep going, and preserves policy wh
     await user.notSee(trigger);
     expect(await flagEnabled()).toBe(false);
     expect(await read("permissions/mode")).toEqual(beforeMode);
-    expect(await read("config")).toEqual(beforeConfig);
+    expect(await readConfig()).toEqual(beforeConfig);
     expect(await mcpRow()).toEqual(beforeMcp);
   });
 });
