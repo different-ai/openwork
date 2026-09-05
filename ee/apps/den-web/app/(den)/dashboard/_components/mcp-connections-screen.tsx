@@ -2830,6 +2830,16 @@ function AddConnectionDialog({
               <p className="mt-1 text-[12px] leading-5 text-gray-500">
                 Register this Den instance's redirect URL with the provider, then add its credentials here.
               </p>
+              {preset?.presetId === "slack" ? (
+                <p className="mt-2 text-[12px] leading-5 text-gray-600">
+                  In your Slack app’s Agents settings, turn on Slack Model Context Protocol (MCP) Server before connecting.
+                  OAuth authorization alone does not make MCP ready. If sign-in succeeds but tool initialization fails,
+                  ask your Slack app admin to check this setting, then retry loading tools.{" "}
+                  <Link href="https://docs.slack.dev/ai/slack-mcp-server/developing/" target="_blank" rel="noreferrer" className="underline underline-offset-2">
+                    Slack setup guide
+                  </Link>
+                </p>
+              ) : null}
               <div className="mt-3 space-y-3">
                 <div>
                   <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client ID (optional for now)</label>
