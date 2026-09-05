@@ -682,8 +682,23 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
   // reconciles the organization credential, which would replace this isolated
   // env-store rotation with the fixture organization's unchanged secret.
   await go(desktopApp, nativeSessionRoute);
+  await waitFor(desktopApp, `Array.from(document.querySelectorAll('[data-message-role="assistant"] .prose')).some((row) => row.textContent.trim() === ${JSON.stringify(finalReply)})`, { timeoutMs: 30_000, label: "original reply restored before continuing the conversation" });
+  await evalIn(desktopApp, `(() => {
+    const priorMessages = new Set(Array.from(document.querySelectorAll('[data-message-role="assistant"]'), (row) => row.getAttribute("data-message-id")));
+    window.__rotationFrames = [];
+    window.__rotationObserver = new MutationObserver(() => {
+      for (const row of document.querySelectorAll('[data-message-role="assistant"]')) {
+        if (priorMessages.has(row.getAttribute("data-message-id"))) continue;
+        for (const element of row.querySelectorAll('.prose')) {
+          const text = element.textContent.trim();
+          if (text && window.__rotationFrames.at(-1) !== text) window.__rotationFrames.push(text);
+        }
+      }
+    });
+    window.__rotationObserver.observe(document.body, { subtree: true, childList: true, characterData: true });
+  })()`);
   const rotatedMarker = `${promptMarker}-rotated`;
-  const rotatedReply = `${finalReply}-rotated`;
+  const rotatedReply = `ROTATED-REPLY-${Date.now()}`;
   const rotatedKey = "sk-openwork-sync-contract-rotated-eval-only";
   const mockUpdate = await fetch(`${den.mocks.agent.url}/admin/agent-workloads`, {
     method: "POST", headers: { "Content-Type": "application/json" },
@@ -706,6 +721,12 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
   await sleep(3_000);
   await sendComposerMessage(desktopApp, `Reply to the request marked ${rotatedMarker}.`);
   await waitFor(desktopApp, `Array.from(document.querySelectorAll('[data-message-role="assistant"]')).some((row) => row.textContent.includes(${JSON.stringify(rotatedReply)}))`, { timeoutMs: 120_000, label: "reply after credential rotation" });
+  await sleep(2_000);
+  const rotationFrames = await evalIn(desktopApp, `(() => { window.__rotationObserver.disconnect(); return window.__rotationFrames; })()`);
+  expect(Array.isArray(rotationFrames) && rotationFrames.length > 0).toBe(true);
+  expect(Array.isArray(rotationFrames) && rotationFrames.every((frame) => typeof frame === "string" && rotatedReply.startsWith(frame)), JSON.stringify(rotationFrames)).toBe(true);
+  expect(await evalIn(desktopApp, `document.querySelectorAll('[data-message-role="assistant"]').length >= 2 && Array.from(document.querySelectorAll('[data-message-role="assistant"] .prose')).some((row) => row.textContent.trim() === ${JSON.stringify(finalReply)})`)).toBe(true);
+  evidence.recordAssertionEvidence("a second assistant response never substitutes the previous answer or overwrites it", "Every new response frame matched only the independent second reply; after completion the first answer remained intact in a separate assistant message.", true);
   const rotatedRequests = await den.mocks.agent.agentRequests({ promptMarker: rotatedMarker, sinceIso: rotatedAt, atLeast: 1 });
   expect(rotatedRequests.some((request) => request.kind === "final" && request.model === CUSTOM_MODEL_ID)).toBe(true);
   expect(rotatedRequests.some((request) => request.kind === "error" || request.model !== CUSTOM_MODEL_ID)).toBe(false);
