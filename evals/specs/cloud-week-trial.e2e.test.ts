@@ -103,7 +103,13 @@ test("an optional seven-day cloud trial explains model access, starts without a 
     await user.see({ text: "Your OpenWork cloud trial has ended" });
     await user.see({ text: /No payment will be taken/ });
     await user.looks(["The actual expired-trial email clearly says cloud access has paused, saved work is retained, no payment is taken automatically, and offers a calm way to review cloud access"]);
-    await user.click({ role: "link", label: "Review cloud access" });
+    await user.see({ role: "link", label: "Review cloud access" });
+    // Email buttons open a new tab; follow the rendered href in the test's
+    // owned tab, rather than continuing to observe the original email tab.
+    const returnUrl = await probe.eval("Array.from(document.querySelectorAll('a')).find((link) => link.textContent?.trim() === 'Review cloud access')?.href");
+    expect(returnUrl).toBe(new URL("/dashboard/web", world.den.ref.webUrl).toString());
+    if (typeof returnUrl !== "string") throw new Error("Expected the email's cloud access link");
+    await user.navigate(returnUrl);
     await user.see({ text: "Your cloud trial has ended" }, { timeoutMs: 90_000 });
     await user.notSee({ role: "button", label: "Start 7-day free trial" });
     await user.click({ role: "link", label: "View paid plan" });
