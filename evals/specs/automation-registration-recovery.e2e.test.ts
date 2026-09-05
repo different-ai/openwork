@@ -8,6 +8,7 @@ test("desktop registration recovers from a transient Den outage without another 
   needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"] })
   await using den = await server({
     place,
+    env: { DEN_AUTOMATIONS_ENABLED: "true" },
     org: { name: "Synthetic registration recovery", admin: { name: "Test Admin" } },
   })
   await using proxy = await faultProxy(den.ref, {
