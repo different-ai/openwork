@@ -194,8 +194,9 @@ function ScopedCloudTrialCard({ orgId, userId, orgSlug, canStart, dismissible = 
             </div>
           </> : null}
           {expired ? <>
-            <p className="mt-2 text-sm leading-6 text-neutral-600">Your data is retained. Choose a paid plan to keep using cloud access. You won’t be charged automatically.</p>
-            <DenButton className="mt-4" variant="secondary" href={paidPlanHref ?? getWebRoute(orgSlug)}>View paid plan</DenButton>
+            <p className="mt-2 text-sm leading-6 text-neutral-600">New cloud work is paused. Your saved work stays in your workspace. Choose a paid plan to resume cloud work. You won’t be charged automatically.</p>
+            <DenButton className="mt-4" href={paidPlanHref ?? getWebRoute(orgSlug)}>View paid plan</DenButton>
+            <p className="mt-3 text-xs leading-5 text-neutral-500">You can still use OpenWork Desktop for local work. Your saved cloud work stays in your cloud workspace.</p>
           </> : null}
           {error || query.isError ? <div className="mt-3" role="alert">
             <p className="text-sm text-red-700">{error ?? (query.error instanceof Error ? query.error.message : "Could not check trial availability.")}</p>
