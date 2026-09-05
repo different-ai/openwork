@@ -432,6 +432,43 @@ export async function externalSessionVisibility(seed: Seed) {
     other,
     homePath,
     engine: resolveEvalEngine(),
+    async observeWorkspaceEvents(workspaceId: string) {
+      const abort = new AbortController();
+      const url = new URL(`${externalServerUrl}/workspace/${encodeURIComponent(workspaceId)}/opencode2/api/event`);
+      // A client-supplied location must not override its authenticated mount.
+      url.searchParams.set("location[directory]", workspaceId === home.workspaceId ? otherPath : homePath);
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${serverToken}` },
+        signal: AbortSignal.any([abort.signal, AbortSignal.timeout(120_000)]),
+      });
+      if (!response.ok || !response.body) throw new Error(`Workspace event stream returned ${response.status}`);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let received = "";
+      let failure: unknown;
+      const finished = (async () => {
+        try {
+          for (;;) {
+            const chunk = await reader.read();
+            if (chunk.done) break;
+            received += decoder.decode(chunk.value, { stream: true });
+          }
+        } catch (error) {
+          if (!abort.signal.aborted) failure = error;
+        }
+      })();
+      return {
+        snapshot() {
+          if (failure) throw failure;
+          return received;
+        },
+        async [Symbol.asyncDispose]() {
+          abort.abort();
+          await reader.cancel().catch(() => undefined);
+          await finished;
+        },
+      };
+    },
     async serverSessionIds(workspaceId: string): Promise<string[]> {
       const response = await engineSessionProbe({ engine: resolveEvalEngine(), serverUrl: externalServerUrl, token: serverToken, workspaceId }).list();
       if (!response.ok) throw new Error(`Session list returned HTTP ${response.status}`);

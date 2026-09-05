@@ -1422,6 +1422,34 @@ async function proxyOpencodeV2Request(input: {
     headers.set("content-type", "application/json");
   }
   const response = await loopbackFetch(target.toString(), { method, headers, body });
+  if (method === "GET" && /^\/api\/event\/*$/.test(decodeURIComponent(forwardedPath)) && response.ok && response.body) {
+    const expected = await realpath(input.workspace.path);
+    const frames = new BoundedSseFrameBuffer();
+    const encoder = new TextEncoder();
+    const scopedBody = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(": connected\n\n"));
+      },
+      async transform(chunk, controller) {
+        const parsed = frames.push(chunk);
+        if (parsed.overflow) throw new Error("OpenCode v2 event frame exceeded the size limit");
+        for (const frame of parsed.frames) {
+          let payload = parseSsePayload(frame);
+          if (typeof payload === "string") {
+            try { payload = JSON.parse(payload); } catch { continue; }
+          }
+          const location = isRecord(payload) && isRecord(payload.location) ? payload.location : null;
+          const directory = location && typeof location.directory === "string" ? location.directory : null;
+          if (!directory || await realpath(directory).catch(() => null) !== expected) continue;
+          controller.enqueue(encoder.encode(`${frame}\n\n`));
+        }
+      },
+    }));
+    const responseHeaders = new Headers(response.headers);
+    responseHeaders.delete("content-length");
+    responseHeaders.delete("content-encoding");
+    return sanitizeProxyResponse(new Response(scopedBody, { status: response.status, headers: responseHeaders }));
+  }
   if (method === "GET" && forwardedPath === "/api/session" && response.ok) {
     const payload: unknown = await response.json();
     const data = isRecord(payload) && "data" in payload ? payload.data : payload;

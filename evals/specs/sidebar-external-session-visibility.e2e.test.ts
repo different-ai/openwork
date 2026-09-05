@@ -81,6 +81,8 @@ test("sessions created outside the window appear in a non-selected workspace's s
   const homeSessionsBefore = sessionIds(await world.route(), homeId);
 
   // --- Path 1: an explicit reload request, as issued by session.create. ---
+  await using homeEvents = world.engine === "v2" ? await world.observeWorkspaceEvents(homeId) : null;
+  await using otherEvents = world.engine === "v2" ? await world.observeWorkspaceEvents(otherId) : null;
   const reloadedTitle = "External session surfaced by reload";
   // Only the v2 create dialect accepts a location in its JSON body.
   const reloadedId = await world.createSessionOutsideWindow(otherId, reloadedTitle, world.engine === "v2" ? world.homePath : undefined);
@@ -95,6 +97,19 @@ test("sessions created outside the window appear in a non-selected workspace's s
     await expectStillHidden(world, otherId, reloadedId);
     await user.notSee({ text: reloadedTitle });
   });
+
+  if (homeEvents && otherEvents) {
+    await probe.eventually(() => otherEvents.snapshot(), {
+      within: 15_000, intervalMs: 250, label: "own workspace event stream receives the external session",
+      until: (text) => text.includes(reloadedId),
+    });
+    expect(homeEvents.snapshot()).not.toContain(reloadedId);
+    evidence.recordAssertionEvidence(
+      "the server filters workspace event streams even when clients supply a conflicting directory",
+      "The direct authenticated stream for the session's workspace received its creation event; the simultaneously open home-workspace stream did not contain its ID after the observation window. Both requests supplied the other directory as a query hint.",
+      true,
+    );
+  }
 
   await agent.run("workspace.reload_sessions", { workspaceId: otherId });
   const afterReload = await probe.eventually(() => world.route(), {
