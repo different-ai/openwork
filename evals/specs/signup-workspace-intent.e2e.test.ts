@@ -24,17 +24,17 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
   };
 
   await step("a fresh account can review joining without creating an organization", async () => {
-    await user.see("Make room for your work.", { timeoutMs: 90_000 });
-    await user.see("How will you use OpenWork?");
+    await user.see({ text: "Make room for your work." }, { timeoutMs: 90_000 });
+    await user.see({ text: "How will you use OpenWork?" });
     await user.notSee({ role: "textbox", label: "Organization name" });
     expect(await orgs()).toEqual([]);
     await user.click({ text: "Join a team" });
-    await user.type({ role: "textbox", label: "Team invitation link" }, "https://example.test/join-org?invite=not-valid");
-    await user.click("Review invitation");
+    await user.type({ role: "textbox", label: /^Team invitation link/ }, "https://example.test/join-org?invite=not-valid");
+    await user.click({ role: "button", label: "Review invitation" });
     await user.see({ text: /Paste the invitation link for this OpenWork Cloud/ });
     expect(await orgs()).toEqual([]);
-    await user.type({ role: "textbox", label: "Team invitation link" }, new URL("/join-org?invite=missing-invitation", world.den.ref.webUrl).toString(), { replace: true });
-    await user.click("Review invitation");
+    await user.type({ role: "textbox", label: /^Team invitation link/ }, new URL("/join-org?invite=missing-invitation", world.den.ref.webUrl).toString(), { replace: true });
+    await user.click({ role: "button", label: "Review invitation" });
     await probe.eventually(() => world.pathname(), { within: 30_000, label: "existing invite review route", until: (path) => path === "/join-org" });
     expect(await orgs()).toEqual([]);
     evidence.recordAssertionEvidence("Join uses invitation review and neither an invalid link nor review creates an organization", "Foreign origin rejected; same-origin invitation opened /join-org; organization list remained empty", true);
@@ -44,9 +44,9 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
   let personalPolicy: Record<string, unknown> = {};
   await step("personal work creates one organization and continues to tools", async () => {
     await user.navigate(new URL("/organization", world.den.ref.webUrl).toString());
-    await user.see("Make room for your work.", { timeoutMs: 90_000 });
+    await user.see({ text: "Make room for your work." }, { timeoutMs: 90_000 });
     await user.click({ text: "On my own" });
-    await user.notSee("How should your team’s desktop app work?");
+    await user.notSee({ text: "How should your team’s desktop app work?" });
     await user.type({ role: "textbox", label: "Organization name" }, "Personal work");
     await user.click({ role: "button", label: "Continue" });
     await user.see({ testId: "marketplace-onboarding" }, { timeoutMs: 90_000 });
@@ -66,13 +66,13 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await user.click({ role: "button", label: "+ Create New Organization" });
     await user.click({ text: "Create a team" });
     await user.type({ role: "textbox", label: "Team name" }, "Focused team");
-    await user.see("How should your team’s desktop app work?");
+    await user.see({ text: "How should your team’s desktop app work?" });
     await user.click({ text: "Flexible" });
     await user.see({ role: "button", label: "Continue" });
     await user.click({ text: "Set up Restricted" });
     await user.looks(["Team setup uses neutral cards with a selected Restricted option and clearly explains the Enterprise requirement and saving step"]);
-    await user.click("Create team & review policy");
-    await user.see("Review your team’s desktop access", { timeoutMs: 90_000 });
+    await user.click({ role: "button", label: "Create team & review policy" });
+    await user.see({ text: "Review your team’s desktop access" }, { timeoutMs: 90_000 });
     await user.see({ text: /unsaved draft/ });
     await user.see({ text: /Locked by Restricted mode/ });
     const memberships = await orgs();
@@ -83,7 +83,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     expect(before.allowMultipleWorkspaces).toBe(true);
     expect(before.allowManageExtensions).toBe(true);
     await user.reload();
-    await user.see("Review your team’s desktop access", { timeoutMs: 90_000 });
+    await user.see({ text: "Review your team’s desktop access" }, { timeoutMs: 90_000 });
     await user.click({ role: "button", label: "Save changes" });
     await user.see({ testId: "marketplace-onboarding" }, { timeoutMs: 90_000 });
     const after = await policyFor(team.id);
