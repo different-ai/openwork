@@ -1,5 +1,5 @@
 import { expect } from "vitest";
-import { observeTranscript, spec } from "@openwork/testkit";
+import { eventually, observeTranscript, spec } from "@openwork/testkit";
 import { streamedMarkdown, streamedMarkdownMarker } from "../worlds/chat.ts";
 
 const test = spec.world(streamedMarkdown, { timeout: 300_000 });
@@ -27,7 +27,7 @@ function expectSettledDocument(visibleText: string) {
   for (const syntax of rawSyntax) expect(visibleText).not.toContain(syntax);
 }
 
-test("a streaming answer renders as markdown block by block and settles to the same document", async ({ user, probe, step }) => {
+test("a streaming answer renders as markdown block by block and settles to the same document", async ({ world, user, probe, step }) => {
   await using transcript = await observeTranscript(probe, [
     { role: "user", text: prompt },
     ...blockSentinels.map((text): { role: "assistant"; text: string } => ({ role: "assistant", text })),
@@ -60,11 +60,28 @@ test("a streaming answer renders as markdown block by block and settles to the s
     });
   });
 
+  await step("a referenced workspace video has controls and plays only when requested", async () => {
+    const ready = await eventually(() => world.videoState(), {
+      within: 30_000, until: (state) => state?.ready === true,
+    });
+    expect(ready).toMatchObject({ controls: true, autoplay: false, paused: true, error: null });
+    await world.videoState(true);
+    const playing = await eventually(() => world.videoState(), {
+      within: 5_000, until: (state) => state?.time > 0,
+    });
+    expect(playing.time).toBeGreaterThan(0);
+    expect(playing.error).toBeNull();
+  });
+
   await step("history renders the same document after a reload", async () => {
     await user.reload();
     await user.see({ text: closingText }, { timeoutMs: 120_000 });
     expectSettledDocument(await probe.text());
     await user.see({ text: prompt });
     await user.see({ text: headingText });
+    const video = await eventually(() => world.videoState(), {
+      within: 30_000, until: (state) => state?.ready === true,
+    });
+    expect(video).toMatchObject({ controls: true, paused: true, autoplay: false, error: null });
   });
 });
