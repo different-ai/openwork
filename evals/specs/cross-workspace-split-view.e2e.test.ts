@@ -2,29 +2,25 @@ import { expect } from "vitest";
 import { control, evalIn, go, waitFor } from "@openwork/behaviors";
 import type { Surface } from "@openwork/cdp";
 import { screenshot } from "@openwork/test-evidence";
-import {
-  localMysqlIsRunning,
-  localRedisIsRunning,
-  needs,
-  sleep,
-  test,
-} from "@openwork/testkit";
+import { spec, sleep } from "@openwork/testkit";
+import type { User } from "@openwork/testkit";
 import { bootCrossWorkspaceSplitView } from "../../worlds/cross-workspace-split-view.ts";
 
-const e2eTestsEnabled = process.env.OPENWORK_EVAL_E2E_TESTS === "1";
-const daytonaEnabled = process.env.OPENWORK_EVAL_DAYTONA === "1";
-const configuredDen = Boolean(process.env.OPENWORK_EVAL_DEN_API_URL?.trim());
-const localServicesRequired = !daytonaEnabled && !configuredDen;
-const mysqlOpen = await localMysqlIsRunning();
-const redisOpen = await localRedisIsRunning();
-const runnable = e2eTestsEnabled && (!localServicesRequired || (mysqlOpen && redisOpen));
-const skipSuffix = !e2eTestsEnabled
-  ? " skipped — needs: set OPENWORK_EVAL_E2E_TESTS=1"
-  : localServicesRequired && !mysqlOpen
-    ? " skipped — needs MySQL on 127.0.0.1:3306"
-    : localServicesRequired && !redisOpen
-      ? " skipped — needs Redis on 127.0.0.1:6379"
-      : "";
+const test = spec.world(async (_seed, { place }) => {
+  const stack = new AsyncDisposableStack();
+  const runId = `${Date.now().toString(36)}-${process.pid}`;
+  try {
+    const world = await bootCrossWorkspaceSplitView(stack, place, {
+      adminEmail: `split-view-admin-${runId}@openwork.test`,
+      workspacePath: `/tmp/openwork-cross-workspace-split-${runId}-a`,
+      sessionTitles: [`Primary workspace anchor ${runId}`, `Primary workspace peer ${runId}`],
+    });
+    return { ...world, app: world.desktop, runId, [Symbol.asyncDispose]: () => stack.disposeAsync() };
+  } catch (error) {
+    await stack.disposeAsync();
+    throw error;
+  }
+}, { timeout: 600_000 });
 
 type WorkspaceListing = {
   ids: string[];
@@ -173,39 +169,11 @@ async function openSessionRoute(app: Surface, candidate: SplitCandidate): Promis
   })()`, { timeoutMs: 60_000, label: `visible session ${candidate.title}` });
 }
 
-async function closeMenus(app: Surface): Promise<void> {
-  await evalIn(app, `(() => {
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
-    document.body.click();
-    return true;
-  })()`);
-}
-
-async function openContextMenuForSession(app: Surface, candidate: SplitCandidate): Promise<void> {
-  await closeMenus(app);
-  const opened = await evalIn(app, `(() => {
-    const row = document.querySelector(${JSON.stringify(
-      `[data-sidebar-session-id="${candidate.sessionId}"][data-sidebar-session-workspace-id="${candidate.workspaceId}"]`,
-    )});
-    if (!(row instanceof HTMLElement)) return false;
-    const target = row.querySelector(${JSON.stringify(`[data-session-tab-id="${candidate.sessionId}"]`)}) ?? row;
-    if (!(target instanceof HTMLElement)) return false;
-    row.scrollIntoView({ block: "center" });
-    const rect = target.getBoundingClientRect();
-    target.dispatchEvent(new MouseEvent("contextmenu", {
-      bubbles: true,
-      cancelable: true,
-      button: 2,
-      buttons: 2,
-      clientX: rect.left + Math.min(24, Math.max(1, rect.width / 2)),
-      clientY: rect.top + Math.min(12, Math.max(1, rect.height / 2)),
-    }));
-    return true;
-  })()`);
-  expect(opened).toBe(true);
+async function openContextMenuForSession(app: Surface, user: User, candidate: SplitCandidate): Promise<void> {
+  await user.press("Escape");
+  await user.rightClick({ text: candidate.title });
   await waitFor(app, `Boolean(document.querySelector('[role="menu"]'))`, {
-    timeoutMs: 15_000,
-    label: `context menu rendered for ${candidate.title}`,
+    timeoutMs: 15000, label: `context menu rendered for ${candidate.title}`,
   });
 }
 
@@ -213,54 +181,23 @@ async function splitMenuVisible(app: Surface): Promise<boolean> {
   return await evalIn(app, `Boolean(document.querySelector("[data-session-menu-open-split]"))`) === true;
 }
 
-async function clickOpenSplit(app: Surface): Promise<void> {
-  const clicked = await evalIn(app, `(() => {
-    const item = document.querySelector("[data-session-menu-open-split]");
-    if (!(item instanceof HTMLElement)) return false;
-    item.click();
-    return true;
-  })()`);
-  expect(clicked).toBe(true);
+async function clickOpenSplit(user: User): Promise<void> {
+  await user.click({ role: "menuitem", label: /Open in split view/ });
 }
 
-async function closeSecondaryPane(app: Surface): Promise<void> {
-  const clicked = await evalIn(app, `(() => {
-    const button = document.querySelector('button[aria-label="Close secondary split pane"]');
-    if (!(button instanceof HTMLButtonElement)) return false;
-    button.click();
-    return true;
-  })()`);
-  expect(clicked).toBe(true);
+async function closeSecondaryPane(app: Surface, user: User): Promise<void> {
+  await user.click({ role: "button", label: "Close secondary split pane" });
   await waitFor(app, `!document.querySelector('[data-workbench-pane="secondary"]')`, {
-    timeoutMs: 15_000,
-    label: "secondary split pane closes",
+    timeoutMs: 15000, label: "secondary split pane closes",
   });
 }
 
-async function openCrossWorkspaceSplitFromPalette(app: Surface, candidate: SplitCandidate): Promise<void> {
-  await closeMenus(app);
-  await evalIn(app, `(() => {
-    window.dispatchEvent(new KeyboardEvent("keydown", {
-      key: "k",
-      code: "KeyK",
-      metaKey: true,
-      ctrlKey: true,
-      bubbles: true,
-      cancelable: true,
-    }));
-    return true;
-  })()`);
-  await waitFor(app, `Boolean(document.querySelector('[data-command-palette-item="open-in-split-view"]'))`, {
-    timeoutMs: 15_000,
-    label: "Open in split view command is visible",
-  });
-  await evalIn(app, `document.querySelector('[data-command-palette-item="open-in-split-view"]')?.click()`);
-  const candidateSelector = `[data-command-palette-item="split-session:${candidate.workspaceId}:${candidate.sessionId}"]`;
-  await waitFor(app, `Boolean(document.querySelector(${JSON.stringify(candidateSelector)}))`, {
-    timeoutMs: 15_000,
-    label: "cross-workspace session is listed in split picker",
-  });
-  await evalIn(app, `document.querySelector(${JSON.stringify(candidateSelector)})?.click()`);
+async function openCrossWorkspaceSplitFromPalette(app: Surface, user: User, candidate: SplitCandidate): Promise<void> {
+  await user.press("Escape");
+  const mac = app.handle.hostKind !== "daytona" && process.platform === "darwin";
+  await user.press(mac ? "Meta+K" : "Control+K");
+  await user.click({ role: "option", label: /Open in split view/ });
+  await user.click({ text: candidate.title });
 }
 
 async function readSplitFacts(app: Surface, primary: SplitCandidate, secondary: SplitCandidate): Promise<SplitFacts> {
@@ -304,22 +241,9 @@ async function readSplitFacts(app: Surface, primary: SplitCandidate, secondary: 
   })()`));
 }
 
-test.skipIf(!runnable)(
-  `same-workspace and cross-workspace split sessions retain visible ownership${skipSuffix}`,
-  { timeout: 10 * 60_000 },
-  async ({ evidence, place }) => {
-    needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"] });
-    const runId = `${Date.now().toString(36)}-${process.pid}`;
-    const primaryTitle = `Primary workspace anchor ${runId}`;
-    const sameWorkspaceTitle = `Primary workspace peer ${runId}`;
+test("same-workspace and cross-workspace split sessions retain visible ownership", async ({ world, user, evidence }) => {
+    const { app, runId } = world;
     const crossWorkspaceTitle = `Secondary workspace peer ${runId}`;
-    await using stack = new AsyncDisposableStack();
-    const world = await bootCrossWorkspaceSplitView(stack, place, {
-      adminEmail: `split-view-admin-${runId}@openwork.test`,
-      workspacePath: `/tmp/openwork-cross-workspace-split-${runId}-a`,
-      sessionTitles: [primaryTitle, sameWorkspaceTitle],
-    });
-    const app = world.desktop;
     const workspaceA = app.workspaceId;
     if (!workspaceA) throw new Error("World app did not resolve a primary workspace id.");
 
@@ -338,9 +262,9 @@ test.skipIf(!runnable)(
     await waitForSessionRow(app, sameWorkspacePeer);
     await waitForSessionRow(app, crossWorkspacePeer);
 
-    await openContextMenuForSession(app, sameWorkspacePeer);
+    await openContextMenuForSession(app, user, sameWorkspacePeer);
     expect(await splitMenuVisible(app)).toBe(true);
-    await clickOpenSplit(app);
+    await clickOpenSplit(user);
     await waitFor(app, `Boolean(document.querySelector('[data-workbench-pane="secondary"]'))`, {
       timeoutMs: 30_000,
       label: "same-workspace secondary pane opens",
@@ -396,14 +320,14 @@ test.skipIf(!runnable)(
         && !sameWorkspaceFacts.primaryUnavailable
         && !sameWorkspaceFacts.secondaryUnavailable,
     );
-    await closeSecondaryPane(app);
+    await closeSecondaryPane(app, user);
     expect(await evalIn(app, `document.querySelector('[data-session-surface-id="${primary.sessionId}"]') !== null`)).toBe(true);
     expect(await evalIn(app, `document.querySelector('[data-session-surface-id="${sameWorkspacePeer.sessionId}"]') === null`)).toBe(true);
 
-    await openContextMenuForSession(app, crossWorkspacePeer);
+    await openContextMenuForSession(app, user, crossWorkspacePeer);
     expect(await splitMenuVisible(app)).toBe(true);
-    await closeMenus(app);
-    await openCrossWorkspaceSplitFromPalette(app, crossWorkspacePeer);
+    await user.press("Escape");
+    await openCrossWorkspaceSplitFromPalette(app, user, crossWorkspacePeer);
     await waitFor(app, `Boolean(document.querySelector(
       '[data-workbench-pane="secondary"][data-workbench-workspace-id="${workspaceB}"] [data-session-surface-id="${crossWorkspacePeer.sessionId}"]'
     ))`, { timeoutMs: 60_000, label: "cross-workspace palette split renders" });
