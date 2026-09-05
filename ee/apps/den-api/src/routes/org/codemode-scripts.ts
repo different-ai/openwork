@@ -173,18 +173,6 @@ function routeFailure(error: unknown) {
       },
     } as const
   }
-  const readOnlyPrefix = "workflow_requires_read_only_capabilities:"
-  if (message.startsWith(readOnlyPrefix)) {
-    const capability = message.slice(readOnlyPrefix.length)
-    return {
-      status: 400,
-      body: {
-        error: "workflow_requires_read_only_capabilities",
-        capability,
-        message: `${capability} can change data, so it cannot run unattended in a Workflow. Workflows may only call read-only tools; keep write actions in interactive Code Mode runs.`,
-      },
-    } as const
-  }
   return { status: 400, body: { error: "workflow_rejected", message } } as const
 }
 
