@@ -187,6 +187,9 @@ function validateAgentWorkloads(value) {
     if (finalReplyChunkSize !== null && (!Number.isInteger(finalReplyChunkSize) || finalReplyChunkSize < 1)) {
       throw new Error(`agent workload ${promptMarker} finalReplyChunkSize must be a positive integer`);
     }
+    if (workload.latestUserTurn !== undefined && typeof workload.latestUserTurn !== "boolean") {
+      throw new Error(`agent workload ${promptMarker} latestUserTurn must be a boolean`);
+    }
     const steps = workload.steps.map((step) => {
       if (!step || typeof step !== "object" || typeof step.tool !== "string" || !step.tool.trim()) {
         throw new Error(`agent workload ${promptMarker} has an invalid tool step`);
@@ -199,7 +202,7 @@ function validateAgentWorkloads(value) {
       }
       return { tool: step.tool.trim(), arguments: structuredClone(step.arguments), argumentsFrom: step.argumentsFrom };
     });
-    return { promptMarker, finalReply, finalReplyChunkSize, steps };
+    return { promptMarker, finalReply, finalReplyChunkSize, steps, latestUserTurn: workload.latestUserTurn === true };
   });
 }
 
@@ -321,10 +324,14 @@ async function handleAgentCompletion(req, res, entry) {
   const model = typeof body.model === "string" ? body.model : "mock-agent-workload-model";
   const messages = Array.isArray(body.messages) ? body.messages : [];
   const conversationText = messages.map(agentContentText).join("\n");
-  const matchedMarkers = agentWorkloads
-    .filter((workload) => conversationText.includes(workload.promptMarker))
-    .map((workload) => workload.promptMarker);
-  const completedTools = messages.filter((message) => message && typeof message === "object" && message.role === "tool").length;
+  const latestUserIndex = messages.findLastIndex((message) => message?.role === "user");
+  const latestUserText = latestUserIndex < 0 ? "" : agentContentText(messages[latestUserIndex]);
+  const matched = agentWorkloads.filter((workload) =>
+    (workload.latestUserTurn ? latestUserText : conversationText).includes(workload.promptMarker));
+  const matchedMarkers = matched.map((workload) => workload.promptMarker);
+  const workload = matched[0];
+  const scopedMessages = workload?.latestUserTurn ? messages.slice(latestUserIndex + 1) : messages;
+  const completedTools = scopedMessages.filter((message) => message && typeof message === "object" && message.role === "tool").length;
   const baseRequest = { model, matchedMarkers, completedTools };
 
   if (!Array.isArray(body.tools) || body.tools.length === 0) {
@@ -341,7 +348,6 @@ async function handleAgentCompletion(req, res, entry) {
     json(res, 400, { error: { message: `expected one workload marker, found ${matchedMarkers.length}` } });
     return;
   }
-  const workload = agentWorkloads.find((candidate) => candidate.promptMarker === matchedMarkers[0]);
   if (!workload) throw new Error("matched agent workload disappeared");
   if (completedTools >= workload.steps.length) {
     entry.agentCompletion = { ...baseRequest, kind: "final", promptMarker: workload.promptMarker, toolName: null, arguments: {} };

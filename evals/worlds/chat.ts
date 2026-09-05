@@ -1282,3 +1282,50 @@ export async function computerMentions(seed: Seed) {
     },
   };
 }
+
+/** A deterministic model calls the real built-in visualization tool. */
+export async function visualization(seed: Seed) {
+  const providerId = "visualization-mock";
+  const modelId = "visualization-model";
+  const design = {
+    id: "project-overview", title: "Project overview", revision: 1,
+    navigation: ["Overview", "Projects", "Settings"],
+    sections: [{ title: "Your workspace", columns: "two", blocks: [
+      { kind: "metric", label: "Active projects", value: "12" },
+      { kind: "field", label: "Project name", value: "Website refresh" },
+      { kind: "button", label: "Create project" },
+      { kind: "list", label: "Recent activity", items: ["Draft reviewed", "Mockup updated"] },
+      { kind: "image", label: "Cover image" },
+      { kind: "text", label: "Design note", value: "<script>window.mockupExecuted = true</script>" },
+    ] }],
+  };
+  const mock = seed.mock({ agentWorkloads: [
+    { latestUserTurn: true, promptMarker: "Sketch a project overview", finalReply: "Your first sketch is ready.", steps: [{ tool: "openwork_visualization", arguments: design }] },
+    { latestUserTurn: true, promptMarker: "Create version 2", finalReply: "Your revised sketch is ready.", steps: [{ tool: "openwork_visualization", arguments: { ...design, revision: 2, description: "A calmer overview" } }] },
+  ] });
+  const den = await seed.den({ mocks: { agent: mock } });
+  const app = await seed.desktop({ name: "visualization", model: `${providerId}/${modelId}` });
+  const workspace = await seed.workspace(app, seed.tmpPath("visualization"));
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    permission: { openwork_visualization: "allow" },
+    provider: { [providerId]: {
+      npm: "@ai-sdk/openai-compatible", name: "Visualization mock",
+      options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-visualization" },
+      models: { [modelId]: { name: "Visualization model", tool_call: true } },
+    } },
+  });
+  const session = await seedSessionRetry(seed, app);
+  return {
+    den, app, workspace, session,
+    preview: async () => {
+      const result = await evalIn(app, `(() => {
+      const preview = document.querySelector('[data-testid="visualization-preview"]');
+      return { viewport: preview?.getAttribute('data-viewport'), width: preview?.getBoundingClientRect().width,
+        scripts: preview?.querySelectorAll('script').length, executed: window.mockupExecuted === true,
+        cards: document.querySelectorAll('[data-testid="visualization-card"]').length };
+    })()`);
+      if (!isRecord(result) || typeof result.width !== "number") throw new Error("Visualization preview missing");
+      return { ...result, width: result.width };
+    },
+  };
+}

@@ -30,6 +30,8 @@ export interface MockAgentToolStep {
 }
 
 export interface MockAgentWorkload {
+  /** Chat Completions: match the latest user message and count only its tool rounds. */
+  latestUserTurn?: boolean;
   promptMarker: string;
   finalReply: string;
   /** Stream the final reply as consecutive content deltas of this many characters instead of one. */

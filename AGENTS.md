@@ -70,3 +70,10 @@ escalate any leak instead of rewriting history.
 - Smallest possible diff, then make it smaller. Propose the simpler solution. No
   fallback expressions when types or control flow already guarantee a value.
 - If asked to do too much at once, stop and say so.
+
+## Hands-on PR previews
+
+For a preview the user can test inside Codex, use
+[preview-my-work](.opencode/skills/preview-my-work/SKILL.md): named Daytona
+worlds for Den or real Electron through noVNC, with isolated scenarios,
+frontend updates, reset and teardown.
