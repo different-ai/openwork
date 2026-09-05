@@ -57,8 +57,10 @@ async function cardDocument(app: Surface, click?: string): Promise<string> {
 
 test("gateway discovery renders a connection card and checks live authorization in chat", async ({ world, agent, user, probe, evidence }) => {
   expect(connectionActionPrompt).not.toContain(world.connection.id);
-  await agent.send(connectionActionPrompt);
-  await user.see({ text: connectionActionReply }, { timeoutMs: 120_000 });
+  const appUser = user.on(world.app);
+  const webUser = user.on(world.web);
+  await agent.on(world.app).send(connectionActionPrompt);
+  await appUser.see({ text: connectionActionReply }, { timeoutMs: 120_000 });
   const initial = await probe.eventually(() => cardDocument(world.app), {
     within: 60_000, intervalMs: 1_000, label: "connection card rendered directly from search",
     until: text => text.includes("Check connection") && text.includes("Not connected"),
@@ -67,7 +69,7 @@ test("gateway discovery renders a connection card and checks live authorization 
   const calls = await world.den.mocks.connector.agentRequests({ promptMarker: connectionActionPrompt });
   expect(calls.filter(call => call.kind === "tool").every(call => call.toolName?.endsWith("search_capabilities"))).toBe(true);
   expect(calls.filter(call => call.kind === "tool")).toHaveLength(1);
-  await user.screenshot();
+  await appUser.screenshot();
   evidence.recordAssertionEvidence("Search renders an actionable connection card without an execute call", initial, initial.includes("Connect Notes") && initial.includes("Check connection"));
 
   expect(await cardDocument(world.app, "Check connection")).toBeTruthy();
@@ -78,22 +80,27 @@ test("gateway discovery renders a connection card and checks live authorization 
   expect(stillDisconnected).not.toContain("Connection ready");
   evidence.recordAssertionEvidence("Checking before authorization keeps the card disconnected", stillDisconnected, !stillDisconnected.includes("Connection ready"));
 
-  const started = await probe.api(world.den.admin, `/v1/mcp-connections/${world.connection.id}/connect/start`, {
-    method: "GET", headers: { "x-openwork-org-id": world.organizationId },
+  expect(initial).toContain("Review and authorize");
+  expect(await cardDocument(world.app, "Connect Notes")).toBeTruthy();
+  await probe.eventually(() => cardDocument(world.app), {
+    within: 15_000, intervalMs: 500, label: "chat watches for the sign-in handoff",
+    until: text => text.includes("Waiting for you to finish"),
   });
-  expect(started.response.ok, started.text).toBe(true);
-  const authorizeUrl = isRecord(started.body) ? started.body.authorizeUrl : null;
-  expect(typeof authorizeUrl).toBe("string");
-  if (typeof authorizeUrl !== "string") throw new Error("OAuth did not return an authorization URL.");
-  const authorized = await fetch(authorizeUrl, { signal: AbortSignal.timeout(30_000) });
-  expect(authorized.ok).toBe(true);
-  expect(await cardDocument(world.app, "Check connection")).toBeTruthy();
+  await webUser.see({ testId: "guided-connection-setup" }, { timeoutMs: 60_000 });
+  await webUser.see("Bring Notes into your work");
+  await webUser.notSee("You’re connected");
+  await webUser.screenshot();
+  evidence.recordAssertionEvidence("The selected connector opens a guided setup in Den", "Bring Notes into your work; not connected before authorization", true);
+  await webUser.click({ role: "button", text: "Continue to Notes" });
+  await webUser.see("You’re connected", { timeoutMs: 90_000 });
+  await webUser.screenshot();
+  evidence.recordAssertionEvidence("Den confirms authorization from its sign-in button", "You’re connected", true);
   const connected = await probe.eventually(() => cardDocument(world.app), {
     within: 60_000, intervalMs: 1_000, label: "card confirms live OAuth authorization",
     until: text => text.includes("Connection ready"),
   });
   expect(connected).not.toContain("Check connection");
   expect(connected).not.toContain("Connect Notes");
-  await user.screenshot();
-  evidence.recordAssertionEvidence("The same card confirms authorization and removes connection actions", connected, connected.includes("Connection ready") && !connected.includes("Check connection"));
+  await appUser.screenshot();
+  evidence.recordAssertionEvidence("The same card automatically confirms authorization and removes connection actions", connected, connected.includes("Connection ready") && !connected.includes("Check connection"));
 });

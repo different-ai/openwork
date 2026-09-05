@@ -891,7 +891,7 @@ async function reloadConfiguredApp(app: import("@openwork/cdp").Surface): Promis
 
 export const connectionActionResourceUri = "ui://openwork/connection-action/v1/view.html";
 export const connectionActionReply = "Connect your Notes account to continue.";
-export const connectionActionPrompt = "Find my recent notes.";
+export const connectionActionPrompt = "I want to connect Notes.";
 
 export async function connectionActionMcpApp(seed: Seed) {
   const providerId = "connection-action-mcp-app-provider";
@@ -930,7 +930,8 @@ export async function connectionActionMcpApp(seed: Seed) {
   });
   await reloadConfiguredApp(app);
   await seed.session(app);
-  return { app, den, connection, organizationId, mcpSession: { ...den.admin, token: mcpToken } };
+  const web = await seed.web({ den, signedInAs: den.admin, startPath: `/dashboard/your-connections?connectionId=${encodeURIComponent(connection.id)}`, headless: true });
+  return { app, web, den, connection, organizationId, mcpSession: { ...den.admin, token: mcpToken } };
 }
 
 export const skillCreatedResourceUri = "ui://openwork/skill-created/v1/view.html";
