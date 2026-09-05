@@ -1282,7 +1282,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       <div className={props.flush ? "" : "max-w-[800px] mx-auto"}>
         {/* Main composer panel */}
         <div
-          className={`relative overflow-visible rounded-[18px] border border-dls-border bg-dls-surface transition-all ${panelRoundedClass}`}
+          className={`@container/composer relative overflow-visible rounded-[18px] border border-dls-border bg-dls-surface transition-all ${panelRoundedClass}`}
         >
           {props.topAccessory ? <div className="relative z-10">{props.topAccessory}</div> : null}
 
@@ -1400,9 +1400,10 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
               }}
             />
 
-            {/* Action row — tools, attachments, model, and send stay on one line */}
-            <div className="mt-2 flex items-center gap-1.5">
-              <div className="flex min-w-0 flex-1 items-center gap-1.5">
+            {/* Respond to the pane width, including desktop split views. */}
+            <div data-composer-toolbar className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-1.5 gap-y-2 @min-[560px]/composer:flex">
+              <div className="contents">
+                <div className="col-start-1 row-start-2 flex shrink-0 items-center gap-1.5">
                 <input
                   ref={(element) => {
                     fileInput = element ?? undefined;
@@ -1664,13 +1665,16 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                   <Paperclip size={16} />
                 </button>
 
+                </div>
+
+                <div data-composer-settings className="col-span-2 row-start-1 flex min-w-0 flex-wrap items-center gap-1 border-b border-dls-border pb-2 @min-[560px]/composer:flex-1 @min-[560px]/composer:border-0 @min-[560px]/composer:pb-0">
                 {/* Agent picker (#2101/#1971). Only shown once a non-default
                     agent is selected. Switching back to Default agent lives in
                     this menu and in the + tools menu. */}
-                <div ref={agentMenuRef} className={showAgentPicker ? "relative" : "hidden"}>
+                <div ref={agentMenuRef} className={showAgentPicker ? "relative min-w-0 max-w-full shrink-0" : "hidden"}>
                   <button
                     type="button"
-                    className="flex h-9 max-h-9 items-center gap-1 rounded-md px-1.5 text-[12px] font-medium text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12"
+                    className="flex h-9 max-h-9 max-w-full items-center gap-1 rounded-md px-1.5 text-[12px] font-medium text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12"
                     onClick={() => setAgentMenuOpen((value) => !value)}
                     disabled={props.busy}
                     aria-expanded={agentMenuOpen}
@@ -1767,10 +1771,11 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                     </span>
                   </button>
                 ) : (
-                  <span className="max-w-[20rem] truncate text-xs font-medium text-red-10">
+                  <span className="min-w-0 max-w-full truncate text-xs font-medium text-red-10">
                     {props.modelUnavailableMessage ?? t("models.model_unavailable_short")}
                   </span>
                 ) : null}
+                </div>
 
               </div>
 
@@ -1780,9 +1785,9 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                 - Busy: stop icon in that same slot (Enter still queues;
                   Cmd/Ctrl+Enter still steers).
               */}
-              <div className="ml-auto flex shrink-0 items-center gap-1.5">
+              <div data-composer-actions className="col-start-2 row-start-2 ml-auto flex shrink-0 items-center gap-1.5">
                 {props.busy && escapeArmed ? (
-                  <span className="self-center pr-1 text-[12px] font-medium text-gray-10 max-lg:hidden">
+                  <span className="self-center pr-1 text-[12px] font-medium text-gray-10 hidden @min-[720px]/composer:inline">
                     {t("composer.escape_to_stop")}
                   </span>
                 ) : null}
