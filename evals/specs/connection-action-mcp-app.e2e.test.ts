@@ -1,19 +1,18 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import type { Surface } from "@openwork/cdp";
+import { connect, debuggerUrlFor, listTargets, type Surface, type CdpClient } from "@openwork/cdp";
 import { connectionActionMcpApp, connectionActionPrompt, connectionActionReply, isRecord, records } from "../worlds/library.ts";
 
 const test = spec.world(connectionActionMcpApp, { timeout: 600_000 });
 
 // Inspect and click the rendered sandbox document, without bypassing its bridge.
 async function cardDocument(app: Surface, click?: string): Promise<string> {
-  const result = await app.client.send("Page.getFrameTree");
-  const visit = async (node: unknown): Promise<string> => {
+  const visit = async (client: CdpClient, node: unknown): Promise<string> => {
     if (!isRecord(node) || !isRecord(node.frame)) return "";
     if (typeof node.frame.id === "string") {
-      const world = await app.client.send("Page.createIsolatedWorld", { frameId: node.frame.id, worldName: "connection-card-proof" }).catch(() => null);
+      const world = await client.send("Page.createIsolatedWorld", { frameId: node.frame.id, worldName: "connection-card-proof" }).catch(() => null);
       if (isRecord(world) && typeof world.executionContextId === "number") {
-        const inspected = await app.client.send("Runtime.evaluate", {
+        const inspected = await client.send("Runtime.evaluate", {
           contextId: world.executionContextId, returnByValue: true,
           expression: `(() => {
             const card = document.querySelector('main.card');
@@ -31,12 +30,29 @@ async function cardDocument(app: Surface, click?: string): Promise<string> {
       }
     }
     for (const child of records(node.childFrames)) {
-      const text = await visit(child);
+      const text = await visit(client, child);
       if (text) return text;
     }
     return "";
   };
-  return visit(isRecord(result) ? result.frameTree : null);
+  const inspect = async (client: CdpClient) => {
+    const result = await client.send("Page.getFrameTree");
+    return visit(client, isRecord(result) ? result.frameTree : null);
+  };
+  const main = await inspect(app.client);
+  if (main) return main;
+  // Chromium isolates the App sandbox in a separate renderer process.
+  for (const target of await listTargets(app.handle.cdpUrl)) {
+    if (target.type !== "iframe" || !target.url.includes("/mcp-apps/sandbox.html")) continue;
+    const client = await connect(debuggerUrlFor(app.handle.cdpUrl, target));
+    try {
+      const text = await inspect(client);
+      if (text) return text;
+    } finally {
+      client.close();
+    }
+  }
+  return "";
 }
 
 test("gateway discovery renders a connection card and checks live authorization in chat", async ({ world, agent, user, probe, evidence }) => {
