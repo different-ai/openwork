@@ -1,102 +1,68 @@
-import type { Config } from "@planetscale/database"
+import { setTimeout as delay } from "node:timers/promises"
 
-const TRANSIENT_DB_ERROR_CODES = new Set([
-  "EAI_AGAIN",
-  "ECONNREFUSED",
-  "ECONNRESET",
-  "ENOTFOUND",
-  "EPIPE",
-  "ETIMEDOUT",
-  "PROTOCOL_CONNECTION_LOST",
-  "PROTOCOL_ENQUEUE_AFTER_FATAL_ERROR",
-  "UND_ERR_BODY_TIMEOUT",
-  "UND_ERR_CONNECT_TIMEOUT",
-  "UND_ERR_HEADERS_TIMEOUT",
-  "UND_ERR_SOCKET",
-])
-
-const TRANSIENT_DB_HTTP_STATUSES = new Set([429, 500, 502, 503, 504])
-const RETRYABLE_QUERY_PREFIXES = ["select", "show", "describe", "explain"]
-type PlanetScaleFetch = NonNullable<Config["fetch"]>
+// This bounds admission, backoff and the second attempt; it does not change
+// the SDK's first-attempt timeout or retry a response body after headers arrive.
+const RETRY_BUDGET_MS = 250
+const SOCKET_ERROR_CODES = new Set(["ECONNRESET", "EPIPE", "UND_ERR_SOCKET"])
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
 }
 
-export function isTransientDbConnectionError(error: unknown): boolean {
-  if (!isRecord(error)) {
-    return false
+function isSocketFailure(error: unknown): boolean {
+  const seen = new Set<object>()
+  let socketFailure = false
+  while (isRecord(error) && !seen.has(error)) {
+    seen.add(error)
+    // Cancellation and explicit provider responses take precedence over causes.
+    if (error.name === "AbortError" || error.name === "TimeoutError" || typeof error.status === "number") return false
+    if (typeof error.code === "string" && SOCKET_ERROR_CODES.has(error.code)) socketFailure = true
+    error = error.cause
   }
-
-  if (typeof error.code === "string" && TRANSIENT_DB_ERROR_CODES.has(error.code)) {
-    return true
-  }
-
-  if (typeof error.status === "number" && TRANSIENT_DB_HTTP_STATUSES.has(error.status)) {
-    return true
-  }
-
-  return isTransientDbConnectionError(error.cause)
+  return socketFailure
 }
 
-function extractPlanetScaleSql(body: string | undefined): string | null {
-  if (!body) {
-    return null
-  }
-
+function isStandaloneRead(body: unknown): boolean {
+  if (typeof body !== "string") return false
   try {
     const parsed: unknown = JSON.parse(body)
-    if (isRecord(parsed) && typeof parsed.query === "string") {
-      return parsed.query
+    if (!isRecord(parsed) || parsed.session !== null || typeof parsed.query !== "string") return false
+    // Conservative admission, not an SQL parser. Ambiguous SQL passes through
+    // once, including functions, comments, multi-statements and locking reads.
+    for (const [, word] of parsed.query.matchAll(/([\w$`]+)\s*\(/g)) {
+      if (!word || !["where", "and", "or", "not", "in", "exists"].includes(word.toLowerCase())) return false
     }
-    return null
+    return /^\s*select\s/i.test(parsed.query)
+      && !/[;#@]|--|\/\*|\b(?:for|lock|into)\b/i.test(parsed.query)
   } catch {
-    return null
-  }
-}
-
-function isRetryableReadQuery(sql: string | null): boolean {
-  if (!sql) {
     return false
   }
-
-  const normalized = sql.trimStart().toLowerCase()
-  return RETRYABLE_QUERY_PREFIXES.some((prefix) => normalized.startsWith(prefix))
 }
 
-export async function retryReadQuery<T>(
-  label: "query" | "execute",
-  sql: string | null,
-  run: () => Promise<T>,
-): Promise<T> {
-  try {
-    return await run()
-  } catch (error) {
-    if (!isRetryableReadQuery(sql) || !isTransientDbConnectionError(error)) {
-      throw error
-    }
-
-    const queryType = sql?.trimStart().split(/\s+/, 1)[0]?.toUpperCase() ?? "QUERY"
-    console.warn(`[db] transient database error on ${label} (${queryType}); retrying once`)
-    return run()
-  }
-}
-
-export function createRetryingPlanetScaleFetch(): PlanetScaleFetch {
-  return async (input, init) => {
-    const sql = extractPlanetScaleSql(init?.body)
-    let firstAttempt = true
-
-    return retryReadQuery("execute", sql, async () => {
-      const shouldRetryResponse = firstAttempt && isRetryableReadQuery(sql)
-      firstAttempt = false
-      const response = await globalThis.fetch(input, init)
-      if (shouldRetryResponse && TRANSIENT_DB_HTTP_STATUSES.has(response.status)) {
-        // Release the discarded response before issuing the bounded retry.
-        await response.body?.cancel()
-        throw response
+export function createRetryingPlanetScaleFetch() {
+  return async (input: string, init?: RequestInit): Promise<Response> => {
+    const started = performance.now()
+    init?.signal?.throwIfAborted()
+    try {
+      return await globalThis.fetch(input, init)
+    } catch (originalError) {
+      init?.signal?.throwIfAborted()
+      if (!isStandaloneRead(init?.body) || !isSocketFailure(originalError)) throw originalError
+      const backoff = 25 + Math.floor(Math.random() * 25)
+      if (performance.now() - started + backoff >= RETRY_BUDGET_MS) throw originalError
+      try {
+        await delay(backoff, undefined, { signal: init?.signal ?? undefined })
+        init?.signal?.throwIfAborted()
+        const remaining = Math.floor(RETRY_BUDGET_MS - (performance.now() - started))
+        if (remaining <= 0) throw originalError
+        const deadline = AbortSignal.timeout(remaining)
+        const signal = init?.signal ? AbortSignal.any([init.signal, deadline]) : deadline
+        console.warn("[db] retrying standalone PlanetScale read after socket failure")
+        return await globalThis.fetch(input, { ...init, signal })
+      } catch {
+        init?.signal?.throwIfAborted()
+        throw originalError
       }
-      return response
-    })
+    }
   }
 }
