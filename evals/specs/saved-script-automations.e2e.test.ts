@@ -478,8 +478,13 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
   expect(refreshedApp.body).toMatchObject({ onDashboard: true, view: { configObjectId: externalConfigObjectId } })
   expect(JSON.stringify(requireRecord(refreshedApp.body, "refreshed app").payload)).toContain(refreshMarker)
   expect(JSON.stringify(requireRecord(refreshedApp.body, "refreshed app").payload)).not.toContain(externalMarker)
-  expect((await appRequest(den.members.colleague, externalAppPath)).response.status).toBe(404)
-  expect(JSON.stringify((await appRequest(den.admin, appPath)).body)).not.toContain(refreshMarker)
+  const forbiddenApp = await appRequest(colleague, externalAppPath)
+  expect(forbiddenApp.response.status).toBe(403)
+  expect(forbiddenApp.body).not.toHaveProperty("payload")
+  expect(forbiddenApp.body).not.toHaveProperty("view")
+  const unrelatedApp = await appRequest(den.admin, appPath)
+  expect(JSON.stringify(unrelatedApp.body)).toContain(scheduledMarker)
+  expect(JSON.stringify(unrelatedApp.body)).not.toContain(refreshMarker)
   evidence.recordAssertionEvidence(
     "A connection beyond the first 16 works from chat discovery through a saved and refreshed app",
     "Search returned the seventeenth connection's callable script path. Its procedure executed, saved, reran and produced an app whose latest payload changed on refresh; the unrelated app and colleague's access stayed unchanged.",
