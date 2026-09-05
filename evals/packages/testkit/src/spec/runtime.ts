@@ -17,6 +17,7 @@ import {
   evaluateOnSurface,
   hoverAt,
   locate,
+  assertAbsent,
   navigate,
   pressKey,
   reload,
@@ -586,8 +587,6 @@ export class SeedChannel implements Seed {
   }
 }
 
-class VisibleTargetError extends Error {}
-
 export class UserChannel implements User {
   readonly #runtime: SpecRuntime;
   readonly #surface: Surface | null;
@@ -681,17 +680,7 @@ export class UserChannel implements User {
   notSee(target: Target, options: { timeoutMs?: number } = {}): Promise<void> {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("user", "notSee", `notSee(${targetDetail(target)})`, surface, async () => {
-      const timeoutMs = options.timeoutMs ?? 3_000;
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        try {
-          const found = await locate(surface, target);
-          if (found.visible) throw new VisibleTargetError(`${targetDetail(target)} remained visible. On screen: ${await dumpScreenState(surface)}.`);
-        } catch (error) {
-          if (error instanceof VisibleTargetError) throw error;
-        }
-        await new Promise((resolve) => setTimeout(resolve, Math.min(100, Math.max(0, deadline - Date.now()))));
-      }
+      await assertAbsent(surface, target, options.timeoutMs ?? 3_000);
     });
   }
 
