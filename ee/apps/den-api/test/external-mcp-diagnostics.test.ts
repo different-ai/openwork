@@ -5,6 +5,7 @@ import {
   EnterpriseMcpClientError,
   EnterpriseMcpLifecycleDeadlineError,
   EnterpriseMcpOAuthContractError,
+  EnterpriseMcpToolInputError,
 } from "@openwork/enterprise-mcp-client"
 import {
   ExternalMcpDiagnosticTracker,
@@ -502,6 +503,23 @@ describe("external MCP diagnostics", () => {
       providerErrorMessage: "Provider rejected private argument detail",
     })
     expect(error.diagnostic.operatorAction).toContain("do not retry the same arguments")
+    // The member-facing message must carry the provider's rejection so a
+    // dashboard launch that omits a required argument names that argument.
+    expect(error.message).toBe(
+      'The provider rejected the tool arguments. Provider-declared message (untrusted): "Provider rejected private argument detail".',
+    )
+  })
+
+  test("explains locally rejected non-JSON tool arguments", () => {
+    const tracker = new ExternalMcpDiagnosticTracker("req_invalid_json_arguments")
+    const error = tracker.error(new EnterpriseMcpToolInputError("MCP_TOOL_ARGUMENT_INVALID_JSON"))
+
+    expect(error.diagnostic).toMatchObject({
+      category: "mcp_tool_input_invalid",
+      code: "MCP_TOOL_ARGUMENT_INVALID_JSON",
+    })
+    expect(error.diagnostic.message).toContain("not valid JSON data")
+    expect(error.diagnostic.message).not.toContain("protocol lifecycle")
   })
 
   test("classifies downstream provider authorization links without treating -32001 as a timeout", () => {
@@ -1239,12 +1257,11 @@ describe("external MCP diagnostics", () => {
 
     expect(html).toContain("You're connected")
     expect(html).toContain("Enterprise MCP &lt;test&gt; is connected to OpenWork.")
-    expect(html).toContain("window.close();")
-    expect(html).toContain("Close window")
-    expect(html).toContain("Your browser prevented OpenWork from closing this tab automatically.")
-    expect(html).toContain("manualCloseGuidance.hidden = false")
-    expect(html).toContain("OpenWork Connect")
-    expect(html).toContain("background: #f8fbff")
+    expect(html).not.toContain("window.close")
+    expect(html).not.toContain("<button")
+    expect(html).toContain("You can close this window and return to OpenWork.")
+    expect(html).toContain('<div class="brand">')
+    expect(html).toContain("OpenWork</span>")
     expect(html).not.toContain("@keyframes")
     expect(html).not.toContain("openwork://")
     expect(html).not.toContain("Open OpenWork")

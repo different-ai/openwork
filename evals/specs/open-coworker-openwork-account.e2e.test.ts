@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { clickButton, coworker, evalIn, fill, needs, test, waitFor, waitForText } from "@openwork/testkit";
 import { expect, onTestFinished } from "vitest";
-import { buildGeneratedArtifactViewInWorker } from "../../ee/apps/den-api/src/generated-artifact-view-builder.js";
+import { buildStandardAppHtml } from "../worlds/coworker.ts";
 
 /**
  * Continue with OpenWork, end to end, without a real account: a deterministic
@@ -46,7 +46,7 @@ const RELEASE_SKILL_ID = "cob_eval_release";
  * skill behind them, and one standard MCP App so the coworker's Apps & tools
  * surface has something real to render.
  */
-const skillApp = await buildGeneratedArtifactViewInWorker({
+const skillAppHtml = await buildStandardAppHtml({
   reactSource: `export default function SkillStudio({ data }) {
     return <main><p className="eyebrow">SKILL STUDIO</p><h2>{data.title}</h2><p>{data.status}</p></main>
   }`,
@@ -59,8 +59,6 @@ const skillApp = await buildGeneratedArtifactViewInWorker({
   title: "Skill studio",
   description: "Deterministic OpenWork Connect App fixture.",
 });
-if (!skillApp.ok) throw new Error(`Connect App build failed: ${JSON.stringify(skillApp.diagnostics)}`);
-const skillAppHtml = skillApp.html;
 
 type GatewayCall = { endpoint: "gateway" | "connection"; method: string; tool: string; authorization: string };
 
@@ -461,6 +459,8 @@ async function openDetails(app: Awaited<ReturnType<typeof coworker>>): Promise<v
 
 test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"], commands: ["opencode"] });
+  let assignedTemplates: Array<Record<string, unknown>> = [];
+  let coworkerTeamsEnabled = false;
 
   // --- Mock organization model: an OpenAI-compatible endpoint that answers deterministically.
   const completionAuthorizations: string[] = [];
@@ -512,6 +512,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     },
     models: [{ id: MODEL_ID, name: MODEL_NAME, config: { tool_call: false, reasoning: false } }],
   };
+  let membershipResponse: "active" | "unpaid" | "setup" | "unavailable" | "admin" = "active";
   const den = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://den.local");
     // Self-hosted Den is addressed through its /api/den proxy path.
@@ -603,6 +604,22 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     }
     if (request.method === "GET" && path === "/v1/me/orgs") {
       respondJson(response, 200, { orgs: [{ id: ORG_ID, name: ORG_NAME }], activeOrgId: ORG_ID });
+      return;
+    }
+    if (request.method === "GET" && path === "/v1/inference") {
+      if (org !== ORG_ID) { respondJson(response, 403, { error: "wrong_organization" }); return; }
+      if (membershipResponse === "unavailable" || membershipResponse === "admin") { respondJson(response, membershipResponse === "admin" ? 403 : 503, { error: "unavailable" }); return; }
+      respondJson(response, 200, { inference: {
+        subscribed: membershipResponse !== "unpaid", enabled: membershipResponse === "active", upstreamProviderConfigured: membershipResponse === "active",
+        buckets: [
+          { windowType: "five_hour", windowStartAt: new Date(Date.now() - 60_000).toISOString(), windowEndAt: new Date(Date.now() + 60_000).toISOString(), limitAmount: 100, usedAmount: 25 },
+          { windowType: "weekly", windowStartAt: "2020-01-01T00:00:00Z", windowEndAt: "2020-01-08T00:00:00Z", limitAmount: 100, usedAmount: 0 },
+        ],
+      } });
+      return;
+    }
+    if (request.method === "GET" && path === "/v1/me/coworkers") {
+      respondJson(response, 200, { enabled: coworkerTeamsEnabled, items: assignedTemplates, nextCursor: null });
       return;
     }
     if (request.method === "GET" && path === "/v1/llm-providers") {
@@ -743,6 +760,16 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(isRecord(scout) && scout.model).toBe(`${PROVIDER_RECORD_ID}/${MODEL_ID}`);
   await backToActivity(app);
 
+  expect(await evalIn(app, `document.querySelector('[data-testid="coworker-discussion-empty"]')?.querySelectorAll("button").length`)).toBe(0);
+  await clickButtonContaining(app, "Starting points");
+  await waitFor(app, `(() => { const panel = document.querySelector('[aria-label="A useful first step"]'); if (!panel) return false; const rect = panel.getBoundingClientRect(); return rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight; })()`, { timeoutMs: 5_000, label: "starting points remain within the window" });
+  await clickButton(app, "Turn a goal into a plan");
+  const starter = await evalIn(app, `document.querySelector('textarea[aria-label="Message Scout"]')?.value ?? ""`);
+  expect(String(starter)).toContain("Ask what I want to achieve");
+  expect(await evalIn(app, `document.querySelectorAll('[data-message-role="user"]').length`)).toBe(0);
+  await fill(app, 'textarea[aria-label="Message Scout"]', "");
+  evidence.recordAssertionEvidence("A new conversation offers a useful starting point as an editable draft", "The quiet empty canvas retained its avatar and had no action cards. Opening Starting points beside the composer and choosing Turn a goal into a plan filled the composer with a practical request. It sent no message and created no work until the person chose Send.", true);
+
   evidence.recordAssertionEvidence(
     "The organization's model reaches Coworker settings labelled by source, without a model step in creation",
     `Scout was created from a name alone; in Coworker settings the picker grouped ${MODEL_NAME} under Eval Org Provider with an OpenWork Cloud tag and a summary naming ${ORG_NAME}, and selecting it persisted ${PROVIDER_RECORD_ID}/${MODEL_ID} on Scout.`,
@@ -798,6 +825,40 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     "Signing in wires OpenWork Connect into the coworker's workspace",
     `After sign-in the app minted ${mintedTokens} gateway token(s) and registered the gateway at ${denBaseUrl}/mcp/agent in Scout's workspace; the embedded server reported it usable with both capability tools present, every gateway call carried the minted bearer token, the Apps & tools root row read Connected as ${ORG_NAME}, and the Connected screen led with Ask Scout and Create a skill enabled and no MCP vocabulary.`,
     true,
+  );
+
+  const ownToolsEndpoint = await evalIn(app, `(async () => {
+    const runtime = await window.__COWORKER__.invoke("runtime.info");
+    const scout = await window.__COWORKER__.invoke("coworkers.get", { slug: "scout" });
+    const response = await fetch(runtime.result.serverUrl + "/workspace/" + encodeURIComponent(scout.result.workspaceId) + "/config", {
+      headers: { Authorization: "Bearer " + runtime.result.ownerToken },
+    });
+    const config = await response.json();
+    return { status: response.status, url: config.opencode?.mcp?.coworker?.url };
+  })()`, { awaitPromise: true, timeoutMs: 30_000 });
+  if (!isRecord(ownToolsEndpoint) || typeof ownToolsEndpoint.url !== "string") throw new Error("Coworker tools endpoint was unavailable.");
+  expect(ownToolsEndpoint.status).toBe(200);
+  expect(new URL(ownToolsEndpoint.url).hostname).toBe("127.0.0.1");
+  for (const authorization of ["Basic unknown", "Bearer " + " ".repeat(8_000) + "invalid token", "Bearer unknown"] ) {
+    const rejected = await fetch(ownToolsEndpoint.url, { method: "POST", headers: { Authorization: authorization }, body: "{}", signal: AbortSignal.timeout(5_000) });
+    expect(rejected.status).toBe(401);
+    expect(await rejected.json()).toMatchObject({ error: "unauthorized" });
+  }
+  const ownTools = await evalIn(app, `(async () => {
+    const runtime = await window.__COWORKER__.invoke("runtime.info");
+    const scout = await window.__COWORKER__.invoke("coworkers.get", { slug: "scout" });
+    const response = await fetch(runtime.result.serverUrl + "/workspace/" + encodeURIComponent(scout.result.workspaceId) + "/mcp/coworker/tools", {
+      headers: { Authorization: "Bearer " + runtime.result.ownerToken },
+    });
+    const listed = await response.json();
+    return { status: response.status, count: listed.tools?.length ?? 0 };
+  })()`, { awaitPromise: true, timeoutMs: 30_000 });
+  expect(ownTools).toMatchObject({ status: 200 });
+  if (!isRecord(ownTools) || typeof ownTools.count !== "number") throw new Error("Coworker tool discovery was unavailable.");
+  expect(ownTools.count).toBeGreaterThan(0);
+  evidence.recordAssertionEvidence(
+    "The packaged coworker tool server rejects malformed bearer credentials and remains usable with its registered credentials",
+    "Unknown, wrong-scheme, and long whitespace-bearing credentials returned 401 without tool access; authenticated tool discovery still returned the coworker's tools afterward.", true,
   );
 
   // --- The Connected screen's four groups, read through the gateway's skill index and its search.
@@ -967,10 +1028,14 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     true,
   );
 
-  // --- Reload: account, providers, and selection all persist; settings explain the source of every provider.
+  // --- Reload: unsent work, account, providers, and selection persist.
+  await fill(app, 'textarea[aria-label="Message Scout"]', "Keep this unfinished request for my return.");
   await evalIn(app, "location.reload(); true");
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Scout")`, { timeoutMs: 120_000, label: "Scout discussion view" });
   await waitForText(app, REPLY, { timeoutMs: 60_000 });
+  expect(await evalIn(app, `document.querySelector('textarea[aria-label="Message Scout"]')?.value`)).toBe("Keep this unfinished request for my return.");
+  expect(String(await evalIn(app, `[...document.querySelectorAll('[data-message-role="user"]')].map((element) => element.textContent).join("\\n")`))).not.toContain("Keep this unfinished request for my return.");
+  await fill(app, 'textarea[aria-label="Message Scout"]', "");
   await clickButtonContaining(app, ORG_NAME);
   await waitForText(app, "OpenWork settings", { timeoutMs: 30_000 });
   await clickButton(app, "Account");
@@ -991,6 +1056,42 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(modelsText).toContain(PROVIDER_RECORD_ID);
   expect(modelsText).not.toContain(PROVIDER_API_KEY);
 
+  await waitForText(app, "Membership active", { timeoutMs: 30_000 });
+  const membershipText = String(await evalIn(app, `document.querySelector('[data-testid="models-membership"]')?.textContent ?? ""`));
+  expect(membershipText).toContain("75% left");
+  expect(membershipText).toContain("Waiting for refreshed usage");
+  expect(membershipText).toContain("Manage membership");
+  expect(membershipText).not.toMatch(/free credits|launch offer|limited offer|guaranteed faster/);
+  expect(denRequests.filter((entry) => entry.path === "/v1/inference").every((entry) => entry.authorization === `Bearer ${SESSION_TOKEN}` && entry.org === ORG_ID)).toBe(true);
+  membershipResponse = "unavailable";
+  await clickButton(app, "Refresh membership & models");
+  await waitForText(app, "Membership status is unavailable", { timeoutMs: 30_000 });
+  expect(String(await evalIn(app, `document.querySelector('[data-testid="models-membership"]')?.textContent ?? ""`))).not.toContain("No active Models membership");
+  membershipResponse = "admin";
+  await clickButton(app, "Refresh membership & models");
+  await waitForText(app, "Your workspace admin manages the membership", { timeoutMs: 30_000 });
+  membershipResponse = "unpaid";
+  await clickButton(app, "Refresh membership & models");
+  await waitForText(app, "No active Models membership", { timeoutMs: 30_000 });
+  const unpaidText = String(await evalIn(app, `document.querySelector('[data-testid="models-membership"]')?.textContent ?? ""`));
+  expect(unpaidText).toContain("View models & pricing");
+  expect(unpaidText).not.toMatch(/Manage membership|75% left|Membership active/);
+  membershipResponse = "setup";
+  await clickButton(app, "Refresh membership & models");
+  await waitForText(app, "Membership active · setup needs attention", { timeoutMs: 30_000 });
+  const setupText = String(await evalIn(app, `document.querySelector('[data-testid="models-membership"]')?.textContent ?? ""`));
+  expect(setupText).toContain("Finish Models setup");
+  expect(setupText).not.toMatch(/No active Models membership|View models & pricing/);
+  membershipResponse = "active";
+  await clickButton(app, "Refresh membership & models");
+  await waitForText(app, "Manage membership", { timeoutMs: 30_000 });
+  expect(denRequests.filter((entry) => entry.path === "/v1/inference").every((entry) => entry.authorization === `Bearer ${SESSION_TOKEN}` && entry.org === ORG_ID)).toBe(true);
+  expect(denRequests.some((entry) => entry.method === "POST" && /billing|checkout/.test(entry.path))).toBe(false);
+  evidence.recordAssertionEvidence(
+    "Models membership shows authenticated workspace usage; errors and member permissions never masquerade as an unpaid subscription",
+    "The account-scoped read showed 75% remaining and a management action, refused to present an expired bucket as fresh usage, and explained 503 and 403 without an unpaid claim. Confirmed unpaid accounts saw pricing; paid accounts needing setup saw Finish Models setup. No checkout was created and no promotion was advertised.", true,
+  );
+
   evidence.recordAssertionEvidence(
     "Account and provider state survive reload and are explained without exposing secrets",
     "After reload the discussion and reply were still present, Account showed OpenWork connected with the organization and member, and AI models listed the organization provider under OpenWork Cloud. Neither the session token nor the provider key appeared on screen.",
@@ -1007,6 +1108,8 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(await evalIn(app, `window.localStorage.getItem("coworker.den.session.v1")`)).toBeNull();
   await clickButton(app, "AI models");
   // The sweep reloads the engine asynchronously; re-read the catalog until the account group is gone.
+  await waitFor(app, `document.querySelector('[data-testid="models-membership"]')?.getAttribute("data-state") === "signed-out"`, { timeoutMs: 30_000, label: "membership clears on sign-out" });
+  expect(String(await evalIn(app, `document.querySelector('[data-testid="models-membership"]')?.textContent ?? ""`))).not.toMatch(/Membership active|75% left/);
   const sweepDeadline = Date.now() + 180_000;
   for (;;) {
     const swept = await evalIn(app, `(() => {
@@ -1068,4 +1171,67 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     `After Sign out the settings showed Local mode with no OpenWork Cloud group, the Apps & tools root row read Not connected with the Connect explanation as the Connected screen's first step again (Skip left the short card), and the next discussion turn failed visibly with a plain headline, naming ${PROVIDER_RECORD_ID}/${MODEL_ID} in the detail, explaining that no account is signed in, with Continue with OpenWork and Choose AI model actions.`,
     true,
   );
+
+  // A new teammate receives a prepared team through the same account handoff.
+  await app.stop();
+  const starts = completionAuthorizations.length;
+  const startingTemplate = { kind: "coworker", schemaVersion: 1, description: "Ready for the marketing team", role: "Marketing", mission: "Help plan campaigns", instructions: "Ask for the audience before drafting.", provisioning: "automatic" };
+  coworkerTeamsEnabled = true;
+  assignedTemplates = [
+    { id: "campaign", versionId: "one", assigned: true, template: { ...startingTemplate, name: "Campaign partner" } },
+    { id: "research", versionId: "one", assigned: true, template: { ...startingTemplate, name: "Research partner" } },
+    { id: "catalog", versionId: "one", assigned: false, template: { ...startingTemplate, name: "Catalog only" } },
+    { id: "optional", versionId: "one", assigned: true, template: { ...startingTemplate, name: "Optional partner", provisioning: "optional" } },
+  ];
+  await using teammateApp = await coworker({ name: "assigned-team", env: { COWORKER_DEN_BASE_URL: denBaseUrl } });
+  await clickTestId(teammateApp, "onboarding-cloud-choice");
+  await waitForText(teammateApp, "Continue with OpenWork", { timeoutMs: 120_000 });
+  await fill(teammateApp, 'input[placeholder^="opencoworker://den-auth"]', `opencoworker://den-auth?grant=${GRANT}&denBaseUrl=${encodeURIComponent(denBaseUrl)}`);
+  await clickButton(teammateApp, "Connect");
+  await waitFor(teammateApp, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && document.body.innerText.includes("Campaign partner")`, { timeoutMs: 180_000, label: "assigned coworkers ready after first sign-in" });
+  const readTeam = () => evalIn(teammateApp, `(async () => (await window.__COWORKER__.invoke("coworkers.list")).result.map(({slug, name, model, automations}) => ({slug, name, model, automations})))()`, { awaitPromise: true });
+  expect(await readTeam()).toEqual([
+    expect.objectContaining({ name: "Campaign partner", automations: [] }),
+    expect.objectContaining({ name: "Research partner", automations: [] }),
+  ]);
+  const initialSoul = await evalIn(teammateApp, `(async () => (await window.__COWORKER__.invoke("coworkers.files.read", {slug:"campaign-partner", path:"soul.md"})).result.content)()`, { awaitPromise: true });
+  expect(initialSoul).toContain(startingTemplate.instructions);
+  expect(completionAuthorizations.length).toBe(starts);
+  expect(denRequests.filter((entry) => entry.path === "/v1/me/coworkers").every((entry) => entry.authorization === `Bearer ${SESSION_TOKEN}` && entry.org === ORG_ID)).toBe(true);
+  evidence.recordAssertionEvidence("An assigned team is ready on first account sign-in", "A fresh Open Coworker profile signed in through the real handoff and displayed Campaign partner and Research partner without manual creation. The reusable instructions were installed; optional and catalog-only coworkers were not created. No scheduled work was imported, and provisioning made no completion requests.", true);
+
+  await evalIn(teammateApp, `(async () => window.__COWORKER__.invoke("coworkers.files.write", {slug:"campaign-partner", path:"memory/working.md", content:"My campaign work stays here."}))()`, { awaitPromise: true });
+  assignedTemplates[0] = { ...assignedTemplates[0], versionId: "two", template: { ...startingTemplate, name: "Campaign partner", instructions: "New instructions for future copies." } };
+  await evalIn(teammateApp, "location.reload(); true");
+  await waitFor(teammateApp, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]'))`, { timeoutMs: 120_000, label: "assigned team after reload" });
+  await clickButtonContaining(teammateApp, ORG_NAME);
+  await clickButton(teammateApp, "Account");
+  await clickButton(teammateApp, "Refresh assigned coworkers");
+  await waitForText(teammateApp, "Template updated · your working copy is preserved", { timeoutMs: 120_000 });
+  expect(await readTeam()).toHaveLength(2);
+  const preserved = await evalIn(teammateApp, `(async () => {
+    const read = async (path) => (await window.__COWORKER__.invoke("coworkers.files.read", {slug:"campaign-partner", path})).result.content;
+    return { memory: await read("memory/working.md"), soul: await read("soul.md") };
+  })()`, { awaitPromise: true });
+  expect(preserved).toMatchObject({ memory: "My campaign work stays here.", soul: expect.stringContaining(startingTemplate.instructions) });
+  await waitFor(teammateApp, `(() => { const button = document.querySelector('[data-template-id="optional"] button'); if (!(button instanceof HTMLButtonElement) || button.disabled) return false; button.click(); return true; })()`, { timeoutMs: 30_000, label: "add an optional assigned coworker" });
+  await waitFor(teammateApp, `document.querySelector('[data-template-id="optional"]')?.textContent.includes("Already added")`, { timeoutMs: 120_000, label: "optional coworker added" });
+  expect(await readTeam()).toHaveLength(3);
+  await evalIn(teammateApp, `(async () => window.__COWORKER__.invoke("coworkers.delete", {slug:"research-partner"}))()`, { awaitPromise: true });
+  await clickButton(teammateApp, "Refresh assigned coworkers");
+  await waitFor(teammateApp, `!document.querySelector('[data-testid="assigned-coworkers"] button')?.disabled`, { timeoutMs: 120_000, label: "assignment refresh after retirement" });
+  expect(await readTeam()).toHaveLength(2);
+  expect(completionAuthorizations.length).toBe(starts);
+  coworkerTeamsEnabled = false;
+  await clickButton(teammateApp, "Refresh assigned coworkers");
+  await waitFor(teammateApp, `document.querySelector('[data-testid="assigned-coworkers"]')?.textContent.includes("Coworker templates") && !document.querySelector('[data-template-id="optional"]')`, { timeoutMs: 30_000, label: "disabled team controls hidden" });
+  expect(await readTeam()).toHaveLength(2);
+  expect(await evalIn(teammateApp, `document.body.innerText.includes("Refresh assigned coworkers")`)).toBe(false);
+  coworkerTeamsEnabled = true;
+  await clickButton(teammateApp, "General");
+  await clickButton(teammateApp, "Account");
+  await waitForText(teammateApp, "Refresh assigned coworkers", { timeoutMs: 30_000 });
+  expect(await readTeam()).toHaveLength(2);
+  evidence.recordAssertionEvidence("Turning prepared teams off hides their controls while keeping personal coworkers", "The disabled catalog deliberately still contained templates; the client failed closed on enabled=false, hid team controls, and preserved both personal coworkers. Returning to Account after re-enabling discovered the flag and restored the controls without duplicates.", true);
+  evidence.recordAssertionEvidence("Refreshes preserve personal work, optional choices, and retirement", "After a version update and reload, the team still had two coworkers and Account explained the preserved working copy. Original starting instructions and edited working memory were unchanged. Explicitly adding an optional coworker created one copy; retiring another and refreshing did not recreate it. No background completion requests were made.", true);
 });

@@ -13,7 +13,7 @@ import { DenSwitch } from "../../_components/ui/switch";
 import { getManagedDashboardsRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { useMcpConnections } from "./mcp-connections-data";
-import { connectionCanListMcpApps } from "./dashboard-mcp-app-catalog";
+import { connectionCanListMcpApps, dashboardCapabilityKey, dashboardElementKey } from "./dashboard-mcp-app-catalog";
 import { OrgMemberIdentity } from "./org-member-identity";
 import {
   type ConnectionMcpAppCatalogItem,
@@ -29,8 +29,12 @@ import {
   useUpdateDashboard,
 } from "./org-dashboards-data";
 
-function elementKey(element: DashboardElement) {
-  return `${element.serverName}:${element.toolName}`;
+/** Required launch-input keys the author left out (or set to undefined). */
+export function missingRequiredInputKeys(
+  requiredInputKeys: string[],
+  launchArguments: Record<string, unknown>,
+): string[] {
+  return requiredInputKeys.filter((key) => !Object.hasOwn(launchArguments, key) || launchArguments[key] === undefined);
 }
 
 export function OrgDashboardDetailScreen({ dashboardId }: { dashboardId: string }) {
@@ -45,11 +49,18 @@ export function OrgDashboardDetailScreen({ dashboardId }: { dashboardId: string 
 
   const dashboard = dashboardQuery.data ?? null;
   const elements = dashboard?.elements ?? [];
-  const existingKeys = useMemo(() => new Set(elements.map(elementKey)), [elements]);
+  const existingKeys = useMemo(() => new Set(elements.map(dashboardElementKey)), [elements]);
   const busy = updateMutation.isPending || deleteMutation.isPending;
 
   function saveElements(next: DashboardElement[]) {
     updateMutation.mutate({ dashboardId, elements: next });
+  }
+
+  /** Adds a tile unless an identical one (same app, same launch input) is already on the dashboard. */
+  function addElement(element: DashboardElement): boolean {
+    if (existingKeys.has(dashboardElementKey(element))) return false;
+    saveElements([...elements, element]);
+    return true;
   }
 
   function moveElement(index: number, direction: -1 | 1) {
@@ -149,11 +160,12 @@ export function OrgDashboardDetailScreen({ dashboardId }: { dashboardId: string 
         ) : (
           <div className="divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white">
             {elements.map((element, index) => (
-              <div key={elementKey(element)} className="flex items-center gap-3 px-5 py-3.5">
+              <div key={dashboardElementKey(element)} className="flex items-center gap-3 px-5 py-3.5">
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[13.5px] font-medium text-gray-900">{element.title}</p>
                   <p className="truncate text-[12px] text-gray-400">
                     {element.toolName}
+                    {element.launchArguments ? ` · ${JSON.stringify(element.launchArguments)}` : ""}
                     {element.organizationAutoLaunch
                       ? " · runs automatically by organization policy"
                       : element.requiresApproval ? " · runs on request" : ""}
@@ -234,11 +246,9 @@ export function OrgDashboardDetailScreen({ dashboardId }: { dashboardId: string 
 
       {pickerOpen ? (
         <AddDashboardAppDialog
-          existingKeys={existingKeys}
+          elements={elements}
           onClose={() => setPickerOpen(false)}
-          onAdd={(element) => {
-            if (!existingKeys.has(elementKey(element))) saveElements([...elements, element]);
-          }}
+          onAdd={addElement}
         />
       ) : null}
     </DashboardPageTemplate>
@@ -246,13 +256,13 @@ export function OrgDashboardDetailScreen({ dashboardId }: { dashboardId: string 
 }
 
 function AddDashboardAppDialog({
-  existingKeys,
+  elements,
   onClose,
   onAdd,
 }: {
-  existingKeys: Set<string>;
+  elements: DashboardElement[];
   onClose: () => void;
-  onAdd: (element: DashboardElement) => void;
+  onAdd: (element: DashboardElement) => boolean;
 }) {
   const connectionsQuery = useMcpConnections("manageable");
   const connections = useMemo(
@@ -319,9 +329,9 @@ function AddDashboardAppDialog({
             <div className="divide-y divide-gray-100 rounded-xl border border-gray-100">
               {visibleApps.map((app) => (
                 <ConnectionAppRow
-                  key={elementKey(app)}
+                  key={dashboardCapabilityKey(app)}
                   app={app}
-                  added={existingKeys.has(elementKey(app))}
+                  addedCount={elements.filter((element) => dashboardCapabilityKey(element) === dashboardCapabilityKey(app)).length}
                   onAdd={onAdd}
                 />
               ))}
@@ -339,12 +349,13 @@ function AddDashboardAppDialog({
 
 function ConnectionAppRow({
   app,
-  added,
+  addedCount,
   onAdd,
 }: {
   app: ConnectionMcpAppCatalogItem;
-  added: boolean;
-  onAdd: (element: DashboardElement) => void;
+  /** Tiles already using this app; the app stays addable with different launch input. */
+  addedCount: number;
+  onAdd: (element: DashboardElement) => boolean;
 }) {
   const [argumentsText, setArgumentsText] = useState("");
   const [argumentsError, setArgumentsError] = useState<string | null>(null);
@@ -364,9 +375,15 @@ function ConnectionAppRow({
         setArgumentsError("Launch input must be valid JSON.");
         return;
       }
+      // A tile whose input omits a key the tool requires fails on every
+      // launch, so refuse it here and name the missing keys.
+      const missingKeys = missingRequiredInputKeys(app.requiredInputKeys, launchArguments);
+      if (missingKeys.length > 0) {
+        setArgumentsError(`Launch input is missing required ${missingKeys.length === 1 ? "key" : "keys"}: ${missingKeys.join(", ")}.`);
+        return;
+      }
     }
-    setArgumentsError(null);
-    onAdd({
+    const added = onAdd({
       serverName: app.serverName,
       connectionId: app.connectionId,
       toolName: app.toolName,
@@ -377,6 +394,7 @@ function ConnectionAppRow({
       ...(app.requiresApproval ? { requiresApproval: true } : {}),
       ...(organizationAutoLaunch ? { organizationAutoLaunch: true } : {}),
     });
+    setArgumentsError(added ? null : "This app is already on the dashboard with the same launch input.");
   }
 
   return (
@@ -390,37 +408,51 @@ function ConnectionAppRow({
             {app.requiresApproval ? " · modifies data, runs on request" : ""}
           </p>
         </div>
-        {added ? (
-          <span className="inline-flex items-center gap-1 text-[12px] text-emerald-600">
-            <Check className="h-3.5 w-3.5" aria-hidden /> Added
+        {addedCount > 0 ? (
+          <span className="inline-flex shrink-0 items-center gap-1 text-[12px] text-emerald-600">
+            <Check className="h-3.5 w-3.5" aria-hidden />
+            {addedCount === 1 ? "Added" : `Added ×${addedCount}`}
           </span>
-        ) : (
-          <DenButton size="sm" variant="secondary" onClick={add}>Add</DenButton>
-        )}
+        ) : null}
+        <DenButton size="sm" variant="secondary" onClick={add}>
+          {addedCount > 0 ? "Add another" : "Add"}
+        </DenButton>
       </div>
-      {!added ? (
-        <div className="mt-3 flex items-start justify-between gap-4 rounded-xl bg-amber-50 px-3 py-2.5">
-          <div>
-            <p className="text-[12px] font-medium text-amber-950">Run automatically</p>
-            <p className="mt-0.5 text-[11.5px] leading-4 text-amber-800">
-              Run on dashboard load and refresh, even if this app modifies data.
-            </p>
-          </div>
-          <DenSwitch
-            size="sm"
-            checked={organizationAutoLaunch}
-            onChange={setOrganizationAutoLaunch}
-            aria-label={`Run ${app.title} automatically, even if it modifies data`}
-          />
-        </div>
+      {app.requiresInput ? (
+        <p className="mt-2 text-[11.5px] leading-4 text-gray-500">
+          Each launch input adds its own tile, so the same app can appear more than once with different input.
+        </p>
       ) : null}
-      {!added && app.requiresInput ? (
+      <div className="mt-3 flex items-start justify-between gap-4 rounded-xl bg-amber-50 px-3 py-2.5">
+        <div>
+          <p className="text-[12px] font-medium text-amber-950">Run automatically</p>
+          <p className="mt-0.5 text-[11.5px] leading-4 text-amber-800">
+            Run on dashboard load and refresh, even if this app modifies data.
+          </p>
+        </div>
+        <DenSwitch
+          size="sm"
+          checked={organizationAutoLaunch}
+          onChange={setOrganizationAutoLaunch}
+          aria-label={`Run ${app.title} automatically, even if it modifies data`}
+        />
+      </div>
+      {app.requiresInput ? (
         <label className="mt-2 block">
           <span className="mb-1 block text-[11.5px] font-medium text-gray-600">Launch input (JSON, required by this app)</span>
+          {app.requiredInputKeys.length > 0 ? (
+            <span className="mb-1 block text-[11.5px] text-gray-500" data-testid="required-input-keys">
+              Required {app.requiredInputKeys.length === 1 ? "key" : "keys"}: {app.requiredInputKeys.map((key) => (
+                <code key={key} className="mr-1 rounded bg-gray-100 px-1 font-mono text-[11px] text-gray-800">{key}</code>
+              ))}
+            </span>
+          ) : null}
           <textarea
             value={argumentsText}
             onChange={(event) => setArgumentsText(event.target.value)}
-            placeholder='{ "example": "value" }'
+            placeholder={app.requiredInputKeys.length > 0
+              ? `{ ${app.requiredInputKeys.map((key) => `"${key}": "…"`).join(", ")} }`
+              : '{ "example": "value" }'}
             rows={2}
             className="w-full resize-none rounded-xl border border-gray-200 px-3 py-2 font-mono text-[12px] text-gray-900 outline-none transition placeholder:text-gray-300 focus:border-gray-400"
           />

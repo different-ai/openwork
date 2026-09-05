@@ -93,3 +93,47 @@ test("scripts and records deterministic OpenAI-compatible agent tool rounds", as
   assert.deepEqual(requests.map((request) => request.completedTools), [0, 1, 2]);
   assert.deepEqual(requests.map((request) => request.matchedMarkers), [[marker], [marker], [marker]]);
 });
+
+test("a declared quiet completion opens the stream, never ends it, and yields to the next request", async () => {
+  const marker = "agent-workload-quiet-marker";
+  await using mock = await startMockMcp({
+    port: await allocateFreePort(),
+    agentWorkloads: [{
+      promptMarker: marker,
+      finalReply: "quiet workload complete",
+      steps: [{ tool: "read", arguments: { filePath: "/tmp/quiet.txt" } }],
+      quietCompletions: 1,
+    }],
+  });
+  const startedAt = new Date().toISOString();
+
+  const controller = new AbortController();
+  const quiet = await fetch(`${mock.url}/v1/chat/completions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(completionBody(marker, 0)),
+    signal: controller.signal,
+  });
+  assert.equal(quiet.status, 200);
+  assert.equal(quiet.headers.get("content-type"), "text/event-stream");
+  const reader = quiet.body?.getReader();
+  assert.ok(reader);
+  const opening = await reader.read();
+  assert.match(new TextDecoder().decode(opening.value), /"role":"assistant"/);
+  const next = await Promise.race([
+    reader.read().then(() => "ended"),
+    new Promise<string>((resolve) => setTimeout(() => resolve("still quiet"), 1_500)),
+  ]);
+  assert.equal(next, "still quiet");
+  controller.abort();
+
+  const second = await fetch(`${mock.url}/v1/chat/completions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(completionBody(marker, 0)),
+  });
+  assert.match(await second.text(), /"name":"read"/);
+
+  const requests = await mock.agentRequests({ promptMarker: marker, sinceIso: startedAt, atLeast: 2, timeoutMs: 5_000 });
+  assert.deepEqual(requests.map((request) => request.kind), ["quiet", "tool"]);
+});

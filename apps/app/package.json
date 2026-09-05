@@ -30,7 +30,8 @@
     "test:fs-engine": "node scripts/fs-engine.mjs",
     "test:local-file-path": "node scripts/local-file-path.mjs",
     "test:browser-entry": "node scripts/browser-entry.mjs",
-    "test:e2e": "pnpm test:local-file-path && node scripts/e2e.mjs && node scripts/session-switch.mjs && node scripts/fs-engine.mjs && node scripts/browser-entry.mjs"
+    "test:e2e": "pnpm test:local-file-path && node scripts/e2e.mjs && node scripts/session-switch.mjs && node scripts/fs-engine.mjs && node scripts/browser-entry.mjs",
+    "test:core": "bun test --isolate tests/session-admission-terminal-invariant.test.ts tests/session-sync-lifecycle.test.ts tests/session-sync-permissions.test.ts tests/session-sync-run-status.test.ts tests/session-sync-stream-generation-restart.test.ts tests/session-sync-token-rotation.test.ts tests/session-sync-tool-parts.test.ts tests/session-transition-controller.test.ts tests/session-management-store.test.ts tests/opencode-stream-timeout.test.ts tests/safe-edit-resend.test.ts tests/attachment-file-part.test.ts tests/attachment-artifacts.test.ts tests/cloud-provider-credentials.test.ts tests/cloud-provider-sync-gateway.test.ts tests/connect-policy-reconciler.test.ts tests/connect-link-parse.test.ts tests/den-session-offline-resilience.test.ts"
   },
   "dependencies": {
     "@ai-sdk/react": "^3.0.148",
@@ -47,6 +48,7 @@
     "@modelcontextprotocol/ext-apps": "^1.7.5",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@opencode-ai/sdk": "^1.18.15",
+    "@openwork/browser-tabs": "workspace:*",
     "@openwork/install-config": "workspace:*",
     "@openwork/types": "workspace:*",
     "@openwork/ui": "workspace:*",
@@ -65,7 +67,6 @@
     "boring-avatars": "^2.0.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "cmdk": "^1.1.1",
     "dompurify": "^3.4.12",
     "emojilib": "^4.0.3",
     "fuzzysort": "^3.1.0",

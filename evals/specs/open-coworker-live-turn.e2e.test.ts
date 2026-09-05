@@ -199,6 +199,27 @@ async function send(app: App, prompt: string): Promise<void> {
   await clickButton(app, "Send");
 }
 
+/** Open the first landed reply's "Thought through" line, read the thinking from its popover, and close it — measuring that the bubble did not grow. */
+async function readLandedThinking(app: App): Promise<{ text: string; bubbleHeightBefore: number; bubbleHeightWhileOpen: number }> {
+  const before = Number(await evalIn(app, `(() => {
+    const line = document.querySelector('[data-testid="coworker-thinking"]');
+    const bubble = line?.closest('[data-message-role="assistant"]');
+    const height = bubble?.getBoundingClientRect().height ?? 0;
+    line?.querySelector("button")?.click();
+    return height;
+  })()`));
+  const read = await waitFor(app, `(() => {
+    const popover = document.querySelector('[data-testid="coworker-details-popover"]');
+    if (!popover) return false;
+    const bubble = document.querySelector('[data-testid="coworker-thinking"]')?.closest('[data-message-role="assistant"]');
+    return { text: popover.querySelector('[data-testid="coworker-thinking-landed-text"]')?.textContent?.trim() ?? "", height: bubble?.getBoundingClientRect().height ?? 0 };
+  })()`, { timeoutMs: 10_000, label: "the thinking popover of a landed reply" });
+  await evalIn(app, `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); true`);
+  await waitFor(app, `!document.querySelector('[data-testid="coworker-details-popover"]')`, { timeoutMs: 5_000, label: "the thinking popover closed" });
+  if (!isRecord(read)) throw new Error("Thinking popover facts were unavailable.");
+  return { text: String(read.text), bubbleHeightBefore: before, bubbleHeightWhileOpen: Number(read.height) };
+}
+
 async function waitForSettled(app: App, reply: string, timeoutMs = 120_000): Promise<void> {
   await waitFor(app, `[...document.querySelectorAll('[data-testid="coworker-reply-bubble"]')].some((bubble) => (bubble.textContent ?? "").includes(${json(reply)}))
     && document.querySelector('[data-testid="coworker-thread-status"]')?.dataset.state === "idle"
@@ -353,13 +374,17 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
       live: document.querySelectorAll('[data-live="true"]').length,
       text: reply?.textContent?.trim() ?? "",
       tooltip: reply?.getAttribute("title") ?? "",
-      thoughtThrough: [...document.querySelectorAll('[data-testid="coworker-thinking"]')].map((node) => node.textContent?.trim() ?? ""),
+      thoughtThrough: [...document.querySelectorAll('[data-testid="coworker-thinking"] button')].map((node) => node.textContent?.trim() ?? ""),
     };
   })()`);
   expect(landed).toMatchObject({ assistantBubbles: 1, live: 0, text: THINK_REPLY });
   if (!isRecord(landed) || typeof landed.tooltip !== "string" || !Array.isArray(landed.thoughtThrough)) throw new Error("Landed facts were unavailable.");
   expect(landed.tooltip).toMatch(/^Answered by eval-scripted\/scripted · first words in (under a second|\d+(\.\d)? s) · \d+(\.\d)? s in all$/);
-  expect(landed.thoughtThrough.join(" ")).toContain("Vendor B is steady.");
+  expect(landed.thoughtThrough.map((line) => String(line).replace(/\s*›$/, ""))).toEqual(["Thought through"]);
+  // The thinking waits behind the line and opens over the transcript, not inside it: the bubble keeps the height it landed with.
+  const thinkingRead = await readLandedThinking(app);
+  expect(thinkingRead.text).toContain("Vendor B is steady.");
+  expect(thinkingRead.bubbleHeightBefore).toBe(thinkingRead.bubbleHeightWhileOpen);
   const firstWordsMs = Number(/first words in (\d+(?:\.\d)?) s/.exec(landed.tooltip)?.[1] ?? "0") * 1_000;
   const expectedThinkingMs = THINK_REASONING.length * REASONING_CHUNK_MS;
   const speedFacts = await evalIn(app, `(async () => {
@@ -446,10 +471,10 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   const afterReload = await waitFor(app, `(() => {
     const bubbles = [...document.querySelectorAll('[data-testid="coworker-reply-bubble"]')];
     if (bubbles.length < 4) return false;
-    return { tooltip: bubbles[0]?.getAttribute("title") ?? "", thoughtThrough: [...document.querySelectorAll('[data-testid="coworker-thinking"]')].map((node) => node.textContent?.trim() ?? "") };
+    return { tooltip: bubbles[0]?.getAttribute("title") ?? "", thoughtThrough: document.querySelectorAll('[data-testid="coworker-thinking"]').length };
   })()`, { timeoutMs: 60_000, label: "the replies after a reload" });
-  expect(afterReload).toMatchObject({ tooltip: landed.tooltip });
-  expect((isRecord(afterReload) && Array.isArray(afterReload.thoughtThrough) ? afterReload.thoughtThrough : []).join(" ")).toContain("Vendor B is steady.");
+  expect(afterReload).toMatchObject({ tooltip: landed.tooltip, thoughtThrough: 1 });
+  expect((await readLandedThinking(app)).text).toContain("Vendor B is steady.");
   evidence.recordAssertionEvidence(
     "A reload keeps the speed line and the thinking",
     `After a reload the first reply's tooltip still read "${landed.tooltip}" and its "Thought through" fold still held the thinking.`,

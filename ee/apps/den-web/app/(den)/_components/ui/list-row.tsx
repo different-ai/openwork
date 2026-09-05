@@ -10,6 +10,8 @@ export type DenListRowProps = {
   meta?: ReactNode;
   action?: ReactNode;
   href?: string;
+  onClick?: () => void;
+  ariaLabel?: string;
   tone?: DenListRowTone;
   /** Temporary emphasis, e.g. a row targeted by a deep link. */
   focused?: boolean;
@@ -36,11 +38,13 @@ export function DenListRow({
   meta,
   action,
   href,
+  onClick,
+  ariaLabel,
   tone = "default",
   focused = false,
   dataAttributes,
 }: DenListRowProps) {
-  const className = `flex items-center gap-3 px-6 py-4 transition ${tone === "warning" ? "bg-amber-50/40" : ""} ${href ? "hover:bg-gray-50" : ""} ${focused ? "bg-blue-50/70 ring-2 ring-inset ring-blue-200" : ""}`;
+  const className = `flex items-center gap-3 px-6 py-4 transition ${tone === "warning" ? "bg-amber-50/40" : ""} ${href || onClick ? "cursor-pointer hover:bg-gray-50" : ""} ${focused ? "bg-blue-50/70 ring-2 ring-inset ring-blue-200" : ""}`;
   const content = (
     <>
       {leading}
@@ -60,6 +64,27 @@ export function DenListRow({
       <Link {...dataAttributes} href={href} className={className}>
         {content}
       </Link>
+    );
+  }
+
+  if (onClick) {
+    return (
+      <div
+        {...dataAttributes}
+        role="button"
+        tabIndex={0}
+        aria-label={ariaLabel}
+        className={className}
+        onClick={onClick}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget) return;
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          onClick();
+        }}
+      >
+        {content}
+      </div>
     );
   }
 

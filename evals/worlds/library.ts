@@ -658,6 +658,67 @@ export async function mockToolsListCount(mock: MockHandle): Promise<number> {
   }).length;
 }
 
+export async function coworkerTemplateEditor(seed: Seed) {
+  const den = await seed.den({
+    org: { name: "Prepared coworker team", admin: { name: "Preview operator" }, members: { teammate: { name: "Team Member" } } },
+  });
+  const created = await seed.api(den.admin, "/v1/plugins", {
+    method: "POST",
+    body: JSON.stringify({ name: "Prepared marketing team", orgWide: true, components: [] }),
+  });
+  const pluginId = stringField(itemOf(created.body), "id");
+  if (created.response.status !== 201 || !pluginId) throw new Error("The team plugin could not be prepared.");
+  const web = await seed.web({
+    den,
+    signedInAs: den.admin,
+    startPath: `/dashboard/plugins/${pluginId}`,
+    headless: true,
+    viewport: { width: 1440, height: 1400 },
+  });
+  return { den, web, pluginId, organizationId: await activeOrganizationId(seed, den.admin) };
+}
+
+export async function pluginEditorWithConnector(seed: Seed) {
+  const stamp = Date.now();
+  const den = await seed.den({
+    org: { name: `Plugin from connector ${stamp}`, admin: { name: "Plugin Admin" } },
+    mocks: { crm: seed.mock({ allowUnauthenticatedMcp: true }) },
+  });
+  const connection = await seed.orgConnection(den.admin, {
+    name: `CRM connector ${stamp}`,
+    url: den.mocks.crm.mcpUrl,
+    authType: "none",
+    credentialMode: "shared",
+    access: { orgWide: true },
+  });
+  const marketplaceName = `Sales collection ${stamp}`;
+  const createdMarketplace = await seed.api(den.admin, "/v1/marketplaces", {
+    method: "POST",
+    body: JSON.stringify({ name: marketplaceName }),
+  });
+  const marketplaceId = stringField(isRecord(createdMarketplace.body) ? createdMarketplace.body.item : null, "id");
+  if (createdMarketplace.response.status !== 201 || !marketplaceId) {
+    throw new Error(`Creating the collection failed: HTTP ${createdMarketplace.response.status} ${createdMarketplace.text.slice(0, 500)}`);
+  }
+
+  const web = await seed.web({
+    den,
+    signedInAs: den.admin,
+    startPath: `/dashboard/plugins/new?marketplaceId=${marketplaceId}`,
+    headless: true,
+    viewport: { width: 1440, height: 1100 },
+  });
+
+  return {
+    den,
+    web,
+    connection,
+    marketplaceId,
+    marketplaceName,
+    pluginName: `Sales CRM ${stamp}`,
+  };
+}
+
 export async function libraryView(seed: Seed) {
   const password = process.env.OPENWORK_EVAL_DEMO_PASSWORD?.trim() || "OpenWorkDemo123!";
   const caseyEmail = process.env.OPENWORK_EVAL_CREATOR_EMAIL?.trim() || "casey.spec@acme.test";

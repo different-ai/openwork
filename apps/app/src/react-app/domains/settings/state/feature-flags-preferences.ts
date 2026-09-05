@@ -18,22 +18,8 @@ export function useFeatureFlagsPreferences() {
     }));
   }, [setPrefs]);
 
-  const memoryEnabled = prefs.featureFlags?.memory === true;
-
-  const toggleMemory = useCallback(() => {
-    setPrefs((previous) => ({
-      ...previous,
-      featureFlags: {
-        ...previous.featureFlags,
-        memory: !previous.featureFlags?.memory,
-      },
-    }));
-  }, [setPrefs]);
-
   return {
     microsandboxCreateSandboxEnabled,
     toggleMicrosandboxCreateSandbox,
-    memoryEnabled,
-    toggleMemory,
   };
 }

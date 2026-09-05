@@ -1,3 +1,5 @@
+import { WORK_PATTERNS, rolesForPattern, teamAdvicePrompt, workPattern } from "@/lib/work-patterns";
+import { slugOfName } from "@/lib/onboarding-team";
 import { useEffect, useState } from "react";
 import { coworkerBridge, type AvatarColor, type AvatarGlasses, type CoworkerSummary, type TeamRole } from "@/lib/bridge";
 import { AvatarControls } from "@/ui/coworker-avatar";
@@ -8,7 +10,7 @@ import { Button, ErrorNote, Field, inputClass } from "@/ui/kit";
 import { RetiredCoworkers } from "@/ui/retired-coworkers";
 import { PickTeammateTile } from "@/ui/team-cards";
 
-type Step = "identity" | "details";
+type Step = "choose" | "identity" | "details";
 
 /** How many suggested roles the Add screen offers above the blank form. */
 const SUGGESTED_ROLES = 3;
@@ -16,23 +18,25 @@ const SUGGESTED_ROLES = 3;
 /**
  * Creation establishes only a durable identity and workspace: a name and a
  * look, with an optional second step for role, mission, and personality. Each
- * step fits without scrolling; the coworker starts on OpenWork's default AI
- * model, and that choice lives in Coworker settings once it exists. Above the
- * blank form, up to three roles nobody on the team covers yet are offered as
- * cards; tapping one fills everything in, still editable.
+ * step stays focused; the coworker starts on OpenWork's default AI
+ * model, and that choice lives in Coworker settings once it exists. Existing
+ * teams first see up to three missing roles, then customize a selected role
+ * or start from scratch. Recommendations never crowd the identity form.
  */
 export function NewCoworker({
   onCreated,
   onCancel,
   team = [],
+  onAskTeam,
 }: {
   onCreated: (coworker: CoworkerSummary) => void;
   /** Null on first run, when there is no team to go back to. */
   onCancel: (() => void) | null;
   /** The coworkers that exist, so a role someone already covers is not suggested again. */
   team?: readonly CoworkerSummary[];
+  onAskTeam?: (slug: string, prompt: string) => void;
 }) {
-  const [step, setStep] = useState<Step>("identity");
+  const [step, setStep] = useState<Step>(team.length > 0 ? "choose" : "identity");
   const [name, setName] = useState("");
   const [role, setRole] = useState("");
   const [mission, setMission] = useState("");
@@ -43,6 +47,9 @@ export function NewCoworker({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [catalog, setCatalog] = useState<TeamRole[]>([]);
+  const [patternId, setPatternId] = useState("");
+  const [workDescription, setWorkDescription] = useState("");
+  const [advisorSlug, setAdvisorSlug] = useState(team[0]?.slug ?? "");
   useEffect(() => {
     let cancelled = false;
     coworkerBridge.team.catalog()
@@ -56,11 +63,12 @@ export function NewCoworker({
   }, []);
   const takenRoles = new Set(team.map((coworker) => coworker.roleId).filter(Boolean));
   const takenSlugs = new Set(team.map((coworker) => coworker.slug));
-  const suggested = catalog.filter((item) => !takenRoles.has(item.id)).slice(0, SUGGESTED_ROLES);
+  const suggested = rolesForPattern(catalog, patternId).filter((item) => !takenRoles.has(item.id)).slice(0, SUGGESTED_ROLES);
 
   /** Start from a suggested role: everything filled in, everything still editable. */
   function pick(item: TeamRole) {
-    const free = takenSlugs.has(item.defaultName.toLowerCase()) ? `${item.defaultName} 2` : item.defaultName;
+    let free = item.defaultName;
+    for (let suffix = 2; takenSlugs.has(slugOfName(free)); suffix += 1) free = `${item.defaultName} ${suffix}`;
     setName(free);
     setRole(item.role);
     setMission(item.mission);
@@ -119,7 +127,7 @@ export function NewCoworker({
       </header>
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-8 pt-2">
         {/* m-auto centers the card and still lets it scroll from its top edge on a very short window. */}
-        <div className="creation-card m-auto grid w-full max-w-3xl shrink-0 overflow-hidden rounded-[30px] border border-line md:min-h-[540px] md:grid-cols-[290px_1fr]">
+        <div className="creation-card m-auto grid min-w-0 w-full max-w-3xl shrink-0 overflow-hidden rounded-[30px] border border-line md:min-h-[540px] md:grid-cols-[290px_1fr]">
           <div className="avatar-stage flex min-h-[300px] flex-col items-center justify-center border-b border-line p-7 md:border-b-0 md:border-r">
             <OnboardingMascotStack
               variant={{ kind: "coworker", name: name.trim() || "New coworker", color: avatarColor, glasses: avatarGlasses }}
@@ -132,30 +140,54 @@ export function NewCoworker({
             {role.trim() ? <p className="mt-1 max-w-full truncate text-xs text-mist">{role.trim()}</p> : null}
           </div>
 
-          <div className="flex flex-col p-6 md:p-7" data-testid={`new-coworker-step-${step}`}>
-            {step === "identity" ? (
+          <div className="flex min-w-0 flex-col p-6 md:p-7" data-testid={`new-coworker-step-${step}`}>
+            {step !== "details" ? (
               <>
                 <h1 className="text-2xl font-semibold tracking-[-0.035em] text-snow">Add a coworker</h1>
                 <p className="mt-1 max-w-sm text-sm leading-relaxed text-mist">
-                  Start with a name and a look. You can teach the job in the first assignment.
+                  {step === "choose" ? "Choose a starting role, or create your own. Every detail is editable." : "Start with a name and a look. You can teach the job in the first assignment."}
                 </p>
-                {suggested.length > 0 ? (
-                  <div className="mt-4" data-testid="new-coworker-suggested">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-mist/75">Suggested · tap one to start from it</p>
-                    <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                      {suggested.map((item) => (
-                        <PickTeammateTile
-                          key={item.id}
-                          look={{ name: item.defaultName, role: item.role, mission: "", avatarColor: item.avatarColor, avatarGlasses: item.avatarGlasses }}
-                          smallPrint=""
-                          onPick={() => pick(item)}
-                          attributes={{ "data-role-id": item.id }}
-                        />
-                      ))}
+                {step === "choose" ? <>
+                  <label className="mt-4 block text-xs text-mist">
+                    Suggestions for your work
+                    <select className={`${inputClass} mt-1.5 bg-ink`} aria-label="Profession" value={patternId} onChange={(event) => setPatternId(event.target.value)}>
+                      <option value="">Any profession</option>
+                      {WORK_PATTERNS.map((pattern) => <option key={pattern.id} value={pattern.id}>{pattern.label}</option>)}
+                    </select>
+                  </label>
+                  {workPattern(patternId) ? <p className="mt-2 text-xs leading-relaxed text-mist" data-testid="work-pattern-outcome">{workPattern(patternId)?.outcome}</p> : null}
+                  {suggested.length > 0 ? (
+                    <div className="mt-4" data-testid="new-coworker-suggested">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-mist/75">Suggested · tap one to start from it</p>
+                      <div className="mt-2 grid min-w-0 gap-2">
+                        {suggested.map((item) => (
+                          <PickTeammateTile
+                            key={item.id}
+                            look={{ name: item.defaultName, role: item.role, mission: item.pitch, avatarColor: item.avatarColor, avatarGlasses: item.avatarGlasses }}
+                            smallPrint=""
+                            onPick={() => pick(item)}
+                            attributes={{ "data-role-id": item.id }}
+                          />
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                ) : null}
-                <div className="mt-5 space-y-4">
+                  ) : null}
+                  {team.length > 0 && onAskTeam ? (
+                    <details className="mt-4 rounded-xl border border-line p-3" data-testid="coworker-team-advice">
+                      <summary className="cursor-pointer text-xs font-medium text-snow">Ask AI to shape your team</summary>
+                      <p className="mt-2 text-xs leading-relaxed text-mist">Describe your work. A coworker can suggest a workflow and a missing teammate; you choose who joins. Uses that coworker's current AI model.</p>
+                      <label className="mt-3 block text-xs text-mist">Ask
+                        <select className={`${inputClass} mt-1 bg-ink`} aria-label="Ask coworker" value={advisorSlug} onChange={(event) => setAdvisorSlug(event.target.value)}>
+                          {team.map((member) => <option key={member.slug} value={member.slug}>{member.name}</option>)}
+                        </select>
+                      </label>
+                      <textarea className={`${inputClass} mt-2 min-h-20 resize-y bg-ink`} aria-label="Your work and goals" placeholder="I run a small agency. Help me turn client research into a weekly campaign and review the results." maxLength={2000} value={workDescription} onChange={(event) => setWorkDescription(event.target.value)} />
+                      <Button className="mt-2" disabled={!workDescription.trim() || !team.some((member) => member.slug === advisorSlug)} data-testid="coworker-team-advice-send" onClick={() => onAskTeam(advisorSlug, teamAdvicePrompt(workDescription, patternId))}>Ask for a recommendation</Button>
+                    </details>
+                  ) : null}
+                </> : null}
+                {step === "identity" ? <div className="mt-5 space-y-4">
+                  {team.length > 0 ? <button type="button" className="text-xs text-mist hover:text-snow" onClick={() => setStep("choose")}>← Browse suggested roles</button> : null}
                   <Field label="Name">
                     <input
                       autoFocus
@@ -174,7 +206,7 @@ export function NewCoworker({
                     onColorChange={setAvatarColor}
                     onGlassesChange={setAvatarGlasses}
                   />
-                </div>
+                </div> : null}
               </>
             ) : (
               <>
@@ -209,7 +241,9 @@ export function NewCoworker({
             {error ? <div className="mt-4"><ErrorNote>{error}</ErrorNote></div> : null}
 
             <div className="mt-auto flex items-center justify-between gap-3 pt-6">
-              {step === "identity" ? (
+              {step === "choose" ? (
+                <Button variant="primary" onClick={() => setStep("identity")} data-testid="new-coworker-scratch">Start from scratch</Button>
+              ) : step === "identity" ? (
                 <button
                   type="button"
                   className="rounded-lg px-1 py-1 text-xs font-medium text-spark hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60"
@@ -225,10 +259,10 @@ export function NewCoworker({
                 </Button>
               )}
               <div className="flex items-center gap-2">
-                {onCancel && step === "identity" ? <Button variant="ghost" onClick={onCancel}>Cancel</Button> : null}
-                <Button aria-busy={busy} variant="primary" disabled={busy || !name.trim()} onClick={() => void create()}>
+                {onCancel && step !== "details" ? <Button variant="ghost" onClick={onCancel}>Cancel</Button> : null}
+                {step !== "choose" ? <Button aria-busy={busy} variant="primary" disabled={busy || !name.trim()} onClick={() => void create()}>
                   {busy ? "Adding…" : "Add coworker"}
-                </Button>
+                </Button> : null}
               </div>
             </div>
           </div>

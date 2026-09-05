@@ -28,6 +28,8 @@ const MAX_TOOL_PAGES = 32;
 const MAX_TOOLS = 2_048;
 const MAX_RESOURCE_BYTES = 768 * 1024;
 const MAX_RESULT_BYTES = 1024 * 1024;
+/** Same cap Den applies to provider-declared error excerpts before relaying them. */
+const MAX_PROVIDER_ERROR_CHARS = 512;
 
 type McpAppCsp = {
   connectDomains: string[];
@@ -68,6 +70,22 @@ export class McpAppHostError extends Error {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * A bounded, single-line excerpt of a provider's error text. Providers already
+ * return arbitrary tool *results* to the same callers, so relaying their
+ * rejection is not a new disclosure, but the text is untrusted: strip control
+ * characters and cap its length before it becomes an API error message.
+ */
+function providerErrorExcerpt(error: unknown): string | null {
+  if (!(error instanceof Error) || !error.message) return null;
+  const sanitized = error.message
+    .replace(/[\u0000-\u001F\u007F-\u009F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!sanitized) return null;
+  return sanitized.length > MAX_PROVIDER_ERROR_CHARS ? `${sanitized.slice(0, MAX_PROVIDER_ERROR_CHARS)}…` : sanitized;
 }
 
 function stringHeaders(value: unknown): Record<string, string> {
@@ -821,7 +839,13 @@ export async function callMcpAppTool(input: {
         "This MCP App tool requires user approval before OpenWork can call it.",
       );
     }
-    const result = await client.callTool({ name: input.name, arguments: input.arguments ?? {} });
+    // A provider that rejects the call (for example JSON-RPC -32602 for a
+    // missing required argument) must reach the member as that rejection,
+    // not as an unhandled 500 "Unexpected server error". The text is
+    // provider-controlled: bound it the same way Den bounds provider excerpts.
+    const result = await client.callTool({ name: input.name, arguments: input.arguments ?? {} }).catch((error: unknown) => {
+      throw new McpAppHostError("tool_call_failed", providerErrorExcerpt(error) ?? "The MCP App tool call failed.");
+    });
     if (new TextEncoder().encode(JSON.stringify(result)).byteLength > MAX_RESULT_BYTES) {
       throw new McpAppHostError("result_too_large", "The MCP App tool result exceeds the 1 MiB host limit.");
     }

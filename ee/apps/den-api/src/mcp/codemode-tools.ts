@@ -55,6 +55,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
+export function stripUndefinedEntries(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return Array.from(value, (entry) => entry === undefined ? null : stripUndefinedEntries(entry))
+  }
+  if (!isRecord(value)) return value
+  const prototype = Object.getPrototypeOf(value)
+  if (prototype !== Object.prototype && prototype !== null) return value
+  const stripped: Record<string, unknown> = {}
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry !== undefined) stripped[key] = stripUndefinedEntries(entry)
+  }
+  return stripped
+}
+
 function isCodemodeJsonSchema(value: unknown): value is Tool.JsonSchema {
   return isRecord(value)
 }
@@ -326,7 +340,7 @@ export async function buildExternalMcpToolTree(input: {
         member: memberIdentity,
         connectionId: connection.id,
         toolName: tool.name,
-        args,
+        args: stripUndefinedEntries(args),
         redirectUriBase: input.redirectUriBase,
       })).pipe(Effect.flatMap((result) => result.ok
         ? Effect.succeed(toolResultValue(result.result))

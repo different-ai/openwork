@@ -13,12 +13,14 @@ import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-targ
 
 import { applyTextHighlights } from "./text-highlights";
 import {
+  createStreamingMarkdownRenderer,
   hasFencedCodeBlock,
   renderHighlightedMarkdownHtml,
   renderMarkdownHtml,
   setCodeCopyButtonState,
   setCodeWrapButtonState,
   syncMarkdownImagePreviews,
+  type MarkdownBlockHtml,
 } from "./markdown-primitive";
 import { LinkActionMenu } from "./link-action-menu";
 import { useMermaidEnhancer } from "./mermaid";
@@ -95,6 +97,15 @@ type MarkdownBlockInnerProps = {
   "ref" | "className" | "children" | "dangerouslySetInnerHTML"
 >;
 
+/**
+ * A streaming answer renders one payload per top-level block so a new token
+ * only re-parses and repaints the block it lands in; a settled answer renders
+ * the whole document at once, exactly as history does.
+ */
+type RenderedMarkdown =
+  | { kind: "document"; html: string }
+  | { kind: "blocks"; blocks: MarkdownBlockHtml[] };
+
 function MarkdownBlockInner({
   className,
   text,
@@ -109,9 +120,18 @@ function MarkdownBlockInner({
   const openArtifactPath = useOpenArtifactPath();
   const [linkMenu, setLinkMenu] = useState<{ target: OpenTarget; rect: DOMRect } | null>(null);
   const [imagePreview, setImagePreview] = useState<{ src: string; alt: string } | null>(null);
-  const syncHtml = useMemo(() => {
-    return renderMarkdownHtml(text);
-  }, [text]);
+  const [streamingRenderer] = useState(() => createStreamingMarkdownRenderer("chat"));
+  const streamedBlocks = useMemo(
+    () => (streaming ? streamingRenderer.render(text) : null),
+    [streaming, streamingRenderer, text],
+  );
+  useEffect(() => {
+    if (!streaming) streamingRenderer.reset();
+  }, [streaming, streamingRenderer]);
+  const syncHtml = useMemo(
+    () => (streamedBlocks ? "" : renderMarkdownHtml(text)),
+    [streamedBlocks, text],
+  );
   const [highlightedHtml, setHighlightedHtml] = useState<{ text: string; html: string } | null>(null);
 
   const handleCodeBlockCopy = useCallback(async (button: HTMLButtonElement, code: string) => {
@@ -183,14 +203,24 @@ function MarkdownBlockInner({
     };
   }, [streaming, text]);
 
-  const candidateHtml = !streaming && highlightedHtml?.text === text ? highlightedHtml.html : syncHtml;
-  const html = useSelectionStableValue(rootRef, candidateHtml);
-  const stableInnerHtml = useMemo(() => ({ __html: html }), [html]);
-  useMermaidEnhancer(rootRef, html, !streaming);
-
+  const candidate = useMemo<RenderedMarkdown>(() => {
+    if (!streaming && highlightedHtml?.text === text) return { kind: "document", html: highlightedHtml.html };
+    if (streamedBlocks) return { kind: "blocks", blocks: streamedBlocks };
+    return { kind: "document", html: syncHtml };
+  }, [highlightedHtml, streamedBlocks, streaming, syncHtml, text]);
+  const rendered = useSelectionStableValue(rootRef, candidate);
   // Keep the innerHTML prop referentially stable too: a fresh wrapper object
   // can make an unrelated React render replace selected text nodes even when
   // the HTML string itself is unchanged.
+  const stableInnerHtml = useMemo(
+    () => ({ __html: rendered.kind === "document" ? rendered.html : "" }),
+    [rendered],
+  );
+  const isEmpty = rendered.kind === "document"
+    ? !rendered.html
+    : rendered.blocks.every((block) => !block.__html);
+  useMermaidEnhancer(rootRef, rendered, !streaming);
+
   useEffect(() => {
     const root = rootRef.current;
 
@@ -206,7 +236,7 @@ function MarkdownBlockInner({
       applyTextHighlights(root, highlightQuery ?? "");
       syncCodeWrapStates();
     });
-  }, [highlightQuery, html]);
+  }, [highlightQuery, rendered]);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -322,20 +352,33 @@ function MarkdownBlockInner({
       root.removeEventListener("click", handleClick);
       root.removeEventListener("keydown", handleKeyDown);
     };
-  }, [handleCodeBlockCopy, html, onOpenTarget, openArtifactPath, openTargets]);
+  }, [handleCodeBlockCopy, onOpenTarget, openArtifactPath, openTargets, rendered]);
 
-  if (!html) {
+  if (isEmpty) {
     return null;
   }
 
+  const rootClassName = cn("markdown-content max-w-none select-text text-foreground", className);
+
   return (
     <>
-      <div
-        ref={rootRef}
-        className={cn("markdown-content max-w-none select-text text-foreground", className)}
-        dangerouslySetInnerHTML={stableInnerHtml}
-        {...props}
-      />
+      {rendered.kind === "blocks" ? (
+        // Keyed by kind so the switch to the settled document remounts the root
+        // instead of mixing children with dangerouslySetInnerHTML.
+        <div key="blocks" ref={rootRef} className={rootClassName} {...props}>
+          {rendered.blocks.map((block, index) => (
+            block.__html ? <div key={index} dangerouslySetInnerHTML={block} /> : null
+          ))}
+        </div>
+      ) : (
+        <div
+          key="document"
+          ref={rootRef}
+          className={rootClassName}
+          dangerouslySetInnerHTML={stableInnerHtml}
+          {...props}
+        />
+      )}
       {linkMenu && onOpenTarget ? (
         <LinkActionMenu
           target={linkMenu.target}

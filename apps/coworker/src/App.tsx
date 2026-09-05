@@ -1,5 +1,6 @@
+import { patternDrafts, workPattern } from "@/lib/work-patterns";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { coworkerBridge, type CoworkerGroupSummary, type CoworkerGroupTurn, type CoworkerSummary, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
+import { coworkerBridge, type CoworkerGroupSummary, type CoworkerGroupTurn, type CoworkerSummary, type CoworkerTemplateSync, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
 import { subscribeGroupRuns } from "@/lib/group-runs";
 import { describeGroupActivity } from "@/lib/groups";
 import {
@@ -55,6 +56,8 @@ export default function App() {
   const [bootError, setBootError] = useState("");
   const [session, setSession] = useState<DenSession | null>(() => readDenSession());
   const [providerSync, setProviderSync] = useState<ProviderSyncRun | null>(null);
+  const [templateSync, setTemplateSync] = useState<CoworkerTemplateSync | null>(null);
+  const [templateError, setTemplateError] = useState("");
   const [signInBusy, setSignInBusy] = useState(false);
   const [signInError, setSignInError] = useState("");
   const [coworkers, setBots] = useState<CoworkerSummary[]>([]);
@@ -173,6 +176,34 @@ export default function App() {
     setRuntime(await coworkerBridge.restartRuntime());
   }, []);
 
+  const receiveImportedTemplates = useCallback((result: CoworkerTemplateSync) => {
+    const first = result.created[0];
+    if (!first) return;
+    setBots((current) => [...current, ...result.created.filter((item) => !current.some((known) => known.slug === item.slug))]);
+    setSelectedSlug((current) => current || first.slug);
+    setOnboardingReady(true);
+    setOnboardingStep("");
+    setCreating(false);
+    void refreshRuntime();
+  }, [refreshRuntime]);
+
+  const receiveTemplates = useCallback((result: CoworkerTemplateSync) => {
+    setTemplateSync(result);
+    setTemplateError("");
+    receiveImportedTemplates(result);
+  }, [receiveImportedTemplates]);
+
+  const syncAssignedCoworkers = useCallback(async (installIds: string[] = []) => {
+    if (!session) return;
+    const key = sessionKey(session);
+    try {
+      const result = await coworkerBridge.templates.sync({ userEmail: session.userEmail, automatic: true, installIds });
+      if (pushedSessionKeyRef.current === key) receiveTemplates(result);
+    } catch (cause) {
+      if (pushedSessionKeyRef.current === key) setTemplateError(cause instanceof Error ? cause.message : "Your team's coworkers could not be refreshed.");
+    }
+  }, [receiveTemplates, session]);
+
   /**
    * Hand the signed-in account to the embedded server so the member's
    * authorized providers become available to every coworker. Runs on boot for a stored
@@ -183,6 +214,14 @@ export default function App() {
     try {
       const run = await coworkerBridge.den.setSession(providerSyncSession(next));
       setProviderSync(run);
+      setTemplateSync(null);
+      setTemplateError("");
+      try {
+        const result = await coworkerBridge.templates.sync({ userEmail: next.userEmail, automatic: true });
+        if (pushedSessionKeyRef.current === sessionKey(next)) receiveTemplates(result);
+      } catch (cause) {
+        if (pushedSessionKeyRef.current === sessionKey(next)) setTemplateError(cause instanceof Error ? cause.message : "Your team's coworkers could not be loaded. Refresh them in Account settings.");
+      }
       return run;
     } catch (cause) {
       const failed: ProviderSyncRun = { status: "failed", message: cause instanceof Error ? cause.message : String(cause) };
@@ -191,7 +230,7 @@ export default function App() {
     } finally {
       void refreshRuntime();
     }
-  }, [refreshRuntime]);
+  }, [receiveTemplates, refreshRuntime]);
 
   useEffect(() => {
     if (!runtime || !session || pushedSessionKeyRef.current === sessionKey(session)) return;
@@ -558,13 +597,13 @@ export default function App() {
 
   const proposeTeam = useCallback(async () => {
     try {
-      const drafts = await coworkerBridge.team.recommend(onboardingDraft.intents);
+      const drafts = patternDrafts(await coworkerBridge.team.recommend(onboardingDraft.intents), onboardingDraft.patternId ?? "");
       updateOnboardingDraft((current) => ({ ...current, drafts }));
       setOnboardingStep("team");
     } catch (cause) {
       setBootError(cause instanceof Error ? cause.message : String(cause));
     }
-  }, [onboardingDraft.intents, updateOnboardingDraft]);
+  }, [onboardingDraft.intents, onboardingDraft.patternId, updateOnboardingDraft]);
 
   const updateSelectedLiveActivity = useCallback((activity: CoworkerActivity | null) => {
     if (!selectedSlug) return;
@@ -636,6 +675,8 @@ export default function App() {
         <OnboardingIntents
           catalog={teamCatalog}
           selected={onboardingDraft.intents}
+          patternId={onboardingDraft.patternId ?? ""}
+          onPattern={(patternId) => updateOnboardingDraft((current) => ({ ...current, patternId, intents: workPattern(patternId)?.jobs.map((job) => job.roleId) ?? [] }))}
           onToggle={(id) => updateOnboardingDraft((current) => ({ ...current, intents: toggleIntent(current.intents, id) }))}
           onContinue={() => void proposeTeam()}
           onOwn={addOwnCoworker}
@@ -662,6 +703,13 @@ export default function App() {
       <OnboardingWelcome
         onConnect={() => setConnecting(true)}
         onContinueLocally={() => setLocalSetup(true)}
+        onImport={async () => {
+          const result = await coworkerBridge.templates.import();
+          if (result) {
+            if (result.created.length === 0) throw new Error("This template was already added. Its previous working copy has been kept.");
+            receiveImportedTemplates(result);
+          }
+        }}
       />
     );
   }
@@ -739,6 +787,7 @@ export default function App() {
           <div key="create" className="view-enter flex min-w-0 flex-1">
             <NewCoworker
               team={coworkers}
+              onAskTeam={(slug, prompt) => { setCreating(false); visitCoworker(slug, prompt); }}
               onCancel={selected || coworkers.length > 0 ? () => setCreating(false) : null}
               onCreated={(coworker) => {
                 setCreating(false);
@@ -856,6 +905,10 @@ export default function App() {
             runtime={runtime}
             session={session}
             providerSync={providerSync}
+            templateSync={session ? templateSync : null}
+            templateError={session ? templateError : ""}
+            onSyncTemplates={syncAssignedCoworkers}
+            onImportedTemplates={receiveImportedTemplates}
             coworkers={coworkers}
             selectedCoworker={selected}
             initialSection={globalSettings ?? "general"}

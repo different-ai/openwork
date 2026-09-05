@@ -79,6 +79,7 @@ export const openworkContextSnapshotSchema = z.object({
   conversations: z.object({
     tabs: z.array(openworkSessionRefSchema),
     layout: openworkConversationLayoutSchema,
+    pinnedSessionIds: z.array(z.string()),
   }),
   chrome: z.object({
     sidebarOpen: z.boolean(),

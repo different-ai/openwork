@@ -93,8 +93,10 @@ import { registerFileRoutes } from "./routes/files.js";
 import { registerOperationRoutes } from "./routes/operations.js";
 import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } from "./routes/registry.js";
 import { registerSessionGroupRoutes } from "./routes/session-groups.js";
+import { registerUiControlRoutes } from "./routes/ui-control.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
+import { UiControlMailbox } from "./ui-control.js";
 import { captureServerException, isExpectedRequestCancellation } from "./telemetry.js";
 import {
   completeLocalManagedMcpAuthorization,
@@ -653,9 +655,12 @@ function toUnixNano(): string {
   return (BigInt(Date.now()) * 1_000_000n).toString();
 }
 
-function isBrokenLogPipeError(error: unknown): boolean {
+function isUnavailableLogOutputError(error: unknown): boolean {
   if (!isRecord(error)) return false;
-  return error.code === "EPIPE" || error.code === "ERR_STREAM_DESTROYED";
+  // Redirected stdout can run out of space just like the optional file sink.
+  // Logging must not turn an otherwise successful request into a server crash.
+  return error.code === "EPIPE" || error.code === "ERR_STREAM_DESTROYED"
+    || error.code === "ENOSPC" || error.code === "EDQUOT";
 }
 
 let stdoutLogWritesDisabled = false;
@@ -665,7 +670,7 @@ function ensureStdoutErrorHandler() {
   if (stdoutErrorHandlerInstalled) return;
   stdoutErrorHandlerInstalled = true;
   process.stdout.on("error", (error: unknown) => {
-    if (isBrokenLogPipeError(error)) {
+    if (isUnavailableLogOutputError(error)) {
       stdoutLogWritesDisabled = true;
       return;
     }
@@ -707,7 +712,7 @@ export function createServerLogger(
     try {
       writeLine(line);
     } catch (error) {
-      if (isBrokenLogPipeError(error)) {
+      if (isUnavailableLogOutputError(error)) {
         logWritesDisabled = true;
         if (writeLine === writeStdoutLogLine) {
           stdoutLogWritesDisabled = true;
@@ -948,6 +953,7 @@ function isPromptAsyncProxyRequest(method: string, proxyPath: string) {
 
 export async function startServer(config: ServerConfig): Promise<ServeResult> {
   const approvals = new ApprovalService(config.approval);
+  const uiControl = new UiControlMailbox();
   const reloadEvents = new ReloadEventStore();
   const tokens = new TokenService(config);
   const env = new EnvService();
@@ -992,9 +998,12 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
       engineMcpServerState,
       { forceStandby: true, reason: "cloud_provider_sync" },
     ),
-    engineBusy: () => enginePoolForConfig(config)
-      ? Promise.resolve(false)
-      : engineHasActiveSessions(config, resolveEngineRuntimeWorkspace(config)),
+    engineBusy: () => {
+      const pool = enginePoolForConfig(config);
+      return pool
+        ? Promise.resolve(pool.hasDrainingGeneration())
+        : engineHasActiveSessions(config, resolveEngineRuntimeWorkspace(config));
+    },
     logger: toManagedProviderAuthLogger(logger),
   });
   const routes = createRoutes(
@@ -1165,6 +1174,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
           params: route.params,
           config,
           approvals,
+          uiControl,
           reloadEvents,
           tokens,
           actor,
@@ -3005,6 +3015,8 @@ function createRoutes(
       reloadOpencodeEngine(routeConfig, workspace, engineMcpServerState, { reason: "operation_route", manual: options?.force === true }),
     readOptionalJsonBody,
   });
+
+  registerUiControlRoutes({ routes, jsonResponse, readJsonBody, requireClientScope });
 
   registerFileRoutes({
     routes,

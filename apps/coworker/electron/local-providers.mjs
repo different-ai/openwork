@@ -146,7 +146,9 @@ export function codexAuthFromFile(parsed) {
 function copilotToken(parsed) {
   if (!isRecord(parsed)) return "";
   for (const [host, entry] of Object.entries(parsed)) {
-    if (!host.startsWith("github.com") || !isRecord(entry)) continue;
+    // Copilot apps.json keys append a client id after a colon; hosts.json uses the host alone.
+    const hostname = host.split(":", 1)[0];
+    if (hostname !== "github.com" || !isRecord(entry)) continue;
     if (nonEmpty(entry.oauth_token)) return entry.oauth_token;
   }
   return "";

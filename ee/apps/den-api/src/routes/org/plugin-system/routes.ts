@@ -1,4 +1,7 @@
+import { declarativeDeleteSchema, declarativeResponses, externalKeyParamsSchema, isDuplicateEntry } from "../declarative.js"
+import { findMarketplaceByExternalKey } from "./store.js"
 import type { Context, Hono } from "hono"
+import { coworkerTemplateListSchema } from "@openwork/types/coworker-template"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -159,6 +162,7 @@ import {
   listMarketplaces,
   listMeLibraryConnectionItems,
   listMeLibraryPluginItems,
+  listMeCoworkerTemplates,
   listMeEffectivePluginAccess,
   listPluginMemberships,
   listPlugins,
@@ -275,7 +279,7 @@ export function isAgentPluginMcpOAuthClientSetup(input: { apiKey?: string | null
   return isAgentPluginMcpSecretSetup(input)
 }
 
-function withPluginArchOrgContext(app: Hono<any>, method: "delete" | "get" | "patch" | "post", path: string, ...handlers: unknown[]) {
+function withPluginArchOrgContext(app: Hono<any>, method: "delete" | "get" | "patch" | "post" | "put", path: string, ...handlers: unknown[]) {
   const routeHandler = handlers.pop() as unknown
   const routeMiddlewares = handlers as unknown[]
   const routeApp = app as unknown as Record<string, (...args: unknown[]) => unknown>
@@ -283,6 +287,22 @@ function withPluginArchOrgContext(app: Hono<any>, method: "delete" | "get" | "pa
 }
 
 export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
+  withPluginArchOrgContext(app, "get", pluginArchRoutePaths.meCoworkers,
+    queryValidator(configObjectVersionListQuerySchema),
+    describeRoute({
+      tags: ["Config Objects"],
+      summary: "List available coworker templates",
+      description: "Returns versioned coworkers visible to the member and whether a people, team, or marketplace grant assigns them for onboarding.",
+      responses: {
+        200: jsonResponse("Available coworkers.", coworkerTemplateListSchema),
+        401: jsonResponse("Sign in to see coworkers.", unauthorizedSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      const query = validQuery<z.infer<typeof configObjectVersionListQuerySchema>>(c)
+      return c.json(await listMeCoworkerTemplates({ context: actorContext(c), cursor: query.cursor, limit: query.limit }))
+    },
+  )
   withPluginArchOrgContext(
     app,
     "post",
@@ -711,7 +731,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
     describeRoute({
       tags: ["Plugins"],
       summary: "Create plugin",
-      description: "Creates a plugin and can also create components, share org-wide, and publish to a marketplace in one request. An mcp component may carry the same connection setup as the Connections page (authentication, credential mode, API key, OAuth app) so its server is configured immediately; owners and admins only.",
+      description: "Creates a plugin and can also create components, share org-wide, and publish to a marketplace in one request. An mcp component may carry the same connection setup as the Connections page (authentication, credential mode, API key, OAuth app), or instead reference an existing organization connection by connectionId, so its server is configured immediately; owners and admins only.",
       responses: {
         201: jsonResponse("Plugin created successfully.", pluginMutationResponseSchema),
         400: jsonResponse("The plugin creation request was invalid.", invalidRequestSchema),
@@ -742,7 +762,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
         return c.json({
           ok: true,
           item: await createPluginBundle({
-            components: body.components?.map((component) => ({ connection: component.connection, type: component.type, value: component.input })),
+            components: body.components?.map((component) => ({ connection: component.connection, connectionId: component.connectionId, type: component.type, value: component.input })),
             context,
             description: body.description,
             marketplaceId: body.marketplaceId,
@@ -1145,6 +1165,79 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
         const params = validParam<any>(c)
         await deleteResourceAccessGrant({ context: actorContext(c), grantId: params.grantId, resourceId: params.pluginId, resourceKind: "plugin" })
         return c.body(null, 204)
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "get", "/v1/marketplaces/by-key/:externalKey",
+    paramValidator(externalKeyParamsSchema),
+    describeRoute({ tags: ["Marketplaces"], summary: "Read marketplace by stable key",
+      responses: { 200: jsonResponse("Marketplace configuration.", marketplaceDetailResponseSchema), 404: jsonResponse("Resource not found.", notFoundSchema) } }),
+    async (c: OrgContext) => {
+      try {
+        const context = actorContext(c)
+        const { externalKey } = validParam<z.infer<typeof externalKeyParamsSchema>>(c)
+        const row = await findMarketplaceByExternalKey(context, externalKey)
+        if (!row) return c.json({ error: "marketplace_not_found" }, 404)
+        return c.json({ item: await getMarketplaceDetail(context, row.id) })
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "put", "/v1/marketplaces/by-key/:externalKey",
+    paramValidator(externalKeyParamsSchema),
+    jsonValidator(marketplaceCreateSchema),
+    describeRoute({
+      tags: ["Marketplaces"],
+      summary: "Apply marketplace by stable key",
+      description: "Creates or replaces marketplace metadata. Omitted description and logo are cleared. Memberships and access grants are managed separately. Archived marketplaces must be explicitly restored before applying.",
+      responses: declarativeResponses(marketplaceMutationResponseSchema),
+    }),
+    async (c: OrgContext) => {
+      try {
+        const permission = ensureOrganizationAdmin(c, "Only organization admins can manage declarative resources.")
+        if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
+        if (c.req.header("If-Match") || c.req.header("If-None-Match")) return c.json({ error: "unsupported_precondition" }, 400)
+        const context = actorContext(c)
+        const { externalKey } = validParam<z.infer<typeof externalKeyParamsSchema>>(c)
+        const body = validJson<z.infer<typeof marketplaceCreateSchema>>(c)
+        const input = { context, name: body.name, description: body.description ?? null, logoUrl: body.logoUrl ?? null }
+        const replace = async (row: NonNullable<Awaited<ReturnType<typeof findMarketplaceByExternalKey>>>) => {
+          if (row.status !== "active") return c.json({ error: "marketplace_inactive", message: "Restore this marketplace before applying its configuration." }, 409)
+          return c.json({ ok: true, item: await updateMarketplace({ ...input, marketplaceId: row.id }) })
+        }
+        const existing = await findMarketplaceByExternalKey(context, externalKey)
+        if (existing) return replace(existing)
+        await requirePluginArchCapability(context, "marketplace.create")
+        try {
+          return c.json({ ok: true, item: await createMarketplace({ ...input, externalKey }) }, 201)
+        } catch (error) {
+          if (!isDuplicateEntry(error)) throw error
+          const winner = await findMarketplaceByExternalKey(context, externalKey)
+          if (!winner) throw error
+          return replace(winner)
+        }
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "delete", "/v1/marketplaces/by-key/:externalKey",
+    paramValidator(externalKeyParamsSchema),
+    describeRoute({ tags: ["Marketplaces"], summary: "Delete marketplace by stable key",
+      responses: { 200: jsonResponse("Idempotent deletion result.", declarativeDeleteSchema) } }),
+    async (c: OrgContext) => {
+      try {
+        const permission = ensureOrganizationAdmin(c, "Only organization admins can manage declarative resources.")
+        if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
+        const context = actorContext(c)
+        const { externalKey } = validParam<z.infer<typeof externalKeyParamsSchema>>(c)
+        const existing = await findMarketplaceByExternalKey(context, externalKey)
+        if (!existing) return c.json({ ok: true, deleted: false })
+        await setMarketplaceLifecycle({ context, marketplaceId: existing.id, action: "delete" })
+        return c.json({ ok: true, deleted: true })
       } catch (error) {
         return routeErrorResponse(c, error)
       }

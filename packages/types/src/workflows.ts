@@ -35,11 +35,51 @@ export const workflowAutomationReferenceSchema = z.object({
 })
 export type WorkflowAutomationReference = z.infer<typeof workflowAutomationReferenceSchema>
 
+export const workflowGraphNodeSchema = z.discriminatedUnion("kind", [
+  z.object({
+    id: z.string(),
+    kind: z.literal("input"),
+    label: z.string(),
+    fields: z.array(z.string()),
+  }),
+  z.object({
+    id: z.string(),
+    kind: z.literal("tool"),
+    label: z.string(),
+    namespace: z.string(),
+    tool: z.string(),
+    scriptPath: z.string(),
+    assignsTo: z.string().nullable(),
+    parallelGroup: z.string().nullable(),
+  }),
+  z.object({ id: z.string(), kind: z.literal("search"), label: z.string() }),
+  z.object({ id: z.string(), kind: z.literal("branch"), label: z.string() }),
+  z.object({ id: z.string(), kind: z.literal("loop"), label: z.string() }),
+  z.object({ id: z.string(), kind: z.literal("return"), label: z.string() }),
+])
+export type WorkflowGraphNode = z.infer<typeof workflowGraphNodeSchema>
+
+export const workflowGraphEdgeSchema = z.object({
+  from: z.string(),
+  to: z.string(),
+  label: z.string().nullable(),
+  kind: z.enum(["flow", "data"]),
+})
+export type WorkflowGraphEdge = z.infer<typeof workflowGraphEdgeSchema>
+
+export const workflowGraphSchema = z.object({
+  nodes: z.array(workflowGraphNodeSchema),
+  edges: z.array(workflowGraphEdgeSchema),
+  parseError: z.string().nullable(),
+})
+export type WorkflowGraph = z.infer<typeof workflowGraphSchema>
+
 export const workflowVersionSchema = z.object({
   id: idSchema,
   // Authoring source and example input are OpenWork management data, not MCP
   // runtime data. Non-manager detail responses intentionally return null.
   code: z.string().nullable(),
+  graph: workflowGraphSchema.nullable(),
   inputSchema: z.unknown().nullable(),
   outputSchema: z.unknown().nullable(),
   exampleInput: z.unknown().nullable().optional(),
@@ -65,6 +105,7 @@ export const workflowArtifactSnapshotSchema = z.object({
   inputSchemaDigest: digestSchema.nullable(),
   outputSchemaDigest: digestSchema.nullable(),
   rendererVersion: z.literal("codemode-markdown-v1").nullable(),
+  toolCalls: z.array(z.object({ name: z.string() })),
   status: z.enum(["succeeded", "failed"]),
   errorKind: z.string().nullable(),
   errorMessage: z.string().nullable(),

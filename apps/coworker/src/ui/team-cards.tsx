@@ -58,14 +58,14 @@ export function TeammateTile({
   attributes?: Record<string, string>;
 }) {
   return (
-    <div className={`rounded-[18px] bg-panel-2 px-3.5 py-3 text-left ${className}`} data-testid={testId} {...attributes}>
+    <div className={`min-w-0 rounded-[18px] bg-panel-2 px-3.5 py-3 text-left [overflow-wrap:anywhere] ${className}`} data-testid={testId} {...attributes}>
       <div className="flex items-start gap-3">
         <span className={`shrink-0 ${nod ? "teammate-nod" : ""}`} data-testid="teammate-card-avatar">
           <CoworkerAvatar animated gaze={false} color={look.avatarColor} glasses={look.avatarGlasses} name={look.name} size={44} />
         </span>
         <div className="min-w-0 flex-1">
-          {children ?? <p className="truncate text-[15px] font-semibold leading-tight text-snow" data-testid="teammate-card-name">{look.name}</p>}
-          {look.role ? <p className="mt-0.5 text-[13px] text-mist" data-testid="teammate-card-role">{look.role}</p> : null}
+          {children ?? <p className="text-[15px] font-semibold leading-snug text-snow" data-testid="teammate-card-name">{look.name}</p>}
+          {look.role ? <p className="mt-0.5 text-[13px] leading-snug text-mist" data-testid="teammate-card-role">{look.role}</p> : null}
           {look.mission ? <p className="mt-1.5 text-[13px] leading-snug text-snow/85" data-testid="teammate-card-mission">{look.mission}</p> : null}
           {smallPrint ? <p className="mt-2 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-mist/80" data-testid="teammate-card-small-print">{smallPrint}</p> : null}
         </div>
@@ -161,7 +161,7 @@ export function EditableTeammateTile({
   }
   return (
     <div className="relative">
-      <TeammateTile look={look} smallPrint={smallPrint} attributes={{ "data-kind": "draft", ...attributes }}>
+      <TeammateTile look={look} smallPrint={smallPrint} className={onRemove ? "pr-11" : ""} attributes={{ "data-kind": "draft", ...attributes }}>
         {editing ? (
           <input
             ref={inputRef}
@@ -185,7 +185,7 @@ export function EditableTeammateTile({
               setEditing(true);
             }}
           >
-            <span className="truncate">{look.name}</span>
+            <span className="min-w-0 [overflow-wrap:anywhere]">{look.name}</span>
             <span className="text-[11px] text-mist opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" aria-hidden="true">✎</span>
           </button>
         )}
@@ -211,7 +211,7 @@ export function PickTeammateTile({ look, smallPrint, onPick, attributes = {} }: 
   return (
     <button
       type="button"
-      className="w-full rounded-[18px] text-left transition-colors hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/50"
+      className="min-w-0 w-full rounded-[18px] text-left transition-colors hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/50"
       data-testid="teammate-pick"
       onClick={onPick}
       {...attributes}

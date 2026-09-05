@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Archive, ArrowLeft, Code2, FileText, MoreHorizontal, Pencil, Plus, Server, Store, Terminal, Users, Webhook } from "lucide-react";
 
-import { getNewPluginSkillRoute, getOrgAccessFlags, getPluginSkillRoute, getPluginsRoute } from "../../_lib/den-org";
+import { getNewPluginSkillRoute, getOrgAccessFlags, getPluginSkillRoute, getPluginRoute, getPluginsRoute } from "../../_lib/den-org";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenTextarea } from "../../_components/ui/textarea";
@@ -225,6 +225,17 @@ export function PluginDetailScreen({
           error={pluginAccessQuery.error}
         />
         <SkillsSection orgSlug={orgSlug} plugin={plugin} canEdit={access.isAdmin} />
+        {orgContext?.capabilities.coworkerTeams === true ? <section data-testid="plugin-coworkers">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div><h2 className="text-sm font-semibold text-gray-950">Coworkers</h2><p className="mt-1 text-xs text-gray-500">Prepared teammates included with this plugin. Assign the plugin to give people a team at sign-in.</p></div>
+            {access.isAdmin ? <Link href={`${getPluginRoute(orgSlug, plugin.id)}/coworkers/new`} className={buttonVariants({ size: "sm" })}>Add coworker</Link> : null}
+          </div>
+          {plugin.agents.filter((item) => item.coworker).map((item) => <div key={item.id} className="mt-2 rounded-xl border border-gray-100 bg-white p-4">
+            <div className="flex items-center justify-between gap-3"><p className="text-sm font-medium">{item.name}</p>{access.isAdmin ? <Link className="text-xs text-gray-600 hover:text-gray-950" href={`${getPluginRoute(orgSlug, plugin.id)}/coworkers/${encodeURIComponent(item.id)}`}>Edit template</Link> : null}</div>
+            <p className="mt-1 text-xs text-gray-500">{item.description}</p>
+          </div>)}
+          {!plugin.agents.some((item) => item.coworker) ? <p className="rounded-xl border border-dashed border-gray-200 px-5 py-6 text-sm text-gray-500">Add a marketing partner, researcher, or another coworker your team needs.</p> : null}
+        </section> : null}
         <WorkflowsSection
           plugin={plugin}
           canEdit={access.isAdmin}
@@ -234,7 +245,7 @@ export function PluginDetailScreen({
           }}
           onOpen={(workflowId) => setSelectedWorkflowId(workflowId)}
         />
-        <PrimitiveSection icon={Users} label="Agents" items={plugin.agents} render={renderAgentRow} />
+        <PrimitiveSection icon={Users} label="Agents" items={plugin.agents.filter((item) => !item.coworker)} render={renderAgentRow} />
         <PrimitiveSection icon={Terminal} label="Commands" items={plugin.commands} render={renderCommandRow} />
         <PrimitiveSection icon={Webhook} label="Hooks" items={plugin.hooks} render={renderHookRow} />
         <PrimitiveSection icon={Server} label="MCP Servers" items={plugin.mcps} render={renderMcpRow} />
@@ -586,6 +597,7 @@ function renderHookRow(hook: PluginHook) {
 }
 
 function renderMcpRow(mcp: PluginMcp) {
+  const label = mcp.connectionId ? "Connector" : mcp.transport === "stdio" ? "Desktop only" : "Remote";
   return (
     <div
       key={mcp.id}
@@ -598,7 +610,7 @@ function renderMcpRow(mcp: PluginMcp) {
         ) : null}
       </div>
       <span className="shrink-0 rounded-full bg-gray-50 px-2 py-0.5 text-[11px] text-gray-500">
-        {mcp.transport === "stdio" ? "Desktop only" : "Remote"} · {mcp.toolCount} tool{mcp.toolCount === 1 ? "" : "s"}
+        {label}{mcp.toolCount > 0 ? ` · ${mcp.toolCount} tool${mcp.toolCount === 1 ? "" : "s"}` : ""}
       </span>
     </div>
   );

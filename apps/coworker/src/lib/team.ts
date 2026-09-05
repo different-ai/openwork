@@ -53,8 +53,8 @@ export type ReferralCard = {
 
 export type TeamCard = SuggestionCard | ReferralCard;
 
-const AVATAR_COLORS: ReadonlySet<string> = new Set(["blue", "violet", "mint", "orange", "rose", "slate"]);
-const AVATAR_GLASSES: ReadonlySet<string> = new Set(["round", "square", "none"]);
+const AVATAR_COLORS: ReadonlySet<string> = new Set(["blue", "violet", "mint", "orange", "rose", "slate", "sand"]);
+const AVATAR_GLASSES: ReadonlySet<string> = new Set(["round", "square", "oval", "none"]);
 const PERSONALITIES: ReadonlySet<string> = new Set([
   "none", "neutral", "warm", "calm", "eager", "playful", "dry", "blunt", "curious", "thoughtful", "meticulous", "detective",
 ]);

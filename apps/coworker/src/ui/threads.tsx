@@ -1,3 +1,4 @@
+import { ActionMenu } from "@/ui/kit";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { coworkerBridge, type CoworkerSummary, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
@@ -51,6 +52,7 @@ import {
 } from "@/lib/discussions";
 import { effortForTurn, laneWithPreference, replyKindForLane, type EffortStop } from "@/lib/effort";
 import { EffortDial } from "@/ui/effort-dial";
+import { PopoverDisclosure, TechnicalText } from "@/ui/details-popover";
 import { carryVariant, chooseModelForLane, classifyRequest, describeModelChoice, markAutoPicked, wasAutoPicked, type ModelLane } from "@/lib/model-choice";
 import { describeReview, parseWorkerReview, parseWorkerTurn, workerNameFromTitle, type WorkerReview, type WorkerSummary } from "@/lib/workers";
 import { WorkerDecisionCards } from "@/ui/worker-decision";
@@ -77,15 +79,17 @@ import {
 } from "@/lib/thread-queue";
 import {
   NO_REPLY,
-  RETRY_LINE,
   WAIT_BUDGET_MS,
+  choiceNavigates,
   deriveTurnOutcome,
+  retrySummary,
   type TurnChoice,
   type TurnEngineStatus,
   type TurnOutcome,
   type TurnReplyState,
 } from "@/lib/turn-outcome";
-import { describeTurnFailure } from "@/lib/turn-failure";
+import { describeTurnFailure, failureText } from "@/lib/turn-failure";
+import { useComposerDraft } from "@/ui/use-composer-draft";
 import { classifyFailure, retryDelayMs } from "@/lib/turn-retry";
 import { applyStreamEvent, type LiveStream } from "@/lib/live-stream";
 import { useAutoGrow } from "@/ui/use-auto-grow";
@@ -122,7 +126,7 @@ type TranscriptMessage = {
   /** When the engine closed a reply; null while it is being written, or when it was cut off. */
   completedAt: number | null;
   /** Why a reply ended without an answer; null when it did not fail. */
-  error: { name: string; message: string; retryable: boolean | null } | null;
+  error: { name: string; message: string; retryable: boolean | null; providerError: string | null } | null;
   reasoning: string;
   /** Provider/model the engine attributed this reply to; null for user turns and unbound replies. */
   model: { providerId: string; modelId: string } | null;
@@ -187,7 +191,7 @@ function replyStateFor(messages: readonly TranscriptMessage[], messageId: string
   if (last.error) {
     return {
       state: "error",
-      error: `${last.error.name}: ${last.error.message}`,
+      error: failureText(last.error),
       retryable: last.error.retryable,
       aborted: /abort/i.test(last.error.name) || /abort/i.test(last.error.message),
     };
@@ -222,10 +226,7 @@ function WorkspaceProblemNote({ problem, onRetry }: { problem: WorkspaceProblem;
         <Button variant="ghost" className="text-xs" onClick={onRetry}>Try again</Button>
       </div>
       <p className="mt-1 text-[11px] leading-relaxed text-mist">If this keeps happening, restart the AI service from AI &amp; local setup.</p>
-      <details className="mt-2 text-[11px] text-mist">
-        <summary className="cursor-pointer select-none">Technical details</summary>
-        <p className="mt-1 break-words font-mono">{problem.technical}</p>
-      </details>
+      <TechnicalText text={problem.technical} testId="coworker-workspace-problem-technical" />
     </div>
   );
 }
@@ -286,10 +287,10 @@ function relativeTime(timestamp: number): string {
   return new Date(timestamp).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-function threadTone(status: ThreadListItem["status"]): "spark" | "amber" | "mint" {
+function threadTone(status: ThreadListItem["status"]): "spark" | "amber" | "ready" {
   if (status === "busy") return "spark";
   if (status === "retry") return "amber";
-  return "mint";
+  return "ready";
 }
 
 export function ThreadsPanel({
@@ -306,6 +307,7 @@ export function ThreadsPanel({
   headerSlots,
   onOpenModelSettings,
   onOpenAccount,
+  onOpenProviders,
   onActivityChange,
   documents,
   summary = null,
@@ -335,6 +337,8 @@ export function ThreadsPanel({
   onOpenModelSettings: () => void;
   /** The OpenWork account section — where a provider is reconnected. */
   onOpenAccount: () => void;
+  /** OpenWork › AI models — where the person connects their own AI provider when the free model is busy. */
+  onOpenProviders: () => void;
   onActivityChange: (activity: CoworkerActivity | null) => void;
   documents?: DocumentHooks;
   /** What the coworker holds, for the quiet line under the composer; null hides the line. */
@@ -602,6 +606,7 @@ export function ThreadsPanel({
         onInitialTurnHandled={(id) => setQueuedTurn((current) => current?.id === id ? null : current)}
         onOpenModelSettings={onOpenModelSettings}
         onOpenAccount={onOpenAccount}
+        onOpenProviders={onOpenProviders}
         session={session}
         onSyncProviders={onSyncProviders}
         onActivityChange={onActivityChange}
@@ -659,6 +664,7 @@ export function ThreadsPanel({
       onInitialTurnHandled={(id) => setQueuedTurn((current) => current?.id === id ? null : current)}
       onOpenModelSettings={onOpenModelSettings}
       onOpenAccount={onOpenAccount}
+      onOpenProviders={onOpenProviders}
       session={session}
       onSyncProviders={onSyncProviders}
       onActivityChange={onActivityChange}
@@ -706,8 +712,8 @@ function DiscussionWelcome({
   summary?: CoworkerSummaryLine | null;
   onOpenSummary?: (kind: SummaryKind) => void;
 }) {
-  const [message, setMessage] = useState("");
-  const [assignmentText, setAssignmentText] = useState("");
+  const [message, setMessage] = useComposerDraft(`${coworker.slug}:${coworker.createdAt}:new`);
+  const [assignmentText, setAssignmentText] = useComposerDraft(`${coworker.slug}:${coworker.createdAt}:new-assignment`);
   const [assignmentMode, setAssignmentMode] = useState(false);
   const [busy, setBusy] = useState(false);
   const [composerError, setComposerError] = useState("");
@@ -776,6 +782,7 @@ function DiscussionWelcome({
         onAssignmentChange={setAssignmentText}
         onCreateAssignment={() => void assign()}
         busy={busy}
+        offerStartingPoints={!problem}
         // A first message fired at a workspace that is still starting would fail on the way in
         // and leave a stray thread behind; hold it until the workspace answers.
         waiting={warmingUp ? `Getting ${coworker.name} ready` : undefined}
@@ -925,6 +932,7 @@ function ThreadView({
   onInitialTurnHandled,
   onOpenModelSettings,
   onOpenAccount,
+  onOpenProviders,
   session,
   onSyncProviders,
   onActivityChange,
@@ -962,6 +970,7 @@ function ThreadView({
   onInitialTurnHandled: (id: number) => void;
   onOpenModelSettings: () => void;
   onOpenAccount: () => void;
+  onOpenProviders: () => void;
   session: DenSession | null;
   onSyncProviders: () => Promise<ProviderSyncRun>;
   onActivityChange: (activity: CoworkerActivity | null) => void;
@@ -991,9 +1000,9 @@ function ThreadView({
   /** What the engine reports for this thread: idle, busy, or retrying (with its next attempt). */
   const [engineStatus, setEngineStatus] = useState<TurnEngineStatus>({ type: "unknown" });
   const [pending, setPending] = useState<PendingInteractions>({ permissions: [], questions: [] });
-  const [reply, setReply] = useState("");
+  const [reply, setReply] = useComposerDraft(`${coworker.slug}:${coworker.createdAt}:${threadId}`);
   const [assignmentMode, setAssignmentMode] = useState(false);
-  const [assignmentText, setAssignmentText] = useState("");
+  const [assignmentText, setAssignmentText] = useComposerDraft(`${coworker.slug}:${coworker.createdAt}:${threadId}:assignment`);
   const [error, setError] = useState("");
   const [assignmentBusy, setAssignmentBusy] = useState(false);
   /** The turn in flight or left unresolved, and the messages waiting as Next — the record turns.json keeps. */
@@ -1069,7 +1078,7 @@ function ThreadView({
       // now, and tell the person why in the provider's words with a way to choose another model.
       const status = transcript.status;
       const retryStatus = status.type === "retry" ? status : null;
-      const stall = retryStatus ? stalledRetry({ next: retryStatus.next, message: retryStatus.message }) : null;
+      const stall = retryStatus ? stalledRetry(retryStatus) : null;
       if (stall && retryStatus && stallRef.current?.next !== retryStatus.next) {
         stallRef.current = { next: retryStatus.next, reason: stall };
         void threads.client.abortThread(threadId).catch(() => undefined);
@@ -1325,6 +1334,13 @@ function ThreadView({
     let refreshTimer: number | undefined;
     /** The turn ended without a reply: settle what the person sees, in this order — fall back, retry later, or say so. */
     const settleFailure = async (message: string, retryable: boolean | null, engineKnows: boolean) => {
+      // Cancelling an exhausted allowance can settle as an abort, an error, or
+      // a timeout. Keep the reason we cancelled instead of the transport result.
+      const stall = stallRef.current;
+      if (stall && turnStateRef.current.pending?.stoppedAt === null) {
+        setFailure(stall.reason);
+        return;
+      }
       if (await fallBack(message)) return;
       if (retryLater(message, retryable)) return;
       // The engine's own reply carries the words; only a failure it never saw needs remembering here.
@@ -1413,24 +1429,24 @@ function ThreadView({
       // this paint boundary, the header can briefly return to Ready before the
       // completed assistant message becomes visible.
       await new Promise<void>((resolvePaint) => {
-        window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolvePaint()));
+        // Hidden or minimized windows may suspend animation frames. Settling a
+        // turn and draining Next must still complete while the app is behind.
+        const timer = window.setTimeout(resolvePaint, 150);
+        window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+          window.clearTimeout(timer);
+          resolvePaint();
+        }));
       });
 
       // A stop or a budget that ran out after the reply had already landed changes nothing: the turn replied.
-      const landed = result.outcome !== "settled" && replyStateFor(result.snapshot.messages.map((message) => ({
-        id: message.id,
-        role: message.role,
-        parentId: message.parentId,
-        text: "",
-        createdAt: message.createdAt,
-        completedAt: message.completedAt,
-        error: message.error,
-        reasoning: "",
-        model: null,
-        usage: null,
-        toolCalls: [],
-      })), messageId).state === "complete" && !isRunning(result.snapshot.status);
       const settledReplies = result.snapshot.messages.filter((message) => message.role === "assistant" && message.parentId === messageId);
+      const lastReply = settledReplies.at(-1);
+      // The observation deadline can pass just before its final snapshot records
+      // a completed reply or provider error. Honor that snapshot instead of
+      // treating a recoverable error (or an answer) as a silent timeout.
+      const quiet = !isRunning(result.snapshot.status);
+      const landed = result.outcome !== "settled" && quiet && lastReply?.error === null && lastReply.completedAt !== null;
+      const terminalError = result.terminalError ?? (quiet ? lastReply?.error : null);
       const emptyReply = (result.outcome === "settled" || landed)
         && settledReplies.length > 0
         && settledReplies.every((message) => message.parts.every((part) => part.type !== "tool" && !(part.type === "text" && part.text?.trim())));
@@ -1440,11 +1456,10 @@ function ThreadView({
       } else if (result.outcome === "settled" || landed) {
         if (send.mode === "retry" && send.switchedTo) setResolution({ messageId, note: `Retried with ${send.switchedTo}` });
         commitTurnState(clearPending);
-      } else if (result.outcome === "failed") {
-        const failureText = result.terminalError
-          ? `${result.terminalError.name}: ${result.terminalError.message}`
-          : "The model stopped before producing a response.";
-        await settleFailure(failureText, result.terminalError?.retryable ?? null, result.terminalError !== null);
+      } else if (result.outcome === "failed" || (result.outcome === "timeout" && terminalError)) {
+        // The same raw text the transcript's failure reads, so the retry decision sees the provider's own error type too.
+        const terminal = terminalError ? failureText(terminalError) : "The model stopped before producing a response.";
+        await settleFailure(terminal, terminalError?.retryable ?? null, Boolean(terminalError));
       } else if (result.outcome === "timeout") {
         // The engine went idle without a reply or an error: the turn ended in silence.
         await settleFailure("The model stopped before producing a response.", false, false);
@@ -1696,6 +1711,9 @@ function ThreadView({
       case "continue-with-openwork":
         onOpenAccount();
         return;
+      case "connect-provider":
+        onOpenProviders();
+        return;
       case "refresh-providers":
         void refreshProvidersAndRetry();
         return;
@@ -1818,7 +1836,7 @@ function ThreadView({
       return;
     }
     if (outcome?.kind === "retrying") {
-      onActivityChange({ state: "retrying", label: outcome.label, detail: subject, summary: `${RETRY_LINE} Trying again…`, updatedAt: Date.now(), threadId });
+      onActivityChange({ state: "retrying", label: outcome.label, detail: subject, summary: retrySummary(outcome.retry?.reason ?? null), updatedAt: Date.now(), threadId });
       return;
     }
     if (outcome?.kind === "slow") {
@@ -1901,7 +1919,7 @@ function ThreadView({
             // unresolved is told by the outcome below instead, with its actions.
             if (block.kind === "ended") {
               if (block.message.parentId === pendingTurn?.messageId) return null;
-              return <QuietLine key={block.message.id} outcome={block.ended} text={block.ended === "stopped" ? "Stopped." : describeTurnFailure(block.message.error?.message ?? "", coworker.name).headline} />;
+              return <QuietLine key={block.message.id} outcome={block.ended} text={block.ended === "stopped" ? "Stopped." : describeTurnFailure(block.message.error ? failureText(block.message.error) : "", coworker.name).headline} />;
             }
             return (
               <Fragment key={block.message.id}>
@@ -2001,6 +2019,7 @@ function ThreadView({
           busy={assignmentBusy}
           working={composerWorking}
           onStop={() => void stop()}
+          offerStartingPoints={freshDiscussion}
           coworkerName={coworker.name}
           summary={summary}
           onOpenSummary={onOpenSummary}
@@ -2128,19 +2147,15 @@ const REVIEW_KIND_WORDS = { finding: "reported", decision: "needs a decision", d
 /** "Reviewed 2 updates from Workers", opening into what each Worker said. */
 function ReviewDisclosure({ review }: { review: WorkerReview }) {
   return (
-    <details className="group text-[11px] text-mist" data-testid="coworker-worker-review">
-      <summary className="flex cursor-pointer list-none items-center gap-1.5 py-0.5 marker:hidden hover:text-snow">
-        <span>{describeReview(review)}</span>
-        <span className="text-mist/60 transition-transform group-open:rotate-90" aria-hidden="true">›</span>
-      </summary>
-      <ul className="mt-1 space-y-1.5 border-l border-line pl-3 leading-relaxed">
+    <PopoverDisclosure label={describeReview(review)} title="What the Workers reported" testId="coworker-worker-review" className="text-[11px] text-mist">
+      <ul className="space-y-1.5">
         {review.updates.map((update, index) => (
           <li key={index} className="whitespace-pre-wrap">
             <span className="font-semibold text-snow/80">{update.worker}</span> {REVIEW_KIND_WORDS[update.kind]}: {update.text}
           </li>
         ))}
       </ul>
-    </details>
+    </PopoverDisclosure>
   );
 }
 
@@ -2241,19 +2256,20 @@ function MessageBubble({
             <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/70">Assignment for {coworker.name}</p>
             <p className="mt-1 whitespace-pre-wrap" data-testid="coworker-assignment-outcome">{brief.outcome}</p>
             {brief.context.length > 0 ? (
-              <details className="group mt-2 text-xs text-white/80" data-testid="coworker-assignment-context">
-                <summary className="flex cursor-pointer list-none items-center gap-1 marker:hidden hover:text-white">
-                  <span>From your discussion · {brief.context.length} message{brief.context.length === 1 ? "" : "s"}</span>
-                  <span className="transition-transform group-open:rotate-90" aria-hidden="true">›</span>
-                </summary>
-                <ol className="mt-1.5 space-y-1.5 border-l border-white/25 pl-2.5">
+              <PopoverDisclosure
+                label={`From your discussion · ${brief.context.length} message${brief.context.length === 1 ? "" : "s"}`}
+                title="From your discussion"
+                testId="coworker-assignment-context"
+                className="mt-2 text-xs text-white/80"
+              >
+                <ol className="space-y-1.5">
                   {brief.context.map((entry, index) => (
                     <li key={index} className="whitespace-pre-wrap">
-                      <span className="font-semibold">{entry.speaker === "you" ? "You" : coworker.name}:</span> {entry.text}
+                      <span className="font-semibold text-snow/80">{entry.speaker === "you" ? "You" : coworker.name}:</span> {entry.text}
                     </li>
                   ))}
                 </ol>
-              </details>
+              </PopoverDisclosure>
             ) : null}
           </div>
         </article>
@@ -2362,14 +2378,9 @@ function ReplyText({ message, active, turnCalls, onLongReply }: { message: Trans
 /** Provider-returned thinking, folded to one quiet line once the reply is complete. Only what the transcript makes available is shown. */
 function ThinkingDisclosure({ text }: { text: string }) {
   return (
-    <details className="group text-[11px] text-mist" data-testid="coworker-thinking">
-      <summary className="flex cursor-pointer list-none items-center gap-1.5 py-0.5 marker:hidden hover:text-snow">
-        <ThoughtIcon className="size-3.5 shrink-0" />
-        <span>Thought through</span>
-        <span className="text-mist/60 transition-transform group-open:rotate-90" aria-hidden="true">›</span>
-      </summary>
-      <p className="mt-1 whitespace-pre-wrap border-l border-line pl-3 leading-relaxed">{text}</p>
-    </details>
+    <PopoverDisclosure label="Thought through" title="Thinking" icon={<ThoughtIcon className="size-3.5 shrink-0" />} testId="coworker-thinking" className="text-[11px] text-mist">
+      <p className="whitespace-pre-wrap" data-testid="coworker-thinking-landed-text">{text}</p>
+    </PopoverDisclosure>
   );
 }
 
@@ -2457,7 +2468,8 @@ function TurnFailureBubble({ coworkerName, outcome, onChoose }: { coworkerName: 
   }, [outcome.since]);
   const choose = (choice: TurnChoice) => {
     if (busy) return;
-    setBusy(choice.id);
+    // Opening a screen is not acting on the turn: the card stays ready for the person's return.
+    if (!choiceNavigates(choice.id)) setBusy(choice.id);
     onChoose(choice);
   };
   useEffect(() => {
@@ -2494,41 +2506,31 @@ function TurnFailureBubble({ coworkerName, outcome, onChoose }: { coworkerName: 
             />
           ))}
         </div>
-        {outcome.technical ? (
-          <details className="mt-2 text-[11px] text-mist" data-testid="coworker-turn-technical">
-            <summary className="cursor-pointer select-none">Technical details</summary>
-            <p className="mt-1 break-words font-mono">{outcome.technical}</p>
-          </details>
-        ) : null}
+        {outcome.technical ? <TechnicalText text={outcome.technical} testId="coworker-turn-technical" /> : null}
       </InteractionCard>
     </div>
   );
 }
 
-/**
- * What the person said while the coworker was working, waiting between the
- * transcript and the field. Each row is the message on one line with Edit,
- * Remove, and Send now; the first says what Next means. Rows go one at a
- * time, in order, as turns settle.
- */
+/** Queued messages remain in order; secondary actions live in one menu per row. */
 function NextRows({ items, onEdit, onRemove, onSendNow }: { items: QueuedMessage[]; onEdit: (id: string) => void; onRemove: (id: string) => void; onSendNow: (id: string) => void }) {
   return (
-    <div className="bg-ink px-5 pt-1" data-testid="coworker-next">
-      <div className="mx-auto max-w-3xl space-y-1 px-12">
-        {items.map((item, index) => (
-          <div key={item.id} className="flex items-center gap-2 text-[11px] text-mist" data-testid="coworker-next-row" data-queued-id={item.id}>
-            <span className="shrink-0 font-medium text-snow/70">
-              Next
-              {index === 0 ? <span className="font-normal text-mist/70"> · steers the reply that follows</span> : null}
-            </span>
-            <span className="min-w-0 flex-1 truncate" title={item.text}>{item.text}</span>
-            <span className="flex shrink-0 items-center gap-x-3">
-              <button type="button" className="font-medium text-snow/80 underline-offset-2 hover:underline" data-testid="coworker-next-edit" onClick={() => onEdit(item.id)}>Edit</button>
-              <button type="button" className="font-medium text-snow/80 underline-offset-2 hover:underline" data-testid="coworker-next-remove" onClick={() => onRemove(item.id)}>Remove</button>
-              <button type="button" className="font-medium text-snow/80 underline-offset-2 hover:underline" data-testid="coworker-next-send-now" onClick={() => onSendNow(item.id)}>Send now</button>
-            </span>
-          </div>
-        ))}
+    <div className="bg-ink px-5 pt-2" data-testid="coworker-next">
+      <div className="mx-auto max-w-3xl pl-10 sm:pl-12">
+        <p className="mb-1 text-[10px] text-mist" data-testid="coworker-next-label">Up next · {items.length} {items.length === 1 ? "message" : "messages"} · sent after this reply</p>
+        <ol className="rounded-xl border border-line bg-panel/40 px-2 py-1" aria-label="Queued messages">
+          {items.map((item, index) => (
+            <li key={item.id} className="flex min-w-0 items-center gap-2 py-0.5 text-xs text-mist" data-testid="coworker-next-row" data-queued-id={item.id}>
+              <span className="w-4 shrink-0 text-center text-[10px] text-mist/70" aria-label={`Position ${index + 1}`}>{index + 1}</span>
+              <span className="min-w-0 flex-1 truncate text-snow/85" title={item.text}>{item.text}</span>
+              <ActionMenu label={`Actions for queued message ${index + 1}`} side="above" items={[
+                { label: "Edit message", testId: "coworker-next-edit", onSelect: () => onEdit(item.id) },
+                { label: "Send now", testId: "coworker-next-send-now", onSelect: () => onSendNow(item.id) },
+                { label: "Remove from queue", testId: "coworker-next-remove", tone: "danger", onSelect: () => onRemove(item.id) },
+              ]} />
+            </li>
+          ))}
+        </ol>
       </div>
     </div>
   );
@@ -2752,7 +2754,9 @@ function DiscussionComposer({
   onOpenSummary,
   effortStop,
   onEffortChange,
+  offerStartingPoints = false,
 }: {
+  offerStartingPoints?: boolean;
   message: string;
   onMessageChange: (value: string) => void;
   onSend: () => void;
@@ -2839,6 +2843,16 @@ function DiscussionComposer({
                 : `Enter to ${assignmentMode ? "create" : "send"} · Shift Enter for a new line`}
           </span>
           <span className="flex min-w-0 items-center gap-3">
+            {offerStartingPoints && !assignmentMode && !held && !working && !value.trim() ? (
+              <PopoverDisclosure label="Starting points" title="A useful first step" testId="coworker-starting-points" align="end">
+                {[
+                  { label: "Turn a goal into a plan", prompt: "Help me turn a goal into a practical plan. Ask what I want to achieve and when I need it, then help me create a short working document with next steps." },
+                  { label: "Work through a document", prompt: "Help me improve a document. Ask me to share it and tell you who it is for, then identify the most useful changes before drafting a revision." },
+                  { label: "Take recurring work off my plate", prompt: "Help me choose one recurring task you can take off my plate. Ask about the task, the apps it needs, and when I want the result. Propose a responsibility for me to review before scheduling it." },
+                ].map((starter) => <button key={starter.label} type="button" className="block w-full rounded-lg px-2 py-2 text-left text-xs text-snow hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/45" onClick={() => { onMessageChange(starter.prompt); fieldRef.current?.focus(); }}>{starter.label}</button>)}
+                <p className="pt-2 text-[11px] text-mist">Choose a starting point, edit it, then send.</p>
+              </PopoverDisclosure>
+            ) : null}
             {effortStop && onEffortChange ? <EffortDial stop={effortStop} onChange={onEffortChange} coworkerName={coworkerName} /> : null}
             <SummaryLine summary={summary} onOpen={onOpenSummary} />
           </span>

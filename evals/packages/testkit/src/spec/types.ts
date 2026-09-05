@@ -35,6 +35,7 @@ export interface ProbeEvalOptions {
 
 export interface User {
   click(target: Target, options?: ClickOptions): Promise<void>;
+  rightClick(target: Target, options?: ClickOptions): Promise<void>;
   dblclick(target: Target): Promise<void>;
   type(target: Target, text: string, options?: TypeOptions): Promise<void>;
   press(key: string): Promise<void>;

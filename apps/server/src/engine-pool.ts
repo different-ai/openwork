@@ -569,6 +569,11 @@ export class EnginePool {
     };
   }
 
+  /** Provider sync treats an active drain as busy so it defers instead of parking on waitForDrain(). */
+  hasDrainingGeneration(): boolean {
+    return this.generations.some((entry) => entry.status === "draining");
+  }
+
   /**
    * Bring the engine onto current config. Idle engines reload in place; busy
    * ones roll over to a standby. Serialized: concurrent requests collapse into

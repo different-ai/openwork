@@ -119,6 +119,16 @@ test("search finds the capabilities with executable shape metadata", () => {
   expect(searchRemoteSessionCapabilities("unrelated zebra taxonomy", 10)).toEqual([])
 })
 
+test("task phrasings route to remote-session:create first", () => {
+  for (const query of [
+    "run slack search for messages on the remote session",
+    "do this in the web",
+    "hand this task off to the cloud",
+  ]) {
+    expect(searchRemoteSessionCapabilities(query, 10)[0]?.name).toBe("remote-session:create")
+  }
+})
+
 test("create returns the native session identifiers", async () => {
   const result = await executeRemoteSessionCapability(
     executeInput("create", { title: "Handoff", prompt: "Summarize the repo" }),

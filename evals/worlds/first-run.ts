@@ -741,7 +741,7 @@ export async function toolTesterWorld(seed: Seed) {
   const web = await seed.web({
     den,
     signedInAs: "admin",
-    startPath: "/dashboard/your-connections",
+    startPath: "/dashboard/mcp-connections",
     headless: true,
     viewport: { width: 1440, height: 1000 },
   });
@@ -775,6 +775,87 @@ export async function toolTesterWorld(seed: Seed) {
     execute: (schemaDigest: string, text: string) => callTool("execute_capability", {
       name: `mcp:${connection.id}:mock_echo`, schemaDigest, body: { text },
     }),
+    /** The Tool Tester link destination for this connection. */
+    // TODO(primitive): read a visible link destination by test id.
+    async testToolsHref(): Promise<string> {
+      const value = await seed.evalIn(web, `(connectionId) => document.querySelector('[data-testid="test-mcp-tools-' + connectionId + '"]')?.getAttribute("href") ?? ""`, {
+        args: [connection.id],
+      });
+      return typeof value === "string" ? value : "";
+    },
+    /** Whether Tool Tester appears in Manage rather than Settings. */
+    // TODO(primitive): identify a nav item's containing sidebar group.
+    async toolTesterSidebarPlacement(): Promise<{ inManage: boolean; inSettings: boolean }> {
+      const value = await seed.evalIn(web, `(() => {
+        const sidebar = document.querySelector('[data-testid="den-org-sidebar"]');
+        const links = sidebar ? [...sidebar.querySelectorAll('a')] : [];
+        const toolTester = links.find((link) => link.textContent?.trim() === "Tool Tester");
+        const settings = links.find((link) => link.textContent?.trim() === "Settings");
+        return {
+          inManage: toolTester?.closest('[data-sidebar-section="manage"]') != null,
+          inSettings: settings?.parentElement?.contains(toolTester ?? null) ?? false,
+        };
+      })()`);
+      if (!isRecord(value) || typeof value.inManage !== "boolean" || typeof value.inSettings !== "boolean") {
+        throw new Error(`Expected Tool Tester sidebar placement booleans, received ${JSON.stringify(value)}.`);
+      }
+      return { inManage: value.inManage, inSettings: value.inSettings };
+    },
+    /** The current web location. */
+    async location(): Promise<string> {
+      const value = await seed.evalIn(web, `location.href`);
+      if (typeof value !== "string") throw new Error("Expected the web location to be a string.");
+      return value;
+    },
+    /** The checked states of the arguments editor modes by label. */
+    // TODO(primitive): assert selected and unselected radio state.
+    async argumentsEditorModes(): Promise<Record<string, string | null>> {
+      const value = await seed.evalIn(web, `(() => {
+        const editor = document.querySelector('[role="radiogroup"][aria-label="Arguments editor mode"]');
+        const radios = editor ? [...editor.querySelectorAll('[role="radio"]')] : [];
+        return Object.fromEntries(radios.map((radio) => [(radio.textContent ?? "").trim(), radio.getAttribute("aria-checked")]));
+      })()`);
+      if (!isRecord(value) || !Object.values(value).every((entry) => typeof entry === "string" || entry === null)) {
+        throw new Error(`Expected arguments editor modes, received ${JSON.stringify(value)}.`);
+      }
+      const modes: Record<string, string | null> = {};
+      for (const [label, checked] of Object.entries(value)) {
+        if (typeof checked === "string" || checked === null) modes[label] = checked;
+      }
+      return modes;
+    },
+    /** The selected Tool call inspection tab's label. */
+    // TODO(primitive): assert the selected result tab state.
+    async selectedInspectionTab(): Promise<string> {
+      const value = await seed.evalIn(web, `document.querySelector('[aria-label="Tool call inspection"] [role="tab"][aria-selected="true"]')?.textContent?.trim() ?? ""`);
+      return typeof value === "string" ? value : "";
+    },
+    /** The organization tools switch's checked state. */
+    // TODO(primitive): assert a visible switch's checked state.
+    async orgToolsSwitchChecked(): Promise<string | null> {
+      const value = await seed.evalIn(web, `document.querySelector('[role="switch"][aria-label="Tools enabled for your organization"]')?.getAttribute("aria-checked")`);
+      return typeof value === "string" ? value : null;
+    },
+    /** The arguments editor's nested-schema fallback state. */
+    // TODO(primitive): assert disabled and selected radio state.
+    async argumentsEditorFallback(): Promise<{ formDisabled: boolean; jsonChecked: string }> {
+      const value = await seed.evalIn(web, `(() => {
+        const editor = document.querySelector('[role="radiogroup"][aria-label="Arguments editor mode"]');
+        const radios = editor ? [...editor.querySelectorAll('[role="radio"]')] : [];
+        const form = radios.find((radio) => (radio.textContent ?? "").trim() === "Form");
+        const json = radios.find((radio) => (radio.textContent ?? "").trim() === "JSON");
+        return { formDisabled: form?.hasAttribute("disabled") ?? false, jsonChecked: json?.getAttribute("aria-checked") ?? "" };
+      })()`);
+      if (!isRecord(value) || typeof value.formDisabled !== "boolean" || typeof value.jsonChecked !== "string") {
+        throw new Error(`Expected arguments editor fallback state, received ${JSON.stringify(value)}.`);
+      }
+      return { formDisabled: value.formDisabled, jsonChecked: value.jsonChecked };
+    },
+    /** Whether the Run tool button is disabled. */
+    // TODO(primitive): assert a visible button's disabled state.
+    async runToolDisabled(): Promise<boolean> {
+      return await seed.evalIn(web, `[...document.querySelectorAll("button")].some((button) => button.textContent?.trim() === "Run tool" && button.disabled)`) === true;
+    },
   };
 }
 

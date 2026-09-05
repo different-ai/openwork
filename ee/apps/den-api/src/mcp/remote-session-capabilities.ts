@@ -107,13 +107,13 @@ const REMOTE_SESSION_DEFINITIONS: RemoteSessionDefinition[] = [
   {
     action: "create",
     summary:
-      "Create a chat session on your OpenWork Cloud workspace or queue one for your connected OpenWork desktop. Optionally start it with a first prompt.",
+      "Start a remote session: a native OpenWork chat on your OpenWork Web instance (runs in the cloud, visible in the browser). Automatically sets up your workspace on first use; on cloud_runtime_provisioning, wait retryAfterMs before retrying with the same arguments. Give it the task to run as prompt. target \"desktop\" runs it on your connected OpenWork desktop instead.",
     searchExtraTokens:
-      "remote session sessions chat thread cloud web desktop create start new handoff continue browser workspace",
+      "remote session sessions chat thread cloud web instance browser openwork desktop create start new open run do task work delegate hand off handoff background continue workspace",
     argumentsSchema: {
       type: "object",
       properties: {
-        target: { type: "string", enum: ["cloud", "desktop"], description: "Execution target. Defaults to \"cloud\"." },
+        target: { type: "string", enum: ["cloud", "desktop"], description: "Where the session runs. Defaults to \"cloud\" (your OpenWork Web instance)." },
         title: { type: "string", maxLength: 120, description: "Session title shown in OpenWork." },
         prompt: { type: "string", description: "Optional first prompt. When present the session starts working immediately." },
         model: MODEL_ARGUMENT_SCHEMA,
@@ -123,9 +123,9 @@ const REMOTE_SESSION_DEFINITIONS: RemoteSessionDefinition[] = [
   {
     action: "send",
     summary:
-      "Send a prompt to an existing remote session on your OpenWork Cloud workspace. Returns an acceptance receipt; poll remote-session:read for the reply.",
+      "Send a follow-up prompt to an existing remote session on your OpenWork Web instance. Returns an acceptance receipt; poll remote-session:read for the reply.",
     searchExtraTokens:
-      "remote session sessions chat thread cloud web send prompt message turn continue",
+      "remote session sessions chat thread cloud web instance send prompt message turn continue follow up reply ask tell",
     argumentsSchema: {
       type: "object",
       properties: {
@@ -139,9 +139,9 @@ const REMOTE_SESSION_DEFINITIONS: RemoteSessionDefinition[] = [
   {
     action: "read",
     summary:
-      "Read the status of a queued desktop command or the recent transcript of a remote session on your OpenWork Cloud workspace.",
+      "Read a remote session's recent transcript and status from your OpenWork Web instance, or the status of a queued desktop command.",
     searchExtraTokens:
-      "remote session sessions chat thread cloud web read transcript status reply answer poll result",
+      "remote session sessions chat thread cloud web instance read transcript status reply answer poll result output check progress desktop command",
     argumentsSchema: {
       type: "object",
       properties: {
@@ -202,16 +202,17 @@ export type RemoteSessionRuntimeResult =
   | { ok: true; runtime: RemoteSessionRuntime }
   | {
       ok: false
-      error: "cloud_not_available" | "needs_cloud_setup" | "cloud_runtime_failed" | "cloud_runtime_waking" | "cloud_runtime_unreachable"
+      error: "cloud_not_available" | "needs_cloud_setup" | "cloud_runtime_provisioning" | "cloud_runtime_failed" | "cloud_runtime_waking" | "cloud_runtime_unreachable"
       message: string
       retryable: boolean
+      retryAfterMs?: number
     }
 
 export type RemoteSessionThreadClient = Pick<AgentSessionClient, "createThread" | "sendTurn" | "getThreadSnapshot">
 
 export type RemoteSessionExecuteDeps = {
   getOpenWorkWebAccess: OpenWorkWebRuntimeAccessResolver
-  resolveRuntime: (scope: { organizationId: DenTypeId<"organization">; userId: string }) => Promise<RemoteSessionRuntimeResult>
+  resolveRuntime: (scope: { organizationId: DenTypeId<"organization">; userId: string; provisionIfMissing?: boolean }) => Promise<RemoteSessionRuntimeResult>
   createClient: (runtime: RemoteSessionRuntime) => RemoteSessionThreadClient
   commandStore: RemoteSessionCommandStore
   desktopPresence: (scope: {
@@ -234,7 +235,17 @@ const READ_MESSAGE_TEXT_LIMIT = 4_000
 const FINAL_TEXT_LIMIT = 20_000
 
 const NEEDS_SETUP_MESSAGE =
-  "No OpenWork Cloud workspace is available for your account yet. Open OpenWork Cloud in the browser once (the Web tab in OpenWork, or your organization's OpenWork Web URL) so it can be provisioned, then retry this capability."
+  "No OpenWork Cloud workspace exists for your account yet. Use remote-session:create to start a new task and set up your workspace automatically."
+
+function provisioningResult(): RemoteSessionRuntimeResult {
+  return {
+    ok: false,
+    error: "cloud_runtime_provisioning",
+    message: "Your OpenWork Cloud workspace is being set up. No task has been submitted yet. Retry remote-session:create with the same arguments in about 30 seconds; you do not need to open the web app.",
+    retryable: true,
+    retryAfterMs: 30_000,
+  }
+}
 
 const CLOUD_NOT_AVAILABLE_MESSAGE =
   "OpenWork Cloud is not available on this deployment, so remote sessions are unavailable."
@@ -301,7 +312,7 @@ export async function resolveRemoteSessionWorkspace(
 }
 
 async function defaultResolveRuntime(
-  scope: { organizationId: DenTypeId<"organization">; userId: string },
+  scope: { organizationId: DenTypeId<"organization">; userId: string; provisionIfMissing?: boolean },
 ): Promise<RemoteSessionRuntimeResult> {
   // Defense in depth: the registry already hides these capabilities when the
   // deployment cannot host Cloud, but the runtime re-checks so the runtime
@@ -318,8 +329,19 @@ async function defaultResolveRuntime(
       userId: normalizeDenTypeId("user", scope.userId),
     })
     if (access.status === "missing") {
+      if (scope.provisionIfMissing) {
+        // Load on first use to avoid a startup cycle through the route and MCP
+        // registries. Browser and MCP creation share one store and in-flight map.
+        const { ensureMemberCloudWorker } = await import("../routes/cloud/index.js")
+        await ensureMemberCloudWorker({
+          orgId: scope.organizationId,
+          createdByUserId: normalizeDenTypeId("user", scope.userId),
+        })
+        return provisioningResult()
+      }
       return { ok: false, error: "needs_cloud_setup", message: NEEDS_SETUP_MESSAGE, retryable: false }
     }
+    if (access.status === "provisioning" && scope.provisionIfMissing) return provisioningResult()
     if (access.status !== "ready" && access.reason === "unreachable") {
       return {
         ok: false,
@@ -547,12 +569,17 @@ export async function executeRemoteSessionCapability(
     }
   }
 
-  const runtime = await deps.resolveRuntime({ organizationId: input.organizationId, userId: input.userId })
+  const runtime = await deps.resolveRuntime({
+    organizationId: input.organizationId,
+    userId: input.userId,
+    provisionIfMissing: input.action === "create",
+  })
   if (!runtime.ok) {
     return errorResult({
       error: runtime.error,
       message: runtime.message,
       retryable: runtime.retryable,
+      ...(runtime.retryAfterMs === undefined ? {} : { retryAfterMs: runtime.retryAfterMs }),
     })
   }
 
@@ -573,7 +600,7 @@ export async function executeRemoteSessionCapability(
         workerId: runtime.runtime.workerId,
         title: thread.title,
         started: thread.started,
-        note: "This is a native OpenWork session on your Cloud workspace; it appears in OpenWork Web. Use remote-session:send to prompt it and remote-session:read to read replies.",
+        note: "This is a native OpenWork session on your OpenWork Web instance; it is visible in OpenWork Web. Use remote-session:send for follow-ups and remote-session:read to read replies.",
       })
     } catch (error) {
       return threadErrorResult("create", null, error)

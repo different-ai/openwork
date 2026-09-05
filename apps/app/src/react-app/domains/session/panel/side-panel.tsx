@@ -159,11 +159,13 @@ function SidePanelTab({ tab, active, onSelect, onClose }: SidePanelTabProps) {
 }
 
 type BrowserPanelContentProps = {
+  sessionId: string;
   tab: BrowserPanelTab;
   onClose: () => void;
 };
 
 function BrowserPanelContent({
+  sessionId,
   tab,
   onClose,
 }: BrowserPanelContentProps) {
@@ -267,7 +269,10 @@ function BrowserPanelContent({
       }
 
       if (!shownRef.current) {
-        browser.show?.(bounds);
+        // Naming the conversation lets the native browser put that
+        // conversation's tabs on screen and keep every other conversation's
+        // tabs silently in the background.
+        browser.show?.(bounds, sessionId);
         shownRef.current = true;
         lastBoundsRef.current = bounds;
         return;
@@ -307,7 +312,7 @@ function BrowserPanelContent({
       shownRef.current = false;
       lastBoundsRef.current = null;
     };
-  }, [isAvailable]);
+  }, [isAvailable, sessionId]);
 
   return (
     <>
@@ -665,7 +670,7 @@ export function SidePanel({
           />
         ) : null}
         {activeTab?.type === "browser" ? (
-          <BrowserPanelContent tab={activeTab} onClose={onClose} />
+          <BrowserPanelContent sessionId={sessionId} tab={activeTab} onClose={onClose} />
         ) : activeTab?.type === "artifact" ? (
           <div className="min-h-0 flex-1 overflow-hidden">
             <ArtifactPanel

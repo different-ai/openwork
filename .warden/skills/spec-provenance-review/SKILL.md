@@ -1,41 +1,53 @@
 ---
 name: spec-provenance-review
-description: Flag e2e specs whose title claims a human action that the spec does not perform through the user channel. Advisory only; never gates Warden clearance.
+description: Flag concrete false-positive proof introduced by changed specs, not test helper or channel preferences. Advisory only; never gates Warden clearance.
 allowed-tools: Read Grep Glob
 ---
 
-You are reviewing changes under `evals/specs/**` and `evals/worlds/**` to answer
-one question: does each changed spec prove its claim through the channel its
-title implies?
+Review changes under `evals/specs/**` and `evals/worlds/**` for one question:
+does this diff let a spec pass while the specific behavior it claims to test
+is broken?
 
-Background. Specs are written against four capability-restricted channels
-(`evals/README.md`, section "Writing specs"):
+Test code has a different purpose from production code. Review the validity
+of its evidence, not production hardening, abstraction, style, or preferred
+helper usage. Channel conventions in `evals/README.md` are authoring guidance;
+a channel mismatch alone is not a finding.
 
-- `seed.*` — arrange. May construct state through APIs or the control rail.
-- `user.*` — act through real trusted input events and visible labels. This is
-  the only channel that proves "a person can do X".
-- `agent.*` — act through the product's `window.__openworkControl` rail. Proves
-  the agent/voice rail, not a person.
-- `probe.*` — read-only inspection.
+Report a MEDIUM (advisory) finding only when ALL of these hold:
 
-Report a MEDIUM (advisory) finding when:
+- The changed lines introduce or materially worsen the gap.
+- The spec bypasses the behavior under test or asserts evidence unrelated to
+  that behavior.
+- You can identify a concrete broken behavior that would still pass, grounded
+  in the spec and relevant implementation. A hypothetical possibility or the
+  availability of a different helper is insufficient.
 
-1. The spec title (or a `step()` name) says a person does something — signs in,
-   clicks, types, opens, sends, sees — but the body performs that action with
-   `seed.*` or `agent.*` instead of `user.*`. Quote the title fragment and the
-   substituting call.
-2. A NEW spec (added in this diff) uses the escape hatches `seed.evalIn(` or
-   `probe.eval(` without a `// TODO(primitive):` comment naming the missing
-   verb, or uses them to perform an action rather than to seed or read.
-3. A spec asserts a user-visible outcome only through `probe.*` when
-   `user.see`/`user.notSee` would prove what a person perceives.
+Examples worth reporting:
+
+- A spec claims a person can submit a form, but directly invokes the API and
+  never submits through the UI, so broken form wiring is not exercised.
+- A spec claims a save persists data, but only asserts the seeded value and
+  never observes the result of saving.
+- A spec claims visible success, but checks an internal success flag while
+  the implementation demonstrably never renders the result.
 
 Do not report:
 
-- `seed.*` calls inside world functions (`evals/worlds/**`) or after the first
-  act in a body — that is legitimate arrangement.
-- `agent.*` in specs whose title explicitly says agent, control rail, or voice.
-- Anything outside `evals/specs/**` and `evals/worlds/**`.
+- Read-only DOM/CDP inspection, `evaluateOnSurface`, `document.body.innerText`,
+  or `probe.*` merely because `user.see`/`user.notSee` could be used instead.
+  For example, opening `/pricing` and asserting new prices in rendered body
+  text is acceptable pricing evidence; the title saying "visitors see" does
+  not by itself require a different helper. Report only if the implementation
+  shows that the asserted text does not prove the specific claimed outcome.
+- `seed.*`, direct API calls, or browser evaluation used to arrange state,
+  including setup between actions; report only when setup substitutes for
+  the behavior actually under test.
+- `agent.*` in specs testing the agent, control rail, or voice.
+- Missing `// TODO(primitive):` comments or helper migration suggestions.
+- Test-only shortcuts, mocks, or fixtures that do not invalidate the claim.
+- Pre-existing gaps, title wording alone, or anything outside the scoped paths.
 
-Never report `high` or `low`. Keep each finding to the title fragment, the
-offending line, and the channel that should have been used.
+Never report `high` or `low`. Each finding must quote the claimed behavior,
+identify the changed line that bypasses it, explain the concrete failure that
+would still pass, and suggest the smallest fix. If that evidence is missing,
+report nothing.

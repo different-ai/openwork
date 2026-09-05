@@ -57,6 +57,7 @@ import {
   type ExecuteCapabilityToolResult,
 } from "./capability-registry.js"
 import { runCodemodeScript } from "./codemode-run.js"
+import { normalizeToolBody } from "./invoke.js"
 import { recordWorkflowResult } from "../workflow-runs.js"
 import {
   activateArtifactViewRevision,
@@ -164,29 +165,20 @@ export const SEARCH_CAPABILITIES_OUTPUT_SCHEMA = z.object({
 
 export const AGENT_MCP_INSTRUCTIONS = [
   "This OpenWork Cloud MCP server uses standard MCP tools, resources, structured results, and list-changed notifications.",
+  "Always call search_capabilities first with 2-4 keyword variants before concluding something is unavailable. Use execute_capability only with exact names returned by search_capabilities. A successful search_capabilities call proves this connection is authorized: Never tell the user to reconnect OpenWork Cloud because a downstream connector failed.",
+  "Capabilities include native Google Workspace operations (Gmail read/search, Calendar list/create, Drive search/read, and Gmail draft creation) executed with the signed-in member's organization credentials, plus any MCP connections the organization has added. Allowlisted platform admins also discover namespaced OpenWork Admin capabilities here; other members cannot.",
+  "A remote session is the member's OpenWork Web instance: a native OpenWork chat running in the cloud, visible in the browser. When asked to do something \"on the remote session\", \"in the web\", or \"in the cloud\" (e.g. \"run a Slack search for messages on the remote session\"), do not do the work here: execute remote-session:create with the whole request as prompt (or remote-session:send to an existing sessionId), then poll remote-session:read and relay the reply. target \"desktop\" runs it on the member's connected desktop instead.",
   "Use create_skill to create one private Cloud skill in a new Plugin, and update_skill to publish a new immutable version of an existing skill. Both return a standard skill-created MCP App result plus a text fallback; do not route these flows through execute_capability, postPlugins, or postConfigObjectsVersions.",
-  "Standard MCP Apps supplied by connected MCP servers are discovered through search_capabilities. A match with kind mcp_app must be executed through execute_capability like any other exact match; compatible OpenWork hosts preserve the current _meta.ui.resourceUri and render it without a generated direct-tool name.",
-  "Standalone URL-imported Apps are deferred future work and are not part of this release. Do not offer, search for, import, or launch them.",
-  "Skills teach how to perform work. Workflows are saved procedures discovered through search_capabilities and run through execute_capability using the exact capability name returned by search.",
-  "Author an ad hoc procedure with execute_capability_script. Workflow runs produce artifacts rendered by render_workflow_artifact, and Automations trigger Workflows.",
-  "When a member asks to keep a successful Code Mode result, save it as a Workflow inside the existing OpenWork Connect Plugin they name by passing that pluginId to the Workflow save operation. Omit pluginId only for a private Workflow in the member's My Workflows Plugin. A Workflow inherits discovery and sharing from its Plugin and any Marketplace containing that Plugin; do not create a separate Workflow package or marketplace entry.",
-  "Capabilities include native Google Workspace operations (Gmail read/search, Calendar list/create, Drive search/read, and Gmail draft creation) executed with the signed-in member's organization credentials, plus any MCP connections the organization has added.",
-  "Allowlisted platform admins can also discover namespaced OpenWork Admin capabilities through this same connection; other members cannot discover or execute them.",
-  "Always call search_capabilities first with 2-4 keyword variants before concluding something is unavailable. Use execute_capability only with exact names returned by search_capabilities.",
-  "Built-in remote skills create-skill, share-plugin, add-to-marketplace, and add-user-to-marketplace are always listed in the skill index. Retrieve and follow the matching one by executing its exact capability; do not invent a local copy to access them.",
-  "For a request to add a public GitHub plugin to an organization marketplace, search for the marketplace list, GitHub plugin import preview, GitHub plugin marketplace import, and resolved marketplace detail capabilities. Preview first; do not recreate the plugin by hand.",
-  "Before importing, confirm the target marketplace, selected skill/server keys, and who can use them. Do not choose one authentication type for every server: the import route resolves known presets and plugin declarations, while the request authType is only a fallback for unknown servers.",
-  "After importing, retrieve the resolved marketplace detail and report each plugin's cloudReadiness. An import or plugin binding is not proof that an MCP connection is usable. Relay needs_admin_setup or needs_signin as the next human action instead of claiming the connection is ready.",
-  "Do not invent OAuth-client, credential, or local-extension setup. Organization connections are managed in the OpenWork Cloud dashboard / Settings > Connect. When a returned connection or marketplace readiness state requires administrator setup or member sign-in, relay that exact action.",
-  "A successful search_capabilities call proves this OpenWork Cloud MCP connection is authorized. Never tell the user to reconnect OpenWork Cloud because a downstream connector failed.",
-  "External MCP matches include the provider-advertised argumentsSchema, schemaDigest, and invocation.argumentsField. Put an object matching argumentsSchema in execute_capability.body and copy schemaDigest into execute_capability.schemaDigest.",
-  "Do not import, convert, or browse for a standalone HTML URL when a connected capability already appears with kind mcp_app. Execute that exact match and let the host resolve its originating ui:// resource.",
-  "OpenWork always attempts the downstream provider call when local schema checks find a mismatch. schemaGuidance is advisory and appears alongside the provider result: if the provider succeeded, accept that result and do not retry solely because of the warning; if it failed, use the warning to correct the arguments or search again.",
+  "Built-in remote skills create-skill, share-plugin, add-to-marketplace, and add-user-to-marketplace are always listed in the skill index. Retrieve and follow the matching one by executing its exact capability; do not invent a local copy.",
+  "Skills teach how to perform work. Workflows are saved procedures discovered through search_capabilities and run through execute_capability. Author an ad hoc procedure with execute_capability_script; Workflow runs produce artifacts rendered by render_workflow_artifact, and Automations trigger Workflows. To keep a successful Code Mode result, save it as a Workflow inside the existing Plugin the member names (pass that pluginId); omit pluginId only for a private Workflow in their My Workflows Plugin. A Workflow inherits discovery and sharing from its Plugin and Marketplaces; never create a separate Workflow package or marketplace entry.",
+  "A match with kind mcp_app is a standard MCP App from a connected MCP server: execute that exact match through execute_capability and let compatible hosts render its ui:// resource. Never import, convert, or browse for a standalone HTML URL instead; standalone URL-imported Apps are not part of this release.",
+  "To add a public GitHub plugin to an organization marketplace, search for the marketplace list, GitHub plugin import preview, GitHub plugin marketplace import, and resolved marketplace detail capabilities. Preview first; do not recreate the plugin by hand. Before importing, confirm the target marketplace, selected skill/server keys, and who can use them. Do not choose one authentication type for every server: the import route resolves known presets and plugin declarations, and the request authType is only a fallback for unknown servers.",
+  "After importing, retrieve the resolved marketplace detail and report each plugin's cloudReadiness. An import or plugin binding is not proof that an MCP connection is usable: relay needs_admin_setup or needs_signin as the next human action instead of claiming the connection is ready.",
+  "Do not invent OAuth-client, credential, or local-extension setup. Organization connections are managed in the OpenWork Cloud dashboard / Settings > Connect; when a connection or marketplace readiness state requires administrator setup or member sign-in, relay that exact action.",
+  "External MCP matches include the provider-advertised argumentsSchema, schemaDigest, and invocation.argumentsField. Put an object matching argumentsSchema in execute_capability.body and copy schemaDigest into execute_capability.schemaDigest. OpenWork always attempts the downstream provider call even when local schema checks find a mismatch; schemaGuidance is advisory: if the provider succeeded, accept the result and do not retry because of the warning; if it failed, use the warning to correct the arguments or search again.",
   "If the provider returns invalid_capability_arguments, correct the listed issues and retry once with changed arguments; never retry the same arguments unchanged. If it returns unknown_capability, call search_capabilities again before retrying.",
-  "When a match has kind connection_status, execute that exact match once: it returns the live status and renders an actionable connection card for the member in compatible hosts. Also name connectionStatus.connectionName and relay connectionStatus.action exactly in text. Distinguish the member's Your Connections page, the organization Connections dashboard, and the provider's own admin console.",
-  "When execute_capability fails with needs_connection or connection_not_connected, execute that connection's status capability (mcp:<connectionId>:*) once so the member gets the same actionable connection card, then relay the action in text.",
-  "Successful postMarketplacesPlugins, postPluginsAccess, and postMarketplacesAccess calls through execute_capability render a confirmation card automatically in compatible hosts; report the outcome in text as well.",
-  "Connection probes are live. After the requested human fixes that connector, search again in the same task; otherwise do not retry unchanged or improvise workarounds through other tools.",
+  "When a match has kind connection_status, execute that exact match once: it returns the live status and renders an actionable connection card for the member in compatible hosts. When execute_capability fails with needs_connection or connection_not_connected, execute that connection's status capability (mcp:<connectionId>:*) once for the same card. In both cases name connectionStatus.connectionName and relay connectionStatus.action exactly in text, distinguishing the member's Your Connections page, the organization Connections dashboard, and the provider's own admin console. Probes are live: after the human fixes the connector, search again in the same task; otherwise do not retry unchanged or improvise workarounds through other tools.",
+  "Successful postMarketplacesPlugins, postPluginsAccess, and postMarketplacesAccess calls render a confirmation card automatically in compatible hosts; report the outcome in text as well.",
 ].join("\n")
 
 async function mcpRequestInfo(request: Request): Promise<{ method: string | null; resourceUri: string | null }> {
@@ -898,11 +890,13 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           "Not available: import/require, classes, generators, .then/.catch chaining, timers, fetch, process, and other host globals — call tools for all external work.",
           "Send plain source only (no markdown fences). End with `return <json-safe value>`; use console.log for progress logs.",
           "Run independent tool calls in parallel with Promise.all and return only the fields needed.",
+          "Parameters go in `input` (a JSON object) and are read inside the script as `input.<field>`; never hardcode values that should be parameters.",
+          "Typical Workflows are recurring digests (Slack/Gmail/Calendar summaries), inbox or ticket triage, lead alerts and CRM syncs, and status reports. Put everything a person might change (channel, recipient, lookback hours, thresholds) in `input` so the saved Workflow can be scheduled as an Automation with different parameters. tools.$codemode.search is fine while exploring but a saved Workflow must call tools directly.",
         ].join(" "),
         annotations: EXECUTE_CAPABILITY_ANNOTATIONS,
         inputSchema: z.object({
           code: z.string().min(1),
-          input: z.unknown().optional(),
+          input: z.unknown().optional().describe("Optional parameters for the script, bound read-only as `input`. Pass a JSON object (not a JSON string). It becomes the Workflow's example input when the run is saved with saveWorkflow."),
         }),
       },
       async ({ code, input }) => executeCapabilityWithBudget({
@@ -912,7 +906,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           const startedAt = new Date()
           const result = await runCodemodeScript({
             code,
-            scriptInput: input,
+            scriptInput: normalizeToolBody(input),
             tools,
             timeoutMs: 170_000,
           })

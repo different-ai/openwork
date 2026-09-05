@@ -365,8 +365,7 @@ describe("Cloud instance route gate", () => {
     routes.registerCloudRoutes(app, {
       memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }))),
       orgMode: "multi_org",
-      provisionerMode: "daytona",
-      daytonaApiKey: "daytona-test-key",
+      provisionerMode: "stub",
       getOpenWorkWebAccess: async () => ({ hasAccess: false }),
       ensureCloudWorker: async () => {
         ensureCalls += 1
@@ -445,8 +444,7 @@ describe("Cloud instance route gate", () => {
     routes.registerCloudRoutes(app, {
       memberRoute: contextMiddleware(organizationContext(null)),
       orgMode: "multi_org",
-      provisionerMode: "daytona",
-      daytonaApiKey: "daytona-test-key",
+      provisionerMode: "stub",
       getOpenWorkWebAccess: async () => ({ hasAccess: false }),
       ensureCloudWorker: async () => {
         ensureCalls += 1
@@ -1012,8 +1010,7 @@ describe("Cloud instance update route", () => {
     routes.registerCloudRoutes(app, {
       memberRoute: contextMiddleware(organizationContext(null, { orgId, userId })),
       orgMode: "multi_org",
-      provisionerMode: "daytona",
-      daytonaApiKey: "daytona-test-key",
+      provisionerMode: "stub",
       getOpenWorkWebAccess: async () => ({ hasAccess: false }),
       cloudWorkerStore: store.store,
       getSandboxRecord: async () => fakeSandbox(),

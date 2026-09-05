@@ -50,6 +50,8 @@ export interface DenSandboxOptions {
   reuse?: string;
   repoRoot?: string;
   bootstrapAdminEmail?: string;
+  /** Extra Den environment for a freshly provisioned sandbox; a reused Den is already running and cannot take it. */
+  env?: Record<string, string>;
   log?: (line: string) => void;
 }
 
@@ -66,6 +68,7 @@ export interface MockOnSandboxOptions {
   log?: (line: string) => void;
   fetchImpl?: typeof fetch;
   allowUnauthenticatedMcp?: boolean;
+  appToolName?: string;
 }
 
 export interface MockOnSandbox {
@@ -483,10 +486,25 @@ function lineWriter(log: (line: string) => void): LineWriter {
   };
 }
 
-function runDenProvisionScript(ref: string, repoRoot: string, bootstrapAdminEmail: string | undefined, log: (line: string) => void, urlsFile: string): Promise<LocalProcessResult> {
+/**
+ * Extra Den env travels to the sandbox as base64 `KEY=VALUE` lines, so values
+ * are never interpolated into the `daytona exec` command line. Keys must be
+ * plain environment names; the start script exports each line verbatim.
+ */
+export function encodeDenExtraEnv(env: Record<string, string>): string {
+  const lines = Object.entries(env).map(([key, value]) => {
+    if (!/^[A-Z_][A-Z0-9_]*$/.test(key)) throw new Error(`Unsafe Den environment name ${JSON.stringify(key)}.`);
+    if (value.includes("\n")) throw new Error(`Den environment value for ${key} may not contain a newline.`);
+    return `${key}=${value}`;
+  });
+  return Buffer.from(lines.join("\n"), "utf8").toString("base64");
+}
+
+function runDenProvisionScript(ref: string, repoRoot: string, bootstrapAdminEmail: string | undefined, extraEnv: Record<string, string> | undefined, log: (line: string) => void, urlsFile: string): Promise<LocalProcessResult> {
   return new Promise((resolve, reject) => {
     const env: NodeJS.ProcessEnv = { ...process.env, OPENWORK_DEN_URLS_FILE: urlsFile };
     if (bootstrapAdminEmail) env.DEN_BOOTSTRAP_ADMIN_EMAILS = bootstrapAdminEmail;
+    if (extraEnv && Object.keys(extraEnv).length > 0) env.OPENWORK_DEN_EXTRA_ENV_B64 = encodeDenExtraEnv(extraEnv);
     const child = spawn("bash", [".devcontainer/test-server-on-daytona.sh", ref, "--seed", "--name", serverSandboxName()], {
       cwd: repoRoot,
       env,
@@ -656,6 +674,7 @@ export async function provisionDenSandbox(options: DenSandboxOptions & Provision
         ref,
         options.repoRoot ?? REPO_ROOT,
         options.bootstrapAdminEmail,
+        options.env,
         log,
         urlsFile,
       ));
@@ -701,10 +720,11 @@ export async function startMockOnSandbox(options: MockOnSandboxOptions & Provisi
 
   await timedStep(log, "mock process detach", async () => {
     const unauthenticatedMcpEnv = options.allowUnauthenticatedMcp ? " MOCK_ALLOW_UNAUTHENTICATED_MCP=1" : "";
+    const appToolEnv = options.appToolName ? ` MOCK_APP_TOOL_NAME=${assertSafeRef(options.appToolName)}` : "";
     const detachScript = `cd /workspace; python3 - <<PYEOF
 import subprocess
 log = open("/tmp/mock-mcp.log", "ab", buffering=0)
-subprocess.Popen(["bash", "-lc", "cd /workspace && env HOST=0.0.0.0 PORT=${port} ISSUER=${url} AUTO_APPROVE=1${unauthenticatedMcpEnv} node scripts/mock-oauth-mcp-server.mjs"], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
+subprocess.Popen(["bash", "-lc", "cd /workspace && env HOST=0.0.0.0 PORT=${port} ISSUER=${url} AUTO_APPROVE=1${unauthenticatedMcpEnv}${appToolEnv} node scripts/mock-oauth-mcp-server.mjs"], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
 PYEOF
 echo detached`;
     await execInSandbox(exec, options.sandbox, detachScript, { timeoutMs: 30_000, context: `mock process detach for ${options.sandbox}` });

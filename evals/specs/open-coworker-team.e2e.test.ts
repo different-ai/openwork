@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { clickButton, coworker, evalIn, fill, needs, test, waitFor, waitForText } from "@openwork/testkit";
+import { clickButton, coworker, evalIn, fill, needs, screenshot, test, waitFor, waitForText } from "@openwork/testkit";
 import { expect, onTestFinished } from "vitest";
 
 /**
@@ -275,9 +275,11 @@ async function waitForTools(app: App, slug: string): Promise<void> {
 }
 
 /** Send one message and wait for the reply; returns the settled action line's collapsed words. */
-async function converse(app: App, name: string, prompt: string, reply: string): Promise<{ summary: string; steps: string[]; text: string }> {
-  await fill(app, `textarea[aria-label=${json(`Message ${name}`)}]`, prompt);
-  await clickButton(app, "Send");
+async function converse(app: App, name: string, prompt: string, reply: string, alreadySent = false): Promise<{ summary: string; steps: string[]; text: string }> {
+  if (!alreadySent) {
+    await fill(app, `textarea[aria-label=${json(`Message ${name}`)}]`, prompt);
+    await clickButton(app, "Send");
+  }
   await waitFor(app, `[...document.querySelectorAll('[data-message-role="assistant"]')].some((message) => (message.textContent ?? "").includes(${json(reply)}))`, {
     timeoutMs: 300_000,
     label: `reply ${json(reply)}`,
@@ -404,7 +406,9 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   await waitFor(app, `Boolean(document.querySelector('[data-testid="local-mode"]'))`, { timeoutMs: 60_000, label: "the Use this Mac step" });
   await clickButton(app, "Continue", { timeoutMs: 120_000 });
   await waitFor(app, `document.querySelectorAll('[data-testid="onboarding-intent"]').length === 6`, { timeoutMs: 60_000, label: "the six intents" });
-  await evalIn(app, `document.querySelector('[data-testid="onboarding-intent"][data-intent="research"]').click(); document.querySelector('[data-testid="onboarding-intent"][data-intent="writing"]').click(); true`);
+  expect(await evalIn(app, `document.querySelector('select[aria-label="Profession"]').options.length`)).toBe(9);
+  await evalIn(app, `(() => { const select = document.querySelector('select[aria-label="Profession"]'); select.value = "marketing"; select.dispatchEvent(new Event("change", { bubbles: true })); return true; })()`);
+  await waitFor(app, `document.querySelector('[data-testid="work-pattern-outcome"]')?.textContent.includes("weekly campaign")`, { label: "profession explains its workflow" });
   expect(await evalIn(app, `[...document.querySelectorAll('[data-testid="onboarding-intent"][aria-pressed="true"]')].map((tile) => tile.dataset.intent)`)).toEqual(["research", "writing"]);
   await evalIn(app, `document.querySelector('[data-testid="onboarding-intents-continue"]').click(); true`);
   const proposed = await waitFor(app, `(() => {
@@ -424,12 +428,18 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   })()`, { timeoutMs: 60_000, label: "the proposed team" });
   expect(proposed).toEqual({
     cards: [
-      { roleId: "research", name: "Scout", role: "Research and synthesis", mission: expect.stringMatching(/^I /), avatar: true },
-      { roleId: "writing", name: "Editor", role: "Writing and content", mission: expect.stringMatching(/^I /), avatar: true },
+      { roleId: "research", name: "Scout", role: "Research and synthesis", mission: expect.stringContaining("sourced campaign brief"), avatar: true },
+      { roleId: "writing", name: "Editor", role: "Writing and content", mission: expect.stringContaining("content calendar for your review"), avatar: true },
     ],
     selects: 0,
     railVisible: false,
   });
+  expect(await evalIn(app, `(() => {
+    const cards = [...document.querySelectorAll('[data-testid="onboarding-team-cards"] [data-testid="teammate-card"]')];
+    return cards.every((card) => card.scrollWidth <= card.clientWidth && [...card.querySelectorAll('p')].every((text) => text.scrollWidth <= text.clientWidth));
+  })()`)).toBe(true);
+  await screenshot(app);
+  evidence.recordAssertionEvidence("Profession presets propose an editable team with concrete responsibilities", "Marketing selected research and writing, then proposed a sourced campaign brief and reviewable content calendar. Both full-width cards contained their role and mission without horizontal overflow; no coworker or schedule was created by selecting the preset.", true);
   // Rename the first coworker in place: tap the name, type, Enter.
   await evalIn(app, `document.querySelector('[data-testid="onboarding-team-cards"] [data-testid="teammate-card-name"]').click(); true`);
   await fill(app, '[data-testid="teammate-card-name-input"]', "Nova");
@@ -446,7 +456,7 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   const novaRoster = resultText(await invokeCoworker(app, "coworkers.files.read", { slug: "nova", path: "team/roster.md" }));
   expect(novaRoster).toMatch(/^# My team/);
   expect(novaRoster).toContain("I am Nova (Research and synthesis).");
-  expect(novaRoster).toContain("- Editor (`editor`) — Writing and content — I turn rough ideas into clear drafts");
+  expect(novaRoster).toContain("- Editor (`editor`) — Writing and content — I turn the campaign brief into consistent posts");
   expect(resultText(await invokeCoworker(app, "coworkers.files.read", { slug: "editor", path: "team/roster.md" }))).toContain("- Nova (`nova`) — Research and synthesis");
   const agents = resultText(await invokeCoworker(app, "coworkers.files.read", { slug: "nova", path: "AGENTS.md" }));
   expect(agents).toContain("<!-- open-coworker-contract: 8 -->");
@@ -535,7 +545,7 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
     state: "open",
     name: "Editor",
     role: "Writing and content",
-    mission: expect.stringMatching(/^I turn rough ideas/),
+    mission: expect.stringMatching(/^I turn the campaign brief/),
     smallPrint: "Editor could take this · Writing and content",
     slug: "editor",
     hasAvatar: true,
@@ -598,7 +608,25 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   );
 
   // --- 3. Work nobody covers: Nova proposes a teammate; Add to team creates it without leaving; Say hi opens it.
-  const inbox = await converse(app, "Nova", INBOX_PROMPT, INBOX_REPLY);
+  await evalIn(app, `document.querySelector('button[title="New coworker"], button[aria-label="New coworker"]').click(); true`);
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="new-coworker-suggested"]'))`, { label: "readable suggested roles" });
+  await evalIn(app, `(() => { const select = document.querySelector('select[aria-label="Profession"]'); select.value = "support"; select.dispatchEvent(new Event("change", { bubbles: true })); return true; })()`);
+  await waitFor(app, `document.querySelector('[data-testid="teammate-pick"]')?.getAttribute("data-role-id") === "support"`, { label: "support profession leads with the missing support role" });
+  expect(await evalIn(app, `(() => {
+    const cards = [...document.querySelectorAll('[data-testid="new-coworker-suggested"] [data-testid="teammate-card"]')];
+    return cards.length === 3 && cards.every((card) => card.getBoundingClientRect().width >= 300 && card.scrollWidth <= card.clientWidth && [...card.querySelectorAll('p')].every((text) => text.scrollWidth <= text.clientWidth));
+  })()`)).toBe(true);
+  await screenshot(app);
+  await evalIn(app, `document.querySelector('[data-testid="coworker-team-advice"] summary').click(); true`);
+  await evalIn(app, `(() => { const select = document.querySelector('select[aria-label="Ask coworker"]'); select.value = "nova"; select.dispatchEvent(new Event("change", { bubbles: true })); return true; })()`);
+  await fill(app, 'textarea[aria-label="Your work and goals"]', INBOX_PROMPT);
+  expect(resultList(await invokeCoworker(app, "coworkers.list", {}))).toHaveLength(2);
+  await evalIn(app, `document.querySelector('[data-testid="coworker-team-advice-send"]').click(); true`);
+  await waitForConversation(app, "Nova");
+  const inbox = await converse(app, "Nova", INBOX_PROMPT, INBOX_REPLY, true);
+  expect(scripted.prompts.some((prompt) => prompt.includes(INBOX_PROMPT) && prompt.includes("Customer success & support") && prompt.includes("Prefer existing teammates"))).toBe(true);
+  expect(resultList(await invokeCoworker(app, "coworkers.list", {}))).toHaveLength(2);
+  evidence.recordAssertionEvidence("The Add screen recommends roles for a profession and asks an existing coworker for AI advice", "The suggested roles were readable full-width rows. Customer success prioritized the missing support role. Asking Nova with the work description used the existing conversation and model, sent the profession and review boundaries, and returned a real teammate suggestion without creating anyone before Add to team.", true);
   expect(inbox.summary).toBe("Suggested a teammate · Care");
   const suggestionTiles = await waitFor(app, `(() => { const tiles = ${READ_TILES}; return tiles.length === 3 && tiles[2].state === "open" ? tiles[2] : false; })()`, { timeoutMs: 30_000, label: "the suggested teammate tile" });
   expect(suggestionTiles).toEqual({
@@ -677,4 +705,32 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
     "After a reload Editor's conversation still showed the declined Pipeline tile with no pills, and Nova's showed the first hand-over as Passed to Editor, the second as kept with Nova, and the Care suggestion as added with its Say hi pill.",
     true,
   );
+  await evalIn(app, `document.querySelector('button[title="New coworker"], button[aria-label="New coworker"]').click(); true`);
+  await clickButton(app, "Start from scratch");
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="new-coworker-step-identity"]'))`, { label: "custom coworker form" });
+  await fill(app, 'input[placeholder="Scout"]', "Willow");
+  await evalIn(app, `document.querySelector('button[aria-label="Sand"]').click(); true`);
+  await clickButton(app, "Oval");
+  expect(await evalIn(app, `document.querySelectorAll('.avatar-stage .coworker-avatar__glasses ellipse').length`)).toBe(2);
+  await waitFor(app, `document.querySelector('[data-testid="new-coworker-step-identity"]') && !document.querySelector('[data-testid="new-coworker-suggested"]') && [...document.querySelectorAll("button")].some((button) => button.textContent?.trim() === "Add coworker" && button.getBoundingClientRect().bottom <= innerHeight)`, { label: "custom form separates recommendations and keeps its create button visible" });
+  await screenshot(app);
+  await clickButton(app, "Add coworker");
+  await waitForConversation(app, "Willow");
+  const willow = resultList(await invokeCoworker(app, "coworkers.list", {})).find((member) => member.slug === "willow");
+  expect(willow).toMatchObject({ avatarColor: "sand", avatarGlasses: "oval" });
+  await evalIn(app, "location.reload(); true");
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-rail"]'))`, { timeoutMs: 60_000, label: "custom avatar after reload" });
+  expect(resultList(await invokeCoworker(app, "coworkers.list", {})).find((member) => member.slug === "willow")).toMatchObject({ avatarColor: "sand", avatarGlasses: "oval" });
+  evidence.recordAssertionEvidence("Sand and oval frames persist without changing the avatar's established shape", "The creation form preview showed two oval lenses. Creating Willow stored sand and oval, and the same look returned after reloading the app.", true);
+
+  await evalIn(app, `document.querySelector('[data-testid="new-group-chat"]').click(); true`);
+  await clickButton(app, "Create group chat");
+  const groupReady = await waitFor(app, `(() => {
+    if (!document.querySelector('[data-testid="group-chat-empty"]')) return false;
+    const status = document.querySelector('[data-testid="coworker-top-status"]');
+    return status?.textContent?.trim() === "Ready" ? { tone: status.dataset.tone, color: getComputedStyle(status).color, dots: status.querySelectorAll('span').length } : false;
+  })()`, { label: "new group is ready in the same muted sage" });
+  expect(groupReady).toEqual({ tone: "ready", color: "rgb(120, 148, 135)", dots: 0 });
+  evidence.recordAssertionEvidence("Group availability shares the discreet Ready tone", "Creating a group from the rail opened an empty conversation with Ready in muted sage rgb(120, 148, 135), with no status dot or unsolicited message.", true);
+
 });

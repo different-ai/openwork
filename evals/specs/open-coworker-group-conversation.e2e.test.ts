@@ -255,7 +255,7 @@ test.skipIf(!enabled)(title, { timeout: 1_500_000 }, async ({ evidence }) => {
       summaryLine: false,
     };
   })()`, { timeoutMs: 30_000, label: "group header and composer hint row" });
-  expect(groupHeader).toEqual({ statusDot: 0, statusTone: "mist", brandLine: false, summaryLine: false });
+  expect(groupHeader).toEqual({ statusDot: 0, statusTone: "ready", brandLine: false, summaryLine: false });
 
   evidence.recordAssertionEvidence(
     "@everyone makes both coworkers answer in order, each signed, with a live row and rail line that say who is replying",

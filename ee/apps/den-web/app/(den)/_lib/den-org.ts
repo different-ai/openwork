@@ -245,6 +245,7 @@ export type DenOrgCapabilities = {
   orgManagedDashboards: boolean;
   installLinks: boolean;
   mcpConnections: boolean;
+  coworkerTeams: boolean;
   /** Always on: Workflows/Code Mode shipped for every organization. Older servers may still return false. */
   workflows: boolean;
   /** Effective Web offer; true for the global switch or this organization's complimentary admin grant. */
@@ -651,6 +652,10 @@ export function getIntegrationsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/integrations`;
 }
 
+export function getPluginSourcesRoute(orgSlug?: string | null): string {
+  return `${getPluginsRoute(orgSlug)}?view=sources`;
+}
+
 export function getGithubIntegrationRoute(orgSlug?: string | null): string {
   return `${getIntegrationsRoute(orgSlug)}/github`;
 }
@@ -943,13 +948,14 @@ function parseOrgAuthMethods(value: unknown): DenOrgAuthMethods {
 
 function parseOrgCapabilities(value: unknown): DenOrgCapabilities {
   if (!isRecord(value)) {
-    return { orgManagedDashboards: false, installLinks: false, mcpConnections: false, workflows: true, openworkWeb: false, cloud: false };
+    return { orgManagedDashboards: false, installLinks: false, mcpConnections: false, coworkerTeams: false, workflows: true, openworkWeb: false, cloud: false };
   }
 
   return {
     orgManagedDashboards: value.orgManagedDashboards === true,
     installLinks: value.installLinks === true,
     mcpConnections: value.mcpConnections === true,
+    coworkerTeams: value.coworkerTeams === true,
     // Workflows are enabled everywhere on current servers; only an explicit
     // false from an older server still hides the surface.
     workflows: value.workflows !== false,

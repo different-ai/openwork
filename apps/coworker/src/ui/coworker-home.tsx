@@ -64,14 +64,14 @@ const BESIDE_APPS_MIN_WIDTH = 480;
 /** Below this window width the open panel lies over the conversation instead of beside it. */
 const NARROW_WINDOW = 900;
 
-const STATUS_TEXT_TONE: Record<StatusTone, string> = { mist: "text-mist", amber: "text-amber", rose: "text-rose" };
+const STATUS_TEXT_TONE: Record<StatusTone, string> = { mist: "text-mist", ready: "text-ready", amber: "text-amber", rose: "text-rose" };
 
 /** Which Activity level each part of the summary line opens. */
 const SUMMARY_LEVELS: Record<SummaryKind, ActivityLevel> = { assignments: "assignments", workers: "workers", documents: "documents" };
 
 /**
- * The header's one plain word about the coworker — no dot, colour only when it
- * asks for the person or reports a failure. The tooltip adds the reason and the
+ * The header's one plain word about the coworker — no dot, muted sage when
+ * ready and stronger colour when it asks for the person or reports a failure. The tooltip adds the reason and the
  * time; the live row in the transcript owns the moment-to-moment phrase.
  */
 export function HeaderStatusWord({ activity, engineManaged }: { activity: CoworkerActivity | undefined; engineManaged: boolean }) {
@@ -475,6 +475,7 @@ export function CoworkerHome({
             headerSlots={{ title: headerTitleSlot, actions: headerActionsSlot }}
             onOpenModelSettings={() => openSettingsSection("model", Date.now())}
             onOpenAccount={() => onOpenOpenWork("account")}
+            onOpenProviders={() => onOpenOpenWork("models")}
             onActivityChange={onActivityChange}
             documents={documentHooks}
             summary={summaryLine}

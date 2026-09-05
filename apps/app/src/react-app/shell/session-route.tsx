@@ -75,6 +75,7 @@ import {
   type RouteSession,
   describeRouteError,
   describeTaskCreateFailure,
+  describeTaskCreateRetry,
   describeWorkspaceCreateError,
   downloadWorkspaceJson,
   folderNameFromPath,
@@ -175,6 +176,7 @@ import { useShareWorkspaceState } from "@/react-app/domains/workspace/share-work
 import { ModelPickerModal, MODEL_PICKER_UNAVAILABLE_SUBTITLE } from "@/react-app/domains/session/modals/model-picker-modal";
 import { CommandPalette, type PaletteItem, type SessionGroupOption } from "./command-palette";
 import { buildCommandPaletteSessions } from "./command-palette-sessions";
+import { requestRenameSession } from "./session-actions-bus";
 import type { ThinkingModeShortcutDirection } from "./thinking-mode-shortcut";
 import { SessionSearchDialog } from "./session-search-dialog";
 import type { SessionMessageFetcher } from "@/react-app/domains/session/search/session-search";
@@ -222,6 +224,7 @@ import { useShellConfig } from "./shell-config";
 import { useShellShortcuts } from "./use-shell-shortcuts";
 import { useEngineReload } from "./use-engine-reload";
 import { useSessionGroupSync } from "./use-session-group-sync";
+import { useUiStateStore } from "./ui-state-store";
 import { useWorkspaceRouteState } from "./use-workspace-route-state";
 import { CloudWorkspaceBootTakeover, useCloudWorkspaceStatus } from "./cloud-workspace-overlay";
 import {
@@ -359,11 +362,14 @@ export function SessionRoute() {
   const dashboardWorkspaceRoute = dashboardRouteRequested
     && (dashboardAvailabilityLoading || mcpAppsDashboardEnabled);
   const platform = usePlatform();
+  const toggleSidebar = useUiStateStore((state) => state.toggleSidebar);
   const denAuth = useDenAuth();
   const { config: shellConfig } = useShellConfig();
   const local = useLocal();
   const automationDeploymentEnabled = useAutomationDeploymentEnabled();
-  const automationsEnabled = isDesktopRuntime() && automationDeploymentEnabled;
+  // Desktop and Web share one Automations surface; the runtime only decides
+  // the placement of what each creates. Den's deployment flag stays the gate.
+  const automationsEnabled = automationDeploymentEnabled;
   const automationsRouteActive = automationsEnabled && automationsRouteRequested;
   const denSettings = readDenSettings();
   const sessionDraftScope = resolveSessionDraftScope({
@@ -698,6 +704,9 @@ export function SessionRoute() {
     selectedWorkspaceId ? state.groupsByWorkspace[selectedWorkspaceId] : undefined
   ));
   const assignSessionToGroup = sessionManagementStore((state) => state.assignGroup);
+  const currentSessionPinned = sessionManagementStore((state) => (
+    selectedSessionId ? state.pinnedIds.includes(selectedSessionId) : false
+  ));
   const seedWorkspaceActivitySessions = useSessionActivityStore((state) => state.seedWorkspaceSessions);
   const sessionActivityByWorkspaceId = useSessionActivityStore((state) => state.statusesByWorkspaceId);
 
@@ -1239,7 +1248,7 @@ export function SessionRoute() {
     return {
       workspaceRoot: selectedWorkspaceRoot,
       draftScope: sessionDraftScope,
-      developerMode: false,
+      developerMode,
       modelLabel,
       onModelClick: (sessionId?: string) => {
         setModelPickerSessionId(sessionId ?? null);
@@ -1518,6 +1527,7 @@ export function SessionRoute() {
     listSlashCommands,
     modelBehaviorOptions,
     cloudMcpSubmissionState,
+    developerMode,
     modelLabel,
     modelUnavailableMessage,
     organizationModelsEmpty,
@@ -2054,7 +2064,11 @@ export function SessionRoute() {
     });
   }, [local, selectedSessionId]);
 
-  const handleCreateTaskInWorkspace = useCallback(async (workspaceId: string): Promise<string | null> => {
+  const handleCreateTaskInWorkspaceWithOpenMode = useCallback(async (
+    workspaceId: string,
+    openAs: "primary" | "split",
+    source: "new_task" | "new_split" = openAs === "split" ? "new_split" : "new_task",
+  ): Promise<string | null> => {
     const workspace = workspaces.find((item) => item.id === workspaceId);
     if (
       !workspace ||
@@ -2086,9 +2100,10 @@ export function SessionRoute() {
         ),
         retryDelaysMs: TASK_CREATE_RETRY_DELAYS_MS,
         onRetry: (attempt) => {
-          toast.info(t("session.engine_catching_up_title"), {
+          const notice = describeTaskCreateRetry({ developerMode, attempt, attempts });
+          toast.info(notice.title, {
             id: toastId,
-            description: t("session.engine_catching_up_detail", { attempt: String(attempt), total: String(attempts) }),
+            description: notice.description,
             duration: Infinity,
           });
         },
@@ -2097,14 +2112,16 @@ export function SessionRoute() {
         void refreshCloudProviderSync("new_chat");
       }
       captureAnalyticsEvent("task_created", {
-        source: "new_task",
+        source,
         workspace_type: workspace.workspaceType ?? "unknown",
       });
       toast.dismiss(taskCreateUnavailableToastId(workspaceId));
       toast.dismiss();
-      setLegacySelectedWorkspaceId(workspaceId);
-      writeActiveWorkspaceId(workspaceId || null);
-      writeLastSessionFor(workspaceId, session.id);
+      if (openAs === "primary") {
+        setLegacySelectedWorkspaceId(workspaceId);
+        writeActiveWorkspaceId(workspaceId || null);
+        writeLastSessionFor(workspaceId, session.id);
+      }
       rememberPendingCreatedSession(workspaceId, session.id);
       applyLastUsedModelToSession(session.id);
       setSessionsByWorkspaceId((current) => {
@@ -2115,8 +2132,21 @@ export function SessionRoute() {
         sessionsByWorkspaceIdRef.current = next;
         return next;
       });
-      navigateToWorkspaceSession(workspaceId, session.id);
-      focusPromptSoon();
+      if (openAs === "primary") {
+        navigateToWorkspaceSession(workspaceId, session.id);
+        focusPromptSoon();
+      } else {
+        const tab = {
+          workspaceId,
+          workspaceTitle: workspace.displayNameResolved.trim() || workspaceId,
+          sessionId: session.id,
+          title: session.title,
+        };
+        const workbench = useWorkbenchStore.getState();
+        workbench.openTab(tab);
+        workbench.setSplit(tab);
+        workbench.focusPane("secondary");
+      }
       void refreshRouteState();
       return session.id;
     } catch (error) {
@@ -2129,7 +2159,7 @@ export function SessionRoute() {
         description: failure.description,
         action: {
           label: "Retry",
-          onClick: () => void handleCreateTaskInWorkspace(workspaceId),
+          onClick: () => void handleCreateTaskInWorkspaceWithOpenMode(workspaceId, openAs, source),
         },
         // A blue/green reload brings up a fresh engine without killing live
         // sessions; the full desktop restart stays a last resort elsewhere.
@@ -2139,7 +2169,7 @@ export function SessionRoute() {
                 label: t("session.engine_reload_action"),
                 onClick: () => {
                   void reloadEngineWithDesktopFallback(endpoint.client, endpoint.workspaceId)
-                    .then(() => handleCreateTaskInWorkspace(workspaceId))
+                    .then(() => handleCreateTaskInWorkspaceWithOpenMode(workspaceId, openAs, source))
                     .catch(() => undefined);
                 },
               },
@@ -2158,7 +2188,18 @@ export function SessionRoute() {
       }
       return null;
     }
-  }, [applyLastUsedModelToSession, endpointForWorkspace, loading, navigateToWorkspaceSession, refreshCloudProviderSync, refreshRouteState, rememberPendingCreatedSession, retryingWorkspaceIds, selectedWorkspaceId, workspaces]);
+  }, [applyLastUsedModelToSession, developerMode, endpointForWorkspace, loading, navigateToWorkspaceSession, refreshCloudProviderSync, refreshRouteState, rememberPendingCreatedSession, retryingWorkspaceIds, selectedWorkspaceId, workspaces]);
+
+  const handleCreateTaskInWorkspace = useCallback((workspaceId: string): Promise<string | null> => {
+    const { focusedPane, secondary } = useWorkbenchStore.getState();
+    const openAs = focusedPane === "secondary" && secondary ? "split" : "primary";
+    return handleCreateTaskInWorkspaceWithOpenMode(workspaceId, openAs, "new_task");
+  }, [handleCreateTaskInWorkspaceWithOpenMode]);
+
+  const handleCreateSplitTaskInWorkspace = useCallback(
+    (workspaceId: string): Promise<string | null> => handleCreateTaskInWorkspaceWithOpenMode(workspaceId, "split"),
+    [handleCreateTaskInWorkspaceWithOpenMode],
+  );
 
   // Latest session-list state for prev/next session tab navigation. The
   // `options` field is updated by `onSessionTabsChange` from SessionPage so we
@@ -2609,6 +2650,39 @@ export function SessionRoute() {
       (session) => session.workspaceId === selectedWorkspaceId && session.sessionId === selectedSessionId,
     ) ?? null;
   }, [paletteSessionOptions, selectedSessionId, selectedWorkspaceId]);
+
+  const currentSessionActionPaletteItems = useMemo<PaletteItem[]>(() => {
+    if (!selectedSessionId || !selectedWorkspaceId || !currentSessionForGroupMove) return [];
+    const items: PaletteItem[] = [{
+      id: "session.pin.toggle",
+      title: currentSessionPinned
+        ? t("session_management.unpin_session")
+        : t("session_management.pin_session"),
+      detail: currentSessionForGroupMove.title,
+      meta: "Session",
+      keywords: ["pin", "unpin", "favorite", "star", "keep on top", "sidebar"],
+      group: "actions",
+      action: () => {
+        setCommandPaletteOpen(false);
+        sessionManagementStore.getState().togglePin(selectedSessionId);
+      },
+    }];
+    if (opencodeClient) {
+      items.push({
+        id: "session.rename",
+        title: "Rename session…",
+        detail: currentSessionForGroupMove.title,
+        meta: "Session",
+        keywords: ["rename", "title", "name", "edit title"],
+        group: "actions",
+        action: () => {
+          setCommandPaletteOpen(false);
+          requestRenameSession(selectedSessionId);
+        },
+      });
+    }
+    return items;
+  }, [currentSessionForGroupMove, currentSessionPinned, opencodeClient, selectedSessionId, selectedWorkspaceId]);
 
   const currentSessionGroupId = selectedSessionId
     ? selectedWorkspaceGroupState?.assignments[selectedSessionId] ?? null
@@ -3268,6 +3342,9 @@ export function SessionRoute() {
             }
           });
         },
+        onCreateSplitTaskInWorkspace: (workspaceId) => {
+          void handleCreateSplitTaskInWorkspace(workspaceId);
+        },
         onCreateTaskWithPrompt: (workspaceId, prompt, attachments) => {
           void (async () => {
             const workspace = workspaces.find((item) => item.id === workspaceId);
@@ -3478,9 +3555,15 @@ export function SessionRoute() {
     <CommandPalette
       open={commandPaletteOpen}
       onClose={() => setCommandPaletteOpen(false)}
+      developerMode={developerMode}
       onCreateNewSession={() => {
         if (selectedWorkspaceId) {
           void handleCreateTaskInWorkspace(selectedWorkspaceId);
+        }
+      }}
+      onCreateNewSplitSession={() => {
+        if (selectedWorkspaceId) {
+          void handleCreateSplitTaskInWorkspace(selectedWorkspaceId);
         }
       }}
       onOpenSession={(workspaceId, sessionId) => navigateToWorkspaceSession(workspaceId, sessionId)}
@@ -3500,7 +3583,11 @@ export function SessionRoute() {
         workbench.setSplit(tab);
       }}
       onOpenSettings={(route) => handleOpenSettings(route ?? "/settings/general")}
-      onOpenExtensions={() => handleOpenExtensions()}
+      onOpenExtensions={(section) => handleOpenExtensions(section)}
+      onToggleSidebar={toggleSidebar}
+      onOpenAutomations={() => navigate(automationsRoute())}
+      onOpenDashboard={() => navigate(dashboardRoute())}
+      onCreateWorkspace={handleOpenCreateWorkspace}
       modelOptions={modelPicker.options}
       selectedModel={paletteSelectedModel}
       selectedModelBehavior={paletteSelectedModelBehavior}
@@ -3528,7 +3615,7 @@ export function SessionRoute() {
       currentSessionForGroupMove={currentSessionForGroupMove}
       currentSessionGroupId={currentSessionGroupId}
       onMoveCurrentSessionToGroup={handleMoveCurrentSessionToGroup}
-      extraItems={[...(sessionFindPaletteItem ? [sessionFindPaletteItem] : []), sessionSearchPaletteItem, ...terminalPaletteItems, developerModePaletteItem, diagnosticsCopyPaletteItem, diagnosticsExportPaletteItem, nextSessionTabPaletteItem, prevSessionTabPaletteItem, reloadConfigPaletteItem]}
+      extraItems={[...currentSessionActionPaletteItems, ...(sessionFindPaletteItem ? [sessionFindPaletteItem] : []), sessionSearchPaletteItem, ...terminalPaletteItems, developerModePaletteItem, diagnosticsCopyPaletteItem, diagnosticsExportPaletteItem, nextSessionTabPaletteItem, prevSessionTabPaletteItem, reloadConfigPaletteItem]}
       listAgents={listAgents}
       selectedAgent={selectedAgent}
       onSelectAgent={setSelectedAgent}

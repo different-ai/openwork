@@ -75,8 +75,8 @@ export function ErrorNote({ children }: { children: ReactNode }) {
   return <p className="rounded-md border border-rose/30 bg-rose/10 px-3 py-2 text-sm text-rose">{children}</p>;
 }
 
-export function StatusDot({ tone }: { tone: "spark" | "mint" | "amber" | "rose" | "mist" }) {
-  const colors = { spark: "bg-spark", mint: "bg-mint", amber: "bg-amber", rose: "bg-rose", mist: "bg-mist" } as const;
+export function StatusDot({ tone }: { tone: "spark" | "mint" | "ready" | "amber" | "rose" | "mist" }) {
+  const colors = { spark: "bg-spark", mint: "bg-mint", ready: "bg-ready", amber: "bg-amber", rose: "bg-rose", mist: "bg-mist" } as const;
   return <span className={`inline-block size-2 rounded-full ${colors[tone]}`} />;
 }
 
@@ -354,6 +354,7 @@ export function IconButton({
 
 export type ActionMenuItem = {
   label: string;
+  testId?: string;
   onSelect: () => void;
   disabled?: boolean;
   /** Destructive items render in rose. */
@@ -361,7 +362,7 @@ export type ActionMenuItem = {
 };
 
 /** A compact "⋯" menu for one row's secondary actions. Closes on outside click and Escape. */
-export function ActionMenu({ label, items }: { label: string; items: ActionMenuItem[] }) {
+export function ActionMenu({ label, items, side = "below" }: { label: string; items: ActionMenuItem[]; side?: "above" | "below" }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
@@ -372,8 +373,12 @@ export function ActionMenu({ label, items }: { label: string; items: ActionMenuI
       if (!rootRef.current?.contains(event.target instanceof Node ? event.target : null)) setOpen(false);
     };
     const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") {
+        setOpen(false);
+        rootRef.current?.querySelector<HTMLButtonElement>('[aria-haspopup="menu"]')?.focus();
+      }
     };
+    rootRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus();
     document.addEventListener("mousedown", close);
     document.addEventListener("keydown", escape);
     return () => {
@@ -399,11 +404,19 @@ export function ActionMenu({ label, items }: { label: string; items: ActionMenuI
           id={menuId}
           role="menu"
           aria-label={label}
-          className="absolute right-0 top-full z-40 mt-1 min-w-36 overflow-hidden rounded-xl border border-line bg-[#0d121b] py-1 text-left"
+          className={`absolute right-0 z-40 min-w-40 overflow-hidden rounded-xl border border-line bg-[#0d121b] py-1 text-left shadow-lg ${side === "above" ? "bottom-full mb-1" : "top-full mt-1"}`}
+          onKeyDown={(event) => {
+            const choices = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')];
+            const index = choices.findIndex((choice) => choice === document.activeElement);
+            const next = event.key === "ArrowDown" ? (index + 1) % choices.length : event.key === "ArrowUp" ? (index - 1 + choices.length) % choices.length : event.key === "Home" ? 0 : event.key === "End" ? choices.length - 1 : -1;
+            if (next >= 0) { event.preventDefault(); choices[next]?.focus(); }
+            if (event.key === "Tab") setOpen(false);
+          }}
         >
           {items.map((item) => (
             <button
               key={item.label}
+              data-testid={item.testId}
               type="button"
               role="menuitem"
               disabled={item.disabled}

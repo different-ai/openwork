@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useEffect, useMemo, useRef, useState } from "react"
-import { AUTOMATION_FREE_MODEL, type AutomationSchedule, type CreateAutomation } from "@openwork/types/automations"
+import { AUTOMATION_FREE_MODEL, type AutomationExecutionTarget, type AutomationSchedule, type CreateAutomation } from "@openwork/types/automations"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -58,9 +58,18 @@ function timeForSchedule(schedule: AutomationSchedule) {
   return { hour: schedule.hour, minute: schedule.minute }
 }
 
+/** A Workflow version the Automation is pinned to instead of free-form instructions and a model. */
+export type AutomationEditorPinnedWorkflow = {
+  title: string
+  configObjectVersionId: string
+}
+
 export type AutomationEditorProps = {
   initial?: CreateAutomation | null
   initialKey?: string
+  /** Fixed by the creating surface; changes the copy, never a control. */
+  placement: AutomationExecutionTarget
+  pinnedWorkflow?: AutomationEditorPinnedWorkflow
   modelOptions: readonly AutomationModelOption[]
   providerCatalog?: AutomationProviderCatalog
   busy: boolean
@@ -101,9 +110,12 @@ export function AutomationEditor(props: AutomationEditorProps) {
     }),
     [input.model, props.modelOptions, props.providerCatalog],
   )
+  const pinnedWorkflow = props.pinnedWorkflow
+  const cloud = props.placement === "cloud"
   const canSave = useMemo(
-    () => input.name.trim().length > 0 && input.instructions.trim().length > 0 && currentModelAvailable,
-    [currentModelAvailable, input.instructions, input.name],
+    () => input.name.trim().length > 0
+      && (pinnedWorkflow !== undefined || (input.instructions.trim().length > 0 && currentModelAvailable)),
+    [currentModelAvailable, input.instructions, input.name, pinnedWorkflow],
   )
   const time = timeForSchedule(input.schedule)
 
@@ -168,21 +180,29 @@ export function AutomationEditor(props: AutomationEditorProps) {
         />
       </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="automation-instructions">Instructions</Label>
-        <Textarea
-          id="automation-instructions"
-          className="min-h-36 resize-y"
-          value={input.instructions}
-          required
-          placeholder="Describe the outcome, sources to check, and what a useful result should include."
-          onChange={(event) => {
-            const instructions = event.currentTarget.value
-            setInput((current) => ({ ...current, instructions }))
-          }}
-        />
-        <p className="text-xs text-muted-foreground">Each claimed run starts a fresh task in your desktop OpenCode runtime.</p>
-      </div>
+      {pinnedWorkflow ? (
+        <div className="rounded-xl border border-border bg-muted/30 p-3 text-sm" data-automation-pinned-workflow={pinnedWorkflow.configObjectVersionId}>
+          <p className="font-medium">Pinned Workflow</p>
+          <p className="mt-1 text-muted-foreground">{pinnedWorkflow.title}</p>
+          <p className="mt-1 break-all font-mono text-xs text-muted-foreground">Version {pinnedWorkflow.configObjectVersionId}</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <Label htmlFor="automation-instructions">Instructions</Label>
+          <Textarea
+            id="automation-instructions"
+            className="min-h-36 resize-y"
+            value={input.instructions}
+            required
+            placeholder="Describe the outcome, sources to check, and what a useful result should include."
+            onChange={(event) => {
+              const instructions = event.currentTarget.value
+              setInput((current) => ({ ...current, instructions }))
+            }}
+          />
+          <p className="text-xs text-muted-foreground">{cloud ? "Each run starts a fresh task in your OpenWork Cloud runtime." : "Each claimed run starts a fresh task in your desktop OpenCode runtime."}</p>
+        </div>
+      )}
 
       <div className="grid gap-4 md:grid-cols-2">
         <div className="space-y-2">
@@ -261,7 +281,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
             }}
           />
         </div>
-        <div className="space-y-2">
+        {pinnedWorkflow ? null : <div className="space-y-2">
           <Label htmlFor="automation-model">Model</Label>
           <Button
             id="automation-model"
@@ -280,7 +300,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
             options={pickerOptions}
             query={modelQuery}
             setQuery={setModelQuery}
-            subtitle="Runs use this model and reasoning level in your desktop runtime."
+            subtitle={cloud ? "Runs use this model and reasoning level in your OpenWork Cloud runtime." : "Runs use this model and reasoning level in your desktop runtime."}
             target="default"
             current={{ providerID: input.model.providerId, modelID: input.model.modelId }}
             onSelect={(model) => {
@@ -299,11 +319,13 @@ export function AutomationEditor(props: AutomationEditorProps) {
             onOpenSettings={() => setPickerOpen(false)}
             onClose={() => setPickerOpen(false)}
           />
-        </div>
+        </div>}
       </div>
 
-      <div className="rounded-xl border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
-        Den keeps the schedule and run history. Your signed-in desktop claims each occurrence and executes it with the selected model in its local OpenCode runtime. If the desktop is unavailable before the claim deadline, the occurrence is recorded as missed.
+      <div className="rounded-xl border border-border bg-muted/30 p-3 text-sm text-muted-foreground" data-automation-placement={props.placement}>
+        {cloud
+          ? "Den keeps the schedule and run history. Each occurrence runs headlessly in OpenWork Cloud, even while your desktop is offline; a stopped Cloud container wakes automatically."
+          : "Den keeps the schedule and run history. Your signed-in desktop claims each occurrence and executes it with the selected model in its local OpenCode runtime. If the desktop is unavailable before the claim deadline, the occurrence is recorded as missed."}
       </div>
 
       <div className="flex justify-end gap-2">

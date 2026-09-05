@@ -2,6 +2,7 @@ import type { ApprovalService } from "../approvals.js";
 import type { ReloadEventStore } from "../events.js";
 import type { TokenService } from "../tokens.js";
 import type { Actor, ServerConfig } from "../types.js";
+import type { UiControlMailbox } from "../ui-control.js";
 
 export type AuthMode = "none" | "client" | "host" | "host-token";
 
@@ -11,6 +12,7 @@ export interface RequestContext {
   params: Record<string, string>;
   config: ServerConfig;
   approvals: ApprovalService;
+  uiControl: UiControlMailbox;
   reloadEvents: ReloadEventStore;
   tokens: TokenService;
   actor?: Actor;

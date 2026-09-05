@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import type { CSSProperties } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
 import { ArrowLeft, Cloud, FileText, Globe, Mic2, MoreHorizontal, PanelRight, TextSearch, X, Zap } from "lucide-react";
 
@@ -70,6 +70,10 @@ import { useShellConfig } from "../../../shell/shell-config";
 import { type SidePanelItem, useUiStateStore } from "../../../shell/ui-state-store";
 import type { SessionNumberShortcutsState } from "../../../shell/session-number-shortcuts";
 import { useBootOverlayVisible } from "../../../shell/boot-state";
+import {
+  OPEN_RENAME_SESSION_EVENT,
+  renameSessionIdFromEvent,
+} from "../../../shell/session-actions-bus";
 
 import { isElectronRuntime } from "../../../../app/utils";
 import { isCollectibleArtifactTarget, isLocalhostBrowserTarget, isOpenableFileTarget, type OpenTarget } from "../artifacts/open-target";
@@ -153,6 +157,7 @@ export type SessionPageSidebarProps = {
   onOpenSession: (workspaceId: string, sessionId: string) => void;
   onPrefetchSession?: (workspaceId: string, sessionId: string) => void;
   onCreateTaskInWorkspace: (workspaceId: string, groupId?: string) => void;
+  onCreateSplitTaskInWorkspace: (workspaceId: string) => void;
   onCreateTaskWithPrompt?: (workspaceId: string, prompt: string, attachments?: ComposerAttachment[]) => void;
   onOpenRenameWorkspace: (workspaceId: string) => void;
   onShareWorkspace: (workspaceId: string) => void;
@@ -579,6 +584,26 @@ export function SessionPage(props: SessionPageProps) {
     toggleSidePanelState(sidePanelSessionKey, panel);
   }, [setSidePanelState, sidePanelSessionKey, toggleSidePanelState]);
 
+  // Which conversation's browser tabs may take the screen. Every other
+  // conversation's tabs keep loading silently in the background.
+  useEffect(() => {
+    if (!isElectronRuntime()) return;
+    void (window as Window).__OPENWORK_ELECTRON__?.browser?.setVisibleSession?.(props.selectedSessionId ?? null);
+  }, [props.selectedSessionId]);
+
+  // Open the side panel of the conversation that owns a browser event. For the
+  // conversation on screen that is the visible panel; for a background
+  // conversation only its own panel state is marked open, so its tabs are
+  // waiting when the user switches to it and nothing on screen moves.
+  const openOwnerSidePanel = useCallback((ownerSessionId: string | null | undefined) => {
+    const ownerKey = getSidePanelSessionKey(ownerSessionId ?? null);
+    if (ownerSessionId == null || ownerKey === sidePanelSessionKey) {
+      setCurrentSidePanel("panel");
+      return;
+    }
+    setSidePanelState(ownerKey, "panel");
+  }, [setCurrentSidePanel, setSidePanelState, sidePanelSessionKey]);
+
   // When the agent calls a built-in browser tool, the main process opens
   // the WebContentsView and sends panel-opened; when hide_browser is called
   // it sends panel-closed. Without this listener the React UI never knows
@@ -587,16 +612,24 @@ export function SessionPage(props: SessionPageProps) {
     if (!isElectronRuntime()) return;
     const browser = (window as Window).__OPENWORK_ELECTRON__?.browser;
     if (!browser) return;
-    const unsubOpen = browser.onPanelOpened?.(() => {
+    const unsubOpen = browser.onPanelOpened?.((payload) => {
       if (preserveSidePanelOnPanelOpenRef.current) {
         preserveSidePanelOnPanelOpenRef.current = false;
         return;
       }
-      setCurrentSidePanel("panel");
+      openOwnerSidePanel(payload?.ownerSessionId);
     });
-    const unsubClose = browser.onPanelClosed?.(() => setCurrentSidePanel(null));
+    const unsubClose = browser.onPanelClosed?.((payload) => {
+      const ownerSessionId = payload?.ownerSessionId ?? null;
+      const ownerKey = getSidePanelSessionKey(ownerSessionId);
+      if (ownerSessionId === null || ownerKey === sidePanelSessionKey) {
+        setCurrentSidePanel(null);
+        return;
+      }
+      setSidePanelState(ownerKey, null);
+    });
     return () => { unsubOpen?.(); unsubClose?.(); };
-  }, [setCurrentSidePanel]);
+  }, [openOwnerSidePanel, setCurrentSidePanel, setSidePanelState, sidePanelSessionKey]);
   const {
     leftSidebarResizing,
     leftSidebarWidth,
@@ -635,8 +668,9 @@ export function SessionPage(props: SessionPageProps) {
     if (target.kind === "url" || target.preview === "browser") {
       const url = browserUrlForTarget(target);
       if (isElectronRuntime()) {
-        setCurrentSidePanel("panel");
-        void window.__OPENWORK_ELECTRON__?.browser?.createTab?.(url);
+        const ownerSessionId = sourceSessionId ?? props.selectedSessionId ?? null;
+        openOwnerSidePanel(ownerSessionId);
+        void window.__OPENWORK_ELECTRON__?.browser?.createTab?.(url, ownerSessionId);
       } else {
         window.open(url, "_blank", "noopener,noreferrer");
       }
@@ -709,7 +743,7 @@ export function SessionPage(props: SessionPageProps) {
     }
 
     openFileTarget(target);
-  }, [activePanelTab?.id, browserUrlForTarget, openTab, props.selectedSessionId, setCurrentSidePanel]);
+  }, [activePanelTab?.id, browserUrlForTarget, openOwnerSidePanel, openTab, props.selectedSessionId, setCurrentSidePanel]);
   const openTarget = useCallback((target: OpenTarget, options?: OpenTargetOptions, sourceSessionId?: string) => {
     openTargetForRuntime({
       client: props.openworkServerClient,
@@ -748,17 +782,21 @@ export function SessionPage(props: SessionPageProps) {
     ],
     previewArgs: { url: "https://example.com", provider: "builtin" },
     disabled: !isElectronRuntime(),
-    execute: async (args) => {
+    execute: async (args, helpers) => {
       const url = controlStringArg(args, "url");
       if (!url) return { ok: false, error: "Missing URL." };
       const provider = controlStringArg(args, "provider") || "builtin";
       if (provider !== "auto" && provider !== "builtin") {
         return { ok: false, error: `Browser provider is not available yet: ${provider}` };
       }
-      setCurrentSidePanel("panel");
-      return window.__OPENWORK_ELECTRON__?.browser?.openUrl?.(url, provider);
+      // The tab belongs to the conversation whose agent asked for it. When that
+      // is a background conversation the page loads silently there; the
+      // conversation on screen is never interrupted.
+      const ownerSessionId = helpers.origin?.sessionId ?? props.selectedSessionId ?? null;
+      openOwnerSidePanel(ownerSessionId);
+      return window.__OPENWORK_ELECTRON__?.browser?.openUrl?.(url, provider, { sessionId: ownerSessionId });
     },
-  }), [setCurrentSidePanel]);
+  }), [openOwnerSidePanel, props.selectedSessionId]);
   useControlAction(openBrowserUrlControlAction);
   const setBrowserProxyControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "browser.set_proxy",
@@ -1281,6 +1319,19 @@ export function SessionPage(props: SessionPageProps) {
     setRenameOpen(true);
   };
 
+  const handleRenameSessionRequest = useEffectEvent((event: Event) => {
+    if (!props.onRenameSession) return;
+    const sessionId = renameSessionIdFromEvent(event);
+    if (sessionId) openRenameModal(sessionId);
+  });
+
+  useEffect(() => {
+    if (!props.onRenameSession) return;
+    const handler = (event: Event) => handleRenameSessionRequest(event);
+    window.addEventListener(OPEN_RENAME_SESSION_EVENT, handler);
+    return () => window.removeEventListener(OPEN_RENAME_SESSION_EVENT, handler);
+  }, [props.onRenameSession]);
+
   const submitRename = async () => {
     const sessionId = sessionActionId;
     const nextTitle = renameTitle.trim();
@@ -1359,6 +1410,7 @@ export function SessionPage(props: SessionPageProps) {
           onOpenSession={openSessionTab}
           onPrefetchSession={props.sidebar.onPrefetchSession}
           onCreateTaskInWorkspace={props.sidebar.onCreateTaskInWorkspace}
+          onCreateSplitTaskInWorkspace={props.sidebar.onCreateSplitTaskInWorkspace}
           onOpenRenameSession={props.onRenameSession ? openRenameModal : undefined}
           onOpenDeleteSession={props.onDeleteSession ? (sessionId) => {
             setSessionActionId(sessionId);
@@ -1416,15 +1468,23 @@ export function SessionPage(props: SessionPageProps) {
             !shellConfig.sidebar && "mac:[&_header]:pl-34",
           )}
         >
-          <div className="flex min-h-0 flex-1 max-lg:p-0 lg:py-2 lg:pl-2">
+          <div className={cn(
+            "flex min-h-0 flex-1 max-lg:p-0 lg:py-2 lg:pl-2",
+            !sidebarOpen && "mac:lg:pt-0 mac:lg:pl-0",
+          )}>
           <ResizablePanelGroup
             orientation="horizontal"
             onLayoutChanged={sidePanelOpen ? commitBrowserPanelWidth : undefined}
             className="min-h-0 flex-1 max-lg:rounded-none lg:rounded-[14px]"
           >
             <ResizablePanel minSize={isMobile ? "0px" : "360px"} className="min-w-0">
-              <main className="flex h-full min-w-0 flex-col overflow-hidden bg-dls-surface max-lg:rounded-none max-lg:border-0 max-lg:shadow-none lg:rounded-[14px] lg:border lg:border-border lg:shadow-[0_8px_24px_rgba(15,23,42,0.06)] dark:lg:shadow-[0_10px_30px_rgba(0,0,0,0.45)] mac:bg-dls-surface/85 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
-          <header className="z-10 flex h-9 shrink-0 items-center justify-between border-b border-border px-3 max-lg:h-12 lg:px-6 mac:titlebar-drag  mac:backdrop-blur-2xl mac:backdrop-saturate-150 @container/titlebar">
+              <main data-session-pane className="flex h-full min-w-0 flex-col overflow-hidden bg-dls-surface max-lg:rounded-none max-lg:border-0 max-lg:shadow-none lg:rounded-[14px] lg:border lg:border-border lg:shadow-[0_8px_24px_rgba(15,23,42,0.06)] dark:lg:shadow-[0_10px_30px_rgba(0,0,0,0.45)] mac:bg-dls-surface/85 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
+          {/* The pane `<main>` above already carries the macOS vibrancy blur. A
+              second backdrop filter on the header (or on the transcript surface
+              below) is invisible — nothing scrolls beneath either — but each
+              one forces an extra full-pane blur pass every frame the transcript
+              repaints. Keep the pane as the only backdrop surface. */}
+          <header className="z-10 flex h-9 shrink-0 items-center justify-between border-b border-border px-3 max-lg:h-12 lg:px-6 mac:titlebar-drag @container/titlebar">
             <div className="flex min-w-0 items-center gap-3">
               {shellConfig.sidebar ? <SidebarTrigger className="mac:hidden" /> : null}
               {parentSessionLink && !props.primarySlot && !hasMainContentTakeover ? (
@@ -1637,7 +1697,7 @@ export function SessionPage(props: SessionPageProps) {
             className="min-h-0 flex-1 overflow-hidden"
           >
             <ResizablePanel minSize="180px" className="min-h-0">
-            <div className="relative h-full min-w-0 overflow-hidden bg-dls-surface mac:bg-dls-surface/85 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
+            <div className="relative h-full min-w-0 overflow-hidden bg-dls-surface mac:bg-dls-surface/85">
               {props.primarySlot ? (
                 <div className="h-full overflow-y-auto" data-workspace-primary-slot>
                   {props.primarySlot}

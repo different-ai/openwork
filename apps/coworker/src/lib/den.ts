@@ -18,6 +18,7 @@ import {
   type AutomationRun,
 } from "@openwork/types/automations";
 import { z } from "zod";
+import { coworkerTemplateListSchema, type AssignedCoworkerTemplate } from "@openwork/types/coworker-template";
 
 /** `POST /v1/mcp/token` — the minted gateway token plus the resource it is valid for. */
 const connectTokenSchema = z.object({
@@ -56,6 +57,26 @@ export type DenSession = {
   orgName: string;
 };
 
+/** The main process supplies its already-resolved API base, including any self-hosted proxy path. */
+export async function listAssignedCoworkerTemplates(session: Pick<DenSession, "baseUrl" | "token" | "orgId">): Promise<{ enabled: boolean; items: AssignedCoworkerTemplate[] }> {
+  const items: AssignedCoworkerTemplate[] = [];
+  const cursors = new Set<string>();
+  let cursor: string | null = null;
+  do {
+    const query = new URLSearchParams({ limit: "100" });
+    if (cursor) query.set("cursor", cursor);
+    const page = coworkerTemplateListSchema.parse(await denRequest(session.baseUrl, `/v1/me/coworkers?${query}`, { token: session.token, orgId: session.orgId, resolvedApiBase: true }));
+    if (!page.enabled) return { enabled: false, items: [] };
+    items.push(...page.items);
+    cursor = page.nextCursor;
+    if (cursor) {
+      if (cursors.has(cursor)) throw new Error("The team catalog could not be read completely. Refresh to try again.");
+      cursors.add(cursor);
+    }
+  } while (cursor);
+  return { enabled: true, items };
+}
+
 const denSessionSchema = z.object({
   baseUrl: z.string().min(1),
   token: z.string().min(1),
@@ -64,6 +85,42 @@ const denSessionSchema = z.object({
   orgId: z.string(),
   orgName: z.string(),
 });
+
+/** The existing Models entitlement; an unreadable response is never a free account. */
+const modelsMembershipSchema = z.object({
+  inference: z.object({
+    subscribed: z.boolean(),
+    enabled: z.boolean(),
+    upstreamProviderConfigured: z.boolean(),
+    buckets: z.array(z.object({
+      windowType: z.enum(["five_hour", "weekly", "monthly"]),
+      windowStartAt: z.iso.datetime({ offset: true }),
+      windowEndAt: z.iso.datetime({ offset: true }),
+      limitAmount: z.number().finite().nonnegative(),
+      usedAmount: z.number().finite().nonnegative(),
+    })),
+  }),
+});
+export type ModelsMembership = z.infer<typeof modelsMembershipSchema>["inference"];
+
+export function buildDenAccountUrl(baseUrl: string, destination: "models" | "billing" | "connections"): string {
+  const paths = { models: "/dashboard/inference", billing: "/dashboard/billing", connections: "/dashboard/your-connections" };
+  const url = new URL(baseUrl);
+  if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("OpenWork needs a web address.");
+  url.pathname = paths[destination];
+  url.search = "";
+  url.hash = "";
+  url.username = "";
+  url.password = "";
+  url.searchParams.set("utm_source", "opencoworker");
+  url.searchParams.set("utm_medium", "desktop");
+  return url.toString();
+}
+
+export async function readModelsMembership(session: DenSession): Promise<ModelsMembership> {
+  const payload = await denRequest(session.baseUrl, "/v1/inference", { token: session.token, orgId: session.orgId });
+  return modelsMembershipSchema.parse(payload).inference;
+}
 
 export function readDenSession(): DenSession | null {
   try {
@@ -222,6 +279,7 @@ export function describeSkippedProvider(reason: "missing_credentials" | "needs_k
 }
 
 type DenRequestOptions = {
+  resolvedApiBase?: boolean;
   method?: string;
   token?: string;
   orgId?: string;
@@ -245,7 +303,7 @@ async function denRequest(baseUrl: string, path: string, options: DenRequestOpti
   }
   headers[AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER] = AUTOMATION_MODEL_ATTENTION_CAPABILITY;
   if (options.body !== undefined) headers["Content-Type"] = "application/json";
-  const response = await fetch(`${requestBase(baseUrl, path)}${path}`, {
+  const response = await fetch(`${options.resolvedApiBase ? trimBase(baseUrl) : requestBase(baseUrl, path)}${path}`, {
     method: options.method ?? "GET",
     headers,
     body: options.body === undefined ? undefined : JSON.stringify(options.body),

@@ -2,11 +2,17 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import net from "node:net";
-import { mkdtempSync, realpathSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
+
+function withoutInheritedOpencodeEnv(env) {
+  return Object.fromEntries(
+    Object.entries(env).filter(([key]) => !/^OPENCODE_/.test(key) && key !== "XDG_CONFIG_HOME"),
+  );
+}
 
 function resolveBasicAuthHeader() {
   const password = process.env.OPENCODE_SERVER_PASSWORD?.trim() ?? "";
@@ -57,6 +63,10 @@ export async function spawnOpencodeServe({
 
   const cwd = realpathSync(directory);
   const isolatedRoot = mkdtempSync(join(tmpdir(), "openwork-opencode-smoke-"));
+  const configDir = join(isolatedRoot, "config");
+  const xdgConfigHome = join(isolatedRoot, "xdg");
+  mkdirSync(configDir);
+  mkdirSync(xdgConfigHome);
   const args = ["serve", "--hostname", hostname, "--port", String(port)];
   for (const origin of corsOrigins) {
     args.push("--cors", origin);
@@ -66,13 +76,18 @@ export async function spawnOpencodeServe({
     cwd,
     stdio: ["ignore", "pipe", "pipe"],
     env: {
-      ...process.env,
+      ...withoutInheritedOpencodeEnv(process.env),
       // Core SDK smoke scripts must not inherit a developer or CI runner's
-      // sessions database, MCPs, plugins, or provider setup. A shared DB also
-      // serializes every script behind the same SQLite writer. Browser-entry
-      // opts out of the pure config because it deliberately creates a project
-      // command, but it still receives an isolated database.
+      // OPENCODE_* setup because OPENCODE_CONFIG_CONTENT merges rather than
+      // replaces inherited config. XDG_CONFIG_HOME is redirected to an empty
+      // temp directory so neither the inherited profile nor
+      // ~/.config/opencode is loaded. A shared DB also serializes every script
+      // behind the same SQLite writer.
+      // Browser-entry opts out of the pure config because it deliberately
+      // creates a project command.
       OPENCODE_DB: join(isolatedRoot, "opencode.db"),
+      OPENCODE_CONFIG_DIR: configDir,
+      XDG_CONFIG_HOME: xdgConfigHome,
       ...(pure
         ? {
             OPENCODE_CONFIG_CONTENT: "{}",

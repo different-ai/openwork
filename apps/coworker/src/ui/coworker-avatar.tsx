@@ -8,11 +8,13 @@ const AVATAR_COLORS: Array<{ id: AvatarColor; label: string; swatch: string }> =
   { id: "orange", label: "Orange", swatch: "#e4c3ad" },
   { id: "rose", label: "Rose", swatch: "#e2c1cb" },
   { id: "slate", label: "Pearl", swatch: "#e3e6ea" },
+  { id: "sand", label: "Sand", swatch: "#ded0b0" },
 ];
 
 const AVATAR_GLASSES: Array<{ id: AvatarGlasses; label: string }> = [
   { id: "round", label: "Round" },
   { id: "square", label: "Soft square" },
+  { id: "oval", label: "Oval" },
   { id: "none", label: "None" },
 ];
 
@@ -23,6 +25,7 @@ const PALETTES: Record<AvatarColor, { fill: string; edge: string; depth: string 
   orange: { fill: "#e4c3ad", edge: "#cda589", depth: "#9d7961" },
   rose: { fill: "#e2c1cb", edge: "#cda1ae", depth: "#9c7682" },
   slate: { fill: "#e3e6ea", edge: "#c2c8d0", depth: "#939aa4" },
+  sand: { fill: "#ded0b0", edge: "#c1ae86", depth: "#95825c" },
 };
 
 function motionPhase(name: string) {
@@ -116,6 +119,14 @@ export function CoworkerAvatar({
                 >
                   <circle cx="37.5" cy="57" r="17.5" />
                   <circle cx="82.5" cy="57" r="17.5" />
+                  <path d="M57.5 57c1.25-4 3.75-4 5 0" />
+                  <path d="M15 57h4.5M100.5 57h4.5" strokeWidth="7" />
+                </g>
+              ) : null}
+              {glasses === "oval" ? (
+                <g className="coworker-avatar__glasses" fill="none" stroke="#11151d" strokeLinecap="round" strokeWidth="5">
+                  <ellipse cx="37.5" cy="57" rx="18" ry="14" />
+                  <ellipse cx="82.5" cy="57" rx="18" ry="14" />
                   <path d="M57.5 57c1.25-4 3.75-4 5 0" />
                   <path d="M15 57h4.5M100.5 57h4.5" strokeWidth="7" />
                 </g>
@@ -221,7 +232,7 @@ export function AvatarControls({
       </fieldset>
       <fieldset>
         <legend className="mb-2 text-[10px] font-semibold uppercase tracking-[0.15em] text-mist">Glasses</legend>
-        <div className="grid grid-cols-3 gap-1 rounded-xl border border-line bg-black/20 p-1">
+        <div className="grid grid-cols-2 gap-1 rounded-xl border border-line bg-black/20 p-1">
           {AVATAR_GLASSES.map((option) => (
             <button
               key={option.id}

@@ -5,6 +5,75 @@ platform. Open Coworker is a second product client, not a second platform: it
 assembles existing OpenWork primitives into a coworker-centric experience and
 adds no new database concepts.
 
+## Team onboarding through OpenWork Connect
+
+Prepared teams are a per-organization preview, **off by default**. A platform
+admin can open **/admin → organization → Capabilities → Prepared coworker
+teams (preview)** to enable publishing and delivery for that organization
+alone. The stored key is `capabilities.coworkerTeams`; only literal `true`
+enables it. Clearing the override returns to off. No database migration,
+global rollout switch, or hardcoded organization is required.
+
+While disabled, Connect hides the coworker section and protects direct editor
+links; the API rejects template publishing and returns `enabled: false` with
+an empty catalog. Open Coworker hides the team controls and installs nothing
+from a disabled or older server. Opening Account refreshes this state. Turning
+the flag off stops future delivery without removing personal coworkers or
+their work. Local template file import/export remains available.
+
+An organization can prepare a team once and give every new teammate a useful
+starting point. In Connect, open a plugin and choose **Add coworker**. Define
+the name, role, mission, description, and reusable instructions, or import a
+`.coworker.json` file. Include several coworkers, skills, and MCP connections
+in the same plugin, then assign the plugin to people, a team, or an organization
+marketplace using the existing access controls.
+
+With **Add automatically for assigned teammates** enabled, Open Coworker
+creates the assigned coworkers when the member signs in, relaunches with a
+saved account, or chooses **Account → Refresh assigned coworkers**. Coworkers
+marked optional remain available through **Add coworker**. An administrator's
+visibility or ownership of a catalog does not itself trigger installation.
+Team membership, including membership managed through the existing enterprise
+identity flow, controls which assignments the member receives on the next sync.
+
+For example, a Marketing starter plugin can contain a campaign partner and a
+research partner, together with brand skills and the team's approved connected
+apps. Someone joining Marketing signs in and gets both coworkers without
+building each profile. They use the apps and models available to their own
+account. Provisioning starts no conversations, schedules, or inference runs.
+
+The template is a versioned `agent` config object with schema marker
+`openwork.coworker.v1` and a strict `{ kind: "coworker", schemaVersion: 1, ... }`
+payload. It reuses plugin, person, team, and marketplace permissions, version
+history, and archive operations; it introduces no database migration.
+`GET /v1/me/coworkers` returns paginated visible templates with their version
+and an explicit `assigned` flag. Generic agents remain separate in the UI.
+
+Each installation is a personal working copy. A local receipt is scoped to
+the Connect server, organization, account, and template ID. Repeat syncs do
+not create duplicates, and retiring a coworker does not make it reappear.
+New template versions are shown as available updates; they supply future
+copies and never overwrite an existing copy's memory or instructions.
+Removing access or archiving a template stops future delivery. Existing
+downloaded copies are retained; this is distribution, not remote deletion or
+continuous policy enforcement of local files. Live model and app access
+continues to follow the member's existing Connect permissions.
+
+Connect's editor can export a template file for import into another
+organization. Open Coworker's welcome screen can import one before setup;
+the Account page can import one, or export the
+selected coworker's starting profile and explicitly reusable instructions.
+Exports omit conversations, evolving soul and memory, working documents,
+credentials, model choices, schedules, and active tasks. Extra payload fields
+are rejected. A normal coworker exported for the first time contains its
+profile; add reusable instructions in Connect's editor before distribution.
+File portability does not transfer marketplace access between organizations.
+
+Verification lives in `evals/specs/coworker-template-distribution.test.ts`
+(real permission and assignment boundaries) and the existing
+`evals/specs/open-coworker-openwork-account.e2e.test.ts` (native first sign-in,
+optional installation, reload, template changes, and retirement).
+
 ## What a coworker is
 
 ```
@@ -51,7 +120,7 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
   discussion is open. Each view places its own title line and actions (Back,
   Stop) into that header, so there is never a second header row. The header
   ends in one plain status word — Ready, Working, Retrying, Needs you,
-  Stopped… — with no dot: mist unless the coworker is asking for the person
+  Stopped… — with no dot: muted sage for Ready, mist for neutral states, unless the coworker is asking for the person
   (amber: Needs you, Waiting for permission, Waiting for an answer) or reporting
   a failure (rose: AI unavailable, Not responding, Reply failed, Response
   delayed). The moment-to-moment phases (Sending, Thinking, Using a tool,
@@ -60,7 +129,13 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
   after an interruption · since 7:40 AM"). An empty conversation shows only a small
   avatar, the coworker's name and role, one line ("What should we work
   through?", or, for a coworker a teammate proposed, "Nova suggested me — …"),
-  and the focused composer; there are no starter cards. At the foot
+  and the focused composer, with no starter cards in the canvas. A discreet
+  **Starting points** control beside the composer offers three editable requests
+  to turn a goal
+  into a plan, work through a document, or prepare recurring work. Choosing one
+  fills an editable draft; nothing is sent until the person sends it. Unsent
+  conversation and assignment drafts are saved locally per coworker and thread,
+  and removed when sent. At the foot
   of the conversation column one discreet **summary line** on the composer's
   hint row says what the coworker holds — "2 assignments · 1 Worker · 3
   documents" (`lib/coworker-summary.ts`) — each part opening the matching level
@@ -403,15 +478,30 @@ line, Activity's Now card, and the journeys read the same value.
   model when the app itself had picked the failing one. A retry the engine
   pushes hours away (the free tier's daily usage) is a failure with the
   provider's words, not endless Retrying.
+- **The free model's shared limit** is named as such, never as a hiccup and
+  never in the engine's own words. The engine marks that retry with its reason
+  (`free_tier_limit`, carried by `@openwork/headless-threads` as
+  `status.reason`) and its terminal error with the provider's type
+  (`FreeUsageLimitError`, carried as `error.providerError`); the app reads
+  either and says "The free model is busy. Trying again in 6 s…" with *Stop*
+  and *Connect an AI provider* inline. After three engine retries against a
+  named free-tier limit, the app cancels the loop and explains the shared usage
+  limit with options to wait, choose a connected model, or explore OpenWork
+  Models membership and other providers. It makes no speed or reset-time claim.
+  The engine's raw reason appears separately in bounded *Technical details*.
+  The app never runs its own 2/6/15 s attempts on this limit.
 - **A failure** is one message on the coworker's side at the bubble's width: a
   headline in its voice ("Nova couldn't reach the AI model.", "Nova's AI model
   cannot use the tools enabled for this coworker."), one line of explanation,
   then lettered choices — `A Use <model>` when another connected model can take
   over, else `A Retry`; `B Choose AI model`; and `C Continue with OpenWork`
   (signed out) or `C Refresh providers` (signed in) when the model is the
-  likely cause. Never more than three. An amber dot says it needs you; the raw
-  text waits behind a closed *Technical details*. When the retry replies the
-  bubble goes and, if the model changed, one line stays: "Retried with Claude".
+  likely cause, or `C Connect an AI provider` (OpenWork › AI models) when the
+  free model's limit is. Never more than three. An amber dot says it needs you;
+  the raw text is part of the bubble from the start — small, monospaced,
+  bounded to a few lines that scroll — so the bubble lands at its full height
+  and never grows. When the retry replies the bubble goes and, if the model
+  changed, one line stays: "Retried with Claude".
 - **Stopped.** The round send control becomes a stop control while a reply runs
   and the field is empty; the live row's *Stop* and the header's *Stop* do the
   same. Stopping leaves one quiet line — "Stopped." · *Retry* — and Retry runs
@@ -450,6 +540,26 @@ same dots for a model that shares no thinking, the typing bubble past the wait
 budget with its soft phrase and Stop, and a reload are each read from a trace
 of the live shapes.
 
+## Models membership and connected apps
+
+OpenWork settings brings the existing Models subscription into the app. The
+membership card reads `/v1/inference` with the current account and organization,
+shows active membership and remaining shared allowances, and distinguishes
+expired usage data, unavailable status, and an admin-only response. An unknown
+status never becomes an unpaid-account claim. Signed-out users can compare
+models and pricing or sign in; existing members can manage the subscription.
+
+Checkout and subscription changes use Den's existing browser pages. Links carry
+`utm_source=opencoworker` and `utm_medium=desktop`, never a session token. The
+browser may have another workspace selected, so the card names the workspace
+to check. Returning can refresh membership; **Refresh membership & models** also
+synchronizes providers. It never silently changes a coworker's chosen model.
+The Account page also opens **Manage connected apps** in Den; the coworker's
+Apps & tools panel remains the place to use those connections.
+
+Promotion terms are not part of this integration. Available models, subscription
+entitlements, and checkout remain controlled by the existing services.
+
 ## Architecture
 
 - `electron/main.mjs` — standalone shell (own app id/userData; single
@@ -479,6 +589,32 @@ keeps identity, memory, model preference, schedules, and thread execution on
 this Mac.
 
 ## A team that grows
+
+The chooser uses full-width recommendation rows so names, roles, and missions
+remain readable beside the existing avatars. The recommendation chooser and
+custom identity form are separate steps, so the form stays short. Eight optional profession presets
+(marketing, sales, founders, product and engineering, consulting, customer
+success, people, and education) suggest small teams with concrete responsibilities
+and a reviewable workflow. All roles and names remain editable; a preset grants
+no app access and starts no schedules.
+
+On **Add a coworker**, **Ask AI to shape your team** sends the person's work
+and selected profession to an existing coworker's conversation using its current
+model. The coworker can recommend a workflow and offer one missing teammate
+through the existing suggestion card. Existing duplicate, decline, and daily
+suggestion limits still apply, and only **Add to team** creates the coworker.
+The original avatar shape, gaze, and animation remain; **Sand** and **Oval** add
+one optional color and frame style, including portable template support.
+
+**Ready** uses a quiet gray-green (`#789487`) in the coworker rail, status dot,
+and conversation headers, keeping availability visible without the bright mint
+used for successful connections and completed work.
+
+Messages queued during a reply appear as numbered rows under one **Up next**
+label. Each row has one action menu for editing, sending now, or removing it.
+The menu opens above the composer, supports arrow keys, and returns focus to its
+trigger on Escape. Queue persistence, order, and send-now behavior are unchanged.
+
 
 A new person never meets a blank form first, coworkers know who else is on the
 team, and the team can grow from the conversation — while only the person's
@@ -956,9 +1092,11 @@ pointer gaze remains, within the icon's restraint (pupils ≈2 px, turn ≤0.8°
 travel ≤1 px). The box never changes size, the stack takes no pointer events,
 and reduced motion renders the icon composition at once. The new-coworker
 preview reuses the component with the coworker being created in front. The app
-icon itself is one coworker over one charcoal card on the OpenWork-blue tile
-(`resources/icons/open-coworker-app-icon.svg`); every raster is regenerated from
-it with `pnpm --filter @openwork/coworker icons:render`.
+icon on macOS uses the blue porcelain tile and white coworker in
+`resources/icons/icon-macos.png`, a transparent 1024-pixel master shared by the
+Dock and packaged `.icns` icon. Windows and Linux use the vector artwork in
+`resources/icons/open-coworker-app-icon.svg`. Regenerate the platform icon sets
+with `pnpm --filter @openwork/coworker icons:render`.
 
 The avatars' always-on idle motion (an 8.8 s float of 0.8 px and turns of about
 a pixel, staggered per coworker) is drawn in six steps per movement rather than
@@ -977,12 +1115,20 @@ personality) as hairline-separated rows, the AI model, Memory, and a quiet
 Retire row — with Save appearing only when something changed; no card sits
 inside another card.
 
-Thinking and tool work fold into two quiet lines above a reply: provider-returned
-thinking becomes a borderless "Thought through" disclosure once the reply is
+**Nothing that has landed in the conversation grows when the person looks
+closer.** A bubble keeps the height it landed with; detail floats in a light
+popover under (or over) its line — the same shell for all of them
+(`ui/details-popover.tsx`) — or is part of the bubble from the start. Thinking
+and tool work are two quiet lines above a reply: provider-returned thinking is
+a "Thought through" line whose popover holds the thinking once the reply is
 complete, and all the tool calls behind one reply become one work receipt
-("Edited index.md", "Worked with your files and Calendar · 3 steps") that opens
-into plain-word steps with the tool name behind Technical details
-(`lib/work-receipt.ts`). Documents and Apps the work produced stay first-class
+("Edited index.md", "Worked with your files and Calendar · 3 steps") whose
+popover lists the plain-word steps with the tool name behind Technical details
+(`lib/work-receipt.ts`, `ui/work-popover.tsx`). The same rule holds for a
+Worker review's updates and for the discussion an assignment carries; a
+failure's raw reason and a workspace problem's raw reason are shown small and
+bounded from the start. The one fold left in the conversation is a long reply's
+*Show the rest*, which exists to keep a wall of text short. Documents and Apps the work produced stay first-class
 as compact attachment chips beneath the receipt. While a turn runs, the live
 turn carries the moving state — a typing bubble while thinking (tap for the
 thinking), a chip while a tool runs, and the words themselves streaming into
@@ -992,9 +1138,10 @@ and sit closer together.
 
 The message that opens an assignment carries scaffolding for the model (the
 outcome, the visible discussion it came from, and a short instruction); the
-person sees it as a brief — "Assignment for Nova", the outcome, and a closed
-"From your discussion · n messages" disclosure — never the headings or the
-instruction (`parseAssignmentBrief` in `lib/conversation.ts`). The engine still
+person sees it as a brief — "Assignment for Nova", the outcome, and a
+"From your discussion · n messages" line whose popover holds those messages —
+never the headings or the instruction (`parseAssignmentBrief` in
+`lib/conversation.ts`). The engine still
 receives the exact prompt the journeys verify.
 
 Scheduled assignments read like a to-do list for a person: one line per

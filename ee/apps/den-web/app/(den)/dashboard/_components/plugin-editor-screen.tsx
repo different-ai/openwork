@@ -4,23 +4,17 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Download, FileText, Plus, Server, Terminal, Trash2 } from "lucide-react";
+import { ArrowLeft, Check, Download, FileText, Plus, Server, Terminal, Trash2 } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenSelect } from "../../_components/ui/select";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
-import { getImportPluginRoute, getPluginRoute, getPluginsRoute } from "../../_lib/den-org";
+import { getImportPluginRoute, getMcpConnectionsRoute, getPluginRoute, getPluginsRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { IntegrationIcon } from "./integration-icon";
 import { useMarketplaces } from "./marketplace-data";
-import {
-  AUTH_TYPE_OPTIONS,
-  CREDENTIAL_MODE_OPTIONS,
-  credentialModeDescription,
-  MCP_OAUTH_REDIRECT_DOCS_URL,
-  SegmentedControl,
-} from "./mcp-connection-form-controls";
-import { McpCredentialInput } from "./mcp-credential-input";
+import { type ExternalMcpConnection, useMcpConnections } from "./mcp-connections-data";
 import { pluginQueryKeys } from "./plugin-data";
 import {
   clearPluginImportDraft,
@@ -29,13 +23,6 @@ import {
   pluginImportSuggestedName,
   type PluginImportDraft,
 } from "./plugin-import-draft";
-import {
-  emptyPluginMcpConnectionDraft,
-  pluginMcpConnectionDraftError,
-  pluginMcpConnectionRequest,
-  withPluginMcpAuthType,
-  type PluginMcpConnectionDraft,
-} from "./plugin-mcp-connection-draft";
 
 type ComponentKind = "skill" | "command" | "mcp";
 
@@ -44,10 +31,10 @@ type DraftComponent = {
   kind: ComponentKind;
   name: string;
   description: string;
-  /** Markdown body for skills/commands; remote server URL for MCP. */
+  /** Markdown body for skills/commands. */
   content: string;
-  /** How the MCP server authenticates; unused for skills and commands. */
-  connection: PluginMcpConnectionDraft;
+  /** Existing organization connector selected for MCP; unused for skills and commands. */
+  connectionId: string;
 };
 
 const COMPONENT_META: Record<ComponentKind, { label: string; icon: typeof FileText; hint: string }> = {
@@ -62,11 +49,12 @@ const COMPONENT_META: Record<ComponentKind, { label: string; icon: typeof FileTe
     hint: "A reusable slash command. Describe exactly what the agent should do when it runs.",
   },
   mcp: {
-    label: "MCP server",
+    label: "Connector",
     icon: Server,
-    hint: "Connect a remote MCP server by URL and say how it authenticates, the same way you would under Connectors. Members get its tools when they install the plugin.",
+    hint: "Pick one of your organization's connectors. Members get its tools when they install the plugin — sign-in and access stay managed under Connectors.",
   },
 };
+const COMPONENT_KINDS: ComponentKind[] = ["skill", "command", "mcp"];
 
 function slugify(value: string): string {
   return value
@@ -93,21 +81,9 @@ function buildSkillMarkdown(component: DraftComponent): string {
 
 function buildComponentBody(component: DraftComponent): Record<string, unknown> {
   if (component.kind === "mcp") {
-    const serverName = slugify(component.name);
     return {
       type: "mcp",
-      input: {
-        normalizedPayloadJson: {
-          mcpServers: {
-            [serverName]: { type: "remote", url: component.content.trim() },
-          },
-        },
-        metadata: {
-          name: component.name.trim(),
-          description: component.description.trim() || undefined,
-        },
-      },
-      connection: pluginMcpConnectionRequest(component.connection),
+      connectionId: component.connectionId,
     };
   }
 
@@ -145,108 +121,95 @@ function createdItemId(payload: unknown): string | null {
   return typeof item?.id === "string" ? item.id : null;
 }
 
-/**
- * The authentication half of the Connectors page's advanced form. Access is
- * not asked here because a plugin-declared server follows the plugin's own
- * sharing and collection grants.
- */
-function McpConnectionFields({
-  connection,
+function connectorAuthDescription(connection: ExternalMcpConnection): string {
+  let description: string;
+  if (connection.authType === "oauth") {
+    description = connection.credentialMode === "per_member"
+      ? "Each member signs in with their own account"
+      : "One shared organization account";
+  } else if (connection.authType === "apikey") {
+    description = "Organization API key";
+  } else {
+    description = "No sign-in needed";
+  }
+  return !connection.connected && connection.credentialMode === "shared"
+    ? `${description} · Not connected yet`
+    : description;
+}
+
+function ConnectorPicker({
+  connections,
+  loading,
+  value,
+  takenIds,
   disabled,
+  orgSlug,
   onChange,
 }: {
-  connection: PluginMcpConnectionDraft;
+  connections: ExternalMcpConnection[];
+  loading: boolean;
+  value: string;
+  takenIds: Set<string>;
   disabled: boolean;
-  onChange: (update: (connection: PluginMcpConnectionDraft) => PluginMcpConnectionDraft) => void;
+  orgSlug: string | null;
+  onChange: (connectionId: string) => void;
 }) {
+  if (loading) {
+    return <p className="text-[13px] text-gray-500">Loading connectors…</p>;
+  }
+
+  if (connections.length === 0) {
+    return (
+      <p className="text-[13px] text-gray-500">
+        No connectors yet.{" "}
+        <Link href={getMcpConnectionsRoute(orgSlug)} className="font-medium text-gray-700 underline underline-offset-2 hover:text-gray-900">
+          Add a connector
+        </Link>
+      </p>
+    );
+  }
+
   return (
-    <div className="flex flex-col gap-3 rounded-2xl border border-gray-100 bg-gray-50 p-4">
-      <div>
-        <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Authentication</label>
-        <SegmentedControl
-          options={AUTH_TYPE_OPTIONS}
-          value={connection.authType}
-          disabled={disabled}
-          onChange={(authType) => onChange((current) => withPluginMcpAuthType(current, authType))}
-        />
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-2">
+        {connections.map((connection) => {
+          const selected = value === connection.id;
+          const taken = takenIds.has(connection.id);
+          return (
+            <button
+              key={connection.id}
+              type="button"
+              data-testid={`plugin-connector-option-${connection.id}`}
+              aria-pressed={selected}
+              disabled={disabled || taken}
+              onClick={() => onChange(connection.id)}
+              className={selected
+                ? "flex w-full items-center gap-3 rounded-2xl border border-gray-900 bg-gray-50 px-4 py-3 text-left"
+                : "flex w-full items-center gap-3 rounded-2xl border border-gray-200 px-4 py-3 text-left transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"}
+            >
+              <IntegrationIcon
+                name={connection.name}
+                serviceUrl={connection.url}
+                className="size-9 rounded-xl"
+                imageClassName="size-4"
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[14px] font-medium text-gray-900">{connection.name}</span>
+                <span className="block text-[12px] text-gray-500">
+                  {taken ? "Already in this plugin" : connectorAuthDescription(connection)}
+                </span>
+              </span>
+              {selected ? <Check size={16} className="shrink-0 text-gray-900" aria-hidden /> : null}
+            </button>
+          );
+        })}
       </div>
-
-      {connection.authType === "apikey" ? (
-        <div>
-          <label className="mb-1.5 block text-[12px] font-medium text-gray-700">API key</label>
-          <McpCredentialInput
-            kind="secret"
-            name="plugin-mcp-api-key"
-            value={connection.apiKey}
-            onChange={(event) => onChange((current) => ({ ...current, apiKey: event.target.value }))}
-            placeholder="sk-..."
-            disabled={disabled}
-          />
-          <p className="mt-1.5 text-[11px] leading-5 text-gray-500">Stored encrypted as one organization credential.</p>
-        </div>
-      ) : null}
-
-      {connection.authType === "oauth" && !connection.useOAuthClient ? (
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={() => onChange((current) => ({ ...current, useOAuthClient: true }))}
-          className="text-left text-[12px] font-medium text-gray-500 underline decoration-gray-300 underline-offset-4 transition hover:text-gray-900"
-        >
-          Use a pre-registered OAuth app instead
-        </button>
-      ) : null}
-
-      {connection.authType === "oauth" && connection.useOAuthClient ? (
-        <div className="rounded-2xl border border-gray-200 bg-white p-4">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-[13px] font-semibold text-gray-900">OAuth app</p>
-            <Link href={MCP_OAUTH_REDIRECT_DOCS_URL} target="_blank" rel="noreferrer" className="text-[11px] font-medium text-gray-500 underline underline-offset-2 hover:text-gray-900">
-              OAuth setup
-            </Link>
-          </div>
-          <p className="mt-1 text-[12px] leading-5 text-gray-500">
-            Register this Den instance&apos;s redirect URL with the provider, then add its credentials here.
-          </p>
-          <div className="mt-3 space-y-3">
-            <div>
-              <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client ID (optional for now)</label>
-              <McpCredentialInput
-                kind="identifier"
-                name="plugin-mcp-oauth-client-id"
-                value={connection.oauthClientId}
-                onChange={(event) => onChange((current) => ({ ...current, oauthClientId: event.target.value }))}
-                placeholder="1234567890.1234567890123"
-                disabled={disabled}
-              />
-            </div>
-            <div>
-              <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Client secret (optional for now)</label>
-              <McpCredentialInput
-                kind="secret"
-                name="plugin-mcp-oauth-client-secret"
-                value={connection.oauthClientSecret}
-                onChange={(event) => onChange((current) => ({ ...current, oauthClientSecret: event.target.value }))}
-                placeholder="Client secret"
-                disabled={disabled}
-              />
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {connection.authType === "oauth" ? (
-        <div>
-          <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Whose account does the AI use?</label>
-          <SegmentedControl
-            options={CREDENTIAL_MODE_OPTIONS}
-            value={connection.credentialMode}
-            disabled={disabled}
-            onChange={(credentialMode) => onChange((current) => ({ ...current, credentialMode }))}
-          />
-          <p className="mt-1.5 text-[12px] leading-5 text-gray-500">{credentialModeDescription(connection.credentialMode)}</p>
-        </div>
-      ) : null}
+      <p className="text-[12px] text-gray-500">
+        Need a different service?{" "}
+        <Link href={getMcpConnectionsRoute(orgSlug)} className="font-medium text-gray-700 underline underline-offset-2 hover:text-gray-900">
+          Add a connector
+        </Link>
+      </p>
     </div>
   );
 }
@@ -257,6 +220,8 @@ export function PluginEditorScreen() {
   const queryClient = useQueryClient();
   const { orgContext, orgSlug, runReauthableAction } = useOrgDashboard();
   const { data: marketplaces = [] } = useMarketplaces();
+  const { data: allConnections = [], isLoading: connectionsLoading } = useMcpConnections("manageable");
+  const connections = allConnections.filter((connection) => !connection.nativeProviderKey);
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -288,7 +253,7 @@ export function PluginEditorScreen() {
   const addComponent = (kind: ComponentKind) => {
     setComponents((current) => [
       ...current,
-      { key: nextKey, kind, name: "", description: "", content: "", connection: emptyPluginMcpConnectionDraft() },
+      { key: nextKey, kind, name: "", description: "", content: "", connectionId: "" },
     ]);
     setNextKey((value) => value + 1);
   };
@@ -296,12 +261,6 @@ export function PluginEditorScreen() {
   const updateComponent = (key: number, patch: Partial<DraftComponent>) => {
     setComponents((current) =>
       current.map((entry) => (entry.key === key ? { ...entry, ...patch } : entry)),
-    );
-  };
-
-  const updateConnection = (key: number, update: (connection: PluginMcpConnectionDraft) => PluginMcpConnectionDraft) => {
-    setComponents((current) =>
-      current.map((entry) => (entry.key === key ? { ...entry, connection: update(entry.connection) } : entry)),
     );
   };
 
@@ -371,25 +330,23 @@ export function PluginEditorScreen() {
       return;
     }
     if (components.length === 0) {
-      setSaveError("Add at least one skill, command, or MCP server.");
+      setSaveError("Add at least one skill, command, or connector.");
       return;
     }
     for (const component of components) {
+      if (component.kind === "mcp") {
+        if (!component.connectionId) {
+          setSaveError("Pick a connector for the plugin.");
+          return;
+        }
+        continue;
+      }
       if (!component.name.trim()) {
         setSaveError(`Every ${COMPONENT_META[component.kind].label.toLowerCase()} needs a name.`);
         return;
       }
       if (!component.content.trim()) {
-        setSaveError(
-          component.kind === "mcp"
-            ? `Enter the server URL for "${component.name || "your MCP server"}".`
-            : `Write the instructions for "${component.name || "your component"}".`,
-        );
-        return;
-      }
-      const connectionError = component.kind === "mcp" ? pluginMcpConnectionDraftError(component.connection, component.name) : null;
-      if (connectionError) {
-        setSaveError(connectionError);
+        setSaveError(`Write the instructions for "${component.name || "your component"}".`);
         return;
       }
     }
@@ -445,7 +402,7 @@ export function PluginEditorScreen() {
         <div>
           <h1 className="text-[28px] font-semibold text-gray-900">Create a plugin</h1>
           <p className="mt-1 text-[15px] text-gray-500">
-            Bundle skills, commands, and MCP servers your team can install in OpenWork with one click.
+            Bundle skills, commands, and connectors your team can install in OpenWork with one click.
           </p>
         </div>
         <Link
@@ -483,7 +440,7 @@ export function PluginEditorScreen() {
         <div className="flex items-center justify-between">
           <h2 className="text-[18px] font-semibold text-gray-900">What&apos;s inside</h2>
           {!importDraft ? <div className="flex gap-2">
-            {(Object.keys(COMPONENT_META) as ComponentKind[]).map((kind) => {
+            {COMPONENT_KINDS.map((kind) => {
               const meta = COMPONENT_META[kind];
               return (
                 <DenButton
@@ -540,7 +497,7 @@ export function PluginEditorScreen() {
           </div>
         ) : components.length === 0 ? (
           <div className="mt-4 rounded-[24px] border border-dashed border-gray-300 bg-gray-50 px-6 py-10 text-center text-[14px] text-gray-500">
-            Add a skill, command, or MCP server to get started. A plugin needs at least one component.
+            Add a skill, command, or connector to get started. A plugin needs at least one component.
           </div>
         ) : null}
 
@@ -548,6 +505,13 @@ export function PluginEditorScreen() {
           {components.map((component) => {
             const meta = COMPONENT_META[component.kind];
             const Icon = meta.icon;
+            const takenIds = new Set(
+              components.flatMap((entry) =>
+                entry.kind === "mcp" && entry.key !== component.key && entry.connectionId
+                  ? [entry.connectionId]
+                  : [],
+              ),
+            );
             return (
               <div key={component.key} className="rounded-[24px] border border-gray-200 bg-white p-5">
                 <div className="mb-3 flex items-center justify-between">
@@ -567,46 +531,42 @@ export function PluginEditorScreen() {
                 </div>
                 <p className="mb-4 text-[13px] text-gray-500">{meta.hint}</p>
                 <div className="flex flex-col gap-3">
-                  <DenInput
-                    value={component.name}
-                    onChange={(event) => updateComponent(component.key, { name: event.target.value })}
-                    placeholder={component.kind === "mcp" ? "Server name (e.g. Linear)" : "Name (e.g. Prep a sales call)"}
-                    disabled={saving}
-                  />
-                  {component.kind !== "mcp" ? (
-                    <DenInput
-                      value={component.description}
-                      onChange={(event) => updateComponent(component.key, { description: event.target.value })}
-                      placeholder="One-line description — when should the agent use this?"
-                      disabled={saving}
-                    />
-                  ) : null}
                   {component.kind === "mcp" ? (
+                    <ConnectorPicker
+                      connections={connections}
+                      loading={connectionsLoading}
+                      value={component.connectionId}
+                      takenIds={takenIds}
+                      disabled={saving}
+                      orgSlug={orgSlug}
+                      onChange={(connectionId) => updateComponent(component.key, { connectionId })}
+                    />
+                  ) : (
                     <>
                       <DenInput
+                        value={component.name}
+                        onChange={(event) => updateComponent(component.key, { name: event.target.value })}
+                        placeholder="Name (e.g. Prep a sales call)"
+                        disabled={saving}
+                      />
+                      <DenInput
+                        value={component.description}
+                        onChange={(event) => updateComponent(component.key, { description: event.target.value })}
+                        placeholder="One-line description — when should the agent use this?"
+                        disabled={saving}
+                      />
+                      <DenTextarea
                         value={component.content}
                         onChange={(event) => updateComponent(component.key, { content: event.target.value })}
-                        placeholder="https://mcp.example.com/mcp"
+                        placeholder={
+                          component.kind === "skill"
+                            ? "Write the instructions the agent should follow, in plain markdown..."
+                            : "Write what this command should do when someone runs it..."
+                        }
+                        rows={8}
                         disabled={saving}
-                      />
-                      <McpConnectionFields
-                        connection={component.connection}
-                        disabled={saving}
-                        onChange={(update) => updateConnection(component.key, update)}
                       />
                     </>
-                  ) : (
-                    <DenTextarea
-                      value={component.content}
-                      onChange={(event) => updateComponent(component.key, { content: event.target.value })}
-                      placeholder={
-                        component.kind === "skill"
-                          ? "Write the instructions the agent should follow, in plain markdown..."
-                          : "Write what this command should do when someone runs it..."
-                      }
-                      rows={8}
-                      disabled={saving}
-                    />
                   )}
                 </div>
               </div>

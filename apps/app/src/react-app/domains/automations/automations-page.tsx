@@ -47,11 +47,12 @@ import { toast } from "@/components/ui/sonner"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
 import { useDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider"
 import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal"
+import { automationCreationPlacement } from "./automation-availability"
 import { AutomationEditor } from "./automation-editor"
 import { dispatchAutomationsStateChanged } from "./automation-events"
 import { automationExecutionThreadRoute, automationExecutionIdentity, automationLocalSessionRoute } from "./automation-cloud-thread"
 import { formatAutomationSchedule, formatAutomationTime } from "./automation-format"
-import type { AutomationProviderCatalog } from "./automation-model-options"
+import type { AutomationModelOption, AutomationProviderCatalog } from "./automation-model-options"
 import { automationModelOptions, describeAutomationModel } from "./automation-model-options"
 
 const ACTIVE_RUN_STATUSES = new Set<AutomationRun["status"]>(["queued", "claimed", "running"])
@@ -102,6 +103,17 @@ function describeError(error: unknown) {
     return error.message
   }
   return error instanceof Error ? error.message : "Automations could not be loaded."
+}
+
+/** Editor defaults for a pinned-Workflow Automation, which has no instructions or model of its own. */
+function inputDefaults(models: readonly AutomationModelOption[]): CreateAutomation {
+  const first = models[0] ?? AUTOMATION_FREE_MODEL
+  return {
+    name: "",
+    instructions: "",
+    schedule: { kind: "daily", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, hour: 9, minute: 0 },
+    model: { providerId: first.providerId, modelId: first.modelId, variant: null },
+  }
 }
 
 function inputFromDetail(detail: AutomationDetail): CreateAutomation {
@@ -162,6 +174,10 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
   const selectedRunId = searchParams.get("run")?.trim() || null
   const selectedThreadId = searchParams.get("thread")?.trim() || null
   const creating = searchParams.get("create") === "1"
+  // A Den "Automate this Workflow" link lands here with the exact version to pin.
+  const workflowId = searchParams.get("workflow")?.trim() || null
+  const workflowVersionId = searchParams.get("version")?.trim() || null
+  const placement = automationCreationPlacement()
   const ready = denAuth.isSignedIn && Boolean(client && organizationId)
   const queryRoot = ["den", "automations", organizationId]
   const zenModelRestricted = useDesktopRestriction("allowZenModel")
@@ -206,6 +222,11 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
       ? AUTOMATIONS_PAGE_FAST_POLL_MS
       : AUTOMATIONS_PAGE_SLOW_POLL_MS,
   })
+  const workflowQuery = useQuery({
+    queryKey: [...queryRoot, "workflow", workflowId],
+    queryFn: () => client!.getWorkflow(organizationId!, workflowId!),
+    enabled: ready && creating && placement === "cloud" && Boolean(workflowId),
+  })
   const receiptQuery = useQuery({
     queryKey: [...queryRoot, "receipt", selectedRunId],
     queryFn: () => client!.getAutomationRun(organizationId!, selectedRunId!),
@@ -216,11 +237,13 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
     },
   })
 
+  // The free Zen starter is a published-Desktop exception; Cloud runs revalidate
+  // against the organization's own providers.
   const models = useMemo(
     () => automationModelOptions(providersQuery.data ?? [], {
-      includeFreeStarter: !zenModelRestricted && freeStarterInRuntime,
+      includeFreeStarter: placement === "desktop" && !zenModelRestricted && freeStarterInRuntime,
     }),
-    [freeStarterInRuntime, providersQuery.data, zenModelRestricted],
+    [freeStarterInRuntime, placement, providersQuery.data, zenModelRestricted],
   )
   const filteredItems = useMemo(() => {
     const normalized = query.trim().toLowerCase()
@@ -264,7 +287,7 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
           <Cloud aria-hidden="true" />
           <AlertTitle>Sign in to Den to use Automations</AlertTitle>
           <AlertDescription>
-            Den keeps Automation schedules and history. Cloud Automations can run while Desktop is offline; Desktop Automations run when this signed-in app is connected.
+            Den keeps Automation schedules and history. Cloud Automations run headlessly while your desktop is offline; Desktop Automations run when that signed-in app is connected.
           </AlertDescription>
         </Alert>
       </div>
@@ -296,6 +319,13 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
   }
 
   if (creating) {
+    // Only a Workflow the person can run may be pinned; Den enforces the same
+    // bar on create, this just keeps a viewer from reaching a form that fails.
+    const workflow = placement === "cloud" && workflowId && workflowQuery.data?.canRun ? workflowQuery.data : undefined
+    const workflowVersion = workflow
+      ? workflow.versions.find((version) => version.id === workflowVersionId) ?? workflow.currentVersion
+      : undefined
+    if (placement === "cloud" && workflowId && workflowQuery.isLoading) return <LoadingState />
     return (
       <div className="mx-auto max-w-3xl space-y-5 p-6">
         <div className="flex items-center gap-3">
@@ -304,10 +334,22 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
           </Button>
           <div>
             <h2 className="text-xl font-semibold">Create Automation</h2>
-            <p className="text-sm text-muted-foreground">It becomes active as soon as you create it.</p>
+            <p className="text-sm text-muted-foreground">
+              {placement === "cloud" ? "It runs in OpenWork Cloud and becomes active as soon as you create it." : "It runs on this desktop and becomes active as soon as you create it."}
+            </p>
           </div>
         </div>
+        {placement === "cloud" && workflowId && workflowQuery.error ? (
+          <Alert variant="warning"><AlertCircle /><AlertTitle>Workflow unavailable</AlertTitle><AlertDescription>{describeError(workflowQuery.error)}</AlertDescription></Alert>
+        ) : placement === "cloud" && workflowId && workflowQuery.data && !workflowQuery.data.canRun ? (
+          <Alert variant="warning"><AlertCircle /><AlertTitle>You can read this Workflow but not run it</AlertTitle><AlertDescription>Ask a Workflow manager for run access to schedule it. You can still create an ordinary Automation below.</AlertDescription></Alert>
+        ) : null}
         <AutomationEditor
+          key={workflowVersion?.id ?? "agent"}
+          placement={placement}
+          initial={workflow && workflowVersion ? { ...inputDefaults(models), name: `${workflow.title} refresh` } : undefined}
+          initialKey={workflowVersion?.id}
+          pinnedWorkflow={workflow && workflowVersion ? { title: workflow.title, configObjectVersionId: workflowVersion.id } : undefined}
           busy={busyAction === "create"}
           modelOptions={models}
           providerCatalog={props.providerCatalog}
@@ -319,10 +361,22 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
               // Pin the workspace the person is creating from; targeting must
               // not follow whichever workspace happens to be active at run time.
               const workspaceId = props.workspaceId?.trim() || null
-              const detail = await client.createAutomation(organizationId, {
-                ...input,
-                ...(workspaceId ? { workspaceId } : {}),
-              })
+              const detail = placement === "cloud"
+                ? await client.createCloudAutomation(organizationId, {
+                    name: input.name,
+                    schedule: input.schedule,
+                    action: workflow && workflowVersion
+                      ? {
+                          kind: "saved_script",
+                          script: { pluginId: workflow.pluginId, configObjectId: workflow.configObjectId, configObjectVersionId: workflowVersion.id },
+                          input: workflowVersion.exampleInput ?? {},
+                        }
+                      : { kind: "agent", instructions: input.instructions, model: input.model },
+                  })
+                : await client.createAutomation(organizationId, {
+                    ...input,
+                    ...(workspaceId ? { workspaceId } : {}),
+                  })
               await refresh()
               openAutomation(detail.automation.id)
               toast.success("Automation created and active")
@@ -360,7 +414,10 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
       ? automationLocalSessionRoute(selectedReceipt.run.executionThread)
       : null
 
-    if (editing && (detail.revision.executionTarget ?? "desktop") === "desktop") {
+    const editable = detail.revision.action?.kind !== "saved_script"
+    const detailPlacement = detail.revision.executionTarget ?? "desktop"
+
+    if (editing && editable) {
       return (
         <div className="mx-auto max-w-3xl space-y-5 p-6">
           <div>
@@ -368,6 +425,7 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
             <p className="text-sm text-muted-foreground">Saving creates an immutable revision for future runs.</p>
           </div>
           <AutomationEditor
+            placement={detailPlacement}
             initial={inputFromDetail(detail)}
             initialKey={detail.revision.id}
             busy={busyAction === "update"}
@@ -414,7 +472,7 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            {(detail.revision.executionTarget ?? "desktop") === "desktop" ? <Button variant="outline" onClick={() => {
+            {editable ? <Button variant="outline" onClick={() => {
               setRepairingModel(false)
               setEditing(true)
             }}><Pencil />Edit</Button> : null}
@@ -476,7 +534,7 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
             <AlertTitle>{modelNeedsAttention ? "Model needs attention" : "Action required"}</AlertTitle>
             <AlertDescription className="space-y-3">
               <p>{task.needsAttentionReason.message}</p>
-              {modelNeedsAttention && (detail.revision.executionTarget ?? "desktop") === "desktop" ? (
+              {modelNeedsAttention && editable ? (
                 <>
                   <p>This Automation is paused. Its instructions, schedule, and run history are unchanged.</p>
                   <Button
@@ -662,7 +720,11 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h2 className="text-xl font-semibold">Automations</h2>
-          <p className="mt-1 text-sm text-muted-foreground">Scheduled durably in Den, with each Automation executed in its fixed Desktop or OpenWork Cloud location.</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {placement === "cloud"
+              ? "Scheduled durably in Den. Automations created here run headlessly in OpenWork Cloud; Desktop-created Automations stay on Desktop."
+              : "Scheduled durably in Den, with each Automation executed in its fixed Desktop or OpenWork Cloud location."}
+          </p>
         </div>
         <Button onClick={() => setSearchParams(new URLSearchParams({ create: "1" }))}><Plus />New Automation</Button>
       </div>
@@ -675,7 +737,13 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
           <EmptyHeader>
             <EmptyMedia variant="icon"><CalendarClock /></EmptyMedia>
             <EmptyTitle>{query ? "No matching Automations" : "No Automations yet"}</EmptyTitle>
-            <EmptyDescription>{query ? "Try a different search." : "Create a Desktop Automation here; it runs while this signed-in desktop is connected. Create headless Cloud Automations from Web or Cloud Chat."}</EmptyDescription>
+            <EmptyDescription>
+              {query
+                ? "Try a different search."
+                : placement === "cloud"
+                  ? "Create a Cloud Automation here; it runs headlessly in OpenWork Cloud even while your desktop is offline."
+                  : "Create a Desktop Automation here; it runs while this signed-in desktop is connected. Create headless Cloud Automations from OpenWork Web."}
+            </EmptyDescription>
           </EmptyHeader>
           {!query ? <EmptyContent><Button onClick={() => setSearchParams(new URLSearchParams({ create: "1" }))}><Plus />New Automation</Button></EmptyContent> : null}
         </Empty>

@@ -227,6 +227,12 @@ class DaytonaPlacementHost implements Host {
     }
   }
 
+  async signal(handle: SurfaceHandle, pid: number, signal: "SIGSTOP" | "SIGCONT"): Promise<void> {
+    const placed = this.#surfaces.get(handle);
+    if (!placed) throw new Error(`Surface ${handle.name} is not placed on a Daytona sandbox.`);
+    await placed.host.signal(handle, pid, signal);
+  }
+
   async disposeSurface(handle: SurfaceHandle): Promise<void> {
     const placed = this.#surfaces.get(handle);
     if (!placed) return;
@@ -277,7 +283,10 @@ export function resolvePlace(env: NodeJS.ProcessEnv = process.env): Place {
     || (worldPlace === undefined && env.OPENWORK_EVAL_DAYTONA?.trim() === "1");
   if (useDaytona) {
     const ref = env.OPENWORK_EVAL_REF?.trim() || env.GITHUB_SHA?.trim() || "dev";
-    return new DaytonaPlace(ref, env.OPENWORK_EVAL_DAYTONA_DESKTOP_SANDBOX?.trim());
+    return new DaytonaPlace(
+      ref,
+      env.OPENWORK_EVAL_DAYTONA_DESKTOP_SANDBOX?.trim(),
+    );
   }
   return new LocalPlace(env.OPENWORK_EVAL_MYSQL_URL?.trim() || DEFAULT_MYSQL_URL);
 }

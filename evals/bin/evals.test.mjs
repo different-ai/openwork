@@ -77,7 +77,7 @@ test("parseArgs validates values, exclusivity, and unknown flags", () => {
 
 test("explicit local placement removes inherited remote provisioning inputs", () => {
   const options = parseArgs(["app-smoke", "--local"]);
-  const childEnv = resolveRunEnvironment(options, {
+  const resolved = resolveRunEnvironment(options, {
     PATH: "/bin",
     OPENWORK_EVAL_DAYTONA: "1",
     OPENWORK_EVAL_DAYTONA_SANDBOX: "desktop-sandbox",
@@ -86,28 +86,66 @@ test("explicit local placement removes inherited remote provisioning inputs", ()
     OPENWORK_EVAL_DAYTONA_DESKTOP_SANDBOX: "prepared-desktop",
     OPENWORK_EVAL_DEN_API_URL: "https://den-api.example.test",
     OPENWORK_EVAL_DEN_WEB_URL: "https://den.example.test",
-  });
+  }, () => { throw new Error("probe called"); });
 
-  assert.deepEqual(childEnv, { PATH: "/bin" });
+  assert.deepEqual(resolved, { env: { PATH: "/bin" }, placement: "local", reason: "--local" });
 });
 
-test("explicit Daytona and attached Den placement retain their existing behavior", () => {
+test("explicit attached Den placement does not probe Daytona", () => {
+  const attached = resolveRunEnvironment(parseArgs(["app-smoke", "--den", "https://den.example.test"]), {}, () => {
+    throw new Error("probe called");
+  });
+  assert.deepEqual(attached, {
+    env: { OPENWORK_EVAL_DEN_API_URL: "https://den.example.test" },
+    placement: "attached",
+    reason: "--den",
+  });
+});
+
+test("explicit Daytona placement requires an authenticated CLI", () => {
   const daytona = resolveRunEnvironment(parseArgs(["app-smoke", "--daytona"]), {
     OPENWORK_EVAL_DEN_API_URL: "https://attached.example.test",
+  }, () => true);
+  assert.deepEqual(daytona, {
+    env: {
+      OPENWORK_EVAL_DEN_API_URL: "https://attached.example.test",
+      OPENWORK_EVAL_DAYTONA: "1",
+    },
+    placement: "daytona",
+    reason: "--daytona",
   });
-  assert.equal(daytona.OPENWORK_EVAL_DAYTONA, "1");
-  assert.equal(daytona.OPENWORK_EVAL_DEN_API_URL, "https://attached.example.test");
 
-  const attached = resolveRunEnvironment(parseArgs(["app-smoke", "--den", "https://den.example.test"]), {});
-  assert.equal(attached.OPENWORK_EVAL_DEN_API_URL, "https://den.example.test");
+  assert.throws(
+    () => resolveRunEnvironment(parseArgs(["app-smoke", "--daytona"]), {}, () => false),
+    /--daytona requested but the daytona CLI is missing or not authenticated/,
+  );
 });
 
-test("automatic placement preserves the caller environment", () => {
+test("ambient Daytona placement preserves the caller environment without probing", () => {
   const ambient = {
     OPENWORK_EVAL_DAYTONA: "1",
     OPENWORK_EVAL_DEN_API_URL: "https://den.example.test",
   };
-  assert.deepEqual(resolveRunEnvironment(parseArgs(["app-smoke"]), ambient), ambient);
+  assert.deepEqual(resolveRunEnvironment(parseArgs(["app-smoke"]), ambient, () => {
+    throw new Error("probe called");
+  }), {
+    env: ambient,
+    placement: "daytona",
+    reason: "OPENWORK_EVAL_DAYTONA=1 in environment",
+  });
+});
+
+test("automatic placement uses authenticated Daytona and otherwise falls back to local", () => {
+  assert.deepEqual(resolveRunEnvironment(parseArgs(["app-smoke"]), { PATH: "/bin" }, () => true), {
+    env: { PATH: "/bin", OPENWORK_EVAL_DAYTONA: "1" },
+    placement: "daytona",
+    reason: "daytona CLI authenticated",
+  });
+  assert.deepEqual(resolveRunEnvironment(parseArgs(["app-smoke"]), { PATH: "/bin" }, () => false), {
+    env: { PATH: "/bin" },
+    placement: "local",
+    reason: "daytona CLI missing or not authenticated",
+  });
 });
 
 test("verdict and exit mapping covers failed, incomplete, and passed runs", () => {

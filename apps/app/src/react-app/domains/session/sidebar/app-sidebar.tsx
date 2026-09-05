@@ -17,6 +17,7 @@ import {
   Pencil,
   Pin,
   PinOff,
+  PanelRightOpen,
   Plus,
   Search,
   Share2,
@@ -290,6 +291,7 @@ function SessionMenuContent({
   const canOpenInSplit = Boolean(primary)
     && !isSameWorkbenchSession(sessionRef, primary)
     && !isSameWorkbenchSession(sessionRef, secondary);
+  const canCreateNewSplit = Boolean(primary);
   const openInSplitView = () => {
     const tab = {
       workspaceId,
@@ -314,6 +316,12 @@ function SessionMenuContent({
           <DropdownMenuItem data-session-menu-open-split onClick={openInSplitView}>
             <Columns2 className="size-4" />
             {t("session_management.open_in_split_view")}
+          </DropdownMenuItem>
+        ) : null}
+        {canCreateNewSplit ? (
+          <DropdownMenuItem data-session-menu-new-split onClick={() => ctx.onCreateSplitTaskInWorkspace(workspaceId)}>
+            <PanelRightOpen className="size-4" />
+            {t("session_management.new_split")}
           </DropdownMenuItem>
         ) : null}
         {isInSplit ? (
@@ -399,6 +407,12 @@ function SessionMenuContent({
         <ContextMenuItem data-session-menu-open-split onClick={openInSplitView}>
           <Columns2 className="size-4" />
           {t("session_management.open_in_split_view")}
+        </ContextMenuItem>
+      ) : null}
+      {canCreateNewSplit ? (
+        <ContextMenuItem data-session-menu-new-split onClick={() => ctx.onCreateSplitTaskInWorkspace(workspaceId)}>
+          <PanelRightOpen className="size-4" />
+          {t("session_management.new_split")}
         </ContextMenuItem>
       ) : null}
       {isInSplit ? (
@@ -895,6 +909,7 @@ export type AppSidebarProps = {
   onOpenSession: (workspaceId: string, sessionId: string) => void;
   onPrefetchSession?: (workspaceId: string, sessionId: string) => void;
   onCreateTaskInWorkspace: (workspaceId: string, groupId?: string) => void;
+  onCreateSplitTaskInWorkspace: (workspaceId: string) => void;
   onOpenRenameSession?: (sessionId: string) => void;
   onOpenDeleteSession?: (sessionId: string) => void;
   onArchiveSession?: (sessionId: string, archived: boolean) => void;
@@ -1034,6 +1049,7 @@ export function AppSidebar(props: AppSidebarProps) {
     onOpenSession: props.onOpenSession,
     onPrefetchSession: props.onPrefetchSession,
     onCreateTaskInWorkspace: props.onCreateTaskInWorkspace,
+    onCreateSplitTaskInWorkspace: props.onCreateSplitTaskInWorkspace,
     onOpenRenameSession: props.onOpenRenameSession,
     onOpenDeleteSession: props.onOpenDeleteSession,
     onArchiveSession: props.onArchiveSession,
@@ -1209,7 +1225,7 @@ export function AppSidebar(props: AppSidebarProps) {
             data-slot="sidebar-content"
             data-sidebar="content"
             data-session-number-modifier-held={props.sessionNumberShortcuts.modifierHeld ? "true" : undefined}
-            className="no-scrollbar flex min-h-0 flex-1 flex-col gap-0 overflow-auto [--radius:var(--radius-md)] group-data-[collapsible=icon]:overflow-hidden"
+            className="no-scrollbar flex min-h-0 flex-1 flex-col gap-0 overflow-x-hidden overflow-y-auto [--radius:var(--radius-md)] group-data-[collapsible=icon]:overflow-hidden"
           >
             {pinnedSessions.length > 0 ? (
               <GlobalPinnedSessions entries={pinnedSessions} />
@@ -2288,7 +2304,9 @@ function SessionMenuItem({
   const rowButtonClass = cn(
     // Soft pill @ 11px radius from Paper; overlay tint adapts to theme
     // (light: --ow-light-hover ≈ black/5, dark: #FFFFFF17 ≈ white/9).
-    "relative h-8 rounded-md transition-[padding,background-color] duration-75 pe-7 group-hover/menu-sub-item:pe-18 group-has-data-popup-open/menu-sub-item:pe-18 group-hover/menu-sub-item:bg-black/[0.05] dark:group-hover/menu-sub-item:bg-white/[0.09] data-active:bg-black/[0.07] dark:data-active:bg-white/[0.12] text-[13px] text-sidebar-foreground/80 data-active:text-sidebar-foreground",
+    // The end padding tracks SessionHoverQuickActions: reserve their width
+    // whenever they show, including the layouts that show them without hover.
+    "relative h-8 rounded-md transition-[padding,background-color] duration-75 pe-7 group-hover/menu-sub-item:pe-18 group-has-data-popup-open/menu-sub-item:pe-18 max-lg:pe-18 pointer-coarse:pe-18 group-hover/menu-sub-item:bg-black/[0.05] dark:group-hover/menu-sub-item:bg-white/[0.09] data-active:bg-black/[0.07] dark:data-active:bg-white/[0.12] text-[13px] text-sidebar-foreground/80 data-active:text-sidebar-foreground",
   );
   const rowButtonStyle = {
     paddingInlineStart: sidebarRowPaddingInlineStart(0),
@@ -2303,7 +2321,7 @@ function SessionMenuItem({
   const trailing = (
     <>
       <SessionOutcomeIndicator
-        className="absolute right-3 top-1/2 -translate-y-1/2 opacity-100 group-hover/menu-sub-item:opacity-0 pointer-events-none select-none"
+        className="absolute right-3 top-1/2 -translate-y-1/2 opacity-100 group-hover/menu-sub-item:opacity-0 max-lg:opacity-0 pointer-coarse:opacity-0 pointer-events-none select-none"
         status={sessionActivityStatus}
         isActiveWork={resolvedActiveWork}
         isUnread={isUnread}

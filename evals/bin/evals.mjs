@@ -14,8 +14,10 @@ const usage = `Usage: node evals/bin/evals.mjs [test-names...] [flags]
 Run E2E tests:
   --with-llm-vision  Judge vision claims inline (default: defer judging)
   --local            Force isolated local resources and clear inherited remote placement
-  --daytona          Set OPENWORK_EVAL_DAYTONA=1
+  --daytona          Require Daytona (fails if the CLI is not authenticated)
   --den <url>        Set OPENWORK_EVAL_DEN_API_URL=<url>
+
+Without a placement flag, Daytona is used when the daytona CLI is authenticated, otherwise local.
 
 Judge then publish evidence:
   --publish         Enter judge-then-publish mode
@@ -142,15 +144,39 @@ const REMOTE_PLACEMENT_ENV = [
 ];
 
 /** Resolve the child environment before any test process can provision resources. */
-export function resolveRunEnvironment(options, env = process.env) {
+export function daytonaAuthenticated(exec = spawnSync) {
+  const result = exec("daytona", ["snapshot", "list", "-f", "json"], {
+    stdio: "ignore",
+    timeout: 30_000,
+  });
+  return !result.error && result.status === 0;
+}
+
+export function resolveRunEnvironment(options, env = process.env, probe = daytonaAuthenticated) {
   const childEnv = { ...env };
   if (options.local) {
     for (const name of REMOTE_PLACEMENT_ENV) delete childEnv[name];
-    return childEnv;
+    return { env: childEnv, placement: "local", reason: "--local" };
   }
-  if (options.daytona) childEnv.OPENWORK_EVAL_DAYTONA = "1";
-  if (options.den !== undefined) childEnv.OPENWORK_EVAL_DEN_API_URL = options.den;
-  return childEnv;
+  if (options.den !== undefined) {
+    childEnv.OPENWORK_EVAL_DEN_API_URL = options.den;
+    return { env: childEnv, placement: "attached", reason: "--den" };
+  }
+  if (options.daytona) {
+    if (!probe()) {
+      throw new Error("--daytona requested but the daytona CLI is missing or not authenticated. Install it and run `daytona login`.");
+    }
+    childEnv.OPENWORK_EVAL_DAYTONA = "1";
+    return { env: childEnv, placement: "daytona", reason: "--daytona" };
+  }
+  if (env.OPENWORK_EVAL_DAYTONA === "1") {
+    return { env: childEnv, placement: "daytona", reason: "OPENWORK_EVAL_DAYTONA=1 in environment" };
+  }
+  if (probe()) {
+    childEnv.OPENWORK_EVAL_DAYTONA = "1";
+    return { env: childEnv, placement: "daytona", reason: "daytona CLI authenticated" };
+  }
+  return { env: childEnv, placement: "local", reason: "daytona CLI missing or not authenticated" };
 }
 
 function testFiles(directory = testsDir) {
@@ -291,7 +317,7 @@ function publish(options) {
 function run(options) {
   const runStartedAt = Date.now();
   const resolved = resolveTestNames(options.testNames);
-  const childEnv = resolveRunEnvironment(options);
+  const { env: childEnv, placement, reason } = resolveRunEnvironment(options);
   childEnv.OPENWORK_EVAL_E2E_TESTS = "1";
   const consented = new Set(["OPENWORK_EVAL_E2E_TESTS"]);
 
@@ -316,6 +342,7 @@ function run(options) {
     `--outputFile=${outputFile}`,
     ...resolved.map((file) => relative(evalsDir, file).split(sep).join("/")),
   ];
+  process.stderr.write(`placement: ${placement} (${reason})\n`);
   const child = spawnSync("pnpm", vitestArgs, { cwd: evalsDir, env: childEnv, stdio: "inherit" });
   const status = childStatus(child);
   let report;
@@ -340,14 +367,8 @@ function run(options) {
   process.stdout.write(`${JSON.stringify({
     command: "evals:e2e",
     lane: "e2e",
-    daytona: childEnv.OPENWORK_EVAL_DAYTONA?.trim() === "1",
-    placement: options.local
-      ? "local"
-      : options.daytona
-        ? "daytona"
-        : options.den !== undefined
-          ? "attached"
-          : "automatic",
+    daytona: placement === "daytona",
+    placement,
     vision: options.withLlmVision ? "inline" : "defer",
     files: options.testNames.length > 0 ? options.testNames : ["all"],
     ...summary,

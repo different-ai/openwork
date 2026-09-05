@@ -63,9 +63,15 @@ function signJwt(overrides) {
   return signingInput + "." + signature
 }
 
+let signingKeysUnavailable = false
+
 mock.module("./src/auth.js", () => ({
   auth: {
-    handler: () => Promise.resolve(Response.json({ keys: [publicJwk] })),
+    handler: () => Promise.resolve(new Response(null, { status: 429 })),
+    api: { getJwks: async () => {
+      if (signingKeysUnavailable) throw new Error("synthetic signing key outage")
+      return { keys: [publicJwk] }
+    } },
   },
   DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX: "ow_mcp_at_",
   DEN_MCP_FIRST_PARTY_CLIENT_ID: firstPartyClientId,
@@ -170,6 +176,21 @@ async function expectPrincipal(name, token, context) {
     throw new Error(name + " failed with " + JSON.stringify(await principal.json()))
   }
 }
+
+const recoveryToken = signJwt({})
+signingKeysUnavailable = true
+const unavailable = await verifyMcpRequest(new Headers({ authorization: "Bearer " + recoveryToken }), agentContext("req_outage"))
+if (!(unavailable instanceof Response) || unavailable.status !== 503) throw new Error("Signing key outage must be retryable")
+if (unavailable.headers.has("www-authenticate")) throw new Error("Signing key outage must not trigger reauthentication")
+if (unavailable.headers.get("retry-after") !== "10") throw new Error("Signing key outage must advertise retry delay")
+const unavailableBody = await unavailable.json()
+if (unavailableBody.error !== "mcp_signing_keys_unavailable" || unavailableBody.oauthError) throw new Error("Signing key outage must not invalidate the token")
+signingKeysUnavailable = false
+for (let attempt = 0; attempt < 25; attempt++) {
+  await expectPrincipal("same token after recovery and beyond public auth limit", recoveryToken, agentContext("req_recovered"))
+}
+await expectError("malformed token", "invalid.jwt.token", agentContext("req_malformed"), { status: 401, error: "invalid_mcp_token" })
+await expectError("expired token", signJwt({ exp: 1 }), agentContext("req_expired"), { status: 401, error: "invalid_mcp_token" })
 
 await expectError("mismatched custom resource claim", signJwt({ [resourceClaim]: parentResource }), agentContext("req_mismatch"), {
   status: 401,

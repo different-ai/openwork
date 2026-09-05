@@ -41,7 +41,7 @@ function subscribeToDenSettings(onStoreChange: () => void) {
   return () => window.removeEventListener(denSettingsChangedEvent, onStoreChange);
 }
 
-function denWebBillingUrl(baseUrl: string) {
+export function denWebBillingUrl(baseUrl: string) {
   try {
     return new URL("/dashboard/web", baseUrl).toString();
   } catch {

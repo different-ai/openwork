@@ -45,3 +45,13 @@ test("required launch input is detected from the input schema", () => {
   expect(connections.mcpToolRequiresInput({ inputSchema: { type: "object", required: [] } })).toBe(false)
   expect(connections.mcpToolRequiresInput({ inputSchema: { type: "object", required: ["query"] } })).toBe(true)
 })
+
+test("required launch-input keys are listed so authors can supply and Den can validate them", () => {
+  expect(connections.mcpToolRequiredInputKeys({})).toEqual([])
+  expect(connections.mcpToolRequiredInputKeys({ inputSchema: { type: "object", required: [] } })).toEqual([])
+  expect(connections.mcpToolRequiredInputKeys({ inputSchema: { type: "object", required: ["cloudId", "pageId"] } }))
+    .toEqual(["cloudId", "pageId"])
+  // Non-string entries are provider schema noise, never keys an author can type.
+  expect(connections.mcpToolRequiredInputKeys({ inputSchema: { type: "object", required: ["cloudId", 7, ""] } }))
+    .toEqual(["cloudId"])
+})

@@ -13,7 +13,7 @@ import { createDenClient, readDenSettings } from "@/app/lib/den"
 import { Button } from "@/components/ui/button"
 import { Tool } from "@/components/ui/tool"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
-import { useAutomationDeploymentEnabled } from "@/react-app/domains/automations/automation-availability"
+import { automationCreationPlacement, useAutomationDeploymentEnabled } from "@/react-app/domains/automations/automation-availability"
 import { formatAutomationSchedule } from "@/react-app/domains/automations/automation-format"
 import {
   automationModelOptions,
@@ -58,6 +58,7 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
   const navigate = useNavigate()
   const denAuth = useDenAuth()
   const automationsEnabled = useAutomationDeploymentEnabled()
+  const placement = automationCreationPlacement()
   const workspaceContext = useWorkspaceMaybe()
   const [created, setCreated] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -100,19 +101,26 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
     setBusy(true)
     try {
       const client = createDenClient({ baseUrl: settings.baseUrl, token })
-      const detail = await client.createAutomation(organizationId, {
-        name: proposal.name,
-        instructions: proposal.instructions,
-        schedule: proposal.schedule,
-        model: resolved?.model ?? proposal.model ?? {
-          providerId: AUTOMATION_FREE_MODEL.providerId,
-          modelId: AUTOMATION_FREE_MODEL.modelId,
-        },
-        // Pin the proposal's originating workspace, falling back to the pane
-        // this card renders in, so the Automation keeps running there instead
-        // of following whichever workspace is active at run time.
-        ...(pinnedWorkspaceId ? { workspaceId: pinnedWorkspaceId } : {}),
-      })
+      const model = resolved?.model ?? proposal.model ?? {
+        providerId: AUTOMATION_FREE_MODEL.providerId,
+        modelId: AUTOMATION_FREE_MODEL.modelId,
+      }
+      const detail = placement === "cloud"
+        ? await client.createCloudAutomation(organizationId, {
+            name: proposal.name,
+            schedule: proposal.schedule,
+            action: { kind: "agent", instructions: proposal.instructions, model },
+          })
+        : await client.createAutomation(organizationId, {
+            name: proposal.name,
+            instructions: proposal.instructions,
+            schedule: proposal.schedule,
+            model,
+            // Pin the proposal's originating workspace, falling back to the pane
+            // this card renders in, so the Automation keeps running there instead
+            // of following whichever workspace is active at run time.
+            ...(pinnedWorkspaceId ? { workspaceId: pinnedWorkspaceId } : {}),
+          })
       setCreated(detail.automation.id)
       toast.success("Automation created and active")
     } catch (error) {
@@ -142,7 +150,9 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
           </h3>
           <p className="mt-0.5 text-xs text-dls-secondary">
             {created
-              ? "It runs on the schedule below while this desktop is connected."
+              ? placement === "cloud"
+                ? "It runs on the schedule below in OpenWork Cloud."
+                : "It runs on the schedule below while this desktop is connected."
               : "Nothing was created yet. Review it, then create it if it looks right."}
           </p>
         </div>
@@ -153,14 +163,14 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
           <p className="truncate text-sm font-medium text-dls-primary" title={proposal.name}>{proposal.name}</p>
           <p className="text-xs text-dls-secondary">{formatAutomationSchedule(proposal.schedule)}</p>
           {modelLabel ? <p className="text-xs text-dls-secondary">Runs with {modelLabel}</p> : null}
-          {pinnedWorkspaceId ? <p className="text-xs text-dls-secondary" data-automation-pinned-workspace={pinnedWorkspaceId}>Runs in this workspace</p> : null}
+          {pinnedWorkspaceId && placement === "desktop" ? <p className="text-xs text-dls-secondary" data-automation-pinned-workspace={pinnedWorkspaceId}>Runs in this workspace</p> : null}
         </div>
         <p className="whitespace-pre-wrap text-sm text-dls-secondary">{proposal.instructions}</p>
       </div>
 
       <div className="flex items-center justify-between gap-3 border-t border-dls-border px-4 py-3">
         <p className="min-w-0 flex-1 text-xs text-dls-secondary">
-          {blocker ?? "Automations run on this desktop while it is connected."}
+          {blocker ?? (placement === "cloud" ? "Automations run headlessly in OpenWork Cloud." : "Automations run on this desktop while it is connected.")}
         </p>
         {created ? (
           <Button

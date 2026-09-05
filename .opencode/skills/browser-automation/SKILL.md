@@ -5,6 +5,8 @@ description: Local OpenWork Electron browser automation with CDP. Use when drivi
 
 # Browser Automation
 
+For verdicts, do not drive CDP by hand — write or run an `evals/specs` test (`write-a-spec`, `run-tests`). This skill is for exploration and debugging only.
+
 ## What I Do
 
 - Attach OpenCode browser tools to the OpenWork Electron app during local development.

@@ -190,7 +190,7 @@ function renderArtifact(artifact: TestArtifact, sequence: number, imageUrl: stri
     }
   }
   if (imageUrl) {
-    lines.push("", `<a href="${html(imageUrl)}"><img src="${html(imageUrl)}" alt="${html(artifact.caption)}" width="700"></a>`);
+    lines.push("", `![${artifact.caption}](${imageUrl})`);
   }
   return lines.join("\n");
 }

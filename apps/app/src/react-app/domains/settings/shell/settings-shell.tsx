@@ -22,17 +22,16 @@ import { NotificationBell } from "../../../shell/notification-center";
 import { usePlatform } from "../../../kernel/platform";
 import type { SettingsTab } from "../../../../app/types";
 import {
+  CLOUD_SETTINGS_TABS,
   SettingsPage,
   SettingsBetaBadge,
   SettingsSidebar,
-  getCloudSettingsTabs,
   getGlobalSettingsTabs,
   getSettingsTabIcon,
   getSettingsTabLabel,
   getWorkspaceSettingsTabs,
   isSettingsTabBeta,
 } from "./settings-page";
-import { useFeatureFlagsPreferences } from "../state/feature-flags-preferences";
 
 type SettingsPageFrameProps = Omit<React.ComponentProps<typeof SettingsPage>, "children">;
 
@@ -165,12 +164,11 @@ export function SettingsShell(props: SettingsShellProps) {
 
 function SettingsSectionMenu(props: Pick<SettingsPageFrameProps, "activeTab" | "developerMode" | "onSelectTab">) {
   const platform = usePlatform();
-  const { memoryEnabled } = useFeatureFlagsPreferences();
   const sections: Array<{ label: string | null; tabs: SettingsTab[] }> = [
     { label: null, tabs: ["general"] },
     { label: t("settings.group_workspace"), tabs: getWorkspaceSettingsTabs() },
     { label: t("settings.group_global"), tabs: getGlobalSettingsTabs(props.developerMode, platform.capabilities) },
-    { label: t("settings.group_cloud"), tabs: getCloudSettingsTabs(memoryEnabled) },
+    { label: t("settings.group_cloud"), tabs: CLOUD_SETTINGS_TABS },
   ];
   const ActiveIcon = getSettingsTabIcon(props.activeTab);
 

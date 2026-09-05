@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   describeTaskCreateFailure,
+  describeTaskCreateRetry,
   TASK_CREATE_RETRY_DELAYS_MS,
   withTransientEngineRetry,
 } from "../src/react-app/shell/route-workspaces";
@@ -99,5 +100,22 @@ describe("describeTaskCreateFailure", () => {
     expect(failure.kind).toBe("unavailable");
     expect(failure.title).toBe("OpenCode unavailable");
     expect(failure.description).toBe("Workspace path is not authorized");
+  });
+});
+
+describe("describeTaskCreateRetry", () => {
+  test("hides engine internals when developer mode is off", () => {
+    const notice = describeTaskCreateRetry({ developerMode: false, attempt: 2, attempts: 4 });
+    expect(notice.title).toBe("Still loading…");
+    expect(notice.description).not.toContain("OpenCode");
+    expect(notice.description).not.toContain("engine");
+    expect(notice.description).not.toContain("Retrying");
+    expect(notice.description).not.toContain("2/4");
+  });
+
+  test("keeps the retry countdown when developer mode is on", () => {
+    const notice = describeTaskCreateRetry({ developerMode: true, attempt: 2, attempts: 4 });
+    expect(notice.title).toBe("OpenCode is catching up");
+    expect(notice.description).toContain("Retrying (2/4)…");
   });
 });

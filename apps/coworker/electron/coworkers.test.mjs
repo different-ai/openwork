@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
+import { createTemplateInstaller, exportCoworkerTemplate, parseCoworkerTemplateFile, templateScope } from "./templates.mjs";
 import {
   AGENTS_CONTRACT_VERSION,
   agentsContractVersion,
@@ -36,6 +37,61 @@ async function tempCoworkersDir() {
   roots.push(dir);
   return path.join(dir, "coworkers");
 }
+
+test("template import gives a recoverable message for invalid JSON and private fields", () => {
+  for (const contents of ["not json", JSON.stringify({ kind: "coworker", schemaVersion: 1, name: "Invalid", memory: "private" })]) {
+    assert.throws(() => parseCoworkerTemplateFile(contents), { message: "Choose a valid coworker template. Memory, credentials, and working files are not accepted." });
+  }
+});
+
+test("assigned templates create once, preserve working copies across updates, and respect retirement", async () => {
+  const dir = await tempCoworkersDir();
+  const create = (input) => createCoworker(dir, input);
+  const install = createTemplateInstaller(dir, create);
+  const template = { kind: "coworker", schemaVersion: 1, name: "Campaign partner", description: "Campaign planning", role: "Marketing", mission: "Plan campaigns", instructions: "Ask for the audience before drafting.", provisioning: "automatic" };
+  const items = [{ id: "assigned", versionId: "one", template, assigned: true }, { id: "catalog-only", versionId: "one", template: { ...template, name: "Catalog only" }, assigned: false }];
+  const input = { scope: "first-account", items, automatic: true };
+  const runs = await Promise.all([install(input), install(input)]);
+  assert.equal(runs.flatMap((run) => run.created).length, 1);
+  const coworker = (await listCoworkers(dir))[0];
+  assert.equal(coworker.name, template.name);
+  assert.match(await readCoworkerFile(dir, coworker.slug, "soul.md"), /Ask for the audience/);
+  await writeCoworkerFile(dir, coworker.slug, "soul.md", "My evolving private instructions");
+  await writeCoworkerFile(dir, coworker.slug, "memory/working.md", "My private work in progress");
+  const updated = { ...input, items: [{ ...items[0], versionId: "two", template: { ...template, instructions: "New starting instructions" } }] };
+  const refreshed = await install(updated);
+  assert.equal(refreshed.created.length, 0);
+  assert.equal(refreshed.items[0].updateAvailable, true);
+  assert.equal(await readCoworkerFile(dir, coworker.slug, "soul.md"), "My evolving private instructions");
+  const exported = await exportCoworkerTemplate(dir, coworker.slug);
+  assert.equal(exported.instructions, template.instructions);
+  assert.equal(exported.provisioning, "optional");
+  assert.doesNotMatch(JSON.stringify(exported), /private|workspaceId|model|automations|templateOrigin/);
+  await retireCoworker(dir, coworker.slug);
+  assert.equal((await createTemplateInstaller(dir, create)(updated)).created.length, 0);
+  assert.equal((await listCoworkers(dir)).length, 0);
+  // An explicitly requested optional template is still available to add.
+  const optional = { ...items[1], template: { ...template, name: "Optional", provisioning: "optional" } };
+  assert.equal((await install({ scope: "first-account", items: [optional], automatic: true })).created.length, 0);
+  assert.equal((await install({ scope: "first-account", items: [optional], installIds: [optional.id] })).created.length, 1);
+  const longName = "Campaign ".repeat(8).trim();
+  const duplicates = ["long-one", "long-two"].map((id) => ({ ...items[0], id, template: { ...template, name: longName } }));
+  const longCopies = await install({ scope: "first-account", items: duplicates, automatic: true });
+  assert.equal(new Set(longCopies.created.map((item) => item.slug)).size, 2);
+});
+
+test("template imports reject extra private fields and separate account and server scopes", async () => {
+  const dir = await tempCoworkersDir();
+  const install = createTemplateInstaller(dir, (input) => createCoworker(dir, input));
+  const template = { kind: "coworker", schemaVersion: 1, name: "Unsafe", description: "Test", role: "Test", mission: "Test", memory: "private" };
+  await assert.rejects(install({ scope: "test", items: [{ id: "one", versionId: "one", assigned: true, template }], automatic: true }));
+  assert.deepEqual(await listCoworkers(dir), []);
+  const session = { baseUrl: "https://connect.example.test/first", orgId: "org-one" };
+  assert.equal(templateScope(session, "Member@example.test"), templateScope(session, "member@example.test"));
+  assert.notEqual(templateScope(session, "member@example.test"), templateScope({ ...session, orgId: "org-two" }, "member@example.test"));
+  assert.notEqual(templateScope(session, "member@example.test"), templateScope({ ...session, baseUrl: "https://connect.example.test/second" }, "member@example.test"));
+  assert.notEqual(templateScope(session, "member@example.test"), templateScope(session, "colleague@example.test"));
+});
 
 after(async () => {
   await Promise.all(roots.map((dir) => rm(dir, { recursive: true, force: true })));

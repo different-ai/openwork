@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { coworker, evalIn, fill, needs, test, waitFor } from "@openwork/testkit";
+import { coworker, evalIn, fill, needs, screenshot, test, waitFor } from "@openwork/testkit";
 import { expect, onTestFinished } from "vitest";
 
 /**
@@ -32,6 +32,10 @@ const TRANSIENT_PROMPT = "TRANSIENT: reply once the rate limit clears.";
 const TRANSIENT_REPLY = "Back after the rate limit.";
 /** The engine retries a rate limit by itself (five times, honouring Retry-After); one more refusal hands the retry to the app. */
 const TRANSIENT_REFUSALS = 6;
+/** The free model's shared limit, as the free provider answers it: a 429 whose body names FreeUsageLimitError. */
+const FREE_PROMPT = "FREE: the free model is past its shared limit.";
+const FREE_REPLY = "Back once the free model had room.";
+const FREE_PROVIDER_MESSAGE = "Error from provider (Console): Rate limit exceeded. Please try again later.";
 const HARD_PROMPT = "HARD: this model cannot use tools.";
 const SECOND_MODEL_REPLY = "Answered by the second model.";
 const SLOW_PROMPT = "SLOW: take longer than two minutes.";
@@ -170,6 +174,8 @@ async function startScriptedModel(): Promise<{ baseUrl: string; requests: Record
           if (nth <= TRANSIENT_REFUSALS) return refuse(response, 429, "Rate limit exceeded, try again later", "rate_limit_error", { "retry-after": "1" });
           return streamReply(response, model, TRANSIENT_REPLY);
         }
+        // Refused with the free provider's own error type for as long as the journey holds it, then answered.
+        if (prompt.includes("FREE")) return holding.has("FREE") ? refuse(response, 429, FREE_PROVIDER_MESSAGE, "FreeUsageLimitError", { "retry-after": "1" }) : streamReply(response, model, FREE_REPLY);
         if (prompt.includes("HARD")) return refuse(response, 400, "No endpoints found that support tool use. Try disabling tools.", "invalid_request_error");
         if (prompt.includes("SLOW")) return holdThenReply(response, model, SLOW_REPLY, SLOW_HOLD_MS, SLOW_OPENING);
         // Held while the journey says so — whatever request lands first — and answered once it lets go.
@@ -388,6 +394,10 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   // --- (a) A rate limit that clears: trying again, live, then the reply — one message, held once. -------
   await beginOutcomeTrace(app);
   await type(app, TRANSIENT_PROMPT);
+  await waitFor(app, `[...document.querySelectorAll('[data-message-role="assistant"]')].some((message) => (message.textContent ?? "").includes(${json(TRANSIENT_REPLY)})) || Boolean(document.querySelector('[data-testid="coworker-turn-failed"]'))`, { timeoutMs: 180_000, label: "the transient rate limit's outcome" });
+  if (await evalIn(app, `Boolean(document.querySelector('[data-testid="coworker-turn-failed"]'))`)) {
+    throw new Error(`A transient rate limit became a failure after ${scripted.countFor("TRANSIENT")} provider requests. ${await describeThread(app, serverUrl, ownerToken, workspaceId, await threadIdOf(), scripted)}`);
+  }
   await waitForReply(app, TRANSIENT_REPLY, 180_000);
   const transientTrace = await endOutcomeTrace(app);
   expect(transientTrace.outcomes).toContain("retrying");
@@ -418,10 +428,11 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     const technical = failure.querySelector('[data-testid="coworker-turn-technical"]');
     return {
       headline: failure.querySelector('[data-testid="coworker-turn-headline"]')?.textContent?.trim() ?? "",
-      text: failure.innerText ?? "",
+      text: (failure.innerText ?? "").replace(technical instanceof HTMLElement ? technical.innerText : "", ""),
       className: failure.className,
       needsYou: failure.getAttribute("data-needs-you"),
-      technicalOpen: technical instanceof HTMLDetailsElement ? technical.open : null,
+      technicalShown: technical instanceof HTMLElement && technical.getBoundingClientRect().height > 0 && !(technical instanceof HTMLDetailsElement),
+      technicalText: technical?.textContent ?? "",
       choices: [...failure.querySelectorAll('[data-testid="coworker-turn-choice"]')].map((choice) => ({ letter: choice.getAttribute("data-letter"), choice: choice.getAttribute("data-choice"), label: choice.textContent?.trim() ?? "" })),
       widthRatio: failure.parentElement ? failure.getBoundingClientRect().width / failure.parentElement.getBoundingClientRect().width : null,
       header: document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() ?? "",
@@ -434,7 +445,9 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(hardCard.headline).toBe("Nova's AI model cannot use the tools enabled for this coworker.");
   expect(hardCard.className).not.toMatch(/rose/);
   expect(hardCard.needsYou).toBe("true");
-  expect(hardCard.technicalOpen).toBe(false);
+  // The raw reason is part of the bubble from the start, small and bounded, so the bubble never grows; the words the person reads first stay plain.
+  expect(hardCard.technicalShown).toBe(true);
+  expect(String(hardCard.technicalText)).toMatch(/Technical details/);
   expect(String(hardCard.text)).not.toMatch(/APIError|status code|400/);
   expect(hardCard.choices.length).toBeLessThanOrEqual(3);
   expect(hardCard.choices.map((choice) => (isRecord(choice) ? `${choice.letter} ${choice.choice}` : ""))).toEqual(["A use-model", "B choose-model", "C continue-with-openwork"]);
@@ -461,7 +474,108 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(resultRecord(await invokeCoworker(app, "coworkers.get", { slug: "nova" })).model).toBe(`${SCRIPTED_PROVIDER}/${SECOND_MODEL}`);
   evidence.recordAssertionEvidence(
     "A model that cannot use tools is one message in the coworker's voice with three lettered ways out, and A retries the same message on another model",
-    `The failure sat on Nova's side at the bubble's width with an amber dot and no rose, led with the headline, kept the provider's text folded and closed, and offered exactly A Use ${SECOND_MODEL_LABEL}, B Choose AI model, C Continue with OpenWork; the header, the thread status, and the rail all said the failure's own words. Choosing A switched Nova to ${SECOND_MODEL} and re-ran the same message id: the scripted model saw the prompt once per model, the engine holds one user message for it, and the conversation kept one user bubble plus a "Retried with" line.`,
+    `The failure sat on Nova's side at the bubble's width with an amber dot and no rose, led with the headline, kept the provider's text small and bounded, and offered exactly A Use ${SECOND_MODEL_LABEL}, B Choose AI model, C Continue with OpenWork; the header, the thread status, and the rail all said the failure's own words. Choosing A switched Nova to ${SECOND_MODEL} and re-ran the same message id: the scripted model saw the prompt once per model, the engine holds one user message for it, and the conversation kept one user bubble plus a "Retried with" line.`,
+    true,
+  );
+  await useFirstModel();
+
+  // --- (b2) The free model's shared limit: named while the engine retries and once it gives up, never in the ---
+  // --- engine's words, with the person's own AI provider as the way out; the app adds no attempts of its own. ---
+  await waitForSettled(app);
+  scripted.hold("FREE");
+  await beginOutcomeTrace(app);
+  await type(app, FREE_PROMPT);
+  // While the engine retries: the quiet line names the free model, in the app's words, and offers the way out inline.
+  const freeRetryLine = await waitFor(app, `(() => {
+    const line = document.querySelector('[data-testid="coworker-turn-line"][data-outcome="retrying"]');
+    if (!line) return false;
+    return {
+      text: line.textContent?.trim() ?? "",
+      actions: [...line.querySelectorAll('[data-testid="coworker-turn-choice"]')].map((choice) => choice.getAttribute("data-choice")),
+      header: document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() ?? "",
+    };
+  })()`, { timeoutMs: 90_000, label: "the free model's retry line" });
+  if (!isRecord(freeRetryLine) || !Array.isArray(freeRetryLine.actions)) throw new Error("The retry line facts were unavailable.");
+  expect(String(freeRetryLine.text)).toMatch(/^The free model is busy\. Trying again/);
+  expect(String(freeRetryLine.text)).not.toMatch(/subscribe|OpenCode Go|Couldn't reach/i);
+  expect(freeRetryLine.actions).toEqual(["stop", "connect-provider"]);
+  expect(freeRetryLine.header).toBe("Retrying");
+  // Once the engine gives up: one coworker-side message that names the free model and offers C Connect an AI provider.
+  const freeCard = await waitFor(app, `(() => {
+    const failure = document.querySelector('[data-testid="coworker-turn-failed"]');
+    if (!failure || !failure.querySelector('[data-choice="use-model"]')) return false;
+    const technical = failure.querySelector('[data-testid="coworker-turn-technical"]');
+    const plain = failure.cloneNode(true);
+    plain.querySelector('[data-testid="coworker-turn-technical"]')?.remove();
+    return {
+      headline: failure.querySelector('[data-testid="coworker-turn-headline"]')?.textContent?.trim() ?? "",
+      text: plain.textContent ?? "",
+      technicalShown: technical instanceof HTMLElement && technical.getBoundingClientRect().height > 0 && !(technical instanceof HTMLDetailsElement),
+      technicalText: technical?.textContent ?? "",
+      choices: [...failure.querySelectorAll('[data-testid="coworker-turn-choice"]')].map((choice) => ({ letter: choice.getAttribute("data-letter"), choice: choice.getAttribute("data-choice"), label: choice.textContent?.trim() ?? "" })),
+      header: document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() ?? "",
+      rail: document.querySelector('[data-testid="coworker-rail-line"]')?.textContent?.trim() ?? "",
+    };
+  })()`, { timeoutMs: 240_000, label: "the free model's limit as a coworker-side message" });
+  if (!isRecord(freeCard) || !Array.isArray(freeCard.choices)) throw new Error("Free-limit card facts were unavailable.");
+  const engineAttempts = scripted.countFor("FREE");
+  expect(freeCard.headline).toBe("The free model is busy right now.");
+  expect(String(freeCard.text)).toContain("The free model's shared usage limit was reached.");
+  expect(String(freeCard.text)).toContain("OpenWork Models membership and your own AI providers");
+  expect(String(freeCard.text)).not.toMatch(/faster|free credits|few minutes/);
+  expect(String(freeCard.text)).toContain("Switching models is your choice.");
+  expect(freeCard.technicalShown).toBe(true);
+  // The plain explanation is separate from the bounded technical reason.
+  expect(String(freeCard.text)).not.toMatch(/subscribe|OpenCode Go|FreeUsageLimitError|APIError|429/);
+  expect(String(freeCard.technicalText)).toMatch(/FreeUsageLimitError|free_tier_limit/);
+  // Another connected model can take over, so it leads; the third way is the one that ends the limit for good.
+  expect(freeCard.choices.map((choice) => (isRecord(choice) ? `${choice.letter} ${choice.choice}` : ""))).toEqual(["A use-model", "B choose-model", "C connect-provider"]);
+  const freeLabels = freeCard.choices.map((choice) => (isRecord(choice) ? String(choice.label) : ""));
+  expect(freeLabels[0]).toContain(`Use ${SECOND_MODEL_LABEL}`);
+  expect(freeLabels[1]).toContain("Choose AI model");
+  expect(freeLabels[2]).toContain("Connect an AI provider");
+  expect(freeCard.header).toBe("Reply failed");
+  expect(freeCard.rail).toBe("The free model is busy right now.");
+  // The app never runs its own 2/6/15 s attempts against the free model's limit: the count stays the engine's.
+  await new Promise((resolve) => setTimeout(resolve, 16_000));
+  expect(scripted.countFor("FREE")).toBe(engineAttempts);
+  expect(engineAttempts).toBeGreaterThanOrEqual(2);
+  expect(engineAttempts).toBeLessThanOrEqual(4);
+  // C opens OpenWork › AI models — where the person's own provider is connected — and closing it keeps the failure in place.
+  await evalIn(app, `document.querySelector('[data-testid="coworker-turn-choice"][data-choice="connect-provider"]').click(); true`);
+  const providersScreen = await waitFor(app, `(() => {
+    const pane = document.querySelector('[data-testid="openwork-settings-pane"]');
+    const current = pane?.querySelector('[aria-current="page"]');
+    const providers = pane?.querySelector('[data-testid="local-providers"]');
+    if (!pane || pane.getAttribute("data-active") !== "true" || !current || !providers) return false;
+    return { section: current.textContent?.trim() ?? "" };
+  })()`, { timeoutMs: 30_000, label: "OpenWork settings open at AI models" });
+  expect(isRecord(providersScreen) ? String(providersScreen.section) : "").toContain("AI models");
+  await evalIn(app, `document.querySelector('button[aria-label="Close settings"]').click(); true`);
+  // The settings pane stays mounted for continuity and only goes inactive; the discussion beneath still holds the failure.
+  await waitFor(app, `document.querySelector('[data-testid="openwork-settings-pane"]')?.getAttribute("data-active") === "false" && Boolean(document.querySelector('[data-testid="coworker-turn-failed"]'))`, { timeoutMs: 30_000, label: "back in the discussion with the failure still there" });
+  // A hands the same message to the other connected model; the reply lands, the failure goes, one receipt line stays.
+  scripted.release("FREE");
+  await evalIn(app, `document.querySelector('[data-testid="coworker-turn-choice"][data-choice="use-model"]').click(); true`);
+  await waitForReply(app, SECOND_MODEL_REPLY, 120_000);
+  // The conversation keeps one resolution note, the newest: this turn's "Retried with" replaces the earlier one.
+  expect(await waitFor(app, `(() => {
+    const lines = [...document.querySelectorAll('[data-testid="coworker-turn-line"][data-outcome="retried"]')].map((line) => line.textContent?.trim());
+    return lines.length > 0 && document.querySelectorAll('[data-testid="coworker-turn-failed"]').length === 0 ? lines : false;
+  })()`, { timeoutMs: 30_000, label: "the free-limit failure gone and the Retried with line in place" })).toEqual([`Retried with ${SECOND_MODEL_LABEL}`]);
+  const freeTrace = await endOutcomeTrace(app);
+  expect(freeTrace.outcomes).toContain("retrying");
+  expect(freeTrace.outcomes).toContain("failed");
+  expect(freeTrace.rails.some((line) => line.startsWith("The free model is busy."))).toBe(true);
+  expect(freeTrace.rails.some((line) => line.startsWith("Couldn't reach the AI model."))).toBe(false);
+  expect(scripted.requests.filter((request) => request.prompt.includes("FREE")).map((request) => request.model)).toEqual([...Array<string>(engineAttempts).fill(FIRST_MODEL), SECOND_MODEL]);
+  const freeBubbles = await evalIn(app, USER_BUBBLES);
+  expect(Array.isArray(freeBubbles) && freeBubbles.filter((text) => String(text).includes("FREE")).length).toBe(1);
+  const afterFree = await engineUserMessages(serverUrl, ownerToken, workspaceId, threadId);
+  expect(afterFree.filter((text) => text.includes("FREE"))).toHaveLength(1);
+  evidence.recordAssertionEvidence(
+    "The free model's shared limit is named as such while the engine retries and once it gives up, with connecting an AI provider as the way out, and the app adds no attempts of its own",
+    `The scripted provider answered "FREE" with 429 and a FreeUsageLimitError body while held. The conversation's quiet line read "The free model is busy. Trying again…" with Stop and Connect an AI provider inline and the header said Retrying — never the engine's subscription copy. When the app bounded the exhausted free-tier loop after ${engineAttempts} attempts, one coworker-side message read "The free model is busy right now." with the plain explanation, exactly A Use ${SECOND_MODEL_LABEL}, B Choose AI model, C Connect an AI provider, the free-tier reason shown separately in bounded Technical details, and the header and rail agreed; sixteen seconds later the provider had still seen ${engineAttempts} requests, so the app ran none of its own 2/6/15 s attempts. C opened OpenWork settings at AI models; closing it returned to the discussion with the failure in place; A handed the same message to ${SECOND_MODEL}, whose reply landed as request ${engineAttempts + 1}, and the engine holds exactly one user message for it.`,
     true,
   );
   await useFirstModel();
@@ -554,7 +668,16 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   await type(app, "Next two");
   const rows = () => evalIn(app, `[...document.querySelectorAll('[data-testid="coworker-next-row"]')].map((row) => row.querySelector("span.truncate")?.textContent?.trim() ?? "")`);
   expect(await rows()).toEqual(["Next one", "Next two"]);
-  expect(await evalIn(app, `document.querySelector('[data-testid="coworker-next-row"]')?.textContent ?? ""`)).toContain("Next · steers the reply that follows");
+  expect(await evalIn(app, `document.querySelector('[data-testid="coworker-next-label"]')?.textContent ?? ""`)).toBe("Up next · 2 messages · sent after this reply");
+  expect(await evalIn(app, `document.querySelectorAll('[data-testid="coworker-next-row"] button').length`)).toBe(2);
+  expect(await evalIn(app, `document.querySelectorAll('[data-testid="coworker-next"] [role="menuitem"]').length`)).toBe(0);
+  await screenshot(app);
+  await evalIn(app, `document.querySelector('[data-testid="coworker-next-row"] [aria-haspopup="menu"]').click(); true`);
+  await waitFor(app, `document.activeElement?.getAttribute("data-testid") === "coworker-next-edit"`, { label: "queue menu focuses its first action" });
+  await evalIn(app, `document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })); true`);
+  expect(await evalIn(app, `document.activeElement?.getAttribute("data-testid")`)).toBe("coworker-next-send-now");
+  await evalIn(app, `document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); true`);
+  await waitFor(app, `document.activeElement?.getAttribute("aria-haspopup") === "menu" && !document.querySelector('[data-testid="coworker-next"] [role="menu"]')`, { label: "Escape returns focus to the queue action control" });
   // The record beside the coworker carries both: the turn in flight and what waits as Next.
   const turnsFile = await waitFor(app, `window.__COWORKER__.invoke("coworkers.files.read", { slug: "nova", path: "turns.json" })
     .then((response) => response.ok && response.result.content.includes("Next two") ? JSON.parse(response.result.content) : false)
@@ -563,14 +686,20 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   const recorded = turnsFile.threads[threadId];
   expect(isRecord(recorded.pending) ? recorded.pending.prompt : null).toBe(HOLD_PROMPT);
   expect(Array.isArray(recorded.next) ? recorded.next.map((item) => (isRecord(item) ? item.text : null)) : null).toEqual(["Next one", "Next two"]);
-  await evalIn(app, `[...document.querySelectorAll('[data-testid="coworker-next-row"]')][1].querySelector('[data-testid="coworker-next-edit"]').click(); true`);
+  await evalIn(app, `[...document.querySelectorAll('[data-testid="coworker-next-row"]')][1].querySelector('[aria-haspopup="menu"]').click(); true`);
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-next-edit"]'))`, { label: "queue menu opens for edit" });
+  await evalIn(app, `document.querySelector('[data-testid="coworker-next-edit"]').click(); true`);
   expect(await evalIn(app, `document.querySelector('textarea[aria-label="Message Nova"]')?.value`)).toBe("Next two");
   expect(await rows()).toEqual(["Next one"]);
   await type(app, "Next three");
   expect(await rows()).toEqual(["Next one", "Next three"]);
-  await evalIn(app, `[...document.querySelectorAll('[data-testid="coworker-next-row"]')][1].querySelector('[data-testid="coworker-next-remove"]').click(); true`);
+  await evalIn(app, `[...document.querySelectorAll('[data-testid="coworker-next-row"]')][1].querySelector('[aria-haspopup="menu"]').click(); true`);
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-next-remove"]'))`, { label: "queue menu opens for remove" });
+  await evalIn(app, `document.querySelector('[data-testid="coworker-next-remove"]').click(); true`);
   expect(await rows()).toEqual(["Next one"]);
-  await evalIn(app, `document.querySelector('[data-testid="coworker-next-row"] [data-testid="coworker-next-send-now"]').click(); true`);
+  await evalIn(app, `[...document.querySelectorAll('[data-testid="coworker-next-row"]')][0].querySelector('[aria-haspopup="menu"]').click(); true`);
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-next-send-now"]'))`, { label: "queue menu opens for send-now" });
+  await evalIn(app, `document.querySelector('[data-testid="coworker-next-send-now"]').click(); true`);
   await waitFor(app, `[...document.querySelectorAll('[data-message-role="user"]')].some((node) => (node.textContent ?? "").trim() === "Next one")`, { timeoutMs: 30_000, label: "Send now sent the waiting message" });
   await waitForReply(app, DEFAULT_REPLY, 60_000);
   expect(await rows()).toEqual([]);
@@ -598,7 +727,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(scripted.countFor("Drain B")).toBe(1);
   evidence.recordAssertionEvidence(
     "Messages typed while the coworker works wait as Next, can be edited, removed, or sent now, and drain in order",
-    "With a reply held, two messages became two Next rows in order (the first saying it steers the reply that follows), recorded in turns.json beside the pending turn; Edit returned the second to the field, a new one took its place, Remove dropped it, and Send now stopped the held reply (one quiet Stopped. line stayed in the transcript) and sent the waiting message at once. Two more messages then drained one at a time after the held reply landed, in order, each once.",
+    "With a reply held, two messages became two numbered rows under one Up next label, each with a single action menu; ArrowDown moved between actions and Escape closed the menu and restored focus, recorded in turns.json beside the pending turn; Edit returned the second to the field, a new one took its place, Remove dropped it, and Send now stopped the held reply (one quiet Stopped. line stayed in the transcript) and sent the waiting message at once. Two more messages then drained one at a time after the held reply landed, in order, each once.",
     true,
   );
 
@@ -634,6 +763,8 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(cutLine).toEqual({ text: "Stopped when the app closed before Nova replied.", choices: ["continue", "discard"], header: "Stopped", rail: "Stopped when the app closed before Nova replied.", next: ["After the cut"], failed: 0 });
   const beforeContinue = await describeThread(app, serverUrl, ownerToken, workspaceId, threadId, scripted);
   scripted.release("CUT");
+  // A hidden window can suspend paint callbacks. Work settlement must not wait for a paint.
+  await evalIn(app, `window.__savedAnimationFrame = window.requestAnimationFrame; window.requestAnimationFrame = () => 0; true`);
   await evalIn(app, `document.querySelector('[data-testid="coworker-turn-line"][data-outcome="cut-off"] [data-choice="continue"]').click(); true`);
   try {
     await waitForReply(app, CUT_REPLY, 120_000);
@@ -649,13 +780,14 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     throw new Error(`${error instanceof Error ? error.message : String(error)}\nThread after the drain wait: ${await describeThread(app, serverUrl, ownerToken, workspaceId, threadId, scripted)}`);
   }
   await waitFor(app, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready"`, { timeoutMs: 120_000, label: "settled after the cut" });
+  await evalIn(app, `window.requestAnimationFrame = window.__savedAnimationFrame; delete window.__savedAnimationFrame; true`);
   const afterCut = await engineUserMessages(serverUrl, ownerToken, workspaceId, threadId);
   expect(afterCut.filter((text) => text.includes("CUT"))).toHaveLength(1);
   expect(afterCut.at(-1)).toBe("After the cut");
   expect(await evalIn(app, `document.querySelectorAll('[data-testid="coworker-turn-line"][data-outcome="cut-off"]').length`)).toBe(0);
   evidence.recordAssertionEvidence(
     "A turn cut off before it finished reads as such after a reload, Continue finishes it under the same message id, and Next drains after",
-    "With the reply held and one message waiting as Next, the window reloaded while the engine's turn was interrupted. The returning window read the record beside the coworker and showed one quiet line — Stopped when the app closed before Nova replied. · Continue · Discard — with the header saying Stopped and the rail the same line, the Next row still there, and no failure card. Continue re-ran the message under its own id and its reply landed; the waiting message then went by itself, and the engine holds one user message for the cut turn.",
+    "With the reply held and one message waiting as Next, the window reloaded while the engine's turn was interrupted. The returning window read the record beside the coworker and showed one quiet line — Stopped when the app closed before Nova replied. · Continue · Discard — with the header saying Stopped and the rail the same line, the Next row still there, and no failure card. Continue re-ran the message under its own id and its reply landed even with animation frames suspended; the waiting message then went by itself, and the engine holds one user message for the cut turn.",
     true,
   );
 });

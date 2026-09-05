@@ -32,6 +32,9 @@ const errorToolMode = (process.env.MOCK_ERROR_TOOL_MODE || "result").trim();
 const errorToolConnectUrl = (process.env.MOCK_ERROR_TOOL_CONNECT_URL || "https://connect.example.test/salesforce/start").trim();
 const errorToolProvider = (process.env.MOCK_ERROR_TOOL_PROVIDER || "salesforce").trim();
 const allowUnauthenticatedMcp = process.env.MOCK_ALLOW_UNAUTHENTICATED_MCP === "1";
+// An app-visible MCP App launch tool (`_meta.ui.resourceUri`), so dashboard
+// and MCP App specs can witness App catalogs without a real provider.
+const appToolName = (process.env.MOCK_APP_TOOL_NAME || "").trim();
 const syntheticTools = Array.from({ length: extraToolCount }, (_, index) => {
   const i = index + 1;
   return {
@@ -172,11 +175,17 @@ function validateAgentWorkloads(value) {
     if (!workload || typeof workload !== "object") throw new Error("agent workload must be an object");
     const promptMarker = typeof workload.promptMarker === "string" ? workload.promptMarker.trim() : "";
     const finalReply = typeof workload.finalReply === "string" ? workload.finalReply : "";
-    if (!promptMarker || !finalReply || !Array.isArray(workload.steps) || workload.steps.length === 0) {
-      throw new Error("agent workload needs promptMarker, finalReply, and at least one step");
+    if (!promptMarker || !finalReply || !Array.isArray(workload.steps)) {
+      throw new Error("agent workload needs promptMarker, finalReply, and a steps array");
     }
     if (markers.has(promptMarker)) throw new Error(`duplicate agent workload marker: ${promptMarker}`);
     markers.add(promptMarker);
+    // Deliver the final reply as consecutive content deltas of this many
+    // characters, so a spec can watch an answer render while it streams.
+    const finalReplyChunkSize = workload.finalReplyChunkSize === undefined ? null : workload.finalReplyChunkSize;
+    if (finalReplyChunkSize !== null && (!Number.isInteger(finalReplyChunkSize) || finalReplyChunkSize < 1)) {
+      throw new Error(`agent workload ${promptMarker} finalReplyChunkSize must be a positive integer`);
+    }
     const steps = workload.steps.map((step) => {
       if (!step || typeof step !== "object" || typeof step.tool !== "string" || !step.tool.trim()) {
         throw new Error(`agent workload ${promptMarker} has an invalid tool step`);
@@ -186,8 +195,35 @@ function validateAgentWorkloads(value) {
       }
       return { tool: step.tool.trim(), arguments: structuredClone(step.arguments) };
     });
-    return { promptMarker, finalReply, steps };
+    // Declared fault: the first N main completions stream their opening chunk
+    // and then go quiet without ending, the way a half-open socket behaves
+    // after the client machine slept. Later completions proceed normally.
+    const quietCompletions = workload.quietCompletions ?? 0;
+    if (!Number.isInteger(quietCompletions) || quietCompletions < 0) {
+      throw new Error(`agent workload ${promptMarker} quietCompletions must be a non-negative integer`);
+    }
+    return { promptMarker, finalReply, finalReplyChunkSize, steps, quietCompletions, mainCompletions: 0 };
   });
+}
+
+function finalReplyChunks(workload) {
+  if (workload.finalReplyChunkSize === null) return [workload.finalReply];
+  const chunks = [];
+  for (let offset = 0; offset < workload.finalReply.length; offset += workload.finalReplyChunkSize) {
+    chunks.push(workload.finalReply.slice(offset, offset + workload.finalReplyChunkSize));
+  }
+  return chunks;
+}
+
+function agentQuietStream(res, model) {
+  res.writeHead(200, {
+    "access-control-allow-origin": "*",
+    "content-type": "text/event-stream",
+    "cache-control": "no-cache",
+    connection: "keep-alive",
+  });
+  // Opening chunk only; the response is never ended or closed by the mock.
+  res.write(`data: ${JSON.stringify(agentChunk(model, { role: "assistant" }))}\n\n`);
 }
 
 function offeredAgentTool(body, wanted) {
@@ -262,11 +298,17 @@ async function handleAgentCompletion(req, res, entry) {
   }
   const workload = agentWorkloads.find((candidate) => candidate.promptMarker === matchedMarkers[0]);
   if (!workload) throw new Error("matched agent workload disappeared");
+  workload.mainCompletions += 1;
+  if (workload.mainCompletions <= workload.quietCompletions) {
+    entry.agentCompletion = { ...baseRequest, kind: "quiet", promptMarker: workload.promptMarker, toolName: null, arguments: {} };
+    agentQuietStream(res, model);
+    return;
+  }
   if (completedTools >= workload.steps.length) {
     entry.agentCompletion = { ...baseRequest, kind: "final", promptMarker: workload.promptMarker, toolName: null, arguments: {} };
     agentStream(res, model, [
       agentChunk(model, { role: "assistant" }),
-      agentChunk(model, { content: workload.finalReply }),
+      ...finalReplyChunks(workload).map((content) => agentChunk(model, { content })),
       agentChunk(model, {}, "stop"),
     ]);
     return;
@@ -629,6 +671,23 @@ function mcpResult(message) {
             },
           },
           ...syntheticTools,
+          ...(appToolName ? [{
+            name: appToolName,
+            title: "Search issues (JQL)",
+            description: "Runs a JQL search and renders the results as an MCP App view.",
+            inputSchema: {
+              type: "object",
+              properties: { jql: { type: "string" } },
+              required: ["jql"],
+            },
+            annotations: {
+              readOnlyHint: true,
+              destructiveHint: false,
+            },
+            _meta: {
+              ui: { resourceUri: `ui://mock/${appToolName}/view.html` },
+            },
+          }] : []),
           ...(extraToolName ? [{
             name: extraToolName,
             title: extraToolTitle || extraToolName,

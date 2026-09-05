@@ -10,10 +10,11 @@ function readComponent(...segments: string[]) {
 
 const screen = readComponent("dashboard", "_components", "llm-providers-screen.tsx");
 const shell = readComponent("dashboard", "_components", "org-dashboard-shell.tsx");
+const navigation = readComponent("dashboard", "_lib", "dashboard-navigation.ts");
 
 describe("Bring your Own Keys page", () => {
   test("sidebar and page title use the product name", () => {
-    expect(shell).toContain('label: "Bring your Own Keys"');
+    expect(navigation).toContain('label: "Bring your Own Keys"');
     expect(shell).toContain('return "Bring your Own Keys";');
     expect(shell).not.toContain('"LLM Providers"');
     expect(screen).toContain('title="Bring your Own Keys"');

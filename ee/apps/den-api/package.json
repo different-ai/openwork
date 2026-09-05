@@ -11,7 +11,7 @@
     "build:mcp-apps": "pnpm --filter @openwork/mcp-apps build",
     "openapi:snapshot": "tsx scripts/generate-openapi-snapshot.ts",
     "smoke:config-object-payload-boundary": "tsx scripts/smoke-config-object-payload-boundary.ts",
-    "test": "bun test --conditions development test/api-keys.test.ts test/bearer-session.test.ts",
+    "test": "bun test --conditions development test/api-keys.test.ts test/bearer-session.test.ts test/cloud-provider-materialization-read-retry.test.ts test/remote-session-capability-wire.test.ts",
     "backfill:desktop-policies": "pnpm run build:den-db && tsx scripts/backfill-desktop-policies.ts",
     "migrate:skills-to-plugins": "pnpm run build:den-db && tsx scripts/migrate-skills-to-plugins.ts",
     "test:admin-scale": "bun test test/admin-scale-performance.test.ts",

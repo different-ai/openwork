@@ -158,6 +158,11 @@ test("a Copilot hosts or apps file under XDG_CONFIG_HOME is found and imports as
   assert.ok(!JSON.stringify(result).includes(FAKE_GITHUB_TOKEN));
   assert.equal(copilotSignedIn({ "github.com": { user: "octocat", oauth_token: FAKE_GITHUB_TOKEN } }), true);
   assert.equal(copilotSignedIn({ "ghe.example.com": { oauth_token: "x" } }), false);
+  for (const host of ["github.com.attacker.invalid", "github.com@attacker.invalid", "github.com/attacker", "ghe.example.com"]) {
+    const credentials = { [host]: { oauth_token: FAKE_GITHUB_TOKEN } };
+    assert.equal(copilotSignedIn(credentials), false);
+    assert.throws(() => copilotAuthFromFile(credentials), SignInImportError);
+  }
   assert.deepEqual(copilotAuthFromFile({ "github.com": { oauth_token: FAKE_GITHUB_TOKEN } }), { type: "oauth", refresh: FAKE_GITHUB_TOKEN, access: "", expires: 0 });
   assert.throws(() => copilotAuthFromFile({}), SignInImportError);
 });

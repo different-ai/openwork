@@ -9,9 +9,9 @@
  * desktop app process.
  */
 import { execFile } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -19,7 +19,8 @@ import { BrowserWindow, Menu, app, dialog, ipcMain, shell } from "electron";
 import { openworkConfigDir } from "@openwork/paths";
 import { createHeadlessThreadClient, toTranscript } from "@openwork/headless-threads";
 import { cloudModelOptions, resolveCloudModel } from "../src/lib/cloud-responsibilities.ts";
-import { createDenAutomationsClient } from "../src/lib/den.ts";
+import { createDenAutomationsClient, listAssignedCoworkerTemplates } from "../src/lib/den.ts";
+import { createTemplateInstaller, exportCoworkerTemplate, parseCoworkerTemplateFile, templateScope } from "./templates.mjs";
 import { assignmentToolCatalog, createAssignmentToolHandlers, createSelfToolHandlers, selfToolCatalog } from "./assignment-tools.mjs";
 import {
   createCoworker,
@@ -130,7 +131,13 @@ const APP_IDENTIFIER = isDev ? "com.differentai.opencoworker.dev" : "com.differe
 const DEFAULT_SERVER_PORT = 8790;
 const DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
 const HOSTED_DEN_APEX_HOST = "openworklabs.com";
-const APP_ICON_PATH = path.resolve(__dirname, "..", "resources", "icons", "icon.png");
+const APP_ICON_PATH = path.resolve(
+  __dirname,
+  "..",
+  "resources",
+  "icons",
+  process.platform === "darwin" ? "icon-macos.png" : "icon.png",
+);
 
 const explicitCdpPort = Number.parseInt(
   process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT?.trim() ?? "",
@@ -1823,7 +1830,31 @@ function shortDate(at) {
   return new Date(at).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+const installTemplates = createTemplateInstaller(coworkersDir, addCoworker);
+
 const commands = {
+  "templates.sync": async ({ userEmail, automatic = false, installIds = [] }) => {
+    const session = denSession;
+    if (!session) throw new Error("Sign in to OpenWork to get your team's coworkers.");
+    const catalog = await listAssignedCoworkerTemplates(session);
+    if (!catalog.enabled) return { enabled: false, items: [], created: [] };
+    return { enabled: true, ...await installTemplates({ scope: templateScope(session, userEmail), items: catalog.items, automatic, installIds, isCurrent: () => denSession === session }) };
+  },
+  "templates.import": async () => {
+    const selection = await dialog.showOpenDialog({ title: "Import a coworker template", properties: ["openFile"], filters: [{ name: "Coworker template", extensions: ["json"] }] });
+    if (selection.canceled || !selection.filePaths[0]) return null;
+    if ((await stat(selection.filePaths[0])).size > 131072) throw new Error("A coworker template must be 128 KB or smaller.");
+    const template = parseCoworkerTemplateFile(await readFile(selection.filePaths[0], "utf8"));
+    const id = createHash("sha256").update(JSON.stringify(template)).digest("hex");
+    return installTemplates({ scope: "imported-file", items: [{ id, versionId: id, template, assigned: false }], installIds: [id] });
+  },
+  "templates.export": async ({ slug }) => {
+    const template = await exportCoworkerTemplate(coworkersDir, slug);
+    const selection = await dialog.showSaveDialog({ title: "Export a coworker template", defaultPath: `${slug}.coworker.json`, filters: [{ name: "Coworker template", extensions: ["json"] }] });
+    if (selection.canceled || !selection.filePath) return { saved: false };
+    await writeFile(selection.filePath, `${JSON.stringify(template, null, 2)}\n`, "utf8");
+    return { saved: true };
+  },
   "runtime.info": async () => {
     await ensurePlatformServer();
     return runtimeInfo();

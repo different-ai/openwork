@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
+import { coworkerTemplateSchema } from "@openwork/types/coworker-template";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
   type ConnectedIntegration,
@@ -64,6 +65,7 @@ export type PluginMcpTransport = "stdio" | "http" | "sse";
 
 export type PluginMcp = {
   configObjectId?: string;
+  connectionId?: string | null;
   id: string;
   name: string;
   description: string;
@@ -74,6 +76,7 @@ export type PluginMcp = {
 };
 
 export type PluginAgent = {
+  coworker?: boolean;
   id: string;
   name: string;
   description: string;
@@ -203,9 +206,10 @@ export function getPluginPartsSummary(plugin: DenPlugin): string {
   if (plugin.mcps.length > 0) {
     parts.push(`${plugin.mcps.length} ${plugin.mcps.length === 1 ? "MCP" : "MCPs"}`);
   }
-  if (plugin.agents.length > 0) {
-    parts.push(`${plugin.agents.length} ${plugin.agents.length === 1 ? "Agent" : "Agents"}`);
-  }
+  const coworkers = plugin.agents.filter((item) => item.coworker).length;
+  const agents = plugin.agents.length - coworkers;
+  if (coworkers > 0) parts.push(`${coworkers} ${coworkers === 1 ? "Coworker" : "Coworkers"}`);
+  if (agents > 0) parts.push(`${agents} ${agents === 1 ? "Agent" : "Agents"}`);
   if (plugin.commands.length > 0) {
     parts.push(`${plugin.commands.length} ${plugin.commands.length === 1 ? "Command" : "Commands"}`);
   }
@@ -546,6 +550,7 @@ export function pluginMcpEntries(item: {
 
   return servers.map(([serverName, config], index) => ({
     configObjectId: item.id,
+    connectionId: asString(config.externalMcpConnectionId),
     description: item.description,
     id: servers.length === 1 ? item.id : `${item.id}:${index}`,
     name: servers.length === 1 ? item.title : serverName,
@@ -564,7 +569,7 @@ function parseMembershipConfigObject(entry: unknown) {
   const configObject = entry.configObject;
   const id = asString(configObject.id);
   const title = asString(configObject.title);
-  const description = asString(configObject.description) ?? "Imported from a connected repository.";
+  const description = asString(configObject.description) ?? "";
   const objectType = asString(configObject.objectType);
   const currentRelativePath = asString(configObject.currentRelativePath);
   const latestVersion = isRecord(configObject.latestVersion) ? configObject.latestVersion : null;
@@ -646,7 +651,7 @@ async function fetchResolvedPlugin(id: string): Promise<DenPlugin | null> {
     .map((item) => ({ id: item.id, name: item.title, description: item.description } satisfies PluginSkill));
   const agents = membershipItems
     .filter((item) => item.objectType === "agent")
-    .map((item) => ({ id: item.id, name: item.title, description: item.description } satisfies PluginAgent));
+    .map((item) => ({ id: item.id, name: item.title, description: item.description, coworker: coworkerTemplateSchema.safeParse(item.normalizedPayload).success } satisfies PluginAgent));
   const commands = membershipItems
     .filter((item) => item.objectType === "command")
     .map((item) => ({ id: item.id, name: item.currentRelativePath?.split("/").pop()?.replace(/\.md$/i, "") ?? item.title, description: item.description } satisfies PluginCommand));
@@ -696,7 +701,7 @@ async function fetchResolvedPlugin(id: string): Promise<DenPlugin | null> {
     commands,
     createdAt: asString(pluginItem.createdAt) ?? new Date().toISOString(),
     createdByOrgMembershipId: asString(pluginItem.createdByOrgMembershipId),
-    description: asString(pluginItem.description) ?? "Imported from a connected repository.",
+    description: asString(pluginItem.description) ?? "",
     hooks,
     id: pluginId,
     installed: true,
@@ -716,8 +721,9 @@ async function fetchResolvedPlugin(id: string): Promise<DenPlugin | null> {
   } satisfies DenPlugin;
 }
 
-export function usePlugins() {
+export function usePlugins({ enabled = true }: { enabled?: boolean } = {}) {
   return useQuery({
+    enabled,
     queryKey: pluginQueryKeys.list(),
     queryFn: async () => {
       const { response, payload } = await requestJson("/v1/plugins?status=active&limit=100", { method: "GET" }, 20000);

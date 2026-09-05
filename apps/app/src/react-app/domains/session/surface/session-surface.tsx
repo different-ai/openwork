@@ -73,7 +73,8 @@ import {
   messageHasVisibleAssistantOutput,
   resolveAdmissionOutcome,
 } from "./session-admission-outcome";
-import { interruptedTaskRecoveryPrompt } from "@/react-app/domains/session/sync/session-error";
+import { describeOpencodeSessionError, interruptedTaskRecoveryPrompt, presentOpencodeSessionError } from "@/react-app/domains/session/sync/session-error";
+import { createSessionErrorUIMessage } from "@/react-app/domains/session/sync/usechat-adapter";
 import { useLocal } from "@/react-app/kernel/local-provider";
 import { resolveAttachmentFileMetadata } from "@/react-app/domains/session/sync/attachment-file-part";
 import { deriveSessionRenderModel } from "@/react-app/domains/session/sync/transition-controller";
@@ -89,8 +90,8 @@ import { QueuedMessagesPanel } from "@/react-app/domains/session/modals/queued-m
 import { deriveOpenTargets, sameOpenTargets, selectAutoOpenTarget, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { usePanelTabStore } from "@/react-app/domains/session/panel/panel-tab-store";
 import {
+  deriveRunSyncHealth,
   markSessionSnapshotFetchStart,
-  reconcileFailureDegradedThreshold,
   seedSessionState,
   snapshotKey as reactSnapshotKey,
   statusKey as reactStatusKey,
@@ -407,6 +408,47 @@ function createSessionLifecycleEvalMessages(sessionId: string): UIMessage[] {
   ];
 }
 
+/**
+ * Shaped like a live `session.error` payload from OpenCode: an API error with
+ * provider, status, and the raw response body, so the transcript renders it
+ * through the same presentation path as a real failure.
+ */
+const SESSION_ERROR_EVAL_PAYLOAD = {
+  name: "APIError",
+  data: {
+    message: "Rate limit reached for claude-sonnet-4-5 on requests per minute (RPM): Limit 50, Used 50. Please try again in 1.2s.",
+    statusCode: 429,
+    providerID: "anthropic",
+    code: "rate_limit_error",
+    retries: 3,
+    responseBody: JSON.stringify({
+      type: "error",
+      error: { type: "rate_limit_error", message: "Rate limit reached for claude-sonnet-4-5 on requests per minute (RPM)." },
+      request_id: "req_01JZK4W9N7X2Q8M3V5T6B1C0DE",
+    }),
+  },
+};
+
+function createSessionErrorEvalMessages(sessionId: string, error: unknown = SESSION_ERROR_EVAL_PAYLOAD): UIMessage[] {
+  const now = Date.now();
+  const turnId = `${sessionId}:eval-session-error-assistant`;
+  return [
+    {
+      id: `${sessionId}:eval-session-error-user`,
+      role: "user",
+      parts: [{ type: "text", text: "Summarize the open pull requests." }],
+      metadata: { opencode: { created: now } },
+    },
+    {
+      id: turnId,
+      role: "assistant",
+      parts: [{ type: "text", text: "Looking at the repository now." }],
+      metadata: { opencode: { created: now + 1, completed: now + 900 } },
+    },
+    createSessionErrorUIMessage(turnId, presentOpencodeSessionError(error), { created: now + 1_000 }),
+  ];
+}
+
 function createSubagentActivityEvalMessages(sessionId: string, childSessionId?: string): UIMessage[] {
   const now = Date.now();
   return [
@@ -624,6 +666,19 @@ function resolveFindOwnerSessionId() {
   return firstMountedSessionSurfaceId();
 }
 
+function subscribeNetworkOnline(onChange: () => void) {
+  window.addEventListener("online", onChange);
+  window.addEventListener("offline", onChange);
+  return () => {
+    window.removeEventListener("online", onChange);
+    window.removeEventListener("offline", onChange);
+  };
+}
+
+function readNetworkOnline() {
+  return window.navigator.onLine !== false;
+}
+
 function statusLabel(snapshot: OpenworkSessionSnapshot | undefined, busy: boolean) {
   if (busy) return "Running...";
   if (snapshot?.status.type === "busy") return "Running...";
@@ -783,18 +838,23 @@ function parseSessionError(thrown: unknown): SessionError {
   return { message: raw || "Failed to send prompt." };
 }
 
-function SessionErrorCard({ error, onDismiss, onChangeModel, onOpenModelPicker }: {
+function SessionErrorCard({ error, developerMode, onDismiss, onChangeModel, onOpenModelPicker }: {
   error: SessionError;
+  developerMode: boolean;
   onDismiss: () => void;
   onChangeModel?: (model: { providerID: string; modelID: string }) => void;
   onOpenModelPicker?: () => void;
 }) {
+  const presentation = presentOpencodeSessionError(error.message);
   return (
     <div className="mx-auto max-w-[720px] px-3 py-3 sm:px-5" data-testid="session-error-card" role="alert">
       <div className="rounded-2xl border border-red-6/30 bg-red-3/15 px-5 py-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-medium text-red-11">{error.message}</div>
+            <div className="text-sm font-medium text-red-11">{developerMode ? error.message : presentation.title}</div>
+            {!developerMode && presentation.description ? (
+              <p className="mt-1 text-sm text-red-11">{presentation.description}</p>
+            ) : null}
             {error.kind === "model-not-found" ? (
               <div className="mt-2 flex flex-wrap gap-2">
                 {error.suggestions && error.suggestions.length > 0 ? (
@@ -1066,6 +1126,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [cloudQueueRetryVersion, setCloudQueueRetryVersion] = useState(0);
   const sending = props.cloudMcpSubmissionState.status === "sending";
   const cloudQueueBlockedRef = useRef(false);
+  const evalSnapshotFailureRef = useRef(false);
   // Shared with promote-to-send so a manual send-now cannot race the idle drain.
   const drainingQueueRef = useRef(false);
   // Admission-aware drain state. It lives in a module-level per-session store
@@ -1102,6 +1163,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const snapshotQuery = useQuery<OpenworkSessionSnapshot>({
     queryKey: snapshotQueryKey,
     queryFn: async ({ signal }) => {
+      if (evalSnapshotFailureRef.current) {
+        throw new Error("eval: forced session snapshot failure");
+      }
       const startedAt = Date.now();
       const item = await composeNativeSessionSnapshot(
         { opencodeBaseUrl: props.opencodeBaseUrl, token: props.openworkToken },
@@ -1112,6 +1176,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       return item;
     },
     staleTime: 500,
+    retry: (failureCount) => !evalSnapshotFailureRef.current && failureCount < 3,
   });
 
   const currentSnapshot = snapshotQuery.data?.session.id === props.sessionId ? snapshotQuery.data : null;
@@ -1135,6 +1200,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [props.sessionId, currentSnapshot]);
 
   useEffect(() => {
+    evalSnapshotFailureRef.current = false;
     hydratedKeyRef.current = null;
     setSteering(false);
     setError(null);
@@ -1231,15 +1297,19 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // A busy status is a claim that decays: the sync layer revalidates it
   // continuously against /session/status, and once that validation keeps
   // failing (network drop, sleep, dead engine) the transcript must present
-  // "reconnecting" instead of a confidently ticking Working row.
+  // "reconnecting" instead of a confidently ticking Working row. A local
+  // engine keeps answering that poll while the machine itself is offline, so
+  // the browser's own connectivity is part of the same judgement: its model
+  // request cannot progress without a network either.
   const syncStreamKey = workspaceSyncStreamKey({ workspaceId: props.workspaceId, baseUrl: props.opencodeBaseUrl });
   const syncReconcileHealth = useWorkspaceSyncStreamStore(
     (state) => state.reconcileHealthByKey[syncStreamKey],
   );
-  const runSyncHealth = useMemo(() => ({
-    degraded: (syncReconcileHealth?.consecutiveFailures ?? 0) >= reconcileFailureDegradedThreshold,
-    lastConfirmedAt: syncReconcileHealth?.lastSuccessAt ?? null,
-  }), [syncReconcileHealth]);
+  const networkOnline = useSyncExternalStore(subscribeNetworkOnline, readNetworkOnline, () => true);
+  const runSyncHealth = useMemo(
+    () => deriveRunSyncHealth({ networkOnline, health: syncReconcileHealth }),
+    [networkOnline, syncReconcileHealth],
+  );
 
   useEffect(() => {
     if (!chatStreaming) setSteering(false);
@@ -1376,6 +1446,36 @@ export function SessionSurface(props: SessionSurfaceProps) {
     };
   }, [props.sessionId]);
   useControlAction(props.isControlTarget ? seedConnectorToolCallControlAction : null);
+  const seedSessionErrorControlAction = useMemo<OpenworkControlAction | null>(() => {
+    if (!import.meta.env.DEV) return null;
+
+    return {
+      id: "eval.session_error.seed",
+      label: "Seed a provider session error",
+      description: "Dev-only eval hook that renders a failed turn with a provider API error (status, code, response body) through the live session-error presentation path.",
+      sideEffect: "mutation",
+      disabled: !props.sessionId,
+      args: [
+        { name: "kind", type: "string", description: "Optional disk-full or database-error fixture." },
+        { name: "surface", type: "string", description: "Optional banner instead of the transcript." },
+      ],
+      execute: (args) => {
+        const kind = args && typeof args === "object" && "kind" in args ? args.kind : null;
+        const error = kind === "disk-full" || kind === "database-error"
+          ? { name: "SqlError", data: { message: `effect/sql/SqlError: Failed to execute statement\n    at runLoop (/$bunfs/root/chunk.js:25:2045)${kind === "disk-full" ? "\nCaused by: ENOSPC: no space left on device, write" : ""}` } }
+          : SESSION_ERROR_EVAL_PAYLOAD;
+        if (args && typeof args === "object" && "surface" in args && args.surface === "banner") {
+          setEvalMarkdownMessages([]);
+          setError({ message: error.data.message });
+        } else {
+          setError(null);
+          setEvalMarkdownMessages(createSessionErrorEvalMessages(props.sessionId, error));
+        }
+        return { ok: true };
+      },
+    };
+  }, [props.sessionId]);
+  useControlAction(props.isControlTarget ? seedSessionErrorControlAction : null);
   const seedSessionLifecycleControlAction = useMemo<OpenworkControlAction | null>(() => {
     if (!import.meta.env.DEV) return null;
 
@@ -1612,6 +1712,22 @@ export function SessionSurface(props: SessionSurfaceProps) {
     isFetching: snapshotQuery.isFetching,
     isError: snapshotQuery.isError || Boolean(error),
   });
+  const failSessionSnapshotControlAction = useMemo<OpenworkControlAction | null>(() => {
+    if (!import.meta.env.DEV) return null;
+
+    return {
+      id: "eval.session_snapshot.fail",
+      label: "Force the session snapshot query to fail",
+      sideEffect: "mutation",
+      disabled: !props.sessionId,
+      execute: async () => {
+        evalSnapshotFailureRef.current = true;
+        const result = await snapshotQuery.refetch();
+        return { ok: true, isError: result.isError };
+      },
+    };
+  }, [props.sessionId, snapshotQuery.refetch]);
+  useControlAction(props.isControlTarget ? failSessionSnapshotControlAction : null);
 
   const buildDraft = useCallback((text: string, nextAttachments: ComposerAttachment[]): ComposerDraft => {
     const parts: ComposerPart[] = text.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|@[^\s@]+)/).flatMap((segment) => {
@@ -2653,6 +2769,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
             ) : null}
             {error && snapshot && snapshot.messages.length > 0 ? (
               <SessionErrorCard
+                developerMode={props.developerMode}
                 error={error}
                 onDismiss={handleDismissError}
                 onChangeModel={handleModelChange}
@@ -2669,6 +2786,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
               <div className="px-6 py-8">
                 {error ? (
                   <SessionErrorCard
+                    developerMode={props.developerMode}
                     error={error}
                     onDismiss={handleDismissError}
                     onChangeModel={handleModelChange}
@@ -2676,7 +2794,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
                   />
                 ) : (
                   <div className="mx-auto max-w-xl rounded-3xl border border-red-6/40 bg-red-3/20 px-6 py-5 text-sm text-red-11">
-                    {snapshotQuery.error instanceof Error ? snapshotQuery.error.message : "Failed to load session."}
+                    {props.developerMode && snapshotQuery.error instanceof Error
+                      ? snapshotQuery.error.message
+                      : describeOpencodeSessionError(snapshotQuery.error, "Failed to load session.")}
                   </div>
                 )}
               </div>
@@ -2686,6 +2806,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
               </div>
             ) : renderedMessages.length === 0 && snapshot && snapshot.messages.length === 0 && error ? (
               <SessionErrorCard
+                developerMode={props.developerMode}
                 error={error}
                 onDismiss={handleDismissError}
                 onChangeModel={handleModelChange}

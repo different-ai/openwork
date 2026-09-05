@@ -85,6 +85,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     sessionsByWorkspaceId,
     workspaces,
   } = input;
+  const pinnedIds = useSessionManagementStore((s) => s.pinnedIds);
 
   const createTaskControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.create_task",
@@ -104,12 +105,12 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
   const listSessionsControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.list_sessions",
     label: "List available sessions",
-    description: "Return the list of sessions across workspaces so the user can ask to open one by name.",
+    description: "Return sessions across workspaces. Entries include `pinned`, and pinned sessions come first.",
     kind: "query",
     effects: { data: "read", ui: "none", external: false },
     sideEffect: "none",
     execute: () => {
-      const out: { sessionId: string; title: string; workspace: string; updatedAt: number }[] = [];
+      const out: { sessionId: string; title: string; workspace: string; updatedAt: number; pinned: boolean }[] = [];
       for (const workspace of workspaces) {
         const list = sessionsByWorkspaceId[workspace.id] ?? [];
         for (const session of list) {
@@ -117,13 +118,13 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
           if (!sessionId) continue;
           const title = getDisplaySessionTitle(session.title ?? "");
           const updatedAt = session.time?.updated ?? session.time?.created ?? 0;
-          out.push({ sessionId, title, workspace: workspaceLabel(workspace), updatedAt });
+          out.push({ sessionId, title, workspace: workspaceLabel(workspace), updatedAt, pinned: pinnedIds.includes(sessionId) });
         }
       }
-      out.sort((a, b) => b.updatedAt - a.updatedAt);
+      out.sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt - a.updatedAt);
       return out.slice(0, 30);
     },
-  }), [sessionsByWorkspaceId, workspaces]);
+  }), [pinnedIds, sessionsByWorkspaceId, workspaces]);
   useControlAction(listSessionsControlAction);
 
   const openSessionControlAction = useMemo<OpenworkControlAction>(() => ({

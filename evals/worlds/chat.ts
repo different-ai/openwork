@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join, resolve } from "node:path";
+import { evalIn } from "@openwork/behaviors";
 import type { Seed } from "@openwork/env";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
@@ -197,6 +198,53 @@ export async function emptyChat(seed: Seed) {
   const workspace = await seed.workspace(app, seed.tmpPath("chat-empty"));
   const session = await seedSessionRetry(seed, app);
   return { app, workspace, session };
+}
+
+export async function paletteSessionActions(seed: Seed) {
+  const app = await seed.desktop({ name: "command-palette-pin-rename" });
+  const workspace = await seed.workspace(app, seed.tmpPath("command-palette-pin-rename"));
+  const session = await seedSessionRetry(seed, app, { title: "Palette pin rename probe" });
+  return { app, workspace, session };
+}
+
+export async function newSplitPrimary(seed: Seed) {
+  const app = await seed.desktop({ name: "new-split-session" });
+  const workspace = await seed.workspace(app, seed.tmpPath("new-split-session"));
+  const session = await seedSessionRetry(seed, app, { title: "New split primary" });
+  const splitFacts = () => evalIn(app, `(() => {
+    const context = window.__openworkControl?.context?.();
+    const layout = context?.conversations?.layout;
+    const primaryPane = document.querySelector('[data-workbench-pane="primary"]');
+    const secondaryPanes = [...document.querySelectorAll('[data-workbench-pane="secondary"]')];
+    const secondaryPane = secondaryPanes[0];
+    return {
+      layoutKind: layout?.kind ?? "",
+      focusedPane: layout?.focused ?? "",
+      primarySessionId: layout?.primarySessionId ?? layout?.sessionId ?? "",
+      secondarySessionId: layout?.secondarySessionId ?? "",
+      primaryWorkspaceId: layout?.primaryWorkspaceId ?? "",
+      secondaryWorkspaceId: layout?.secondaryWorkspaceId ?? "",
+      primarySurfaceSessionId: primaryPane?.querySelector('[data-session-surface-id]')
+        ?.getAttribute('data-session-surface-id') ?? "",
+      secondarySurfaceSessionId: secondaryPane?.querySelector('[data-session-surface-id]')
+        ?.getAttribute('data-session-surface-id') ?? "",
+      secondaryPaneWorkspaceId: secondaryPane?.getAttribute('data-workbench-workspace-id') ?? "",
+      secondaryPaneCount: secondaryPanes.length,
+      locationHash: window.location.hash,
+    };
+  })()`);
+  const agentContextViaServer = () => evalIn(app, `(async () => {
+    const response = await fetch("http://127.0.0.1:" + localStorage.getItem("openwork.server.port") + "/experimental/ui-control/request", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + localStorage.getItem("openwork.server.token"),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ kind: "context" }),
+    });
+    return response.json();
+  })()`, { awaitPromise: true, timeoutMs: 15_000 });
+  return { app, workspace, session, splitFacts, agentContextViaServer };
 }
 
 export async function shimmerChat(seed: Seed) {
@@ -452,6 +500,59 @@ export async function renderCycle(seed: Seed) {
     await close(provider);
     throw error;
   }
+}
+
+export const streamedMarkdownMarker = "STREAM_MARKDOWN_ANSWER";
+/** A multi-block answer: heading, prose, list, table, fenced code, closing prose. */
+export const streamedMarkdownAnswer = [
+  "## Streamed answer heading",
+  "",
+  "Opening paragraph with **bold emphasis** and `inline-code.ts` in it.",
+  "",
+  "- alpha list item",
+  "- beta list item",
+  "",
+  "| Column | Value |",
+  "| --- | --- |",
+  "| gamma row | 42 |",
+  "",
+  "```ts",
+  "const streamed = \"delta\";",
+  "```",
+  "",
+  "Closing paragraph epsilon.",
+].join("\n");
+
+/**
+ * The answer arrives in small content deltas from the shared agent mock, which
+ * the placement boots next to Den so the engine can reach it on Daytona too.
+ */
+export async function streamedMarkdown(seed: Seed) {
+  const providerId = "streamed-markdown-mock";
+  const modelId = "streamed-markdown-model";
+  const mock = seed.mock({
+    agentWorkloads: [{
+      promptMarker: streamedMarkdownMarker,
+      finalReply: streamedMarkdownAnswer,
+      finalReplyChunkSize: 8,
+      steps: [],
+    }],
+  });
+  const den = await seed.den({ mocks: { agent: mock } });
+  const app = await seed.desktop({ den, as: "admin", model: `${providerId}/${modelId}` });
+  const workspace = await seed.workspace(app, seed.tmpPath("streamed-markdown-answer"));
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    provider: {
+      [providerId]: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "Streamed markdown mock",
+        options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-streamed-markdown" },
+        models: { [modelId]: { name: "Streamed markdown model" } },
+      },
+    },
+  });
+  const session = await seedSessionRetry(seed, app);
+  return { app, den, workspace, session };
 }
 
 const htmlToolName = "explode_html";
@@ -1018,6 +1119,41 @@ export async function safeEdit(seed: Seed) {
   }
 }
 
+export async function sessionErrorCard(seed: Seed) {
+  const app = await seed.desktop({ name: "session-error-technical-details" });
+  const workspace = await seed.workspace(app, seed.tmpPath("session-error-details"));
+  const session = await seedSessionRetry(seed, app, { title: "Session error proof" });
+  await arrangeControl(seed, app, "eval.session_error.seed");
+  return {
+    app, workspace, session,
+    seedStorageError: (kind: "disk-full" | "database-error", surface: "transcript" | "banner" = "transcript") => arrangeControl(seed, app, "eval.session_error.seed", { kind, surface }),
+  };
+}
+
+export async function snapshotFailure(seed: Seed) {
+  const app = await seed.desktop({ name: "composer-snapshot-failure" });
+  const workspace = await seed.workspace(app, seed.tmpPath("composer-snapshot-failure"));
+  const session = await seedSessionRetry(seed, app, { title: "Composer snapshot failure proof" });
+  await arrangeControl(seed, app, "eval.chat_transcript.seed");
+  const failureJson = await seed.evalIn(app, `async () => {
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
+      const available = window.__openworkControl?.listActions()
+        .find((candidate) => candidate.id === "eval.session_snapshot.fail" && !candidate.disabled);
+      if (available) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    const result = await window.__openworkControl.execute("eval.session_snapshot.fail", null);
+    if (!result?.ok) throw new Error(String(result?.error ?? "control action failed"));
+    return JSON.stringify(result.result);
+  }`, { args: [], awaitPromise: true, timeoutMs: 120_000 });
+  const failure: unknown = typeof failureJson === "string" ? JSON.parse(failureJson) : failureJson;
+  if (!isRecord(failure) || failure.isError !== true) {
+    throw new Error(`Session snapshot failure was not established: ${JSON.stringify(failure)}`);
+  }
+  return { app, workspace, session };
+}
+
 export async function taskActivity(seed: Seed) {
   const app = await seed.desktop({ name: "task-activity-shimmer" });
   const workspace = await seed.workspace(app, seed.tmpPath("task-activity-shimmer"));
@@ -1032,4 +1168,96 @@ export async function unfinishedTools(seed: Seed) {
   const session = await seedSessionRetry(seed, app);
   await arrangeControl(seed, app, "eval.session_lifecycle.seed_unfinished_tools", { lifecycle: "active" });
   return { app, workspace, session };
+}
+
+export const suspendedTurnPrompt = "Continue the deterministic task that spans a laptop sleep.";
+export const suspendedTurnReply = "The task finished after the computer resumed.";
+
+/**
+ * A model whose first answer goes quiet after its opening chunk and never
+ * ends — what a half-open socket looks like after the machine slept — and
+ * whose later answers complete. The witness records every completion so a
+ * spec can prove the engine re-asked once rather than duplicating work.
+ */
+export async function suspendedTurn(seed: Seed, { place }: { place: import("@openwork/env").Place }) {
+  const providerId = "suspended-turn-mock";
+  const modelId = "suspended-turn-model";
+  const agent = seed.mock({
+    agentWorkloads: [{
+      promptMarker: suspendedTurnPrompt,
+      finalReply: suspendedTurnReply,
+      quietCompletions: 1,
+      steps: [{
+        tool: "bash",
+        arguments: {
+          command: "printf '%s\\n' 'suspended-turn-resumed'",
+          timeout: 30_000,
+          description: "Acknowledge the resumed turn",
+        },
+      }],
+    }],
+  });
+  const den = await seed.den({ mocks: { agent } });
+  const app = await seed.desktop({ den, as: "admin", model: `${providerId}/${modelId}` });
+  const workspace = await seed.workspace(app, seed.tmpPath("suspended-turn"));
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    provider: {
+      [providerId]: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "Suspended turn mock",
+        options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-suspended-turn" },
+        models: { [modelId]: { name: "Suspended turn model" } },
+      },
+    },
+  });
+  const session = await seedSessionRetry(seed, app, { title: "Suspended turn" });
+  const startedAt = new Date().toISOString();
+  return {
+    app,
+    workspace,
+    session,
+    /** Kinds of every main completion for this turn, in order. */
+    async completionKinds(): Promise<string[]> {
+      const requests = await den.mocks.agent.agentRequests({ promptMarker: suspendedTurnPrompt, sinceIso: startedAt });
+      return requests.filter((request) => request.kind !== "utility").map((request) => request.kind);
+    },
+    /**
+     * Stop the engine process for `ms` and let it continue: from the engine's
+     * point of view this is the lid closing and opening again.
+     */
+    async suspendEngine(ms: number): Promise<void> {
+      // TODO(primitive): read the managed engine process id from the desktop runtime.
+      const info = await seed.evalIn(app, `window.__OPENWORK_ELECTRON__.invokeDesktop("engineInfo")`, { awaitPromise: true, timeoutMs: 30_000 });
+      const pid = recordValue(info, "pid");
+      if (typeof pid !== "number") throw new Error(`Engine pid unavailable: ${JSON.stringify(info)}`);
+      const host = place.host();
+      const signal = host
+        ? (kind: "SIGSTOP" | "SIGCONT") => host.signal(app.handle, pid, kind)
+        : async (kind: "SIGSTOP" | "SIGCONT") => { process.kill(pid, kind); };
+      await signal("SIGSTOP");
+      try {
+        await new Promise((resolveWait) => setTimeout(resolveWait, ms));
+      } finally {
+        await signal("SIGCONT");
+      }
+    },
+    async transcriptFacts(): Promise<{ prompts: number; replies: number; interruptedCards: number }> {
+      // TODO(primitive): count transcript occurrences and interrupted-run cards.
+      const facts = await seed.evalIn(app, `(prompt, reply) => {
+        const text = document.body.innerText;
+        return {
+          prompts: text.split(prompt).length - 1,
+          replies: text.split(reply).length - 1,
+          interruptedCards: document.querySelectorAll('[data-testid="session-error-interrupted"]').length,
+        };
+      }`, { args: [suspendedTurnPrompt, suspendedTurnReply] });
+      const prompts = recordValue(facts, "prompts");
+      const replies = recordValue(facts, "replies");
+      const interruptedCards = recordValue(facts, "interruptedCards");
+      if (typeof prompts !== "number" || typeof replies !== "number" || typeof interruptedCards !== "number") {
+        throw new Error(`Transcript facts were invalid: ${JSON.stringify(facts)}`);
+      }
+      return { prompts, replies, interruptedCards };
+    },
+  };
 }

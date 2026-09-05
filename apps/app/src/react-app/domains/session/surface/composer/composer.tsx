@@ -1295,7 +1295,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                 kind: isImageAttachment(attachment) ? "image" : "file",
                 previewUrl: attachment.previewUrl,
               }))}
-              disabled={props.disabled}
+              submitDisabled={props.disabled}
               placeholder={t("composer.placeholder")}
               onChange={props.onDraftChange}
               onSubmit={handleEditorSubmit}

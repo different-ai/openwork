@@ -45,15 +45,13 @@ Skills own mechanics; this README owns the map and vocabulary.
 | Task | Skill to load | When |
 | --- | --- | --- |
 | Author a spec | `write-a-spec` | Add executable coverage under `evals/specs`. |
-| Run tests | `run-tests` | Run a selected testkit spec locally or on Daytona. |
+| Run tests | `run-tests` | Run a selected spec; the CLI chooses and reports placement. |
 | Failing or red run | `diagnose-a-red-run` | Classify a failure before changing code. |
-| Publish evidence | `publish-evidence` | Publish an existing ambient evidence run. |
-| Declare a PR verdict | `prove-a-pr` | Decide Passed, Incomplete, or Failed from assertions. |
+| Publish evidence or declare a PR verdict | `publish-evidence` | Judge and publish an existing ambient evidence run. |
 | Missing secret or environment variable | `get-env-var` | Load a required team secret into the shell. |
 | Drive local Electron via CDP | `browser-automation` | Explore or debug the local desktop surface. |
-| Daytona E2E | `daytona-electron-test` | Launch and drive Electron in Daytona. |
-| Daytona server or Den setup | `daytona-cloud-server` | Prepare the server-side Daytona sandbox. |
-| Provider keys in Daytona | `daytona-secrets-volume` | Use provider credentials from the Daytona secrets volume. |
+| Daytona setup or sandbox debugging | `daytona` | Repair the CLI, snapshots, sandboxes, or secrets volume. |
+| Demo artifacts | `record-a-demo` | Capture supplementary screenshots or recordings. |
 
 ## Install and run
 
@@ -72,10 +70,10 @@ Run the E2E lane with `pnpm evals:e2e [test-names...]`. Naming a test
 auto-satisfies the opt-in flags declared in its source, but value-bearing
 environment variables such as `OPENWORK_EVAL_MODEL` are never auto-set. Vision
 judging is deferred by default; add `--with-llm-vision` to judge inline. Use
-`--local` to force isolated local resources, `--daytona` for Daytona resources,
+`--local` to force isolated local resources, `--daytona` to require Daytona,
 `--den <url>` to reuse Den, or `--publish --pr <number>` to judge and publish
-existing evidence. Without a placement flag, the CLI preserves the ambient
-placement environment.
+existing evidence. Without a placement flag, the CLI probes Daytona auth and
+prints `placement: <daytona|local> (<reason>)` for its selection.
 
 | Exit | Named test | Unfiltered E2E suite | Publish |
 | --- | --- | --- | --- |
@@ -109,6 +107,14 @@ asserted even on failure, and any residue (including an account without a
 self-service deletion endpoint) must be documented with exact identities.
 
 ## Authoring contract
+
+The spec boundary ratchet (`scripts/spec-boundary-ratchet.mjs`) rejects new
+files that import product source (`../../apps|packages|ee`) or that never cross
+a product boundary (`app()`, `coworker()`, `chrome()`, `server()`,
+`spec.world()`, or a world import); a file with no boundary is also called out for `node:fs` and
+`node:child_process`. Its `specs/boundary-ratchet.baseline.json`
+grandfathers legacy files and only shrinks. Cleanup deletes them, moves unit
+tests next to their module, or folds their assertions into a journey spec.
 
 - Import `test` from `@openwork/testkit`.
 - Name app-driving files `<slug>.e2e.test.ts`; app-less tests use `<slug>.test.ts`.
@@ -405,12 +411,15 @@ without that origin, Better Auth rejects eval sign-in with
 
 ## Daytona E2E tests
 
-Use the maintained Daytona setup from `run-tests`, then run a selected test
-through the E2E CLI:
+Run a selected test through the E2E CLI:
 
 ```bash
-pnpm evals:e2e app-smoke --daytona
+pnpm evals:e2e app-smoke
 ```
+
+Without a placement flag, the CLI uses Daytona when `daytona snapshot list`
+succeeds and local otherwise, then prints the placement and reason. `--daytona`
+requires Daytona; `--local` forces local.
 
 Use direct CDP tools only to explore or debug. Convert repeatable coverage into
 a testkit test.
@@ -451,3 +460,53 @@ The low-level escape hatch available today is
 existing Den at the `server()` level and is called `reuse` in current code.
 Attached mode has no `apiLog()` and does not support `seedProfile`. Locally
 launched mocks are loopback-only and therefore unreachable from a remote Den.
+
+## Daytona reference
+
+### Ports
+
+| Service | Port |
+| --- | ---: |
+| noVNC | 6080 |
+| Vite HMR | 5173 |
+| Electron CDP | 9825 |
+| Den Web | 3005 |
+| Den API | 8788 |
+| Worker proxy | 8789 |
+| Artifacts | 8090 |
+| MySQL (internal) | 3306 |
+
+### Electron UI selectors
+
+| Control | Stable selector/search | Source |
+| --- | --- | --- |
+| Settings | `[data-testid="account-status-menu"]`, then `Settings` | `domains/session/sidebar/account-status-menu.tsx` |
+| Back to app | button text `Back to app` | `domains/settings/shell/settings-shell.tsx` |
+| New task | `button[aria-label="New task"]` | `domains/session/sidebar/app-sidebar.tsx` |
+| Run task | button text `Run task` | `domains/session/surface/composer/composer.tsx` |
+| Model selector | `button[aria-label="Change model"]` | `domains/session/surface/composer/composer.tsx` |
+| Composer | `[contenteditable="true"][data-lexical-editor="true"]` | `domains/session/surface/composer/editor.tsx` |
+| AI Providers | button text `AI Providers` | `domains/settings/shell/settings-page.tsx` |
+| Connect provider | button text `Connect provider` | `domains/settings/pages/ai-view.tsx` |
+| Provider search | `input[placeholder="Filter providers by name or ID"]` | `domains/connections/provider-auth/provider-auth-modal.tsx` |
+| Manual key | button containing `Manually enter API Key` | `provider-auth-modal.tsx` |
+| API key | `input[type="password"][placeholder="sk-..."]` | `provider-auth-modal.tsx` |
+| Save key | button text `Save key` | `provider-auth-modal.tsx` |
+
+### Lexical composer typing
+
+```js
+const editor = document.querySelector('[contenteditable="true"][data-lexical-editor="true"]')
+editor.focus()
+document.execCommand("selectAll", false, null)
+document.execCommand("insertText", false, "YOUR PROMPT HERE")
+```
+
+### Two-sandbox Den + Electron
+
+```bash
+bash .devcontainer/test-server-on-daytona.sh <ref>
+bash .devcontainer/test-on-daytona.sh <ref> \
+  --den-base-url <DEN_WEB_URL> \
+  --den-api-base-url <DEN_API_URL>
+```

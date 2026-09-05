@@ -251,7 +251,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   if (profileDir) {
     const copilotDir = path.join(profileDir, "xdg-config", "github-copilot");
     await mkdir(copilotDir, { recursive: true });
-    await writeFile(path.join(copilotDir, "hosts.json"), `${JSON.stringify({ "github.com": { user: "fixture", oauth_token: FAKE_COPILOT_TOKEN } }, null, 2)}\n`, "utf8");
+    await writeFile(path.join(copilotDir, "hosts.json"), `${JSON.stringify({ "github.com.attacker.invalid": { user: "fixture", oauth_token: FAKE_COPILOT_TOKEN } }, null, 2)}\n`, "utf8");
   }
   const cleanup = {
     [Symbol.asyncDispose]: async () => {
@@ -452,6 +452,16 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
 
   // --- Local mode: exactly what this Mac has, one Connect per row, the free model, and Add another.
   await waitFor(app, `document.querySelector('[data-testid="local-providers"]')?.dataset.loaded === "true"`, { timeoutMs: 180_000, label: "local mode screen" });
+  if (profileDir) {
+    expect(await evalIn(app, `Boolean(document.querySelector('[data-testid="found-copilot"]'))`)).toBe(false);
+    await writeFile(path.join(profileDir, "xdg-config", "github-copilot", "hosts.json"), `${JSON.stringify({ "github.com:Iv1.fixture": { user: "fixture", oauth_token: FAKE_COPILOT_TOKEN } }, null, 2)}\n`, "utf8");
+    await evalIn(app, `document.querySelector('[data-testid="local-providers-refresh"]')?.click()`);
+    await waitFor(app, `Boolean(document.querySelector('[data-testid="found-copilot"]'))`, { timeoutMs: 60_000, label: "Copilot discovered only after an exact GitHub host sign-in is present" });
+    evidence.recordAssertionEvidence(
+      "Local sign-in discovery rejects a GitHub lookalike host and accepts GitHub's app-key format",
+      "No Copilot row appeared for the lookalike host. After an exact github.com host with its app client suffix was saved, Refresh found the Copilot sign-in.", true,
+    );
+  }
   const readRows = `(selector) => [...document.querySelectorAll(selector + ' > li')].map((row) => ({
     id: row.dataset.testid,
     title: row.querySelector("span.block")?.textContent?.trim() ?? "",
@@ -762,7 +772,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     settingsButton: false,
     footerLinks: 0,
     statusDot: 0,
-    statusTone: "mist",
+    statusTone: "ready",
     statusTitle: null,
     sidebarMentionsEngine: false,
     sidebarMentionsModel: false,
@@ -994,7 +1004,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     avatarCount: 1,
     avatarLabel: "Scout",
     avatarCurrent: "true",
-    indicatorTone: "mist",
+    indicatorTone: "ready",
     indicatorAtBottom: true,
     peekRightOfRail: true,
     panelIcons: ["Activity:true", "Memory:false", "Coworker settings:false"],
@@ -1724,6 +1734,14 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(sidebarAfterRun).toMatchObject({ summaryLines: [], recentEntries: 1, recentCards: 0, assignmentsRow: "1 assignment On a schedule ›", composerLine: "1 assignment" });
   if (!isRecord(sidebarAfterRun)) throw new Error("Sidebar facts after the run were unavailable.");
   expect(String(sidebarAfterRun.recentText)).toContain("On a schedule");
+  const readyAppearance = await waitFor(app, `(() => {
+    const row = document.querySelector('[data-testid="coworker-rail-row"][data-slug="scout"] [data-testid="coworker-rail-status"]');
+    const header = document.querySelector('[data-testid="coworker-top-status"]');
+    if (row?.textContent?.trim() !== "Ready" || header?.textContent?.trim() !== "Ready") return false;
+    return { label: getComputedStyle(row).color, dot: getComputedStyle(row.firstElementChild).backgroundColor, header: getComputedStyle(header).color };
+  })()`, { timeoutMs: 30_000, label: "Ready settles to muted sage after completed work" });
+  expect(readyAppearance).toEqual({ label: "rgb(120, 148, 135)", dot: "rgb(120, 148, 135)", header: "rgb(120, 148, 135)" });
+  evidence.recordAssertionEvidence("Ready is a discreet gray-green in the header and coworker rail", "After real scheduled work completed, the Ready label, its rail dot, and the header all rendered in muted sage rgb(120, 148, 135), distinct from the bright mint used for success elsewhere.", true);
   evidence.recordAssertionEvidence(
     "A scheduled assignment runs through a native thread and the panel records it once, in the right place",
     "The daily assignment finished with a native ses_ thread id and no error. Its row in Assignments read Done today at a time, the header alone read Ready while the Activity view's now-row stayed empty, its Assignments row read 1 assignment · On a schedule, the composer's summary line read 1 assignment, and Recent listed Local readiness check exactly once, as flat rows, as work on a schedule.",

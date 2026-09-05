@@ -19,6 +19,7 @@ import {
     getProviderNpmPackage,
     useOrgLlmProviders,
 } from "./llm-provider-data";
+import { RuntimeEnvKeyChip, resolveRuntimeEnvKeys } from "./runtime-env-key";
 
 function formatCountLabel(count: number, singular: string, plural: string) {
     return `${count} ${count === 1 ? singular : plural}`;
@@ -112,7 +113,12 @@ export function LlmProviderDetailScreen({
         );
     }
 
-    const envNames = getProviderEnvNames(provider.providerConfig);
+    const envKeys = resolveRuntimeEnvKeys({
+        declaredEnvNames: getProviderEnvNames(provider.providerConfig),
+        scoped: provider.source === "models_dev",
+        saved: true,
+        runtimeEnvKeys: provider.runtimeEnvKeys,
+    });
     const npmPackage = getProviderNpmPackage(provider.providerConfig);
     const apiBase = getProviderApiBase(provider.providerConfig);
     const docUrl = getProviderDocUrl(provider.providerConfig);
@@ -227,13 +233,12 @@ export function LlmProviderDetailScreen({
                 </div>
 
                 <div className="mt-6 flex flex-wrap gap-2">
-                    {envNames.map((envName) => (
-                        <span
-                            key={envName}
-                            className="rounded-full bg-gray-100 px-3 py-1 text-[12px] font-medium text-gray-600"
-                        >
-                            {envName}
-                        </span>
+                    {envKeys.map((envKey) => (
+                        <RuntimeEnvKeyChip
+                            key={envKey.declared}
+                            envKey={envKey}
+                            className="rounded-full bg-gray-100 px-3 py-1 font-mono text-[12px] font-medium text-gray-600"
+                        />
                     ))}
                     {docUrl ? (
                         <a

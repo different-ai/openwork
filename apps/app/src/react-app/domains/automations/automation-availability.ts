@@ -1,3 +1,6 @@
+import type { AutomationExecutionTarget } from "@openwork/types/automations"
+
+import { isDesktopRuntime } from "@/app/lib/runtime-env"
 import { useDesktopConfig } from "@/react-app/domains/cloud/desktop-config-provider"
 
 /**
@@ -9,4 +12,13 @@ import { useDesktopConfig } from "@/react-app/domains/cloud/desktop-config-provi
 export function useAutomationDeploymentEnabled() {
   const { config, loading } = useDesktopConfig()
   return !loading && config.automationsEnabled === true
+}
+
+/**
+ * The surface that creates an Automation fixes its execution placement for
+ * life: Desktop creates Desktop Automations that its signed-in runner claims;
+ * every browser surface creates Cloud Automations that Den runs headlessly.
+ */
+export function automationCreationPlacement(): AutomationExecutionTarget {
+  return isDesktopRuntime() ? "desktop" : "cloud"
 }

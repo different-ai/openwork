@@ -319,6 +319,16 @@ export async function typeText(surface: Surface, text: string): Promise<void> {
   await surface.client.send("Input.insertText", { text });
 }
 
+// Synthesized CDP key events do not go through the OS keymap, so editing
+// shortcuts only act on the focused field when the matching editing command is
+// named explicitly.
+const EDITING_COMMANDS: Record<string, string[]> = {
+  "Meta+A": ["selectAll"],
+  "Control+A": ["selectAll"],
+  "Meta+ArrowDown": ["moveToEndOfDocument"],
+  "Control+End": ["moveToEndOfDocument"],
+};
+
 export async function pressKey(surface: Surface, key: string): Promise<void> {
   const descriptor = mapKey(key);
   const params = {
@@ -328,7 +338,8 @@ export async function pressKey(surface: Surface, key: string): Promise<void> {
     nativeVirtualKeyCode: descriptor.windowsVirtualKeyCode,
     modifiers: descriptor.modifiers,
   };
-  await surface.client.send("Input.dispatchKeyEvent", { type: "keyDown", ...params });
+  const commands = EDITING_COMMANDS[key];
+  await surface.client.send("Input.dispatchKeyEvent", { type: "keyDown", ...params, ...(commands ? { commands } : {}) });
   await surface.client.send("Input.dispatchKeyEvent", { type: "keyUp", ...params });
 }
 

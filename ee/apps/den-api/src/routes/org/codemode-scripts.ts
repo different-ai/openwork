@@ -5,6 +5,7 @@ import {
   workflowArtifactSnapshotSchema,
   workflowCapabilitySchema,
   workflowDetailSchema,
+  workflowGraphSchema,
   workflowTestResultSchema,
   workflowVersionSchema,
   generatedArtifactViewSchema,
@@ -33,6 +34,7 @@ import { PluginArchAuthorizationError } from "./plugin-system/access.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { codemodeCodeDigest } from "../../workflow-runs.js"
 import { getWorkflowLibraryDetail } from "../../workflow-library.js"
+import { normalizeToolBody } from "../../mcp/invoke.js"
 import {
   activateArtifactViewRevision,
   listArtifactViewsForScript,
@@ -60,7 +62,13 @@ const saveSchema = z.object({
   inputSchema: z.unknown().optional(),
   outputSchema: z.unknown().optional().describe("Optional JSON Schema for the value returned by this Workflow."),
 })
-const savedSchema = z.object({ pluginId: z.string(), configObjectId: z.string(), configObjectVersionId: z.string() })
+const savedSchema = z.object({
+  pluginId: z.string(),
+  configObjectId: z.string(),
+  configObjectVersionId: z.string(),
+  graph: workflowGraphSchema,
+  mermaid: z.string(),
+})
 const runParamsSchema = z.object({ configObjectId: z.string().min(1).max(160) })
 const runSchema = z.object({
   pluginId: z.string().min(1).max(160),
@@ -140,7 +148,34 @@ function routeFailure(error: unknown) {
       status: 400,
       body: {
         error: message,
-        message: "Run the exact procedure successfully with execute_capability_script, then retry saving the Workflow without changing the code. The successful run must be less than 15 minutes old.",
+        message: "Run the exact procedure successfully with execute_capability_script, then retry saving the Workflow without changing the code. The successful run must be less than 15 minutes old. The match is byte-exact on the code string, so re-send the identical source (same whitespace) that succeeded.",
+      },
+    } as const
+  }
+  const unavailablePrefix = "workflow_capability_unavailable:"
+  if (message.startsWith(unavailablePrefix)) {
+    const capability = message.slice(unavailablePrefix.length)
+    const isSearch = capability === "$codemode.search" || capability === "tools.$codemode.search"
+    return {
+      status: 400,
+      body: {
+        error: "workflow_capability_unavailable",
+        capability,
+        message: isSearch
+          ? "Workflows cannot include tools.$codemode.search. Use search_capabilities (or tools.$codemode.search in an ad-hoc run) to find the exact tool paths, then write the Workflow with direct tool calls only and run it again before saving."
+          : `The Workflow calls ${capability}, which is not available to this member as a saved capability. Remove it or connect the required service, then run the exact code again before saving.`,
+      },
+    } as const
+  }
+  const readOnlyPrefix = "workflow_requires_read_only_capabilities:"
+  if (message.startsWith(readOnlyPrefix)) {
+    const capability = message.slice(readOnlyPrefix.length)
+    return {
+      status: 400,
+      body: {
+        error: "workflow_requires_read_only_capabilities",
+        capability,
+        message: `${capability} can change data, so it cannot run unattended in a Workflow. Workflows may only call read-only tools; keep write actions in interactive Code Mode runs.`,
       },
     } as const
   }
@@ -212,10 +247,14 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
     async (c) => {
       try {
         const { context, actorContext, buildTools } = await contextFor(c)
+        const body = c.req.valid("json")
         const saved = await saveWorkflow({
           organizationId: context.organization.id,
           ownerMemberId: context.currentMember.id,
-          workflow: c.req.valid("json"),
+          workflow: {
+            ...body,
+            ...(body.currentInput === undefined ? {} : { currentInput: normalizeToolBody(body.currentInput) }),
+          },
           buildTools,
           context: actorContext,
         })

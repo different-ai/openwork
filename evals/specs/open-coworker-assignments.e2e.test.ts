@@ -1,6 +1,5 @@
 import { EVAL_COWORKER_MODEL, clickButton, coworker, evalIn, fill, needs, test, waitFor, waitForText } from "@openwork/testkit";
 import { expect } from "vitest";
-import { assignmentPrompt, assignmentTitle } from "../../apps/coworker/src/lib/conversation.ts";
 
 /**
  * Natural chat never becomes assigned work by itself. This journey chats
@@ -147,7 +146,8 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   await fill(app, 'textarea[aria-label="Assignment outcome"]', OUTCOME);
   await clickButton(app, "Create assignment");
 
-  const expectedTitle = assignmentTitle(OUTCOME);
+  // One line under eighty characters: the outcome itself is the assignment's title.
+  const expectedTitle = OUTCOME;
   await waitForText(app, expectedTitle, { timeoutMs: 60_000 });
   // The conversation column is the surface under test: the one header now carries the
   // assignment's title and badge. The rail and Activity view may truthfully name the
@@ -170,8 +170,8 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     return {
       outcome: brief.querySelector('[data-testid="coworker-assignment-outcome"]')?.textContent?.trim() ?? "",
       visibleText: brief.innerText,
-      contextSummary: context?.querySelector("summary span:not([aria-hidden])")?.textContent?.trim() ?? "",
-      contextOpen: context instanceof HTMLDetailsElement ? context.open : null,
+      contextSummary: context?.querySelector("button span:not([aria-hidden])")?.textContent?.trim() ?? "",
+      contextOpen: context?.querySelector("button")?.getAttribute("aria-expanded") === "true",
       plainUserBubbles: document.querySelectorAll('[data-message-role="user"]:not([data-assignment-brief])').length,
     };
   })()`);
@@ -192,11 +192,14 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(discussionTexts[0]?.text).toBe(CHAT_PROMPT);
   expect(discussionTexts[1]?.text).toContain(CHAT_REPLY);
 
-  // The assignment's first turn is exactly the bounded visible prose of that discussion — no reasoning, no tool payloads.
+  // The assignment's first turn is the outcome plus the visible prose of that discussion, whole and in
+  // order, and nothing else the thread held — no reasoning, no tool payloads.
   const assignmentTexts = await readSessionTexts(app, workspaceId, assignment.id);
   const firstUserTurn = assignmentTexts.find((message) => message.role === "user");
-  expect(firstUserTurn?.text).toBe(assignmentPrompt(OUTCOME, discussionTexts));
-  expect(firstUserTurn?.text).toContain("## Outcome");
+  const [discussionAsk, discussionReply] = discussionTexts;
+  if (!discussionAsk || !discussionReply) throw new Error(`The discussion lost a message: ${JSON.stringify(discussionTexts)}`);
+  expect(firstUserTurn?.text).toContain(`## Outcome\n\n${OUTCOME}`);
+  expect(firstUserTurn?.text).toContain(`## Relevant discussion\n\nYou: ${discussionAsk.text.trim()}\n\nCoworker: ${discussionReply.text.trim()}`);
   expect(firstUserTurn?.text).toContain(`You: ${CHAT_PROMPT}`);
   expect(firstUserTurn?.text).toContain(`Coworker: ${CHAT_REPLY}`);
   for (const forbidden of ["reasoning", "toolCalls", "partId", "openworkMcpApp", "metadata"]) {

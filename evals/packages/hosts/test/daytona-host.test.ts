@@ -189,6 +189,9 @@ test("spawnElectron starts isolated Daytona Electron profiles and writes bootstr
   assert.equal(second.meta?.profileOwner, "host");
   assert.deepEqual(polled, ["https://cdp-9825.example.test/json/list", "https://cdp-9830.example.test/json/list"]);
 
+  const firstMkdirIndex = calls.findIndex((call) => argsText(call).includes("mkdir -p") && argsText(call).includes("/profiles/owner-"));
+  assert(firstMkdirIndex >= 0);
+
   const bootstrapCall = findCall(calls, "base64 -d");
   assert.equal(Buffer.from(base64AfterEcho(bootstrapCall), "base64").toString("utf8"), `${JSON.stringify(bootstrap, null, 2)}\n`);
   assert(argsText(bootstrapCall).includes("/workspace/.openwork-daytona/profiles/owner-"));

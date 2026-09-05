@@ -112,6 +112,12 @@ test("only a known coworker token gets in", async () => {
     assert.equal(wrong.status, 401);
     const none = await fetch(server.url, { method: "POST", body: "{}" });
     assert.equal(none.status, 401);
+    for (const authorization of ["Basic " + TOKEN, "Bearer " + " ".repeat(8_000) + "invalid token", "Bearer " + TOKEN + " other"]) {
+      const rejected = await fetch(server.url, { method: "POST", headers: { Authorization: authorization }, body: "{}", signal: AbortSignal.timeout(5_000) });
+      assert.equal(rejected.status, 401);
+    }
+    const valid = await fetch(server.url, { method: "POST", headers: { Authorization: `bEaReR\t${TOKEN}` }, body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "ping" }) });
+    assert.equal(valid.status, 200);
   } finally {
     await server.stop();
   }

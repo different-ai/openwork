@@ -39,10 +39,12 @@ test("Open Coworker has its own stable packaged identity and local runtime resou
   assert.deepEqual(config.extraResources[1], {
     from: "server/dist/opencode-plugins",
     to: "opencode-plugins",
-    filter: ["*.js", "!*.test.js"],
+    filter: ["*.js", "*.wasm", "!*.test.js"],
   });
+  // The browser plugin ships bundled with the embedded server (dev's openwork-chrome-devtools), pinned exactly,
+  // so a coworker team's cold start never asks the engine to install it.
   const serverPackage = JSON.parse(await readFile(path.resolve(coworkerRoot, "..", "server", "package.json"), "utf8"));
-  assert.equal(serverPackage.devDependencies["opencode-chrome-devtools"], "^1.0.4");
+  assert.equal(serverPackage.devDependencies["opencode-chrome-devtools"], "1.0.4");
 });
 
 test("Open Coworker mirrors every embedded-server runtime dependency for electron-builder", async () => {

@@ -30,7 +30,16 @@ export interface MockAgentToolStep {
 export interface MockAgentWorkload {
   promptMarker: string;
   finalReply: string;
+  /** Stream the final reply as consecutive content deltas of this many characters instead of one. */
+  finalReplyChunkSize?: number;
+  /** Tool calls the agent makes before its final reply; empty answers directly. */
   steps: MockAgentToolStep[];
+  /**
+   * Declared fault: the first N main completions stream their opening chunk
+   * and then go quiet without ending (a half-open socket after the client
+   * slept). Recorded as kind "quiet"; later completions proceed normally.
+   */
+  quietCompletions?: number;
 }
 
 export interface MockAgentRequest {
@@ -38,7 +47,7 @@ export interface MockAgentRequest {
   promptMarker: string | null;
   matchedMarkers: string[];
   completedTools: number;
-  kind: "utility" | "tool" | "final" | "error";
+  kind: "utility" | "tool" | "final" | "error" | "quiet";
   toolName: string | null;
   arguments: Record<string, unknown>;
   at: string;
@@ -79,6 +88,8 @@ export interface StartMockMcpOptions {
   allowUnauthenticatedMcp?: boolean;
   /** Serve this many additional synthetic mock_tool_<i> tools for scale specs. */
   extraToolCount?: number;
+  /** Serve one app-visible MCP App launch tool (`_meta.ui.resourceUri`) under this name. */
+  appToolName?: string;
   /** Script deterministic OpenAI-compatible agent turns through this mock. */
   agentWorkloads?: MockAgentWorkload[];
 }
@@ -302,6 +313,7 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
         AUTO_APPROVE: "1",
         ...(options.allowUnauthenticatedMcp ? { MOCK_ALLOW_UNAUTHENTICATED_MCP: "1" } : {}),
         ...(options.extraToolCount ? { MOCK_EXTRA_TOOL_COUNT: String(options.extraToolCount) } : {}),
+        ...(options.appToolName ? { MOCK_APP_TOOL_NAME: options.appToolName } : {}),
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -374,7 +386,7 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
       const at = typeof entry.at === "string" ? entry.at : "";
       if (sinceIso && at < sinceIso) continue;
       const kind = completion.kind;
-      if (kind !== "utility" && kind !== "tool" && kind !== "final" && kind !== "error") continue;
+      if (kind !== "utility" && kind !== "tool" && kind !== "final" && kind !== "error" && kind !== "quiet") continue;
       const marker = typeof completion.promptMarker === "string" ? completion.promptMarker : null;
       if (promptMarker && marker !== promptMarker) continue;
       if (typeof completion.model !== "string"

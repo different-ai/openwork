@@ -20,9 +20,11 @@ import {
   openworkCapabilitiesKnowledgePluginPath,
   openworkAnthropicAdaptiveThinkingPluginPath,
   openworkAnthropicToolSchemaPluginPath,
+  openworkProviderConnectionPluginPath,
   openworkOfficeAttachmentsPluginPath,
   openworkSpreadsheetsPluginPath,
-  openworkBrowserPluginPath,
+  openworkChromeDevtoolsPluginPath,
+  openworkPdfAttachmentsPluginPath,
 } from "./openwork-extensions-plugin-path.js";
 import type { ServerConfig } from "./types.js";
 import { runtimeStorageDir } from "./runtime-db.js";
@@ -79,10 +81,7 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
       },
     },
     plugin: [
-      // A local bundled path keeps cold starts deterministic. A bare package
-      // name makes OpenCode install it on first use, and simultaneous
-      // coworker workspace boots can contend on that shared installation.
-      openworkBrowserPluginPath(),
+      openworkChromeDevtoolsPluginPath(),
       // Registration order is prompt order: the knowledge plugin appends the
       // operating rules first, then the extensions plugin adds app-control
       // mechanics, live Connect steering, and the remote skill and Automation
@@ -91,8 +90,10 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
       openworkExtensionsPreviewPluginPath(),
       openworkOfficeAttachmentsPluginPath(),
       openworkSpreadsheetsPluginPath(),
+      openworkPdfAttachmentsPluginPath(),
       openworkAnthropicAdaptiveThinkingPluginPath(),
       openworkAnthropicToolSchemaPluginPath(),
+      openworkProviderConnectionPluginPath(),
       ...runtimePluginList(runtimeConfig),
     ],
     ...(disabledProviders.length ? { disabled_providers: disabledProviders } : {}),

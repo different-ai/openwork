@@ -492,6 +492,16 @@ async function ensureCloudWorker(input: {
   return promise
 }
 
+/** Share the browser's member-scoped creation and race handling with MCP. */
+export function ensureMemberCloudWorker(input: { orgId: OrgId; createdByUserId: UserId }) {
+  return ensureCloudWorker({
+    ...input,
+    name: CLOUD_INSTANCE_NAME,
+    continueProvisioning: continueCloudProvisioning,
+    store: databaseCloudWorkerStore,
+  })
+}
+
 function workerNeedsUserRequestedUpdate(worker: CloudWorker) {
   const snapshot = env.daytona.snapshot
   return Boolean(snapshot && (worker.image_version ?? null) !== snapshot)
@@ -758,10 +768,6 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
     orgMemberRouteMiddleware,
     async (c) => {
       const payload = c.get("organizationContext")
-      if (!cloudAvailable(payload, options)) {
-        return c.json(cloudNotFound(), 404)
-      }
-
       const user = c.get("user")
       if (!hasCloudUserId(user)) {
         return c.json({ error: "unauthorized" }, 401)
@@ -773,6 +779,10 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
       const webAccess = await getOpenWorkWebAccess(payload.organization.id)
       if (!webAccess.hasAccess) {
         return c.json(openWorkWebAccessRequiredPayload(), 403)
+      }
+
+      if (!cloudAvailable(payload, options)) {
+        return c.json(cloudNotFound(), 404)
       }
 
       const resolved = await resolveCloudInstanceForMember({
@@ -811,10 +821,6 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
     orgMemberRouteMiddleware,
     async (c) => {
       const payload = c.get("organizationContext")
-      if (!cloudAvailable(payload, options)) {
-        return c.json(cloudNotFound(), 404)
-      }
-
       const user = c.get("user")
       if (!hasCloudUserId(user)) {
         return c.json({ error: "unauthorized" }, 401)
@@ -823,6 +829,10 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
       const webAccess = await getOpenWorkWebAccess(payload.organization.id)
       if (!webAccess.hasAccess) {
         return c.json(openWorkWebAccessRequiredPayload(), 403)
+      }
+
+      if (!cloudAvailable(payload, options)) {
+        return c.json(cloudNotFound(), 404)
       }
 
       const resolved = await resolveCloudInstanceForMember({
@@ -862,10 +872,6 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
     orgMemberRouteMiddleware,
     async (c) => {
       const payload = c.get("organizationContext")
-      if (!cloudAvailable(payload, options)) {
-        return c.json(cloudNotFound(), 404)
-      }
-
       const user = c.get("user")
       if (!hasCloudUserId(user)) {
         return c.json({ error: "unauthorized" }, 401)
@@ -874,6 +880,10 @@ export function registerCloudRoutes<T extends { Variables: OrgRouteVariables }>(
       const webAccess = await getOpenWorkWebAccess(payload.organization.id)
       if (!webAccess.hasAccess) {
         return c.json(openWorkWebAccessRequiredPayload(), 403)
+      }
+
+      if (!cloudAvailable(payload, options)) {
+        return c.json(cloudNotFound(), 404)
       }
 
       const worker = await getCloudWorker(payload.organization.id, user.id, store)

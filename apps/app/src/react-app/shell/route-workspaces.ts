@@ -212,6 +212,26 @@ export function describeTaskCreateFailure(error: unknown, attempts: number): Tas
   return { kind: "unavailable", title: t("session.engine_unavailable_title"), description: message };
 }
 
+export type TaskCreateRetryNotice = { title: string; description: string };
+
+/** Retry countdown wording; engine internals stay behind developer mode. */
+export function describeTaskCreateRetry(input: {
+  developerMode: boolean;
+  attempt: number;
+  attempts: number;
+}): TaskCreateRetryNotice {
+  if (input.developerMode) {
+    return {
+      title: t("session.engine_catching_up_title"),
+      description: t("session.engine_catching_up_detail", { attempt: input.attempt, total: input.attempts }),
+    };
+  }
+  return {
+    title: t("session.still_loading_title"),
+    description: t("session.still_loading_detail"),
+  };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }

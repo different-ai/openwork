@@ -217,6 +217,81 @@ export async function workspaceNewTask(seed: Seed) {
   return oneWorkspace(seed, `openwork-kitchen-vercel-env-hit-target-${Date.now()}`);
 }
 
+// TODO(primitive): seed.workspace should resolve only after the workspace's first session load settles; until then session.create_task returns no id (#4364).
+async function waitForWorkspaceSessionsLoaded(
+  seed: Seed,
+  app: Awaited<ReturnType<Seed["desktop"]>>,
+  workspaceId: string,
+  timeoutMs = 60_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastState: unknown = null;
+  while (Date.now() < deadline) {
+    lastState = await seed.evalIn(app, `(workspaceId) => {
+      const route = window.__openwork?.slice?.("route");
+      const workspace = (route?.workspaces ?? []).find((item) => item.id === workspaceId);
+      return workspace ? { exists: true, loading: workspace.loading } : { exists: false, loading: null };
+    }`, { args: [workspaceId] });
+    if (isRecord(lastState) && lastState.exists === true && lastState.loading === false) return;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`Workspace ${workspaceId} did not finish its first session load within ${timeoutMs}ms. Last state: ${JSON.stringify(lastState)}`);
+}
+
+export async function pinnedSessions(seed: Seed) {
+  const app = await seed.desktop({ name: "pinned-sessions-exposed" });
+  const workspacePath = seed.tmpPath("pinned-sessions-exposed");
+  const workspace = await seed.workspace(app, workspacePath);
+  await waitForWorkspaceSessionsLoaded(seed, app, workspace.workspaceId);
+  const [candidate, neighbor] = await seed.sessions(app, ["Candidate session", "Neighbor session"]);
+  if (!candidate || !neighbor) throw new Error("Pinned world did not create both sessions.");
+
+  // TODO(primitive): probe.context should expose the OpenWork context snapshot.
+  async function context(): Promise<{ pinnedSessionIds: string[]; pinnedResourceRefs: string[] }> {
+    const value = await seed.evalIn(app, `(() => {
+      const c = window.__openworkControl?.context?.();
+      return {
+        pinnedSessionIds: c?.conversations?.pinnedSessionIds ?? null,
+        pinnedResourceRefs: (c?.resources ?? [])
+          .filter((r) => r.kind === "session" && r.state?.pinned === true)
+          .map((r) => r.ref),
+      };
+    })()`);
+    if (!isRecord(value)
+      || !Array.isArray(value.pinnedSessionIds)
+      || !value.pinnedSessionIds.every((id) => typeof id === "string")
+      || !Array.isArray(value.pinnedResourceRefs)
+      || !value.pinnedResourceRefs.every((ref) => typeof ref === "string")) {
+      throw new Error(`OpenWork context pin state was malformed: ${JSON.stringify(value)}`);
+    }
+    return {
+      pinnedSessionIds: value.pinnedSessionIds,
+      pinnedResourceRefs: value.pinnedResourceRefs,
+    };
+  }
+
+  // TODO(primitive): probe.sidebar complements user.see({ text: "Pinned" }) by exposing which rows the section contains.
+  async function pinnedSidebarRows(): Promise<string[] | null> {
+    const value = await seed.evalIn(app, `(() => {
+      const section = document.querySelector("[data-global-pinned-sessions]");
+      if (!section) return null;
+      return [...section.querySelectorAll("[data-sidebar-session-id]")]
+        .map((row) => row.getAttribute("data-sidebar-session-id"));
+    })()`);
+    if (value === null) return null;
+    if (!Array.isArray(value) || !value.every((sessionId) => typeof sessionId === "string")) {
+      throw new Error(`Global pinned sidebar rows were malformed: ${JSON.stringify(value)}`);
+    }
+    return value;
+  }
+
+  return { app, workspace, workspacePath, candidate, neighbor, context, pinnedSidebarRows };
+}
+
+export async function commandPaletteSearch(seed: Seed) {
+  return oneWorkspace(seed, `command-palette-search-${Date.now()}`);
+}
+
 export async function archiveSessions(seed: Seed) {
   const stamp = `${Date.now()}-${process.pid}`;
   const app = await seed.desktop({ name: "session-archive-button" });

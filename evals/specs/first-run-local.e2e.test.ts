@@ -40,13 +40,24 @@ test("first use without an invite or cloud reaches local task UI with honest mod
     return;
   }
 
-  await step("Run the first task", async () => {
+  await step("Run the first task or hear honestly why the free model can't", async () => {
     await user.click("Run task");
     await user.see({ text: prompt }, { timeoutMs: 30_000 });
-    await probe.eventually(
-      async () => (await probe.composer()).assistantMessageCount,
-      { within: 180_000, label: "assistant reply", until: (count) => count > 0 },
+    const outcome = await probe.eventually(
+      async () => {
+        const composer = await probe.composer();
+        if (composer.assistantMessageCount > 0) return "replied";
+        const busy = await probe.has("The free starter model is busy right now");
+        return busy ? "free-model-busy" : null;
+      },
+      { within: 180_000, label: "assistant reply or honest free-model notice", until: (value) => value !== null },
     );
-    expect((await probe.composer()).assistantMessageCount).toBeGreaterThan(0);
+    expect(outcome === "replied" || outcome === "free-model-busy").toBe(true);
+    if (outcome === "free-model-busy") {
+      await user.see({ text: "The free starter model is busy right now" });
+    }
+    await user.notSee({ text: /subscribe to Go/i });
+    await user.notSee({ text: /Error from provider/ });
+    await user.notSee({ text: /Something went wrong/ });
   });
 });

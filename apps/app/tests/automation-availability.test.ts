@@ -25,10 +25,11 @@ describe("Automations availability", () => {
     expect(availability).toContain("!loading && config.automationsEnabled === true")
   })
 
-  test("the shell gates route, Den probe, and navigation on runtime and deployment availability", () => {
+  test("the shell gates route, Den probe, and navigation on deployment availability for Desktop and Web alike", () => {
     const source = read("src/react-app/shell/session-route.tsx")
     expect(source).toContain("const automationDeploymentEnabled = useAutomationDeploymentEnabled()")
-    expect(source).toContain("const automationsEnabled = isDesktopRuntime() && automationDeploymentEnabled")
+    expect(source).toContain("const automationsEnabled = automationDeploymentEnabled")
+    expect(source).not.toContain("isDesktopRuntime() && automationDeploymentEnabled")
     expect(source).not.toContain("featureFlags?.automations")
     expect(source).toContain("automationsEnabled && automationsRouteRequested")
     expect(source).toContain("!automationsEnabled || !denAuth.isSignedIn")
@@ -66,8 +67,30 @@ describe("Automations availability", () => {
     expect(proposal).toContain("data-automation-model-resolution")
   })
 
-  test("the automations capability stays desktop-only", () => {
+  test("the creating surface fixes placement: Desktop stays local, every browser runtime is Cloud", () => {
+    const availability = read("src/react-app/domains/automations/automation-availability.ts")
+    expect(availability).toContain('return isDesktopRuntime() ? "desktop" : "cloud"')
+
+    const page = read("src/react-app/domains/automations/automations-page.tsx")
+    expect(page).toContain("const placement = automationCreationPlacement()")
+    expect(page).toContain('placement === "cloud"\n                ? await client.createCloudAutomation(organizationId, {')
+    expect(page).toContain(": await client.createAutomation(organizationId, {")
+    // The free Zen starter is a published-Desktop exception that Cloud revalidation rejects.
+    expect(page).toContain('includeFreeStarter: placement === "desktop" && !zenModelRestricted && freeStarterInRuntime')
+
+    const proposal = read("src/components/tools/openwork-automation-proposal.tsx")
+    expect(proposal).toContain("const placement = automationCreationPlacement()")
+    expect(proposal).toContain('placement === "cloud"\n        ? await client.createCloudAutomation(organizationId, {')
+  })
+
+  test("the desktop runner never registers from a browser runtime", () => {
+    const bridge = read("src/react-app/domains/automations/automation-runner-bridge.tsx")
+    expect(bridge).toContain("if (!isDesktopRuntime() || !window.__OPENWORK_ELECTRON__?.invokeDesktop) return")
+  })
+
+  test("the automations capability is listed for every runtime", () => {
     const controls = read("src/react-app/shell/control/control-provider.tsx")
-    expect(controls).toContain("...(isDesktopRuntime()")
+    expect(controls).toContain('{ id: "automations", label: "Automations", description: "Schedule recurring tasks and background agents." }')
+    expect(controls).not.toContain("...(isDesktopRuntime()\n            ? [{ id: \"automations\"")
   })
 })

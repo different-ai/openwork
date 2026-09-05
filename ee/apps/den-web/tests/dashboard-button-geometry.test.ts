@@ -13,4 +13,14 @@ describe("dashboard button geometry", () => {
     expect(source).toContain("rounded-lg");
     expect(source).not.toContain("rounded-full");
   });
+
+  test("shared action primitives keep labels on one line", () => {
+    const source = readFileSync(buttonPath, "utf8");
+
+    const baseClassLists = source.match(/"[^"]*rounded-lg font-medium transition-colors"/g) ?? [];
+    expect(baseClassLists.length).toBe(2);
+    for (const classList of baseClassLists) {
+      expect(classList).toContain("whitespace-nowrap");
+    }
+  });
 });

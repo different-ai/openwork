@@ -36,6 +36,7 @@ import {
   threadStatusesSchema,
   threadTodosSchema,
   toSnapshot,
+  toStatus,
   toThread,
 } from "./wire.js";
 
@@ -188,7 +189,8 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
       "GET",
       statusPath,
     );
-    return statuses[threadId] ?? { type: "idle" };
+    const status = statuses[threadId];
+    return status === undefined ? { type: "idle" } : toStatus(status);
   }
 
   async function getThreadSnapshot(
@@ -210,7 +212,7 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     const session = sdkJson(sessionSchema, sessionResult, "GET", sessionPath);
     const messages = sdkJson(threadMessagesSchema, messagesResult, "GET", messagesPath);
     const todos = sdkJson(threadTodosSchema, todosResult, "GET", todosPath);
-    return toSnapshot(threadSnapshotSchema.parse({ session, messages, todos, status }));
+    return toSnapshot(threadSnapshotSchema.parse({ session, messages, todos }), status);
   }
 
   async function createThread(input: CreateThreadInput): Promise<HeadlessThread> {

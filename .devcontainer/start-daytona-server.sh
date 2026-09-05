@@ -14,6 +14,20 @@ fi
 
 cd "$REPO_DIR"
 
+# Per-test Den env from the eval harness (base64 KEY=VALUE lines, one per
+# line). Exported first so a caller's value wins over the defaults below.
+if [ -n "${OPENWORK_DEN_EXTRA_ENV_B64:-}" ]; then
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    case "$line" in
+      [A-Z_]*=*) export "$line" ;;
+      *) echo "ERROR: invalid Den env line from OPENWORK_DEN_EXTRA_ENV_B64." >&2; exit 1 ;;
+    esac
+  done <<EOF_EXTRA_ENV
+$(printf %s "$OPENWORK_DEN_EXTRA_ENV_B64" | base64 -d)
+EOF_EXTRA_ENV
+fi
+
 DEN_API_PORT="${DEN_API_PORT:-8788}"
 DEN_WEB_PORT="${DEN_WEB_PORT:-3005}"
 PNPM_STORE="${PNPM_STORE:-$REPO_DIR/.openwork-daytona/pnpm-store}"
@@ -70,6 +84,10 @@ esac
 # so desktop handoff links point at the den-web /api/den proxy.
 export DEN_WEB_APP_HOSTS="${DEN_WEB_APP_HOSTS:-${PREVIEW_PROXY_WILDCARD:+.${PREVIEW_PROXY_HOST#*.}}}"
 export DEN_BETTER_AUTH_TRUSTED_ORIGINS="${DEN_BETTER_AUTH_TRUSTED_ORIGINS:-$CORS_ORIGINS${PREVIEW_PROXY_WILDCARD:+,$PREVIEW_PROXY_WILDCARD}}"
+# The Daytona preview proxy answers CORS itself, reflecting the caller's
+# origin on every response. den-api's own headers would then be duplicates,
+# which browsers reject, so den-web-in-a-browser could never reach den-api.
+export DEN_CORS_HANDLED_BY_EDGE="${DEN_CORS_HANDLED_BY_EDGE:-${PREVIEW_PROXY_WILDCARD:+true}}"
 
 run_root() {
   if [ "$(id -u)" -eq 0 ]; then
@@ -220,7 +238,7 @@ if [ "${RUN_SEED:-0}" = "1" ]; then
       BETTER_AUTH_URL="$BETTER_AUTH_URL" \
       DEN_API_PUBLIC_URL="$DEN_API_PUBLIC_URL" \
       DEN_ORG_MODE="$DEN_ORG_MODE" \
-      OPENWORK_DEV_MODE="$OPENWORK_DEV_MODE" \
+      OPENWORK_DEV_MODE=1 \
       DEN_DEMO_SEED_FETCH_GITHUB="${DEN_DEMO_SEED_FETCH_GITHUB:-0}" \
       node --conditions=development --import tsx scripts/seed-demo-org.ts) > /tmp/den-seed.log 2>&1
     if signin_ok; then
