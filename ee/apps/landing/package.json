@@ -18,7 +18,8 @@
     "lucide-react": "^0.577.0",
     "next": "15.5.21",
     "react": "catalog:react18",
-    "react-dom": "catalog:react18"
+    "react-dom": "catalog:react18",
+    "@openwork/types": "workspace:*"
   },
   "devDependencies": {
     "@types/bun": "^1.3.6",

@@ -1,3 +1,5 @@
+import { sanitizeDiagnosticString } from "@openwork/types/diagnostic-sanitizer";
+
 const ENV_FEEDBACK_URL = String(import.meta.env.VITE_OPENWORK_FEEDBACK_URL ?? "").trim();
 const ENV_APP_VERSION = String(import.meta.env.VITE_OPENWORK_APP_VERSION ?? "").trim();
 
@@ -85,7 +87,7 @@ export function buildFeedbackUrl(options: FeedbackUrlOptions): string {
   const osContext = parseClientOsContext();
 
   url.searchParams.set("source", "openwork-app");
-  url.searchParams.set("entrypoint", options.entrypoint);
+  url.searchParams.set("entrypoint", sanitizeDiagnosticString(options.entrypoint));
 
   const entries = {
     deployment: options.deployment?.trim() ?? "",
@@ -99,7 +101,7 @@ export function buildFeedbackUrl(options: FeedbackUrlOptions): string {
 
   for (const [key, value] of Object.entries(entries)) {
     if (value) {
-      url.searchParams.set(key, value);
+      url.searchParams.set(key, sanitizeDiagnosticString(value));
     }
   }
 

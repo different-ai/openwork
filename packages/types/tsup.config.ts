@@ -3,6 +3,7 @@ import { defineConfig } from "tsup"
 export default defineConfig({
   entry: {
     index: "src/index.ts",
+    "diagnostic-sanitizer": "src/diagnostic-sanitizer.ts",
     "agent-context-diagnostics": "src/agent-context-diagnostics.ts",
     "openwork-affordance": "src/openwork-affordance.ts",
     "openwork-context": "src/openwork-context.ts",

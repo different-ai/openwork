@@ -1,3 +1,4 @@
+import { sanitizeDiagnosticString } from "@openwork/types/diagnostic-sanitizer";
 import { buildResponseHeaders, jsonResponse, rateLimitFormRequest, validateAntiSpamFields, validateTrustedOrigin, verifyFormBotProtection } from "../_lib/security";
 import { EmailSendError, sendEmail, type FeedbackEmailProps } from "@openwork/email";
 
@@ -26,7 +27,7 @@ type FeedbackPayload = {
 const DEFAULT_INTERNAL_FEEDBACK_EMAIL = "team@openworklabs.com";
 
 function sanitizeValue(value: unknown, maxLength = 240) {
-  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+  return typeof value === "string" ? sanitizeDiagnosticString(value.trim()).slice(0, maxLength) : "";
 }
 
 function sanitizeContext(input: FeedbackContext | undefined) {
@@ -106,8 +107,8 @@ export async function POST(request: Request) {
   }
 
   const message = sanitizeValue(payload.message, 5000);
-  const name = sanitizeValue(payload.name, 120);
-  const email = sanitizeValue(payload.email, 240);
+  const name = typeof payload.name === "string" ? payload.name.trim().slice(0, 120) : "";
+  const email = typeof payload.email === "string" ? payload.email.trim().slice(0, 240) : "";
   const mode = sanitizeValue(payload.mode, 40) === "contact" ? "contact" : "feedback";
 
   if (!name) {
