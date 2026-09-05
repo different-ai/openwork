@@ -87,7 +87,15 @@ jobs:
       - name: Verify native Google refresh recovery
         env:
           OPENWORK_EVAL_NATIVE_GOOGLE_REFRESH: '1'
-        run: pnpm evals:pr specs/native-google-refresh-recovery.test.ts
+        run: |
+          pnpm evals:pr specs/native-google-refresh-recovery.test.ts
+          node --input-type=module <<'NODE'
+          import { readdirSync, readFileSync } from "node:fs";
+          const root = "evals/results/test-runs";
+          const runs = readdirSync(root).filter(name => name.includes("native-google-refresh")).map(name =>
+            JSON.parse(readFileSync(`${root}/${name}/test-run.json`, "utf8")));
+          if (runs.length !== 1 || runs[0].outcome !== "passed") throw new Error("Native Google refresh proof must execute and pass; skips are not proof.");
+          NODE
       - name: Upload native Google refresh evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -284,7 +292,7 @@ jobs:
   # Single stable context for branch rulesets to require. Green only when
   # the lane selected by classification succeeds; always reports.
   openwork-tests-required:
-    needs: [classify-changes, openwork-tests-core, openwork-tests-build, validate-models-snapshot, validate-docs]
+    needs: [classify-changes, openwork-tests-core, openwork-tests-build, native-google-refresh, validate-models-snapshot, validate-docs]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -294,12 +302,14 @@ jobs:
           LANE: ${{ needs.classify-changes.outputs.lane }}
           CORE_RESULT: ${{ needs.openwork-tests-core.result }}
           BUILD_RESULT: ${{ needs.openwork-tests-build.result }}
+          GOOGLE_REFRESH_RESULT: ${{ needs.native-google-refresh.result }}
           SNAPSHOT_RESULT: ${{ needs.validate-models-snapshot.result }}
           DOCS_RESULT: ${{ needs.validate-docs.result }}
         run: |
           echo "classification: $CLASSIFY_RESULT ($LANE)"
           echo "core product regressions: $CORE_RESULT"
           echo "packaging and IPC contract: $BUILD_RESULT"
+          echo "native Google refresh: $GOOGLE_REFRESH_RESULT"
           echo "snapshot validation: $SNAPSHOT_RESULT"
           echo "docs validation: $DOCS_RESULT"
 
@@ -310,13 +320,13 @@ jobs:
 
           case "$LANE" in
             full)
-              [ "$CORE_RESULT" = "success" ] && [ "$BUILD_RESULT" = "success" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] && [ "$DOCS_RESULT" = "skipped" ] || exit 1
+              [ "$CORE_RESULT" = "success" ] && [ "$BUILD_RESULT" = "success" ] && [ "$GOOGLE_REFRESH_RESULT" = "success" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] && [ "$DOCS_RESULT" = "skipped" ] || exit 1
               ;;
             snapshot)
-              [ "$SNAPSHOT_RESULT" = "success" ] && [ "$CORE_RESULT" = "skipped" ] && [ "$BUILD_RESULT" = "skipped" ] && [ "$DOCS_RESULT" = "skipped" ] || exit 1
+              [ "$SNAPSHOT_RESULT" = "success" ] && [ "$CORE_RESULT" = "skipped" ] && [ "$BUILD_RESULT" = "skipped" ] && [ "$GOOGLE_REFRESH_RESULT" = "skipped" ] && [ "$DOCS_RESULT" = "skipped" ] || exit 1
               ;;
             docs)
-              [ "$DOCS_RESULT" = "success" ] && [ "$CORE_RESULT" = "skipped" ] && [ "$BUILD_RESULT" = "skipped" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] || exit 1
+              [ "$DOCS_RESULT" = "success" ] && [ "$CORE_RESULT" = "skipped" ] && [ "$BUILD_RESULT" = "skipped" ] && [ "$GOOGLE_REFRESH_RESULT" = "skipped" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] || exit 1
               ;;
             *)
               echo "Changed-file classification returned an unexpected value; blocking merge." >&2
