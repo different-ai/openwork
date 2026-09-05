@@ -335,6 +335,7 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
       }));
       const applied = workspaceMcp.get(directory) ?? new Map<string, string>();
       workspaceMcp.set(directory, applied);
+      let changed = false;
       // Remove first so a failed replacement cannot leave an old credential or
       // revoked tool active. Only touch registrations owned by this mirror.
       for (const [name, fingerprint] of applied) {
@@ -344,6 +345,7 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
         });
         if (result.status !== 204 && result.status !== 404) throw new Error(`OpenCode v2 MCP removal failed (${result.status})`);
         applied.delete(name);
+        changed = true;
       }
       for (const [name, mcpConfig] of desired) {
         const fingerprint = JSON.stringify(mcpConfig);
@@ -353,10 +355,39 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
         });
         if (result.status !== 204) throw new Error(`OpenCode v2 MCP registration failed (${result.status})`);
         applied.set(name, fingerprint);
+        changed = true;
+      }
+      if (changed) {
+        const deadline = Date.now() + 30_000;
+        while (true) {
+          const result = await active.fetchJson("/api/mcp", { directory, timeoutMs: 5_000 });
+          const entries = isRecord(result.json) ? result.json.data : undefined;
+          if (result.status !== 200 || !Array.isArray(entries)) throw new Error("OpenCode v2 MCP status is unavailable");
+          const pending = [...desired.keys()].some((name) => entries.some((entry) =>
+            isRecord(entry) && entry.name === name && isRecord(entry.status) && entry.status.status === "pending"));
+          if (!pending) break;
+          if (Date.now() >= deadline) {
+            // Retry readiness on the next request rather than cache an
+            // acknowledged registration as usable before its tools exist.
+            throw new Error("OpenCode v2 MCP connections did not settle");
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        // The pinned beta batches MCP ToolsChanged events for 100ms after
+        // connection startup. Admission must follow that registry refresh,
+        // not merely the PUT acknowledgement or connected status.
+        await new Promise((resolve) => setTimeout(resolve, 250));
       }
     })();
     mcpInFlight.set(directory, pending);
     try { await pending; }
+    catch (error) {
+      // Retain ownership for removals, but never cache a failed readiness
+      // attempt as an applied configuration.
+      const applied = workspaceMcp.get(directory);
+      if (applied) for (const name of applied.keys()) applied.set(name, "");
+      throw error;
+    }
     finally { if (mcpInFlight.get(directory) === pending) mcpInFlight.delete(directory); }
   }
 
