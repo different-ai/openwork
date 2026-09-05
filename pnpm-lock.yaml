@@ -349,6 +349,9 @@ importers:
       '@openwork/types':
         specifier: workspace:*
         version: link:../../packages/types
+      '@openwork/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
       better-sqlite3:
         specifier: ^13.0.2
         version: 13.0.2
