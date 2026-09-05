@@ -349,6 +349,8 @@ export function BillingDashboardScreen() {
   const aiCancelling = stripeBilling?.subscription?.cancelAtPeriodEnd === true;
 
   const seatsActive = seatBilling?.hasActiveSubscription === true;
+  const seatsCancelling = seatsActive && seatBilling?.subscription?.cancelAtPeriodEnd === true;
+  const seatsEndDate = formatBillingDate(seatBilling?.subscription?.currentPeriodEnd ?? null);
   const freeSeatCount = seatBilling?.freeSeatCount ?? 0;
   const billableSeatCount = seatBilling?.billableSeatCount ?? 0;
   const seatChargeMinor = seatBilling ? seatBilling.unitAmount * billableSeatCount : 0;
@@ -700,11 +702,23 @@ export function BillingDashboardScreen() {
           action={
             !seatsConfigured
               ? <DenBadge tone="neutral">Not billed</DenBadge>
+              : seatsCancelling
+                ? <DenBadge tone="warning">Cancellation scheduled</DenBadge>
               : seatsActive
                 ? <DenBadge tone="success" icon={Check}>Active</DenBadge>
                 : <DenBadge tone="neutral">Included</DenBadge>
           }
         />
+
+        {seatsCancelling ? (
+          <DenNotice
+            tone="warning"
+            className="mt-5"
+            message={seatsEndDate
+              ? `Seat billing ends ${seatsEndDate}. Your subscription will not renew.`
+              : "Cancellation scheduled. Your subscription will not renew after the current paid period."}
+          />
+        ) : null}
 
         <DenNotice
           tone="neutral"
