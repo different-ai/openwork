@@ -17,9 +17,11 @@
     "lint:layers": "depcruise --config .dependency-cruiser.cjs --ignore-known .dependency-cruiser-known-violations.json packages specs worlds bin docs-shots runner scripts",
     "test": "pnpm run lint:layers && node scripts/spec-channel-ratchet.mjs && node scripts/spec-boundary-ratchet.mjs && node --test runner/*.test.ts packages/*/test/*.test.ts bin/*.test.mjs scripts/*.test.mjs",
     "typecheck": "tsc -p .",
-    "typecheck:spec-layer": "tsc -p tsconfig.primitives.json"
+    "typecheck:spec-layer": "tsc -p tsconfig.primitives.json",
+    "test:core": "vitest run --config vitest.config.ts --project pr specs/thread-approvals-replay.test.ts specs/effective-permissions-attribution.test.ts specs/pdf-attachments-model-routing.test.ts"
   },
   "dependencies": {
+    "@openwork/sdk": "link:../packages/sdk",
     "@openwork/behaviors": "workspace:*",
     "@openwork/cdp": "workspace:*",
     "@openwork/env": "workspace:*",

@@ -81,24 +81,24 @@ describe("cloud super-admin role hierarchy", () => {
   });
 
   test("exposes exact admin sidebar destinations for Manage, Observability, and Team", () => {
-    const shell = read("../app/(den)/dashboard/_components/org-dashboard-shell.tsx");
+    const navigation = read("../app/(den)/dashboard/_lib/dashboard-navigation.ts");
 
     for (const label of ["Plugin Directory", "Connectors", "Tool Tester", "Models", "OpenWork Models", "Bring your Own Keys", "Advanced", "Workflow Runs", "Analytics", "Members", "Settings"]) {
-      expect(shell).toContain(`label: "${label}"`);
+      expect(navigation).toContain(`label: "${label}"`);
     }
 
     for (const label of ["General", "Diagnostics", "Billing", "API Keys", "SSO", "SCIM"]) {
-      expect(shell).toContain(`label: "${label}"`);
+      expect(navigation).toContain(`label: "${label}"`);
     }
 
-    expect(shell).toContain('label: "Work"');
-    expect(shell).toContain('label: "Manage"');
-    expect(shell).toContain('label: "Observability"');
-    expect(shell).toContain('label: "Team"');
-    expect(shell).not.toContain('label: "Extensions"');
-    expect(shell).not.toContain('label: "Your Connections"');
-    expect(shell).toContain("access.canViewSettings");
-    expect(shell).toContain("access.isAdmin && activeOrg");
+    expect(navigation).toContain('label: "Work"');
+    expect(navigation).toContain('label: "Manage"');
+    expect(navigation).toContain('label: "Observability"');
+    expect(navigation).toContain('label: "Team"');
+    expect(navigation).not.toContain('label: "Extensions"');
+    expect(navigation).not.toContain('label: "Your Connections"');
+    expect(navigation).toContain("access.canViewSettings");
+    expect(navigation).toContain("access.isAdmin && orgSlug");
   });
 
   test("keeps admins read-only across Settings while super-admins inherit mutation flags", () => {

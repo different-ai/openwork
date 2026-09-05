@@ -1,6 +1,9 @@
-import type { DesktopPolicyKey } from "@openwork/types/den/desktop-policies";
+import {
+  desktopPolicyUserNotices,
+  type DesktopPolicyKey,
+} from "@openwork/types/den/desktop-policies";
 import type { DenDesktopConfig } from "../lib/den";
-import type { ModelRef } from "../types";
+import type { ModelRef, SettingsTab } from "../types";
 
 export type DesktopAppRestrictionKey = DesktopPolicyKey;
 
@@ -15,6 +18,29 @@ export function checkDesktopAppRestriction(input: {
   restriction: DesktopAppRestrictionKey;
 }) {
   return input.config?.[input.restriction] === false;
+}
+
+/** Catalog copy explaining why the organization blocked a capability. */
+export function desktopRestrictionNotice(restriction: DesktopAppRestrictionKey) {
+  return desktopPolicyUserNotices[restriction];
+}
+
+/**
+ * Settings tabs that stay reachable when `allowControlSettings` is blocked.
+ * Members can still see their Cloud account, switch organizations, and use
+ * Cloud features that are not desktop settings; every other tab is hidden and
+ * redirected.
+ */
+const SETTINGS_TABS_WITHOUT_CONTROL = new Set<SettingsTab>(["cloud-account"]);
+
+export const SETTINGS_TAB_WITHOUT_CONTROL: SettingsTab = "cloud-account";
+
+export function isSettingsTabAllowed(input: {
+  tab: SettingsTab;
+  checkRestriction: DesktopAppRestrictionChecker;
+}) {
+  if (!input.checkRestriction({ restriction: "allowControlSettings" })) return true;
+  return SETTINGS_TABS_WITHOUT_CONTROL.has(input.tab);
 }
 
 export function isDesktopProviderBlocked(input: {

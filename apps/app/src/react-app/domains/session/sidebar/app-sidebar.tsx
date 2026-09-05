@@ -49,7 +49,8 @@ import {
   isWindowsPlatform,
 } from "../../../../app/utils";
 import { t } from "../../../../i18n";
-import { useBrandLogoUrl } from "../../cloud/brand-theme";
+import { resolveExtensionIconSrc } from "../../../design-system/extension-icon-src";
+import { useBrandAppName, useBrandLogoUrl } from "../../cloud/brand-theme";
 import { canCreateWorkspaces } from "../../../../app/lib/workspace-creation-policy";
 
 import {
@@ -160,9 +161,10 @@ import { SessionTitle } from "./session-title";
 const OUTCOME_DOT_UNREAD = "#2FBE54";
 const OUTCOME_DOT_NEEDS_ACTION = "#E8933A";
 
-interface SessionLoadingIndicatorProps {
+interface SessionStatusIndicatorProps {
   status?: string;
   isActiveWork: boolean;
+  isUnread: boolean;
 }
 
 function ShowMoreSessionsButton({
@@ -186,32 +188,23 @@ function ShowMoreSessionsButton({
   );
 }
 
-/** Glyph-lane activity only — never used for unread / completion. */
-function SessionLoadingIndicator({ status, isActiveWork }: SessionLoadingIndicatorProps) {
-  if (!isActiveWork) return <SidebarGlyphSlot />;
-
-  const title = isSessionActivityStatus(status) && status !== "idle"
-    ? getSessionActivityStatusLabel(status)
-    : t("workspace_list.session_streaming");
-
+/** Activity and outcomes share the fixed glyph slot before the session title. */
+function SessionStatusIndicator({ status, isActiveWork, isUnread }: SessionStatusIndicatorProps) {
   return (
     <SidebarGlyphSlot>
-      <SessionDotMatrixLoader label={title} />
+      {isActiveWork ? (
+        <SessionDotMatrixLoader label={isSessionActivityStatus(status) && status !== "idle"
+          ? getSessionActivityStatusLabel(status)
+          : t("workspace_list.session_streaming")} />
+      ) : (
+        <SessionOutcomeIndicator status={status} isUnread={isUnread} />
+      )}
     </SidebarGlyphSlot>
   );
 }
 
-interface SessionOutcomeIndicatorProps {
-  className?: string;
-  status?: string;
-  isActiveWork: boolean;
-  isUnread: boolean;
-}
-
-/** Right-edge outcome: orange = needs you, green = unread result, none = read/idle. */
-function SessionOutcomeIndicator({ className, status, isActiveWork, isUnread }: SessionOutcomeIndicatorProps) {
-  if (isActiveWork) return null;
-
+/** Orange = needs you, green = unread result, none = read/idle. */
+function SessionOutcomeIndicator({ status, isUnread }: { status?: string; isUnread: boolean }) {
   if (isNeedsAttentionSessionStatus(status)) {
     const title = isSessionActivityStatus(status)
       ? getSessionActivityStatusLabel(status)
@@ -219,7 +212,7 @@ function SessionOutcomeIndicator({ className, status, isActiveWork, isUnread }: 
     return (
       <span
         data-session-attention-indicator
-        className={cn("size-2 shrink-0 rounded-full", className)}
+        className="size-2 shrink-0 rounded-full"
         style={{ backgroundColor: OUTCOME_DOT_NEEDS_ACTION }}
         title={title}
         aria-label={title}
@@ -232,7 +225,7 @@ function SessionOutcomeIndicator({ className, status, isActiveWork, isUnread }: 
   return (
     <span
       data-session-attention-indicator
-      className={cn("size-2 shrink-0 rounded-full", className)}
+      className="size-2 shrink-0 rounded-full"
       style={{ backgroundColor: OUTCOME_DOT_UNREAD }}
       title={t("workspace_list.session_unread")}
       aria-label={t("workspace_list.session_unread")}
@@ -1069,6 +1062,7 @@ export function AppSidebar(props: AppSidebarProps) {
   };
 
   const brandLogoUrl = useBrandLogoUrl();
+  const brandAppName = useBrandAppName();
   const pinnedIds = useSessionManagementStore((state) => state.pinnedIds);
   const pinnedSessions = React.useMemo(() => {
     const sessionsById = new Map<string, GlobalPinnedSessionEntry>();
@@ -1111,7 +1105,12 @@ export function AppSidebar(props: AppSidebarProps) {
               className="max-h-9 w-auto max-w-[140px] object-contain object-left"
             />
           </div>
-        ) : null}
+        ) : (
+          <div data-sidebar-brand className="flex h-11 shrink-0 items-center gap-2 px-4 mac:titlebar-drag">
+            <img src={resolveExtensionIconSrc("/openwork-mark.svg")} alt="" className="size-5 shrink-0 object-contain dark:invert" />
+            <span className="truncate text-[15px] font-medium tracking-[-0.4px]" title={brandAppName}>{brandAppName}</span>
+          </div>
+        )}
         {props.conversationHistory ? (
           <div
             className="flex shrink-0 items-center justify-end gap-0.5 px-2 pb-1 max-lg:hidden mac:absolute mac:right-1.5 mac:top-[7px] mac:z-50 mac:p-0 mac:titlebar-no-drag"
@@ -1150,6 +1149,7 @@ export function AppSidebar(props: AppSidebarProps) {
               <SidebarMenuButton
                 type="button"
                 data-sidebar-new-chat
+                className="bg-sidebar-accent font-medium text-sidebar-accent-foreground"
                 aria-label={t("session.new_task")}
                 tooltip={t("session.new_task")}
                 disabled={props.newTaskDisabled}
@@ -1157,6 +1157,20 @@ export function AppSidebar(props: AppSidebarProps) {
               >
                 <SquarePen className="size-4" />
                 <span className="flex-1 truncate">{t("session.new_task")}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                type="button"
+                data-sidebar-new-split
+                className="text-sidebar-foreground/60"
+                aria-label={t("session_management.split_view")}
+                tooltip={t("session_management.split_view")}
+                disabled={props.newTaskDisabled}
+                onClick={() => props.onCreateSplitTaskInWorkspace(props.selectedWorkspaceId)}
+              >
+                <Columns2 className="size-4" />
+                <span className="flex-1 truncate">{t("session_management.split_view")}</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
             {props.onOpenSessionSearch ? (
@@ -1225,7 +1239,7 @@ export function AppSidebar(props: AppSidebarProps) {
             data-slot="sidebar-content"
             data-sidebar="content"
             data-session-number-modifier-held={props.sessionNumberShortcuts.modifierHeld ? "true" : undefined}
-            className="no-scrollbar flex min-h-0 flex-1 flex-col gap-0 overflow-auto [--radius:var(--radius-md)] group-data-[collapsible=icon]:overflow-hidden"
+            className="no-scrollbar flex min-h-0 flex-1 flex-col gap-0 overflow-x-hidden overflow-y-auto [--radius:var(--radius-md)] group-data-[collapsible=icon]:overflow-hidden"
           >
             {pinnedSessions.length > 0 ? (
               <GlobalPinnedSessions entries={pinnedSessions} />
@@ -2315,17 +2329,11 @@ function SessionMenuItem({
   // Pinned/archived rows identify their workspace via the tooltip title
   // only — no workspace color dot in these sections.
   const leading = (
-    <SessionLoadingIndicator status={sessionActivityStatus} isActiveWork={resolvedActiveWork} />
+    <SessionStatusIndicator status={sessionActivityStatus} isActiveWork={resolvedActiveWork} isUnread={isUnread} />
   );
 
   const trailing = (
     <>
-      <SessionOutcomeIndicator
-        className="absolute right-3 top-1/2 -translate-y-1/2 opacity-100 group-hover/menu-sub-item:opacity-0 max-lg:opacity-0 pointer-coarse:opacity-0 pointer-events-none select-none"
-        status={sessionActivityStatus}
-        isActiveWork={resolvedActiveWork}
-        isUnread={isUnread}
-      />
       <SessionHoverQuickActions
         sessionId={session.id}
         isPinned={isPinned}

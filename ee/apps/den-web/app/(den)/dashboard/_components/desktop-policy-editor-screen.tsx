@@ -5,8 +5,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Laptop } from "lucide-react";
 import {
+  applyRestrictedDesktopPolicy,
   desktopPolicyDefaults,
   desktopPolicyKeys,
+  isRestrictedDesktopPolicyValue,
   type DesktopPolicyDocumentWrite,
   type DesktopPolicyValue,
 } from "@openwork/types/den/desktop-policies";
@@ -14,7 +16,7 @@ import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-templ
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenTextarea } from "../../_components/ui/textarea";
-import { getDesktopPoliciesRoute, getMembersRoute, getOrgAccessFlags } from "../../_lib/den-org";
+import { getDesktopPoliciesRoute, getMembersRoute, getTeamRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
   createDesktopPolicy,
@@ -26,8 +28,11 @@ import {
 } from "./desktop-policy-data";
 import { EnterprisePlanNotice } from "./enterprise-plan-notice";
 
+type PolicyMode = "custom" | "restricted";
+
 type PolicyDraft = {
   policyName: string;
+  mode: PolicyMode;
   policy: Required<DesktopPolicyValue>;
   priority: number;
   onboardingPromptsEnabled: boolean;
@@ -40,6 +45,7 @@ type PolicyDraft = {
 
 const EMPTY_DRAFT: PolicyDraft = {
   policyName: "New desktop policy",
+  mode: "custom",
   policy: { ...desktopPolicyDefaults },
   priority: 0,
   onboardingPromptsEnabled: false,
@@ -49,6 +55,21 @@ const EMPTY_DRAFT: PolicyDraft = {
   teamIds: [],
   roles: [],
 };
+
+const POLICY_MODES: Array<{ id: PolicyMode; name: string; description: string }> = [
+  {
+    id: "custom",
+    name: "Custom",
+    description: "Choose each capability below.",
+  },
+  {
+    id: "restricted",
+    name: "Restricted",
+    description:
+      "Chat and organization-approved skills only. Locks the capabilities below so members cannot change desktop settings, add providers or models, add workspaces, or install extensions and MCP servers.",
+  },
+];
+const POLICY_MODE_HELP_ID = "desktop-policy-mode-help";
 
 const ONBOARDING_PROMPT_LABELS = ["First prompt", "Second prompt", "Optional third prompt"];
 const ONBOARDING_PROMPT_DESCRIPTION_MAX_LENGTH = 120;
@@ -65,9 +86,11 @@ function requiredPolicyValue(value: DesktopPolicyValue): Required<DesktopPolicyV
 function draftFromPolicy(policy: DenDesktopPolicy): PolicyDraft {
   const onboardingPrompts = policy.policy.onboardingPrompts ?? [];
   const onboardingPromptDescriptions = policy.policy.onboardingPromptDescriptions ?? [];
+  const policyValue = requiredPolicyValue(policy.policy);
   return {
     policyName: policy.policyName,
-    policy: requiredPolicyValue(policy.policy),
+    mode: isRestrictedDesktopPolicyValue(policyValue) ? "restricted" : "custom",
+    policy: policyValue,
     priority: policy.priority,
     onboardingPromptsEnabled: onboardingPrompts.length > 0,
     onboardingPromptTexts: [
@@ -236,6 +259,15 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
   const priorityError = getPriorityError(draft, isDefault);
   const disabledPromptCopy = getDisabledPromptCopy(isDefault);
   const formDisabled = saving || togglingEnabled || !canManage;
+  const restrictedMode = draft.mode === "restricted";
+
+  const handleSelectMode = (mode: PolicyMode) => {
+    setDraft({
+      ...draft,
+      mode,
+      policy: mode === "restricted" ? applyRestrictedDesktopPolicy(draft.policy) : draft.policy,
+    });
+  };
 
   const handleSave = async () => {
     if (!canManage) {
@@ -326,7 +358,7 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
     <DashboardPageTemplate
       icon={Laptop}
       title={isEditing ? "Edit desktop policy" : "New desktop policy"}
-      description="Default policy values apply org-wide. Other policies can grant access to specific users or teams."
+      description="Advanced app defaults and grants. Manage team modes and permissions from Team → Access."
       colors={["#F8FAFC", "#0F172A", "#38BDF8", "#A78BFA"]}
     >
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
@@ -353,6 +385,14 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
         <div className="rounded-[32px] border border-dashed border-gray-200 bg-white px-6 py-12 text-center text-[15px] text-gray-500">
           Desktop policy not found.
         </div>
+      ) : policy?.policy.access ? (
+        <section className="rounded-2xl border border-gray-200 bg-white p-6">
+          <h2 className="text-lg font-semibold">Managed in Team access</h2>
+          <p className="mt-2 text-sm text-gray-500">This configuration represents the team’s permissions. Change the mode and individual capabilities from the team’s Access page.</p>
+          {policy.assignments.flatMap((assignment) => assignment.teamId ? [
+            <DenButton key={assignment.teamId} className="mt-4" href={getTeamRoute(orgSlug, assignment.teamId)}>Open team access</DenButton>,
+          ] : [])}
+        </section>
       ) : !canView ? (
         <div className="rounded-[32px] border border-dashed border-gray-200 bg-white px-6 py-12 text-center text-[15px] text-gray-500">
           Only workspace admins can view desktop policies.
@@ -419,30 +459,72 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
             ) : null}
           </div>
 
+          <fieldset className="grid gap-3" aria-describedby={POLICY_MODE_HELP_ID} data-testid="desktop-policy-mode">
+            <legend className="text-[13px] font-medium text-gray-700">Policy mode</legend>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {POLICY_MODES.map((mode) => (
+                <label
+                  key={mode.id}
+                  className={`flex items-start gap-3 rounded-[22px] border px-5 py-4 ${
+                    draft.mode === mode.id ? "border-gray-900 bg-white" : "border-gray-200 bg-gray-50"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="desktop-policy-mode"
+                    className="mt-1 h-5 w-5"
+                    value={mode.id}
+                    checked={draft.mode === mode.id}
+                    onChange={() => handleSelectMode(mode.id)}
+                    disabled={formDisabled}
+                  />
+                  <span>
+                    <span className="block text-[14px] font-medium text-gray-950">{mode.name}</span>
+                    <span className="mt-1 block text-[13px] leading-6 text-gray-500">{mode.description}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            <p id={POLICY_MODE_HELP_ID} className="text-[12px] text-gray-500">
+              {restrictedMode
+                ? isDefault
+                  ? "Locked capabilities stay off until you switch back to Custom."
+                  : "Targeted policies only grant capabilities. Apply Restricted to the default policy to lock members down."
+                : "Switch to Restricted to lock every capability to its restricted value."}
+            </p>
+          </fieldset>
+
           <div className="grid gap-3">
-            {definitions.map((definition) => (
-              <label
-                key={definition.id}
-                className="flex items-start justify-between gap-4 rounded-[22px] border border-gray-200 bg-gray-50 px-5 py-4"
-              >
-                <span>
-                  <span className="block text-[14px] font-medium text-gray-950">{definition.name}</span>
-                  <span className="mt-1 block text-[13px] leading-6 text-gray-500">{definition.description}</span>
-                </span>
-                <input
-                  type="checkbox"
-                  className="mt-1 h-5 w-5"
-                  checked={draft.policy[definition.id] === true}
-                  onChange={(event) =>
-                    setDraft({
-                      ...draft,
-                      policy: { ...draft.policy, [definition.id]: event.target.checked },
-                    })
-                  }
-                  disabled={formDisabled}
-                />
-              </label>
-            ))}
+            {definitions.map((definition) => {
+              const locked = restrictedMode && definition.restrictedValue !== null;
+              return (
+                <label
+                  key={definition.id}
+                  className="flex items-start justify-between gap-4 rounded-[22px] border border-gray-200 bg-gray-50 px-5 py-4"
+                >
+                  <span>
+                    <span className="block text-[14px] font-medium text-gray-950">{definition.name}</span>
+                    <span className="mt-1 block text-[13px] leading-6 text-gray-500">{definition.description}</span>
+                    {locked ? (
+                      <span className="mt-1 block text-[12px] text-gray-500">Locked by Restricted mode.</span>
+                    ) : null}
+                  </span>
+                  <input
+                    type="checkbox"
+                    className="mt-1 h-5 w-5"
+                    data-desktop-policy-key={definition.id}
+                    checked={draft.policy[definition.id] === true}
+                    onChange={(event) =>
+                      setDraft({
+                        ...draft,
+                        policy: { ...draft.policy, [definition.id]: event.target.checked },
+                      })
+                    }
+                    disabled={formDisabled || locked}
+                  />
+                </label>
+              );
+            })}
           </div>
 
           <div className="grid gap-4 rounded-[22px] border border-gray-200 bg-gray-50 px-5 py-4">

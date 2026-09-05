@@ -1,10 +1,13 @@
 import { useSyncExternalStore } from "react";
 
+import { desktopRestrictionNotice, type DesktopAppRestrictionChecker } from "../../../app/cloud/desktop-app-restrictions";
+
 import { applyEdits, modify, parse, printParseErrorCode } from "jsonc-parser";
 
 import { t } from "../../../i18n";
 import {
   getMcpServerName,
+  isBuiltInOpenWorkExtension,
   MCP_QUICK_CONNECT,
   type McpDirectoryInfo,
 } from "../../../app/constants";
@@ -109,6 +112,7 @@ export type McpConnectResult =
   | { ok: false; error: string };
 
 export function createConnectionsStore(options: {
+  checkDesktopAppRestriction: DesktopAppRestrictionChecker;
   client: () => Client | null;
   setClient: (value: Client | null) => void;
   projectDir: () => string;
@@ -659,7 +663,31 @@ export function createConnectionsStore(options: {
     }
   }
 
+  function mcpMutationDenied(builtIn: boolean) {
+    const restriction = builtIn ? "allowBuiltInExtensions" : "allowManageExtensions";
+    if (!options.checkDesktopAppRestriction({ restriction })) return null;
+    const message = desktopRestrictionNotice(restriction);
+    setStateField("mcpStatus", message);
+    return message;
+  }
+
+  function builtInMcp(name: string) {
+    return MCP_QUICK_CONNECT.find((entry) =>
+      isBuiltInOpenWorkExtension(entry) && getMcpServerName(entry) === name,
+    );
+  }
+
   async function connectMcp(entry: McpDirectoryInfo): Promise<McpConnectResult> {
+    const builtIn = builtInMcp(getMcpServerName(entry));
+    // Use catalog configuration for built-ins; caller-supplied metadata must
+    // not turn an arbitrary URL or command into an allowed built-in.
+    if (builtIn) entry = builtIn;
+    // Cloud repair uses the signed-in organization's reconciler below, not
+    // caller-supplied MCP configuration. Existing service access stays usable.
+    if (entry.managedBy !== "openwork-connect") {
+      const error = mcpMutationDenied(Boolean(builtIn));
+      if (error) return { ok: false, error };
+    }
     const startedAt = perfNow();
     const openworkSnapshot = getOpenworkSnapshot();
     const isRemoteWorkspace =
@@ -756,7 +784,7 @@ export function createConnectionsStore(options: {
         if (!canUseOpenworkServer || !openworkClient || !openworkWorkspaceId) {
           throw new Error("OpenWork server is required to repair agent access to connected services.");
         }
-        const context = await resolveCloudMcpOperationContext(entry.url);
+        const context = await resolveCloudMcpOperationContext(null);
         if (!context) {
           throw new Error("Sign in to OpenWork Cloud and choose an organization first.");
         }
@@ -1206,6 +1234,7 @@ export function createConnectionsStore(options: {
   }
 
   async function removeMcp(name: string) {
+    if (mcpMutationDenied(Boolean(builtInMcp(name)))) return;
     try {
       setStateField("mcpStatus", null);
 
@@ -1288,6 +1317,7 @@ export function createConnectionsStore(options: {
   // this never gets called when the server is unavailable. Reload UX comes
   // from the existing reload-required popup; no extra banner here.
   async function setMcpEnabled(name: string, enabled: boolean) {
+    if (mcpMutationDenied(Boolean(builtInMcp(name)))) return;
     try {
       const { openworkClient, openworkWorkspaceId, canUseOpenworkServer } =
         await resolveWritableOpenworkTarget();

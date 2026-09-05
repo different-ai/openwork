@@ -62,7 +62,7 @@ if (testRunArg && testRunArg !== "latest") {
 }
 if (!testRunDir || !selectedTestRun) throw new Error(`No test run found${testRunArg ? ` for ${testRunArg}` : ""}.`);
 
-process.stdout.write(`Selected test run: ${selectedTestRun.name} · SHA ${selectedTestRun.gitSha ?? "unknown"} · ${formatTestRunAge(selectedTestRun.createdAt)}\n`);
+process.stdout.write(`Selected test run: ${selectedTestRun.name} · SHA ${selectedTestRun.gitSha ?? "unknown"} · engine ${selectedTestRun.engine} · ${formatTestRunAge(selectedTestRun.createdAt)}\n`);
 
 if (shouldOpen) {
   if (process.platform !== "darwin") throw new Error("--open is only supported on darwin.");

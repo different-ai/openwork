@@ -2,29 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  BarChart3,
-  Box,
-  CalendarClock,
   ChevronDown,
   ChevronRight,
   FileText,
-  Globe,
-  Home,
-  LayoutDashboard,
-  LibraryBig,
   LogOut,
   Menu,
   MessageSquare,
-  ScrollText,
-  Plug,
-  Settings2,
-  SlidersHorizontal,
-  Sparkles,
-  type LucideIcon,
-  Users,
-  Wrench,
   X,
 } from "lucide-react";
 import { useDenFlow } from "../../_providers/den-flow-provider";
@@ -63,35 +48,18 @@ import { useOrgListWindow } from "../../_lib/use-org-list-window";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { buildDenFeedbackUrl } from "../../_lib/feedback";
 import { OrgSelectionScreen } from "../_features/org-selection/org-selection-screen";
+import {
+  buildDashboardNavSections,
+  type DashboardNavChild,
+} from "../_lib/dashboard-navigation";
+import { DenCommandPalette } from "./command-palette/den-command-palette";
+import {
+  DenSearchBar,
+  type DenSearchBarHandle,
+} from "./command-palette/den-search-bar";
 import { UserProfileDialog } from "./user-profile-dialog";
 
 const OPENWORK_DOCS_URL = "https://openworklabs.com/docs";
-
-type DashboardNavChild = {
-  href: string;
-  label: string;
-  badge?: string;
-};
-
-type DashboardNavItem = {
-  href: string;
-  label: string;
-  icon: LucideIcon;
-  badge?: string;
-  testId?: string;
-  /** Extra pathname prefixes that select this entry. */
-  matchHrefs?: string[];
-  /**
-   * Grouped entries (Models, Settings) link to the first child and expand
-   * their children while the current page is inside the group.
-   */
-  children?: DashboardNavChild[];
-};
-
-type DashboardNavSection = {
-  label: string;
-  items: DashboardNavItem[];
-};
 
 function OrgMark({ name }: { name: string }) {
   const initials = useMemo(() => {
@@ -341,8 +309,11 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   } = useOrgDashboard();
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [profilePromptDismissed, setProfilePromptDismissed] = useState(false);
   const switcherTriggerRef = useRef<HTMLButtonElement>(null);
+  const searchBarRef = useRef<DenSearchBarHandle>(null);
+  const commandPaletteWasOpenRef = useRef(false);
   const isSingleOrgMode = runtimeConfigLoaded && runtimeConfig.orgMode === "single_org";
   const {
     query: switcherQuery,
@@ -354,6 +325,35 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     showMore: showMoreOrgDirectory,
     showSearch: showSwitcherSearch,
   } = useOrgListWindow(orgDirectory, 20);
+
+  const handleCommandPaletteOpenChange = useCallback((open: boolean) => {
+    setCommandPaletteOpen(open);
+  }, []);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (
+        event.key.toLowerCase() !== "k"
+        || (!event.metaKey && !event.ctrlKey)
+        || event.shiftKey
+        || event.altKey
+      ) {
+        return;
+      }
+      event.preventDefault();
+      setCommandPaletteOpen((current) => !current);
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  useEffect(() => {
+    if (commandPaletteWasOpenRef.current && !commandPaletteOpen) {
+      searchBarRef.current?.focus();
+    }
+    commandPaletteWasOpenRef.current = commandPaletteOpen;
+  }, [commandPaletteOpen]);
 
   useEffect(() => {
     if (!switcherOpen) return;
@@ -411,145 +411,20 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     pathname,
     orgSlug: activeOrg?.slug,
   });
-  const mcpConnectionsEnabled = orgContext?.capabilities.mcpConnections === true;
-  const orgManagedDashboardsEnabled = orgContext?.capabilities.orgManagedDashboards === true;
-  const workflowsEnabled = orgContext?.capabilities.workflows === true;
-  // Den API advertises the effective organization offer: either the deployment
-  // switch is on or a platform admin granted this organization complimentary access.
-  const showWeb = runtimeConfigLoaded
-    && orgContext?.capabilities.openworkWeb === true;
-
-  // One nav, two audiences. Members see Work only. Admins add Manage
-  // (catalog + connectors + Tool Tester + models + Advanced), Observability, and Team.
-  // Advanced groups collections, desktop policies, and brand appearance as tabs.
-  const workItems: DashboardNavItem[] = [
-    {
-      href: activeOrg ? getOrgDashboardRoute(activeOrg.slug) : "#",
-      label: "Dashboard",
-      icon: Home,
+  const navSections = buildDashboardNavSections({
+    orgSlug: activeOrg?.slug ?? null,
+    access,
+    capabilities: orgContext?.capabilities ?? {
+      cloud: false,
+      installLinks: false,
+      mcpConnections: false,
+      openworkWeb: false,
+      orgManagedDashboards: false,
+      workflows: false,
     },
-    {
-      href: activeOrg ? getLibraryRoute(activeOrg.slug) : "#",
-      label: "My Library",
-      icon: LibraryBig,
-    },
-    ...(workflowsEnabled && activeOrg
-      ? [{
-          href: getAutomationsRoute(activeOrg.slug),
-          label: "My Automations",
-          icon: CalendarClock,
-        }]
-      : []),
-    ...(showWeb
-      ? [{
-          href: activeOrg ? getWebRoute(activeOrg.slug) : "#",
-          label: "OpenWork Web",
-          icon: Globe,
-        }]
-      : []),
-  ];
-  // OpenWork Models are a hosted OpenWork Cloud offering; self-hosted
-  // (single-org) deployments only manage their own LLM providers. Default
-  // hidden until the runtime config confirms a hosted (multi-org) deployment.
-  const showOpenWorkModels = runtimeConfigLoaded && runtimeConfig.orgMode === "multi_org";
-  const modelsGroup: DashboardNavItem | null = access.isAdmin && activeOrg
-    ? {
-        href: showOpenWorkModels
-          ? getInferenceRoute(activeOrg.slug)
-          : getCustomLlmProvidersRoute(activeOrg.slug),
-        label: "Models",
-        icon: Sparkles,
-        badge: "Providers",
-        children: [
-          ...(showOpenWorkModels
-            ? [{ href: getInferenceRoute(activeOrg.slug), label: "OpenWork Models" }]
-            : []),
-          { href: getCustomLlmProvidersRoute(activeOrg.slug), label: "Bring your Own Keys" },
-        ],
-      }
-    : null;
-  const manageItems: DashboardNavItem[] = access.isAdmin && activeOrg
-    ? [
-        {
-          href: getPluginsRoute(activeOrg.slug),
-          label: "Plugin Directory",
-          icon: Box,
-        },
-        {
-          href: getMcpConnectionsRoute(activeOrg.slug),
-          label: "Connectors",
-          icon: Plug,
-          badge: "MCPs",
-        },
-        ...(mcpConnectionsEnabled && access.isAdmin
-          ? [{ href: getToolTesterRoute(activeOrg.slug), label: "Tool Tester", icon: Wrench }]
-          : []),
-        ...(orgManagedDashboardsEnabled
-          ? [{
-              href: getManagedDashboardsRoute(activeOrg.slug),
-              label: "Dashboards",
-              icon: LayoutDashboard,
-            }]
-          : []),
-        ...(modelsGroup ? [modelsGroup] : []),
-        {
-          href: getMarketplacesRoute(activeOrg.slug),
-          label: "Advanced",
-          icon: Settings2,
-          matchHrefs: [
-            getDesktopPoliciesRoute(activeOrg.slug),
-            getBrandAppearanceRoute(activeOrg.slug),
-          ],
-        },
-      ]
-    : [];
-  const observabilityItems: DashboardNavItem[] = access.isAdmin && activeOrg
-    ? [
-        ...(workflowsEnabled
-          ? [{
-              href: getWorkflowRunsRoute(activeOrg.slug),
-              label: "Workflow Runs",
-              icon: ScrollText,
-              testId: "nav-workflow-runs",
-            }]
-          : []),
-        { href: getAnalyticsRoute(activeOrg.slug), label: "Analytics", icon: BarChart3 },
-      ]
-    : [];
-  const settingsChildren: DashboardNavChild[] = activeOrg
-    ? [
-        ...(access.canViewSettings
-          ? [
-              { href: getOrgSettingsRoute(activeOrg.slug), label: "General" },
-              { href: getDiagnosticsRoute(activeOrg.slug), label: "Diagnostics" },
-              { href: getBillingRoute(activeOrg.slug), label: "Billing" },
-              { href: getApiKeysRoute(activeOrg.slug), label: "API Keys" },
-              { href: getSsoRoute(activeOrg.slug), label: "SSO" },
-              { href: getScimRoute(activeOrg.slug), label: "SCIM" },
-            ]
-          : []),
-      ]
-    : [];
-  const settingsGroup: DashboardNavItem | null = settingsChildren.length > 0
-    ? {
-        href: settingsChildren[0].href,
-        label: "Settings",
-        icon: SlidersHorizontal,
-        children: settingsChildren,
-      }
-    : null;
-  const teamItems: DashboardNavItem[] = [
-    ...(access.isAdmin && activeOrg
-      ? [{ href: getMembersRoute(activeOrg.slug), label: "Members", icon: Users }]
-      : []),
-    ...(settingsGroup ? [settingsGroup] : []),
-  ];
-  const navSections: DashboardNavSection[] = [
-    { label: "Work", items: workItems },
-    ...(manageItems.length > 0 ? [{ label: "Manage", items: manageItems }] : []),
-    ...(observabilityItems.length > 0 ? [{ label: "Observability", items: observabilityItems }] : []),
-    ...(teamItems.length > 0 ? [{ label: "Team", items: teamItems }] : []),
-  ];
+    orgMode: runtimeConfig.orgMode,
+    runtimeConfigLoaded,
+  });
 
   const orgSwitcher = isSingleOrgMode ? (
     <div className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-2">
@@ -631,7 +506,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                 value={switcherQuery}
                 onChange={(event) => setSwitcherQuery(event.target.value)}
                 placeholder="Search workspaces"
-                className="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[12px] text-gray-900 outline-none transition focus:border-gray-400"
+                className="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[12px] text-gray-900 outline-hidden transition focus:border-gray-400"
               />
             </div>
           ) : null}
@@ -859,7 +734,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-14 shrink-0 items-center justify-between border-b border-gray-100 bg-white px-4 md:px-6">
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 items-center gap-3">
             <button
               type="button"
               className="rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 md:hidden"
@@ -873,7 +748,14 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
             </span>
           </div>
 
-          <div className="flex items-center gap-1">
+          <div className="flex flex-1 justify-center px-4">
+            <DenSearchBar
+              ref={searchBarRef}
+              onOpen={() => handleCommandPaletteOpenChange(true)}
+            />
+          </div>
+
+          <div className="flex shrink-0 items-center gap-1">
             {showFeedbackLink ? (
               <a
                 href={feedbackHref}
@@ -899,6 +781,11 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
 
         <main className="flex-1 overflow-y-auto bg-[#fafafa]">{children}</main>
       </div>
+
+      <DenCommandPalette
+        open={commandPaletteOpen}
+        onOpenChange={handleCommandPaletteOpenChange}
+      />
 
       {shouldShowProfilePrompt && user ? (
         <UserProfileDialog

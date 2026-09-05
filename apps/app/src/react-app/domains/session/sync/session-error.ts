@@ -3,7 +3,7 @@ import type { UIMessage } from "ai";
 import { safeStringify } from "../../../../app/utils";
 import { normalizeErrorText } from "../../../../lib/error-text";
 
-export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "free-model-limit" | "generic";
+export type OpencodeSessionErrorKind = "aborted" | "provider-timeout" | "free-model-limit" | "disk-full" | "database-error" | "generic";
 
 export type OpencodeSessionErrorPresentation = {
   kind: OpencodeSessionErrorKind;
@@ -59,7 +59,13 @@ function sessionErrorKind(
   code: string | null,
   responseBody: string | null,
 ): OpencodeSessionErrorKind {
-  const searchable = [name, message, code].filter(Boolean).join(" ");
+  const searchable = [name, message, code, responseBody].filter(Boolean).join(" ");
+  if (/\b(?:ENOSPC|EDQUOT|SQLITE_FULL)\b|no space left on device|database or disk is full|disk quota exceeded/i.test(searchable)) {
+    return "disk-full";
+  }
+  if (/\bSqlError\b|\bSQLITE_(?:IOERR|CANTOPEN|CORRUPT)\b/i.test(searchable)) {
+    return "database-error";
+  }
   if (
     name === "MessageAbortedError" ||
     code === "ABORT_ERR" ||
@@ -81,6 +87,8 @@ function sessionErrorKind(
 }
 
 function errorTitle(kind: OpencodeSessionErrorKind, fallback: string) {
+  if (kind === "disk-full") return "Not enough disk space";
+  if (kind === "database-error") return "OpenWork couldn’t access its saved data";
   if (kind === "aborted") return "Task interrupted";
   if (kind === "provider-timeout") return "Provider did not respond in time";
   if (kind === "free-model-limit") return "The free starter model is busy right now";
@@ -88,6 +96,12 @@ function errorTitle(kind: OpencodeSessionErrorKind, fallback: string) {
 }
 
 function errorDescription(kind: OpencodeSessionErrorKind) {
+  if (kind === "disk-full") {
+    return "The device running this task has run out of storage. Free up some disk space, then try again. If this is a cloud workspace, ask its administrator to check the storage.";
+  }
+  if (kind === "database-error") {
+    return "Try again. If this keeps happening, check the available disk space on the device running this task and restart OpenWork. For a cloud workspace, contact its administrator.";
+  }
   if (kind === "aborted") {
     return "OpenCode stopped before the task finished. Output and files already produced are kept.";
   }
@@ -121,17 +135,6 @@ function normalizeSessionError(text: string) {
 }
 
 function sessionErrorFields(error: unknown, fallback: string) {
-  if (error instanceof Error) {
-    return {
-      name: error.name || null,
-      message: error.message.trim() || fallback,
-      status: null,
-      provider: null,
-      code: null,
-      retries: null,
-      responseBody: null,
-    };
-  }
   if (typeof error === "string") {
     return {
       name: null,

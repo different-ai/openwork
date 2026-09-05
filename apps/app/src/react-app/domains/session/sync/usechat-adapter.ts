@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import type { UIMessage } from "ai";
-import type { FilePart, Part, ToolPart } from "@opencode-ai/sdk/v2/client";
+import type { FilePart, Part, TextPart, ToolPart } from "@opencode-ai/sdk/v2/client";
 
 import type { OpenworkSessionSnapshot } from "../../../../app/lib/openwork-server";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../../../../app/types";
@@ -120,6 +120,27 @@ function mapSnapshotToolParts(part: ToolPart): UIMessage["parts"] {
   return [mapped];
 }
 
+/** Recover display-only attachments without sending unsupported binary parts to the model. */
+export function attachmentNoteToUIParts(part: TextPart): UIMessage["parts"] {
+  if (!part.synthetic || part.ignored) return [];
+  const attachments = part.metadata?.openworkAttachments;
+  if (!Array.isArray(attachments)) return [];
+  return attachments.flatMap<UIMessage["parts"][number]>((attachment: unknown, index) => {
+    if (!attachment || typeof attachment !== "object"
+      || !("filename" in attachment) || typeof attachment.filename !== "string"
+      || !("mime" in attachment) || typeof attachment.mime !== "string"
+      || !("url" in attachment) || typeof attachment.url !== "string"
+      || !attachment.url.startsWith("file://")) return [];
+    return [{
+      type: "file",
+      filename: attachment.filename,
+      mediaType: attachment.mime,
+      url: attachment.url,
+      providerMetadata: { opencode: { partId: `${part.id}:attachment:${index}` } },
+    }];
+  });
+}
+
 export function snapshotToUIMessages(snapshot: OpenworkSessionSnapshot): UIMessage[] {
   return snapshot.messages.flatMap((message) => {
     const created = message.info.time?.created;
@@ -133,7 +154,7 @@ export function snapshotToUIMessages(snapshot: OpenworkSessionSnapshot): UIMessa
         : {}),
       parts: message.parts.flatMap<UIMessage["parts"][number]>((part) => {
         if (part.type === "text") {
-          if (part.synthetic || part.ignored) return [];
+          if (part.synthetic || part.ignored) return attachmentNoteToUIParts(part);
           return [{
             type: "text",
             text: getTextPartValue(part),

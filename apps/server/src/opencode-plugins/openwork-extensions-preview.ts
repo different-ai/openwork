@@ -1,7 +1,6 @@
-import { readFile, realpath } from "node:fs/promises";
-import { join } from "node:path";
-import { homedir, platform } from "node:os";
+import { realpath } from "node:fs/promises";
 import { z } from "zod";
+import { visualizationSchema } from "@openwork/types/visualization";
 import type { OpenworkAffordanceEffects } from "@openwork/types/openwork-affordance";
 import { automationProposalSchema } from "@openwork/types/automations";
 import {
@@ -120,6 +119,7 @@ const sessionMessageSchema = z.object({
 
 const OPENWORK_AGENT_SURFACE_INSTRUCTION =
   `## OpenWork app context
+For lightweight UI mockups, wireframes, and design iterations, use openwork_visualization to show a native OpenWork-styled sketch in the conversation. Keep the design id when revising, increment revision, and send the complete updated design. Mock controls are illustrative; use the normal app-building workflow when a working app is requested.
 Use openwork_context when the request depends on the current OpenWork screen, open tabs, split view, focused pane, sidebar, side panel, settings panel, or available app actions.
 Each affordance declares its effects and executor. Use openwork_query only for side-effect-free affordances whose executor is OpenWork. Use openwork_execute for OpenWork commands without activating the desktop window. If executor names another tool, call that exact tool instead.
 Reading another session does not require opening it. Prefer session.search then session.read for transcript questions; use session.create for new chats and a UI command only when the user asks to navigate.
@@ -131,15 +131,6 @@ const OPENWORK_BROWSER_INSTRUCTION =
   `## Built-in Browser (external websites)
 For web browsing tasks, ALWAYS start with openwork_execute id browser.open_url. It creates/selects a built-in OpenWork browser tab and returns browser_url plus target_id. Use that exact browser_url and target_id for every later browser_snapshot, browser_click, browser_fill, browser_eval, and browser_screenshot call.
 Do not call browser_navigate without a target_id returned by browser.open_url; a target titled "OpenWork" or whose URL contains ":5173/#/" is the app itself, not a web page.`;
-
-// ── UI control bridge discovery ──
-
-type UiBridge = { baseUrl: string; token: string };
-let cachedBridge: UiBridge | null = null;
-let cachedBridgeAt = 0;
-let cachedBridgeDiscovery: string | undefined;
-const BRIDGE_CACHE_MS = 2_000;
-const BRIDGE_TIMEOUT_MS = 5_000;
 
 type OpenWorkWorkspace = z.infer<typeof workspaceSchema>;
 type SessionInfo = z.infer<typeof sessionInfoSchema>;
@@ -285,61 +276,14 @@ const SESSION_SEARCH_CONCURRENCY = 6;
 const SESSION_SNIPPET_BEFORE = 36;
 const SESSION_SNIPPET_AFTER = 72;
 
-function userAppDataDir(): string {
-  if (platform() === "darwin") return join(homedir(), "Library", "Application Support");
-  if (platform() === "win32") return process.env.APPDATA || join(homedir(), "AppData", "Roaming");
-  return process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
-}
-
-function uiControlDiscoveryPaths(): string[] {
-  return [
-    process.env.OPENWORK_UI_CONTROL_DISCOVERY?.trim(),
-    join(userAppDataDir(), "com.differentai.openwork", "openwork-ui-control.json"),
-    join(userAppDataDir(), "com.differentai.openwork.dev", "openwork-ui-control.json"),
-  ].filter((p): p is string => Boolean(p));
-}
-
-async function discoverUiBridge(): Promise<UiBridge | null> {
-  // A changed discovery override points at a different desktop; never reuse
-  // the bridge cached for the previous one.
-  const discovery = process.env.OPENWORK_UI_CONTROL_DISCOVERY?.trim();
-  if (cachedBridge && cachedBridgeDiscovery === discovery && Date.now() - cachedBridgeAt < BRIDGE_CACHE_MS) return cachedBridge;
-  for (const candidate of uiControlDiscoveryPaths()) {
-    try {
-      const raw = await readFile(candidate, "utf8");
-      const parsed = JSON.parse(raw) as Record<string, unknown>;
-      if (typeof parsed.baseUrl === "string" && typeof parsed.token === "string") {
-        cachedBridge = { baseUrl: parsed.baseUrl, token: parsed.token };
-        cachedBridgeAt = Date.now();
-        cachedBridgeDiscovery = discovery;
-        return cachedBridge;
-      }
-    } catch {
-      // Try next
-    }
-  }
-  return null;
-}
-
-async function uiBridgeRequest(path: string, options: { method?: string; body?: unknown } = {}): Promise<unknown> {
-  const bridge = await discoverUiBridge();
-  if (!bridge) return { ok: false, error: "OpenWork UI bridge not available. The desktop app may not be running." };
+async function uiControlRequest(
+  kind: "context" | "query" | "command",
+  input?: unknown,
+): Promise<unknown> {
   try {
-    const response = await fetch(`${bridge.baseUrl}${path}`, {
-      method: options.method || "GET",
-      signal: AbortSignal.timeout(BRIDGE_TIMEOUT_MS),
-      headers: {
-        Authorization: `Bearer ${bridge.token}`,
-        ...(options.body ? { "Content-Type": "application/json" } : {}),
-      },
-      ...(options.body ? { body: JSON.stringify(options.body) } : {}),
-    });
-    const text = await response.text();
-    try { return JSON.parse(text); } catch { return { ok: false, error: text || `HTTP ${response.status}` }; }
+    return await postJson("/experimental/ui-control/request", { kind, input }, AbortSignal.timeout(7_000));
   } catch (error) {
-    cachedBridge = null;
-    cachedBridgeAt = 0;
-    return { ok: false, error: `UI bridge unreachable: ${error instanceof Error ? error.message : String(error)}` };
+    return { ok: false, error: unknownErrorMessage(error) };
   }
 }
 
@@ -389,7 +333,7 @@ async function readOpenworkAgentContext(
   engineMcpStatusDirectory: string | undefined,
 ): Promise<Record<string, unknown>> {
   const [uiResult, skills, mcps] = await Promise.all([
-    uiBridgeRequest("/context"),
+    uiControlRequest("context"),
     readConnectSkillDescriptors(),
     readEngineMcpDescriptors(engineMcpStatusClient, engineMcpStatusDirectory),
   ]);
@@ -449,10 +393,7 @@ async function queryOpenworkAffordance(rawArgs: unknown): Promise<unknown> {
       "This affordance declares a dedicated Connect executor. Call the tool named in openwork_context.",
     );
   }
-  const result = await uiBridgeRequest("/query", {
-    method: "POST",
-    body: request,
-  });
+  const result = await uiControlRequest("query", request);
   return isRecord(result) && typeof result.ok === "boolean"
     ? result
     : unavailableAffordance(request.id, "OpenWork UI query returned an invalid response.");
@@ -496,13 +437,18 @@ async function executeOpenworkAffordance(
       "This affordance declares a dedicated Connect executor. Call the tool named in openwork_context.",
     );
   }
-  const result = await uiBridgeRequest("/command", {
-    method: "POST",
-    body: request,
-  });
+  // Keep the requesting conversation attached when commands cross the server.
+  const result = await uiControlRequest("command", { ...request, ...affordanceOrigin(context) });
   return isRecord(result) && typeof result.ok === "boolean"
     ? result
     : unavailableAffordance(request.id, "OpenWork UI command returned an invalid response.");
+}
+
+function affordanceOrigin(context: OpenCodeContext): { origin?: { sessionId: string; workspaceId?: string } } {
+  const sessionId = context.sessionID?.trim();
+  if (!sessionId) return {};
+  const workspaceId = (context.workspaceId ?? context.workspaceID)?.trim();
+  return { origin: { sessionId, ...(workspaceId ? { workspaceId } : {}) } };
 }
 
 function collapseWhitespace(value: string): string {
@@ -876,11 +822,12 @@ async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext
   // The desktop only receives engine events for its selected workspace, so a
   // session created here in any other workspace stays invisible until that
   // list is refetched. A session whose prompt failed still exists, so it is
-  // refetched too. Best effort: headless runs have no UI bridge.
+  // refetched too. Best effort: headless runs without a connected window get
+  // a soft error.
   if (createdOnEngine) {
-    await uiBridgeRequest("/command", {
-      method: "POST",
-      body: { id: "workspace.reload_sessions", args: { workspaceId: workspace.id } },
+    await uiControlRequest("command", {
+      id: "workspace.reload_sessions",
+      args: { workspaceId: workspace.id },
     });
   }
   return {
@@ -917,9 +864,10 @@ function proposeAutomation(rawArgs: unknown, context: OpenCodeContext): object {
   };
 }
 
-async function postJson(path: string, body: ExtensionActionPayload | Record<string, unknown>): Promise<unknown> {
+async function postJson(path: string, body: ExtensionActionPayload | Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
   const { url, token } = requireOpenWorkServer();
   const response = await fetch(url + path, {
+    signal,
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -992,6 +940,13 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
     );
   },
   tool: {
+    openwork_visualization: {
+      description: "Show a lightweight UI mockup inline in OpenWork using native OpenWork styling. Use for wireframes, screen layouts, and design iteration instead of ASCII UI. Provide a title, optional navigation, and sections of text, metrics, fields, buttons, lists, or image placeholders. These are mock controls, not a working app. For revisions, keep the same id and send the complete updated mockup with an increased revision; earlier versions remain in the conversation. No HTML, scripts, servers, or files needed.",
+      args: visualizationSchema.shape,
+      async execute(rawArgs: unknown) {
+        return JSON.stringify(visualizationSchema.parse(rawArgs));
+      },
+    },
     openwork_context: {
       description: "Read one semantic snapshot of OpenWork: current screen, retained conversation tabs, split view and focused pane, sidebar and side panel state, settings panel, provider contributions, remote skill guidance, and available affordances with explicit effects and executors.",
       args: {},

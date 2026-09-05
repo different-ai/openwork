@@ -38,6 +38,7 @@ describe("local MCP server recovery", () => {
       },
     } as unknown as OpenworkServerStore;
     const store = createConnectionsStore({
+      checkDesktopAppRestriction: () => false,
       client: () => null,
       setClient: () => undefined,
       projectDir: () => "/tmp/openwork-mcp-recovery",

@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
+    "sdk:generate": "pnpm --filter @openwork/sdk generate",
+    "sdk:check": "pnpm --filter @openwork/sdk generate:check && pnpm --filter @openwork/sdk typecheck",
+    "sdk:build": "pnpm --filter @openwork/sdk build",
     "dev": "OPENWORK_DEV_MODE=1 OPENWORK_ELECTRON_REMOTE_DEBUG_PORT=${OPENWORK_ELECTRON_REMOTE_DEBUG_PORT:-9823} pnpm --filter @openwork/desktop dev",
     "dev:worktree": "OPENWORK_DEV_MODE=1 OPENWORK_DEV_PROFILE=auto OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN=${OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN:-1} OPENWORK_ELECTRON_REMOTE_DEBUG_PORT=0 PORT=0 pnpm --filter @openwork/desktop dev",
     "dev:electron": "OPENWORK_DEV_MODE=1 pnpm --filter @openwork/desktop dev:electron",
@@ -34,7 +37,7 @@
     "check:enterprise-mcp-mock-server": "pnpm --filter @openwork/enterprise-mcp-mock-server check",
     "check:enterprise-mock-lab": "pnpm --filter @openwork-ee/enterprise-mock-lab check",
     "check:diagnostics": "pnpm --filter @openwork-ee/diagnostics test && pnpm --filter @openwork-ee/diagnostics build",
-    "test": "pnpm -r --if-present --filter '!@openwork/app' --filter '!openwork-server' run test && pnpm --dir evals run test && pnpm --dir evals run test:pr",
+    "test": "pnpm test:core",
     "test:health": "pnpm --filter @openwork/app test:health",
     "test:sessions": "pnpm --filter @openwork/app test:sessions",
     "test:refactor": "pnpm --filter @openwork/app test:refactor",
@@ -58,7 +61,9 @@
     "release:review": "node scripts/release/review.mjs",
     "release:rollback": "node scripts/release/rollback.mjs",
     "release:cut": "node scripts/release/cut.mjs",
-    "release:cut:watch": "node scripts/release/cut.mjs --watch"
+    "release:cut:watch": "node scripts/release/cut.mjs --watch",
+    "test:core": "pnpm --filter @openwork/app test:core && pnpm --filter openwork-server test:core && pnpm --filter @openwork-ee/den-api test && pnpm --filter @openwork/desktop test:core && pnpm --dir evals run test:core",
+    "test:extended": "pnpm --filter @openwork/app test && pnpm --filter openwork-server test && pnpm --filter @openwork-ee/den-api test && pnpm --filter @openwork/desktop test && node --test scripts/release/*.test.mjs && pnpm test:eval-runner && pnpm evals:pr && pnpm test:e2e"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

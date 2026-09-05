@@ -2,6 +2,7 @@
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
+import { DesktopUpdateButton } from "../../settings/state/desktop-updater-provider";
 import { ArrowLeft, Cloud, FileText, Globe, Mic2, MoreHorizontal, PanelRight, TextSearch, X, Zap } from "lucide-react";
 
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
@@ -584,6 +585,26 @@ export function SessionPage(props: SessionPageProps) {
     toggleSidePanelState(sidePanelSessionKey, panel);
   }, [setSidePanelState, sidePanelSessionKey, toggleSidePanelState]);
 
+  // Which conversation's browser tabs may take the screen. Every other
+  // conversation's tabs keep loading silently in the background.
+  useEffect(() => {
+    if (!isElectronRuntime()) return;
+    void (window as Window).__OPENWORK_ELECTRON__?.browser?.setVisibleSession?.(props.selectedSessionId ?? null);
+  }, [props.selectedSessionId]);
+
+  // Open the side panel of the conversation that owns a browser event. For the
+  // conversation on screen that is the visible panel; for a background
+  // conversation only its own panel state is marked open, so its tabs are
+  // waiting when the user switches to it and nothing on screen moves.
+  const openOwnerSidePanel = useCallback((ownerSessionId: string | null | undefined) => {
+    const ownerKey = getSidePanelSessionKey(ownerSessionId ?? null);
+    if (ownerSessionId == null || ownerKey === sidePanelSessionKey) {
+      setCurrentSidePanel("panel");
+      return;
+    }
+    setSidePanelState(ownerKey, "panel");
+  }, [setCurrentSidePanel, setSidePanelState, sidePanelSessionKey]);
+
   // When the agent calls a built-in browser tool, the main process opens
   // the WebContentsView and sends panel-opened; when hide_browser is called
   // it sends panel-closed. Without this listener the React UI never knows
@@ -592,16 +613,24 @@ export function SessionPage(props: SessionPageProps) {
     if (!isElectronRuntime()) return;
     const browser = (window as Window).__OPENWORK_ELECTRON__?.browser;
     if (!browser) return;
-    const unsubOpen = browser.onPanelOpened?.(() => {
+    const unsubOpen = browser.onPanelOpened?.((payload) => {
       if (preserveSidePanelOnPanelOpenRef.current) {
         preserveSidePanelOnPanelOpenRef.current = false;
         return;
       }
-      setCurrentSidePanel("panel");
+      openOwnerSidePanel(payload?.ownerSessionId);
     });
-    const unsubClose = browser.onPanelClosed?.(() => setCurrentSidePanel(null));
+    const unsubClose = browser.onPanelClosed?.((payload) => {
+      const ownerSessionId = payload?.ownerSessionId ?? null;
+      const ownerKey = getSidePanelSessionKey(ownerSessionId);
+      if (ownerSessionId === null || ownerKey === sidePanelSessionKey) {
+        setCurrentSidePanel(null);
+        return;
+      }
+      setSidePanelState(ownerKey, null);
+    });
     return () => { unsubOpen?.(); unsubClose?.(); };
-  }, [setCurrentSidePanel]);
+  }, [openOwnerSidePanel, setCurrentSidePanel, setSidePanelState, sidePanelSessionKey]);
   const {
     leftSidebarResizing,
     leftSidebarWidth,
@@ -640,8 +669,9 @@ export function SessionPage(props: SessionPageProps) {
     if (target.kind === "url" || target.preview === "browser") {
       const url = browserUrlForTarget(target);
       if (isElectronRuntime()) {
-        setCurrentSidePanel("panel");
-        void window.__OPENWORK_ELECTRON__?.browser?.createTab?.(url);
+        const ownerSessionId = sourceSessionId ?? props.selectedSessionId ?? null;
+        openOwnerSidePanel(ownerSessionId);
+        void window.__OPENWORK_ELECTRON__?.browser?.createTab?.(url, ownerSessionId);
       } else {
         window.open(url, "_blank", "noopener,noreferrer");
       }
@@ -714,7 +744,7 @@ export function SessionPage(props: SessionPageProps) {
     }
 
     openFileTarget(target);
-  }, [activePanelTab?.id, browserUrlForTarget, openTab, props.selectedSessionId, setCurrentSidePanel]);
+  }, [activePanelTab?.id, browserUrlForTarget, openOwnerSidePanel, openTab, props.selectedSessionId, setCurrentSidePanel]);
   const openTarget = useCallback((target: OpenTarget, options?: OpenTargetOptions, sourceSessionId?: string) => {
     openTargetForRuntime({
       client: props.openworkServerClient,
@@ -753,17 +783,21 @@ export function SessionPage(props: SessionPageProps) {
     ],
     previewArgs: { url: "https://example.com", provider: "builtin" },
     disabled: !isElectronRuntime(),
-    execute: async (args) => {
+    execute: async (args, helpers) => {
       const url = controlStringArg(args, "url");
       if (!url) return { ok: false, error: "Missing URL." };
       const provider = controlStringArg(args, "provider") || "builtin";
       if (provider !== "auto" && provider !== "builtin") {
         return { ok: false, error: `Browser provider is not available yet: ${provider}` };
       }
-      setCurrentSidePanel("panel");
-      return window.__OPENWORK_ELECTRON__?.browser?.openUrl?.(url, provider);
+      // The tab belongs to the conversation whose agent asked for it. When that
+      // is a background conversation the page loads silently there; the
+      // conversation on screen is never interrupted.
+      const ownerSessionId = helpers.origin?.sessionId ?? props.selectedSessionId ?? null;
+      openOwnerSidePanel(ownerSessionId);
+      return window.__OPENWORK_ELECTRON__?.browser?.openUrl?.(url, provider, { sessionId: ownerSessionId });
     },
-  }), [setCurrentSidePanel]);
+  }), [openOwnerSidePanel, props.selectedSessionId]);
   useControlAction(openBrowserUrlControlAction);
   const setBrowserProxyControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "browser.set_proxy",
@@ -1435,7 +1469,10 @@ export function SessionPage(props: SessionPageProps) {
             !shellConfig.sidebar && "mac:[&_header]:pl-34",
           )}
         >
-          <div className="flex min-h-0 flex-1 max-lg:p-0 lg:py-2 lg:pl-2">
+          <div className={cn(
+            "flex min-h-0 flex-1 max-lg:p-0 lg:py-2 lg:pl-2",
+            !sidebarOpen && "mac:lg:pt-0 mac:lg:pl-0",
+          )}>
           <ResizablePanelGroup
             orientation="horizontal"
             onLayoutChanged={sidePanelOpen ? commitBrowserPanelWidth : undefined}
@@ -1505,7 +1542,8 @@ export function SessionPage(props: SessionPageProps) {
               ) : null}
             </div>
 
-            <div className="flex items-center gap-1.5 text-gray-10 mac:titlebar-no-drag">
+            <div className="flex shrink-0 items-center gap-1.5 text-gray-10 mac:titlebar-no-drag">
+              <DesktopUpdateButton />
               {!props.primarySlot && findButtonSessionId && !hasMainContentTakeover ? (
                 <Tooltip>
                   <TooltipTrigger
@@ -1807,14 +1845,12 @@ export function SessionPage(props: SessionPageProps) {
                             />
                             {splitPaneRuntime.status === "ready" ? (
                               <div className="min-h-0 flex-1">
-                                {crossWorkspaceSplit ? (
-                                  <ReactSessionRuntime
-                                    workspaceId={splitPaneRuntime.runtimeWorkspaceId}
-                                    sessionId={splitSession.sessionId}
-                                    opencodeBaseUrl={splitPaneRuntime.opencodeBaseUrl}
-                                    openworkToken={splitPaneRuntime.openworkToken}
-                                  />
-                                ) : null}
+                                <ReactSessionRuntime
+                                  workspaceId={splitPaneRuntime.runtimeWorkspaceId}
+                                  sessionId={splitSession.sessionId}
+                                  opencodeBaseUrl={splitPaneRuntime.opencodeBaseUrl}
+                                  openworkToken={splitPaneRuntime.openworkToken}
+                                />
                                 <SessionSurface
                                   {...splitPaneRuntime.surface}
                                   client={splitPaneRuntime.client}

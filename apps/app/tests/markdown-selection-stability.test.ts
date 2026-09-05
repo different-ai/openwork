@@ -41,15 +41,23 @@ describe("markdown selection stability", () => {
   });
 
   test("keeps the innerHTML prop stable across unrelated completed-response renders", () => {
-    const sources = [
-      "../src/components/markdown/markdown.tsx",
-      "../src/react-app/domains/session/surface/markdown.tsx",
-    ].map((path) => readFileSync(join(import.meta.dir, path), "utf8"));
+    const chatSource = readFileSync(join(import.meta.dir, "../src/components/markdown/markdown.tsx"), "utf8");
+    const surfaceSource = readFileSync(
+      join(import.meta.dir, "../src/react-app/domains/session/surface/markdown.tsx"),
+      "utf8",
+    );
 
-    for (const source of sources) {
-      expect(source).toContain("const stableInnerHtml = useMemo(() => ({ __html: html }), [html]);");
+    expect(surfaceSource).toContain("const stableInnerHtml = useMemo(() => ({ __html: html }), [html]);");
+    // The chat surface memoizes the settled document payload on the committed
+    // render and hands each streamed block its own cached payload object.
+    expect(chatSource).toContain("const stableInnerHtml = useMemo(");
+    expect(chatSource).toContain("[rendered],");
+    expect(chatSource).toContain("dangerouslySetInnerHTML={block}");
+
+    for (const source of [chatSource, surfaceSource]) {
       expect(source).toContain("dangerouslySetInnerHTML={stableInnerHtml}");
       expect(source).not.toContain("dangerouslySetInnerHTML={{ __html: html }}");
+      expect(source).not.toContain("dangerouslySetInnerHTML={{ __html:");
     }
   });
 });

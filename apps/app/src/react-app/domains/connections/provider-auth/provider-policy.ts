@@ -79,11 +79,14 @@ export function resolveEntitledOrgDefaultModel(
   const entitled = filterEntitledModelOptions(options, input);
   if (
     input.currentDefault &&
-    entitled.some(
+    // A catalog is an availability snapshot, not permission to replace a
+    // remembered organization selection. Let unavailable-model recovery ask
+    // the user when that model is truly gone.
+    (isCloudManagedProviderKey(input.currentDefault.providerID) || entitled.some(
       (option) =>
         option.providerID === input.currentDefault?.providerID &&
         option.modelID === input.currentDefault.modelID,
-    )
+    ))
   ) {
     return null;
   }

@@ -22,23 +22,25 @@ function serverConfig(logFormat: ServerConfig["logFormat"] = "pretty"): ServerCo
   };
 }
 
-function brokenPipeError() {
-  const error = new Error("write EPIPE");
-  Object.defineProperty(error, "code", { value: "EPIPE", enumerable: true });
+function logOutputError(code: string) {
+  const error = new Error(`write ${code}`);
+  Object.defineProperty(error, "code", { value: code, enumerable: true });
   return error;
 }
 
 describe("createServerLogger", () => {
-  test("disables log writes after stdout closes", () => {
+  test.each(["EPIPE", "ERR_STREAM_DESTROYED", "ENOSPC", "EDQUOT"])("disables log writes after %s while preserving the file sink", (code) => {
     let attempts = 0;
+    const fileLines: string[] = [];
     const logger = createServerLogger(serverConfig(), () => {
       attempts += 1;
-      throw brokenPipeError();
-    });
+      throw logOutputError(code);
+    }, { path: "unused", write: (line) => { fileLines.push(line); }, close: () => {} });
 
     expect(() => logger.log("info", "GET / 200 1ms")).not.toThrow();
     expect(() => logger.log("info", "GET /again 200 1ms")).not.toThrow();
     expect(attempts).toBe(1);
+    expect(fileLines).toHaveLength(2);
   });
 
   test("still throws unexpected log write failures", () => {

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { chmod, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { app as startApp, server as startServer } from "@openwork/env";
@@ -68,9 +68,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export async function appSmokeWorld(seed: Seed) {
-  const app = await seed.desktop({ name: "app-smoke" });
-  const workspace = await seed.workspace(app, seed.tmpPath("app-smoke"));
-  return { app, workspace };
+  const packaged = Boolean(process.env.OPENWORK_EVAL_ELECTRON_BINARY);
+  const app = packaged
+    ? await desktop({ name: "app-smoke", prepareSharedResources: false, timeoutMs: 60_000,
+      env: { OPENWORK_DEV_MODE: "0", OPENWORK_ELECTRON_START_URL: "", ELECTRON_START_URL: "" } })
+    : await seed.desktop({ name: "app-smoke" });
+  const workspace = packaged ? null : await seed.workspace(app, seed.tmpPath("app-smoke"));
+  return {
+    app, workspace, packaged,
+    async packagedRuntime() {
+      return evalIn(app, `(async () => {
+        const bridge = window.__OPENWORK_ELECTRON__;
+        if (typeof bridge?.invokeDesktop !== "function") return { bridge: false };
+        const info = await bridge.invokeDesktop("openworkServerInfo");
+        const health = await fetch(info.baseUrl + "/health", { signal: AbortSignal.timeout(5000) });
+        return { bridge: true, protocol: location.protocol, health: health.status,
+          welcome: location.hash === "#/welcome" && [...document.querySelectorAll("button")]
+            .some(button => button.textContent.trim() === "Use Without Cloud" && !button.disabled),
+          crash: /Something went wrong|Cannot find module|Maximum update depth exceeded/.test(document.body.innerText) };
+      })()`, { awaitPromise: true });
+    },
+    async [Symbol.asyncDispose]() { await app[Symbol.asyncDispose](); },
+  };
 }
 
 export async function bareFirstRunWorld(seed: Seed, { place }: { place: Place }) {
@@ -110,7 +129,10 @@ export async function parentChildPermissionWorld(seed: Seed) {
     });
     return { child, activity };
   })()`, { awaitPromise: true });
-  if (!isRecord(seeded)) throw new Error(`Child permission seed failed: ${JSON.stringify(seeded)}`);
+  if (!isRecord(seeded) || !isRecord(seeded.child) || seeded.child.ok !== true
+    || !isRecord(seeded.activity) || seeded.activity.ok !== true) {
+    throw new Error(`Child permission seed failed: ${JSON.stringify(seeded)}`);
+  }
   return base;
 }
 
@@ -133,6 +155,7 @@ export async function artifactCodeBrowserWorld(seed: Seed) {
       },
     );
     const responses = await Promise.all([
+      write("restricted/hidden-proof.ts", "export const restricted = true;"),
       write("src/openwork-artifact-proof.ts", "export const artifactEditor = true;\\n"),
       write("config/openwork-artifact-settings.json", "{\\"artifactEditor\\":true}\\n"),
     ]);
@@ -149,7 +172,30 @@ export async function artifactCodeBrowserWorld(seed: Seed) {
   // TODO(primitive): seed artifact tabs through a first-class artifact fixture.
   const tabs = await seed.evalIn(base.app, `window.__openworkControl.execute("eval.artifact_tabs.seed_overflow", { count: 12 })`, { awaitPromise: true });
   if (!isRecord(tabs) || tabs.ok !== true) throw new Error(`Could not seed artifact tabs: ${JSON.stringify(tabs)}`);
-  return base;
+  return {
+    ...base,
+    async visibleArtifactCode() {
+      return seed.evalIn(base.app, `(() => {
+        const root = document.querySelector("[data-artifact-code-view]");
+        if (!root || root.getBoundingClientRect().height === 0) return "";
+        const text = (node) => [...node.childNodes].map((child) =>
+          child.nodeType === Node.TEXT_NODE ? child.textContent :
+          child instanceof Element ? text(child.shadowRoot || child) : ""
+        ).join("");
+        return text(root);
+      })()`);
+    },
+    async setCatalogFolderRestricted(restricted: boolean) {
+      const path = join(base.workspacePath, "restricted");
+      const mode = restricted ? "000" : "700";
+      const sandbox = base.app.handle.sandboxId;
+      if (sandbox) {
+        await checkedExec(defaultDaytonaExec, remoteCommand(sandbox, `chmod ${mode} ${shellQuote(path)}`), "set synthetic catalog folder permissions");
+      } else {
+        await chmod(path, restricted ? 0 : 0o700);
+      }
+    },
+  };
 }
 
 export async function skillsLocalWorld(seed: Seed) {
@@ -979,5 +1025,74 @@ export async function managedVaultWorld(_seed: Seed, { place }: { place: Place }
       await rm(profileDir, { recursive: true, force: true });
       await rm(workspacePath, { recursive: true, force: true });
     },
+  };
+}
+
+export async function backgroundUpdateWorld(seed: Seed) {
+  const app = await seed.desktop({ name: "background-update", signIn: false });
+  const workspace = await seed.workspace(app, seed.tmpPath("background-update"));
+  await evalIn(app, `(async () => {
+    const currentVersion = "0.18.0";
+    const now = Date.now.bind(Date);
+    const state = { checks: 0, downloads: 0, installs: 0, offset: 0, finishDownload: null, intervalCheck: null };
+    window.__backgroundUpdateWitness = state;
+    const schedule = window.setInterval.bind(window);
+    window.setInterval = (callback, delay, ...args) => {
+      if (delay === 15 * 60 * 1000) state.intervalCheck = callback;
+      return schedule(callback, delay, ...args);
+    };
+    Date.now = () => now() + state.offset;
+    window.__openworkReadDesktopVersionMetadataEval = () => ({
+      minAppVersion: "0.1.0", latestAppVersion: "9.9.9", publishedDesktopVersions: ["9.9.9"],
+    });
+    window.__openworkApplyDesktopConfig?.({});
+    window.__openworkSetDesktopConfigRefreshResult?.({});
+    window.__openworkUpdaterEvalBridge = {
+      getChannel: async () => ({ channel: "stable", currentVersion }),
+      setChannel: async (channel) => ({ channel, currentVersion }),
+      check: async () => {
+        state.checks++;
+        return { available: state.checks >= 4, channel: "stable", currentVersion, latestVersion: state.checks >= 4 ? "9.9.9" : currentVersion };
+      },
+      download: async () => {
+        state.downloads++;
+        return new Promise(resolve => { state.finishDownload = () => resolve({ ok: true }); });
+      },
+      installAndRestart: async () => { state.installs++; return { ok: true }; },
+      onDownloadProgress: () => () => {},
+    };
+    state.offset += 16 * 60 * 1000;
+    window.dispatchEvent(new Event("focus"));
+  })()`, { awaitPromise: true });
+  return {
+    app,
+    snapshot: () => evalIn(app, `(() => {
+      const { checks, downloads, installs } = window.__backgroundUpdateWitness;
+      return {
+        checks, downloads, installs, route: location.hash,
+        updateInTitlebar: Boolean(document.querySelector('header [data-update-button]')),
+        updateInSidebar: Boolean(document.querySelector('[data-sidebar="footer"] [data-update-button]')),
+        sidebarName: document.querySelector('[data-sidebar-brand]')?.textContent?.trim() ?? null,
+        customLogoLoaded: Boolean(document.querySelector('[data-testid="brand-logo"] img')?.naturalWidth),
+      };
+    })()`),
+    setCustomBranding: () => evalIn(app, `(() => {
+      const logo = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="120" height="32"><rect width="120" height="32" rx="5" fill="#25262b"/><text x="12" y="22" font-family="sans-serif" font-size="18" fill="white">Studio</text></svg>');
+      window.__openworkApplyDesktopConfig({ brandAppName: "Studio", brandLogoUrl: logo });
+    })()`),
+    tickUpdateInterval: () => evalIn(app, `(() => {
+      const state = window.__backgroundUpdateWitness;
+      if (!state.intervalCheck) throw new Error("Update interval was not registered");
+      state.offset += 15 * 60 * 1000;
+      state.intervalCheck();
+    })()`),
+    finishDownload: () => evalIn(app, `window.__backgroundUpdateWitness.finishDownload()`),
+    returnToApp: () => evalIn(app, `(() => {
+      window.__backgroundUpdateWitness.offset += 16 * 60 * 1000;
+      window.dispatchEvent(new Event("focus"));
+      window.dispatchEvent(new Event("online"));
+    })()`),
+    openSettings: () => go(app, `/workspace/${workspace.workspaceId}/settings/updates`),
+    openWorkspace: () => go(app, `/workspace/${workspace.workspaceId}/session`),
   };
 }

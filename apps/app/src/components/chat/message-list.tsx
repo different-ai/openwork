@@ -1,5 +1,6 @@
 "use memo";
 
+import { VisualizationTool } from "@/components/tools/visualization-tool"
 import * as React from "react"
 import {
   AlertTriangle,
@@ -213,6 +214,10 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
     )
   }
 
+  if (part.type === "dynamic-tool" && part.toolName === "openwork_visualization") {
+    return <VisualizationTool part={part} />
+  }
+
   if (isBashToolPart(part)) {
     return <BashTool part={part} />
   }
@@ -288,7 +293,7 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
       <CapabilityCallLine
         part={part}
         connector={resolveConnectorToolIdentity(part, connectorIdentities)}
-        onReconnect={onMcpReconnect}
+        onReconnect={hasPreservedMcpAppResult(part) ? undefined : onMcpReconnect}
         onReopenAuthorization={onMcpReopenAuthorization}
         onRetry={onMcpRetry}
       />

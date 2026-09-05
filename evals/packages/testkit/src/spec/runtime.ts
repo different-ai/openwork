@@ -873,6 +873,33 @@ export class ProbeChannel implements Probe {
     });
   }
 
+  desktopApi(path: string): Promise<{ status: number; body: unknown }> {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("probe", "desktopApi", `desktopApi(GET ${path})`, surface, async () => {
+      if (!path.startsWith("/") || path.startsWith("//") || /[\\\s]/.test(path)) {
+        throw new Error("probe.desktopApi requires a root-relative server path.");
+      }
+      const value = await callFunctionOnSurface(surface, `async (path) => {
+        const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
+        if (!info?.running || !info.baseUrl) return { status: 0, body: { error: "local_server_unavailable" } };
+        const response = await fetch(String(info.baseUrl).replace(/\\/+$/, "") + path, {
+          method: "GET",
+          headers: { Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? "") },
+          redirect: "error",
+          signal: AbortSignal.timeout(15_000),
+        });
+        const text = await response.text();
+        let body = text;
+        try { body = text ? JSON.parse(text) : null; } catch {}
+        return { status: response.status, body };
+      }`, [path], { awaitPromise: true, timeoutMs: 20_000 });
+      if (!isRecord(value) || typeof value.status !== "number" || !("body" in value)) {
+        throw new Error("Invalid desktop API probe response.");
+      }
+      return { status: value.status, body: value.body };
+    });
+  }
+
   toolCalls(mock: import("@openwork/env").MockHandle, options: Parameters<import("@openwork/env").MockHandle["toolCalls"]>[0] = {}) {
     return this.#runtime.call("probe", "toolCalls", `toolCalls(${options.name ?? "any"})`, null, () => mock.toolCalls(options));
   }

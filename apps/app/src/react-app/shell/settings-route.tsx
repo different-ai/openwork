@@ -106,7 +106,7 @@ import { McpView } from "@/react-app/domains/settings/pages/mcp-view";
 import { RecoveryView } from "@/react-app/domains/settings/pages/recovery-view";
 import { UpdatesView } from "@/react-app/domains/settings/pages/updates-view";
 import { useDebugViewModel } from "@/react-app/domains/settings/state/debug-view-model";
-import { useElectronUpdaterState } from "@/react-app/domains/settings/state/electron-updater-state";
+import { useDesktopUpdater } from "@/react-app/domains/settings/state/desktop-updater-provider";
 import { CloudSessionProvider, useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
 import { useDenSession } from "@/react-app/domains/settings/cloud/use-den-session";
 import { useControlAction, type OpenworkControlAction } from "./control/control-provider";
@@ -131,7 +131,12 @@ import {
   type WorkspaceList,
   revealDesktopItemInDir,
 } from "@/app/lib/desktop";
-import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
+import {
+  SETTINGS_TAB_WITHOUT_CONTROL,
+  desktopRestrictionNotice,
+  isDesktopProviderBlocked,
+  isSettingsTabAllowed,
+} from "@/app/cloud/desktop-app-restrictions";
 import { useCheckDesktopRestriction, useDesktopConfig } from "@/react-app/domains/cloud/desktop-config-provider";
 import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-notice-provider";
 import { useCloudProviderAutoSync } from "@/react-app/domains/cloud/use-cloud-provider-auto-sync";
@@ -276,12 +281,11 @@ function reconcileSelectedWorkspaceId(
 }
 
 const SETTINGS_HIDE_TITLEBAR_KEY = "openwork.react.settings.hide-titlebar";
-const SETTINGS_UPDATE_AUTO_CHECK_KEY = "openwork.react.settings.update-auto-check";
-const SETTINGS_UPDATE_AUTO_DOWNLOAD_KEY = "openwork.react.settings.update-auto-download";
 
 export function parseSettingsPath(pathname: string): {
   tab: SettingsTab;
   redirectPath: string | null;
+  advancedSection?: string;
   extensionsSection?: ExtensionsSection;
   extensionDetailId?: string;
 } {
@@ -299,12 +303,13 @@ export function parseSettingsPath(pathname: string): {
     case "ai":
     case "preferences":
     case "permissions":
-    case "advanced":
     case "appearance":
     case "environment":
     case "updates":
     case "debug":
       return { tab: head, redirectPath: null };
+    case "advanced":
+      return { tab: "advanced", redirectPath: null, advancedSection: tail };
     case "cloud-account":
     case "cloud-providers":
       return { tab: head, redirectPath: null };
@@ -415,6 +420,7 @@ function findSessionWorkspaceId(
 }
 
 export function settingsPathForRoute(route: ReturnType<typeof parseSettingsPath>) {
+  if (route.tab === "advanced" && route.advancedSection) return `advanced/${route.advancedSection}`;
   if (route.tab === "extensions" && route.extensionDetailId) {
     return `extensions/${encodeURIComponent(route.extensionDetailId)}`;
   }
@@ -472,11 +478,19 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [workspaceConnectionOverrides, setWorkspaceConnectionOverrides] = useState<Record<string, WorkspaceConnectionState>>({});
   const [legacySelectedWorkspaceId, setLegacySelectedWorkspaceId] = useState(() => navigationWorkspaceId ?? readActiveWorkspaceId() ?? "");
   const selectedWorkspaceId = routeWorkspaceId || legacySelectedWorkspaceId;
+  // The standalone Library takeover is not a settings surface; the
+  // `allowControlSettings` policy only governs the settings shell.
+  const settingsTabBlocked = !props.standaloneExtensions
+    && !isSettingsTabAllowed({ tab: route.tab, checkRestriction: checkDesktopRestriction });
 
   useEffect(() => {
-    if (!props.embedded || !route.redirectPath) return;
-    setEmbeddedPath(route.redirectPath);
-  }, [props.embedded, route.redirectPath]);
+    if (!props.embedded) return;
+    if (route.redirectPath) {
+      setEmbeddedPath(route.redirectPath);
+      return;
+    }
+    if (settingsTabBlocked) setEmbeddedPath(SETTINGS_TAB_WITHOUT_CONTROL);
+  }, [props.embedded, route.redirectPath, settingsTabBlocked]);
 
   const navigateSettingsPath = useCallback((path: string) => {
     if (props.embedded) {
@@ -531,12 +545,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   }, []);
   const [themeMode, setThemeModeState] = useState<ThemeMode>(getInitialThemeMode);
   const [hideTitlebar, setHideTitlebar] = useState(() => readStoredBoolean(SETTINGS_HIDE_TITLEBAR_KEY, false));
-  const [updateAutoCheck, setUpdateAutoCheck] = useState(() =>
-    readStoredBoolean(SETTINGS_UPDATE_AUTO_CHECK_KEY, true),
-  );
-  const [updateAutoDownload, setUpdateAutoDownload] = useState(() =>
-    readStoredBoolean(SETTINGS_UPDATE_AUTO_DOWNLOAD_KEY, false),
-  );
   const [configActionStatus, setConfigActionStatus] = useState<string | null>(null);
   const [permissionsRefreshToken, setPermissionsRefreshToken] = useState(0);
   const [revealConfigBusy, setRevealConfigBusy] = useState(false);
@@ -579,6 +587,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   );
 
   const routeStateRef = useRef({
+    checkDesktopRestriction,
     activeClient: null as Client | null,
     providerBaseUrl: "",
     selectedWorkspaceId: "",
@@ -656,6 +665,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const opencodeBaseUrl = selectedWorkspaceEndpoint?.opencodeBaseUrl ?? "";
 
   routeStateRef.current = {
+    checkDesktopRestriction,
     activeClient,
     providerBaseUrl: opencodeBaseUrl,
     selectedWorkspaceId,
@@ -728,6 +738,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const connectionsStore = useMemo(
     () =>
       createConnectionsStore({
+        checkDesktopAppRestriction: (input) => routeStateRef.current.checkDesktopRestriction(input),
         client: () => routeStateRef.current.activeClient,
         setClient: setActiveClient,
         projectDir: () => routeStateRef.current.selectedWorkspaceRoot,
@@ -791,6 +802,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const extensionsStore = useMemo(
     () =>
       createExtensionsStore({
+        checkDesktopAppRestriction: (input) => routeStateRef.current.checkDesktopRestriction(input),
         client: () => routeStateRef.current.activeClient,
         projectDir: () => routeStateRef.current.selectedWorkspaceRoot,
         selectedWorkspaceId: () => routeStateRef.current.selectedWorkspaceId,
@@ -1023,32 +1035,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       }
     },
   });
-  const onReleaseChannelChange = useCallback(
-    (next: "stable" | "alpha") => {
-      local.setPrefs((previous) => ({ ...previous, releaseChannel: next }));
-    },
-    [local],
-  );
-  const electronUpdaterState = useElectronUpdaterState({
-    releaseChannel: local.prefs.releaseChannel ?? "stable",
-    onReleaseChannelChange,
-    updateAutoCheck,
-    updateAutoDownload,
-    desktopConfig: desktopConfig.config,
-    refreshDesktopConfig: desktopConfig.refreshFresh,
-    setError: (message) => {
-      if (message) {
-        // Auto-checks can fail without any user action; alert + log to the
-        // notification center instead of a bare toast.
-        notifyAlert({
-          kind: "update",
-          title: t("notifications.updater_error"),
-          body: message,
-          dedupeKey: "updater-error",
-        });
-      }
-    },
-  });
+  const electronUpdaterState = useDesktopUpdater();
+  const { updateAutoCheck, setUpdateAutoCheck, updateAutoDownload, setUpdateAutoDownload } = electronUpdaterState;
 
   const workspaceSessionGroups = useMemo(
     // Settings has no per-workspace loading state; the empty set keeps the
@@ -1389,14 +1377,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   useEffect(() => {
     writeStoredBoolean(SETTINGS_HIDE_TITLEBAR_KEY, hideTitlebar);
   }, [hideTitlebar]);
-
-  useEffect(() => {
-    writeStoredBoolean(SETTINGS_UPDATE_AUTO_CHECK_KEY, updateAutoCheck);
-  }, [updateAutoCheck]);
-
-  useEffect(() => {
-    writeStoredBoolean(SETTINGS_UPDATE_AUTO_DOWNLOAD_KEY, updateAutoDownload);
-  }, [updateAutoDownload]);
 
   const {
     markRouteReady: markBootRouteReady,
@@ -2339,6 +2319,20 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     return <Navigate to={target} replace state={location.state} />;
   }
 
+  if (!props.embedded && settingsTabBlocked) {
+    // Organization policy hides desktop settings. Library deep links keep
+    // working through the standalone Library surface; everything else lands on
+    // the Cloud account tab, which explains the active policy.
+    const target = route.tab === "extensions"
+      ? selectedWorkspaceId
+        ? workspaceExtensionsRoute(selectedWorkspaceId, extensionsPathForRoute(route))
+        : globalExtensionsRoute(extensionsPathForRoute(route))
+      : selectedWorkspaceId
+        ? workspaceSettingsRoute(selectedWorkspaceId, SETTINGS_TAB_WITHOUT_CONTROL)
+        : `/settings/${SETTINGS_TAB_WITHOUT_CONTROL}`;
+    return <Navigate to={target} replace state={location.state} />;
+  }
+
   const openCloudAccountSettings = () => {
     navigateSettingsPath("cloud-account");
   };
@@ -2457,9 +2451,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             hideDescription={props.standaloneExtensions !== true}
             selectedWorkspaceRoot={selectedWorkspaceRoot}
             isRemoteWorkspace={isRemoteWorkspace}
-            canEditPlugins={canWriteWorkspacePlugins}
+            canEditPlugins={canWriteWorkspacePlugins && allowManageExtensions}
             canUseGlobalScope={!isRemoteWorkspace}
-            accessHint={pluginsAccessHint}
+            accessHint={allowManageExtensions ? pluginsAccessHint : desktopRestrictionNotice("allowManageExtensions")}
             suggestedPlugins={SUGGESTED_PLUGINS}
             extensions={extensionsStore}
             initialSection={route.extensionsSection}
@@ -2582,6 +2576,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         return (
           <SettingsStack>
             <AdvancedView
+              sectionId={route.advancedSection}
               key={runtimeWorkspaceId ?? selectedWorkspaceId}
               busy={busy}
               clientConnected={Boolean(opencodeClient)}
@@ -2601,6 +2596,18 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               }}
               cloudMcpHealth={cloudMcpHealth}
               refreshCloudMcpHealth={refreshCloudMcpHealth}
+              getEngineV2PreviewStatus={async () => {
+                if (!openworkClient) throw new Error("OpenWork server is not connected.");
+                return openworkClient.getEngineV2PreviewStatus();
+              }}
+              setEngineV2PreviewEnabled={async (enabled) => {
+                if (!openworkClient) throw new Error("OpenWork server is not connected.");
+                return openworkClient.setEngineV2PreviewEnabled(enabled);
+              }}
+              setEngineV2PreviewChatRouting={async (enabled) => {
+                if (!openworkClient) throw new Error("OpenWork server is not connected.");
+                return openworkClient.setEngineV2PreviewChatRouting(enabled);
+              }}
               organizationServer={denSession}
             />
             {platform.capabilities.localRuntimeControl ? (
@@ -2768,7 +2775,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         }}
         selectedModelLabel={defaultModelLabel}
         sessions={paletteSessionOptions}
-        extraItems={[developerModePaletteItem]}
+        extraItems={checkDesktopRestriction({ restriction: "allowControlSettings" }) ? [] : [developerModePaletteItem]}
       />
 
       <ProviderAuthModal

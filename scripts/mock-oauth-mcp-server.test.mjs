@@ -93,7 +93,73 @@ test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeo
     body: "grant_type=refresh_token",
   });
   assert.equal(tokenResponse.status, 200);
-  assert.equal(typeof (await tokenResponse.json()).access_token, "string");
+  const accessToken = (await tokenResponse.json()).access_token;
+  assert.equal(typeof accessToken, "string");
+
+  const configured = await fetch(`${origin}/admin/tools`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ tools: [{
+      name: "execute_capability",
+      description: "A deterministic handoff witness",
+      inputSchema: { type: "object", properties: { target: { type: "string" } } },
+      result: { content: [{ type: "text", text: "queued" }] },
+    }] }),
+  });
+  assert.equal(configured.status, 200);
+  const rpc = async (method, params) => {
+    const response = await fetch(`${origin}/mcp`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    });
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  const discovery = await rpc("server/discover", {});
+  assert.equal(discovery.error.code, -32601);
+  assert.equal("result" in discovery, false);
+  const initialized = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "1" } });
+  assert.equal(initialized.result.protocolVersion, "2025-06-18");
+  const listed = await rpc("tools/list", {});
+  assert.deepEqual(listed.result.tools.map((tool) => tool.name), ["execute_capability"]);
+  assert.equal("result" in listed.result.tools[0], false);
+  const invoked = await rpc("tools/call", { name: "execute_capability", arguments: { target: "desktop" } });
+  assert.equal(invoked.result.content[0].text, "queued");
+  const log = await (await fetch(`${origin}/requests`)).json();
+  assert.deepEqual(log.requests.flatMap((entry) => entry.toolCalls ?? []).map(({ name, args }) => ({ name, args })), [
+    { name: "execute_capability", args: { target: "desktop" } },
+  ]);
+
+  const workload = await fetch(`${origin}/admin/agent-workloads`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workloads: [{
+      promptMarker: "[The user selected @",
+      finalReply: "Handoff received",
+      steps: [{ tool: "execute_capability", arguments: { ignored: true }, argumentsFrom: "computer-mention" }],
+    }] }),
+  });
+  assert.equal(workload.status, 200);
+  for (const [target, task] of [["cloud", "Summarize today's notes."], ["desktop", "Review the changed draft."]]) {
+    const completion = await fetch(`${origin}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "handoff-model",
+        messages: [{ role: "user", content: [
+          { type: "text", text: `@${target} ${task}` },
+          { type: "text", text: `[The user selected @${target}: execute it with target "${target}" and the user's task as prompt.]` },
+        ] }],
+        tools: [{ type: "function", function: { name: "execute_capability" } }],
+      }),
+    });
+    assert.equal(completion.status, 200);
+    const frames = (await completion.text()).split("\n")
+      .filter((line) => line.startsWith("data: {")).map((line) => JSON.parse(line.slice(6)));
+    const call = frames.flatMap((frame) => frame.choices[0].delta.tool_calls ?? [])[0];
+    assert.deepEqual(JSON.parse(call.function.arguments), { name: "remote-session:create", body: { target, prompt: task } });
+  }
 
   const failedResponse = await fetch(`${origin}/admin/agent-workloads`, {
     method: "POST",

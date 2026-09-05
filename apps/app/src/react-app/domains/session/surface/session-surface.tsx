@@ -45,9 +45,11 @@ import type {
   CloudMcpSubmissionResult,
 } from "@/react-app/domains/connections/cloud-mcp-submit-readiness";
 import { ReactSessionComposer } from "./composer/composer";
+import { WorkspaceRunModeMenu } from "./composer/workspace-run-mode-menu";
 import { useSessionModelSelection } from "./session-model-store";
 import type { ProviderCatalog } from "./use-model-behavior";
 import type { ModelAvailability } from "./model-availability";
+import { isComputerTarget } from "./composer/computer-mentions";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./composer/mention-encoding";
 import { desktopBridge, openDesktopUrl } from "@/app/lib/desktop";
 import { parseSlashCommandInvocation } from "./composer/slash-command";
@@ -74,7 +76,7 @@ import {
   messageHasVisibleAssistantOutput,
   resolveAdmissionOutcome,
 } from "./session-admission-outcome";
-import { interruptedTaskRecoveryPrompt, presentOpencodeSessionError } from "@/react-app/domains/session/sync/session-error";
+import { describeOpencodeSessionError, interruptedTaskRecoveryPrompt, presentOpencodeSessionError } from "@/react-app/domains/session/sync/session-error";
 import { createSessionErrorUIMessage } from "@/react-app/domains/session/sync/usechat-adapter";
 import { useLocal } from "@/react-app/kernel/local-provider";
 import { resolveAttachmentFileMetadata } from "@/react-app/domains/session/sync/attachment-file-part";
@@ -430,7 +432,7 @@ const SESSION_ERROR_EVAL_PAYLOAD = {
   },
 };
 
-function createSessionErrorEvalMessages(sessionId: string): UIMessage[] {
+function createSessionErrorEvalMessages(sessionId: string, error: unknown = SESSION_ERROR_EVAL_PAYLOAD): UIMessage[] {
   const now = Date.now();
   const turnId = `${sessionId}:eval-session-error-assistant`;
   return [
@@ -446,7 +448,7 @@ function createSessionErrorEvalMessages(sessionId: string): UIMessage[] {
       parts: [{ type: "text", text: "Looking at the repository now." }],
       metadata: { opencode: { created: now + 1, completed: now + 900 } },
     },
-    createSessionErrorUIMessage(turnId, presentOpencodeSessionError(SESSION_ERROR_EVAL_PAYLOAD), { created: now + 1_000 }),
+    createSessionErrorUIMessage(turnId, presentOpencodeSessionError(error), { created: now + 1_000 }),
   ];
 }
 
@@ -754,7 +756,12 @@ function TodoPanel(props: { todos: TodoItem[] }) {
   if (todos.length === 0) return null;
 
   return (
-    <div className="overflow-hidden border-b border-dls-border bg-transparent">
+    <div
+      className="overflow-hidden border-b border-dls-border bg-transparent"
+      data-todo-progress-panel
+      data-todo-progress-completed={completedTodos}
+      data-todo-progress-total={todos.length}
+    >
         <button
           type="button"
           className="flex w-full items-center justify-between px-4 py-3 text-xs text-gray-9 transition-colors hover:bg-gray-2/50"
@@ -826,18 +833,23 @@ function parseSessionError(thrown: unknown): SessionError {
   return { message: raw || "Failed to send prompt." };
 }
 
-function SessionErrorCard({ error, onDismiss, onChangeModel, onOpenModelPicker }: {
+function SessionErrorCard({ error, developerMode, onDismiss, onChangeModel, onOpenModelPicker }: {
   error: SessionError;
+  developerMode: boolean;
   onDismiss: () => void;
   onChangeModel?: (model: { providerID: string; modelID: string }) => void;
   onOpenModelPicker?: () => void;
 }) {
+  const presentation = presentOpencodeSessionError(error.message);
   return (
     <div className="mx-auto max-w-[720px] px-3 py-3 sm:px-5" data-testid="session-error-card" role="alert">
       <div className="rounded-2xl border border-red-6/30 bg-red-3/15 px-5 py-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-medium text-red-11">{error.message}</div>
+            <div className="text-sm font-medium text-red-11">{developerMode ? error.message : presentation.title}</div>
+            {!developerMode && presentation.description ? (
+              <p className="mt-1 text-sm text-red-11">{presentation.description}</p>
+            ) : null}
             {error.kind === "model-not-found" ? (
               <div className="mt-2 flex flex-wrap gap-2">
                 {error.suggestions && error.suggestions.length > 0 ? (
@@ -1107,7 +1119,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [steering, setSteering] = useState(false);
   const [verifiedOpenTargets, setVerifiedOpenTargets] = useState<OpenTarget[]>([]);
   const [cloudQueueRetryVersion, setCloudQueueRetryVersion] = useState(0);
-  const sending = props.cloudMcpSubmissionState.status === "sending";
+  const [pendingSendSessions, setPendingSendSessions] = useState<string[]>([]);
+  const pendingSendsRef = useRef(new Map<symbol, string>());
+  const sending = pendingSendSessions.includes(props.sessionId);
   const cloudQueueBlockedRef = useRef(false);
   const evalSnapshotFailureRef = useRef(false);
   // Shared with promote-to-send so a manual send-now cannot race the idle drain.
@@ -1434,8 +1448,22 @@ export function SessionSurface(props: SessionSurfaceProps) {
       description: "Dev-only eval hook that renders a failed turn with a provider API error (status, code, response body) through the live session-error presentation path.",
       sideEffect: "mutation",
       disabled: !props.sessionId,
-      execute: () => {
-        setEvalMarkdownMessages(createSessionErrorEvalMessages(props.sessionId));
+      args: [
+        { name: "kind", type: "string", description: "Optional disk-full or database-error fixture." },
+        { name: "surface", type: "string", description: "Optional banner instead of the transcript." },
+      ],
+      execute: (args) => {
+        const kind = args && typeof args === "object" && "kind" in args ? args.kind : null;
+        const error = kind === "disk-full" || kind === "database-error"
+          ? { name: "SqlError", data: { message: `effect/sql/SqlError: Failed to execute statement\n    at runLoop (/$bunfs/root/chunk.js:25:2045)${kind === "disk-full" ? "\nCaused by: ENOSPC: no space left on device, write" : ""}` } }
+          : SESSION_ERROR_EVAL_PAYLOAD;
+        if (args && typeof args === "object" && "surface" in args && args.surface === "banner") {
+          setEvalMarkdownMessages([]);
+          setError({ message: error.data.message });
+        } else {
+          setError(null);
+          setEvalMarkdownMessages(createSessionErrorEvalMessages(props.sessionId, error));
+        }
         return { ok: true };
       },
     };
@@ -1695,7 +1723,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   useControlAction(props.isControlTarget ? failSessionSnapshotControlAction : null);
 
   const buildDraft = useCallback((text: string, nextAttachments: ComposerAttachment[]): ComposerDraft => {
-    const parts: ComposerPart[] = text.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|\[connector [^\]]+\]|@[^\s@]+)/).flatMap((segment) => {
+    const parts: ComposerPart[] = text.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|\[connector [^\]]+\]|@[^\s@]+)/).flatMap((segment, index, segments) => {
       if (!segment) return [] as ComposerDraft["parts"];
       const connectorName = parseConnectorToken(segment);
       if (connectorName) {
@@ -1724,6 +1752,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
       if (segment.startsWith("@")) {
         const value = decodeComposerMentionValue(segment.slice(1));
         const kind = mentions[value];
+        if (isComputerTarget(value) && (!kind || kind === "computer") && (index <= 1 && !segments[0] || /\s$/.test(segments[index - 1] ?? ""))) {
+          return [{ type: "computer", target: value } satisfies ComposerDraft["parts"][number]];
+        }
         if (kind === "agent") return [{ type: "agent", name: value } satisfies ComposerDraft["parts"][number]];
         if (kind === "file") return [{ type: "file", path: value, label: value } satisfies ComposerDraft["parts"][number]];
         if (kind === "app") return [{ type: "app", name: value } satisfies ComposerDraft["parts"][number]];
@@ -1783,6 +1814,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // accepts follow-up user turns mid-run (steering) — the running loop picks
   // up the new message — so this is safe to call while the agent is busy.
   const sendDraft = useCallback(async (nextDraft: ComposerDraft) => {
+    const submissionId = Symbol();
+    pendingSendsRef.current.set(submissionId, props.sessionId);
+    setPendingSendSessions([...pendingSendsRef.current.values()]);
     setError(null);
     try {
       const result = await props.onSendDraft(nextDraft, props.sessionId);
@@ -1800,6 +1834,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
       useSessionActivityStore.getState().setError(props.workspaceId, props.sessionId, parsed.message);
       setAwaitingAssistantBaseline(null);
       throw nextError;
+    } finally {
+      pendingSendsRef.current.delete(submissionId);
+      setPendingSendSessions([...pendingSendsRef.current.values()]);
     }
   }, [appendComposerHistory, props.onSendDraft, props.sessionId, props.workspaceId, renderedMessages.length]);
 
@@ -1811,6 +1848,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Initial send (agent idle) and explicit "Steer" follow-up (agent busy)
   // share the same immediate path.
   const handleSend = useCallback(async () => {
+    if ([...pendingSendsRef.current.values()].includes(props.sessionId)) return;
     const originalDraft = draft;
     const text = originalDraft.trim();
     if (!text && attachments.length === 0) return;
@@ -2517,6 +2555,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     try {
       const denClient = createDenClient({ baseUrl: settings.baseUrl, token });
       const connections = await denClient.listMcpConnections(organizationId, "usable");
+      if (!isChatMcpReconnectScopeCurrent(scope, currentScope())) throw new Error("Your OpenWork account changed. Try connecting again.");
       const connection = connections.find((entry) => entry.id === action.connectionId);
       if (!connection || connection.authType !== "oauth" || connection.credentialMode !== "per_member") {
         throw new Error(`${action.connectionName} is no longer available as your reconnectable account.`);
@@ -2529,6 +2568,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       });
       onProgress({ phase: "opening" });
       const result = await denClient.startMcpConnectionConnect(organizationId, action.connectionId);
+      if (!isChatMcpReconnectScopeCurrent(scope, currentScope())) throw new Error("Your OpenWork account changed. Try connecting again.");
       if (result.status === "connected") {
         recordInspectorEvent("mcp.chat_reconnect.completed", {
           workspaceId: props.workspaceId,
@@ -2742,6 +2782,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
             ) : null}
             {error && snapshot && snapshot.messages.length > 0 ? (
               <SessionErrorCard
+                developerMode={props.developerMode}
                 error={error}
                 onDismiss={handleDismissError}
                 onChangeModel={handleModelChange}
@@ -2758,6 +2799,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
               <div className="px-6 py-8">
                 {error ? (
                   <SessionErrorCard
+                    developerMode={props.developerMode}
                     error={error}
                     onDismiss={handleDismissError}
                     onChangeModel={handleModelChange}
@@ -2765,7 +2807,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
                   />
                 ) : (
                   <div className="mx-auto max-w-xl rounded-3xl border border-red-6/40 bg-red-3/20 px-6 py-5 text-sm text-red-11">
-                    {snapshotQuery.error instanceof Error ? snapshotQuery.error.message : "Failed to load session."}
+                    {props.developerMode && snapshotQuery.error instanceof Error
+                      ? snapshotQuery.error.message
+                      : describeOpencodeSessionError(snapshotQuery.error, "Failed to load session.")}
                   </div>
                 )}
               </div>
@@ -2775,6 +2819,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
               </div>
             ) : renderedMessages.length === 0 && snapshot && snapshot.messages.length === 0 && error ? (
               <SessionErrorCard
+                developerMode={props.developerMode}
                 error={error}
                 onDismiss={handleDismissError}
                 onChangeModel={handleModelChange}
@@ -2878,6 +2923,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
           </div>
         ) : null}
         <ReactSessionComposer
+          runModeControl={<WorkspaceRunModeMenu client={props.client} workspaceId={props.workspaceId} busy={chatStreaming || preparingCloudTools || Boolean(props.activePermission || props.activeQuestion)} />}
           draft={draft}
           mentions={mentions}
           onDraftChange={handleComposerDraftChange}

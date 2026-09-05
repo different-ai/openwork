@@ -1,4 +1,4 @@
-import { openworkCloudMcpInlineReconnectSchema } from "@openwork/types/den/mcp-connection-action"
+import { openworkCloudMcpConnectionActionSchema } from "@openwork/types/den/mcp-connection-action"
 
 export type ToolErrorAttribution = {
   label: string
@@ -76,12 +76,14 @@ function confirmed(label: string, description: string): ToolErrorAttribution {
 export function reconnectActionFromChatToolResult(
   toolName: string,
   result: unknown,
+  input?: unknown,
 ): ChatToolReconnectAction | null {
   // Tool output is otherwise untrusted. Only the two canonical OpenWork Cloud
   // capability tools may turn a structured Den response into a UI action.
-  // Discovery is included because it performs a live connection probe before
-  // the agent can safely proceed to execution.
+  // Discovery may offer authorization only for an explicit setup request;
+  // finding an unavailable connection is not itself a reason to prompt.
   if (!OPENWORK_CLOUD_CAPABILITY_TOOLS.has(toolName)) return null
+  if (toolName === "openwork-cloud_search_capabilities" && (!isRecord(input) || input.intent !== "connect")) return null
 
   const parsed = parseResultRecord(result)
   if (!parsed) return null
@@ -95,23 +97,28 @@ export function reconnectActionFromChatToolResult(
         .filter(isRecord)
       : []),
   ]
-  const reconnectTargets = new Map<string, { connectionId: string; connectionName: string }>()
+  const reconnectTargets = new Map<string, ChatToolReconnectAction>()
   for (const connectionStatus of candidates) {
-    const parsedStatus = openworkCloudMcpInlineReconnectSchema.safeParse(connectionStatus)
+    const parsedStatus = openworkCloudMcpConnectionActionSchema.safeParse(connectionStatus)
     if (!parsedStatus.success) continue
-    const { connectionId, connectionName } = parsedStatus.data
-    reconnectTargets.set(connectionId, { connectionId, connectionName })
+    const status = parsedStatus.data
+    if (status.authType !== "oauth" || status.credentialMode !== "per_member" || status.actor !== "member"
+      || status.action.surface !== "openwork_your_connections"
+      || !((status.state === "needs_connection" && status.action.type === "connect")
+        || (status.state === "reauth_required" && status.action.type === "reconnect"))) continue
+    const { connectionId, connectionName } = status
+    reconnectTargets.set(connectionId, { connectionId, connectionName, label: status.state === "needs_connection" ? "Connect" : "Reconnect" })
   }
 
   // One tool row should never guess which of several connections the user
   // intended to authorize. Multi-connection search results remain descriptive.
   if (reconnectTargets.size !== 1) return null
-  const [{ connectionId, connectionName }] = reconnectTargets.values()
+  const [action] = reconnectTargets.values()
 
   // Keep the chat action concise and derived from the trusted connection
   // identity. Diagnostic operator guidance can be much longer than a button
   // label, and tool output must never get to inject arbitrary action copy.
-  return { connectionId, connectionName, label: "Reconnect" }
+  return action
 }
 
 export function attributeChatToolError(errorText: string): ToolErrorAttribution | null {

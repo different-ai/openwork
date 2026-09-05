@@ -12,7 +12,6 @@ import {
   calculateEffectiveDesktopPolicy,
   desktopPolicyDefaults,
   normalizeDesktopPolicyDocument,
-  normalizeDesktopPolicyValue,
   selectEffectiveOnboardingPromptConfig,
   type DesktopConfig,
   type DesktopPolicyValue,
@@ -154,7 +153,7 @@ export async function calculateDesktopPolicyForOrgMember(input: {
   const effectivePolicy = calculateEffectiveDesktopPolicy({
     orgPolicyCount: orgPolicies.length,
     defaultPolicy: defaultPolicy?.policy ?? {},
-    assignedPolicies: uniqueAssignedPolicies.map((row) => normalizeDesktopPolicyValue(row.policy)),
+    assignedPolicies: uniqueAssignedPolicies.map((row) => row.policy),
   })
   const onboardingPromptConfig = selectEffectiveOnboardingPromptConfig({
     defaultPolicy: defaultPolicy?.policy ?? {},

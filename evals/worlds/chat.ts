@@ -3,7 +3,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join, resolve } from "node:path";
 import { evalIn } from "@openwork/behaviors";
-import type { Seed } from "@openwork/env";
+import { resolveEvalEngine, type Seed } from "@openwork/env";
+import type { MockAgentWorkload } from "@openwork/labs";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
 
@@ -77,7 +78,7 @@ function sendStream(response: ServerResponse, chunks: unknown[], intervalMs = 0)
   writeNext();
 }
 
-async function configureProvider(
+export async function configureProvider(
   seed: Seed,
   app: Awaited<ReturnType<Seed["desktop"]>>,
   workspaceId: string,
@@ -208,8 +209,30 @@ export async function paletteSessionActions(seed: Seed) {
 }
 
 export async function newSplitPrimary(seed: Seed) {
-  const app = await seed.desktop({ name: "new-split-session" });
+  const providerId = "split-send-mock";
+  const modelId = "split-send-model";
+  const primaryPrompt = "Reply to the primary split message";
+  const secondaryPrompt = "Reply to the secondary split message";
+  const switchPrompt = "Reply after switching the primary session";
+  const mock = seed.mock({ agentWorkloads: [
+    { promptMarker: primaryPrompt, finalReply: "Primary split received", steps: [] },
+    { promptMarker: secondaryPrompt, finalReply: "Secondary split received", steps: [] },
+    { promptMarker: switchPrompt, finalReply: "Switched session received", steps: [] },
+  ] });
+  const den = await seed.den({ mocks: { agent: mock } });
+  const app = await seed.desktop({ name: "new-split-session", den, as: "admin", model: `${providerId}/${modelId}` });
   const workspace = await seed.workspace(app, seed.tmpPath("new-split-session"));
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    provider: {
+      [providerId]: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "Split send mock",
+        options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-split-send" },
+        models: { [modelId]: { name: "Split send model" } },
+      },
+    },
+  });
+  const switchSession = await seedSessionRetry(seed, app, { title: "Split switch target" });
   const session = await seedSessionRetry(seed, app, { title: "New split primary" });
   const splitFacts = () => evalIn(app, `(() => {
     const context = window.__openworkControl?.context?.();
@@ -219,6 +242,10 @@ export async function newSplitPrimary(seed: Seed) {
     const secondaryPane = secondaryPanes[0];
     return {
       layoutKind: layout?.kind ?? "",
+      focusedPane: layout?.focused ?? "",
+      focusedComposerSessionId: document.activeElement?.matches('[contenteditable="true"]')
+        ? document.activeElement.closest("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? ""
+        : "",
       primarySessionId: layout?.primarySessionId ?? layout?.sessionId ?? "",
       secondarySessionId: layout?.secondarySessionId ?? "",
       primaryWorkspaceId: layout?.primaryWorkspaceId ?? "",
@@ -232,7 +259,18 @@ export async function newSplitPrimary(seed: Seed) {
       locationHash: window.location.hash,
     };
   })()`);
-  return { app, workspace, session, splitFacts };
+  const agentContextViaServer = () => evalIn(app, `(async () => {
+    const response = await fetch("http://127.0.0.1:" + localStorage.getItem("openwork.server.port") + "/experimental/ui-control/request", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + localStorage.getItem("openwork.server.token"),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ kind: "context" }),
+    });
+    return response.json();
+  })()`, { awaitPromise: true, timeoutMs: 15_000 });
+  return { app, workspace, session, splitFacts, agentContextViaServer, primaryPrompt, secondaryPrompt, switchSession, switchPrompt };
 }
 
 export async function shimmerChat(seed: Seed) {
@@ -488,6 +526,80 @@ export async function renderCycle(seed: Seed) {
     await close(provider);
     throw error;
   }
+}
+
+export const streamedMarkdownMarker = "STREAM_MARKDOWN_ANSWER";
+/** A multi-block answer: heading, prose, list, table, fenced code, closing prose. */
+export const streamedMarkdownAnswer = [
+  "## Streamed answer heading",
+  "",
+  "Opening paragraph with **bold emphasis** and `inline-code.ts` in it.",
+  "",
+  "- alpha list item",
+  "- beta list item",
+  "",
+  "| Column | Value |",
+  "| --- | --- |",
+  "| gamma row | 42 |",
+  "",
+  "```ts",
+  "const streamed = \"delta\";",
+  "```",
+  "",
+  "Closing paragraph epsilon.",
+].join("\n");
+
+/**
+ * The answer arrives in small content deltas from the shared agent mock, which
+ * the placement boots next to Den so the engine can reach it on Daytona too.
+ */
+export async function streamedMarkdown(seed: Seed) {
+  const providerId = "streamed-markdown-mock";
+  const modelId = "streamed-markdown-model";
+  const mock = seed.mock({
+    agentWorkloads: [{
+      promptMarker: streamedMarkdownMarker,
+      finalReply: streamedMarkdownAnswer,
+      finalReplyChunkSize: 8,
+      finalReplyDelayMs: 1500,
+      steps: [],
+    }],
+  });
+  const den = await seed.den({ mocks: { agent: mock } });
+  const app = await seed.desktop({ den, as: "admin", model: `${providerId}/${modelId}` });
+  const workspace = await seed.workspace(app, seed.tmpPath("streamed-markdown-answer"));
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    provider: {
+      [providerId]: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "Streamed markdown mock",
+        options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-streamed-markdown" },
+        models: { [modelId]: { name: "Streamed markdown model" } },
+      },
+    },
+  });
+  const engine = resolveEvalEngine();
+  const ready = await seed.evalIn(app, `async (workspaceId, engine, providerId, modelId) => {
+    const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
+    const headers = { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") };
+    const deadline = Date.now() + 60000;
+    while (Date.now() < deadline) {
+      const status = await (await fetch(base + "/experimental/engine-v2-preview/status", { headers })).json();
+      if (engine === "v1" && !status.chatRouting) return true;
+      if (engine === "v2" && status.running && status.chatRouting) {
+        const response = await fetch(base + "/workspace/" + workspaceId + "/opencode2/api/model", { headers });
+        if (response.ok) {
+          const catalog = JSON.stringify(await response.json());
+          if (catalog.includes(providerId) && catalog.includes(modelId)) return true;
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    return false;
+  }`, { args: [workspace.workspaceId, engine, providerId, modelId], awaitPromise: true, timeoutMs: 65000 });
+  if (ready !== true) throw new Error(`Selected ${engine} engine was not ready for the streaming journey`);
+  const session = await seedSessionRetry(seed, app);
+  return { app, den, workspace, session };
 }
 
 const htmlToolName = "explode_html";
@@ -1059,7 +1171,10 @@ export async function sessionErrorCard(seed: Seed) {
   const workspace = await seed.workspace(app, seed.tmpPath("session-error-details"));
   const session = await seedSessionRetry(seed, app, { title: "Session error proof" });
   await arrangeControl(seed, app, "eval.session_error.seed");
-  return { app, workspace, session };
+  return {
+    app, workspace, session,
+    seedStorageError: (kind: "disk-full" | "database-error", surface: "transcript" | "banner" = "transcript") => arrangeControl(seed, app, "eval.session_error.seed", { kind, surface }),
+  };
 }
 
 export async function snapshotFailure(seed: Seed) {
@@ -1100,4 +1215,138 @@ export async function unfinishedTools(seed: Seed) {
   const session = await seedSessionRetry(seed, app);
   await arrangeControl(seed, app, "eval.session_lifecycle.seed_unfinished_tools", { lifecycle: "active" });
   return { app, workspace, session };
+}
+
+/** Signed-in chat with a deterministic model and a scheduled desktop task. */
+export async function computerMentions(seed: Seed) {
+  const providerId = "computer-mentions-mock";
+  const modelId = "computer-mentions-model";
+  const mock = seed.mock({
+    allowUnauthenticatedMcp: true,
+    tools: [
+      {
+        name: "search_capabilities",
+        description: "Find a computer task capability.",
+        inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+        result: { content: [{ type: "text", text: JSON.stringify({ items: [{ name: "remote-session:create" }] }) }] },
+      },
+      {
+        name: "execute_capability",
+        description: "Start a task on the selected computer.",
+        inputSchema: { type: "object", properties: { name: { type: "string" }, body: { type: "object", properties: { target: { type: "string", enum: ["cloud", "desktop"] }, prompt: { type: "string" } }, required: ["target", "prompt"] } }, required: ["name", "body"] },
+        result: { content: [{ type: "text", text: JSON.stringify({ state: "queued", commandId: "computer-task-witness" }) }] },
+      },
+    ],
+    agentWorkloads: [
+      ...["cloud", "desktop"].map((target): MockAgentWorkload => ({
+        // Only the app's synthetic instruction contains this marker. Without routing, the model refuses the task.
+        promptMarker: `[The user selected @${target}:`,
+        finalReply: "Received computer task.",
+        steps: [
+          { tool: "computer_witness_search_capabilities", arguments: { query: "remote-session:create" } },
+          { tool: "computer_witness_execute_capability", arguments: {}, argumentsFrom: "computer-mention" },
+        ],
+      })),
+      { promptMarker: "COMPUTER-PLAIN-TASK", finalReply: "Received computer task.", steps: [] },
+    ],
+  });
+  const den = await seed.den({ mocks: { agent: mock }, env: { DEN_AUTOMATIONS_ENABLED: "true" } });
+  const created = await seed.api(den.admin, "/v1/automations", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "Daily project summary",
+      instructions: "Summarize today's project notes.",
+      schedule: { kind: "daily", timezone: "UTC", hour: 23, minute: 59 },
+      model: { providerId: "opencode", modelId: "big-pickle", variant: null },
+    }),
+  });
+  if (created.response.status !== 201) throw new Error(`Automation setup failed: ${created.text}`);
+  const app = await seed.desktop({ den, as: "admin", model: `${providerId}/${modelId}` });
+  const workspace = await seed.workspace(app, seed.tmpPath("computer-mentions"));
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    permission: { "computer_witness_*": "allow" },
+    mcp: { computer_witness: { type: "remote", url: den.mocks.agent.mcpUrl, enabled: true, oauth: false } },
+    provider: {
+      [providerId]: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "Computer mentions mock",
+        options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-computer-mentions" },
+        models: { [modelId]: { name: "Computer mentions model" } },
+      },
+    },
+  });
+  const session = await seedSessionRetry(seed, app, { title: "Computer task mentions" });
+  return {
+    den, app, workspace, session,
+    async submittedParts() {
+      // TODO(primitive): inspect submitted engine parts, including synthetic routing instructions.
+      return seed.evalIn(app, `async (workspaceId) => {
+        const port = localStorage.getItem("openwork.server.port");
+        const token = localStorage.getItem("openwork.server.token");
+        const base = "http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId) + "/opencode/session";
+        const headers = { Authorization: "Bearer " + token };
+        const listed = await fetch(base, { headers });
+        if (!listed.ok) throw new Error("Session list failed: " + listed.status);
+        const sessions = await listed.json();
+        const messages = [];
+        for (const session of sessions) {
+          const response = await fetch(base + "/" + encodeURIComponent(session.id) + "/message", { headers });
+          if (!response.ok) throw new Error("Transcript read failed: " + response.status);
+          messages.push(...await response.json());
+        }
+        messages.sort((a, b) => a.info.time.created - b.info.time.created);
+        return messages.filter((message) => message.info.role === "user").map((message) => ({
+          visible: message.parts.filter((part) => part.type === "text" && !part.synthetic).map((part) => part.text).join("").trim(),
+          routing: message.parts.filter((part) => part.type === "text" && part.synthetic && part.text.includes("remote-session:create")).map((part) => part.text),
+        }));
+      }`, { args: [workspace.workspaceId], awaitPromise: true });
+    },
+  };
+}
+
+/** A deterministic model calls the real built-in visualization tool. */
+export async function visualization(seed: Seed) {
+  const providerId = "visualization-mock";
+  const modelId = "visualization-model";
+  const design = {
+    id: "project-overview", title: "Project overview", revision: 1,
+    navigation: ["Overview", "Projects", "Settings"],
+    sections: [{ title: "Your workspace", columns: "two", blocks: [
+      { kind: "metric", label: "Active projects", value: "12" },
+      { kind: "field", label: "Project name", value: "Website refresh" },
+      { kind: "button", label: "Create project" },
+      { kind: "list", label: "Recent activity", items: ["Draft reviewed", "Mockup updated"] },
+      { kind: "image", label: "Cover image" },
+      { kind: "text", label: "Design note", value: "<script>window.mockupExecuted = true</script>" },
+    ] }],
+  };
+  const mock = seed.mock({ agentWorkloads: [
+    { latestUserTurn: true, promptMarker: "Sketch a project overview", finalReply: "Your first sketch is ready.", steps: [{ tool: "openwork_visualization", arguments: design }] },
+    { latestUserTurn: true, promptMarker: "Create version 2", finalReply: "Your revised sketch is ready.", steps: [{ tool: "openwork_visualization", arguments: { ...design, revision: 2, description: "A calmer overview" } }] },
+  ] });
+  const den = await seed.den({ mocks: { agent: mock } });
+  const app = await seed.desktop({ name: "visualization", model: `${providerId}/${modelId}` });
+  const workspace = await seed.workspace(app, seed.tmpPath("visualization"));
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    permission: { openwork_visualization: "allow" },
+    provider: { [providerId]: {
+      npm: "@ai-sdk/openai-compatible", name: "Visualization mock",
+      options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-visualization" },
+      models: { [modelId]: { name: "Visualization model", tool_call: true } },
+    } },
+  });
+  const session = await seedSessionRetry(seed, app);
+  return {
+    den, app, workspace, session,
+    preview: async () => {
+      const result = await evalIn(app, `(() => {
+      const preview = document.querySelector('[data-testid="visualization-preview"]');
+      return { viewport: preview?.getAttribute('data-viewport'), width: preview?.getBoundingClientRect().width,
+        scripts: preview?.querySelectorAll('script').length, executed: window.mockupExecuted === true,
+        cards: document.querySelectorAll('[data-testid="visualization-card"]').length };
+    })()`);
+      if (!isRecord(result) || typeof result.width !== "number") throw new Error("Visualization preview missing");
+      return { ...result, width: result.width };
+    },
+  };
 }

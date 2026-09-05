@@ -15,6 +15,7 @@ import {
   joinWorkspaceRelativePath,
   toFileUrl,
 } from "./prompt-file-parts";
+import { computerMentionInstruction } from "../surface/composer/computer-mentions";
 import { appMentionInstruction } from "../surface/composer/app-mentions";
 import { connectSkillPrompt, parseConnectSkillToken } from "../surface/composer/connect-skill-token";
 import { connectorPrompt, parseConnectorToken } from "../surface/composer/connector-token";
@@ -76,7 +77,8 @@ export async function draftToParts(
         .filter((part): part is Extract<ComposerPart, { type: "paste" }> => part.type === "paste")
         .map((part) => [part.label, part.text] as const),
     );
-    for (const segment of draft.text.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|\[connector [^\]]+\]|@[^\s@]+)/)) {
+    const segments = draft.text.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|\[connector [^\]]+\]|@[^\s@]+)/);
+    for (const [index, segment] of segments.entries()) {
       if (!segment) continue;
       const connectorName = parseConnectorToken(segment);
       if (connectorName) {
@@ -113,10 +115,17 @@ export async function draftToParts(
         const mentionPart = draft.parts.find((part) =>
           (part.type === "agent" && part.name === value)
           || (part.type === "app" && part.name === value)
+          || (part.type === "computer" && part.target === value
+            && (index <= 1 && !segments[0] || /\s$/.test(segments[index - 1] ?? "")))
           || (part.type === "file" && part.path === value),
         );
         if (mentionPart?.type === "agent") {
           parts.push({ type: "agent", name: mentionPart.name });
+          continue;
+        }
+        if (mentionPart?.type === "computer") {
+          parts.push({ type: "text", text: `@${mentionPart.target}` });
+          parts.push({ type: "text", text: computerMentionInstruction(mentionPart.target), synthetic: true });
           continue;
         }
         if (mentionPart?.type === "app") {
@@ -160,6 +169,11 @@ export async function draftToParts(
       }
       if (part.type === "skill") {
         parts.push({ type: "text", text: `Load [skill ${part.name}] and follow its instructions.` });
+        continue;
+      }
+      if (part.type === "computer") {
+        parts.push({ type: "text", text: `@${part.target}` });
+        parts.push({ type: "text", text: computerMentionInstruction(part.target), synthetic: true });
         continue;
       }
       if (part.type === "app") {

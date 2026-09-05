@@ -1,0 +1,62 @@
+{
+  "lane": "app-v2",
+  "createdAt": "2026-09-04T15:39:11.395Z",
+  "machine": {
+    "platform": "linux",
+    "arch": "x64",
+    "cpus": 48,
+    "cpuModel": "AMD EPYC 9254 24-Core Processor",
+    "memGB": 377.4,
+    "node": "v25.6.0"
+  },
+  "appCommit": "bb6964dd0c06f1dde664bee3f005fb7c4eb1ba34",
+  "iterations": 1,
+  "pacingMs": 20,
+  "tokens": 20,
+  "pollResolutionMs": 50,
+  "executionPlan": {
+    "coldInstances": 1,
+    "warmIterations": 1,
+    "warmScenariosRunIn": "last cold instance only"
+  },
+  "modelReselectedPerSession": false,
+  "uiCompactionAvailable": false,
+  "results": {
+    "cold_boot_to_composer": [
+      {
+        "appInteractive": 20395,
+        "workspaceReady": 35673,
+        "composerReady": 35674,
+        "desktopTotalMs": 20395,
+        "appReadinessMs": 5618
+      }
+    ],
+    "first_send_cold": [
+      536
+    ],
+    "new_session_ready": [
+      232
+    ],
+    "message_rtt": [
+      {
+        "userRendered": 552,
+        "firstToken": 554,
+        "complete": 555
+      }
+    ],
+    "workspace_switch": [
+      {
+        "aToB": 190,
+        "bToA": 174
+      }
+    ],
+    "long_message": [
+      {
+        "insertMs": 84,
+        "userRendered": 443,
+        "firstToken": 444,
+        "complete": 581
+      }
+    ]
+  }
+}

@@ -108,6 +108,11 @@
       "types": "./src/url.ts",
       "development": "./src/url.ts",
       "default": "./src/url.ts"
+    },
+    "./visualization": {
+      "types": "./src/visualization.ts",
+      "development": "./src/visualization.ts",
+      "default": "./src/visualization.ts"
     }
   },
   "files": [

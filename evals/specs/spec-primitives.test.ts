@@ -151,6 +151,7 @@ primitiveTest("worlds and capability channels preserve provenance and ordering",
     dir: "/tmp/spec-primitives",
     createdAt: "2026-09-01T00:00:00.000Z",
     closedAt: "2026-09-01T00:00:01.000Z",
+    engine: "v1",
     summary: {
       ok: false,
       totalArtifacts: 0,

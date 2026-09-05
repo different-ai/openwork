@@ -238,7 +238,7 @@ if [ "${RUN_SEED:-0}" = "1" ]; then
       BETTER_AUTH_URL="$BETTER_AUTH_URL" \
       DEN_API_PUBLIC_URL="$DEN_API_PUBLIC_URL" \
       DEN_ORG_MODE="$DEN_ORG_MODE" \
-      OPENWORK_DEV_MODE="$OPENWORK_DEV_MODE" \
+      OPENWORK_DEV_MODE=1 \
       DEN_DEMO_SEED_FETCH_GITHUB="${DEN_DEMO_SEED_FETCH_GITHUB:-0}" \
       node --conditions=development --import tsx scripts/seed-demo-org.ts) > /tmp/den-seed.log 2>&1
     if signin_ok; then

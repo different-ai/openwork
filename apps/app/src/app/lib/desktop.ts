@@ -48,12 +48,14 @@ import type {
   NukeReceipt,
   WorkspaceList,
 } from "./desktop-types";
-import type { BrowserPanelTab } from "./desktop-types";
+import type {
+  BrowserPanelOwnerPayload,
+  BrowserPanelTab,
+  BrowserStatePayload,
+  OpenBrowserUrlResult,
+} from "@openwork/browser-tabs";
 
-export type BrowserStatePayload = {
-  activeTabId?: string | null;
-  tabs?: BrowserPanelTab[];
-};
+export type { BrowserStatePayload } from "@openwork/browser-tabs";
 
 export type BrowserProxyState = {
   proxy: { rules: string; authenticated: boolean } | null;
@@ -171,22 +173,21 @@ declare global {
         use?: (id: string) => Promise<RecoveryActionResult>;
       };
       browser?: {
-        show?: (bounds: { x: number; y: number; width: number; height: number }) => Promise<void>;
+        show?: (bounds: { x: number; y: number; width: number; height: number }, sessionId?: string | null) => Promise<void>;
         hide?: () => Promise<void>;
-        openUrl?: (url: string, provider?: "auto" | "builtin" | "external") => Promise<{
-          provider: "builtin";
-          browser_url: string;
-          target_id: string;
-          tab_id: string;
-          url: string;
-        }>;
+        openUrl?: (
+          url: string,
+          provider?: "auto" | "builtin" | "external",
+          options?: { sessionId?: string | null },
+        ) => Promise<OpenBrowserUrlResult>;
+        setVisibleSession?: (sessionId: string | null) => Promise<string | null>;
         navigate?: (url: string) => Promise<void>;
         back?: () => Promise<void>;
         forward?: () => Promise<void>;
         reload?: () => Promise<void>;
         setBounds?: (bounds: { x: number; y: number; width: number; height: number }) => Promise<void>;
         getState?: () => Promise<BrowserStatePayload | null>;
-        createTab?: (url?: string) => Promise<{ tabId: string }>;
+        createTab?: (url?: string, sessionId?: string | null) => Promise<{ tabId: string }>;
         closeTab?: (tabId: string) => Promise<string | null>;
         closeAllTabs?: () => Promise<string[]>;
         selectTab?: (tabId: string) => Promise<string>;
@@ -197,8 +198,8 @@ declare global {
         showTabContextMenu?: (tabId: string, point?: { x: number; y: number }) => Promise<void>;
         destroy?: () => Promise<void>;
         onStateChange?: (callback: (state: BrowserStatePayload) => void) => () => void;
-        onPanelOpened?: (callback: () => void) => () => void;
-        onPanelClosed?: (callback: () => void) => () => void;
+        onPanelOpened?: (callback: (payload?: BrowserPanelOwnerPayload) => void) => () => void;
+        onPanelClosed?: (callback: (payload?: BrowserPanelOwnerPayload) => void) => () => void;
       };
       terminal?: {
         create?: (options: { cwd: string; cols: number; rows: number }) => Promise<{ terminalId: string }>;

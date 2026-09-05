@@ -160,7 +160,9 @@ export function readStoredDefaultModel(): ModelRef {
 export function writeStoredDefaultModel(model: ModelRef): void {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(MODEL_PREF_KEY, formatModelRef(model));
+    const value = formatModelRef(model);
+    if (window.localStorage.getItem(MODEL_PREF_KEY) === value) return;
+    window.localStorage.setItem(MODEL_PREF_KEY, value);
     window.dispatchEvent(new Event(storedDefaultModelChangedEvent));
   } catch {
     // ignore quota errors

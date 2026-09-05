@@ -1,5 +1,8 @@
 # Repository prerequisite: enable Settings → Actions → General →
-# "Allow GitHub Actions to create and approve pull requests".
+# "Allow GitHub Actions to create and approve pull requests", plus
+# Settings → General → Pull Requests → "Allow auto-merge".
+# Merging uses the existing warden-clearance App credentials so the merge
+# triggers downstream push/release workflows. Required branch rules still apply.
 # The bot approval satisfies the "someone other than the last pusher" rule because
 # this workflow's bot never pushes. For SOC 2 four-eyes, this automated control
 # inherits the original human review of the commit already landed on protected dev.
@@ -29,7 +32,7 @@ name: Revert Fast Lane
 
 on:
   pull_request_target:
-    types: [opened, reopened, synchronize]
+    types: [opened, reopened, synchronize, edited, ready_for_review]
     branches: [dev]
 
 permissions:
@@ -42,13 +45,17 @@ concurrency:
 
 jobs:
   verify-and-approve:
-    if: startsWith(github.event.pull_request.title, 'Revert "') && github.event.pull_request.head.repo.full_name == github.repository
+    if: startsWith(github.event.pull_request.title, 'Revert "') && !github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: warden-clearance
     steps:
       - name: Checkout trusted base (dev)
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Fetch PR commits as git data
         env:
@@ -93,6 +100,7 @@ jobs:
           echo "reason=$reason" >> "$GITHUB_OUTPUT"
 
       - name: Approve verified revert
+        id: approve
         if: steps.verify.outputs.verdict == 'pass'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -121,6 +129,36 @@ jobs:
             -f event=APPROVE \
             -f body="$body" > /dev/null
           printf '## Revert Fast Lane\n\nPASS: %s\n' "$body" >> "$GITHUB_STEP_SUMMARY"
+          echo "approved=true" >> "$GITHUB_OUTPUT"
+
+      - name: Mint merge token
+        if: steps.approve.outputs.approved == 'true'
+        id: merge-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ secrets.WARDEN_APP_ID }}
+          private-key: ${{ secrets.WARDEN_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Enable automatic merge of verified revert
+        if: steps.approve.outputs.approved == 'true'
+        env:
+          GH_TOKEN: ${{ steps.merge-token.outputs.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # Re-check mutable PR metadata before opting into automatic merging.
+          eligible="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq \
+            '.state == "open" and .draft == false and .base.ref == "dev" and (.title | startswith("Revert \""))')"
+          if [[ "$eligible" != "true" ]]; then
+            printf 'Automatic merge withheld: PR is no longer an open, ready revert targeting dev.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --auto --squash --match-head-commit "$HEAD_SHA"
+          printf 'Automatic merge requested for verified head %s; GitHub enforces required checks and reviews.\n' "$HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Record ineligible revert
         if: steps.verify.outputs.verdict != 'pass'

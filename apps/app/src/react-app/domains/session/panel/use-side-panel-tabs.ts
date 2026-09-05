@@ -1,4 +1,5 @@
 import * as React from "react";
+import { activeBrowserTabIdForSession, browserTabsForSession } from "@openwork/browser-tabs";
 
 import type { BrowserStatePayload } from "@/app/lib/desktop";
 
@@ -11,9 +12,11 @@ import { getElectronBrowser } from "./utils";
 export function useSidePanelTabs(sessionId: string) {
   const syncBrowserTabs = usePanelTabStore((state) => state.syncBrowserTabs);
 
+  // Every conversation only sees the tabs it opened (plus shared tabs): the
+  // native browser is one surface, but ownership decides what each panel shows.
   const applyBrowserState = React.useCallback((browserState: BrowserStatePayload) => {
-    const tabs = browserState.tabs ?? [];
-    const activeTabId = browserState.activeTabId ?? tabs[0]?.id ?? null;
+    const tabs = browserTabsForSession(browserState.tabs ?? [], sessionId);
+    const activeTabId = activeBrowserTabIdForSession(browserState, sessionId, tabs);
 
     syncBrowserTabs(sessionId, tabs, activeTabId);
   }, [sessionId, syncBrowserTabs]);
@@ -45,7 +48,7 @@ export function useSidePanelTabs(sessionId: string) {
   const reorderTabs = useReorderTabs();
 
   return {
-    createTab: (url?: string) => createTab(url),
+    createTab: (url?: string) => createTab(url, sessionId),
     closeTab: (tab: PanelTab) => closeTab(sessionId, tab),
     selectTab: (tabId: string) => selectTab(sessionId, tabId),
     reorderTabs: (tabIds: string[]) => reorderTabs(sessionId, tabIds),
@@ -53,8 +56,8 @@ export function useSidePanelTabs(sessionId: string) {
 }
 
 export function useCreateTab() {
-  return React.useCallback((url?: string) => {
-    void getElectronBrowser()?.createTab?.(url);
+  return React.useCallback((url?: string, sessionId?: string | null) => {
+    void getElectronBrowser()?.createTab?.(url, sessionId);
   }, []);
 }
 

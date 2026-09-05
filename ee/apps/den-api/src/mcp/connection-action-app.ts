@@ -95,6 +95,27 @@ export function connectionActionLaunch(payload: ConnectionActionPayload) {
   }
 }
 
+/** Attach one unambiguous connection card directly to discovery. */
+export function connectionActionSearchCard(matches: readonly { kind?: string }[]) {
+  const targets = new Map<string, ConnectionActionPayload>()
+  for (const match of matches) {
+    if (match.kind !== "connection_status" || !("connectionStatus" in match)) continue
+    const status = match.connectionStatus
+    if (typeof status !== "object" || status === null) continue
+    const parsed = connectionActionPayloadSchema.safeParse({
+      ...status,
+      schemaVersion: connectionActionAppSchemaVersion,
+    })
+    if (parsed.success) targets.set(parsed.data.connectionId, parsed.data)
+  }
+  if (targets.size !== 1) return null
+  const [payload] = targets.values()
+  return {
+    connectionAction: payload,
+    meta: { "openwork/mcpApp": connectionActionLaunch(payload) },
+  }
+}
+
 /**
  * Card attachment for connection-level tool failures: the same first-party
  * connection card as the status probe, so hosts that render apps for failed

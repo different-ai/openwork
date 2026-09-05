@@ -3,10 +3,14 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { LogOut, Settings } from "lucide-react";
-import { getErrorMessage, normalizeAuthIntentParam, PENDING_AUTH_INTENT_STORAGE_KEY, requestJson } from "../_lib/den-flow";
-import { type DenOrgSummary, formatRoleLabel, getInferenceRoute, getMarketplaceOnboardingRoute, getOrgDashboardRoute, parseOrgListPayload } from "../_lib/den-org";
+import { getErrorMessage, requestJson } from "../_lib/den-flow";
+import { type DenOrgSummary, formatRoleLabel, getJoinOrgRoute, getOnboardingPeopleRoute, getOrgDashboardRoute, parseOrgListPayload } from "../_lib/den-org";
 import { useOrgListWindow } from "../_lib/use-org-list-window";
 import { useDenFlow } from "../_providers/den-flow-provider";
+
+import { DesktopSetupChoices, WorkspaceIntentChoices, type DesktopSetup, type WorkspaceIntent } from "./workspace-intent";
+import { applyRestrictedSetup } from "../_lib/restricted-setup";
+import { SetupFrame } from "./setup-frame";
 
 type SettingsTab = "profile" | "organizations";
 
@@ -19,6 +23,10 @@ export function OrganizationScreen() {
   const [activeTab, setActiveTab] = useState<SettingsTab>("organizations");
   const [showCreate, setShowCreate] = useState(false);
   const [createName, setCreateName] = useState("");
+  const [intent, setIntent] = useState<WorkspaceIntent | null>(null);
+  const [desktopSetup, setDesktopSetup] = useState<DesktopSetup | null>(null);
+  const [invitationLink, setInvitationLink] = useState("");
+  const [createdOrg, setCreatedOrg] = useState<{ id: string; slug: string } | null>(null);
   const [createBusy, setCreateBusy] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -99,44 +107,77 @@ export function OrganizationScreen() {
       return;
     }
 
+    if (intent === "join") {
+      try {
+        const url = new URL(invitationLink.trim(), window.location.origin);
+        const invitationId = url.searchParams.get("invite")?.trim();
+        if (url.origin !== window.location.origin || url.pathname !== "/join-org" || !invitationId) {
+          throw new Error("Paste the invitation link for this OpenWork Cloud. Ask your team owner if you do not have one yet.");
+        }
+        router.push(getJoinOrgRoute(invitationId));
+      } catch (err) {
+        setCreateError(err instanceof Error ? err.message : "Enter a valid invitation link.");
+      }
+      return;
+    }
     const trimmed = createName.trim();
-    if (!trimmed) return;
+    if (!intent || trimmed.length < 2 || (intent === "team" && !desktopSetup)) return;
 
     setCreateBusy(true);
     setCreateError(null);
     try {
-      const { response, payload } = await requestJson("/v1/org", {
-        method: "POST",
-        body: JSON.stringify({ name: trimmed }),
-      });
+      let nextOrg = createdOrg;
+      if (!nextOrg) {
+        const { response, payload } = await requestJson("/v1/org", {
+          method: "POST",
+          body: JSON.stringify({ name: trimmed }),
+        });
 
-      if (!response.ok) {
-        throw new Error(getErrorMessage(payload, "Failed to create organization."));
+        if (!response.ok) {
+          throw new Error(getErrorMessage(payload, "Failed to create organization."));
+        }
+
+        const organization =
+          typeof payload === "object" && payload && "organization" in payload && payload.organization && typeof payload.organization === "object"
+            ? payload.organization
+            : null;
+        if (!organization || !("slug" in organization) || typeof organization.slug !== "string" || !organization.slug || !("id" in organization) || typeof organization.id !== "string") {
+          throw new Error("Organization was created, but no slug was returned.");
+        }
+
+        nextOrg = { id: organization.id, slug: organization.slug };
+        setCreatedOrg(nextOrg);
       }
-
-      const organization =
-        typeof payload === "object" && payload && "organization" in payload && payload.organization && typeof payload.organization === "object"
-          ? (payload.organization as { slug?: unknown })
-          : null;
-      const nextSlug = typeof organization?.slug === "string" ? organization.slug : null;
-
-      if (!nextSlug) {
-        throw new Error("Organization was created, but no slug was returned.");
+      if (intent === "team" && desktopSetup === "restricted") {
+        await applyRestrictedSetup(nextOrg.id);
       }
-
-      const pendingIntent = normalizeAuthIntentParam(window.sessionStorage.getItem(PENDING_AUTH_INTENT_STORAGE_KEY));
-      if (pendingIntent === "models") {
-        window.sessionStorage.removeItem(PENDING_AUTH_INTENT_STORAGE_KEY);
-        router.push(getInferenceRoute(nextSlug));
-        return;
-      }
-
-      router.push(getMarketplaceOnboardingRoute(nextSlug));
+      router.push(getOnboardingPeopleRoute(nextOrg.slug));
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : "Failed to create organization.");
       setCreateBusy(false);
     }
   }
+
+  const creationForm = <form onSubmit={handleCreate} className="grid gap-5" aria-busy={createBusy}>
+    <WorkspaceIntentChoices intent={intent} disabled={createBusy || Boolean(createdOrg)} onChange={(next) => { setIntent(next); setCreateError(null); }} />
+    {intent === "join" ? <label className="grid gap-2">
+      <span className="text-sm font-medium text-gray-700">Team invitation link</span>
+      <input type="text" value={invitationLink} onChange={(event) => setInvitationLink(event.target.value)} placeholder="Paste your invitation link" required className="rounded-xl border border-gray-200 px-4 py-3 text-sm focus:ring-2 focus:ring-gray-900" />
+      <span className="text-xs leading-5 text-gray-500">You will review the team and invited email before accepting. This does not create another organization.</span>
+    </label> : intent ? <>
+      <label className="grid gap-2">
+        <span className="text-sm font-medium text-gray-700">{intent === "personal" ? "Organization name" : "Team name"}</span>
+        <input type="text" value={createName} onChange={(event) => setCreateName(event.target.value)} placeholder={intent === "personal" ? "My work" : "Design team"} minLength={2} maxLength={120} disabled={createBusy || Boolean(createdOrg)} required className="rounded-xl border border-gray-200 px-4 py-3 text-sm focus:ring-2 focus:ring-gray-900" />
+      </label>
+      {intent === "team" ? <DesktopSetupChoices mode={desktopSetup} onChange={setDesktopSetup} disabled={createBusy || Boolean(createdOrg)} /> : <p className="text-sm leading-6 text-gray-500">Start with your own tools. Creating this organization does not upload the files in your desktop workspaces.</p>}
+    </> : null}
+    {createError ? <p role="alert" className="text-sm text-rose-600">{createError}</p> : null}
+    {createdOrg && createError && desktopSetup === "restricted" ? <button type="button" onClick={() => { setDesktopSetup("flexible"); setCreateError(null); }} className="justify-self-start text-sm text-neutral-500 underline underline-offset-4 hover:text-neutral-900">Use Flexible instead</button> : null}
+    {createdOrg && intent === "team" && desktopSetup === "restricted" ? <p role="status" className="text-sm text-gray-600">Your team is saved. We’ll finish applying its settings before continuing.</p> : null}
+    <button type="submit" disabled={createBusy || !intent || (intent === "join" ? !invitationLink.trim() : createName.trim().length < 2 || (intent === "team" && !desktopSetup))} className="w-full rounded-xl bg-gray-950 px-5 py-3.5 text-sm font-medium text-white hover:bg-gray-800 focus-visible:ring-2 focus-visible:ring-gray-600 focus-visible:ring-offset-2 disabled:opacity-50">
+      {createBusy ? "Setting up…" : createdOrg && desktopSetup === "restricted" ? "Retry setup" : intent === "join" ? "Review invitation" : "Continue"}
+    </button>
+  </form>;
 
   function handleSwitch(slug: string) {
     router.push(getOrgDashboardRoute(slug));
@@ -148,6 +189,21 @@ export function OrganizationScreen() {
         <p className="text-sm text-gray-500">Loading organizations...</p>
       </div>
     );
+  }
+
+  if (!isSingleOrgMode && (showDirectCreateFlow || showCreate)) {
+    return <SetupFrame step="space" title="Make it yours." description="A space for your tools, your team, and whatever comes next.">
+      <div className="mb-6">
+        <h2 className="text-[23px] font-semibold tracking-[-.035em]">A little about your work.</h2>
+        <p className="mt-2 text-[13px] leading-6 text-gray-500">Choose a starting point. You can invite people in the next step.</p>
+      </div>
+      {error ? <p role="alert" className="mb-4 text-sm text-rose-600">{error}</p> : null}
+      {creationForm}
+      <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-5 text-xs text-gray-500">
+        <span className="max-w-[260px] truncate">{user?.email}</span>
+        {!createBusy && !createdOrg && orgs.length > 0 ? <button type="button" className="font-medium text-gray-700" onClick={() => { setShowCreate(false); setCreateName(""); setIntent(null); setDesktopSetup(null); setCreateError(null); }}>Cancel</button> : <button type="button" disabled={createBusy} onClick={() => void signOut()} className="font-medium text-gray-700">Log out</button>}
+      </div>
+    </SetupFrame>;
   }
 
   return (
@@ -171,7 +227,7 @@ export function OrganizationScreen() {
       <main className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-12">
         {isSingleOrgMode && orgs.length === 0 ? (
           <div className="mx-auto max-w-2xl">
-            <section className="rounded-[1.75rem] border border-gray-200 bg-white p-5 shadow-sm sm:p-7 md:rounded-[2rem] md:p-10">
+            <section className="rounded-[1.75rem] border border-gray-200 bg-white p-5 shadow-xs sm:p-7 md:rounded-[2rem] md:p-10">
               <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start">
                 <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#011627] text-sm font-semibold uppercase tracking-[0.08em] text-white sm:h-14 sm:w-14">
                   {userInitials}
@@ -215,60 +271,7 @@ export function OrganizationScreen() {
           </div>
         ) : null}
 
-        {showDirectCreateFlow ? (
-          <div className="mx-auto max-w-2xl">
-            <section className="rounded-[1.75rem] border border-gray-200 bg-white p-5 shadow-sm sm:p-7 md:rounded-[2rem] md:p-10">
-              <div className="mb-6 flex flex-col gap-4 sm:mb-8 sm:flex-row sm:items-start">
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-[#011627] text-sm font-semibold uppercase tracking-[0.08em] text-white sm:h-14 sm:w-14">
-                  {userInitials}
-                </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-medium uppercase tracking-[0.18em] text-gray-400">OpenWork Cloud</p>
-                  <h1 className="mt-2 text-[2rem] font-semibold leading-none tracking-[-0.04em] text-gray-950 sm:text-3xl">
-                    Name your team.
-                  </h1>
-                  <p className="mt-3 max-w-xl text-[13px] leading-6 text-gray-500 sm:text-sm">
-                    You can rename it later. No credit card required.
-                  </p>
-                </div>
-              </div>
-
-              {error ? (
-                <div className="mb-6 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-900">
-                  {error}
-                </div>
-              ) : null}
-
-              <form onSubmit={handleCreate} className="grid gap-5">
-                <label className="grid gap-2">
-                  <span className="text-sm font-medium text-gray-700">Organization name</span>
-                  <input
-                    type="text"
-                    value={createName}
-                    onChange={(e) => setCreateName(e.target.value)}
-                    placeholder="Acme Corp"
-                    className="w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm text-gray-900 outline-none transition focus:border-gray-400 focus:ring-4 focus:ring-gray-900/5"
-                    autoFocus
-                    required
-                  />
-                </label>
-
-                {createError ? <p className="text-sm font-medium text-rose-600">{createError}</p> : null}
-
-                <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-                  <button
-                    type="submit"
-                    disabled={createBusy || !createName.trim()}
-                    className="w-full rounded-2xl bg-gray-900 px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-gray-800 disabled:opacity-50 sm:w-auto"
-                  >
-                    {createBusy ? "Creating..." : "Continue"}
-                  </button>
-
-                </div>
-              </form>
-            </section>
-          </div>
-        ) : !isSingleOrgMode ? (
+        {!isSingleOrgMode ? (
           <div className="mx-auto max-w-5xl">
             <div className="mb-6 sm:mb-8">
               <h1 className="text-2xl font-semibold tracking-tight text-gray-900">Settings</h1>
@@ -307,7 +310,7 @@ export function OrganizationScreen() {
             ) : null}
 
             {activeTab === "profile" ? (
-              <section className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+              <section className="rounded-2xl border border-gray-200 bg-white p-6 shadow-xs">
                 <div className="mb-6 flex items-start gap-4">
                   <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-[#011627] text-sm font-semibold uppercase tracking-[0.08em] text-white">
                     {userInitials}
@@ -325,7 +328,7 @@ export function OrganizationScreen() {
                       type="text"
                       value={user?.name ?? ""}
                       readOnly
-                      className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-900 outline-none"
+                      className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-900 outline-hidden"
                     />
                   </label>
 
@@ -335,7 +338,7 @@ export function OrganizationScreen() {
                       type="email"
                       value={user?.email ?? ""}
                       readOnly
-                      className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-900 outline-none"
+                      className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-900 outline-hidden"
                     />
                   </label>
 
@@ -345,7 +348,7 @@ export function OrganizationScreen() {
                       type="text"
                       value={user?.id ?? ""}
                       readOnly
-                      className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-900 outline-none"
+                      className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-900 outline-hidden"
                     />
                   </label>
 
@@ -355,7 +358,7 @@ export function OrganizationScreen() {
                       type="text"
                       value={activeOrg?.name ?? "No active organization"}
                       readOnly
-                      className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-900 outline-none"
+                      className="w-full rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-900 outline-hidden"
                     />
                   </label>
                 </div>
@@ -373,7 +376,7 @@ export function OrganizationScreen() {
                         value={orgQuery}
                         onChange={(event) => setOrgQuery(event.target.value)}
                         placeholder="Search organizations"
-                        className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 outline-none transition focus:border-gray-400 focus:ring-4 focus:ring-gray-900/5"
+                        className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 outline-hidden transition focus:border-gray-400 focus:ring-4 focus:ring-gray-900/5"
                       />
                     ) : null}
                     <button
@@ -385,52 +388,9 @@ export function OrganizationScreen() {
                   </div>
                 </div>
 
-                {showCreate ? (
-                  <div className="mb-6 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm sm:mb-8 sm:p-6">
-                    <h2 className="mb-4 text-lg font-medium text-gray-900">Create an Organization</h2>
-                    <form onSubmit={handleCreate} className="grid max-w-md gap-4">
-                      <label className="grid gap-2">
-                        <span className="text-sm font-medium text-gray-700">Organization Name</span>
-                        <input
-                          type="text"
-                          value={createName}
-                          onChange={(e) => setCreateName(e.target.value)}
-                          placeholder="Acme Corp"
-                          className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-900 outline-none transition focus:border-gray-400 focus:ring-4 focus:ring-gray-900/5"
-                          autoFocus
-                          required
-                        />
-                      </label>
-
-                      <div className="flex flex-col-reverse gap-3 pt-2 sm:flex-row">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setShowCreate(false);
-                            setCreateName("");
-                            setCreateError(null);
-                          }}
-                          className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="submit"
-                          disabled={createBusy || !createName.trim()}
-                          className="rounded-xl bg-gray-900 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-gray-800 disabled:opacity-50"
-                        >
-                          {createBusy ? "Creating..." : "Create"}
-                        </button>
-                      </div>
-
-                      {createError ? <p className="text-sm font-medium text-rose-600">{createError}</p> : null}
-                    </form>
-                  </div>
-                ) : null}
-
                 <div className="grid gap-3 md:hidden">
                   {visibleOrgs.map((org) => (
-                    <section key={org.id} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                    <section key={org.id} className="rounded-2xl border border-gray-200 bg-white p-4 shadow-xs">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <h2 className="truncate text-[15px] font-semibold text-gray-950">{org.name}</h2>
@@ -447,7 +407,7 @@ export function OrganizationScreen() {
                       <div className="mt-4 flex gap-2">
                         <button
                           onClick={() => handleSwitch(org.slug)}
-                          className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50"
+                          className="flex-1 rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm font-medium text-gray-700 shadow-xs transition hover:bg-gray-50"
                         >
                           {org.isActive ? "Open" : "Switch"}
                         </button>
@@ -463,7 +423,7 @@ export function OrganizationScreen() {
                   ))}
                 </div>
 
-                <div className="hidden overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm md:block">
+                <div className="hidden overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-xs md:block">
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-sm">
                       <thead className="border-b border-gray-200 bg-gray-50/50">
@@ -493,7 +453,7 @@ export function OrganizationScreen() {
                               ) : (
                                 <button
                                   onClick={() => handleSwitch(org.slug)}
-                                  className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-sm transition hover:bg-gray-50"
+                                  className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 shadow-xs transition hover:bg-gray-50"
                                 >
                                   Switch
                                 </button>
@@ -525,7 +485,7 @@ export function OrganizationScreen() {
                     <button
                       type="button"
                       onClick={showMoreOrgs}
-                      className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50 sm:w-auto"
+                      className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 shadow-xs transition hover:bg-gray-50 sm:w-auto"
                     >
                       Show more
                     </button>

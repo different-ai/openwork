@@ -26,6 +26,9 @@ importers:
       '@openwork/matchers':
         specifier: workspace:*
         version: link:packages/matchers
+      '@openwork/sdk':
+        specifier: link:../packages/sdk
+        version: link:../packages/sdk
       '@openwork/test-artifacts':
         specifier: workspace:*
         version: link:packages/test-artifacts
@@ -113,6 +116,9 @@ importers:
       '@openwork/cdp':
         specifier: workspace:*
         version: link:../cdp
+      '@openwork/env':
+        specifier: workspace:*
+        version: link:../env
       '@openwork/timeline':
         specifier: workspace:*
         version: link:../timeline

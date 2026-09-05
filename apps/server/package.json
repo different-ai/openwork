@@ -12,14 +12,15 @@
     "test:coverage": "bun --conditions=development test --coverage --coverage-reporter=text --coverage-reporter=lcov --coverage-dir=coverage",
     "test:artifacts": "bun --conditions=development test src/artifact-files.e2e.test.ts src/workspace-init.test.ts src/server.normalizeWorkspaceRelativePath.test.ts",
     "build:enterprise-mcp-client": "pnpm --filter @openwork/enterprise-mcp-client build",
-    "build": "pnpm build:enterprise-mcp-client && tsc -p tsconfig.json && bun build src/opencode-plugins/openwork-chrome-devtools.ts src/opencode-plugins/openwork-extensions-preview.ts src/opencode-plugins/openwork-capabilities-knowledge.ts src/opencode-plugins/openwork-office-attachments.ts src/opencode-plugins/openwork-spreadsheets.ts src/opencode-plugins/openwork-anthropic-adaptive-thinking.ts src/opencode-plugins/openwork-anthropic-tool-schema.ts --outdir dist/opencode-plugins --target node --format esm",
+    "build": "pnpm build:enterprise-mcp-client && tsc -p tsconfig.json && bun build src/opencode-plugins/openwork-chrome-devtools.ts src/opencode-plugins/openwork-extensions-preview.ts src/opencode-plugins/openwork-capabilities-knowledge.ts src/opencode-plugins/openwork-office-attachments.ts src/opencode-plugins/openwork-spreadsheets.ts src/opencode-plugins/openwork-pdf-attachments.ts src/opencode-plugins/openwork-anthropic-adaptive-thinking.ts src/opencode-plugins/openwork-anthropic-tool-schema.ts --outdir dist/opencode-plugins --target node --format esm && node scripts/copy-pdfium-wasm.mjs dist/opencode-plugins",
     "build:bin": "pnpm build:enterprise-mcp-client && bun build --compile src/cli.ts --outfile dist/bin/openwork-server",
     "build:bin:all": "pnpm build:enterprise-mcp-client && bun ./script/build.ts --outdir dist/bin --target bun-darwin-arm64 --target bun-darwin-x64 --target bun-linux-x64 --target bun-linux-arm64 --target bun-windows-x64 --target bun-windows-arm64",
     "prepare:npm": "pnpm build:bin && node scripts/publish-npm.mjs --prepare-only",
     "publish:npm": "pnpm build:bin && node scripts/publish-npm.mjs",
     "start": "bun dist/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "prepublishOnly": "pnpm build:bin"
+    "prepublishOnly": "pnpm build:bin",
+    "test:core": "bun --conditions=development test src/headless-threads.e2e.test.ts src/session-groups.e2e.test.ts src/opencode-proxy.e2e.test.ts src/authorized-folders.e2e.test.ts src/inbox-upload-approval.e2e.test.ts src/artifact-files.e2e.test.ts src/effective-permissions.e2e.test.ts src/cloud-mcp-reconcile.e2e.test.ts src/cloud-provider-sync.e2e.test.ts src/desktop-cloud-sync-preserves-imports.e2e.test.ts src/runtime-config-patch-reload.e2e.test.ts src/engine-instance-eviction.e2e.test.ts src/tokens.test.ts src/workspace-export-safety.test.ts"
   },
   "files": [
     "bin",
@@ -64,6 +65,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@hyzyla/pdfium": "2.1.13",
     "@openwork/headless-threads": "workspace:*",
     "@openwork/paths": "workspace:*",
     "@openwork/types": "workspace:*",
@@ -72,6 +74,8 @@
     "@types/minimatch": "^5.1.2",
     "@types/node": "^22.10.2",
     "bun-types": "^1.3.6",
+    "fast-png": "8.0.0",
+    "jpeg-js": "0.4.4",
     "opencode-chrome-devtools": "1.0.4",
     "typescript": "^5.6.3"
   },

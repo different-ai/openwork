@@ -12,7 +12,7 @@ import {
   McpError,
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { addMcp } from "./mcp.js";
+import { addMcp, listMcp } from "./mcp.js";
 import {
   CONNECT_MCP_SERVER_INDEX_URI,
   connectMcpAppHostName,
@@ -20,7 +20,7 @@ import {
   writeOpenWorkConnectMcpAppHostAuthorization,
   writeOpenWorkConnectMcpAppHostCatalog,
 } from "./connect-mcp-server-catalog.js";
-import { readRuntimeOpencodeConfig, runtimeMcpMap, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
+import { readRuntimeOpencodeConfig, runtimeMcpMap, writeRuntimeOpencodeConfig, writeGlobalRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import {
   callMcpAppTool,
   listMcpAppCatalog,
@@ -542,6 +542,30 @@ describe("MCP Apps host transport", () => {
       resourceUri: RESOURCE_URI,
       html: RESOURCE_HTML,
     });
+  });
+
+  test("resolves and calls account-scoped gateway Apps from the effective runtime configuration", async () => {
+    const { config, root, activateUpdatedResource } = await configuredFixture("openwork-mcp-app-global-gateway-");
+    const fixture = (await listMcp(config, WORKSPACE_ID, root)).find(item => item.name === "fixture");
+    if (!fixture) throw new Error("Fixture server missing");
+    await writeGlobalRuntimeOpencodeConfig(config, () => ({ mcp: { "openwork-cloud": fixture.config } }));
+    const app = await resolveSameServerMcpAppResource({
+      serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root,
+      projectedToolName: "openwork-cloud_model_only_fixture",
+      launch: { toolName: "read_bound_detail", resourceUri: RESOURCE_URI },
+    });
+    expect(app).toMatchObject({ serverName: "openwork-cloud", html: RESOURCE_HTML });
+    await activateUpdatedResource();
+    expect(await callMcpAppTool({
+      serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root,
+      serverName: app.serverName, name: app.toolName, resourceUri: app.resourceUri,
+      arguments: { id: "account" },
+    })).toMatchObject({ structuredContent: { id: "account" } });
+    await writeGlobalRuntimeOpencodeConfig(config, () => ({}));
+    await expect(callMcpAppTool({
+      serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root,
+      serverName: app.serverName, name: app.toolName, resourceUri: app.resourceUri,
+    })).rejects.toMatchObject({ code: "server_unavailable" });
   });
 
   test("rejects a stale gateway launch when the native tool changes its resource binding", async () => {

@@ -610,6 +610,34 @@
       "when": 1788371787639,
       "tag": "0087_external_mcp_connection_expose_directly",
       "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "5",
+      "when": 1788551105619,
+      "tag": "0088_external_mcp_connection_external_key",
+      "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "5",
+      "when": 1788553679500,
+      "tag": "0089_declarative_org_resources",
+      "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "5",
+      "when": 1788562997900,
+      "tag": "0090_saved_app_workflow_use",
+      "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "5",
+      "when": 1788570825673,
+      "tag": "0091_personal_dashboard_apps",
+      "breakpoints": true
     }
   ]
 }

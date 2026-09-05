@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { setTimeout } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { resolveEvalEngineValue } from "./eval-engine.ts";
 import type { ChromeSurfaceOptions, DenServiceHandle, DenServiceOptions, ElectronSurfaceOptions, Host, ShareLinks, SurfaceHandle } from "./types.ts";
 
 export interface DaytonaExecResult {
@@ -604,6 +605,7 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
       }
 
       const env = new Map<string, string>();
+      if (resolveEvalEngineValue(process.env.OPENWORK_EVAL_ENGINE) === "v2") env.set("OPENWORK_ENGINE_V2_PREVIEW", "1");
       appendExtraEnv(env, opts.env);
       env.set("DAYTONA_ELECTRON_LOG", logPath);
       env.set("OPENWORK_ELECTRON_REMOTE_DEBUG_PORT", String(port));

@@ -200,7 +200,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
               setInput((current) => ({ ...current, instructions }))
             }}
           />
-          <p className="text-xs text-muted-foreground">{cloud ? "Each run starts a fresh task in your OpenWork Cloud runtime." : "Each claimed run starts a fresh task in your desktop OpenCode runtime."}</p>
+          <p className="text-xs text-muted-foreground">{cloud ? "Each run starts a new task on your cloud computer." : "Each run starts a new task on your desktop computer."}</p>
         </div>
       )}
 
@@ -300,7 +300,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
             options={pickerOptions}
             query={modelQuery}
             setQuery={setModelQuery}
-            subtitle={cloud ? "Runs use this model and reasoning level in your OpenWork Cloud runtime." : "Runs use this model and reasoning level in your desktop runtime."}
+            subtitle={cloud ? "Your cloud computer uses this model and reasoning level." : "Your desktop computer uses this model and reasoning level."}
             target="default"
             current={{ providerID: input.model.providerId, modelID: input.model.modelId }}
             onSelect={(model) => {
@@ -324,8 +324,8 @@ export function AutomationEditor(props: AutomationEditorProps) {
 
       <div className="rounded-xl border border-border bg-muted/30 p-3 text-sm text-muted-foreground" data-automation-placement={props.placement}>
         {cloud
-          ? "Den keeps the schedule and run history. Each occurrence runs headlessly in OpenWork Cloud, even while your desktop is offline; a stopped Cloud container wakes automatically."
-          : "Den keeps the schedule and run history. Your signed-in desktop claims each occurrence and executes it with the selected model in its local OpenCode runtime. If the desktop is unavailable before the claim deadline, the occurrence is recorded as missed."}
+          ? "Runs on your cloud computer, even when your desktop is offline. You can check past runs here."
+          : "Runs on your desktop computer. Keep OpenWork open, signed in, and connected at the scheduled time. If your desktop stays unavailable, the run is marked as missed."}
       </div>
 
       <div className="flex justify-end gap-2">

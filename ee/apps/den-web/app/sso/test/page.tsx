@@ -1,5 +1,6 @@
 "use client";
 
+import { DenStatusScreen } from "../../../components/den-status-screen";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { denApiCredentials, denApiEndpoint } from "../../(den)/_lib/den-api-origin";
@@ -60,19 +61,15 @@ function SsoTestStartContent() {
   }, [intentId, organizationId]);
 
   return (
-    <main className="min-h-screen bg-[#0B1020] px-6 py-20 text-white">
-      <div className="mx-auto max-w-xl rounded-[32px] border border-white/10 bg-white/5 p-8 shadow-[0_30px_90px_-40px_rgba(0,0,0,0.6)] backdrop-blur">
-        <p className="text-[12px] font-semibold uppercase tracking-[0.24em] text-violet-200">SSO configuration test</p>
-        <h1 className="mt-4 text-3xl font-semibold tracking-[-0.04em]">Continue to your identity provider</h1>
-        <p className="mt-3 text-[15px] leading-7 text-white/70">This test does not enable SSO or replace your current OpenWork session.</p>
-        <div className={`mt-6 rounded-[20px] border px-4 py-3 text-[14px] ${error ? "border-red-400/40 bg-red-500/10 text-red-100" : "border-white/10 bg-black/20 text-white/70"}`}>
-          {error ?? "Preparing the saved configuration for a real authentication test..."}
-        </div>
-      </div>
-    </main>
+    <DenStatusScreen
+      title={error ? "We couldn’t start the test" : "Testing your SSO connection"}
+      description="This test does not enable SSO or replace your current OpenWork session."
+      status="Preparing your organization’s sign-in page…"
+      error={error}
+    />
   );
 }
 
 export default function SsoTestStartPage() {
-  return <Suspense><SsoTestStartContent /></Suspense>;
+  return <Suspense fallback={<DenStatusScreen title="Testing your SSO connection" description="Preparing your organization’s sign-in page…" />}><SsoTestStartContent /></Suspense>;
 }

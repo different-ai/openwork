@@ -13,6 +13,7 @@ import {
   openworkServerDataDir,
 } from "@openwork/paths";
 import { ensureDenStack } from "./den-stack.ts";
+import { resolveEvalEngineValue } from "./eval-engine.ts";
 import type { ChildProcess } from "node:child_process";
 import type { DisposableHost, SurfaceHandle, ElectronSurfaceOptions, ChromeSurfaceOptions, DenServiceOptions, DenServiceHandle, ShareLinks } from "./types.ts";
 
@@ -491,6 +492,7 @@ export function electronSurfaceEnv(
     OPENWORK_DESKTOP_DISABLE_WORKSPACE_RECOVERY: "1",
     OPENWORK_DEV_MODE: "1",
     OPENWORK_ENV_STORE: paths.envStorePath,
+    ...(resolveEvalEngineValue(process.env.OPENWORK_EVAL_ENGINE) === "v2" ? { OPENWORK_ENGINE_V2_PREVIEW: "1" } : {}),
     OPENCODE_CONFIG_DIR: paths.opencodeConfigDir,
     VITE_DISABLE_OPENWORK_MODELS: "1",
     OPENWORK_ELECTRON_APP_IDENTIFIER: options.appIdentifier,
@@ -865,7 +867,8 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
           throw new Error(`OPENWORK_EVAL_ELECTRON_BINARY does not exist: ${packagedBinary}`);
         });
         log(`Starting local Electron surface ${name} from packaged binary ${packagedBinary} (CDP :${cdpPort})...`);
-        spawned = spawnDetached(packagedBinary, [], { cwd: options.repoRoot, env, logPath });
+        // An installed artifact must not resolve assets from the checkout's cwd.
+        spawned = spawnDetached(packagedBinary, [], { cwd: profileRoot, env, logPath });
       } else {
         log(`Starting local Electron surface ${name} (Vite :${port}, CDP :${cdpPort})...`);
         spawned = spawnDetached(pnpmCommand(), [opts.devCommand ?? "dev:electron"], { cwd: options.repoRoot, env, logPath });

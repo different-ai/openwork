@@ -220,6 +220,30 @@ test("spawnElectron starts isolated Daytona Electron profiles and writes bootstr
   assert(secondStart.includes("/electron-userdata"));
 });
 
+test("spawnElectron maps the v2 eval lane before Daytona caller overrides", async () => {
+  const previous = process.env.OPENWORK_EVAL_ENGINE;
+  process.env.OPENWORK_EVAL_ENGINE = "v2";
+  const { exec, calls } = createFakeExec((port) => `https://cdp-${port}.example.test`);
+  const host = createDaytonaHost({
+    sandboxId: "openwork-test-v2-lane",
+    log: () => undefined,
+    exec,
+    repoRoot: "/repo",
+    waitForCdp: successfulPolls(),
+  });
+  try {
+    await host.spawnElectron("v2-default");
+    await host.spawnElectron("v2-override", { env: { OPENWORK_ENGINE_V2_PREVIEW: "sidecar" } });
+  } finally {
+    if (previous === undefined) delete process.env.OPENWORK_EVAL_ENGINE;
+    else process.env.OPENWORK_EVAL_ENGINE = previous;
+  }
+
+  const starts = calls.filter((call) => argsText(call).includes("/workspace/.devcontainer/start-daytona-electron.sh"));
+  assert.match(argsText(starts[0] ?? { args: [] }), /OPENWORK_ENGINE_V2_PREVIEW=.*1/);
+  assert.match(argsText(starts[1] ?? { args: [] }), /OPENWORK_ENGINE_V2_PREVIEW=.*sidecar/);
+});
+
 test("spawnElectron preserves a caller-owned Daytona profile while generated profiles are removed", async () => {
   const { exec, calls } = createFakeExec((port) => `https://cdp-${port}.example.test`);
   const host = createDaytonaHost({

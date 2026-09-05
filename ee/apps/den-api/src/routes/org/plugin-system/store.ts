@@ -998,6 +998,7 @@ function serializeMarketplace(row: MarketplaceRow, pluginCount?: number) {
     deletedAt: row.deletedAt ? row.deletedAt.toISOString() : null,
     description: row.description,
     id: row.id,
+    externalKey: row.externalKey,
     logoUrl: row.logoUrl,
     name: row.name,
     organizationId: row.organizationId,
@@ -1158,6 +1159,14 @@ async function getPluginRow(organizationId: OrganizationId, pluginId: PluginId) 
     .limit(1)
 
   return rows[0] ?? null
+}
+
+export async function findMarketplaceByExternalKey(context: PluginArchActorContext, externalKey: string) {
+  const [row] = await db.select().from(MarketplaceTable).where(and(
+    eq(MarketplaceTable.organizationId, context.organizationContext.organization.id),
+    eq(MarketplaceTable.externalKey, externalKey),
+  )).limit(1)
+  return row
 }
 
 async function getMarketplaceRow(organizationId: OrganizationId, marketplaceId: MarketplaceId) {
@@ -3238,6 +3247,7 @@ async function ensureDefaultMarketplace(input: {
 
   if (!marketplace) {
     const marketplaceRow = {
+      externalKey: null,
       createdAt: input.createdAt,
       createdByOrgMembershipId,
       deletedAt: null,
@@ -3337,9 +3347,10 @@ export async function getMarketplaceDetail(context: PluginArchActorContext, mark
   return serializeMarketplace(row, memberships.length)
 }
 
-export async function createMarketplace(input: { context: PluginArchActorContext; description?: string | null; logoUrl?: string | null; name: string }) {
+export async function createMarketplace(input: { context: PluginArchActorContext; description?: string | null; logoUrl?: string | null; name: string; externalKey?: string }) {
   const now = new Date()
   const row = {
+    externalKey: input.externalKey ?? null,
     createdAt: now,
     createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
     deletedAt: null,

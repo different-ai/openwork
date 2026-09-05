@@ -80,7 +80,8 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
   needs(requirements)
   await using den = await server({
     place,
-    org: { name: `Workflow Automation ${Date.now()}`, admin: { name: "Sarah" } },
+    env: { DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: "true" },
+    org: { name: `Workflow Automation ${Date.now()}`, admin: { name: "Sarah" }, members: { colleague: { name: "Colleague" } } },
     mocks: { reports: mcpMock({ allowUnauthenticatedMcp: true }) },
   })
   const orgs = await denFetch(den.admin, "/v1/me/orgs", {
@@ -99,6 +100,17 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
     "saved-script-automations spec exercises Cloud Automations",
   )
 
+  // A connection found by chat must remain callable in a saved Workflow even
+  // when it was added after the first search batch of 16 connections.
+  for (let index = 0; index < 16; index += 1) {
+    await createOrgConnection(den.admin, {
+      name: `Earlier source ${index}`,
+      url: den.mocks.reports.mcpUrl,
+      authType: "none",
+      credentialMode: "shared",
+      access: { orgWide: true },
+    })
+  }
   const connection = await createOrgConnection(den.admin, {
     name: "Report source",
     url: den.mocks.reports.mcpUrl,
@@ -177,6 +189,28 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
     true,
   )
 
+  const initialDraftSource = "export default function Briefing({ data }) { return <article><h1>Briefing</h1><p>{data.briefing.topic}</p></article> }"
+  const emptyDraft = await agentRpc(den.ref.apiUrl, mcpToken, "tools/call", {
+    name: "save_artifact_view",
+    arguments: { configObjectId, title: "Briefing app", reactSource: initialDraftSource },
+  })
+  expect(emptyDraft.isError).toBe(true)
+  expect(emptyDraft._meta).toBeUndefined()
+  const emptyDraftText = records(emptyDraft.content).find((part) => part.type === "text")?.text
+  if (typeof emptyDraftText !== "string") throw new Error("Missing preview recovery instructions")
+  const emptyDraftError = requireRecord(JSON.parse(emptyDraftText), "empty preview error")
+  expect(emptyDraftError.error).toBe("artifact_view_preview_unavailable")
+  expect(emptyDraftError.reason).toBe("workflow_snapshot_not_found")
+  expect(emptyDraftError.message).toContain("Run the current saved Workflow version")
+  expect(emptyDraftError.artifactViewId).toBeTypeOf("string")
+  const beforeExplicitRun = await readWorkflowDetail(den.admin, configObjectId)
+  expect(beforeExplicitRun.script.latestSuccessfulSnapshot).toBeNull()
+  evidence.recordAssertionEvidence(
+    "An app without a saved Workflow result returns a recovery step instead of an empty ready preview",
+    "An ad-hoc success plus save is insufficient: the builder returns an actionable error and retained draft id, no host preview metadata, and does not execute the workflow implicitly.",
+    emptyDraft.isError === true && emptyDraftError.reason === "workflow_snapshot_not_found",
+  )
+
   const manualResult = await runWorkflow(den.admin, configObjectId, {
     pluginId,
     configObjectVersionId,
@@ -188,6 +222,66 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
   evidence.recordAssertionEvidence(
     "The Workflow produces a validated artifact-ready result",
     "A direct run of the immutable version returned a schema-valid result and durable receipt.",
+    true,
+  )
+
+  const appRequest = (session: typeof den.admin, path: string, init: RequestInit = {}) =>
+    denFetch(session, path, { ...init, headers: { authorization: `Bearer ${session.token}` } })
+  const draft = await agentRpc(den.ref.apiUrl, mcpToken, "tools/call", {
+    name: "save_artifact_view",
+    arguments: {
+      artifactViewId: emptyDraftError.artifactViewId, configObjectId, title: "Briefing app",
+      reactSource: initialDraftSource,
+    },
+  })
+  expect(draft.isError).not.toBe(true)
+  const view = requireRecord(requireRecord(draft.structuredContent, "draft result").view, "draft view")
+  expect(view.id).toBe(emptyDraftError.artifactViewId)
+  const revision = records(view.revisions)[0]
+  expect(revision?.buildStatus).toBe("ready")
+  expect(requireRecord(draft._meta, "draft host metadata")["openwork/appDraft"]).toEqual({
+    appId: view.id, revisionId: revision?.id, receiptId: manualResult.receiptId, title: "Briefing app",
+  })
+  const appPath = `/v1/apps/${view.id}`
+  const pinnedPath = `${appPath}?revisionId=${revision?.id}&receiptId=${manualResult.receiptId}`
+  const draftApp = await appRequest(den.admin, pinnedPath)
+  expect(draftApp.response.status, draftApp.text).toBe(200)
+  expect(draftApp.body).toMatchObject({ onDashboard: false, view: { activeRevisionId: null }, payload: { data: { briefing: { topic: firstMarker } } } })
+  expect((await appRequest(den.admin, "/v1/apps")).body).toMatchObject({ enabled: true, items: [] })
+  expect((await appRequest(den.admin, `${appPath}/dashboard`, { method: "POST", body: JSON.stringify({ added: true }) })).response.status).toBe(404)
+  const beforeSave = await readWorkflowDetail(den.admin, configObjectId)
+  const beforeSnapshots = (await appRequest(den.admin, `/v1/workflows/${configObjectId}/snapshots`)).body
+  const save = { revisionId: revision?.id, title: "Saved briefing", useInWorkflow: false, expectedActiveRevisionId: null }
+  const savedApp = await appRequest(den.admin, `${appPath}/save`, { method: "POST", body: JSON.stringify(save) })
+  expect(savedApp.response.status, savedApp.text).toBe(200)
+  expect(savedApp.body).toMatchObject({ activeRevisionId: revision?.id, title: "Saved briefing", useInWorkflow: false })
+  const reopened = await appRequest(den.admin, appPath)
+  expect(reopened.response.status, reopened.text).toBe(200)
+  expect(reopened.body).toMatchObject({ onDashboard: true, revision: { id: revision?.id }, view: { configObjectId } })
+  const listedApps = await appRequest(den.admin, "/v1/apps")
+  expect(listedApps.response.status, listedApps.text).toBe(200)
+  expect(requireRecord(listedApps.body, "saved app list").items).toEqual([
+    expect.objectContaining({ onDashboard: true, view: expect.objectContaining({ id: view.id, activeRevisionId: revision?.id, title: "Saved briefing" }) }),
+  ])
+  expect(requireRecord(reopened.body, "reopened app").html).toEqual(requireRecord(draftApp.body, "draft app").html)
+  expect((await readWorkflowDetail(den.admin, configObjectId)).script.currentVersion).toEqual(beforeSave.script.currentVersion)
+  expect((await appRequest(den.admin, `/v1/workflows/${configObjectId}/snapshots`)).body).toEqual(beforeSnapshots)
+  expect((await appRequest(den.admin, `${appPath}/save`, { method: "POST", body: JSON.stringify({ ...save, title: "Stale overwrite" }) })).response.status).toBe(409)
+  for (const added of [false, true]) {
+    const placement = await appRequest(den.admin, `${appPath}/dashboard`, { method: "POST", body: JSON.stringify({ added }) })
+    expect(placement.response.status, placement.text).toBe(200)
+    expect((await appRequest(den.admin, appPath)).body).toMatchObject({ onDashboard: added, view: { activeRevisionId: revision?.id, title: "Saved briefing" } })
+  }
+  const colleague = den.members.colleague
+  if (!colleague) throw new Error("Colleague was not provisioned")
+  expect((await appRequest(colleague, appPath)).response.status).toBe(403)
+  expect((await appRequest(colleague, `${appPath}/dashboard`, { method: "POST", body: JSON.stringify({ added: true }) })).response.status).toBe(403)
+  expect((await appRequest(colleague, "/v1/apps")).body).toMatchObject({ items: [] })
+  await appRequest(colleague, `${appPath}/dashboard`, { method: "POST", body: JSON.stringify({ added: false }) })
+  expect((await appRequest(den.admin, appPath)).body).toMatchObject({ onDashboard: true })
+  evidence.recordAssertionEvidence(
+    "A draft app can be saved and reopened with personal placement without running, scheduling, or granting workflow access",
+    "The real MCP builder produced a draft; the Apps routes retained its exact revision and HTML, saved personal placement without changing workflow version or snapshots, rejected stale saves and an ungranted member, and removed/re-added only the author's card.",
     true,
   )
 
@@ -286,7 +380,20 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
   )
 
   const externalMarker = `launch-external-${stamp}`
-  const externalCode = "return { briefing: await tools.report_source.mock_echo({ text: input.topic }) }"
+  const discovered = await agentRpc(den.ref.apiUrl, mcpToken, "tools/call", {
+    name: "search_capabilities",
+    arguments: { query: "Report source mock_echo", type: "mcp", limit: 20 },
+  })
+  expect(discovered.isError).not.toBe(true)
+  const discoveryText = records(discovered.content).find((part) => part.type === "text")?.text
+  if (typeof discoveryText !== "string") throw new Error("Capability search returned no text result")
+  const matches = records(requireRecord(JSON.parse(discoveryText), "capability search").matches)
+  const externalMatch = matches.find((match) => match.name === `mcp:${connection.id}:mock_echo`)
+  expect(externalMatch?.scriptPath).toBe("tools.report_source.mock_echo")
+  const batchTool = catalogTools.find((tool) => tool.name === "mock_batch")
+  expect(batchTool).toBeDefined()
+  expect(isRecord(batchTool?.annotations) ? batchTool.annotations.readOnlyHint : undefined).not.toBe(true)
+  const externalCode = `await tools.report_source.mock_batch({ items: [{ text: input.topic }] }); return { briefing: await ${externalMatch?.scriptPath}({ text: input.topic }) }`
   const externalRunStartedAt = new Date().toISOString()
   const externalExecuted = await agentRpc(den.ref.apiUrl, mcpToken, "tools/call", {
     name: "execute_capability_script",
@@ -340,7 +447,7 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
   const externalSaved = requireRecord(externalSavedResponse.body, "external saved Workflow")
   const externalPluginId = typeof externalSaved.pluginId === "string" ? externalSaved.pluginId : ""
   const externalConfigObjectId = typeof externalSaved.configObjectId === "string" ? externalSaved.configObjectId : ""
-  const externalConfigObjectVersionId = typeof externalSaved.configObjectVersionId === "string" ? externalSaved.configObjectVersionId : ""
+  let externalConfigObjectVersionId = typeof externalSaved.configObjectVersionId === "string" ? externalSaved.configObjectVersionId : ""
   expect(externalPluginId).not.toBe("")
   expect(externalConfigObjectId).not.toBe("")
   expect(externalConfigObjectVersionId).not.toBe("")
@@ -363,6 +470,48 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
     true,
   )
 
+  const editedDraft = {
+    name: `${scriptName} edited external`,
+    description: "A manually refreshed report using an unclassified provider tool.",
+    code: externalCode,
+    exampleInput: { topic: externalMarker },
+    inputSchema,
+    outputSchema,
+    requiredCapabilities: [
+      { capabilityName: `mcp:${connection.id}:mock_batch`, scriptPath: "tools.report_source.mock_batch" },
+      { capabilityName: `mcp:${connection.id}:mock_echo`, scriptPath: "tools.report_source.mock_echo" },
+    ],
+  }
+  const testedDraft = await denFetch(den.admin, "/v1/workflows/test", {
+    method: "POST",
+    headers: { authorization: `Bearer ${den.admin.token}` },
+    body: JSON.stringify({ ...editedDraft, configObjectId: externalConfigObjectId }),
+  })
+  expect(testedDraft.response.status, testedDraft.text).toBe(200)
+  const testReceipt = requireRecord(testedDraft.body, "draft test receipt")
+  const rejectedEdit = await denFetch(den.admin, `/v1/workflows/${externalConfigObjectId}/versions`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${den.admin.token}` },
+    body: JSON.stringify({ ...editedDraft, code: `${externalCode}\n`, receiptId: testReceipt.receiptId }),
+  })
+  expect(rejectedEdit.response.status, rejectedEdit.text).toBe(400)
+  expect(rejectedEdit.text).toContain("workflow_matching_test_receipt_required")
+  const editedVersion = await denFetch(den.admin, `/v1/workflows/${externalConfigObjectId}/versions`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${den.admin.token}` },
+    body: JSON.stringify({ ...editedDraft, receiptId: testReceipt.receiptId }),
+  })
+  expect(editedVersion.response.status, editedVersion.text).toBe(201)
+  const editedDetail = requireRecord(editedVersion.body, "edited Workflow")
+  const editedCurrentVersion = requireRecord(editedDetail.currentVersion, "edited current version")
+  expect(typeof editedCurrentVersion.id).toBe("string")
+  externalConfigObjectVersionId = String(editedCurrentVersion.id)
+  evidence.recordAssertionEvidence(
+    "A successful manual report can be saved and edited with an unclassified provider tool",
+    "Both initial save and a tested new version succeed without granting unattended execution.",
+    externalSavedResponse.status === 201 && editedVersion.response.status === 201,
+  )
+
   const externalManualRun = await runWorkflow(den.admin, externalConfigObjectId, {
     pluginId: externalPluginId,
     configObjectVersionId: externalConfigObjectVersionId,
@@ -370,11 +519,51 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
   })
   expect(externalManualRun.status).toBe("succeeded")
 
+  const externalDraft = await agentRpc(den.ref.apiUrl, mcpToken, "tools/call", {
+    name: "save_artifact_view",
+    arguments: {
+      configObjectId: externalConfigObjectId, title: "Report app",
+      reactSource: "export default function Report({ data }) { return <article><h1>Report</h1><pre>{JSON.stringify(data.briefing)}</pre></article> }",
+    },
+  })
+  expect(externalDraft.isError).not.toBe(true)
+  const externalView = requireRecord(requireRecord(externalDraft.structuredContent, "external app draft").view, "external view")
+  const externalRevision = records(externalView.revisions)[0]
+  expect(externalRevision?.buildStatus).toBe("ready")
+  const externalAppPath = `/v1/apps/${externalView.id}`
+  const externalAppSaved = await appRequest(den.admin, `${externalAppPath}/save`, {
+    method: "POST", body: JSON.stringify({ revisionId: externalRevision?.id, title: "Report app", useInWorkflow: false, expectedActiveRevisionId: null }),
+  })
+  expect(externalAppSaved.response.status, externalAppSaved.text).toBe(200)
+  const refreshMarker = `launch-refreshed-${stamp}`
+  const refreshedRun = await runWorkflow(den.admin, externalConfigObjectId, {
+    pluginId: externalPluginId, configObjectVersionId: externalConfigObjectVersionId,
+    input: { topic: refreshMarker },
+  })
+  expect(refreshedRun.status).toBe("succeeded")
+  const refreshedApp = await appRequest(den.admin, externalAppPath)
+  expect(refreshedApp.response.status, refreshedApp.text).toBe(200)
+  expect(refreshedApp.body).toMatchObject({ onDashboard: true, view: { configObjectId: externalConfigObjectId } })
+  expect(JSON.stringify(requireRecord(refreshedApp.body, "refreshed app").payload)).toContain(refreshMarker)
+  expect(JSON.stringify(requireRecord(refreshedApp.body, "refreshed app").payload)).not.toContain(externalMarker)
+  const forbiddenApp = await appRequest(colleague, externalAppPath)
+  expect(forbiddenApp.response.status).toBe(403)
+  expect(forbiddenApp.body).not.toHaveProperty("payload")
+  expect(forbiddenApp.body).not.toHaveProperty("view")
+  const unrelatedApp = await appRequest(den.admin, appPath)
+  expect(JSON.stringify(unrelatedApp.body)).toContain(scheduledMarker)
+  expect(JSON.stringify(unrelatedApp.body)).not.toContain(refreshMarker)
+  evidence.recordAssertionEvidence(
+    "A connection beyond the first 16 works from chat discovery through a saved and refreshed app",
+    "Search returned the seventeenth connection's callable script path. Its procedure executed, saved, reran and produced an app whose latest payload changed on refresh; the unrelated app and colleague's access stayed unchanged.",
+    true,
+  )
+
   const latestDetail = await readWorkflowDetail(den.admin, externalConfigObjectId)
   const latestScript = latestDetail.script
   const latest = requireRecord(latestScript.latestSnapshot, "latest snapshot")
   const externalToolCallNames = records(latest.toolCalls).map((call) => call.name)
-  expect(externalToolCallNames).toEqual(["report_source.mock_echo"])
+  expect(externalToolCallNames).toEqual(["report_source.mock_batch", "report_source.mock_echo"])
 
   const internalDetail = await readWorkflowDetail(den.admin, configObjectId)
   const internalScript = internalDetail.script
@@ -383,9 +572,10 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
   expect(internalToolCallNames).toEqual(["den.getWorkers"])
   evidence.recordAssertionEvidence(
     "Each Workflow run records the tool calls it made for step-level replay",
-    "The latest snapshot lists report_source.mock_echo for the external Workflow and only den.getWorkers for the internal one.",
-    externalToolCallNames.length === 1
-      && externalToolCallNames[0] === "report_source.mock_echo"
+    "The latest snapshot lists both external tools for the external Workflow and only den.getWorkers for the internal one.",
+    externalToolCallNames.length === 2
+      && externalToolCallNames[0] === "report_source.mock_batch"
+      && externalToolCallNames[1] === "report_source.mock_echo"
       && internalToolCallNames.length === 1
       && internalToolCallNames[0] === "den.getWorkers",
   )
@@ -465,7 +655,6 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
   let unattendedExternalCalls = 0
   try {
     unattendedExternalCalls = (await den.mocks.reports.toolCalls({
-      name: "mock_echo",
       atLeast: 1,
       sinceIso: unattendedRunStartedAt,
       timeoutMs: 5_000,
