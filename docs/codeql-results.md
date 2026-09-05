@@ -13,7 +13,7 @@ reported one missing result for the PR head or its merge commit e322949.
 ## Detect
 
 The daily `CodeQL Result Coverage` workflow checks open same-repository PRs
-against the current default-setup languages. It reports missing successful uploads
+against successful language uploads at the newest scanned default-branch commit. It reports missing successful uploads
 at the current head or merge commit and fails with a PR-specific summary. It does
 not execute PR code, change settings, close PRs, or bypass scanning. Active scans
 are reported as pending. Forks are excluded because default setup does not scan them.
@@ -25,11 +25,14 @@ node scripts/ci/check-codeql-results.mjs 4517
 node scripts/ci/check-codeql-results.mjs
 ```
 
-API failures fail the audit; they are not interpreted as zero required results.
+API failures and missing baselines fail the audit; they are not interpreted as zero required results.
+The monitor uses baseline uploads because reading default-setup settings requires
+Administration permission, which the workflow token does not have. Newly enabled
+languages become expected once their baseline uploads succeed. Results are read
+from the latest 100 baseline analyses; old PR history is paginated in full.
 This verifies coverage, not absence of vulnerabilities. The existing CodeQL rule
 continues to enforce alert thresholds. If switching to advanced setup, update this
-audit to use that workflow's categories; it intentionally fails when default setup
-is disabled.
+audit to use that workflow's categories; it expects the default-setup analysis key.
 
 ## Recover
 

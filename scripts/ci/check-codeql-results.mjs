@@ -21,18 +21,26 @@ function api(path, paginate = false) {
 async function main() {
   const repo = process.env.GITHUB_REPOSITORY ?? "different-ai/openwork";
   const prefix = `repos/${repo}`;
-  const setup = api(`${prefix}/code-scanning/default-setup`);
-  if (setup.state !== "configured") throw new Error("This audit requires CodeQL default setup; review it when migrating to advanced setup.");
+  // Reading default-setup settings needs Administration permission, unavailable
+  // to GITHUB_TOKEN. Use the successful baseline uploads that PRs must match.
+  const repository = api(prefix);
+  const baseline = api(`${prefix}/code-scanning/analyses?ref=${encodeURIComponent(`refs/heads/${repository.default_branch}`)}&tool_name=CodeQL&per_page=100`);
+  const latest = baseline.find((analysis) => !analysis.error && analysis.analysis_key === "dynamic/github-code-scanning/codeql:upload");
+  if (!latest) throw new Error("No successful default-setup baseline found; inspect CodeQL on the default branch.");
+  const languages = [...new Set(baseline.filter((analysis) =>
+    analysis.commit_sha === latest.commit_sha && !analysis.error &&
+    analysis.analysis_key === "dynamic/github-code-scanning/codeql:upload"
+  ).map((analysis) => analysis.category.replace(/^\/language:/, "")))];
   const number = process.argv[2];
   if (number && !/^\d+$/.test(number)) throw new Error("Usage: node scripts/ci/check-codeql-results.mjs [PR number]");
   const pulls = number ? [api(`${prefix}/pulls/${number}`)] : api(`${prefix}/pulls?state=open&per_page=100`, true);
-  const lines = ["# CodeQL result coverage", "", `Configured languages: ${[...new Set(setup.languages)].join(", ")}`, ""];
+  const lines = ["# CodeQL result coverage", "", `Default-branch baseline languages: ${languages.join(", ")}`, ""];
   let failures = 0;
   for (const pull of pulls) {
     if (pull.state !== "open" || pull.head.repo?.full_name !== repo) continue;
     const refs = [`refs/pull/${pull.number}/head`, `refs/pull/${pull.number}/merge`];
     const analyses = refs.flatMap((ref) => api(`${prefix}/code-scanning/analyses?ref=${encodeURIComponent(ref)}&tool_name=CodeQL&per_page=100`, true));
-    const missing = missingLanguages(setup.languages, analyses, [pull.head.sha, pull.merge_commit_sha].filter(Boolean));
+    const missing = missingLanguages(languages, analyses, [pull.head.sha, pull.merge_commit_sha].filter(Boolean));
     // Only query workflow state when coverage is incomplete.
     const runs = missing.length ? api(`${prefix}/actions/runs?head_sha=${pull.head.sha}&per_page=100`, true) : [];
     const active = runs.flatMap((page) => page.workflow_runs).some((run) =>
