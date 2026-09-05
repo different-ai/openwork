@@ -1,23 +1,29 @@
 import { describe, expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { authenticatedConnect, authenticatedConnectPrompt, authenticatedConnectReply, suspendedTurn, suspendedTurnPrompt, suspendedTurnReply } from "../worlds/chat.ts";
+import {
+  authenticatedConnectPrompt,
+  authenticatedConnectReply,
+  suspendedTurn,
+  authenticatedConnect,
+  suspendedTurnReply,
+  stoppedTurnPrompt,
+  stoppedTurnReply,
+} from "../worlds/thread-recovery.ts";
 
 // The engine is paused with SIGSTOP for longer than the connection guard's
 // suspend gap (30s) and then resumed: from the engine's point of view this is
-// exactly what closing the lid does. Its model request has gone quiet on a
+// what an execution pause during sleep looks like. Its model request has gone quiet on a
 // socket that will never deliver, so the turn must retry on its own.
 const suspendMs = 40_000;
 describe("managed provider recovery", () => {
-  const test = spec.world(suspendedTurn, { timeout: 300_000, needs: { placement: "local" } });
+  const test = spec.world(suspendedTurn, { timeout: 180_000, needs: { placement: "local" } });
 
-  test("a turn that goes quiet while the computer sleeps resumes on its own", async ({ world, user, probe, step, skip }) => {
+  test("an in-flight task recovers after sleep without restarting a canceled task", async ({ world, user, probe, step, skip }) => {
     if (process.platform === "win32") return skip("needs: POSIX process suspension");
 
-    await user.type("composer", suspendedTurnPrompt);
-    await user.click("Run task");
     await probe.eventually(() => world.completionKinds(), {
       within: 60_000,
-      label: "first model request is streaming and has gone quiet",
+      label: "other task is streaming and has gone quiet",
       until: (kinds) => kinds.length === 1 && kinds[0] === "quiet",
     });
     await user.see({ text: /Working/ });
@@ -46,13 +52,21 @@ describe("managed provider recovery", () => {
     expect(await world.completionKinds()).toEqual(["quiet", "tool", "final"]);
     await user.notSee({ text: /connection lost/i }, { timeoutMs: 1_000 });
     expect(await world.transcriptFacts()).toEqual({ prompts: 1, replies: 1, interruptedCards: 0, working: false });
+
+    // Recovery took longer than its grace period. Cancellation must not retry
+    // the other request while the live task resumed on the same engine.
+    expect(await world.completionKinds(stoppedTurnPrompt)).toEqual(["quiet"]);
+    await user.click({ text: "Stopped turn", exact: true });
+    await user.see("Run task");
+    await user.notSee({ text: stoppedTurnReply }, { timeoutMs: 1_000 });
+
   });
 });
 
 describe("provider authentication", () => {
-  const authenticated = spec.world(authenticatedConnect, { timeout: 300_000, needs: { placement: "local" } });
+  const test = spec.world(authenticatedConnect, { timeout: 180_000, needs: { placement: "local" } });
 
-  authenticated("an authenticated model can call Connect with recovery enabled", async ({ world, user, probe }) => {
+  test("an authenticated model can call Connect with recovery enabled", async ({ world, user, probe }) => {
     await user.type("composer", authenticatedConnectPrompt);
     await user.click("Run task");
     await probe.eventually(() => world.completionKinds(), {
