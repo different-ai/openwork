@@ -39,6 +39,7 @@ account(".live wrong password is rejected; sign-in survives reload and sign-out 
   await user.see({ testId: "den-org-sidebar" }, { timeoutMs: 60_000 });
   await user.reload();
   await user.see({ testId: "den-org-sidebar" });
+  await user.click({ testId: "workspace-switcher-trigger" });
   await user.click({ role: "button", label: "Sign out" });
   await user.navigate(`${world.den.webUrl}/dashboard`);
   await user.see({ role: "textbox", label: "Email" });
