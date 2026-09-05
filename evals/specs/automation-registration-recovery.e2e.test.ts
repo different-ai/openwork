@@ -15,6 +15,11 @@ test("desktop registration recovers from a transient Den outage without another 
     place,
     sandbox: den.placement?.kind === "daytona" ? den.placement.sandboxId : undefined,
   })
+  // Keep the advertised API origin on the fault proxy. Otherwise desktop
+  // handoff follows Den's runtime config directly to the upstream API.
+  await proxy.faults.status("/api/runtime-config", 200, {
+    times: 100, body: { denApiUrl: proxy.ref.apiUrl },
+  })
   await using desktop = await app({ den: { ...den, ref: proxy.ref }, as: "admin", place })
   const isRegistration = (path: string) => path.split("?")[0].endsWith("/v1/automation-runners/token")
   const initial = await eventually(async () => {
