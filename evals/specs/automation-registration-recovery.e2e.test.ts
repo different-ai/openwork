@@ -20,36 +20,44 @@ test("desktop registration recovers from a transient Den outage without another 
   await proxy.faults.status("/api/runtime-config", 200, {
     times: 100, body: { denApiUrl: proxy.ref.apiUrl },
   })
+  const registrationPath = "/api/den/v1/automation-runners/token"
+  await proxy.faults.status(registrationPath, 503, { times: 100 })
   await using desktop = await app({ den: { ...den, ref: proxy.ref }, as: "admin", place })
-  const isRegistration = (path: string) => path.split("?")[0].endsWith("/v1/automation-runners/token")
-  const initial = await eventually(async () => {
-    const requests = await proxy.requestLog()
-    return {
-      registration: requests.find((request) => isRegistration(request.path) && request.status === 200),
-      diagnostics: requests.filter((request) => isRegistration(request.path) || request.path.endsWith("/v1/me/desktop-config"))
-        .map(({ method, path, status }) => ({ method, path: path.split("?")[0], status })),
-    }
-  }, { within: 60_000, label: "initial desktop registration", until: (value) => Boolean(value.registration) })
-  if (!initial.registration) throw new Error("Initial registration missing")
-  const registrationPath = initial.registration.path.split("?")[0]
+  const presence = async () => {
+    const result = await denFetch(den.admin, "/v1/automation-runners/presence", {
+      headers: { authorization: `Bearer ${den.admin.token}` },
+    })
+    expect(result.response.status).toBe(200)
+    return record(result.body).connected
+  }
+  await eventually(async () => (await proxy.requestLog()).some((request) =>
+    request.path === registrationPath && request.faulted && request.status === 503), {
+    within: 60_000, label: "registration outage reached by the desktop",
+  })
+  expect(await presence()).toBe(false)
 
-  const start = (await proxy.requestLog()).length
+  await proxy.faults.clear()
+  await proxy.faults.status("/api/runtime-config", 200, {
+    times: 100, body: { denApiUrl: proxy.ref.apiUrl },
+  })
   await proxy.faults.status(registrationPath, 503, { times: 2 })
+  const start = (await proxy.requestLog()).length
   await evalIn(desktop, `window.dispatchEvent(new Event("online"))`)
   await eventually(async () => {
     const requests = (await proxy.requestLog()).slice(start)
       .filter((request) => request.path === registrationPath)
     return requests.filter((request) => request.faulted && request.status === 503).length === 2
-      && requests.some((request) => !request.faulted && request.status === 200)
-  }, { within: 35_000, label: "automatic registration retry after two transient failures" })
+      && requests.some((request) => !request.faulted)
+      && await presence() === true
+  }, { within: 35_000, label: "Den observes a registered desktop after two transient failures" })
 
   const attempts = (await proxy.requestLog()).slice(start)
     .filter((request) => request.path === registrationPath)
   expect(attempts.filter((request) => request.faulted)).toHaveLength(2)
-  expect(attempts.filter((request) => request.status === 200)).toHaveLength(1)
+  expect(attempts.filter((request) => !request.faulted)).toHaveLength(1)
   evidence.recordAssertionEvidence(
     "Registration recovers without another online event",
-    "Two injected HTTP 503 registration failures were followed by one successful registration within 35 seconds after a single online event.",
+    "Den reported no desktop during the injected startup registration outage. After a single online event and two further HTTP 503s, the desktop retried and Den reported it connected within 35 seconds.",
     true,
   )
 })
