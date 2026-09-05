@@ -20,7 +20,7 @@ export async function billingCancellationWeb(seed: Seed) {
       const response = await stripe.webhook(den.ref.apiUrl, "customer.subscription.updated", value);
       if (!response.ok) throw new Error(`Fixture webhook failed: ${response.status}`);
     }
-    const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/billing", headless: true,
+    const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard", headless: true,
       viewport: { width: 1440, height: 1100 } });
     const effectiveDate = await seed.evalIn(web, `new Date("2026-10-01T00:00:00.000Z").toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })`);
     if (typeof effectiveDate !== "string") throw new Error("Browser date formatting failed");

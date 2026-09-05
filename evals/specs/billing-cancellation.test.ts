@@ -27,8 +27,8 @@ test("confirmed cancellation survives retries and stale events with its effectiv
   expect(await billing()).toMatchObject({ billing: { stripe: { subscription: { status: "active", cancelAtPeriodEnd: false } } } });
   subscription.cancel_at_period_end = true;
   for (const payload of [subscription, subscription, stale]) {
-    expect((await stripe.webhook(den.ref.apiUrl, "customer.subscription.updated", payload, true, "evt_cancellation_retry")).status).toBe(200);
-    expect(await billing()).toMatchObject({ billing: { stripe: { subscription: {
+    expect((await stripe.webhook(den.ref.apiUrl, "customer.subscription.updated", payload, true, payload === stale ? "evt_before_cancellation" : "evt_cancellation_retry")).status).toBe(200);
+    expect(await billing()).toMatchObject({ billing: { stripe: { hasActiveSubscription: true, subscription: {
       status: "active", cancelAtPeriodEnd: true, currentPeriodStart: "2026-09-01T00:00:00.000Z", currentPeriodEnd: "2026-10-01T00:00:00.000Z",
     } } } });
   }
