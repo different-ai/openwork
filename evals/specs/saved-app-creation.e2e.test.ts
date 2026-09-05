@@ -102,7 +102,7 @@ test("create, preview, save and reopen an app without changing already-open resu
   evidence.recordAssertionEvidence("Drafts stay off the dashboard until saved, and Cancel does not save them", "Draft list was empty; Cancel retained a null active revision; Save persisted the exact revision, workflow link, and personal dashboard placement without executing or scheduling a run.", true);
 
   await step("saved app header stays readable in a narrow preview", async () => {
-    await seed.eval(world.app, `document.querySelector('[data-app-header]').parentElement.style.width = '320px'`);
+    await seed.evalIn(world.app, `document.querySelector('[data-app-header]').parentElement.style.width = '320px'`);
     const header = await probe.eval(world.app, `(() => {
       const header = document.querySelector('[data-app-header]');
       const title = header.querySelector('h2');
@@ -123,7 +123,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.see("Delete Team briefing");
     await user.screenshot();
     await user.click("App options for Team briefing");
-    await seed.eval(world.app, `document.querySelector('[data-app-header]').parentElement.style.removeProperty('width')`);
+    await seed.evalIn(world.app, `document.querySelector('[data-app-header]').parentElement.style.removeProperty('width')`);
   });
   evidence.recordAssertionEvidence("The saved app header preserves the title at a 320px panel width", "The real preview header remains under 72px tall with over 180px for the fully visible title. Saved is status text; Run, Ask for changes, and Delete are reachable in the options menu.", true);
 
