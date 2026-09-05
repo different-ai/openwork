@@ -2,7 +2,7 @@
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
-import { DesktopUpdateCapsule } from "../../settings/state/desktop-updater-provider";
+import { DesktopUpdateButton } from "../../settings/state/desktop-updater-provider";
 import { ArrowLeft, Cloud, FileText, Globe, Mic2, MoreHorizontal, PanelRight, TextSearch, X, Zap } from "lucide-react";
 
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
@@ -1543,7 +1543,7 @@ export function SessionPage(props: SessionPageProps) {
             </div>
 
             <div className="flex shrink-0 items-center gap-1.5 text-gray-10 mac:titlebar-no-drag">
-              <DesktopUpdateCapsule />
+              <DesktopUpdateButton />
               {!props.primarySlot && findButtonSessionId && !hasMainContentTakeover ? (
                 <Tooltip>
                   <TooltipTrigger

@@ -1027,8 +1027,8 @@ export async function backgroundUpdateWorld(seed: Seed) {
       const { checks, downloads, installs } = window.__backgroundUpdateWitness;
       return {
         checks, downloads, installs, route: location.hash,
-        updateInTitlebar: Boolean(document.querySelector('header [data-update-capsule]')),
-        updateInSidebar: Boolean(document.querySelector('[data-sidebar="footer"] [data-update-capsule]')),
+        updateInTitlebar: Boolean(document.querySelector('header [data-update-button]')),
+        updateInSidebar: Boolean(document.querySelector('[data-sidebar="footer"] [data-update-button]')),
         sidebarName: document.querySelector('[data-sidebar-brand]')?.textContent?.trim() ?? null,
         customLogoLoaded: Boolean(document.querySelector('[data-testid="brand-logo"] img')?.naturalWidth),
       };
