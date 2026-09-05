@@ -2,6 +2,7 @@ import { readFile, realpath, writeFile, rm, stat } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
+import { inferenceModelSelectionIssue } from "@openwork/types/den/inference";
 import { resolveGlobalOpencodeConfigPath } from "@openwork/paths";
 import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor, ReloadReason, ReloadTrigger, TokenScope } from "./types.js";
 import { agentContextDiagnosticsRequestSchema } from "./agent-context-diagnostics-schema.js";
@@ -1444,6 +1445,18 @@ export async function proxyOpencodeRequest(input: {
   const body = method === "GET" || method === "HEAD"
     ? undefined
     : await input.request.arrayBuffer().then((buf) => (buf.byteLength > 0 ? buf : undefined));
+  if (body && method === "POST" && /^\/session\/[^/]+\/(message|prompt_async|command)$/.test(normalizeOpencodeProxyPath(proxyPath))) {
+    const selection: unknown = await Promise.resolve().then(() => JSON.parse(new TextDecoder().decode(body))).catch(() => null);
+    if (isRecord(selection)) {
+      const modelId = isRecord(selection.model) && selection.model.providerID === "openwork" && typeof selection.model.modelID === "string"
+        ? selection.model.modelID
+        : typeof selection.model === "string" && selection.model.startsWith("openwork/") ? selection.model.slice("openwork/".length) : null;
+      if (modelId !== null) {
+        const issue = inferenceModelSelectionIssue(modelId, typeof selection.variant === "string" ? selection.variant : null);
+        if (issue) return jsonResponse({ code: "managed_model_selection_unavailable", message: issue }, 400);
+      }
+    }
+  }
   if (pool && method === "GET" && isEngineEventPath(proxyPath)) {
     // An open engine event stream means this workspace is visible somewhere in
     // the UI; hold its instance so the idle reaper leaves it alone until the

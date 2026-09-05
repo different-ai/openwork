@@ -33,6 +33,7 @@ type InferenceStatus = {
   upstreamProviderConfigured: boolean;
   subscribed: boolean;
   buckets: InferenceUsageBucket[];
+  unpricedUsageCount: number;
 };
 
 const WINDOW_LABEL: Record<InferenceWindowType, string> = {
@@ -93,6 +94,7 @@ function parseInferencePayload(payload: unknown): InferenceStatus | null {
     upstreamProviderConfigured: value.upstreamProviderConfigured === true,
     subscribed: value.subscribed === true,
     buckets: parseUsageBuckets(value.buckets),
+    unpricedUsageCount: typeof value.unpricedUsageCount === "number" ? value.unpricedUsageCount : 0,
   };
 }
 
@@ -457,6 +459,11 @@ export function InferenceScreen() {
       <ModelsLineup subscribed={subscribed} />
 
       {enabled && status ? <UsageLimitsCard buckets={status.buckets} /> : null}
+      {status && status.unpricedUsageCount > 0 ? (
+        <p role="status" className="text-sm text-muted-foreground">
+          {status.unpricedUsageCount} model usage {status.unpricedUsageCount === 1 ? "record needs" : "records need"} reconciliation. Usage totals are incomplete until these records are priced. Contact support; no estimated charge has been applied.
+        </p>
+      ) : null}
 
       <p className="text-[13px] text-gray-400">
         Prefer your own provider accounts?{" "}

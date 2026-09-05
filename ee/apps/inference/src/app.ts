@@ -6,7 +6,6 @@ import { sql } from "@openwork-ee/den-db/drizzle";
 import { sentry } from "@sentry/hono/node";
 import { cors } from "hono/cors";
 import { Hono } from "hono";
-import { logger } from "hono/logger";
 import { z } from "zod";
 import { db } from "./db.js";
 import { env } from "./env.js";
@@ -38,21 +37,12 @@ if (isSentryEnabled) {
   });
 }
 
-const requestLogger = logger((message, ...rest) => {
-  if (/-->\s+\S+\s+\S+\s+[45]\d\d\b/.test(message)) {
-    console.error(message, ...rest);
-    return;
-  }
-  console.log(message, ...rest);
-});
-
 app.use("*", async (c, next) => {
-  if (healthPath(c.req.path)) {
-    await next();
-    return;
-  }
-
-  return requestLogger(c, next);
+  const startedAt = Date.now();
+  await next();
+  if (healthPath(c.req.path)) return;
+  const route = ["/api/v1/models", "/api/v1/chat/completions", "/webhooks/openrouter"].includes(c.req.path) ? c.req.path : "other";
+  console.log("[inference-http]", { method: c.req.method, route, status: c.res.status, durationMs: Date.now() - startedAt });
 });
 
 if (env.corsOrigins.length > 0) {
@@ -69,6 +59,7 @@ if (env.corsOrigins.length > 0) {
         "X-Test-Connection",
       ],
       allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+      exposeHeaders: ["X-OpenWork-Request-Id", "Retry-After"],
       maxAge: 600,
     }),
   );
@@ -81,7 +72,7 @@ app.get("/ready", async (c) => {
     await db.execute(sql`select 1`);
     return c.json({ ok: true, service: "inference", checks: { database: "ok" } });
   } catch (error) {
-    console.error("[readiness] inference database check failed", error);
+    console.error("[readiness] inference database check failed");
     return c.json({ ok: false, service: "inference", checks: { database: "error" } }, 503);
   }
 });
@@ -103,7 +94,7 @@ app.onError((error, c) => {
   if (error instanceof z.ZodError) {
     return c.json({ error: "invalid_request", issues: error.issues }, 400);
   }
-  console.error(error);
+  console.error("[inference] request handling failed");
   return c.json({ error: "internal_server_error" }, 500);
 });
 

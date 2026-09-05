@@ -7,6 +7,7 @@ import {
   useState,
 } from "react";
 import { Check, ChevronDown, ChevronRight, RefreshCw, Search, Star } from "lucide-react";
+import { inferenceModelCapabilities } from "@openwork/types/den/inference";
 
 import {
   Dialog,
@@ -485,6 +486,8 @@ function DefaultModelRow({
   opt: ModelOption; current: ModelRef; onSelect: (opt: ModelOption) => void; recommended?: boolean;
 }) {
   const active = modelEquals(current, { providerID: opt.providerID, modelID: opt.modelID });
+  const capabilities = opt.providerID === "openwork" ? inferenceModelCapabilities(opt.modelID) : null;
+  const tokens = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
 
   return (
     <button
@@ -499,6 +502,13 @@ function DefaultModelRow({
       <div className="min-w-0 flex-1">
         <span className={["text-[12px]", active ? "font-medium text-dls-text" : "text-dls-text"].join(" ")}>{opt.title}</span>
         <span className="ml-2 font-mono text-[10px] text-dls-secondary/60">{opt.modelID}</span>
+        {capabilities ? (
+          <div className="mt-1 text-[11px] text-dls-secondary" title={`Maximum context: ${capabilities.contextTokens.toLocaleString()} tokens. Maximum output: ${capabilities.outputTokens.toLocaleString()} tokens, including reasoning. Actual capacity depends on the conversation and provider.`}>
+            {capabilities.inputModalities.includes("image") ? "Text and images" : "Text only"}
+            {capabilities.supportedParameters.includes("tools") ? " · Tool support" : ""}
+            {` · Up to ${tokens.format(capabilities.contextTokens)} context / ${tokens.format(capabilities.outputTokens)} output tokens`}
+          </div>
+        ) : null}
       </div>
       {active ? <Check size={14} className="shrink-0 text-green-11" /> : null}
     </button>

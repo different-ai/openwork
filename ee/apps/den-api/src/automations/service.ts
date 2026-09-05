@@ -99,7 +99,7 @@ export class AutomationService {
     const page = await automationRepository.list({ ...scope, cursor: input.cursor, limit: input.limit ?? 50 })
     const modelAccessBySelection = new Map<string, ReturnType<typeof resolveAutomationModelAccess>>()
     const resolveModelAccess = (item: AutomationListItem) => {
-      const key = JSON.stringify([item.revision.model.providerId, item.revision.model.modelId])
+      const key = JSON.stringify([item.revision.model.providerId, item.revision.model.modelId, item.revision.model.variant])
       const existing = modelAccessBySelection.get(key)
       if (existing) return existing
       const access = resolveAutomationModelAccess({

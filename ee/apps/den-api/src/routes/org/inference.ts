@@ -29,6 +29,7 @@ const inferenceStatusSchema = z.object({
   upstreamProviderConfigured: z.boolean(),
   subscribed: z.boolean().optional(),
   buckets: z.array(inferenceUsageBucketSchema),
+  unpricedUsageCount: z.number().optional(),
 }).meta({ ref: "InferenceStatus" })
 
 const inferenceStatusResponseSchema = z.object({

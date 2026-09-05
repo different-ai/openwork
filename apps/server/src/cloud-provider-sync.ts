@@ -1,3 +1,4 @@
+import { openWorkModelConfigurations } from "@openwork/types/den/inference";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
@@ -474,7 +475,8 @@ function buildProviderConfig(provider: DenProviderConnection): JsonRecord {
     name: provider.name,
     env: readProviderEnvNames(provider.providerConfig),
   };
-  if (Object.keys(models).length > 0 || provider.source !== "openwork") config.models = models;
+  config.models = provider.source === "openwork" ? openWorkModelConfigurations() : models;
+  if (provider.source === "openwork") config.whitelist = Object.keys(openWorkModelConfigurations());
 
   const npm = readRequiredString(provider.providerConfig.npm);
   if (npm) config.npm = npm;
@@ -482,7 +484,7 @@ function buildProviderConfig(provider: DenProviderConnection): JsonRecord {
   if (api) config.api = api;
   if (isRecord(provider.providerConfig.options)) config.options = provider.providerConfig.options;
   const whitelist = readStringList(provider.providerConfig.whitelist);
-  if (whitelist.length > 0) config.whitelist = whitelist;
+  if (provider.source !== "openwork" && whitelist.length > 0) config.whitelist = whitelist;
   const blacklist = readStringList(provider.providerConfig.blacklist);
   if (blacklist.length > 0) config.blacklist = blacklist;
   return config;

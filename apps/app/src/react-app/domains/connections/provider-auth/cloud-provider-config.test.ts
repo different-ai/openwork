@@ -88,7 +88,7 @@ describe("isCloudProviderOutOfSync", () => {
 });
 
 describe("buildCloudProviderConfig", () => {
-  test("omits empty models for openwork so catalog models can remain", () => {
+  test("materializes the managed capability catalog even when Den has no model rows", () => {
     const provider: DenOrgLlmProviderConnection = {
       id: "lpr_openwork",
       source: "openwork",
@@ -108,7 +108,9 @@ describe("buildCloudProviderConfig", () => {
     };
 
     const config = buildCloudProviderConfig(provider);
-    expect(config.models).toBe(undefined);
+    expect(Object.keys(config.models ?? {}).length).toBe(9);
+    expect(config.models?.["z-ai/glm-5.2"]?.limit).toEqual({ context: 1048576, output: 131072 });
+    expect(config.whitelist).toEqual(Object.keys(config.models ?? {}));
     expect(config.name).toBe("OpenWork Models");
   });
 

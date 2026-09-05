@@ -1,0 +1,381 @@
+{
+  "source": "https://openrouter.ai/api/v1/models",
+  "verifiedAt": "2026-09-05T00:06:01.446Z",
+  "models": {
+    "z-ai/glm-5.2": {
+      "contextTokens": 1048576,
+      "outputTokens": 131072,
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "supportedParameters": [
+        "frequency_penalty",
+        "include_reasoning",
+        "logit_bias",
+        "logprobs",
+        "max_tokens",
+        "min_p",
+        "parallel_tool_calls",
+        "presence_penalty",
+        "reasoning",
+        "reasoning_effort",
+        "repetition_penalty",
+        "response_format",
+        "seed",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_logprobs",
+        "top_p"
+      ],
+      "reasoning": {
+        "mandatory": false,
+        "defaultEnabled": true,
+        "supportedEfforts": [
+          "xhigh",
+          "high"
+        ],
+        "defaultEffort": "high",
+        "supportsTokenBudget": false
+      },
+      "interleaved": {
+        "field": "reasoning_content"
+      }
+    },
+    "moonshotai/kimi-k2.7-code": {
+      "contextTokens": 262144,
+      "outputTokens": 235929,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "supportedParameters": [
+        "frequency_penalty",
+        "include_reasoning",
+        "logit_bias",
+        "logprobs",
+        "max_tokens",
+        "min_p",
+        "parallel_tool_calls",
+        "presence_penalty",
+        "reasoning",
+        "repetition_penalty",
+        "response_format",
+        "seed",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_logprobs",
+        "top_p"
+      ],
+      "reasoning": {
+        "mandatory": true,
+        "defaultEnabled": true,
+        "supportedEfforts": [],
+        "defaultEffort": null,
+        "supportsTokenBudget": false
+      },
+      "interleaved": false
+    },
+    "tencent/hy3-preview": {
+      "contextTokens": 262144,
+      "outputTokens": 235929,
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "supportedParameters": [
+        "include_reasoning",
+        "max_tokens",
+        "reasoning",
+        "reasoning_effort",
+        "seed",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_p"
+      ],
+      "reasoning": {
+        "mandatory": false,
+        "defaultEnabled": true,
+        "supportedEfforts": [
+          "high",
+          "low",
+          "none"
+        ],
+        "defaultEffort": "high",
+        "supportsTokenBudget": false
+      },
+      "interleaved": false
+    },
+    "moonshotai/kimi-k2.6": {
+      "contextTokens": 262144,
+      "outputTokens": 235929,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "supportedParameters": [
+        "frequency_penalty",
+        "include_reasoning",
+        "logit_bias",
+        "logprobs",
+        "max_tokens",
+        "min_p",
+        "parallel_tool_calls",
+        "presence_penalty",
+        "reasoning",
+        "repetition_penalty",
+        "response_format",
+        "seed",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_logprobs",
+        "top_p"
+      ],
+      "reasoning": {
+        "mandatory": false,
+        "defaultEnabled": true,
+        "supportedEfforts": [],
+        "defaultEffort": null,
+        "supportsTokenBudget": false
+      },
+      "interleaved": {
+        "field": "reasoning_details"
+      }
+    },
+    "deepseek/deepseek-v4-flash": {
+      "contextTokens": 1024000,
+      "outputTokens": 384000,
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "supportedParameters": [
+        "frequency_penalty",
+        "include_reasoning",
+        "logit_bias",
+        "logprobs",
+        "max_completion_tokens",
+        "max_tokens",
+        "min_p",
+        "presence_penalty",
+        "reasoning",
+        "reasoning_effort",
+        "repetition_penalty",
+        "response_format",
+        "seed",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_a",
+        "top_k",
+        "top_logprobs",
+        "top_p"
+      ],
+      "reasoning": {
+        "mandatory": false,
+        "defaultEnabled": null,
+        "supportedEfforts": [
+          "xhigh",
+          "high"
+        ],
+        "defaultEffort": "high",
+        "supportsTokenBudget": false
+      },
+      "interleaved": {
+        "field": "reasoning_content"
+      }
+    },
+    "minimax/minimax-m2.7": {
+      "contextTokens": 204800,
+      "outputTokens": 131072,
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "supportedParameters": [
+        "frequency_penalty",
+        "include_reasoning",
+        "logit_bias",
+        "logprobs",
+        "max_tokens",
+        "min_p",
+        "presence_penalty",
+        "reasoning",
+        "repetition_penalty",
+        "response_format",
+        "seed",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_logprobs",
+        "top_p"
+      ],
+      "reasoning": {
+        "mandatory": true,
+        "defaultEnabled": null,
+        "supportedEfforts": [],
+        "defaultEffort": null,
+        "supportsTokenBudget": false
+      },
+      "interleaved": false
+    },
+    "minimax/minimax-m3": {
+      "contextTokens": 524288,
+      "outputTokens": 512000,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "supportedParameters": [
+        "frequency_penalty",
+        "include_reasoning",
+        "logit_bias",
+        "logprobs",
+        "max_tokens",
+        "min_p",
+        "presence_penalty",
+        "reasoning",
+        "repetition_penalty",
+        "response_format",
+        "seed",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_logprobs",
+        "top_p"
+      ],
+      "reasoning": {
+        "mandatory": false,
+        "defaultEnabled": null,
+        "supportedEfforts": [],
+        "defaultEffort": null,
+        "supportsTokenBudget": false
+      },
+      "interleaved": false
+    },
+    "z-ai/glm-5.1": {
+      "contextTokens": 200000,
+      "outputTokens": 128000,
+      "inputModalities": [
+        "text"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "supportedParameters": [
+        "frequency_penalty",
+        "include_reasoning",
+        "logit_bias",
+        "logprobs",
+        "max_tokens",
+        "min_p",
+        "presence_penalty",
+        "reasoning",
+        "repetition_penalty",
+        "response_format",
+        "seed",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_logprobs",
+        "top_p"
+      ],
+      "reasoning": {
+        "mandatory": false,
+        "defaultEnabled": true,
+        "supportedEfforts": [],
+        "defaultEffort": null,
+        "supportsTokenBudget": false
+      },
+      "interleaved": {
+        "field": "reasoning_content"
+      }
+    },
+    "moonshotai/kimi-k3": {
+      "contextTokens": 1048576,
+      "outputTokens": 943718,
+      "inputModalities": [
+        "text",
+        "image"
+      ],
+      "outputModalities": [
+        "text"
+      ],
+      "supportedParameters": [
+        "frequency_penalty",
+        "include_reasoning",
+        "logit_bias",
+        "logprobs",
+        "max_tokens",
+        "min_p",
+        "presence_penalty",
+        "reasoning",
+        "reasoning_effort",
+        "repetition_penalty",
+        "response_format",
+        "seed",
+        "stop",
+        "structured_outputs",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_logprobs",
+        "top_p"
+      ],
+      "reasoning": {
+        "mandatory": false,
+        "defaultEnabled": true,
+        "supportedEfforts": [
+          "max",
+          "high",
+          "low"
+        ],
+        "defaultEffort": "max",
+        "supportsTokenBudget": false
+      },
+      "interleaved": false
+    }
+  }
+}
