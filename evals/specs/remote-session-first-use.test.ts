@@ -250,12 +250,12 @@ test("first cloud task provisions once over MCP, recovers its workspace, and pre
 
   const beforeRefresh = await runtimeRecord(original.workerId);
   const beforeRefreshEvents = witness.events.length;
-  witness.expireEndpoint(original.id);
-  const expired = await fetch(`${beforeRefresh.signed_preview_url}/health`, { signal: AbortSignal.timeout(5_000) });
-  expect(expired.status).toBe(410);
+  // Keep the legacy endpoint healthy: only the neutral row can require refresh.
   await queryDenDatabase(databaseUrl, "UPDATE cloud_runtime_instance SET endpoint_expires_at = '2000-01-01 00:00:00' WHERE worker_id = ?", [original.workerId]);
   const refreshed = await instance();
   const afterRefresh = await runtimeRecord(original.workerId);
+  const expired = await fetch(`${beforeRefresh.signed_preview_url}/health`, { signal: AbortSignal.timeout(5_000) });
+  expect(expired.status).toBe(410);
   expect(refreshed).toMatchObject({ status: "ready", instanceName: original.id });
   expect(refreshed.url).not.toBe(beforeRefresh.signed_preview_url);
   expect(afterRefresh).toMatchObject({ id: beforeRefresh.id, sandbox_id: original.id, signed_preview_url: refreshed.url });
@@ -264,7 +264,7 @@ test("first cloud task provisions once over MCP, recovers its workspace, and pre
   expect((await call(writeToken, "read", { sessionId })).payload).toMatchObject({ sessionId, messageCount: 2 });
   expect(witness.sandboxes).toHaveLength(2);
   await colleagueUnaffected();
-  evidence.recordAssertionEvidence("Expired endpoint refresh does not recreate the runtime", "The stored endpoint was expired and the witness rejected the old URL. Resolve issued only a new signed endpoint, persisted a future expiry on the same instance row, and read the existing session. No bootstrap/start/create or changes to the colleague.", true);
+  evidence.recordAssertionEvidence("Expired endpoint refresh does not recreate the runtime", "Only the neutral row was expired; the legacy URL remained healthy until resolve issued a new signed endpoint. The old URL was then rejected, the future expiry was persisted on both tables, and the existing session remained readable. No bootstrap/start/create or changes to the colleague.", true);
 
   // Model an established workspace on an older image. The real public update
   // endpoint must flush, stop, and ask the adapter to prove restore before retire.
