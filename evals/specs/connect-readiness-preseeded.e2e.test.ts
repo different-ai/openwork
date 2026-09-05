@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 import { readAvailableModels, selectModel } from "@openwork/behaviors";
-import { spec } from "@openwork/testkit";
+import { observeTranscript, spec } from "@openwork/testkit";
 import {
   cloudHealthExpression,
   isRecord,
@@ -126,8 +126,11 @@ test("bundled engine connects to preseeded organization skills and connections",
       until: models => models.some(model => model.name === world.modelId && model.selectable),
     });
     await selectModel(world.app, world.modelId, { provider: world.providerName });
+    await using transcript = await observeTranscript(probe, [{ role: "assistant", text: world.proofPhrase }]);
     await agent.send(world.prompt);
-    await user.see({ text: world.proofPhrase }, { timeoutMs: 120_000 });
+    await user.see({ text: new RegExp(world.proofPhrase) }, { timeoutMs: 120_000 });
+    await user.see("Run task", { timeoutMs: 60_000 });
+    expect(await transcript.finish()).toMatchObject({ seen: [true], stopped: false });
     const calls = await world.den.mocks.connector.agentRequests({ promptMarker: world.prompt });
     const tools = calls.filter(call => call.kind === "tool");
     expect(tools).toHaveLength(2);
