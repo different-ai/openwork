@@ -705,7 +705,7 @@ async function probeExternalMcpConnection(input: {
           score,
           summary: `[${connection.name}] Available to you, but you haven't connected your ${connection.name} account yet.`,
           status: "needs_connection",
-          hint: `Ask the user to open OpenWork Cloud -> Your Connections and click Connect on "${connection.name}", then search again. ${CONNECTION_CARD_HINT}`,
+          hint: `Ask the user to click Connect on the "${connection.name}" card in OpenWork desktop, then search again. In clients without inline connection controls, use OpenWork Cloud -> Your Connections. ${CONNECTION_CARD_HINT}`,
           connectionStatus: buildExternalConnectionStatus({ connection, state: "needs_connection", errorCode: "not_connected", message }),
         }))
       }

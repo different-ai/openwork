@@ -31,6 +31,7 @@ export type ChatToolReconnectCallbacks = {
 export function useChatToolReconnect(
   toolPart: ToolUIPart | DynamicToolUIPart,
   { onReconnect, onReopenAuthorization, onRetry }: ChatToolReconnectCallbacks,
+  actionOverride?: ChatToolReconnectAction,
 ) {
   const isError = toolPart.state === "output-error"
   const reconnectResult = isError && toolPart.errorText
@@ -38,9 +39,9 @@ export function useChatToolReconnect(
     : toolPart.state === "output-available" && "output" in toolPart
       ? toolPart.output
       : undefined
-  const reconnectAction = toolPart.type === "dynamic-tool" && reconnectResult !== undefined
+  const reconnectAction = actionOverride ?? (toolPart.type === "dynamic-tool" && reconnectResult !== undefined
     ? reconnectActionFromChatToolResult(toolPart.toolName, reconnectResult)
-    : null
+    : null)
   const reconnectKey = reconnectAction
     ? chatMcpReconnectKey(toolPart.toolCallId, reconnectAction.connectionId)
     : null

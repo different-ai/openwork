@@ -2536,6 +2536,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     try {
       const denClient = createDenClient({ baseUrl: settings.baseUrl, token });
       const connections = await denClient.listMcpConnections(organizationId, "usable");
+      if (!isChatMcpReconnectScopeCurrent(scope, currentScope())) throw new Error("Your OpenWork account changed. Try connecting again.");
       const connection = connections.find((entry) => entry.id === action.connectionId);
       if (!connection || connection.authType !== "oauth" || connection.credentialMode !== "per_member") {
         throw new Error(`${action.connectionName} is no longer available as your reconnectable account.`);
@@ -2548,6 +2549,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       });
       onProgress({ phase: "opening" });
       const result = await denClient.startMcpConnectionConnect(organizationId, action.connectionId);
+      if (!isChatMcpReconnectScopeCurrent(scope, currentScope())) throw new Error("Your OpenWork account changed. Try connecting again.");
       if (result.status === "connected") {
         recordInspectorEvent("mcp.chat_reconnect.completed", {
           workspaceId: props.workspaceId,

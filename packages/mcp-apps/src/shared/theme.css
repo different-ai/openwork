@@ -299,22 +299,3 @@ h1 {
     align-items: stretch;
   }
 }
-
-/* Guided connection handoff, scoped to the connection App. */
-.connection-guide .header { padding: 16px 20px; }
-.connection-guide .body { padding: 24px; }
-.connection-identity { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
-.connection-logo { display: grid; place-items: center; width: 48px; height: 48px; border: 1px solid var(--app-border); border-radius: 14px; background: var(--app-bg); box-shadow: var(--app-shadow); font-size: 26px; font-weight: 650; }
-.connection-openwork { background: var(--app-bg-subtle); }
-.connection-logo svg { width: 24px; height: 24px; }
-.connection-link { color: var(--app-muted); letter-spacing: 4px; }
-.connection-title { margin: 0 0 8px; font-size: 22px; line-height: 1.25; letter-spacing: -.5px; overflow-wrap: anywhere; }
-.connection-steps { display: grid; gap: 18px; list-style: none; padding: 20px 0; margin: 0; }
-.connection-steps li { display: flex; gap: 12px; align-items: flex-start; color: var(--app-muted); }
-.connection-steps li > span { display: grid; place-items: center; flex-shrink: 0; width: 24px; height: 24px; border: 1px solid var(--app-border); border-radius: 50%; font-size: 11px; }
-.connection-steps li[data-active="true"] > span { color: var(--app-accent-fg); background: var(--app-accent); }
-.connection-steps strong { font-size: 13px; font-weight: 600; color: var(--app-text); }
-.connection-steps p { font-size: 12px; line-height: 1.5; margin: 3px 0 0; }
-.connection-guide .footer { padding: 16px 24px; background: var(--app-bg-hover); }
-.connection-guide button:focus-visible { outline: 2px solid var(--app-info); outline-offset: 3px; }
-@media (max-width: 420px) { .connection-guide .footer { flex-direction: column; align-items: stretch; } }

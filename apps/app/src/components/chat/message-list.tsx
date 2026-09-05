@@ -288,7 +288,7 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
       <CapabilityCallLine
         part={part}
         connector={resolveConnectorToolIdentity(part, connectorIdentities)}
-        onReconnect={onMcpReconnect}
+        onReconnect={hasPreservedMcpAppResult(part) ? undefined : onMcpReconnect}
         onReopenAuthorization={onMcpReopenAuthorization}
         onRetry={onMcpRetry}
       />

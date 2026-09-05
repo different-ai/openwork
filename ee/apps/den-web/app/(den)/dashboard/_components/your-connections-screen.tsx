@@ -51,9 +51,8 @@ export function YourConnectionsScreen() {
   const disconnectProvider = useDisconnectMyProviderAccount();
   const [setupTarget, setSetupTarget] = useState<PluginMcpSetupTarget | null>(null);
   const [rowError, setRowError] = useState<{ connectionId: string; message: string } | null>(null);
-  const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
   const focusedRowRef = useRef<HTMLDivElement | null>(null);
-  const focusConnectionId = trustedConnectionFocusId(connections, selectedConnectionId ?? searchParams.get("connectionId"));
+  const focusConnectionId = trustedConnectionFocusId(connections, searchParams.get("connectionId"));
   const visibleConnections = useMemo(
     () => sortConnectionsForFocus(connections, focusConnectionId),
     [connections, focusConnectionId],
@@ -97,7 +96,7 @@ export function YourConnectionsScreen() {
         </div>
       ) : connections.length === 0 ? (
         <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-center text-[14px] text-gray-500">
-          Nothing has been shared with you yet. Ask a workspace admin to add a connection.
+          Nothing has been shared with you yet. Ask a workspace admin to add an MCP connection.
         </div>
       ) : (
         <div className="divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white">
@@ -124,10 +123,7 @@ export function YourConnectionsScreen() {
                     ? authorization.error.message
                     : null
               }
-              onConnect={() => {
-                if (focusConnectionId === connection.id) void authorization.connect(connection.id);
-                else setSelectedConnectionId(connection.id);
-              }}
+              onConnect={() => void authorization.connect(connection.id)}
               onDisconnect={() => void handleDisconnectMyAccount(connection)}
               toolTesterRoute={getToolTesterRoute(orgSlug)}
             />;
@@ -201,12 +197,11 @@ function YourConnectionRow({
     <div
       ref={rowRef}
       tabIndex={highlighted ? -1 : undefined}
-      className={`outline-none transition ${highlighted ? "rounded-2xl bg-gray-50/60 ring-1 ring-inset ring-gray-200" : ""}`}
-      data-testid={highlighted ? "guided-connection-setup" : undefined}
+      className={`outline-none transition ${highlighted ? "bg-blue-50/70 ring-2 ring-inset ring-blue-200" : ""}`}
     >
       <div className="flex flex-col gap-4 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 flex-1 items-center gap-3">
-          <IntegrationIcon name={connection.name} serviceUrl={connection.url} className={highlighted ? "h-14 w-14 rounded-2xl" : "h-10 w-10 rounded-xl"} imageClassName={highlighted ? "h-7 w-7" : "h-5 w-5"} />
+          <IntegrationIcon name={connection.name} serviceUrl={connection.url} />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <p className="truncate text-[14px] font-semibold text-gray-900">{connection.name}</p>
@@ -248,7 +243,7 @@ function YourConnectionRow({
                 </span>
               )}
             </div>
-            {!highlighted ? <p className="mt-0.5 truncate text-[12px] text-gray-500">{connection.url}</p> : null}
+            <p className="mt-0.5 truncate text-[12px] text-gray-500">{connection.url}</p>
             {requiredByLabel ? (
               <p className="mt-1 text-[12px] font-medium text-gray-700">{requiredByLabel}</p>
             ) : null}
@@ -308,36 +303,11 @@ function YourConnectionRow({
           ) : null}
           {needsReconnect || needsMyConnect || needsAdminConnect ? (
             <DenButton variant="primary" size="sm" loading={connecting || polling} onClick={onConnect}>
-              {highlighted ? `Continue to ${connection.name}` : needsReconnect ? "Reconnect" : "Connect"}
+              {needsReconnect ? "Reconnect" : "Connect"}
             </DenButton>
           ) : null}
         </div>
       </div>
-      {highlighted ? (
-        <section className="border-t border-gray-100 px-6 py-6" aria-label={`Set up ${connection.name}`} aria-live="polite">
-          <h2 className="text-xl font-semibold tracking-tight text-gray-900">
-            {connection.connectedForMe && !needsReconnect && !needsAdminRecovery && !needsAdminSetup ? "You’re connected" : `Bring ${connection.name} into your work`}
-          </h2>
-          {needsAdminSetup || needsAdminRecovery || !(needsReconnect || needsMyConnect || needsAdminConnect || connection.connectedForMe) ? (
-            <p className="mt-2 text-sm leading-6 text-gray-500">An organization admin needs to finish setup before you can use this connection. Your account has not been connected.</p>
-          ) : connection.connectedForMe && !needsReconnect ? (
-            <p className="mt-2 text-sm leading-6 text-gray-500">You can return to your chat. Your connection card will confirm when the tools are ready.</p>
-          ) : (
-            <>
-              <p className="mt-2 text-sm leading-6 text-gray-500">{isPerMember ? "Connect your own account to use this service in OpenWork." : "Authorize the account your organization will use for this connection."}</p>
-              <ol className="mt-6 grid gap-5 sm:grid-cols-3" aria-label="Connection progress">
-                {["Continue to sign-in", "Review and authorize", "Return to your chat"].map((step, index) => (
-                  <li key={step} className="flex items-start gap-3" aria-current={index === (connecting || polling ? 1 : 0) ? "step" : undefined}>
-                    <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-medium ${index === (connecting || polling ? 1 : 0) ? "bg-gray-900 text-white" : "border border-gray-200 bg-white text-gray-500"}`}>{index + 1}</span>
-                    <div><p className="text-[13px] font-medium text-gray-900">{step}</p><p className="mt-1 text-xs leading-5 text-gray-500">{index === 0 ? "Use the button above to open sign-in." : index === 1 ? "Choose your account and review the requested access." : "We’ll confirm your connection automatically."}</p></div>
-                  </li>
-                ))}
-              </ol>
-              {polling ? <p className="mt-5 text-sm text-gray-500">Waiting for authorization. Finish sign-in in the window that opened.</p> : null}
-            </>
-          )}
-        </section>
-      ) : null}
     </div>
   );
 }

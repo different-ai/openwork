@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useState } from "react"
 import type { App } from "@modelcontextprotocol/ext-apps"
 import { z } from "zod"
 import { connectionActionPayloadSchema, connectionActionToolName, type ConnectionActionPayload } from "@openwork/types/connection-action-app"
-import { ConnectorMark } from "./shared/connector-mark"
 import { mountMcpApp } from "./shared/bridge"
 import { AlertIcon, AppHeader, ArrowIcon, CardBody, CardFooter, CheckIcon, KeyValueGrid, PlugIcon, type Tone } from "./shared/ui"
 import "./shared/theme.css"
@@ -38,12 +37,8 @@ function ConnectionActionCard({ initialPayload, app }: { initialPayload: Connect
   const [payload, setPayload] = useState(initialPayload)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [waiting, setWaiting] = useState(false)
-  const [opening, setOpening] = useState(false)
-  const inFlight = useRef(false)
-  const checkConnection = useCallback(async () => {
-    if (!app || inFlight.current) return
-    inFlight.current = true
+  const checkConnection = async () => {
+    if (!app || busy) return
     setBusy(true)
     setError(null)
     try {
@@ -53,52 +48,26 @@ function ConnectionActionCard({ initialPayload, app }: { initialPayload: Connect
         throw new Error("Could not check this connection. Please try again.")
       }
       setPayload(parsed.data)
-      if (parsed.data.state === "connected") setWaiting(false)
     } catch (error) {
-      setWaiting(false)
       setError(error instanceof Error ? error.message : "Could not check this connection.")
     } finally {
-      inFlight.current = false
       setBusy(false)
     }
-  }, [app, payload.connectionId])
-  useEffect(() => {
-    if (!waiting) return
-    const deadline = Date.now() + 120_000
-    let cancelled = false
-    let timer: ReturnType<typeof setTimeout>
-    const poll = async () => {
-      if (Date.now() >= deadline) {
-        setWaiting(false)
-        setError("Still waiting for sign-in. You can check again whenever you’re ready.")
-        return
-      }
-      await checkConnection()
-      if (!cancelled) timer = setTimeout(() => void poll(), 3_000)
-    }
-    timer = setTimeout(() => void poll(), 3_000)
-    return () => { cancelled = true; clearTimeout(timer) }
-  }, [waiting, checkConnection])
+  }
   const presentation = STATE_PRESENTATION[payload.state]
   const actionUrl = payload.action?.url
   const openAction = async () => {
-    if (!actionUrl || !app || opening) return
-    setOpening(true)
+    if (!actionUrl || !app) return
     setError(null)
     try {
       const result = await app.openLink({ url: actionUrl })
       if (result.isError) setError("Could not open sign-in. Please try again.")
-      else setWaiting(true)
     } catch {
       setError("Could not open sign-in. Please try again.")
-    } finally {
-      setOpening(false)
     }
   }
-  const memberSignIn = payload.actor === "member" && (payload.action?.type === "connect" || payload.action?.type === "reconnect")
-  const connected = payload.state === "connected"
   return (
-    <main className="card connection-guide" aria-live="polite" aria-busy={busy}>
+    <main className="card" aria-live="polite" aria-busy={busy}>
       <AppHeader
         tone={presentation.tone}
         icon={payload.state === "connected" ? <CheckIcon /> : payload.state === "provider_error" ? <AlertIcon /> : <PlugIcon />}
@@ -107,20 +76,9 @@ function ConnectionActionCard({ initialPayload, app }: { initialPayload: Connect
         badge={{ tone: presentation.tone, label: presentation.badge }}
       />
       <CardBody>
-        <div className="connection-identity" aria-hidden="true">
-          <span className="connection-logo"><ConnectorMark name={payload.connectionName} /></span>
-          <span className="connection-link">···</span>
-          <span className="connection-logo connection-openwork"><PlugIcon /></span>
-        </div>
-        <h2 className="connection-title">{connected ? `${payload.connectionName} is ready` : `${payload.state === "reauth_required" ? "Reconnect" : "Connect"} ${payload.connectionName}`}</h2>
+        <p className="name">{payload.connectionName}</p>
         <p className="description">{payload.message}</p>
-        {memberSignIn ? (
-          <ol className="connection-steps" aria-label="Connection progress">
-            <li data-active={!waiting}><span>1</span><div><strong>Continue to sign-in</strong><p>Open the guided setup for your account.</p></div></li>
-            <li data-active={waiting}><span>2</span><div><strong>{waiting ? "Waiting for you to finish…" : "Review and authorize"}</strong><p>Choose your account and review access with the provider.</p></div></li>
-            <li><span>3</span><div><strong>Continue in chat</strong><p>This card updates automatically when your connection is ready.</p></div></li>
-          </ol>
-        ) : payload.action ? (
+        {payload.action ? (
           <KeyValueGrid
             items={[
               ...(payload.actor ? [{ label: "Who acts", value: ACTOR_LABEL[payload.actor] }] : []),
@@ -138,11 +96,11 @@ function ConnectionActionCard({ initialPayload, app }: { initialPayload: Connect
       <CardFooter
         footnote={payload.state === "connected"
           ? "Tools from this connection are available in chat right now."
-          : waiting ? "Waiting for sign-in. You can return here at any time." : memberSignIn ? "Your provider handles sign-in. Keep this chat open." : "Complete the requested setup, then check the connection here."}
+          : "Finish connecting, then check the connection here."}
         action={payload.action ? (
           actionUrl ? (
-            <button className="action-primary" type="button" disabled={!app || opening} onClick={() => void openAction()}>
-              {opening ? "Opening…" : waiting ? "Open setup again" : payload.action.label} <ArrowIcon />
+            <button className="action-primary" type="button" disabled={!app} onClick={() => void openAction()}>
+              {payload.action.label} <ArrowIcon />
             </button>
           ) : (
             <span className="badge" data-tone={presentation.tone}>{payload.action.label}</span>

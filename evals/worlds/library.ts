@@ -930,8 +930,7 @@ export async function connectionActionMcpApp(seed: Seed) {
   });
   await reloadConfiguredApp(app);
   await seed.session(app);
-  const web = await seed.web({ den, signedInAs: den.admin, startPath: `/dashboard/your-connections?connectionId=${encodeURIComponent(connection.id)}`, headless: true });
-  return { app, web, den, connection, organizationId, mcpSession: { ...den.admin, token: mcpToken } };
+  return { app, den, connection, organizationId, mcpSession: { ...den.admin, token: mcpToken } };
 }
 
 export const skillCreatedResourceUri = "ui://openwork/skill-created/v1/view.html";
