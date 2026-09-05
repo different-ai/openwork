@@ -5,6 +5,9 @@ import type { FieldPacket, QueryOptions, QueryResult } from "mysql2"
 import mysql from "mysql2/promise"
 import { parseMySqlConnectionConfig } from "./mysql-config"
 import * as schema from "./schema"
+import { createRetryingPlanetScaleFetch, retryReadQuery } from "./transient-retry"
+
+export { isTransientDbConnectionError } from "./transient-retry"
 
 export type DenDbMode = "mysql" | "planetscale"
 type DenDb = ReturnType<typeof drizzlePlanetScale>
@@ -14,38 +17,8 @@ export type PlanetScaleCredentials = {
   password: string
 }
 
-const TRANSIENT_DB_ERROR_CODES = new Set([
-  "ECONNRESET",
-  "EPIPE",
-  "ETIMEDOUT",
-  "PROTOCOL_CONNECTION_LOST",
-  "PROTOCOL_ENQUEUE_AFTER_FATAL_ERROR",
-])
-
-const RETRYABLE_QUERY_PREFIXES = ["select", "show", "describe", "explain"]
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
-}
-
-function getErrorCode(error: unknown): string | null {
-  if (!isRecord(error)) {
-    return null
-  }
-
-  if (typeof error.code === "string") {
-    return error.code
-  }
-
-  return getErrorCode(error.cause)
-}
-
-export function isTransientDbConnectionError(error: unknown): boolean {
-  const code = getErrorCode(error)
-  if (!code) {
-    return false
-  }
-  return TRANSIENT_DB_ERROR_CODES.has(code)
 }
 
 function extractSql(value: unknown): string | null {
@@ -62,29 +35,6 @@ function extractSql(value: unknown): string | null {
   }
 
   return null
-}
-
-function isRetryableReadQuery(sql: string | null): boolean {
-  if (!sql) {
-    return false
-  }
-
-  const normalized = sql.trimStart().toLowerCase()
-  return RETRYABLE_QUERY_PREFIXES.some((prefix) => normalized.startsWith(prefix))
-}
-
-async function retryReadQuery<T>(label: "query" | "execute", sql: string | null, run: () => Promise<T>): Promise<T> {
-  try {
-    return await run()
-  } catch (error) {
-    if (!isRetryableReadQuery(sql) || !isTransientDbConnectionError(error)) {
-      throw error
-    }
-
-    const queryType = sql?.trimStart().split(/\s+/, 1)[0]?.toUpperCase() ?? "QUERY"
-    console.warn(`[db] transient mysql error on ${label} (${queryType}); retrying once`)
-    return run()
-  }
 }
 
 function parsePlanetScaleConfigFromDatabaseUrl(databaseUrl: string): PlanetScaleCredentials {
@@ -121,7 +71,7 @@ export function createDenDb(input: {
       throw new Error("PlanetScale mode requires DATABASE_HOST, DATABASE_USERNAME, and DATABASE_PASSWORD")
     }
 
-    const client = new Client(credentials)
+    const client = new Client({ ...credentials, fetch: createRetryingPlanetScaleFetch() })
     return {
       client,
       db: drizzlePlanetScale(client, { schema }) as unknown as DenDb,
