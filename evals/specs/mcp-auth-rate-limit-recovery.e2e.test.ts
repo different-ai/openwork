@@ -69,7 +69,7 @@ test("MCP requests keep valid credentials after the public auth rate limit is ex
   const metadata: unknown = await discovery.json();
   const resource = stringField(metadata, "resource");
   expect(resource).toBe(`${den.ref.apiUrl}/mcp/agent`);
-  expect(metadata).toMatchObject({ authorization_servers: [`${den.ref.apiUrl}/api/auth`], bearer_methods_supported: ["header"] });
+  expect(metadata).toMatchObject({ authorization_servers: [`${origin}/api/auth`], bearer_methods_supported: ["header"] });
   const authorize = new URLSearchParams({ client_id: clientId, response_type: "code", redirect_uri: redirectUri, scope, resource, code_challenge: createHash("sha256").update(verifier).digest("base64url"), code_challenge_method: "S256", prompt: "consent" });
   for (const resources of [[], ["https://unrelated.example/mcp"], [resource, resource]]) {
     const rejectedQuery = new URLSearchParams(authorize);
