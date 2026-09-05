@@ -15,6 +15,11 @@ test("command palette searches settings by alias, navigates, records recents, an
   const workspaceId = world.workspace.workspaceId;
   const macPlatform = await probe.eval(`/Mac|iPhone|iPad|iPod/.test(navigator.platform)`);
   const paletteShortcut = macPlatform ? "Meta+K" : "Control+K";
+  const waitForPaletteClose = () => probe.eventually(() => probe.has("Arrow keys to navigate"), {
+    within: 15_000,
+    label: "command palette finishes closing",
+    until: (open) => !open,
+  });
 
   await step("the empty palette offers actions and settings without recents", async () => {
     expect(await probe.hash()).toContain(workspaceId);
@@ -110,6 +115,7 @@ test("command palette searches settings by alias, navigates, records recents, an
     await user.press(paletteShortcut);
     await user.type(paletteInput, "Enable Developer Mode", { replace: true });
     await user.click({ role: "option", label: /^Enable Developer Mode/ });
+    await waitForPaletteClose();
     await user.press(paletteShortcut);
     await user.see({ role: "option", label: /^Organization server/ });
     await user.see({ role: "option", label: /^Runtime/ });
@@ -120,6 +126,7 @@ test("command palette searches settings by alias, navigates, records recents, an
     await user.screenshot();
     await user.type(paletteInput, "Disable Developer Mode", { replace: true });
     await user.click({ role: "option", label: /^Disable Developer Mode/ });
+    await waitForPaletteClose();
     await user.notSee(paletteInput);
   });
 
@@ -139,11 +146,13 @@ test("command palette searches settings by alias, navigates, records recents, an
         label: section.id === "experimental-engine" ? /^Organization server/ : /^Experimental engine/,
       });
       await user.click({ role: "option", label: new RegExp(`^${section.title}`) });
-      await probe.eventually(() => probe.hash(), {
+      const sectionHash = await probe.eventually(() => probe.hash(), {
         within: 15_000,
         label: `${section.title} section route`,
         until: (value) => value.endsWith(`/settings/advanced/${section.id}`),
       });
+      expect(sectionHash).toBe(`#/workspace/${workspaceId}/settings/advanced/${section.id}`);
+      await waitForPaletteClose();
       expect(await probe.eventually(() => probe.eval(`(id) => {
         const section = document.getElementById(id);
         const heading = section?.querySelector("h3");
