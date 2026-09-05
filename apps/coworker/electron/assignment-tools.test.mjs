@@ -121,7 +121,8 @@ test("assignment tools answer for the bound coworker only, in plain words with i
     });
     assert.match(resultText(changed), /^Changed assignment "Move the car" · Every 2 hours between 9:00 AM and 6:00 PM, up to 4 times a day/);
     const paused = await call(server, scout, "tools/call", { name: "assignment_update", arguments: { id, patch: { active: false } } });
-    assert.match(resultText(paused), /^Paused assignment "Move the car"\nIt is paused/);
+    assert.match(resultText(paused), /^Paused assignment "Move the car"\nFuture scheduled runs are paused/);
+    assert.match(resultText(paused), /queued or running run can still finish/);
     const renamed = await call(server, scout, "tools/call", { name: "assignment_update", arguments: { id, patch: { name: "Car day", active: true } } });
     assert.match(resultText(renamed), /^Resumed assignment "Car day"/);
     const onlyName = await call(server, scout, "tools/call", { name: "assignment_update", arguments: { id, patch: { name: "Move the car" } } });

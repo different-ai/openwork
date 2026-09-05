@@ -1,61 +1,28 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="760" height="500" viewBox="0 0 760 500">
-  <rect width="760" height="500" fill="#f4f7fb"/>
-  <rect x="12" y="12" width="736" height="344" rx="34" fill="none" stroke="#dce4ef" stroke-width="2"/>
-
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="760" height="600" viewBox="0 0 760 600">
+  <rect width="760" height="600" fill="#f3f4f6"/>
+  <!-- A quiet architectural backdrop rewards a closer look. -->
+  <image data-decoration="office-activity" x="0" y="61" width="760" height="507" opacity=".12" xlink:href="office-activity-outline.png"/>
   <g font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', Arial, sans-serif">
-    <g transform="translate(34 28)">
-      <rect width="174" height="42" rx="21" fill="#ffffff" stroke="#dce4ef"/>
-      <g transform="translate(11 8)">
-        <path d="M7 1h16c4 0 6 2.7 6 6.8v10.4c0 4.1-2 6.8-6 6.8h-8.2l-4.2 2.6c-1.4.8-2.6 0-2.6-1.6v-1H7c-4 0-6-2.7-6-6.8V7.8C1 3.7 3 1 7 1Z" fill="#5b8dff"/>
-        <g fill="none" stroke="#10141c" stroke-linecap="round" stroke-width="1.8">
-          <circle cx="10.5" cy="13" r="4.7"/><circle cx="20.5" cy="13" r="4.7"/>
-          <path d="M15.2 13c.3-1 1.1-1 1.4 0M4.6 13H3M26.4 13H28"/>
-        </g>
-        <rect x="9.7" y="11.1" width="1.6" height="3.8" rx=".8" fill="#10141c"/>
-        <rect x="19.7" y="11.1" width="1.6" height="3.8" rx=".8" fill="#10141c"/>
-      </g>
-      <text x="48" y="27" font-size="15" font-weight="650" fill="#111722">Open Coworker</text>
-    </g>
+    <image data-brand="white-coworker" x="30" y="20" width="48" height="48" xlink:href="../../public/open-coworker.svg"/>
+    <text x="80" y="48" font-size="14" font-weight="600" letter-spacing="-.2" fill="#303744">Open Coworker</text>
+    <text x="720" y="48" text-anchor="end" font-size="11.5" font-weight="450" fill="#737c8b">Local by default</text>
 
-    <rect x="542" y="28" width="184" height="42" rx="21" fill="#edf3ff"/>
-    <circle cx="562" cy="49" r="4" fill="#2dbf8c"/>
-    <text x="574" y="54" font-size="12.5" font-weight="550" fill="#465165">Local by default</text>
+    <text x="380" y="118" text-anchor="middle" font-size="30" font-weight="650" letter-spacing="-.9" fill="#171c26">Welcome to your new team</text>
+    <text x="380" y="148" text-anchor="middle" font-size="14" font-weight="450" fill="#687181">Drag Open Coworker into Applications.</text>
 
-    <text x="380" y="112" text-anchor="middle" font-size="27" font-weight="700" letter-spacing="-.6" fill="#111722">Welcome to your new team</text>
-    <text x="380" y="140" text-anchor="middle" font-size="14" font-weight="450" fill="#68758a">Drag Open Coworker into Applications. That’s it.</text>
+    <!-- Native Finder icons and their labels sit inside these quiet inset surfaces. -->
+    <rect x="76" y="190" width="208" height="192" rx="28" fill="#e9ecf1"/>
+    <rect x="76" y="188" width="208" height="192" rx="28" fill="#ffffff" fill-opacity=".8" stroke="#ffffff" stroke-width="1.5"/>
+    <text x="180" y="214" text-anchor="middle" font-size="10" font-weight="550" letter-spacing="1.4" fill="#89919e">01 · DRAG</text>
 
-    <rect x="70" y="179" width="220" height="174" rx="38" fill="#e6edf7"/>
-    <rect x="70" y="175" width="220" height="174" rx="38" fill="#ffffff" stroke="#dce4ef" stroke-width="1.5"/>
-    <circle cx="96" cy="201" r="12" fill="#edf3ff"/>
-    <text x="96" y="205" text-anchor="middle" font-size="11" font-weight="700" fill="#4e78dc">1</text>
-    <text x="116" y="206" font-size="12.5" font-weight="600" fill="#657286">Meet your coworker</text>
+    <rect x="476" y="190" width="208" height="192" rx="28" fill="#e9ecf1"/>
+    <rect x="476" y="188" width="208" height="192" rx="28" fill="#ffffff" fill-opacity=".8" stroke="#ffffff" stroke-width="1.5"/>
+    <text x="580" y="214" text-anchor="middle" font-size="10" font-weight="550" letter-spacing="1.4" fill="#89919e">02 · DROP HERE</text>
 
-    <rect x="470" y="179" width="220" height="174" rx="38" fill="#e6edf7"/>
-    <rect x="470" y="175" width="220" height="174" rx="38" fill="#ffffff" stroke="#dce4ef" stroke-width="1.5"/>
-    <circle cx="496" cy="201" r="12" fill="#e7f8f2"/>
-    <text x="496" y="205" text-anchor="middle" font-size="11" font-weight="700" fill="#168968">2</text>
-    <text x="516" y="206" font-size="12.5" font-weight="600" fill="#657286">Give them a home</text>
+    <path d="M338 282h82m-8-8 8 8-8 8" fill="none" stroke="#aab3c1" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
 
-    <path d="M307 281c38-32 80-32 126 0" fill="none" stroke="#c7d5ed" stroke-width="2" stroke-linecap="round" stroke-dasharray="3 8"/>
-    <path d="m428 273 12 9-14 5" fill="none" stroke="#7c9ee9" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
-
-    <g transform="translate(318 228) rotate(-9 22 20)">
-      <path d="M10 2h24c6 0 9 4 9 10v16c0 6-3 10-9 10H22l-6 4c-2 1-4 0-4-3v-1h-2c-6 0-9-4-9-10V12C1 6 4 2 10 2Z" fill="#b7a6f7"/>
-      <g fill="none" stroke="#151923" stroke-width="2.4" stroke-linecap="round"><circle cx="15" cy="20" r="6"/><circle cx="30" cy="20" r="6"/><path d="M21 20c.5-1.5 1.5-1.5 2 0"/></g>
-      <rect x="14.1" y="18" width="1.8" height="4" rx=".9" fill="#151923"/><rect x="29.1" y="18" width="1.8" height="4" rx=".9" fill="#151923"/>
-    </g>
-
-    <g transform="translate(361 275) rotate(8 22 20)">
-      <path d="M10 2h24c6 0 9 4 9 10v16c0 6-3 10-9 10H22l-6 4c-2 1-4 0-4-3v-1h-2c-6 0-9-4-9-10V12C1 6 4 2 10 2Z" fill="#84d8c0"/>
-      <g fill="none" stroke="#151923" stroke-width="2.4" stroke-linecap="round"><circle cx="15" cy="20" r="6"/><circle cx="30" cy="20" r="6"/><path d="M21 20c.5-1.5 1.5-1.5 2 0"/></g>
-      <rect x="14.1" y="18" width="1.8" height="4" rx=".9" fill="#151923"/><rect x="29.1" y="18" width="1.8" height="4" rx=".9" fill="#151923"/>
-    </g>
-
-    <g transform="translate(405 222) rotate(-5 22 20)">
-      <path d="M10 2h24c6 0 9 4 9 10v16c0 6-3 10-9 10H22l-6 4c-2 1-4 0-4-3v-1h-2c-6 0-9-4-9-10V12C1 6 4 2 10 2Z" fill="#ffb48f"/>
-      <g fill="none" stroke="#151923" stroke-width="2.4" stroke-linecap="round"><circle cx="15" cy="20" r="6"/><circle cx="30" cy="20" r="6"/><path d="M21 20c.5-1.5 1.5-1.5 2 0"/></g>
-      <rect x="14.1" y="18" width="1.8" height="4" rx=".9" fill="#151923"/><rect x="29.1" y="18" width="1.8" height="4" rx=".9" fill="#151923"/>
-    </g>
-
+    <path d="M76 409h608" stroke="#dce0e6" stroke-width="1"/>
+    <text x="380" y="438" text-anchor="middle" font-size="13" font-weight="550" fill="#434c5b">Launch Open Coworker from Applications.</text>
+    <text x="380" y="461" text-anchor="middle" font-size="11.5" font-weight="450" fill="#7d8695">Once it’s in place, you can eject this installer.</text>
   </g>
 </svg>

@@ -17,7 +17,9 @@ export function GroupDetailsSheet({
   onClose,
   onChanged,
   onArchived,
+  managed = false,
 }: {
+  managed?: boolean;
   group: CoworkerGroupSummary;
   coworkers: CoworkerSummary[];
   runtime: RuntimeInfo;
@@ -98,6 +100,7 @@ export function GroupDetailsSheet({
           <div className={rowClass}>
             <label className={labelClass} htmlFor="group-details-name">Name</label>
             <input
+              disabled={managed}
               id="group-details-name"
               data-testid="group-details-name"
               className="h-8 w-60 rounded-lg border border-line bg-black/18 px-2 text-sm text-snow outline-none focus:border-spark/50"
@@ -172,7 +175,7 @@ export function GroupDetailsSheet({
               </select>
             </div>
           </details>
-          <div className={rowClass}>
+          {!managed ? <div className={rowClass}>
             <p className="text-sm text-snow">
               Archive this group chat
               <span className="block text-[11px] text-mist">Its messages are kept; it leaves the rail</span>
@@ -186,7 +189,7 @@ export function GroupDetailsSheet({
             }}>
               Archive
             </Button>
-          </div>
+          </div> : <p className="py-3 text-xs text-mist">Turn All Hands off in Settings to hide this space. Your conversation is kept.</p>}
         </div>
         {error ? <div className="mt-3"><ErrorNote>{error}</ErrorNote></div> : null}
         <div className="mt-4 flex justify-end">

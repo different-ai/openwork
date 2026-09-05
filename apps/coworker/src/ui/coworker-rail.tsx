@@ -326,6 +326,7 @@ export function CoworkerRail({
                   return (
                     <button
                       key={group.id}
+                      aria-label={group.name}
                       aria-current={active ? "true" : undefined}
                       data-testid="group-rail-row"
                       data-group-id={group.id}

@@ -232,9 +232,9 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
   Coworker is available and recover at most one missed occurrence after
   relaunch; they do not pretend to be always-on Cloud work.
 - **Workers are long-lived helpers a coworker runs for one goal.** A Worker is
-  a native thread in the coworker's own workspace — same files, memory, tools,
-  and permissions — started for a goal that outlives one reply (watching
-  something over time, a long research pass, a multi-step job) with a lifespan:
+  a native thread in the coworker's own workspace, with its files and connected
+  tools, started for a goal that outlives one reply (a long research pass or a
+  multi-step job) with a lifespan:
   a number of turns (default 10), a time, or until stopped. It works in bounded
   turns and ends each with a *Finding*, a *Needs a decision*, or *Done*, which
   the app reads back into `workers/<id>/findings.jsonl`; every turn takes a
@@ -245,15 +245,20 @@ The coworker directory is registered as an ordinary OpenWork workspace, so:
   discussion listing the Workers and their updates; the transcript folds that
   turn into the action line ("Reviewed an update from Market scan") beside
   whatever the coworker did about it. The coworker starts, steers, and stops
-  Workers through its own tools (`worker_spawn`, `worker_steer`,
-  `worker_cancel`, `workers_list`, `worker_findings`, served by the same
+  Workers through its own tools (`worker_spawn`, `worker_steer`, `worker_pause`,
+  `worker_resume`, `worker_cancel`, `workers_list`, `worker_findings`, served by the same
   loopback MCP server as its document tools); the person does the same from
   the Activity panel's Workers level — flat rows opening into the findings timeline,
   Steer, Pause/Resume, Stop, and Open its work (the Worker's thread, read-only)
   — and starts one with New Worker. At most three Workers are live per
-  coworker; a Worker never starts a Worker. `workers.json` keeps Worker threads
-  out of discussions and assignments; a Worker left mid-turn by a quit resumes
-  on the next launch and waits its turn like any run. The contract sends
+  coworker. Worker turns disable direct Worker, assignment, memory, and team
+  management tools and native task delegation. This is a native tool boundary,
+  not filesystem isolation: Workers still share the coworker's workspace.
+  `workers.json` keeps Worker threads out of discussions and assignments.
+  Steering and the admitted turn are durable; recovery reuses the turn's
+  message id to observe accepted work instead of starting it again. An
+  interrupted engine reply can fail and remains visible for review. Pause
+  lets the current step finish and holds the next one. The contract sends
   complex or long work to a Worker *so the coworker stays in the conversation*:
   a reply that runs for minutes leaves the person waiting, while a Worker runs
   beside them and the coworker keeps answering. For each Worker the app keeps
@@ -412,18 +417,19 @@ those choices; the standard above is what each row is held to.
 
 | Choice | Where | Inputs | Rule | Fallback | Override | Explained to the person? | Proven by |
 |---|---|---|---|---|---|---|---|
-| Starting a Worker | Contract `### Which shape an answer takes` and `## Workers`; `worker_spawn` | The request | One goal with an end, not on a clock, worked in steps; never for a quick question; never on a schedule (that is an assignment); a Worker never starts a Worker (a prompt rule — a Worker shares the coworker's tool token, so the handler cannot tell them apart) | — | New Worker; Steer, Pause, Stop | "Started a Worker · Name" and one sentence from the coworker | `coworkers.test.mjs`, `workers.test.mjs`, `open-coworker-workers` |
+| Starting a Worker | Contract `### Which shape an answer takes` and `## Workers`; `worker_spawn`, `workerTurnTools` | The request | One bounded goal, not a schedule or quick question. Worker turns disable direct management tools and task delegation through native session permissions; the shared workspace is not a sandbox. | — | New Worker; Steer, Pause, Stop | "Started a Worker · Name" and one sentence from the coworker | `coworkers.test.mjs`, `workers.test.mjs`, `open-coworker-turn-recovery` |
 | Its lifespan | `normalizeLifespan`; `spawnWorker` with the effort dial | The tool's `lifespan`, or nothing; the dial's stop | A number of turns (1–100), a deadline, or until stopped; when nobody chose, the dial says how much work is welcome — 6 · 8 · 10 · 14 · 20 turns from Light to All in (10 at Balanced) | Ten turns | The coworker chooses; the person steers or stops, or turns the dial | The row reads "3 of 10 turns left", "Until 4:30 PM", "Until you stop it"; the dial's line names Workers | `workers.test.mjs`, `workers.test.ts`, `effort.test.ts` |
 | At most three live per coworker | `createWorker` | The live Workers | The fourth is refused with a sentence | — | Stop one | The tool's sentence, `workers_list` | `workers.test.mjs` |
 | When a turn runs | `admitWorkerTurn` in `electron/main.mjs` | This Mac's run limit (`maxParallelLocalRuns`, default 2) | Turns follow one another as soon as a slot is free; runs already in line go first | Queued | AI & local setup › the limit | "Waiting its turn" | `open-coworker-workers` (limit 1 → queued) |
 | Waking the coworker | `createReviewScheduler` | Findings | Per coworker, at most once a minute, as one turn in the open discussion once it is idle (up to five minutes); held without a discussion; retried once after a failure, then dropped and recorded on the Worker | Held / dropped, recorded | — | "Reviewed an update from Market scan"; "Not reviewed …" on the Worker | `workers.test.mjs`, `open-coworker-workers` |
 | Needs a decision | `nextWorkerState`; the review prompt | The Worker's report | The Worker waits; the coworker is told not to ask the person the same question; the discussion shows a lettered choice card; the answer is a steer | Waits | Steer or stop | The card and the amber "Waiting for a decision" | `workers.test.mjs`, `workers.test.ts` |
 | Done on the first turn | `nextWorkerState` | The report | Finishes; the slot is released; one turn spent | — | — | "Done" | `workers.test.mjs` |
-| After a quit | `recoverInterruptedWorkers` | The records | Running or starting → waits its turn with a status line; a decision keeps waiting; paused stays paused | — | — | "Paused when the app closed; resumes on the next turn." | `workers.test.mjs` |
+| After a quit | `prepareWorkerTurn`, `recoverInterruptedWorkers` | Durable steering and pending turn | Reuse the admitted message id; do not re-execute accepted work. Decisions keep waiting; paused stays paused with its steering. | Interrupted replies may fail | Resume a paused Worker | "Checking the interrupted step before continuing after the app closed." | `workers.test.mjs`, `open-coworker-turn-recovery` |
 
 Left as they are, with the reason: the onboarding cards do not yet say *why*
 a complement joins (one line per card would); the facilitator's reason stays
-private by design; a Worker starting a Worker is held by the prompt only; the
+private by design; the Worker review queue is still process-local, so findings
+remain on disk after a quit but are not automatically requeued for review; the
 tool catalog's 16 KB of JSON is the largest fixed cost of a turn and its
 schedule schema is carried twice (create and update), which a later pass may
 trim once the free model's scheduling is shown to survive it.
@@ -1030,13 +1036,16 @@ panel's fourth level (root → level → group → item). Its root is three flat
 rows, each with an icon, a title, one status line, a count, and a chevron:
 
 - **Connected with OpenWork** — *Connected as <org>*, *Not connected*, *Needs
-  sign-in*, *Needs setup by an admin*, *Needs attention*, or *Unavailable*,
+  sign-in*, *Needs setup by an admin*, *Needs attention*, or *Temporarily unavailable*,
   mapped from the gateway's own health (a lapsed token is a sign-in; revoked
   membership, disabled agent access, or the wrong organization needs an admin;
-  anything else offers Repair). Signed out, its screen is the OpenWork Connect
+  other failures offer **Try reconnecting** with the raw reason under Technical
+  details). Signed out, its screen is the OpenWork Connect
   explanation as a first step (Continue, Skip, "don't show this again"), then
-  the short card. Signed in, the screen leads with *Ask <coworker>* and *Create
-  a skill*, then four rows: **Apps** (gateway Apps that render inline),
+  the short card. Signed in, **Start with a task** and **Create a skill** prepare
+  plain-language discussion drafts for the person to complete and send.
+  **Manage apps** opens their Connections page; returning refreshes the catalog.
+  Four rows follow: **Apps** (gateway Apps that render inline),
   **Skills** (built in and from marketplaces, read from the gateway's skill
   index through `GET /experimental/connect/skills`), **Plugins & marketplaces**
   (each plugin lists its skills and the services it uses with their readiness in
@@ -1046,14 +1055,18 @@ rows, each with an icon, a title, one status line, a count, and a chevron:
   provider's own console — from the gateway's connection-status results). The
   gateway has no "list everything" call, so plugin readiness and connection
   statuses come from its search with four keyword variants, merged and cached
-  once per session and coworker; Refresh reads again. The live status always
+  per session and coworker. Refresh, returning to the app, and coming back online
+  re-read it; automatic background refreshes are throttled. Partial failures show
+  a retry message and are never cached as a complete or empty account. The live status always
   wins: a connection the catalog reached but the gateway says needs a person
   reads as the gateway says.
 - **Apps** — everything that renders inline, from any source, with a source line
-  (*OpenWork Connect* or *<tool> on this Mac*). A detail offers **Open** (the
-  App mounts in the panel through the standard MCP App host), **Open beside**
-  when the window has room, **Ask <coworker>** (a prefilled assignment), and a
-  *Technical details* fold with the source, tool, and resource.
+  (*OpenWork Connect* or *<tool> on this Mac*). An App that needs input leads
+  with **Ask <coworker> to use it**, preparing an editable discussion draft.
+  Its manual JSON editor and direct launch controls live under **Advanced input**.
+  Apps needing no input retain **Open** and **Open beside** when there is room.
+  Existing approval controls still apply. Technical details hold the source,
+  tool, and resource.
 - **Tools on this Mac** — the servers the person set up (the gateway and the
   app's own document tools are not listed), each with its state in plain words
   — *Connected*, *Not connected*, *Needs sign-in*, *Needs setup*, *Connecting*,
@@ -1071,6 +1084,13 @@ a level it scopes to that level with one tap to *Search everywhere*; a result
 opens its item with the trail built as if navigated. Empty levels are quiet
 lines ("Nothing set up on this Mac yet."), loading lists are skeleton rows, and
 only the root's refresh icon ever spins.
+
+A search with no match offers **Ask <coworker> to find a way**, carrying the
+person's words into a discussion draft without executing a tool. The coworker
+contract discovers relevant existing access before asking for setup, chooses
+the clear available match, asks only for material missing details, and names
+one useful recovery step when access fails. Browsing is discovery, and a
+connection never grants consent to send, publish, purchase, or change records.
 
 **Open beside** puts an App or skill detail in a column of at least 480 px next
 to the conversation while the panel returns to its list. It is offered from
@@ -1260,3 +1280,26 @@ target-specific OpenCode sidecar, or `opencode` on PATH, in that order. The
 Electron build mirrors the embedded server's runtime dependencies, prepares
 the same versioned sidecar used by OpenWork Desktop, and includes both as
 application resources.
+
+## All Hands (optional)
+
+Enable **Settings → All Hands** to gather your coworkers in one persistent group
+conversation, created automatically under **Group chats**. Add at least two coworkers first. The space shows current team
+activity with links to its source conversations. **Gather the team** requests a
+briefing; **Find our next move** asks for a recommendation. Normal chat,
+@mentions, follow-up questions, and assignments use the existing group-chat
+engine and each coworker's chosen model.
+
+Set a focus in Settings, or write **Focus on …** in the conversation to remember
+it. Group details lets you choose the participating coworkers and facilitator
+model. Briefings ask for evidence, timestamps, missing information, and proposed
+next steps; a scheduled briefing does not authorize executing those proposals.
+
+All Hands is off by default. Once enabled, its default rhythm is 09:00 in this
+computer's timezone. Choose morning and afternoon, or only when asked. Automatic
+briefings require the app to be open; returning later runs today's latest eligible
+slot once, without replaying previous days. A slot is reserved before requesting
+inference to avoid repeating a billed request after a crash. Interrupted or failed
+replies use the conversation's existing recovery controls. Normal model usage
+applies. Disabling the feature stops future automatic briefings and hides its
+navigation, retaining history, focus, and unsent drafts for re-enabling.
