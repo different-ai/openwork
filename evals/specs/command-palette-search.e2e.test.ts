@@ -103,4 +103,41 @@ test("command palette searches settings by alias, navigates, records recents, an
     expect(hash).toContain(workspaceId);
     expect(hash).toMatch(/\/settings\/appearance$/);
   });
+
+  await step("Advanced settings is searchable without developer mode", async () => {
+    await user.press(paletteShortcut);
+    await user.type(paletteInput, "advanced settings", { replace: true });
+    await user.see({ role: "option", label: /^Advanced settings/ });
+    await user.press("Enter");
+    await probe.eventually(() => probe.hash(), {
+      within: 15_000,
+      label: "Advanced settings route",
+      until: (value) => value.endsWith("/settings/advanced"),
+    });
+    await user.see({ role: "button", label: "Back to app" });
+    await user.click({ role: "button", label: "Back to app" });
+    await user.notSee({ role: "button", label: /^Advanced settings$/ });
+  });
+
+  await step("developer mode reveals a direct Advanced settings shortcut", async () => {
+    await user.press(paletteShortcut);
+    await user.type(paletteInput, "Enable Developer Mode", { replace: true });
+    await user.see({ role: "option", label: /^Enable Developer Mode/ });
+    await user.press("Enter");
+    await user.see({ role: "button", label: /^Advanced settings$/ });
+    await user.click({ role: "button", label: /^Advanced settings$/ });
+    await probe.eventually(() => probe.hash(), {
+      within: 15_000,
+      label: "sidebar opens Advanced settings",
+      until: (value) => value.endsWith("/settings/advanced"),
+    });
+    await user.screenshot();
+    await user.click({ role: "button", label: "Back to app" });
+    await user.press(paletteShortcut);
+    await user.type(paletteInput, "Disable Developer Mode", { replace: true });
+    await user.see({ role: "option", label: /^Disable Developer Mode/ });
+    await user.press("Enter");
+    await user.notSee({ role: "button", label: /^Advanced settings$/ });
+  });
+
 });

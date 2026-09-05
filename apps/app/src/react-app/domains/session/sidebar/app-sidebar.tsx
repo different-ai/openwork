@@ -28,6 +28,7 @@ import {
   FolderOpen,
   SquarePen,
   Tag,
+  Wrench,
   X,
 } from "lucide-react";
 import { LazyMotion, Reorder, domMax, m, useDragControls } from "motion/react";
@@ -938,6 +939,7 @@ export type AppSidebarProps = {
   };
   onReorderWorkspaces?: (workspaceIds: string[]) => void;
   onStartResize?: React.PointerEventHandler<HTMLButtonElement>;
+  onOpenAdvancedSettings?: () => void;
   onOpenAccountSettings?: () => void;
   onOpenExtensions: () => void;
   extensionsActive?: boolean;
@@ -1230,6 +1232,14 @@ export function AppSidebar(props: AppSidebarProps) {
               label={t("settings.tab_extensions")}
               onSelect={props.onOpenExtensions}
             />
+            {props.developerMode && props.onOpenAdvancedSettings ? (
+              <SidebarDestination
+                active={false}
+                icon={Wrench}
+                label="Advanced settings"
+                onSelect={props.onOpenAdvancedSettings}
+              />
+            ) : null}
             <SidebarMenuItem>
               <NotificationBell variant="sidebar-row" />
             </SidebarMenuItem>

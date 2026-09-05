@@ -237,6 +237,7 @@ export type SessionPageProps = {
   mcpConnectedCount: number;
   onSendFeedback: () => void;
   onOpenSettings: () => void;
+  onOpenAdvancedSettings?: () => void;
   onOpenExtensions: () => void;
   sidebar: SessionPageSidebarProps;
   surface?: SessionPageSurfaceProps | null;
@@ -1400,7 +1401,7 @@ export function SessionPage(props: SessionPageProps) {
           sessionNumberShortcuts={props.sessionNumberShortcuts}
           workspaceSessionGroups={props.sidebar.workspaceSessionGroups}
           selectedWorkspaceId={props.sidebar.selectedWorkspaceId}
-          developerMode={props.sidebar.developerMode}
+          developerMode={props.developerMode}
           selectedSessionId={props.sidebar.selectedSessionId}
           showSessionActions={Boolean(props.onRenameSession || props.onDeleteSession || props.onArchiveSession)}
           sessionStatusById={props.sidebar.sessionStatusById}
@@ -1446,6 +1447,7 @@ export function SessionPage(props: SessionPageProps) {
           }}
           onReorderWorkspaces={props.sidebar.onReorderWorkspaces}
           onStartResize={startLeftSidebarResize}
+          onOpenAdvancedSettings={props.onOpenAdvancedSettings}
           onOpenAccountSettings={props.onOpenSettings}
           onOpenExtensions={props.onOpenExtensions}
           extensionsActive={props.extensionsActive}

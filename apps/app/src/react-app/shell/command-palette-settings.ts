@@ -17,7 +17,7 @@ const SETTINGS_KEYWORDS: Partial<Record<SettingsTab, string[]>> = {
   permissions: ["authorized folders", "folder access", "file access", "allow", "permission denied", "sandbox", "approvals"],
   extensions: ["library", "skills", "plugins", "mcp", "connections", "tools", "apps", "computer use", "voice"],
   environment: ["env", "environment variables", "secrets", "tokens", "api keys"],
-  advanced: ["runtime", "developer", "connection", "server", "port", "reset", "fix", "repair", "clean up", "troubleshoot", "recovery"],
+  advanced: ["advanced settings", "runtime", "developer", "connection", "server", "port", "reset", "fix", "repair", "clean up", "troubleshoot", "recovery"],
   appearance: ["theme", "dark mode", "light mode", "color", "font", "look"],
   updates: ["version", "upgrade", "check for updates", "release"],
   debug: ["logs", "diagnostics", "developer mode"],
@@ -52,7 +52,7 @@ export function buildCommandPaletteSettingsItems(input: {
 
   const tabItems = tabs.map((tab): PaletteItem => ({
     id: `settings:${tab}`,
-    title: getSettingsTabLabel(tab),
+    title: tab === "advanced" ? "Advanced settings" : getSettingsTabLabel(tab),
     detail: getSettingsTabDescription(tab),
     keywords: SETTINGS_KEYWORDS[tab],
     breadcrumb: "Settings",

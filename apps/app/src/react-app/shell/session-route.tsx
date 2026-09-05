@@ -3230,6 +3230,9 @@ export function SessionRoute() {
         );
       }}
       onOpenSettings={() => handleOpenSettings("/settings/general")}
+      onOpenAdvancedSettings={checkDesktopRestriction({ restriction: "allowControlSettings" })
+        ? undefined
+        : () => handleOpenSettings("/settings/advanced")}
       onOpenExtensions={() => handleOpenExtensions()}
       onOpenProviderAuth={handleOpenProviderAuth}
       onChatFirstTask={handleChatFirstTask}
