@@ -297,7 +297,10 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await mobileUser.see({ text: "Give your team a head start." }, { timeoutMs: 90_000 });
     await mobileUser.see({ text: "Already added" });
     expect(await probe.eval(mobile, "document.documentElement.scrollWidth <= window.innerWidth")).toBe(true);
-    await mobileUser.looks(["The narrow Tools screen has readable tool choices and progress, with no horizontal clipping and a clear way to continue"]);
+    await mobileUser.press("Control+Home");
+    await mobileUser.looks(["The top of the narrow Tools screen shows legible setup progress and the Give your team a head start heading without horizontal clipping"]);
+    await mobileUser.hover({ role: "button", label: "Continue" });
+    await mobileUser.looks(["The lower part of the narrow Tools screen shows readable tool cards and a clear Continue button without horizontal clipping"]);
     await mobileUser.click({ role: "button", label: "Continue" });
     await mobileUser.see({ testId: "onboarding-mobile-options" }, { timeoutMs: 90_000 });
     await mobileUser.notSee({ testId: "download-openwork-card" });
@@ -305,7 +308,10 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await mobileUser.see({ role: "link", label: "Try OpenWork Web" });
     expect(await probe.eval(mobile, "document.documentElement.scrollWidth <= window.innerWidth")).toBe(true);
     expect(await connectionsFor(flexibleId)).toEqual(toolsBefore);
-    await mobileUser.looks(["Mobile setup ends with a clear choice to email the desktop download link or try OpenWork Web, using the OpenWork mark and restrained neutral cards instead of desktop platform downloads"]);
+    await mobileUser.hover({ role: "heading", label: "OpenWork Desktop" });
+    await mobileUser.looks(["The mobile OpenWork Desktop card shows its complete heading, OpenWork mark, explanatory copy, and Email me the download link button in a restrained neutral card"]);
+    await mobileUser.hover({ role: "link", label: "Try OpenWork Web" });
+    await mobileUser.looks(["The mobile OpenWork Web card shows its complete heading, OpenWork mark, access-and-plans explanation, and Try OpenWork Web link without horizontal clipping"]);
     const before = await downloadEmails();
     await mobileUser.click({ role: "button", label: "Email me the download link" });
     await mobileUser.see({ role: "button", label: "Download link sent" }, { timeoutMs: 30_000 });

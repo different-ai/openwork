@@ -82,7 +82,9 @@ function MobileOpenWorkOptions({ orgSlug, webAvailable }: { orgSlug: string | nu
     try {
       const { response, payload } = await requestJson("/v1/me/send-download-link", { method: "POST" }, 12000);
       if (!response.ok) {
-        setError(getErrorMessage(payload, "Could not send your link. Please try again."));
+        setError(response.status >= 500
+          ? "Could not send your link right now. Please try again."
+          : getErrorMessage(payload, "Could not send your link. Please try again."));
         return;
       }
       setSent(true);
