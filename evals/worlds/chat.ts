@@ -78,7 +78,7 @@ function sendStream(response: ServerResponse, chunks: unknown[], intervalMs = 0)
   writeNext();
 }
 
-async function configureProvider(
+export async function configureProvider(
   seed: Seed,
   app: Awaited<ReturnType<Seed["desktop"]>>,
   workspaceId: string,

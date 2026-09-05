@@ -234,6 +234,13 @@ function offeredAgentTool(body, wanted) {
       ? [tool.function.name]
       : []
   ));
+  // Dynamic MCP preview tools include a newly allocated app ID. Resolve a
+  // fixture's trailing wildcard only when the offered catalog has one match.
+  if (wanted.endsWith("*")) {
+    const prefix = wanted.slice(0, -1);
+    const matches = names.filter((name) => name.startsWith(prefix) || name.includes(`_${prefix}`));
+    return matches.length === 1 ? matches[0] : null;
+  }
   return names.find((name) => name === wanted)
     ?? names.find((name) => name.endsWith(`_${wanted}`))
     ?? null;
