@@ -139,11 +139,12 @@ async function createProvider(admin: DenSession, orgId: string, body: Record<str
 }
 
 async function deleteProvider(admin: DenSession, orgId: string, providerId: string): Promise<void> {
-  await denFetch(admin, `/v1/llm-providers/${encodeURIComponent(providerId)}`, {
+  const result = await denFetch(admin, `/v1/llm-providers/${encodeURIComponent(providerId)}`, {
     method: "DELETE",
     headers: { ...auth(admin), "x-openwork-org-id": orgId },
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
+  if (!result.response.ok) throw new Error(`Deleting fixture provider failed: HTTP ${result.response.status}`);
 }
 
 async function memberVisibleProviderIds(member: DenSession, orgId: string): Promise<string[]> {
@@ -550,13 +551,18 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
   );
   const catalogPrivacy = await evalIn(desktopApp, `(async () => {
     const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
-    const response = await fetch(base + ${JSON.stringify(`/workspace/${desktopApp.workspaceId}/opencode2/api/model`)}, {
-      headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") }
-    });
-    const text = await response.text();
-    return { status: response.status, leaksKey: text.includes("sk-openwork-sync-contract-eval-only") };
+    const paths = ${JSON.stringify([`/workspace/${desktopApp.workspaceId}/opencode2/api/model`, `/workspace/${desktopApp.workspaceId}/opencode2/api/provider`, `/workspace/${desktopApp.workspaceId}/opencode2/api/provider/${customRuntime.providerId}`])};
+    const results = [];
+    for (const path of paths) {
+      const response = await fetch(base + path, {
+        headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") }
+      });
+      const text = await response.text();
+      results.push({ status: response.status, leaksKey: text.includes("sk-openwork-sync-contract-eval-only") });
+    }
+    return results;
   })()`, { awaitPromise: true });
-  expect(catalogPrivacy).toEqual({ status: 200, leaksKey: false });
+  expect(catalogPrivacy).toEqual(Array.from({ length: 3 }, () => ({ status: 200, leaksKey: false })));
   await go(desktopApp, `/workspace/${desktopApp.workspaceId}/session`);
   await sleep(16_000); // includes the renderer's engine-routing refresh interval
   expect(await evalIn(desktopApp, `localStorage.getItem("openwork.defaultModel")`)).toBe(chosenDefault);
@@ -638,6 +644,9 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
   })()`, { awaitPromise: true, timeoutMs: 90_000 });
   expect(syncResult).toBe(200);
   await go(desktopApp, `/workspace/${desktopApp.workspaceId}/session`);
+  // Opening Models is the user-facing refresh action; server reconciliation
+  // alone does not update the renderer's completed catalog snapshot.
+  await control(desktopApp, "session.model_picker.open");
   await waitFor(desktopApp, `document.body.innerText.includes("Model no longer available")`, { timeoutMs: 90_000, label: "revoked model recovery" });
   const changesAfterRevocation = await evalIn(desktopApp, `window.__modelSelectionProof.changes`);
   await sleep(5_000);

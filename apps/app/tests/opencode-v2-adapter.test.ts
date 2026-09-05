@@ -696,3 +696,23 @@ describe("OpenCode v2 client compatibility", () => {
     }
   });
 });
+
+
+test("v2 provider catalog retains display names without exposing request settings", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    if (request.url.endsWith("/api/model")) return jsonResponse({ data: [{ id: "coding", providerID: "lpr_fixture", name: "Coding" }] });
+    if (request.url.endsWith("/api/provider")) return jsonResponse({ data: [{ id: "lpr_fixture", name: "Assigned Coding", settings: { apiKey: "fixture-private" } }] });
+    if (request.url.endsWith("/api/model/default")) return jsonResponse({ data: {} });
+    throw new Error(`Unexpected request: ${request.url}`);
+  };
+  try {
+    const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
+    const result = await client.provider.list();
+    expect(result.data?.all[0]?.name).toBe("Assigned Coding");
+    expect(JSON.stringify(result.data)).not.toContain("fixture-private");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

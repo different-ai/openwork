@@ -1426,6 +1426,20 @@ async function proxyOpencodeV2Request(input: {
     headers.set("content-type", "application/json");
   }
   const response = await loopbackFetch(target.toString(), { method, headers, body });
+  if (method === "GET" && /^\/api\/provider(?:\/|$)/.test(decodeURIComponent(forwardedPath)) && response.ok) {
+    // Provider.Info includes request settings/headers, which may contain the
+    // mirrored server-owned key. Clients only need public catalog metadata.
+    const payload: unknown = await response.json();
+    const raw = isRecord(payload) && "data" in payload ? payload.data : payload;
+    const publicProvider = (value: unknown) => {
+      if (!isRecord(value) || typeof value.id !== "string" || typeof value.name !== "string") {
+        throw new ApiError(502, "invalid_engine_response", "Invalid provider metadata");
+      }
+      return { id: value.id, name: value.name };
+    };
+    const data = Array.isArray(raw) ? raw.map(publicProvider) : publicProvider(raw);
+    return jsonResponse({ data });
+  }
   if (method === "GET" && /^\/api\/event\/*$/.test(decodeURIComponent(forwardedPath)) && response.ok && response.body) {
     const expected = await realpath(input.workspace.path);
     const frames = new BoundedSseFrameBuffer();

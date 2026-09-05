@@ -1454,7 +1454,19 @@ export function createClientV2(
       ): Promise<FieldsResult<ProviderListResponse>> => {
         const modelsResult = await request("GET", "/api/model", undefined, options?.signal);
         if (!modelsResult.response.ok) return failedResult(modelsResult);
-        const defaultsResult = await request("GET", "/api/model/default", undefined, options?.signal);
+        const [defaultsResult, providersResult] = await Promise.all([
+          request("GET", "/api/model/default", undefined, options?.signal),
+          request("GET", "/api/provider", undefined, options?.signal),
+        ]);
+        const providerNames = new Map<string, string>();
+        if (providersResult.response.ok) {
+          for (const provider of responseItems(providersResult.payload)) {
+            if (!isRecord(provider)) continue;
+            const id = readString(provider, "id");
+            const name = readString(provider, "name");
+            if (id && name) providerNames.set(id, name);
+          }
+        }
         const models = responseItems(modelsResult.payload).flatMap((item) => {
           const mapped = mapV2Model(item);
           return mapped ? [mapped] : [];
@@ -1468,7 +1480,7 @@ export function createClientV2(
           }
           providersByID.set(model.providerID, {
             id: model.providerID,
-            name: model.providerID,
+            name: providerNames.get(model.providerID) ?? model.providerID,
             source: "config",
             env: [],
             options: {},
