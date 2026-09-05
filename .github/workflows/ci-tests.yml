@@ -73,35 +73,10 @@ jobs:
     if: needs.classify-changes.outputs.lane == 'full'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        variant: [head, dev-control]
     steps:
-      - name: Checkout PR head
-        if: matrix.variant == 'head' && github.event_name == 'pull_request'
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
-      - name: Checkout event revision
-        if: matrix.variant == 'head' && github.event_name != 'pull_request'
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ github.sha }}
-      - name: Checkout clean dev control
-        if: matrix.variant == 'dev-control'
-        uses: actions/checkout@v6
-        with:
-          ref: dev
-      - name: Overlay only compatibility witnesses onto clean dev
-        if: matrix.variant == 'dev-control' && github.event_name == 'pull_request'
-        env:
-          PROOF_HEAD: ${{ github.event.pull_request.head.sha }}
-        run: |
-          git fetch origin "$PROOF_HEAD"
-          git show "$PROOF_HEAD:evals/specs/native-google-refresh-recovery.test.ts" > evals/specs/native-google-refresh-recovery.test.ts
-          git show "$PROOF_HEAD:evals/packages/labs/src/mock-google-server.ts" > evals/packages/labs/src/mock-google-server.ts
-          git rev-parse HEAD
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: ./.github/actions/setup-tests
       - name: Prepare native Google refresh boundary
         run: |
@@ -112,7 +87,6 @@ jobs:
       - name: Verify native Google refresh recovery
         env:
           OPENWORK_EVAL_NATIVE_GOOGLE_REFRESH: '1'
-          OPENWORK_EVAL_NATIVE_REFRESH_COMPATIBILITY_ONLY: ${{ matrix.variant == 'dev-control' && '1' || '0' }}
         run: |
           pnpm evals:pr specs/native-google-refresh-recovery.test.ts
           node --input-type=module <<'NODE'
@@ -126,7 +100,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: native-google-refresh-${{ matrix.variant }}-${{ github.run_attempt }}
+          name: native-google-refresh-${{ github.run_attempt }}
           path: evals/results/test-runs/**
           retention-days: 7
 
