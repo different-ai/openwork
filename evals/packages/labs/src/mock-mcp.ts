@@ -24,7 +24,7 @@ export interface MockToolCall {
 
 export interface MockAgentToolStep {
   /** Derive the handoff from the actual model input instead of fixture arguments. */
-  argumentsFrom?: "computer-mention";
+  argumentsFrom?: "computer-mention" | "skill-catalog";
   tool: string;
   arguments: Record<string, unknown>;
 }

@@ -194,7 +194,7 @@ function validateAgentWorkloads(value) {
       if (!step.arguments || typeof step.arguments !== "object" || Array.isArray(step.arguments)) {
         throw new Error(`agent workload ${promptMarker} tool ${step.tool} needs object arguments`);
       }
-      if (step.argumentsFrom !== undefined && step.argumentsFrom !== "computer-mention") {
+      if (step.argumentsFrom !== undefined && step.argumentsFrom !== "computer-mention" && step.argumentsFrom !== "skill-catalog") {
         throw new Error(`agent workload ${promptMarker} has an unknown argument source`);
       }
       return { tool: step.tool.trim(), arguments: structuredClone(step.arguments), argumentsFrom: step.argumentsFrom };
@@ -222,6 +222,18 @@ function offeredAgentTool(body, wanted) {
   return names.find((name) => name === wanted)
     ?? names.find((name) => name.endsWith(`_${wanted}`))
     ?? null;
+}
+
+function skillCatalogArguments(messages, body, toolName, skillName) {
+  const system = messages.filter((message) => message.role === "system").map(messageContentText).join("\n");
+  const paths = [...system.matchAll(/"path"\s*:\s*("(?:[^"\\]|\\.)*")/g)].map((match) => JSON.parse(match[1]));
+  const path = paths.find((value) => typeof value === "string" && value.endsWith(`/${skillName}/SKILL.md`));
+  if (!path) throw new Error("The current system instructions did not advertise the requested skill path");
+  const tool = body.tools.find((candidate) => candidate.function?.name === toolName);
+  const properties = tool?.function?.parameters?.properties ?? {};
+  const key = ["path", "filePath", "file_path"].find((name) => Object.hasOwn(properties, name));
+  if (!key) throw new Error("The offered read tool has no supported file path parameter");
+  return { [key]: path };
 }
 
 function agentStream(res, model, chunks) {
@@ -359,7 +371,8 @@ async function handleAgentCompletion(req, res, entry) {
     json(res, 400, { error: { message: `tool ${step.tool} was not offered to the mock agent` } });
     return;
   }
-  const toolArguments = step.argumentsFrom === "computer-mention" ? computerMentionArguments(messages) : step.arguments;
+  const toolArguments = step.argumentsFrom === "computer-mention" ? computerMentionArguments(messages)
+    : step.argumentsFrom === "skill-catalog" ? skillCatalogArguments(messages, body, toolName, step.arguments.skill) : step.arguments;
   const callId = `call_${workload.promptMarker.replace(/[^a-zA-Z0-9_-]/g, "_")}_${completedTools + 1}`;
   entry.agentCompletion = {
     ...baseRequest,
