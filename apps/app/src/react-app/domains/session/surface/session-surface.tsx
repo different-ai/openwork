@@ -1117,7 +1117,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const [steering, setSteering] = useState(false);
   const [verifiedOpenTargets, setVerifiedOpenTargets] = useState<OpenTarget[]>([]);
   const [cloudQueueRetryVersion, setCloudQueueRetryVersion] = useState(0);
-  const sending = props.cloudMcpSubmissionState.status === "sending";
+  const [sending, setSending] = useState(false);
+  const sendInFlightRef = useRef(false);
   const cloudQueueBlockedRef = useRef(false);
   const evalSnapshotFailureRef = useRef(false);
   // Shared with promote-to-send so a manual send-now cannot race the idle drain.
@@ -1802,6 +1803,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // accepts follow-up user turns mid-run (steering) — the running loop picks
   // up the new message — so this is safe to call while the agent is busy.
   const sendDraft = useCallback(async (nextDraft: ComposerDraft) => {
+    sendInFlightRef.current = true;
+    setSending(true);
     setError(null);
     try {
       const result = await props.onSendDraft(nextDraft, props.sessionId);
@@ -1819,6 +1822,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
       useSessionActivityStore.getState().setError(props.workspaceId, props.sessionId, parsed.message);
       setAwaitingAssistantBaseline(null);
       throw nextError;
+    } finally {
+      sendInFlightRef.current = false;
+      setSending(false);
     }
   }, [appendComposerHistory, props.onSendDraft, props.sessionId, props.workspaceId, renderedMessages.length]);
 
@@ -1830,6 +1836,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // Initial send (agent idle) and explicit "Steer" follow-up (agent busy)
   // share the same immediate path.
   const handleSend = useCallback(async () => {
+    if (sendInFlightRef.current) return;
     const originalDraft = draft;
     const text = originalDraft.trim();
     if (!text && attachments.length === 0) return;

@@ -62,6 +62,12 @@ test("new split creates fresh same-workspace secondary sessions without moving t
   });
   const beforeIds = before.map((session) => session.sessionId);
 
+  await step("New session and Split view are directly available in the sidebar", async () => {
+    await user.see({ role: "button", label: "New session" });
+    await user.see({ role: "button", label: "Split view" });
+    await user.notSee({ role: "button", label: "Create new session" });
+  });
+
   await step("New split in the session context menu opens a fresh secondary", async () => {
     // The sidebar row is the first place the title renders; the pane header comes later in DOM order.
     await user.rightClick({ text: world.session.title });
@@ -120,6 +126,32 @@ test("new split creates fresh same-workspace secondary sessions without moving t
     expect(afterContextMenu.map((session) => session.sessionId)).toContain(firstFacts.secondarySessionId);
     await user.screenshot();
     return { firstFacts, afterContextMenu };
+  });
+
+  await step("both split composers send to their own conversation", async () => {
+    await user.type({ role: "textbox", nth: 0 }, world.primaryPrompt);
+    await user.press("Enter");
+    await user.type({ role: "textbox", nth: 1 }, world.secondaryPrompt);
+    await user.press("Enter");
+    const readPaneReplies = () => probe.eval(`(() => {
+      const primary = document.querySelector('[data-workbench-pane="primary"]')?.textContent ?? "";
+      const secondary = document.querySelector('[data-workbench-pane="secondary"]')?.textContent ?? "";
+      return primary.includes("Primary split received")
+        && secondary.includes("Secondary split received")
+        && !primary.includes("Secondary split received")
+        && !secondary.includes("Primary split received");
+    })()`);
+    await probe.eventually(readPaneReplies, {
+      within: 60_000,
+      label: "each reply appears only in its owning split pane",
+      until: (value) => value === true,
+    });
+    expect(await readPaneReplies()).toBe(true);
+    evidence.recordAssertionEvidence(
+      "Both split composers send and receive replies without crossing sessions",
+      JSON.stringify({ primarySessionId, secondarySessionId: firstFacts.secondarySessionId }),
+      true,
+    );
   });
 
   await step("New split in the command palette replaces the secondary with another fresh session", async () => {

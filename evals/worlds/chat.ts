@@ -209,8 +209,27 @@ export async function paletteSessionActions(seed: Seed) {
 }
 
 export async function newSplitPrimary(seed: Seed) {
-  const app = await seed.desktop({ name: "new-split-session" });
+  const providerId = "split-send-mock";
+  const modelId = "split-send-model";
+  const primaryPrompt = "Reply to the primary split message";
+  const secondaryPrompt = "Reply to the secondary split message";
+  const mock = seed.mock({ agentWorkloads: [
+    { promptMarker: primaryPrompt, finalReply: "Primary split received", steps: [] },
+    { promptMarker: secondaryPrompt, finalReply: "Secondary split received", steps: [] },
+  ] });
+  const den = await seed.den({ mocks: { agent: mock } });
+  const app = await seed.desktop({ name: "new-split-session", den, as: "admin", model: `${providerId}/${modelId}` });
   const workspace = await seed.workspace(app, seed.tmpPath("new-split-session"));
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    provider: {
+      [providerId]: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "Split send mock",
+        options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-split-send" },
+        models: { [modelId]: { name: "Split send model" } },
+      },
+    },
+  });
   const session = await seedSessionRetry(seed, app, { title: "New split primary" });
   const splitFacts = () => evalIn(app, `(() => {
     const context = window.__openworkControl?.context?.();
@@ -248,7 +267,7 @@ export async function newSplitPrimary(seed: Seed) {
     });
     return response.json();
   })()`, { awaitPromise: true, timeoutMs: 15_000 });
-  return { app, workspace, session, splitFacts, agentContextViaServer };
+  return { app, workspace, session, splitFacts, agentContextViaServer, primaryPrompt, secondaryPrompt };
 }
 
 export async function shimmerChat(seed: Seed) {

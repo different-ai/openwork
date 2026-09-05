@@ -1150,6 +1150,7 @@ export function AppSidebar(props: AppSidebarProps) {
               <SidebarMenuButton
                 type="button"
                 data-sidebar-new-chat
+                className="bg-sidebar-accent font-medium text-sidebar-accent-foreground"
                 aria-label={t("session.new_task")}
                 tooltip={t("session.new_task")}
                 disabled={props.newTaskDisabled}
@@ -1157,6 +1158,20 @@ export function AppSidebar(props: AppSidebarProps) {
               >
                 <SquarePen className="size-4" />
                 <span className="flex-1 truncate">{t("session.new_task")}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                type="button"
+                data-sidebar-new-split
+                className="text-sidebar-foreground/60"
+                aria-label={t("session_management.split_view")}
+                tooltip={t("session_management.split_view")}
+                disabled={props.newTaskDisabled}
+                onClick={() => props.onCreateSplitTaskInWorkspace(props.selectedWorkspaceId)}
+              >
+                <Columns2 className="size-4" />
+                <span className="flex-1 truncate">{t("session_management.split_view")}</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
             {props.onOpenSessionSearch ? (
