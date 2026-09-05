@@ -3367,7 +3367,9 @@ export function SessionRoute() {
             if (!workspace) return;
             const endpoint = endpointForWorkspace(workspace);
             if (!endpoint?.token) return;
-            const workspaceClient = createClient(
+            const workspaceClient = workspaceId === selectedWorkspaceId && opencodeClient
+              ? opencodeClient
+              : createClient(
               endpoint.opencodeBaseUrl,
               workspace.path?.trim() || undefined,
               { token: endpoint.token, mode: "openwork" },
