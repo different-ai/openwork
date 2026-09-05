@@ -81,7 +81,7 @@ test("organization billing survives selection and blocks destructive deletion", 
       return (await fetch("/api/auth/organization/set-active", {
         method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ organizationId }),
       })).ok;
-    }`, [{ email: den.admin.email, password: den.admin.password }, empty.id]);
+    }`, [{ email: den.admin.email, password: den.admin.password }, empty.id], { awaitPromise: true, timeoutMs: 30_000 });
     expect(signedIn).toBe(true);
     await navigate(browser.client, new URL("/dashboard/billing", den.ref.webUrl).toString());
     const emptyBilling = await eventually(() => evaluateOnSurface(browser, "document.body.innerText"), {
