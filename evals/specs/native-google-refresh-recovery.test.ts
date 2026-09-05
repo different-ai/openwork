@@ -121,12 +121,19 @@ test("native Google refresh and Microsoft compatibility preserve reconnect and d
 
     await connect();
     await control({ holdRefresh: true });
+    const concurrentMailBefore = (await requests(providerPath)).length;
     const concurrent = Promise.all([read(), read()]);
     try { await waitForRefreshes(2); }
     finally { await control({ holdRefresh: false, release: true }); }
     expect((await concurrent).map(result => result.response.status)).toEqual([200, 200]);
+    const concurrentAttempts = (await control()).attempts;
+    const concurrentTokens = (await requests(providerPath)).slice(concurrentMailBefore).map(request => request.tokenId);
+    expect(concurrentTokens).toHaveLength(2);
+    for (const token of concurrentTokens) expect(typeof token).toBe("string");
     expect((await read()).response.status).toBe(200);
-    proved("Concurrent successful refreshes retain a usable successor", "Two held successful refresh responses completed concurrently; both waiting reads and a later read succeeded.");
+    expect((await control()).attempts).toBe(concurrentAttempts);
+    expect(concurrentTokens).toContain((await requests(providerPath)).at(-1)?.tokenId);
+    proved("Concurrent successful refreshes retain a usable successor", "Two held successful refresh responses completed concurrently; both waiting reads succeeded. A later read succeeded without another refresh and used a credential fingerprint observed on the concurrent mailbox reads.");
 
     // Run the success path on both clean dev and the PR. The rejection variant
     // checks the new handler only; clean dev is known to throw on invalid_grant.
