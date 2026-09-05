@@ -367,6 +367,7 @@ export type CurrentUserDesktopConfigResponse = {
   allowControlSettings?: boolean;
   allowManageExtensions?: boolean;
   allowBuiltInExtensions?: boolean;
+  allowBrowserLoginImport?: boolean;
   allowAlphaUpdates?: boolean;
   showWelcomePage?: boolean;
   allowedDesktopVersions?: Array<string>;
@@ -401,6 +402,7 @@ export type CurrentUserDesktopConfigResponse = {
   connectEnabled?: boolean;
   onboardingPrompts?: Array<string>;
   onboardingPromptDescriptions?: Array<string>;
+  allowedBrowserHosts?: Array<string>;
 };
 
 export type AutomationOpenWorkWebAccessRequiredError = {
@@ -804,6 +806,7 @@ export type DenDesktopPolicyValue = {
   allowControlSettings?: boolean;
   allowManageExtensions?: boolean;
   allowBuiltInExtensions?: boolean;
+  allowBrowserLoginImport?: boolean;
   allowAlphaUpdates?: boolean;
   showWelcomePage?: boolean;
 };
@@ -815,6 +818,7 @@ export type DenDesktopPolicyDocumentWrite = {
   allowControlSettings?: boolean;
   allowManageExtensions?: boolean;
   allowBuiltInExtensions?: boolean;
+  allowBrowserLoginImport?: boolean;
   allowAlphaUpdates?: boolean;
   showWelcomePage?: boolean;
   access?: {
@@ -823,6 +827,7 @@ export type DenDesktopPolicyDocumentWrite = {
   };
   onboardingPrompts?: Array<string> | null;
   onboardingPromptDescriptions?: Array<string> | null;
+  allowedBrowserHosts?: Array<string> | null;
 };
 
 export type DesktopPolicyListResponse = {
