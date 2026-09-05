@@ -6,13 +6,28 @@ const test = spec.world(backgroundUpdateWorld);
 
 test("updates download outside Settings and offer a persistent, optional restart", async ({ world, user, probe }) => {
   await probe.eventually(world.snapshot, {
+    within: 15_000, label: "initial background check finds no update",
+    until: (value) => typeof value === "object" && value !== null && Reflect.get(value, "checks") === 1,
+  });
+  expect(await world.snapshot()).toMatchObject({ checks: 1, downloads: 0 });
+  await world.returnToApp();
+  await probe.eventually(world.snapshot, {
+    within: 5_000, label: "return after the interval checks again while idle",
+    until: (value) => typeof value === "object" && value !== null && Reflect.get(value, "checks") === 2,
+  });
+  await world.openSettings();
+  await user.click("Check automatically");
+  await user.click("Check automatically");
+  await world.openWorkspace();
+  await world.tickUpdateInterval();
+  await probe.eventually(world.snapshot, {
     within: 15_000, label: "background download without opening Settings",
     until: (value) => typeof value === "object" && value !== null && Reflect.get(value, "downloads") === 1,
   });
-  expect(await world.snapshot()).toMatchObject({ checks: 1, downloads: 1, installs: 0, sidebarName: "OpenWork" });
+  expect(await world.snapshot()).toMatchObject({ checks: 3, downloads: 1, installs: 0, sidebarName: "OpenWork" });
   await user.notSee({ text: "Update ready" });
   await world.returnToApp();
-  expect(await world.snapshot()).toMatchObject({ checks: 1, downloads: 1, installs: 0 });
+  expect(await world.snapshot()).toMatchObject({ checks: 3, downloads: 1, installs: 0 });
   await world.finishDownload();
   await user.see({ text: "Update ready" });
   await user.notSee({ text: "Ready when you are." });
@@ -21,7 +36,7 @@ test("updates download outside Settings and offer a persistent, optional restart
   await world.openWorkspace();
   await world.returnToApp();
   await user.see({ text: "Update ready" });
-  expect(await world.snapshot()).toMatchObject({ checks: 1, downloads: 1, installs: 0, updateInTitlebar: true, updateInSidebar: false });
+  expect(await world.snapshot()).toMatchObject({ checks: 3, downloads: 1, installs: 0, updateInTitlebar: true, updateInSidebar: false });
   await user.looks([
     "A small sage Update ready capsule is in the titlebar, and the OpenWork name is above the sidebar navigation",
     "No update banner covers or reduces the workspace",
