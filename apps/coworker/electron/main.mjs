@@ -19,7 +19,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { BrowserWindow, Menu, app, dialog, ipcMain, nativeTheme, shell } from "electron";
 import { bindWindowAppearance } from "./window-appearance.mjs";
 import { openworkConfigDir } from "@openwork/paths";
-import { createHeadlessThreadClient, toTranscript } from "@openwork/headless-threads";
+import { createHeadlessThreadClient, isRunning, toTranscript } from "@openwork/headless-threads";
 import { cloudModelOptions, resolveCloudModel } from "../src/lib/cloud-responsibilities.ts";
 import { createDenAutomationsClient, listAssignedCoworkerTemplates } from "../src/lib/den.ts";
 import { createTemplateInstaller, exportCoworkerTemplate, parseCoworkerTemplateFile, templateScope } from "./templates.mjs";
@@ -932,6 +932,17 @@ async function executeWorkerTurn(slug, id, { onStarted }) {
         return;
       }
       const acceptance = await client.sendTurn(threadId, { ...worker.pendingTurn, tools: workerTurnTools(), signal: controller.signal });
+      // A recovered turn was already admitted before this process started.
+      // If its engine is idle, reconcile the saved reply (including a partial
+      // reply left by a crash) without resending it or awaiting new completion.
+      if (acceptance.alreadyPresent) {
+        const snapshot = await client.getThreadSnapshot(threadId, { signal: controller.signal });
+        if (!isRunning(snapshot.status)) {
+          const transcript = toTranscript(snapshot);
+          continueAfter = await settleWorkerTurn(slug, id, workerTurnOutcome({ outcome: "settled", terminalError: transcript.terminalError }, transcript, worker.pendingTurn.messageId));
+          return;
+        }
+      }
       const result = await client.waitForThread(threadId, {
         timeoutMs: worker.lifespan.kind === "until" ? Math.max(1, Math.min(WORKER_TURN_TIMEOUT_MS, worker.lifespan.at - Date.now())) : WORKER_TURN_TIMEOUT_MS,
         pollIntervalMs: 1_000,
