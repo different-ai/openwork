@@ -1598,8 +1598,8 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     hasVisibleCoworkerContextResizer: false,
     visibleRailAvatars: 0,
     railSearchVisible: false,
-    hasSettingsNavigation: 4,
-    navigationLabels: ["General", "Account", "AI models", "AI & local setup"],
+    hasSettingsNavigation: 5,
+    navigationLabels: ["All Hands", "General", "Account", "AI models", "AI & local setup"],
   });
   if (
     !isRecord(settingsLayout)
