@@ -134,6 +134,10 @@ test("command palette searches settings by alias, navigates, records recents, an
     await step(`Command+K jumps directly to ${section.title}`, async () => {
       await user.press(paletteShortcut);
       await user.type(paletteInput, section.query, { replace: true });
+      await user.notSee({
+        role: "option",
+        label: section.id === "experimental-engine" ? /^Organization server/ : /^Experimental engine/,
+      });
       await user.click({ role: "option", label: new RegExp(`^${section.title}`) });
       await probe.eventually(() => probe.hash(), {
         within: 15_000,
