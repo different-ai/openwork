@@ -16,6 +16,8 @@ import {
   isEngineGlobalRuntimeConfigId,
   onRuntimeOpencodeConfigWrite,
   readGlobalRuntimeOpencodeConfig,
+  readEffectiveRuntimeOpencodeConfig,
+  runtimeMcpMap,
   runtimeProviderMap,
 } from "./runtime-opencode-config-store.js";
 import type { EnvService } from "./env-file.js";
@@ -58,6 +60,7 @@ export interface EngineV2Preview {
   setChatRouting(chatRouting: boolean): Promise<EngineV2PreviewStatus>;
   connection(): { url: string; username: string; password: string } | undefined;
   ensureWorkspaceReady(directory: string): Promise<void>;
+  syncWorkspaceMcp(workspaceId: string, directory: string): Promise<void>;
   stop(): Promise<void>;
 }
 
@@ -264,6 +267,32 @@ function catalogModelIds(payload: unknown, mirroredProviderIds: string[]): strin
   return [...ids].sort((left, right) => left.localeCompare(right));
 }
 
+/** Translate only fields supported by the pinned v2 MCP API. */
+export function mapRuntimeMcpToV2(value: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(value)) return undefined;
+  if (value.enabled === false || value.disabled === true) return undefined;
+  const shared = {
+    ...(typeof value.codemode === "boolean" ? { codemode: value.codemode } : {}),
+    ...(typeof value.timeout === "number" && value.timeout > 0
+      ? { timeout: { startup: value.timeout, catalog: value.timeout, execution: value.timeout } } : {}),
+  };
+  const strings = (input: unknown) => isRecord(input)
+    ? Object.fromEntries(Object.entries(input).filter((entry): entry is [string, string] => typeof entry[1] === "string")) : {};
+  if (value.type === "local" && Array.isArray(value.command)
+    && value.command.length > 0 && value.command.every((part) => typeof part === "string" && part.trim())) {
+    return { type: "local", command: value.command, environment: strings(value.environment),
+      ...(typeof value.cwd === "string" ? { cwd: value.cwd } : {}), ...shared };
+  }
+  if (value.type !== "remote" || typeof value.url !== "string" || !/^https?:\/\//i.test(value.url)) return undefined;
+  const oauth = isRecord(value.oauth) ? {
+    ...(typeof value.oauth.clientId === "string" ? { client_id: value.oauth.clientId } : {}),
+    ...(typeof value.oauth.clientSecret === "string" ? { client_secret: value.oauth.clientSecret } : {}),
+    ...(typeof value.oauth.scope === "string" ? { scope: value.oauth.scope } : {}),
+  } : value.oauth === false ? false : undefined;
+  return { type: "remote", url: value.url, headers: strings(value.headers),
+    ...(oauth === undefined ? {} : { oauth }), ...shared };
+}
+
 export function createEngineV2Preview(options: { config: ServerConfig; env?: Pick<EnvService, "list" | "onChange"> }): EngineV2Preview {
   const { config } = options;
   const rootDir = join(runtimeStorageDir(config), "opencode-v2", "state");
@@ -288,6 +317,83 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
   let mirrorDirty = false;
   const workspaceReadiness = new Map<string, Promise<void>>();
   let mirroredSpecs: OpencodeV2ProviderSpec[] = [];
+  const workspaceMcp = new Map<string, Map<string, string>>();
+  const mcpInFlight = new Map<string, Promise<void>>();
+  const mcpWorkspaces = new Map<string, string>();
+
+  async function syncWorkspaceMcp(workspaceId: string, directory: string): Promise<void> {
+    mcpWorkspaces.set(directory, workspaceId);
+    // Serialize each location, then re-read authoritative state. A queued call
+    // must not reuse a snapshot taken before a removal or credential update.
+    const previous = mcpInFlight.get(directory);
+    const pending = (async () => {
+      if (previous) await previous.catch(() => undefined);
+      const active = sidecar;
+      if (!active) throw new Error("OpenCode v2 is not running");
+      const runtime = runtimeMcpMap(await readEffectiveRuntimeOpencodeConfig(config, workspaceId));
+      const desired = new Map(Object.entries(runtime).flatMap(([name, value]) => {
+        const mapped = mapRuntimeMcpToV2(value);
+        return mapped ? [[name, mapped] as const] : [];
+      }));
+      const applied = workspaceMcp.get(directory) ?? new Map<string, string>();
+      workspaceMcp.set(directory, applied);
+      let changed = false;
+      // Remove first so a failed replacement cannot leave an old credential or
+      // revoked tool active. Only touch registrations owned by this mirror.
+      for (const [name, fingerprint] of applied) {
+        if (desired.has(name) && JSON.stringify(desired.get(name)) === fingerprint) continue;
+        const result = await active.fetchJson(`/api/mcp/${encodeURIComponent(name)}`, {
+          method: "DELETE", directory, timeoutMs: 15_000,
+        });
+        if (result.status !== 204 && result.status !== 404) throw new Error(`OpenCode v2 MCP removal failed (${result.status})`);
+        applied.delete(name);
+        changed = true;
+      }
+      for (const [name, mcpConfig] of desired) {
+        const fingerprint = JSON.stringify(mcpConfig);
+        if (applied.get(name) === fingerprint) continue;
+        const result = await active.fetchJson(`/api/mcp/${encodeURIComponent(name)}`, {
+          method: "PUT", body: { config: mcpConfig }, directory, timeoutMs: 30_000,
+        });
+        if (result.status !== 204) throw new Error(`OpenCode v2 MCP registration failed (${result.status})`);
+        applied.set(name, fingerprint);
+        changed = true;
+      }
+      if (changed) {
+        const deadline = Date.now() + 30_000;
+        while (true) {
+          const result = await active.fetchJson("/api/mcp", { directory, timeoutMs: 5_000 });
+          const entries = isRecord(result.json) ? result.json.data : undefined;
+          if (result.status !== 200 || !Array.isArray(entries)) throw new Error("OpenCode v2 MCP status is unavailable");
+          const pending = [...desired.keys()].some((name) => {
+            const entry = entries.find((entry) => isRecord(entry) && entry.name === name);
+            return !isRecord(entry) || !isRecord(entry.status) || entry.status.status === "pending";
+          });
+          if (!pending) break;
+          if (Date.now() >= deadline) {
+            // Retry readiness on the next request rather than cache an
+            // acknowledged registration as usable before its tools exist.
+            throw new Error("OpenCode v2 MCP connections did not settle");
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        // The pinned beta batches MCP ToolsChanged events for 100ms after
+        // connection startup. Admission must follow that registry refresh,
+        // not merely the PUT acknowledgement or connected status.
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+    })();
+    mcpInFlight.set(directory, pending);
+    try { await pending; }
+    catch (error) {
+      // Retain ownership for removals, but never cache a failed readiness
+      // attempt as an applied configuration.
+      const applied = workspaceMcp.get(directory);
+      if (applied) for (const name of applied.keys()) applied.set(name, "");
+      throw error;
+    }
+    finally { if (mcpInFlight.get(directory) === pending) mcpInFlight.delete(directory); }
+  }
 
   function status(): EngineV2PreviewStatus {
     return {
@@ -362,6 +468,8 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
     const active = sidecar;
     workspaceReadiness.clear();
     sidecar = undefined;
+    workspaceMcp.clear();
+    mcpWorkspaces.clear();
     running = false;
     version = undefined;
     pid = undefined;
@@ -395,8 +503,16 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
       pid = health.pid;
       running = health.healthy;
       const unsubscribeConfig = onRuntimeOpencodeConfigWrite((_writeConfig, workspaceId) => {
-        if (!isEngineGlobalRuntimeConfigId(workspaceId)) return;
-        scheduleMirror();
+        const global = isEngineGlobalRuntimeConfigId(workspaceId);
+        if (global) scheduleMirror();
+        // Connections installed through OpenWork also update already-open
+        // locations while a conversation is active. Request admission joins
+        // the same serialized reconciliation rather than racing it.
+        for (const [directory, id] of mcpWorkspaces) {
+          if (global || id === workspaceId) void syncWorkspaceMcp(id, directory).catch((error) => {
+            if (sidecar) lastError = `MCP: ${errorMessage(error)}`;
+          });
+        }
       });
       const unsubscribeEnv = options.env?.onChange(scheduleMirror);
       unsubscribe = () => { unsubscribeConfig(); unsubscribeEnv?.(); };
@@ -503,5 +619,5 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
   }
 
   if (enabled) void start().catch(recordStartError);
-  return { status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, stop };
+  return { status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, syncWorkspaceMcp, stop };
 }

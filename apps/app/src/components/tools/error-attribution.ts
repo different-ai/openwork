@@ -76,12 +76,14 @@ function confirmed(label: string, description: string): ToolErrorAttribution {
 export function reconnectActionFromChatToolResult(
   toolName: string,
   result: unknown,
+  input?: unknown,
 ): ChatToolReconnectAction | null {
   // Tool output is otherwise untrusted. Only the two canonical OpenWork Cloud
   // capability tools may turn a structured Den response into a UI action.
-  // Discovery is included because it performs a live connection probe before
-  // the agent can safely proceed to execution.
+  // Discovery may offer authorization only for an explicit setup request;
+  // finding an unavailable connection is not itself a reason to prompt.
   if (!OPENWORK_CLOUD_CAPABILITY_TOOLS.has(toolName)) return null
+  if (toolName === "openwork-cloud_search_capabilities" && (!isRecord(input) || input.intent !== "connect")) return null
 
   const parsed = parseResultRecord(result)
   if (!parsed) return null

@@ -1,5 +1,7 @@
 "use client"
 
+import { useId } from "react"
+import { useOptionalMessageList } from "@/components/chat/message-list-provider"
 import type { DynamicToolUIPart, ToolUIPart } from "ai"
 
 import {
@@ -33,6 +35,9 @@ export function useChatToolReconnect(
   { onReconnect, onReopenAuthorization, onRetry }: ChatToolReconnectCallbacks,
   actionOverride?: ChatToolReconnectAction,
 ) {
+  const messageList = useOptionalMessageList()
+  const instanceId = useId()
+  const scope = messageList ? JSON.stringify([messageList.workspaceId, messageList.sessionId]) : instanceId
   const isError = toolPart.state === "output-error"
   const reconnectResult = isError && toolPart.errorText
     ? toolPart.errorText
@@ -40,10 +45,10 @@ export function useChatToolReconnect(
       ? toolPart.output
       : undefined
   const reconnectAction = actionOverride ?? (toolPart.type === "dynamic-tool" && reconnectResult !== undefined
-    ? reconnectActionFromChatToolResult(toolPart.toolName, reconnectResult)
+    ? reconnectActionFromChatToolResult(toolPart.toolName, reconnectResult, toolPart.input)
     : null)
   const reconnectKey = reconnectAction
-    ? chatMcpReconnectKey(toolPart.toolCallId, reconnectAction.connectionId)
+    ? chatMcpReconnectKey(toolPart.toolCallId, reconnectAction.connectionId, scope)
     : null
   const reconnectState = useChatMcpReconnectStore((store) => (
     reconnectKey ? store.records[reconnectKey]?.phase ?? "ready" : "ready"

@@ -1845,14 +1845,12 @@ export function SessionPage(props: SessionPageProps) {
                             />
                             {splitPaneRuntime.status === "ready" ? (
                               <div className="min-h-0 flex-1">
-                                {crossWorkspaceSplit ? (
-                                  <ReactSessionRuntime
-                                    workspaceId={splitPaneRuntime.runtimeWorkspaceId}
-                                    sessionId={splitSession.sessionId}
-                                    opencodeBaseUrl={splitPaneRuntime.opencodeBaseUrl}
-                                    openworkToken={splitPaneRuntime.openworkToken}
-                                  />
-                                ) : null}
+                                <ReactSessionRuntime
+                                  workspaceId={splitPaneRuntime.runtimeWorkspaceId}
+                                  sessionId={splitSession.sessionId}
+                                  opencodeBaseUrl={splitPaneRuntime.opencodeBaseUrl}
+                                  openworkToken={splitPaneRuntime.openworkToken}
+                                />
                                 <SessionSurface
                                   {...splitPaneRuntime.surface}
                                   client={splitPaneRuntime.client}

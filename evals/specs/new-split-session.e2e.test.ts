@@ -62,6 +62,12 @@ test("new split creates fresh same-workspace secondary sessions without moving t
   });
   const beforeIds = before.map((session) => session.sessionId);
 
+  await step("New session and Split view are directly available in the sidebar", async () => {
+    await user.see({ role: "button", label: "New session" });
+    await user.see({ role: "button", label: "Split view" });
+    await user.notSee({ role: "button", label: "Create new session" });
+  });
+
   await step("New split in the session context menu opens a fresh secondary", async () => {
     // The sidebar row is the first place the title renders; the pane header comes later in DOM order.
     await user.rightClick({ text: world.session.title });
@@ -120,6 +126,105 @@ test("new split creates fresh same-workspace secondary sessions without moving t
     expect(afterContextMenu.map((session) => session.sessionId)).toContain(firstFacts.secondarySessionId);
     await user.screenshot();
     return { firstFacts, afterContextMenu };
+  });
+
+  await step("both split composers send to their own conversation", async () => {
+    // Hold the primary's HTTP acknowledgement so the secondary must send
+    // while the primary request is pending. Both requests still hit the engine.
+    await probe.eval(`(() => {
+      for (const pane of ["primary", "secondary"]) {
+        const editor = document.querySelector('[data-workbench-pane="' + pane + '"] [contenteditable="true"][data-lexical-editor="true"]');
+        if (!editor) throw new Error("Missing " + pane + " composer");
+        editor.setAttribute("data-testid", pane + "-split-composer");
+      }
+      const originalFetch = window.fetch;
+      let release;
+      const held = new Promise((resolve) => { release = resolve; });
+      const timeout = setTimeout(release, 60000);
+      window.__releaseSplitSend = () => {
+        clearTimeout(timeout);
+        release();
+        window.fetch = originalFetch;
+        delete window.__releaseSplitSend;
+      };
+      window.fetch = async (...args) => {
+        const url = args[0] instanceof Request ? args[0].url : String(args[0]);
+        const response = await originalFetch.apply(window, args);
+        if (url.includes("/session/" + ${JSON.stringify(primarySessionId)} + "/prompt_async")) {
+          window.__splitSendHeld = true;
+          await held;
+          delete window.__splitSendHeld;
+        }
+        return response;
+      };
+      return true;
+    })()`);
+    try {
+      await user.type({ testId: "primary-split-composer" }, world.primaryPrompt);
+      await user.press("Enter");
+      await probe.eventually(() => probe.eval("window.__splitSendHeld === true"), {
+        within: 15_000,
+        label: "primary request is still pending when the secondary sends",
+        until: (value) => value === true,
+      });
+      await user.type({ testId: "secondary-split-composer" }, world.secondaryPrompt);
+      await user.press("Enter");
+      await user.see({ text: "Secondary split received" }, { timeoutMs: 30_000 });
+      expect(await probe.eval("window.__splitSendHeld === true")).toBe(true);
+      await agent.run("workbench.session.focus", { sessionId: world.switchSession.sessionId });
+      await probe.eventually(() => world.splitFacts(), {
+        within: 15_000,
+        label: "the primary pane switches while its previous request remains pending",
+        until: (value) => parseSplitFacts(value).primarySessionId === world.switchSession.sessionId,
+      });
+      await user.type("composer", world.switchPrompt);
+      await user.press("Enter");
+      await user.see({ text: "Switched session received" }, { timeoutMs: 15_000 });
+      expect(await probe.eval("window.__splitSendHeld === true")).toBe(true);
+      expect(await probe.eval(`(() => {
+        const primary = document.querySelector('[data-workbench-pane="primary"]')?.textContent ?? "";
+        const secondary = document.querySelector('[data-workbench-pane="secondary"]')?.textContent ?? "";
+        return primary.includes("Switched session received")
+          && !primary.includes("Primary split received")
+          && !secondary.includes("Switched session received");
+      })()`)).toBe(true);
+      evidence.recordAssertionEvidence(
+        "Switching sessions during a pending send does not block the new session or cross replies",
+        JSON.stringify({ pendingSessionId: primarySessionId, switchedSessionId: world.switchSession.sessionId }),
+        true,
+      );
+      await agent.run("workbench.session.focus", { sessionId: primarySessionId });
+      await probe.eventually(() => world.splitFacts(), {
+        within: 15_000,
+        label: "return to the original primary without replacing the secondary",
+        until: (value) => parseSplitFacts(value).primarySessionId === primarySessionId
+          && parseSplitFacts(value).secondarySessionId === firstFacts.secondarySessionId,
+      });
+    } catch (error) {
+      await user.screenshot();
+      throw error;
+    } finally {
+      await probe.eval("window.__releaseSplitSend?.(); true");
+    }
+    const readPaneReplies = () => probe.eval(`(() => {
+      const primary = document.querySelector('[data-workbench-pane="primary"]')?.textContent ?? "";
+      const secondary = document.querySelector('[data-workbench-pane="secondary"]')?.textContent ?? "";
+      return primary.includes("Primary split received")
+        && secondary.includes("Secondary split received")
+        && !primary.includes("Secondary split received")
+        && !secondary.includes("Primary split received");
+    })()`);
+    await probe.eventually(readPaneReplies, {
+      within: 60_000,
+      label: "each reply appears only in its owning split pane",
+      until: (value) => value === true,
+    });
+    expect(await readPaneReplies()).toBe(true);
+    evidence.recordAssertionEvidence(
+      "Both split composers send and receive replies without crossing sessions",
+      JSON.stringify({ primarySessionId, secondarySessionId: firstFacts.secondarySessionId }),
+      true,
+    );
   });
 
   await step("New split in the command palette replaces the secondary with another fresh session", async () => {

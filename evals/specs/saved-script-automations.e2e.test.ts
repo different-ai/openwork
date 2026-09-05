@@ -100,6 +100,17 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
     "saved-script-automations spec exercises Cloud Automations",
   )
 
+  // A connection found by chat must remain callable in a saved Workflow even
+  // when it was added after the first search batch of 16 connections.
+  for (let index = 0; index < 16; index += 1) {
+    await createOrgConnection(den.admin, {
+      name: `Earlier source ${index}`,
+      url: den.mocks.reports.mcpUrl,
+      authType: "none",
+      credentialMode: "shared",
+      access: { orgWide: true },
+    })
+  }
   const connection = await createOrgConnection(den.admin, {
     name: "Report source",
     url: den.mocks.reports.mcpUrl,
@@ -346,7 +357,17 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
   )
 
   const externalMarker = `launch-external-${stamp}`
-  const externalCode = "return { briefing: await tools.report_source.mock_echo({ text: input.topic }) }"
+  const discovered = await agentRpc(den.ref.apiUrl, mcpToken, "tools/call", {
+    name: "search_capabilities",
+    arguments: { query: "Report source mock_echo", type: "mcp", limit: 20 },
+  })
+  expect(discovered.isError).not.toBe(true)
+  const discoveryText = records(discovered.content).find((part) => part.type === "text")?.text
+  if (typeof discoveryText !== "string") throw new Error("Capability search returned no text result")
+  const matches = records(requireRecord(JSON.parse(discoveryText), "capability search").matches)
+  const externalMatch = matches.find((match) => match.name === `mcp:${connection.id}:mock_echo`)
+  expect(externalMatch?.scriptPath).toBe("tools.report_source.mock_echo")
+  const externalCode = `return { briefing: await ${externalMatch?.scriptPath}({ text: input.topic }) }`
   const externalRunStartedAt = new Date().toISOString()
   const externalExecuted = await agentRpc(den.ref.apiUrl, mcpToken, "tools/call", {
     name: "execute_capability_script",
@@ -429,6 +450,46 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
     input: { topic: externalMarker },
   })
   expect(externalManualRun.status).toBe("succeeded")
+
+  const externalDraft = await agentRpc(den.ref.apiUrl, mcpToken, "tools/call", {
+    name: "save_artifact_view",
+    arguments: {
+      configObjectId: externalConfigObjectId, title: "Report app",
+      reactSource: "export default function Report({ data }) { return <article><h1>Report</h1><pre>{JSON.stringify(data.briefing)}</pre></article> }",
+    },
+  })
+  expect(externalDraft.isError).not.toBe(true)
+  const externalView = requireRecord(requireRecord(externalDraft.structuredContent, "external app draft").view, "external view")
+  const externalRevision = records(externalView.revisions)[0]
+  expect(externalRevision?.buildStatus).toBe("ready")
+  const externalAppPath = `/v1/apps/${externalView.id}`
+  const externalAppSaved = await appRequest(den.admin, `${externalAppPath}/save`, {
+    method: "POST", body: JSON.stringify({ revisionId: externalRevision?.id, title: "Report app", useInWorkflow: false, expectedActiveRevisionId: null }),
+  })
+  expect(externalAppSaved.response.status, externalAppSaved.text).toBe(200)
+  const refreshMarker = `launch-refreshed-${stamp}`
+  const refreshedRun = await runWorkflow(den.admin, externalConfigObjectId, {
+    pluginId: externalPluginId, configObjectVersionId: externalConfigObjectVersionId,
+    input: { topic: refreshMarker },
+  })
+  expect(refreshedRun.status).toBe("succeeded")
+  const refreshedApp = await appRequest(den.admin, externalAppPath)
+  expect(refreshedApp.response.status, refreshedApp.text).toBe(200)
+  expect(refreshedApp.body).toMatchObject({ onDashboard: true, view: { configObjectId: externalConfigObjectId } })
+  expect(JSON.stringify(requireRecord(refreshedApp.body, "refreshed app").payload)).toContain(refreshMarker)
+  expect(JSON.stringify(requireRecord(refreshedApp.body, "refreshed app").payload)).not.toContain(externalMarker)
+  const forbiddenApp = await appRequest(colleague, externalAppPath)
+  expect(forbiddenApp.response.status).toBe(403)
+  expect(forbiddenApp.body).not.toHaveProperty("payload")
+  expect(forbiddenApp.body).not.toHaveProperty("view")
+  const unrelatedApp = await appRequest(den.admin, appPath)
+  expect(JSON.stringify(unrelatedApp.body)).toContain(scheduledMarker)
+  expect(JSON.stringify(unrelatedApp.body)).not.toContain(refreshMarker)
+  evidence.recordAssertionEvidence(
+    "A connection beyond the first 16 works from chat discovery through a saved and refreshed app",
+    "Search returned the seventeenth connection's callable script path. Its procedure executed, saved, reran and produced an app whose latest payload changed on refresh; the unrelated app and colleague's access stayed unchanged.",
+    true,
+  )
 
   const latestDetail = await readWorkflowDetail(den.admin, externalConfigObjectId)
   const latestScript = latestDetail.script

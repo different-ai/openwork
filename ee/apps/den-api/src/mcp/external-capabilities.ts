@@ -42,7 +42,6 @@ import {
 import { compareCapabilityMatches, tokenize } from "./search.js"
 import type { CapabilityMatch } from "./search.js"
 import {
-  CODEMODE_EXTERNAL_MCP_CONNECTION_LIMIT,
   codemodeScriptPath,
   resolveCodemodeConnectionNamespaceContext,
   type CodemodeConnectionNamespaceContext,
@@ -72,7 +71,7 @@ import {
  */
 
 const EXTERNAL_CAPABILITY_PREFIX = "mcp:"
-export const EXTERNAL_MCP_SEARCH_CONNECTION_LIMIT = CODEMODE_EXTERNAL_MCP_CONNECTION_LIMIT
+export const EXTERNAL_MCP_SEARCH_CONNECTION_LIMIT = 16
 export const EXTERNAL_MCP_SEARCH_CONCURRENCY = 8
 export const EXTERNAL_MCP_SEARCH_MATCH_LIMIT = 20
 const EXTERNAL_MCP_SEARCH_REQUEST_TIMEOUT_MS = 5_000

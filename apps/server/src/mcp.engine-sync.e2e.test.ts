@@ -45,6 +45,7 @@ function startMockOpencode(options?: {
   failMcpNames?: string[];
   mcpStatusByName?: Record<string, unknown>;
   liveMcpStatusByName?: () => Record<string, unknown>;
+  sessionStatus?: () => Record<string, unknown>;
   mcpResponseForName?: (name: string) => Response | Promise<Response> | null;
   disposeResponse?: () => Response | null;
 }) {
@@ -76,6 +77,7 @@ function startMockOpencode(options?: {
       if (url.pathname === "/mcp" && request.method === "GET") {
         return Response.json(options?.liveMcpStatusByName?.() ?? {});
       }
+      if (url.pathname === "/session/status") return Response.json(options?.sessionStatus?.() ?? {});
       if (url.pathname.match(/^\/mcp\/[^/]+\/disconnect$/) && request.method === "POST") return Response.json({});
       return Response.json({ code: "not_found", message: "Not found" }, { status: 404 });
     },
@@ -163,6 +165,68 @@ const POSTHOG_CONFIG = {
 };
 
 describe("runtime MCP engine sync", () => {
+  test("reuses unchanged healthy clients but retries disconnected and changed configurations", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const previousDb = process.env.OPENWORK_RUNTIME_DB;
+    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    let status = "connected";
+    try {
+      const mock = startMockOpencode({ liveMcpStatusByName: () => ({ posthog: { status } }) });
+      const openwork = await startOpenworkServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
+      await writeRuntimeOpencodeConfig(openwork.config, "ws_1", (current) => ({ ...current, mcp: { posthog: POSTHOG_CONFIG } }));
+      const posts = () => mock.requests.filter((entry) => entry.method === "POST" && entry.pathname === "/mcp");
+      await syncAllWorkspacesRuntimeMcpToEngine(openwork.config);
+      expect(posts()).toHaveLength(1);
+      await syncAllWorkspacesRuntimeMcpToEngine(openwork.config);
+      expect(posts()).toHaveLength(1);
+      status = "failed";
+      await syncAllWorkspacesRuntimeMcpToEngine(openwork.config);
+      expect(posts()).toHaveLength(2);
+      status = "connected";
+      const changedConfig = { ...POSTHOG_CONFIG, headers: { Authorization: "Bearer replacement-fixture" } };
+      await writeRuntimeOpencodeConfig(openwork.config, "ws_1", (current) => ({ ...current, mcp: { posthog: changedConfig } }));
+      // A health observer can see connected while desired credentials have
+      // changed. That observation alone must not suppress their delivery.
+      refreshEngineMcpRegistrationFromLiveStatus(openwork.config, openwork.config.workspaces[0]!, "posthog", changedConfig, "connected");
+      await syncAllWorkspacesRuntimeMcpToEngine(openwork.config);
+      expect(posts()).toHaveLength(3);
+    } finally {
+      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
+      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+    }
+  });
+
+  test("keeps a bootstrapped client alive across repeated deferred syncs until its task finishes", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const previousDb = process.env.OPENWORK_RUNTIME_DB;
+    const previousDelay = process.env.OPENWORK_MCP_SYNC_DEFERRED_DELAY_MS;
+    process.env.OPENWORK_RUNTIME_DB = join(workspaceRoot, "runtime.sqlite");
+    process.env.OPENWORK_MCP_SYNC_DEFERRED_DELAY_MS = "10";
+    let busy = true;
+    try {
+      const mock = startMockOpencode({
+        liveMcpStatusByName: () => ({ posthog: { status: "connected" } }),
+        sessionStatus: () => busy ? { task: { type: "busy" } } : {},
+      });
+      const openwork = await startOpenworkServer(workspaceRoot, `http://127.0.0.1:${mock.server.port}`);
+      await writeRuntimeOpencodeConfig(openwork.config, "ws_1", (current) => ({ ...current, mcp: { posthog: POSTHOG_CONFIG } }));
+      const posts = () => mock.requests.filter((entry) => entry.method === "POST" && entry.pathname === "/mcp");
+      await syncAllWorkspacesRuntimeMcpToEngine(openwork.config);
+      await waitForRegistration(() => String(mock.requests.filter((entry) => entry.pathname === "/session/status").length >= 3), "true");
+      expect(posts()).toHaveLength(0);
+      expect(inspectEngineMcpRegistration(openwork.config, openwork.config.workspaces[0]!, "posthog", POSTHOG_CONFIG)).not.toBe("connected");
+      busy = false;
+      await waitForRegistration(() => String(posts().length), "1");
+      await syncAllWorkspacesRuntimeMcpToEngine(openwork.config);
+      expect(posts()).toHaveLength(1);
+    } finally {
+      if (previousDb === undefined) delete process.env.OPENWORK_RUNTIME_DB;
+      else process.env.OPENWORK_RUNTIME_DB = previousDb;
+      if (previousDelay === undefined) delete process.env.OPENWORK_MCP_SYNC_DEFERRED_DELAY_MS;
+      else process.env.OPENWORK_MCP_SYNC_DEFERRED_DELAY_MS = previousDelay;
+    }
+  });
+
   test("hot-adds a runtime MCP into the running engine when added", async () => {
     const workspaceRoot = await createWorkspaceRoot();
     const previousDb = process.env.OPENWORK_RUNTIME_DB;
