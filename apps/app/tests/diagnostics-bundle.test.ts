@@ -78,12 +78,18 @@ describe("diagnostics bundle", () => {
       pid: 222,
       lastStdout: null,
       lastStderr: `engine leaked ${opencodeSecret}`,
-      execution: null,
+      execution: {
+        command: "opencode", args: ["serve", "--api-key", "synthetic-argument"],
+        cwd: "/tmp/synthetic-workspace",
+        env: [{ name: "OPENAI_API_KEY", value: "synthetic-environment-value", redacted: false }],
+      },
     };
 
     const json = composeDiagnosticsBundleJson(input);
     const parsed = JSON.parse(json);
 
+    expect(json).not.toContain("synthetic-argument");
+    expect(json).not.toContain("synthetic-environment-value");
     expect(json).toContain('"tokenPresent": true');
     expect(parsed.openworkServer.settings.tokenPresent).toBe(true);
     expect(parsed.openworkServer.host.lastStderr).toContain("[redacted]");
@@ -145,5 +151,52 @@ describe("diagnostics bundle", () => {
     expect(json).not.toContain("owt_mcp_synthetic_secret");
     expect(json).not.toContain("owt_den_synthetic_secret");
     expect(json).not.toContain("eyJhbGciOiJIUzI1NiJ9");
+  });
+});
+
+test("redacts pasted credentials and nested diagnostic fields while retaining context", () => {
+  const input = baseInputs();
+  input.cloudMcpHealth = {
+    phase: "engine_failed",
+    nested: {
+      accessToken: "synthetic-access",
+      refresh_token: "synthetic-refresh",
+      apiKey: "synthetic-key",
+      "set-cookie": "synthetic-cookie",
+    },
+    error: "request failed Bearer synthetic-bearer-123",
+  };
+  input.context = { openworkServerUrl: "https://example.invalid/?access_token=synthetic-query&status=failed" };
+  const json = composeDiagnosticsBundleJson(input);
+  for (const secret of ["synthetic-access", "synthetic-refresh", "synthetic-key", "synthetic-cookie", "synthetic-bearer", "synthetic-query"]) {
+    expect(json).not.toContain(secret);
+  }
+  expect(json).toContain("engine_failed");
+  expect(json).toContain("status=failed");
+});
+
+test("shared sanitizer handles freeform credentials before truncation without removing useful metadata", async () => {
+  const { sanitizeDiagnosticString, sanitizeDiagnosticRecord } = await import("../src/app/lib/diagnostic-sanitizer");
+  const examples = [
+    "Bearer synthetic-bearer",
+    "Cookie: session=synthetic-cookie; other=synthetic-other",
+    "OPENAI_API_KEY=synthetic-environment",
+    "sk-proj-synthetic-api-credential",
+    "xoxb-synthetic-oauth-credential",
+    "ya29.synthetic-oauth-credential",
+    "github_pat_synthetic-credential",
+    'please inspect api_key="synthetic-key with spaces"',
+    '{"refreshToken":"synthetic-refresh","status":"failed"}',
+    "--client-secret synthetic-cli",
+    "https://synthetic-user:synthetic-password@example.invalid",
+  ];
+  for (const example of examples) {
+    const redacted = sanitizeDiagnosticString(example);
+    expect(redacted).not.toContain("synthetic");
+    expect(redacted).toContain("[REDACTED]");
+    expect(sanitizeDiagnosticString(redacted)).toBe(redacted);
+  }
+  expect(sanitizeDiagnosticRecord({ appVersion: "1.2.3", statusCode: 401, tokenPresent: true })).toEqual({
+    appVersion: "1.2.3", statusCode: 401, tokenPresent: true,
   });
 });

@@ -108,6 +108,11 @@
       "types": "./src/url.ts",
       "development": "./src/url.ts",
       "default": "./src/url.ts"
+    },
+    "./diagnostic-sanitizer": {
+      "types": "./src/diagnostic-sanitizer.ts",
+      "development": "./src/diagnostic-sanitizer.ts",
+      "default": "./src/diagnostic-sanitizer.ts"
     }
   },
   "files": [

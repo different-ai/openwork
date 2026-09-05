@@ -1,6 +1,7 @@
 "use client";
 
 import { AlertCircle, CheckCircle2, Copy, Mail, MessageSquareText, Send } from "lucide-react";
+import { sanitizeDiagnosticString, sanitizeDiagnosticRecord } from "@openwork/types/diagnostic-sanitizer";
 import { useMemo, useState } from "react";
 
 export type AppFeedbackPrefill = {
@@ -107,11 +108,11 @@ export function AppFeedbackForm(props: Props) {
         body: JSON.stringify({
           name: trimmedName,
           email: trimmedEmail,
-          message: trimmed,
+          message: sanitizeDiagnosticString(trimmed),
           website,
           startedAt,
           mode,
-          context: props.prefill,
+          context: sanitizeDiagnosticRecord(props.prefill),
         }),
       });
 

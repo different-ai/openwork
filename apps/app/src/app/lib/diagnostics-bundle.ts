@@ -9,7 +9,8 @@ import {
   type OpenworkServerInfo,
 } from "./desktop";
 import { readPerfLogs, type PerfLogRecord } from "./perf-log";
-import { sanitizeCloudMcpHealthDiagnostic } from "./diagnostic-sanitizer";
+import { isSensitiveKey } from "@openwork/types/diagnostic-sanitizer";
+import { sanitizeDiagnosticValue, sanitizeCloudMcpHealthDiagnostic } from "./diagnostic-sanitizer";
 import {
   readOpenworkServerSettings,
   type OpenworkServerSettings,
@@ -73,7 +74,7 @@ function pickExecution(execution: OpencodeExecutionSnapshot | null): Diagnostics
     cwd: execution.cwd,
     env: execution.env.map((entry) => ({
       name: entry.name,
-      value: entry.value,
+      value: isSensitiveKey(entry.name) || entry.redacted ? "[REDACTED]" : entry.value,
       redacted: entry.redacted,
     })),
   };
@@ -187,7 +188,7 @@ export function composeDiagnosticsBundleJson(input: DiagnosticsBundleInputs): st
       recent: input.developerLogs,
     },
   };
-  return scrubKnownSecretValues(JSON.stringify(bundle, null, 2), collectSecretValues(input));
+  return scrubKnownSecretValues(JSON.stringify(sanitizeDiagnosticValue(bundle), null, 2), collectSecretValues(input));
 }
 
 async function readAppInfo(desktopRuntime: boolean) {

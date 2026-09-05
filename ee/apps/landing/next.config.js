@@ -5,7 +5,7 @@ const mintlifyOrigin = "https://differentai.mintlify.dev";
 
 const nextConfig = {
   reactStrictMode: true,
-  transpilePackages: ["@openwork/email", "@openwork/ui"],
+  transpilePackages: ["@openwork/email", "@openwork/ui", "@openwork/types"],
   // Lets evals build/serve a production instance beside next dev without clobbering .next.
   distDir: process.env.LANDING_DIST_DIR || ".next",
   // Bake VERCEL_ENV at build time so the PostHog gates (app/layout.tsx and
