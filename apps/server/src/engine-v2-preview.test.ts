@@ -11,6 +11,22 @@ import {
   writeEngineV2PreviewState,
 } from "./engine-v2-preview.js";
 import type { ServerConfig } from "./types.js";
+import { buildOpenWorkV2Instructions } from "./opencode-v2-instructions.js";
+import { upsertSkill } from "./skills.js";
+
+test("large v2 skill catalogs stay inside the native instruction limit", async () => {
+  const root = await mkdtemp(join(tmpdir(), "openwork-v2-instructions-"));
+  try {
+    for (let index = 0; index < 20; index++) {
+      await upsertSkill(root, { name: `bounded-${index}`, description: "Catalog description ".repeat(40), content: "Fixture instructions." });
+    }
+    const value = await buildOpenWorkV2Instructions(testConfig(root), root, false);
+    expect(Buffer.byteLength(JSON.stringify(value), "utf8")).toBeLessThanOrEqual(7 * 1024);
+    expect(value.catalogTruncated).toBe(true);
+    expect(value.remoteSkills).toEqual([]);
+    expect(value.operatingInstructions).toStartWith("You are OpenWork.");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 function testConfig(root: string): ServerConfig {
   return {
