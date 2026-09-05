@@ -15,6 +15,7 @@ import { ReauthDialog } from "../../_components/reauth-dialog";
 import {
   type DenOrgContext,
   type DenOrgSummary,
+  getBillingRoute,
   getOrgDashboardRoute,
   getOrgAccessFlags,
   parseOrgContextPayload,
@@ -41,7 +42,7 @@ type OrgDashboardContextValue = {
   updateOrganizationName: (name: string) => Promise<void>;
   updateOrganizationSettings: (input: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null; requireSso?: boolean; brandAppName?: string | null; brandLogoUrl?: string | null; brandIconUrl?: string | null; brandAccentColor?: string | null }) => Promise<void>;
   deleteOrganization: () => Promise<void>;
-  switchOrganization: (slug: string) => void;
+  switchOrganization: (slug: string, destination?: "billing") => void;
   inviteMember: (input: { email: string; role: string }) => Promise<void>;
   startSeatCheckout: () => Promise<void>;
   cancelInvitation: (invitationId: string) => Promise<void>;
@@ -458,7 +459,7 @@ export function OrgDashboardProvider({
     }
   }
 
-  function switchOrganization(nextSlug: string) {
+  function switchOrganization(nextSlug: string, destination?: "billing") {
     if (isSingleOrgMode) {
       return;
     }
@@ -481,7 +482,7 @@ export function OrgDashboardProvider({
         setOrgSelectionOpen(false);
         await refreshWorkers({ keepSelection: false, quiet: workersLoadedOnce });
 
-        router.replace(getOrgDashboardRoute(context.organization.slug));
+        router.replace(destination === "billing" ? getBillingRoute(context.organization.slug) : getOrgDashboardRoute(context.organization.slug));
         router.refresh();
       } catch (error) {
         if (error instanceof OrganizationNotFoundError) {
