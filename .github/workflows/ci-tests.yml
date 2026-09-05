@@ -78,13 +78,25 @@ jobs:
       matrix:
         variant: [head, dev-control]
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout PR head
+        if: matrix.variant == 'head' && github.event_name == 'pull_request'
+        uses: actions/checkout@v6
         with:
-          ref: ${{ matrix.variant == 'dev-control' && 'dev' || github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Checkout event revision
+        if: matrix.variant == 'head' && github.event_name != 'pull_request'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+      - name: Checkout clean dev control
+        if: matrix.variant == 'dev-control'
+        uses: actions/checkout@v6
+        with:
+          ref: dev
       - name: Overlay only compatibility witnesses onto clean dev
         if: matrix.variant == 'dev-control' && github.event_name == 'pull_request'
         env:
-          PROOF_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          PROOF_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           git fetch origin "$PROOF_HEAD"
           git show "$PROOF_HEAD:evals/specs/native-google-refresh-recovery.test.ts" > evals/specs/native-google-refresh-recovery.test.ts
