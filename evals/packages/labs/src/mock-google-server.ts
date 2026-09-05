@@ -87,6 +87,11 @@ interface MockGoogleState {
   drafts: Map<string, RecordedDraft[]>;
   driveUploads: Map<string, RecordedDriveUpload[]>;
   keys: SigningKeys;
+  authorizationExpiresIn: number;
+  refreshError: string | null;
+  holdRefresh: boolean;
+  pendingRefreshes: Array<() => void>;
+  refreshAttempts: number;
 }
 
 const HTML_ENTITIES: Record<string, string> = {
@@ -369,6 +374,18 @@ async function token(state: MockGoogleState, request: IncomingMessage, response:
       sendJson(response, 400, { error: "invalid_grant" });
       return;
     }
+    state.refreshAttempts++;
+    const refreshError = state.refreshError;
+    if (state.holdRefresh) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 10_000);
+        state.pendingRefreshes.push(() => { clearTimeout(timer); resolve(); });
+      });
+    }
+    if (refreshError) {
+      sendJson(response, refreshError === "invalid_grant" ? 400 : 503, { error: refreshError });
+      return;
+    }
     credential = refresh;
   } else {
     sendJson(response, 400, { error: "unsupported_grant_type" });
@@ -380,7 +397,7 @@ async function token(state: MockGoogleState, request: IncomingMessage, response:
     access_token: issued.accessToken,
     refresh_token: issued.refreshToken,
     token_type: "Bearer",
-    expires_in: 3600,
+    expires_in: grantType === "authorization_code" ? state.authorizationExpiresIn : 3600,
     scope: credential.scope,
     id_token: issued.idToken,
   });
@@ -611,6 +628,18 @@ async function handleRequest(state: MockGoogleState, request: IncomingMessage, r
     sendJson(response, 200, { requests: state.requests });
     return;
   }
+  if (url.pathname === "/__mock-google/refresh-control") {
+    if (requestMethod === "POST") {
+      const input = await jsonBody(request);
+      if (!isRecord(input)) { sendJson(response, 400, { error: "invalid_request" }); return; }
+      if (typeof input.authorizationExpiresIn === "number") state.authorizationExpiresIn = input.authorizationExpiresIn;
+      if (input.refreshError === null || input.refreshError === "invalid_grant" || input.refreshError === "temporarily_unavailable") state.refreshError = input.refreshError;
+      if (typeof input.holdRefresh === "boolean") state.holdRefresh = input.holdRefresh;
+      if (input.release === true) state.pendingRefreshes.splice(0).forEach(release => release());
+    }
+    sendJson(response, 200, { attempts: state.refreshAttempts, pending: state.pendingRefreshes.length });
+    return;
+  }
   if (requestMethod === "GET" && url.pathname === "/__mock-google/pending-authorizations") {
     sendJson(response, 200, pendingAuthorizations(state));
     return;
@@ -705,6 +734,11 @@ export async function startMockGoogleServer(options: MockGoogleServerOptions): P
     autoApprove: options.autoApprove,
     baseUrl: options.baseUrl ?? "http://127.0.0.1",
     requests: [],
+    authorizationExpiresIn: 3600,
+    refreshError: null,
+    holdRefresh: false,
+    pendingRefreshes: [],
+    refreshAttempts: 0,
     pending: new Map(),
     codes: new Map(),
     accessTokens: new Map(),
