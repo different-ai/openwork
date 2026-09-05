@@ -1,5 +1,5 @@
 import { createDesktopHandoffGrant, evalIn } from "@openwork/behaviors";
-import { attachSurface, pressKey, typeText } from "@openwork/cdp";
+import { attachSurface, clickAt, locate, pressKey, typeText } from "@openwork/cdp";
 import type { Place, Seed } from "@openwork/env";
 
 export async function enterpriseManualSigninWorld(seed: Seed, { place }: { place: Place }) {
@@ -28,7 +28,8 @@ export async function enterpriseManualSigninWorld(seed: Seed, { place }: { place
       try {
         await pressKey(app, process.platform === "darwin" && place.kind === "local" ? "Meta+A" : "Control+A");
         await typeText(app, link.toString());
-        await pressKey(app, "Enter");
+        const submit = await locate(app, { role: "button", label: "Continue" });
+        await clickAt(app, submit.center);
         const submitted = await evalIn(app, `(async () => {
           const deadline = Date.now() + 10_000;
           while (document.querySelector('#organization-server-input') && Date.now() < deadline) {
