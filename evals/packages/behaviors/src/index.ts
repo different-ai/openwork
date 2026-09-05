@@ -13,3 +13,5 @@ export * from "./sessions.ts";
 export * from "./workflows.ts";
 
 export * from "./live-openai.ts";
+
+export { observeText, textProgressFailures } from "./text-observation.ts";
