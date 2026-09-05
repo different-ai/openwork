@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { useNavigate } from "react-router";
+import { DeleteAppButton } from "./delete-app-button";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -13,6 +15,7 @@ export type AppReference = { appId: string; revisionId?: string; receiptId?: str
 
 export function AppArtifact({ appId, revisionId, receiptId, onClose, onAsk }: AppReference & { onClose?: () => void; onAsk?: (prompt: string) => Promise<void> }) {
   const { client, orgId, scope } = useAppsClient();
+  const navigate = useNavigate();
   const cache = useQueryClient();
   const [saveOpen, setSaveOpen] = useState(false);
   const [name, setName] = useState("");
@@ -65,6 +68,7 @@ export function AppArtifact({ appId, revisionId, receiptId, onClose, onAsk }: Ap
       }}>{saved ? <><Check className="size-4" />Saved</> : app.view.activeRevisionId ? "Save changes" : "Save"}</Button> : null}
       {onAsk && saved ? <Button size="sm" variant="outline" disabled={asking} onClick={() => void ask(`Run my saved app “${app.view.title}” using its existing workflow “${app.workflowTitle}”. Ask for any inputs you need, then show the new results in the saved app.`)}>Run again</Button> : null}
       {onAsk && app.canManage ? <Button size="sm" variant="ghost" disabled={asking} onClick={() => void ask(`Help me improve my saved app “${app.view.title}”. Read its existing app source and workflow “${app.workflowTitle}”, ask what I want to change, and show a draft preview for me to save.`)}>Ask for changes</Button> : null}
+      {app.canManage && app.view.status !== "retired" ? <DeleteAppButton appId={appId} title={app.view.title} onDeleted={onClose ?? (() => navigate("/dashboard"))} /> : null}
       {onClose ? <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label="Close app"><X /></Button> : null}
     </header>
     <div className="min-h-0 flex-1 space-y-4 overflow-auto p-4">

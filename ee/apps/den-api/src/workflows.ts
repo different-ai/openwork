@@ -412,6 +412,7 @@ export async function createWorkflowVersion(input: {
   )).limit(1)
   if (consumed[0]) throw new Error("workflow_test_receipt_already_used")
 
+  // Saving does not authorize unattended execution; executeWorkflow checks that at run time.
   const built = await input.buildTools()
   const manifestByPath = new Map(built.manifest.flatMap((entry) => [
     [entry.scriptPath, entry] as const,
@@ -422,7 +423,6 @@ export async function createWorkflowVersion(input: {
     if (!current || current.capabilityName !== required.capabilityName) {
       throw new Error(`workflow_capability_unavailable:${required.scriptPath}`)
     }
-    if (current.readOnly !== true) throw new Error(`workflow_requires_read_only_capabilities:${required.scriptPath}`)
   }
   for (const call of parseCodemodeToolCalls(receipt.tool_calls)) {
     if (!payload.parsed.requiredCapabilities.some((required) => {
@@ -634,6 +634,7 @@ export async function saveWorkflow(input: {
   const receipt = receipts[0]
   if (!receipt) throw new Error("workflow_recent_receipt_required")
 
+  // Saving does not authorize unattended execution; executeWorkflow checks that at run time.
   const built = await input.buildTools()
   const manifestByPath = new Map(built.manifest.flatMap((entry) => [
     [entry.scriptPath, entry] as const,
@@ -643,7 +644,6 @@ export async function saveWorkflow(input: {
   for (const call of parseCodemodeToolCalls(receipt.tool_calls)) {
     const resolved = manifestByPath.get(call.name)
     if (!resolved) throw new Error(`workflow_capability_unavailable:${call.name}`)
-    if (resolved.readOnly !== true) throw new Error(`workflow_requires_read_only_capabilities:${call.name}`)
     if (!requiredCapabilities.some((entry) => entry.scriptPath === resolved.scriptPath)) {
       requiredCapabilities.push({
         capabilityName: resolved.capabilityName,

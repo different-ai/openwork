@@ -93,3 +93,39 @@ test("scripts and records deterministic OpenAI-compatible agent tool rounds", as
   assert.deepEqual(requests.map((request) => request.completedTools), [0, 1, 2]);
   assert.deepEqual(requests.map((request) => request.matchedMarkers), [[marker], [marker], [marker]]);
 });
+
+test("turn-scoped workloads isolate revisions from earlier markers and tool rounds", async () => {
+  await using mock = await startMockMcp({
+    port: await allocateFreePort(),
+    agentWorkloads: ["first sketch", "revise sketch"].map((promptMarker) => ({
+      latestUserTurn: true,
+      promptMarker,
+      finalReply: `${promptMarker} complete`,
+      steps: [{ tool: "write", arguments: { content: promptMarker } }],
+    })),
+  });
+  const history = [
+    { role: "user", content: "first sketch" },
+    { role: "tool", tool_call_id: "old", content: "old result" },
+    { role: "assistant", content: "first sketch complete" },
+    { role: "user", content: "revise sketch" },
+  ];
+  for (const completed of [false, true]) {
+    const response = await fetch(`${mock.url}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ...completionBody("unused", 0),
+        messages: [...history, ...(completed ? [{ role: "tool", tool_call_id: "new", content: "new result" }] : [])],
+      }),
+    });
+    assert.equal(response.status, 200);
+    const text = await response.text();
+    assert.match(text, completed ? /revise sketch complete/ : /"name":"write"/);
+    assert.doesNotMatch(text, /first sketch complete/);
+  }
+  const requests = await mock.agentRequests({ promptMarker: "revise sketch" });
+  assert.deepEqual(requests.map((request) => request.kind), ["tool", "final"]);
+  assert.deepEqual(requests.map((request) => request.completedTools), [0, 1]);
+  assert.deepEqual(requests.map((request) => request.matchedMarkers), [["revise sketch"], ["revise sketch"]]);
+});
