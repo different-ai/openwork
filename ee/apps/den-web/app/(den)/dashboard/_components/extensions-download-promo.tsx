@@ -4,7 +4,7 @@ import { getMarketplacesRoute } from "../../_lib/den-org";
 
 export function ExtensionsDownloadPromo({ orgSlug }: { orgSlug: string }) {
   return (
-    <section className="rounded-[18px] border border-[#d7e2f5] bg-gradient-to-br from-[#F4F8FF] to-[#EEF3FF] p-5">
+    <section className="rounded-[18px] border border-[#d7e2f5] bg-linear-to-br/srgb from-[#F4F8FF] to-[#EEF3FF] p-5">
       <h2 className="text-[16px] font-semibold tracking-[-0.02em] text-[#07192C]">
         Download the app to unlock extensions
       </h2>

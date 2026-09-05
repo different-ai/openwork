@@ -1422,7 +1422,7 @@ function OpenWorkWebAccessPill({ access }: { access: AdminOpenWorkWebAccess }) {
 
 function DenAdminLoadingShell() {
   return (
-    <section className="mx-auto w-full max-w-6xl rounded-3xl border border-slate-200 bg-white shadow-sm" aria-busy="true">
+    <section className="mx-auto w-full max-w-6xl rounded-3xl border border-slate-200 bg-white shadow-xs" aria-busy="true">
       <div className="border-b border-slate-200 px-6 py-6 sm:px-8">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
@@ -2325,7 +2325,7 @@ export function DenAdminPanel() {
         : error ?? "The backoffice request failed before the dashboard could load.";
 
     return (
-      <section className="mx-auto w-full max-w-4xl rounded-3xl border border-slate-200 bg-white p-8 shadow-sm">
+      <section className="mx-auto w-full max-w-4xl rounded-3xl border border-slate-200 bg-white p-8 shadow-xs">
         <p className="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-slate-500">Den admin</p>
         <h1 className="mt-3 text-3xl font-semibold tracking-[-0.04em] text-slate-950">{title}</h1>
         <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-600">{message}</p>
@@ -2369,7 +2369,7 @@ export function DenAdminPanel() {
   const pageDurationLabel = isAdminScaleFixtureEnabled() ? "fixture computation" : "server";
 
   return (
-    <section className="mx-auto w-full max-w-6xl rounded-3xl border border-slate-200 bg-white shadow-sm">
+    <section className="mx-auto w-full max-w-6xl rounded-3xl border border-slate-200 bg-white shadow-xs">
       <div className="border-b border-slate-200 px-6 py-6 sm:px-8">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
@@ -2436,7 +2436,7 @@ export function DenAdminPanel() {
                 onChange={(event) => setAdminEmail(event.target.value)}
                 placeholder="Email"
                 aria-label="Admin email"
-                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-hidden focus:border-slate-400"
               />
               <input
                 data-testid="admin-add-note"
@@ -2444,7 +2444,7 @@ export function DenAdminPanel() {
                 onChange={(event) => setAdminNote(event.target.value)}
                 placeholder="Note (optional)"
                 aria-label="Admin note"
-                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
+                className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-hidden focus:border-slate-400"
               />
               <button
                 type="button"
@@ -2560,7 +2560,7 @@ export function DenAdminPanel() {
                     setOrganizationQuery(event.target.value);
                   }}
                   placeholder="Org name, slug, or id"
-                  className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+                  className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-hidden transition focus:border-slate-400"
                 />
               </label>
               <p className="text-xs leading-5 text-slate-500">
@@ -2610,7 +2610,7 @@ export function DenAdminPanel() {
                     setUserQuery(event.target.value);
                   }}
                   placeholder="Email, name, user id, provider, organization"
-                  className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+                  className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-hidden transition focus:border-slate-400"
                 />
               </label>
               <p className="text-xs leading-5 text-slate-500">
@@ -2724,7 +2724,7 @@ export function DenAdminPanel() {
                           onChange={(event) => {
                             void saveOrganizationCapability(org, "installLinks", event.target.checked);
                           }}
-                          className="h-4 w-4 rounded border-slate-300"
+                          className="h-4 w-4 rounded-sm border-slate-300"
                         />
                         Install links
                       </label>
@@ -2737,7 +2737,7 @@ export function DenAdminPanel() {
                           onChange={(event) => {
                             void saveOrganizationCapability(org, "mcpConnections", event.target.checked);
                           }}
-                          className="h-4 w-4 rounded border-slate-300"
+                          className="h-4 w-4 rounded-sm border-slate-300"
                         />
                         OpenWork Connect (alpha)
                       </label>
@@ -2807,7 +2807,7 @@ export function DenAdminPanel() {
                           const tier = event.target.value === "enterprise" || event.target.value === "team" ? event.target.value : "free";
                           setOrgDrafts((current) => ({ ...current, [org.id]: { ...draft, tier } }));
                         }}
-                        className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+                        className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-hidden transition focus:border-slate-400"
                       >
                         <option value="free">Free</option>
                         <option value="team">Team</option>
@@ -2822,7 +2822,7 @@ export function DenAdminPanel() {
                         min={1}
                         value={draft.seatLimit}
                         onChange={(event) => setOrgDrafts((current) => ({ ...current, [org.id]: { ...draft, seatLimit: event.target.value } }))}
-                        className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+                        className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-hidden transition focus:border-slate-400"
                       />
                     </label>
 
@@ -3122,7 +3122,7 @@ export function DenAdminPanel() {
                 value={openworkWebAccessDialog.reason}
                 onChange={(event) => setOpenWorkWebAccessDialog({ ...openworkWebAccessDialog, reason: event.target.value })}
                 placeholder="For example: Internal OpenWork administration organization"
-                className="resize-none rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+                className="resize-none rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-hidden transition focus:border-slate-400"
               />
             </label>
 
@@ -3185,7 +3185,7 @@ export function DenAdminPanel() {
                 min={DEFAULT_FREE_SEAT_COUNT}
                 value={freeSeatsDialog.totalFreeSeats}
                 onChange={(event) => setFreeSeatsDialog({ ...freeSeatsDialog, totalFreeSeats: event.target.value })}
-                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-hidden transition focus:border-slate-400"
               />
             </label>
 

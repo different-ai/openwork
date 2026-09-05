@@ -291,7 +291,7 @@ export function BrandAppearanceScreen() {
 
                 <label className="grid gap-3">
                   <span className="text-[14px] font-medium text-gray-700">Accent color</span>
-                  <select value={accentColorDraft} onChange={(event) => setAccentColorDraft(event.target.value)} disabled={!canManageBrandAppearance} className="h-11 rounded-xl border border-gray-200 bg-white px-4 text-[14px] text-gray-900 outline-none">
+                  <select value={accentColorDraft} onChange={(event) => setAccentColorDraft(event.target.value)} disabled={!canManageBrandAppearance} className="h-11 rounded-xl border border-gray-200 bg-white px-4 text-[14px] text-gray-900 outline-hidden">
                     <option value="">Default (OpenWork)</option>
                     {["blue", "violet", "purple", "indigo", "iris", "crimson", "red", "ruby", "pink", "plum", "orange", "tomato", "gold", "green", "grass", "jade", "teal", "cyan", "sky"].map((color) => (
                       <option key={color} value={color}>{color[0].toUpperCase() + color.slice(1)}</option>

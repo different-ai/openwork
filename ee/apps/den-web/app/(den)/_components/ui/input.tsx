@@ -57,7 +57,7 @@ export function DenInput({
         // base visual style
         "w-full rounded-lg border border-gray-200 bg-white",
         "h-[42px] px-4 text-[14px] leading-5 text-gray-900",
-        "outline-none transition-all placeholder:text-gray-400",
+        "outline-hidden transition-all placeholder:text-gray-400",
         "focus:border-gray-300 focus:ring-2 focus:ring-gray-900/5",
         // disabled state
         disabled ? "cursor-not-allowed opacity-60" : "",

@@ -175,7 +175,7 @@ export function MarketplaceOnboardingScreen({
                   type="button"
                   data-testid="onboarding-app-installed"
                   onClick={() => setAppInstalled(true)}
-                  className="rounded text-sm font-medium underline-offset-4 hover:text-[var(--dls-text-primary)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--dls-text-primary)]"
+                  className="rounded-sm text-sm font-medium underline-offset-4 hover:text-[var(--dls-text-primary)] hover:underline focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--dls-text-primary)]"
                 >
                   I&apos;ve already installed it →
                 </button>
@@ -206,7 +206,7 @@ export function MarketplaceOnboardingScreen({
               <div className="min-w-0 flex-1">
                 <h3 className="text-sm font-semibold text-[var(--dls-text-primary)]">OpenWork Models</h3>
                 <p className="mt-1 text-[13px] leading-5 text-[var(--dls-text-secondary)]">Managed models, billed per member. No API keys to look after.</p>
-                <Link href={getInferenceRoute(orgSlug)} className="mt-3 inline-flex items-center gap-1.5 rounded text-sm font-medium text-[var(--dls-text-primary)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--dls-text-primary)]">
+                <Link href={getInferenceRoute(orgSlug)} className="mt-3 inline-flex items-center gap-1.5 rounded-sm text-sm font-medium text-[var(--dls-text-primary)] underline-offset-4 hover:underline focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--dls-text-primary)]">
                   {modelsEnabled ? "Manage models" : "Turn on models"}<ArrowUpRight className="size-3.5" aria-hidden />
                 </Link>
               </div>
@@ -216,7 +216,7 @@ export function MarketplaceOnboardingScreen({
               <div className="min-w-0 flex-1">
                 <h3 className="text-sm font-semibold text-[var(--dls-text-primary)]">Bring your Own Keys</h3>
                 <p className="mt-1 text-[13px] leading-5 text-[var(--dls-text-secondary)]">Connect your provider or gateway. Keep your own billing and model choices.</p>
-                <Link href={getCustomLlmProvidersRoute(orgSlug)} className="mt-3 inline-flex items-center gap-1.5 rounded text-sm font-medium text-[var(--dls-text-primary)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--dls-text-primary)]">
+                <Link href={getCustomLlmProvidersRoute(orgSlug)} className="mt-3 inline-flex items-center gap-1.5 rounded-sm text-sm font-medium text-[var(--dls-text-primary)] underline-offset-4 hover:underline focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--dls-text-primary)]">
                   Add a provider<ArrowUpRight className="size-3.5" aria-hidden />
                 </Link>
               </div>
@@ -231,7 +231,7 @@ export function MarketplaceOnboardingScreen({
         </div>
         <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--dls-border)] pt-5 text-sm">
           <span className="text-[var(--dls-text-secondary)]">Keep setting up at your own pace.</span>
-          <Link href={getOrgDashboardRoute(orgSlug)} className="rounded font-medium text-[var(--dls-text-primary)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--dls-text-primary)]">
+          <Link href={getOrgDashboardRoute(orgSlug)} className="rounded-sm font-medium text-[var(--dls-text-primary)] underline-offset-4 hover:underline focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--dls-text-primary)]">
             Go to dashboard →
           </Link>
         </footer>
