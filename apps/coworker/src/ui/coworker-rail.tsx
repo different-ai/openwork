@@ -31,13 +31,13 @@ function relativeTime(timestamp: number): string {
   return `${Math.round(hours / 24)}d`;
 }
 
-type Tone = "spark" | "mint" | "amber" | "rose" | "mist";
+type Tone = "spark" | "ready" | "amber" | "rose" | "mist";
 
 function activityTone(activity: CoworkerActivity | undefined): Tone {
   if (activity?.state === "working") return "spark";
   if (activity?.state === "retrying" || activity?.state === "attention") return "amber";
   if (activity?.state === "offline") return "rose";
-  if (activity?.state === "recent") return "mint";
+  if (activity?.label === "Ready") return "ready";
   return "mist";
 }
 
@@ -45,11 +45,11 @@ function activityTextTone(activity: CoworkerActivity | undefined): string {
   if (activity?.state === "working") return "text-spark";
   if (activity?.state === "retrying" || activity?.state === "attention") return "text-amber";
   if (activity?.state === "offline") return "text-rose";
-  if (activity?.state === "recent") return "text-mint";
+  if (activity?.label === "Ready") return "text-ready";
   return "text-mist";
 }
 
-const DOT_BG: Record<Tone, string> = { spark: "bg-spark", mint: "bg-mint", amber: "bg-amber", rose: "bg-rose", mist: "bg-mist" };
+const DOT_BG: Record<Tone, string> = { spark: "bg-spark", ready: "bg-ready", amber: "bg-amber", rose: "bg-rose", mist: "bg-mist" };
 
 /** Up to three member avatars overlapped into one mark; a fourth and beyond become a count. */
 export function GroupAvatars({ members, size = 26 }: { members: readonly CoworkerSummary[]; size?: number }) {
@@ -300,7 +300,7 @@ export function CoworkerRail({
                       <span className="truncate text-sm font-semibold text-snow">{coworker.name}</span>
                       <span className="shrink-0 text-[10px] text-mist">{relativeTime(activity?.updatedAt ?? 0)}</span>
                     </span>
-                    <span className={`mt-1 flex items-center gap-1.5 text-[11px] font-medium ${activityTextTone(activity)}`}>
+                    <span data-testid="coworker-rail-status" className={`mt-1 flex items-center gap-1.5 text-[11px] font-medium ${activityTextTone(activity)}`}>
                       <StatusDot tone={activityTone(activity)} />
                       <RailStatusLabel coworker={coworker} activity={activity} />
                     </span>

@@ -11,8 +11,8 @@ import type { CoworkerActivity, RecentWork } from "./threads.ts";
 /** Recent activity stays scannable: a handful of entries, never a log. */
 export const RECENT_WORK_LIMIT = 4;
 
-/** Colour is reserved for what needs a person: amber asks, rose reports a failure, mist is everything else. */
-export type StatusTone = "mist" | "amber" | "rose";
+/** Ready is muted sage; amber asks for attention, rose reports a failure, mist is neutral. */
+export type StatusTone = "mist" | "ready" | "amber" | "rose";
 
 /** The header's one word, its colour, and what the tooltip adds. */
 export type HeaderStatus = {
@@ -36,14 +36,14 @@ export const HEADER_WORKING_WORD = "Working";
 /** States where something went wrong and a person should look. */
 export const FAILURE_LABELS: ReadonlySet<string> = new Set([AI_UNAVAILABLE, "Not responding", "Reply failed", "Response delayed", "Run failed"]);
 
-/** Plain text, no dot: mist unless the coworker is asking for something (amber) or reporting a failure (rose). */
+/** Plain text, no dot: quiet sage for availability, stronger colour for attention or failure. */
 export function describeHeaderStatus(activity: CoworkerActivity | undefined, engineManaged: boolean): HeaderStatus {
   if (!engineManaged) return { word: AI_UNAVAILABLE, tone: "rose" };
   if (!activity) return { word: CHECKING_STATUS, tone: "mist" };
   const word = HEADER_COLLAPSED_LABELS.has(activity.label) ? HEADER_WORKING_WORD : activity.label;
   if (FAILURE_LABELS.has(word)) return { word, tone: "rose" };
   if (activity.state === "attention" || (activity.state === "retrying" && Boolean(activity.reason))) return { word, tone: "amber" };
-  return { word, tone: "mist" };
+  return { word, tone: word === "Ready" ? "ready" : "mist" };
 }
 
 /** "7:40 AM" in the person's locale; empty when the time is unknown. */

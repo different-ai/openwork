@@ -772,7 +772,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     settingsButton: false,
     footerLinks: 0,
     statusDot: 0,
-    statusTone: "mist",
+    statusTone: "ready",
     statusTitle: null,
     sidebarMentionsEngine: false,
     sidebarMentionsModel: false,
@@ -1734,6 +1734,14 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(sidebarAfterRun).toMatchObject({ summaryLines: [], recentEntries: 1, recentCards: 0, assignmentsRow: "1 assignment On a schedule ›", composerLine: "1 assignment" });
   if (!isRecord(sidebarAfterRun)) throw new Error("Sidebar facts after the run were unavailable.");
   expect(String(sidebarAfterRun.recentText)).toContain("On a schedule");
+  const readyAppearance = await waitFor(app, `(() => {
+    const row = document.querySelector('[data-testid="coworker-rail-row"][data-slug="scout"] [data-testid="coworker-rail-status"]');
+    const header = document.querySelector('[data-testid="coworker-top-status"]');
+    if (row?.textContent?.trim() !== "Ready" || header?.textContent?.trim() !== "Ready") return false;
+    return { label: getComputedStyle(row).color, dot: getComputedStyle(row.firstElementChild).backgroundColor, header: getComputedStyle(header).color };
+  })()`, { timeoutMs: 30_000, label: "Ready settles to muted sage after completed work" });
+  expect(readyAppearance).toEqual({ label: "rgb(120, 148, 135)", dot: "rgb(120, 148, 135)", header: "rgb(120, 148, 135)" });
+  evidence.recordAssertionEvidence("Ready is a discreet gray-green in the header and coworker rail", "After real scheduled work completed, the Ready label, its rail dot, and the header all rendered in muted sage rgb(120, 148, 135), distinct from the bright mint used for success elsewhere.", true);
   evidence.recordAssertionEvidence(
     "A scheduled assignment runs through a native thread and the panel records it once, in the right place",
     "The daily assignment finished with a native ses_ thread id and no error. Its row in Assignments read Done today at a time, the header alone read Ready while the Activity view's now-row stayed empty, its Assignments row read 1 assignment · On a schedule, the composer's summary line read 1 assignment, and Recent listed Local readiness check exactly once, as flat rows, as work on a schedule.",

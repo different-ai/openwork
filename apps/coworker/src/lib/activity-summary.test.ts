@@ -28,8 +28,8 @@ test("the header shows one plain word: the phases fold into Working, colour only
   }
   assert.deepEqual(describeHeaderStatus(at("working", "Working"), true), { word: "Working", tone: "mist" });
   assert.deepEqual(describeHeaderStatus(at("working", "Writing"), true), { word: "Working", tone: "mist" }, "words streaming in are still one steady word in the header");
-  assert.deepEqual(describeHeaderStatus(at("recent", "Ready"), true), { word: "Ready", tone: "mist" });
-  assert.deepEqual(describeHeaderStatus(at("ready", "Ready"), true), { word: "Ready", tone: "mist" });
+  assert.deepEqual(describeHeaderStatus(at("recent", "Ready"), true), { word: "Ready", tone: "ready" });
+  assert.deepEqual(describeHeaderStatus(at("ready", "Ready"), true), { word: "Ready", tone: "ready" });
   assert.deepEqual(describeHeaderStatus(at("recent", "Stopped"), true), { word: "Stopped", tone: "mist" });
   assert.deepEqual(describeHeaderStatus(at("retrying", "Retrying"), true), { word: "Retrying", tone: "mist" });
   assert.deepEqual(describeHeaderStatus(at("starting", "Starting up"), true), { word: "Starting up", tone: "mist" });

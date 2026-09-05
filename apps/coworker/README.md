@@ -606,6 +606,10 @@ suggestion limits still apply, and only **Add to team** creates the coworker.
 The original avatar shape, gaze, and animation remain; **Sand** and **Oval** add
 one optional color and frame style, including portable template support.
 
+**Ready** uses a quiet gray-green (`#789487`) in the coworker rail, status dot,
+and conversation headers, keeping availability visible without the bright mint
+used for successful connections and completed work.
+
 Messages queued during a reply appear as numbered rows under one **Up next**
 label. Each row has one action menu for editing, sending now, or removing it.
 The menu opens above the composer, supports arrow keys, and returns focus to its
