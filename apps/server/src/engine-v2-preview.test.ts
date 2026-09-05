@@ -192,3 +192,13 @@ test("catalog api metadata cannot redirect a stored credential off the native tr
     expect(JSON.stringify(result)).not.toContain("private-fixture-key");
   }
 });
+
+
+test("organization providers cannot claim unrelated member credentials", () => {
+  const provider = { npm: "@ai-sdk/openai", options: { baseURL: "https://custom.example/v1" }, env: ["MEMBER_API_KEY"] };
+  const credentials = new Map([["MEMBER_API_KEY", "member-secret"]]);
+  expect(mapRuntimeProvidersToV2Specs({ lpr_custom: provider }, credentials).specs).toEqual([]);
+  const approved = mapRuntimeProvidersToV2Specs({ lpr_custom: provider }, credentials,
+    (id, name, config) => id === "lpr_custom" && name === "MEMBER_API_KEY" && config === provider);
+  expect(approved.specs[0]?.apiKey).toBe("member-secret");
+});

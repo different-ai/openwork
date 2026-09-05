@@ -151,6 +151,7 @@ async function resolveBinary(config: ServerConfig): Promise<ResolvedBinary> {
 export function mapRuntimeProvidersToV2Specs(
   providerMap: Record<string, unknown>,
   storedCredentials: ReadonlyMap<string, string> = new Map(),
+  allowsCloudCredential?: (providerId: string, name: string, providerConfig: Record<string, unknown>) => boolean,
 ): { specs: OpencodeV2ProviderSpec[]; skippedProviderIds: string[] } {
   const specs: OpencodeV2ProviderSpec[] = [];
   const skippedProviderIds: string[] = [];
@@ -201,6 +202,11 @@ export function mapRuntimeProvidersToV2Specs(
     // Resolve only this provider's declared credential, never inherit the
     // server environment or copy unrelated secrets into the sidecar.
     const explicitKey = typeof apiKey === "string" && apiKey.trim() !== "" && !apiKey.includes("{env:") ? apiKey : undefined;
+    if (!explicitKey && storedKey && credentialName && /^lpr_/i.test(id)
+      && !allowsCloudCredential?.(id, credentialName, value)) {
+      skippedProviderIds.push(id);
+      continue;
+    }
     const resolvedKey = explicitKey ?? storedKey;
     if (envNames.length > 0 && !resolvedKey) {
       skippedProviderIds.push(id);
@@ -262,7 +268,14 @@ function catalogModelIds(payload: unknown, mirroredProviderIds: string[]): strin
   return [...ids].sort((left, right) => left.localeCompare(right));
 }
 
-export function createEngineV2Preview(options: { config: ServerConfig; env?: Pick<EnvService, "list" | "onChange"> }): EngineV2Preview {
+export function createEngineV2Preview(options: {
+  config: ServerConfig;
+  env?: Pick<EnvService, "list" | "onChange">;
+  cloudCredentials?: {
+    allowsStoredCredential(providerId: string, name: string, providerConfig: Record<string, unknown>): boolean;
+    onCredentialBindingsChange(listener: () => void): () => void;
+  };
+}): EngineV2Preview {
   const { config } = options;
   const rootDir = join(runtimeStorageDir(config), "opencode-v2", "state");
   const workspaceDir = join(rootDir, "workspace");
@@ -308,7 +321,7 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
     if (!active) return;
     const providerMap = runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config));
     const credentials = new Map((await options.env?.list() ?? []).map((entry) => [entry.key, entry.value]));
-    const mapped = mapRuntimeProvidersToV2Specs(providerMap, credentials);
+    const mapped = mapRuntimeProvidersToV2Specs(providerMap, credentials, (id, name, provider) => options.cloudCredentials?.allowsStoredCredential(id, name, provider) ?? false);
     const nextMirroredProviderIds = mapped.specs.map((spec) => spec.id);
     await active.setProviders(mapped.specs);
     mirroredSpecs = mapped.specs;
@@ -397,7 +410,8 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
         scheduleMirror();
       });
       const unsubscribeEnv = options.env?.onChange(scheduleMirror);
-      unsubscribe = () => { unsubscribeConfig(); unsubscribeEnv?.(); };
+      const unsubscribeCredentials = options.cloudCredentials?.onCredentialBindingsChange(scheduleMirror);
+      unsubscribe = () => { unsubscribeConfig(); unsubscribeEnv?.(); unsubscribeCredentials?.(); };
       scheduleMirror();
       if (mirrorInFlight) await mirrorInFlight;
       if (!enabled || !allowRunning) {

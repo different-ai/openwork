@@ -10,6 +10,15 @@
       "override": null
     },
     {
+      "host": "api.anthropic.com",
+      "kind": "fetched",
+      "components": ["server"],
+      "purpose": "Direct native Anthropic model requests when an Anthropic provider is configured and selected.",
+      "requirement": "opt-in",
+      "blockedEffect": "Configured native Anthropic models cannot generate responses.",
+      "override": "provider options.baseURL"
+    },
+    {
       "host": "api.github.com",
       "kind": "fetched",
       "components": ["server"],
@@ -31,9 +40,9 @@
       "host": "api.openai.com",
       "kind": "fetched",
       "components": ["renderer", "server"],
-      "purpose": "Direct OpenAI Realtime voice and image-generation calls when the user provides an OpenAI key.",
+      "purpose": "Direct OpenAI Realtime voice, image generation, and native model requests when an OpenAI provider is configured.",
       "requirement": "opt-in",
-      "blockedEffect": "Direct OpenAI voice or image features fail for users who configured OpenAI.",
+      "blockedEffect": "Direct OpenAI voice, image, or native model requests fail for users who configured OpenAI.",
       "override": null
     },
     {
@@ -269,6 +278,15 @@
       "requirement": "optional",
       "blockedEffect": "Guided fallback OpenCode installation and OpenCode web links fail; packaged builds still use bundled OpenCode.",
       "override": null
+    },
+    {
+      "host": "openrouter.ai",
+      "kind": "fetched",
+      "components": ["server"],
+      "purpose": "Direct native OpenRouter model requests when an OpenRouter provider is configured and selected.",
+      "requirement": "opt-in",
+      "blockedEffect": "Configured native OpenRouter models cannot generate responses.",
+      "override": "provider options.baseURL"
     },
     {
       "host": "openwork.dev",

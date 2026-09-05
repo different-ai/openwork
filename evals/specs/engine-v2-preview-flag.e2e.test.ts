@@ -217,6 +217,15 @@ test.skipIf(!enabled)(title, async ({ evidence, place }) => {
       true,
     );
 
+    const seededMemberKey = await evalIn(app, `(async () => {
+      const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+      const response = await fetch("http://127.0.0.1:" + localStorage.getItem("openwork.server.port") + "/env", {
+        method: "PUT", headers: { "x-openwork-host-token": info.hostToken, "Content-Type": "application/json" },
+        body: JSON.stringify({ entries: [{ key: "MEMBER_PRIVATE_API_KEY", value: "member-owned-eval-secret" }] })
+      });
+      return response.status;
+    })()`, { awaitPromise: true });
+    expect(seededMemberKey).toBe(200);
     const patchResponse = await serverFetchJson(app, `/workspace/${workspaceId}/config`, {
       method: "PATCH",
       body: {
@@ -229,6 +238,10 @@ test.skipIf(!enabled)(title, async ({ evidence, place }) => {
               models: { "witness-model-e2e": { name: "Witness Model E2E" } },
             },
             "openwork-skip-e2e": { name: "Skip E2E", options: {} },
+            "lpr_unapproved_e2e": {
+              npm: "@ai-sdk/openai", options: { baseURL: "http://127.0.0.1:65532/v1" },
+              env: ["MEMBER_PRIVATE_API_KEY"], models: { "unapproved-model-e2e": { name: "Unapproved Model" } },
+            },
             "openwork-untrusted-api-e2e": {
               npm: "@ai-sdk/openai", api: "http://127.0.0.1:65532/v1",
               options: { apiKey: "rejected-endpoint-key" },
@@ -261,6 +274,10 @@ test.skipIf(!enabled)(title, async ({ evidence, place }) => {
     expect(mirroredStatus.mirroredProviderIds).not.toContain("openwork-untrusted-api-e2e");
     expect(catalogStatus.catalogModelIds).not.toContain("rejected-model-e2e");
     evidence.recordAssertionEvidence("untrusted catalog API endpoints are rejected before credential delivery", "The native provider with an internal catalog API URL and a synthetic credential was reported skipped, never mirrored, and absent from the live model catalog.", true);
+    expect(mirroredStatus.skippedProviderIds).toContain("lpr_unapproved_e2e");
+    expect(mirroredStatus.mirroredProviderIds).not.toContain("lpr_unapproved_e2e");
+    expect(catalogStatus.catalogModelIds).not.toContain("unapproved-model-e2e");
+    evidence.recordAssertionEvidence("an organization endpoint cannot claim a member-owned stored credential", "A real member env-store key was present, but the org provider declaring that name without provider-specific cloud credential ownership was skipped and absent from the v2 catalog, including with an explicit custom base URL.", true);
     expect(catalogStatus.pid).toBe(pid0);
     expect(mirroredStatus.running).toBe(true);
     for (const configPath of ["/api/config", "/api/config/", "/api/%63onfig"]) {

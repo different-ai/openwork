@@ -624,6 +624,8 @@ export class CloudProviderSync {
   private skippedProviders: CloudProviderSyncSkippedProvider[] = [];
   private fingerprint: string | null = null;
   private ownedEnvKeys = new Set<string>();
+  private credentialBindings = new Map<string, { config: string; names: Set<string> }>();
+  private readonly credentialListeners = new Set<() => void>();
   private managedProviderIds = new Set<string>();
   private importedAtByCloudProviderId = new Map<string, number>();
   private reloadPending = false;
@@ -746,6 +748,16 @@ export class CloudProviderSync {
     return this.startRun(request);
   }
 
+  allowsStoredCredential(providerId: string, name: string, providerConfig: Record<string, unknown>): boolean {
+    const binding = this.credentialBindings.get(providerId);
+    return binding !== undefined && binding.names.has(name) && binding.config === stableJson(providerConfig);
+  }
+
+  onCredentialBindingsChange(listener: () => void): () => void {
+    this.credentialListeners.add(listener);
+    return () => { this.credentialListeners.delete(listener); };
+  }
+
   status(): CloudProviderSyncStatus {
     return {
       hasSession: this.session !== null,
@@ -786,6 +798,8 @@ export class CloudProviderSync {
     this.skippedProviders = [];
     this.fingerprint = null;
     this.ownedEnvKeys.clear();
+    this.credentialBindings.clear();
+    for (const listener of this.credentialListeners) listener();
     this.managedProviderIds.clear();
     this.importedAtByCloudProviderId.clear();
   }
@@ -992,6 +1006,15 @@ export class CloudProviderSync {
       await this.env.delete(key);
       this.ownedEnvKeys.delete(key);
     }
+
+    // Publish trust only after these provider-supplied values have persisted.
+    // A declared env name alone must not authorize an org endpoint to consume
+    // an unrelated member-owned credential. Bind to the exact applied config.
+    this.credentialBindings = new Map(prepared.providers.map((entry) => [
+      entry.runtimeProviderId,
+      { config: stableJson(entry.config), names: new Set(entry.envEntries.map((item) => item.key)) },
+    ]));
+    for (const listener of this.credentialListeners) listener();
 
     const workspaceCleanup = await this.cleanupWorkspaceTakeovers();
     const engineWorkspace = findManagedEngineWorkspace(this.config.workspaces) ?? this.config.workspaces[0];
