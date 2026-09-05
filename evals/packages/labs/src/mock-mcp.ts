@@ -36,6 +36,8 @@ export interface MockAgentWorkload {
   finalReply: string;
   /** Stream the final reply as consecutive content deltas of this many characters instead of one. */
   finalReplyChunkSize?: number;
+  /** Hold the final response before sending headers, to exercise loading transitions. */
+  finalReplyDelayMs?: number;
   /** Tool calls the agent makes before its final reply; empty answers directly. */
   steps: MockAgentToolStep[];
 }
