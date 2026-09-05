@@ -488,7 +488,27 @@ export async function getValidAccessToken(input: {
     return { error: "client_not_configured" }
   }
 
-  const refreshed = await refreshTokens({ provider: input.provider, client, refreshToken: account.refreshToken })
+  let refreshed: TokenResponse
+  try {
+    refreshed = await refreshTokens({ provider: input.provider, client, refreshToken: account.refreshToken })
+  } catch (error) {
+    if (!(error instanceof OAuthTokenExchangeError) || error.code !== "oauth_invalid_grant") throw error
+
+    // A rejected old grant must not disconnect a newer refresh or reconnect.
+    // Leave persistence untouched: another worker may still be saving its grant.
+    const current = await getConnectedAccount({
+      organizationId: input.organizationId,
+      orgMembershipId: input.orgMembershipId,
+      providerId: input.credentialProviderId,
+    })
+    if (
+      current?.accessToken
+      && (!current.expiresAt || current.expiresAt.getTime() - TOKEN_EXPIRY_SAFETY_WINDOW_MS > Date.now())
+    ) {
+      return { accessToken: current.accessToken, account: current }
+    }
+    return { error: "not_connected" }
+  }
   const expiresAt = refreshed.expires_in ? new Date(Date.now() + refreshed.expires_in * 1000) : null
   const updated = await refreshConnectedAccountForActiveMember({
     organizationId: input.organizationId,
