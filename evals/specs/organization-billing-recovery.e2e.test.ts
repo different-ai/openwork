@@ -29,12 +29,6 @@ test("organization billing survives selection and blocks destructive deletion", 
       "INSERT INTO org_subscriptions (id, organization_id, type, status, stripe_customer_id, stripe_subscription_id, stripe_price_id, quantity, current_period_end, cancel_at_period_end) VALUES (?, ?, 'web', 'active', 'cus_synthetic_billing', 'sub_synthetic_billing', 'price_synthetic_web', 1, DATE_ADD(NOW(), INTERVAL 30 DAY), true)",
       ["osub_00000000000000000000000001", subscribed.id]);
 
-    const blocked = await request("/v1/org", subscribed.id, "DELETE");
-    evidence.recordAssertionEvidence("Scheduled cancellation does not permit deletion of paid access", `DELETE returned HTTP ${blocked.response.status}; expected 409.`, blocked.response.status === 409);
-    expect(blocked.response.status).toBe(409);
-    expect(blocked.body).toMatchObject({ error: "organization_has_subscriptions" });
-    expect(record(blocked.body) && String(blocked.body.message)).toContain("Billing");
-
     for (const orgId of [empty.id, subscribed.id]) {
       const selected = await request("/v1/me/active-organization", orgId, "POST", { organizationId: orgId });
       expect(selected.response.ok).toBe(true);
@@ -50,6 +44,12 @@ test("organization billing survives selection and blocks destructive deletion", 
       expect(record(web) && web.hasEligibleSubscription).toBe(orgId === subscribed.id);
     }
     evidence.recordAssertionEvidence("Switching organizations exposes the subscribed workspace without transferring its access", "Both selections list Subscribed Workspace with subscriptions and Empty Workspace without; only the subscribed organization retains paid Web access.", true);
+
+    const blocked = await request("/v1/org", subscribed.id, "DELETE");
+    evidence.recordAssertionEvidence("Scheduled cancellation does not permit deletion of paid access", `DELETE returned HTTP ${blocked.response.status}; expected 409.`, blocked.response.status === 409);
+    expect(blocked.response.status).toBe(409);
+    expect(blocked.body).toMatchObject({ error: "organization_has_subscriptions" });
+    expect(record(blocked.body) && String(blocked.body.message)).toContain("Billing");
 
     const outsider = await denFetch(den.members.observer, "/v1/me/orgs", {
       headers: { authorization: `Bearer ${den.members.observer.token}` }, signal: AbortSignal.timeout(15_000),
