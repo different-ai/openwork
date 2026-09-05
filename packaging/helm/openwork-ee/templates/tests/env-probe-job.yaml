@@ -46,8 +46,7 @@ spec:
                 ["DEN_ORG_MODE", process.env.OPENWORK_ENV_PROBE_EXPECTED_DEN_ORG_MODE],
                 ["PROVISIONER_MODE", process.env.OPENWORK_ENV_PROBE_EXPECTED_PROVISIONER_MODE],
                 ["OPENWORK_DEV_MODE", process.env.OPENWORK_ENV_PROBE_EXPECTED_OPENWORK_DEV_MODE],
-                ["BETTER_AUTH_URL", process.env.OPENWORK_ENV_PROBE_EXPECTED_BETTER_AUTH_URL],
-                ["DEN_API_PUBLIC_URL", process.env.OPENWORK_ENV_PROBE_EXPECTED_DEN_API_PUBLIC_URL],
+                ["DEN_BASE_URL", process.env.OPENWORK_ENV_PROBE_EXPECTED_DEN_BASE_URL],
                 ["DEN_AUTH_ORIGIN", process.env.OPENWORK_ENV_PROBE_EXPECTED_DEN_AUTH_ORIGIN],
                 ["PORT", process.env.OPENWORK_ENV_PROBE_EXPECTED_PORT],
                 ["NODE_OPTIONS", process.env.OPENWORK_ENV_PROBE_EXPECTED_NODE_OPTIONS],
@@ -57,13 +56,10 @@ spec:
                 "DATABASE_URL",
                 "DEN_DB_ENCRYPTION_KEY",
                 "BETTER_AUTH_SECRET",
-                "BETTER_AUTH_URL",
+                "DEN_BASE_URL",
                 "DB_MODE",
                 "DEN_ORG_MODE",
                 "PROVISIONER_MODE",
-                "DEN_API_PUBLIC_URL",
-                "CORS_ORIGINS",
-                "DEN_BETTER_AUTH_TRUSTED_ORIGINS",
                 "DEN_API_BASE",
                 "DEN_AUTH_FALLBACK_BASE",
                 "DEN_AUTH_ORIGIN",
@@ -170,10 +166,8 @@ spec:
               value: {{ .Values.config.provisioner.mode | quote }}
             - name: OPENWORK_ENV_PROBE_EXPECTED_OPENWORK_DEV_MODE
               value: {{ .Values.config.openworkDevMode | quote }}
-            - name: OPENWORK_ENV_PROBE_EXPECTED_BETTER_AUTH_URL
+            - name: OPENWORK_ENV_PROBE_EXPECTED_DEN_BASE_URL
               value: {{ .Values.config.public.webOrigin | quote }}
-            - name: OPENWORK_ENV_PROBE_EXPECTED_DEN_API_PUBLIC_URL
-              value: {{ .Values.config.public.apiOrigin | quote }}
             - name: OPENWORK_ENV_PROBE_EXPECTED_DEN_AUTH_ORIGIN
               value: {{ .Values.config.public.webOrigin | quote }}
             - name: OPENWORK_ENV_PROBE_EXPECTED_PORT

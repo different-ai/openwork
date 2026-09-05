@@ -23,7 +23,7 @@ import {
   getGithubIntegrationAccountRoute,
   getGithubIntegrationRoute,
   getGithubIntegrationSetupRoute,
-  getIntegrationsRoute,
+  getPluginSourcesRoute,
 } from "../../_lib/den-org";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
@@ -64,7 +64,7 @@ export function GithubIntegrationScreen() {
       <GithubConnectorInstanceRouter
         connectorInstanceId={connectorInstanceId}
         mode={mode}
-        onBack={() => router.push(getIntegrationsRoute(orgSlug))}
+        onBack={() => router.push(getPluginSourcesRoute(orgSlug))}
       />
     );
   }
@@ -686,7 +686,7 @@ function GithubConnectedAccountSelectionPhase({ connectorAccountId }: { connecto
     >
       <div className="mb-6 flex items-center justify-between gap-3">
         <Link
-          href={getIntegrationsRoute(orgSlug)}
+          href={getPluginSourcesRoute(orgSlug)}
           className="inline-flex items-center gap-1.5 text-[13px] text-gray-400 transition hover:text-gray-700"
         >
           <ArrowLeft className="h-4 w-4" />
@@ -845,7 +845,10 @@ function GithubConnectedAccountSelectionPhase({ connectorAccountId }: { connecto
   );
 }
 
-function manifestLabel(kind: "marketplace" | "plugin" | null, marketplacePluginCount: number | null): string | null {
+function manifestLabel(kind: "agent-plugin" | "marketplace" | "plugin" | null, marketplacePluginCount: number | null): string | null {
+  if (kind === "agent-plugin") {
+    return "Agent Plugin Detected";
+  }
   if (kind === "marketplace") {
     if (marketplacePluginCount && marketplacePluginCount > 1) {
       return `Claude Marketplace · ${marketplacePluginCount} plugins`;
@@ -870,7 +873,7 @@ function RepositoryCard({
 }: {
   fullName: string;
   defaultBranch: string | null;
-  manifestKind: "marketplace" | "plugin" | null;
+  manifestKind: "agent-plugin" | "marketplace" | "plugin" | null;
   marketplacePluginCount: number | null;
   configuredInstanceId: string | null;
   configuredHref: string | null;

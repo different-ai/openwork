@@ -1,3 +1,10 @@
+import {
+  AGENT_PLUGIN_V1_SUPPORTED_VERSIONS,
+  isAgentPluginManifestSchema,
+  validateAgentPluginV1Manifest,
+} from "./agent-plugin-v1.js"
+import type { AgentPluginV1Version } from "./agent-plugin-v1.js"
+
 type GithubDiscoveryTreeEntryKind = "blob" | "tree"
 
 export type GithubDiscoveryTreeEntry = {
@@ -9,6 +16,7 @@ export type GithubDiscoveryTreeEntry = {
 }
 
 export type GithubDiscoveryClassification =
+  | "agent_plugin_repo"
   | "claude_marketplace_repo"
   | "claude_multi_plugin_repo"
   | "claude_single_plugin_repo"
@@ -16,6 +24,7 @@ export type GithubDiscoveryClassification =
   | "unsupported"
 
 export type GithubDiscoveredPluginSourceKind =
+  | "agent_plugin_manifest"
   | "marketplace_entry"
   | "plugin_manifest"
   | "standalone_claude"
@@ -51,6 +60,7 @@ export type GithubDiscoveredPlugin = {
   rootPath: string
   selectedByDefault: boolean
   sourceKind: GithubDiscoveredPluginSourceKind
+  sourceSchemaVersion: AgentPluginV1Version | null
   supported: boolean
   warnings: string[]
 }
@@ -343,6 +353,7 @@ function buildDiscoveredPlugin(input: {
     rootPath: normalizePath(input.rootPath),
     selectedByDefault: input.supported !== false,
     sourceKind: input.sourceKind,
+    sourceSchemaVersion: null,
     supported: input.supported !== false,
     warnings: input.warnings ?? [],
   } satisfies GithubDiscoveredPlugin
@@ -370,6 +381,67 @@ function pluginRootsFromManifests(entries: GithubDiscoveryTreeEntry[]) {
     .map((entry) => normalizePath(entry.path))
     .filter((path) => path.endsWith(".claude-plugin/plugin.json"))
     .map((path) => path.slice(0, -"/.claude-plugin/plugin.json".length))
+}
+
+function agentPluginManifestCandidates(input: {
+  entries: GithubDiscoveryTreeEntry[]
+  fileTextByPath: Record<string, string | null | undefined>
+}) {
+  return input.entries.flatMap((entry) => {
+    const path = normalizePath(entry.path)
+    if (entry.kind !== "blob" || (path !== "plugin.json" && !path.endsWith("/plugin.json"))) return []
+    const value = readJsonMap(input.fileTextByPath, path)
+    if (!isRecord(value) || !isAgentPluginManifestSchema(value.$schema)) return []
+    return [{
+      path,
+      rootPath: path === "plugin.json" ? "" : path.slice(0, -"/plugin.json".length),
+      value,
+    }]
+  })
+}
+
+function agentPluginComponentPaths(input: {
+  entries: GithubDiscoveryTreeEntry[]
+  rootPath: string
+}) {
+  const skillsPrefix = joinPath(input.rootPath, "skills")
+  const skillEntrypoints = input.entries
+    .filter((entry) => entry.kind === "blob")
+    .map((entry) => normalizePath(entry.path))
+    .filter((path) => {
+      if (!path.startsWith(`${skillsPrefix}/`) || !path.endsWith("/SKILL.md")) return false
+      return path.slice(skillsPrefix.length + 1).split("/").length === 2
+    })
+    .sort()
+  const mcpPath = joinPath(input.rootPath, "mcp.json")
+  const hasMcp = input.entries.some((entry) => entry.kind === "blob" && normalizePath(entry.path) === mcpPath)
+  return {
+    agents: [],
+    commands: [],
+    hooks: [],
+    lspServers: [],
+    mcpServers: hasMcp ? [mcpPath] : [],
+    monitors: [],
+    settings: [],
+    skills: skillEntrypoints,
+  } satisfies GithubDiscoveredPlugin["componentPaths"]
+}
+
+function agentPluginAssetWarnings(input: {
+  componentPaths: GithubDiscoveredPlugin["componentPaths"]
+  entries: GithubDiscoveryTreeEntry[]
+}) {
+  const extraAssetCount = input.componentPaths.skills.reduce((count, skillPath) => {
+    const skillDirectory = skillPath.slice(0, -"/SKILL.md".length)
+    return count + input.entries.filter((entry) => (
+      entry.kind === "blob"
+      && normalizePath(entry.path).startsWith(`${skillDirectory}/`)
+      && normalizePath(entry.path) !== skillPath
+    )).length
+  }, 0)
+  return extraAssetCount > 0
+    ? [`${extraAssetCount} additional skill asset${extraAssetCount === 1 ? " was" : "s were"} found. OpenWork imports the SKILL.md entrypoint; referenced skill assets are not installed yet.`]
+    : []
 }
 
 function inferredRootsFromKnownFolders(entries: GithubDiscoveryTreeEntry[]) {
@@ -462,7 +534,63 @@ export function buildGithubRepoDiscovery(input: {
     } satisfies GithubRepoDiscoveryResult
   }
 
+  // Preserve the existing Claude-compatible interpretation when a repository
+  // deliberately carries both formats. Agent Plugins become the repo format
+  // only when no explicit Claude plugin manifest is present.
   const manifestRoots = [...new Set(pluginRootsFromManifests(input.entries))]
+  const agentPluginCandidates = manifestRoots.length === 0 ? agentPluginManifestCandidates(input) : []
+  if (agentPluginCandidates.length > 0) {
+    const discoveredPlugins = agentPluginCandidates.map((candidate) => {
+      const validation = validateAgentPluginV1Manifest(candidate.value)
+      const componentPaths = validation.ok
+        ? agentPluginComponentPaths({ entries: input.entries, rootPath: candidate.rootPath })
+        : {
+            agents: [],
+            commands: [],
+            hooks: [],
+            lspServers: [],
+            mcpServers: [],
+            monitors: [],
+            settings: [],
+            skills: [],
+          }
+      const componentKinds = componentKindsFromPaths(componentPaths)
+      const componentWarnings = validation.ok
+        ? agentPluginAssetWarnings({ componentPaths, entries: input.entries })
+        : []
+      const hasSupportedComponents = componentPaths.skills.length > 0 || componentPaths.mcpServers.length > 0
+      const validationWarnings = validation.ok ? validation.warnings : [...validation.warnings, ...validation.errors]
+      const noComponentsWarning = !validation.ok || hasSupportedComponents
+        ? []
+        : ["This Agent Plugin has no skills or MCP configuration that OpenWork can import."]
+      const manifestName = typeof candidate.value.name === "string" ? candidate.value.name : null
+      const manifestDescription = typeof candidate.value.description === "string" ? candidate.value.description : null
+
+      return {
+        componentKinds,
+        componentPaths,
+        description: manifestDescription,
+        displayName: manifestName || basename(candidate.rootPath) || "Agent Plugin",
+        key: `agent-plugin:${candidate.rootPath || "root"}`,
+        manifestPath: candidate.path,
+        metadata: validation.ok ? validation.manifest : {},
+        rootPath: candidate.rootPath,
+        selectedByDefault: validation.ok && hasSupportedComponents,
+        sourceKind: "agent_plugin_manifest",
+        sourceSchemaVersion: validation.ok ? validation.schemaVersion : null,
+        supported: validation.ok && hasSupportedComponents,
+        warnings: [...validationWarnings, ...componentWarnings, ...noComponentsWarning],
+      } satisfies GithubDiscoveredPlugin
+    })
+
+    return {
+      classification: "agent_plugin_repo",
+      discoveredPlugins,
+      marketplace: null,
+      warnings: discoveredPlugins.flatMap((plugin) => plugin.warnings.map((warning) => `${plugin.displayName}: ${warning}`)),
+    } satisfies GithubRepoDiscoveryResult
+  }
+
   if (manifestRoots.length > 0) {
     const discoveredPlugins = manifestRoots.map((rootPath) => buildDiscoveredPlugin({
       fileTextByPath: input.fileTextByPath,
@@ -508,7 +636,7 @@ export function buildGithubRepoDiscovery(input: {
   //   } satisfies GithubRepoDiscoveryResult
   // }
 
-  warnings.push("OpenWork currently only supports Claude-compatible plugins and marketplaces. Add `.claude-plugin/marketplace.json` or `.claude-plugin/plugin.json` to this repository.")
+  warnings.push(`OpenWork supports Agent Plugins ${AGENT_PLUGIN_V1_SUPPORTED_VERSIONS.join(" and ")} and Claude-compatible plugins. Add a standards-compliant plugin.json, .claude-plugin/marketplace.json, or .claude-plugin/plugin.json to this repository.`)
 
   return {
     classification: "unsupported",

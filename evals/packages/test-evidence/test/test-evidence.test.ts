@@ -55,6 +55,10 @@ test("test evidence writes visual validations, assertions, failures, and unvalid
     testEvidence.recordVisualValidation(passing.hash, seen("Passing screenshot", true));
     testEvidence.recordVisualValidation(failing.hash, seen("Failing screenshot", false));
     testEvidence.recordAssertionEvidence("API returned success", "HTTP 200", true);
+    testEvidence.recordTrace({ stage: "world", channel: "seed", verb: "den", detail: "den(local)", ok: true });
+    testEvidence.recordTrace({ stage: "body", channel: "user", verb: "reload", detail: "reload", ok: true });
+    testEvidence.recordStep({ name: "reload succeeds", depth: 0, ok: true, ms: 25 });
+    testEvidence.setOutcome("failed", "expected test failure");
     await testEvidence.close();
 
     const testRun = await payload(dir);
@@ -70,6 +74,17 @@ test("test evidence writes visual validations, assertions, failures, and unvalid
       pendingJudgments: 0,
     });
     assert.ok(Array.isArray(testRun.artifacts));
+    assert.ok(Array.isArray(testRun.trace));
+    assert.equal(testRun.trace.length, 2);
+    assert.ok(isRecord(testRun.trace[0]));
+    assert.equal(testRun.trace[0].seq, 1);
+    assert.equal(testRun.trace[0].stage, "world");
+    assert.ok(isRecord(testRun.trace[1]));
+    assert.equal(testRun.trace[1].seq, 2);
+    assert.equal(testRun.trace[1].channel, "user");
+    assert.deepEqual(testRun.steps, [{ seq: 1, name: "reload succeeds", depth: 0, ok: true, ms: 25 }]);
+    assert.equal(testRun.outcome, "failed");
+    assert.equal(testRun.failure, "expected test failure");
     assert.deepEqual(
       testRun.artifacts.map((artifact) => isRecord(artifact) ? artifact.caption : null),
       ["Passing screenshot", "Failing screenshot", "API returned success", "body cam artifact 3"],
@@ -89,6 +104,46 @@ test("test evidence writes visual validations, assertions, failures, and unvalid
     assert.match(index, /unvalidated artifacts \(1\)/);
     assert.doesNotMatch(index, /<img src=""/);
   } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("test evidence writes a JSON artifact and lists it in the test run", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "openwork-test-evidence-json-"));
+  try {
+    const testEvidence = createTestEvidence({ name: "world evidence", outDir: dir });
+    testEvidence.recordJsonArtifact("world-snapshot primary", { version: 1, name: "primary" });
+    await testEvidence.close();
+
+    assert.deepEqual(JSON.parse(await readFile(join(dir, "01-world-snapshot-primary.json"), "utf8")), {
+      version: 1,
+      name: "primary",
+    });
+    const testRun = await payload(dir);
+    assert.deepEqual(testRun.artifacts, [{
+      kind: "json",
+      label: "world-snapshot primary",
+      fileName: "01-world-snapshot-primary.json",
+    }]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("test evidence records the selected engine in JSON and the HTML header", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "openwork-test-evidence-engine-"));
+  const previous = process.env.OPENWORK_EVAL_ENGINE;
+  process.env.OPENWORK_EVAL_ENGINE = "v2";
+  try {
+    const testEvidence = createTestEvidence({ name: "engine lane", outDir: dir });
+    await testEvidence.close();
+
+    const testRun = await payload(dir);
+    assert.equal(testRun.engine, "v2");
+    assert.match(await readFile(join(dir, "index.html"), "utf8"), /engine v2/);
+  } finally {
+    if (previous === undefined) delete process.env.OPENWORK_EVAL_ENGINE;
+    else process.env.OPENWORK_EVAL_ENGINE = previous;
     await rm(dir, { recursive: true, force: true });
   }
 });

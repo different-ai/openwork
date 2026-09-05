@@ -2,8 +2,11 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  parseArgs,
   pruneDaytonaDevSnapshots,
+  pruneDaytonaSnapshots,
   selectDevSnapshotPrunes,
+  selectReleaseSnapshotPrunes,
 } from "./prune-daytona-dev-snapshots.mjs"
 
 const apiKey = "test-daytona-api-key"
@@ -71,6 +74,115 @@ test("selection prunes only unprotected dev snapshots", () => {
     ["openwork-dev-recent-2", "recent"],
   ])
   assert.equal(result.prune.some((item) => !item.name.startsWith("openwork-dev-")), false)
+})
+
+test("release selection prunes only unprotected release snapshots", () => {
+  const snapshots = [
+    snapshot("old", "openwork-0.18.1", "2026-01-01T00:00:00Z"),
+    snapshot("rc", "openwork-0.18.2-rc.1", "2026-01-02T00:00:00Z"),
+    snapshot("explicit", "openwork-0.18.3", "2026-01-03T00:00:00Z"),
+    snapshot("pulling", "openwork-0.18.4", "2026-01-04T00:00:00Z", "pulling"),
+    snapshot("active", "openwork-0.18.5", "2026-01-05T00:00:00Z"),
+    snapshot("recent-1", "openwork-0.18.6", "2026-01-06T00:00:00Z"),
+    snapshot("recent-2", "openwork-0.18.7", "2026-01-07T00:00:00Z"),
+    snapshot("dev", "openwork-dev-abc1234", "2026-01-08T00:00:00Z"),
+    snapshot("base", "daytonaio/sandbox:0.8.0", "2026-01-09T00:00:00Z"),
+    snapshot("windows", "windows-small", "2026-01-10T00:00:00Z"),
+  ]
+  const sandboxes = [
+    { id: "started", state: "started", snapshot: "openwork-0.18.5" },
+    { id: "stopped", state: "stopped", snapshot: "openwork-0.18.1" },
+  ]
+
+  const result = selectReleaseSnapshotPrunes({
+    snapshots,
+    sandboxes,
+    nameBase: "openwork",
+    keepNames: ["openwork-0.18.3"],
+    keepCount: 2,
+  })
+
+  assert.deepEqual(result.prune.map((item) => item.name), [
+    "openwork-0.18.1",
+    "openwork-0.18.2-rc.1",
+  ])
+  assert.deepEqual(result.keep.map((item) => [item.name, item.reason]), [
+    ["openwork-0.18.3", "explicit"],
+    ["openwork-0.18.4", "in-flight"],
+    ["openwork-0.18.5", "active-ref"],
+    ["openwork-0.18.6", "recent"],
+    ["openwork-0.18.7", "recent"],
+  ])
+  assert.equal(
+    result.prune.concat(result.keep).some((item) => item.name.includes("-dev-")),
+    false,
+  )
+})
+
+test("release channel defaults to keeping the 20 newest release snapshots", async () => {
+  const snapshots = Array.from({ length: 21 }, (_, index) =>
+    snapshot(
+      `release-${index}`,
+      `openwork-0.18.${index}`,
+      `2026-01-${String(index + 1).padStart(2, "0")}T00:00:00Z`,
+    ),
+  )
+  const { calls, fetchImpl } = inventoryFetch(snapshots)
+
+  const result = await pruneDaytonaSnapshots({
+    apiKey,
+    channel: "release",
+    keepNames: ["openwork-0.18.20"],
+    fetchImpl,
+    log: () => {},
+  })
+
+  assert.deepEqual(result.prune.map((item) => item.name), ["openwork-0.18.0"])
+  assert.equal(result.keep.length, 20)
+  assert.deepEqual(
+    calls.filter((call) => call.options.method === "DELETE").map((call) => call.url),
+    [`${apiUrl}/snapshots/release-0`],
+  )
+})
+
+test("release channel never deletes dev snapshots even when unprotected", async () => {
+  const snapshots = [
+    snapshot("dev-old", "openwork-dev-old", "2026-01-01T00:00:00Z"),
+    snapshot("release-old", "openwork-0.18.1", "2026-01-02T00:00:00Z"),
+    snapshot("release-new", "openwork-0.18.2", "2026-01-03T00:00:00Z"),
+  ]
+  const { calls, fetchImpl } = inventoryFetch(snapshots)
+
+  await pruneDaytonaSnapshots({
+    apiKey,
+    channel: "release",
+    keepNames: ["openwork-0.18.2"],
+    keepCount: 1,
+    fetchImpl,
+    log: () => {},
+  })
+
+  assert.deepEqual(
+    calls.filter((call) => call.options.method === "DELETE").map((call) => call.url),
+    [`${apiUrl}/snapshots/release-old`],
+  )
+})
+
+test("parseArgs resolves channel and rejects unknown channels", () => {
+  const options = parseArgs([
+    "--channel",
+    "release",
+    "--keep",
+    "openwork-0.18.2",
+  ])
+  assert.equal(options.channel, "release")
+  assert.equal(options.keepCount, undefined)
+
+  assert.equal(parseArgs(["--keep", "openwork-dev-a"]).channel, "dev")
+  assert.throws(
+    () => parseArgs(["--channel", "nightly", "--keep", "openwork-dev-a"]),
+    /Invalid channel/,
+  )
 })
 
 test("exactly keepCount in-scope snapshots prunes nothing", () => {

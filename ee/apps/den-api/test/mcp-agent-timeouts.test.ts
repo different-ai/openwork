@@ -116,7 +116,10 @@ test("agent MCP server exposes steering instructions during initialize", async (
   await client.connect(transports.client)
 
   expect(client.getInstructions()).toBe(agentModule.AGENT_MCP_INSTRUCTIONS)
-  expect(client.getInstructions()).toContain("search_capabilities and execute_capability")
+  expect(client.getInstructions()).toContain("Use create_skill")
+  expect(client.getInstructions()).toContain("do not route these flows through execute_capability, postPlugins, or postConfigObjectsVersions")
+  expect(client.getInstructions()).toContain("update_skill to publish a new immutable version")
+  expect(client.getInstructions()).toContain("Do not execute the same status again when the search response includes connectionAction")
   expect(client.getInstructions()).toContain("create-skill")
   expect(client.getInstructions()).toContain("share-plugin")
   expect(client.getInstructions()).toContain("add-to-marketplace")
@@ -134,6 +137,9 @@ test("agent MCP server exposes steering instructions during initialize", async (
   expect(client.getInstructions()).toContain("always attempts the downstream provider call")
   expect(client.getInstructions()).toContain("invalid_capability_arguments")
   expect(client.getInstructions()).toContain("never retry the same arguments unchanged")
+  expect(client.getInstructions()).toContain("on the remote session")
+  expect(client.getInstructions()).toContain("remote-session:create")
+  expect(client.getInstructions()).toContain("OpenWork Web instance")
 
   await client.close()
   await server.close()
@@ -178,10 +184,11 @@ test("built-in cloud skills are searchable and executable as skill capabilities"
     provenance: "Built into OpenWork Cloud.",
   })
   expect(createSkill?.content).toContain("name: create-skill")
-  expect(createSkill?.content).toContain("postPlugins")
-  expect(createSkill?.content).toContain("409 duplicate_plugin")
+  expect(createSkill?.content).toContain("openwork-cloud_create_skill")
+  expect(createSkill?.content).toContain("Do not route this flow through `execute_capability` or `postPlugins`")
+  expect(createSkill?.content).toContain("`duplicate_plugin`")
   expect(createSkill?.content).toContain("share-plugin")
-  expect(createSkill?.content).toContain("Do not send `marketplaceId` or `orgWide`")
+  expect(createSkill?.content).toContain("Do not attach it to a marketplace or grant org-wide access")
   expect(createSkill?.content).not.toContain("Set organization-wide access or a marketplace")
 
   const addToMarketplace = executeBuiltinSkillCapability(BUILTIN_ADD_TO_MARKETPLACE_CAPABILITY)
@@ -289,6 +296,24 @@ test("capability search results include structured output alongside text compati
 
   expect(result.structuredContent).toEqual({ matches })
   expect(JSON.parse(result.content[0]?.text ?? "{}")).toEqual({ matches })
+  const connectionStatus = {
+    version: 1, kind: "connection_action", source: "openwork-cloud",
+    layer: "mcp_connection", errorCode: "not_connected", authType: "oauth", credentialMode: "per_member",
+    connectionId: "emc_notes", connectionName: "Notes", state: "needs_connection",
+    actor: "member", message: "Connect your notes account.",
+    action: { type: "connect", label: "Connect Notes", surface: "openwork_your_connections", retry: "search_capabilities" },
+  }
+  const blocked = [{ ...matches[0], kind: "connection_status", connectionStatus }]
+  const quiet = agentModule.capabilitySearchToolResult(blocked)
+  expect(quiet.structuredContent.matches).toEqual(blocked)
+  expect(quiet.structuredContent.connectionAction).toBeUndefined()
+  expect(quiet._meta).toBeUndefined()
+  const actionable = agentModule.capabilitySearchToolResult(blocked, undefined, null, true)
+  expect(actionable.structuredContent.matches).toEqual(blocked)
+  expect(actionable.structuredContent.connectionAction?.connectionId).toBe("emc_notes")
+  expect(actionable._meta?.["openwork/mcpApp"].arguments).toEqual({ connectionId: "emc_notes" })
+  expect(agentModule.SEARCH_CAPABILITIES_OUTPUT_SCHEMA.safeParse(actionable.structuredContent).success).toBe(true)
+  expect(result._meta).toBeUndefined()
 })
 
 test("capability search preserves the bounded-fanout coverage warning", () => {
@@ -491,3 +516,21 @@ test("connection status only outranks equally relevant callable tools", () => {
   expect(matches[0]?.kind).toBe("connection_status")
   expect(matches[0]?.score).toBe(20)
 })
+
+
+test("connector discovery includes every preset and separates setup suggestions from tools", async () => {
+  const { connectorCatalogForQuery } = await import("../src/mcp/connector-catalog.js");
+  const { EXTERNAL_MCP_PRESETS } = await import("../src/capability-sources/external-mcp-presets.js");
+  const catalog = connectorCatalogForQuery("Please connect Slack");
+  expect(catalog?.selectedIds).toEqual(["slack"]);
+  expect(catalog?.entries.map(entry => entry.id)).toEqual(["google-workspace", "microsoft-365", ...EXTERNAL_MCP_PRESETS.map(preset => preset.presetId)]);
+  expect(catalog?.entries.find(entry => entry.id === "slack")?.setup).toBe("oauth_client");
+  expect(connectorCatalogForQuery("slacker")).toBeNull();
+  expect(connectorCatalogForQuery("write a report")).toBeNull();
+  expect(connectorCatalogForQuery("all quick adds")?.selectedIds).toEqual([]);
+  expect(connectorCatalogForQuery("Slack", true)?.selectedIds).toEqual([]);
+  const result = agentModule.capabilitySearchToolResult([], undefined, catalog);
+  expect(result.structuredContent.connectorCatalog).toEqual(catalog);
+  expect(result.structuredContent.hint).toContain("not connected tools");
+  for (const entry of catalog?.entries ?? []) expect(new URL(entry.setupUrl).searchParams.get("quickAdd")).toBe(entry.id);
+});

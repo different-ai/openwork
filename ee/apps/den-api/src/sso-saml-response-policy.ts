@@ -11,8 +11,7 @@ const parser = new XMLParser({
 export type SamlResponsePolicyInput = {
   samlResponse: string
   expectedAudience: string
-  expectedRecipient: string
-  expectedDestination: string
+  expectedAcsUrls: string[]
 }
 
 type SamlResponsePolicyFailure = { ok: false; code: string; message: string }
@@ -31,7 +30,7 @@ export function validateSamlResponsePolicy(input: SamlResponsePolicyInput): Saml
   }
 
   const destination = stringAttribute(response, "Destination")
-  if (!sameUrl(destination, input.expectedDestination)) {
+  if (!matchesAnyUrl(destination, input.expectedAcsUrls)) {
     return invalid("invalid_destination", "SAML response Destination does not match the configured ACS URL.")
   }
 
@@ -56,7 +55,7 @@ export function validateSamlResponsePolicy(input: SamlResponsePolicyInput): Saml
     return invalid("missing_recipient", "SAML assertion is missing SubjectConfirmationData Recipient.")
   }
 
-  if (!recipients.every((recipient) => sameUrl(recipient, input.expectedRecipient))) {
+  if (!recipients.every((recipient) => matchesAnyUrl(recipient, input.expectedAcsUrls))) {
     return invalid("invalid_recipient", "SAML assertion Recipient does not match the configured ACS URL.")
   }
 
@@ -128,10 +127,12 @@ function textValue(value: unknown) {
   return typeof text === "string" && text.length > 0 ? text : null
 }
 
-function sameUrl(value: string | null, expected: string) {
+function matchesAnyUrl(value: string | null, expected: string[]) {
   const normalizedValue = normalizeUrl(value)
-  const normalizedExpected = normalizeUrl(expected)
-  return normalizedValue !== null && normalizedExpected !== null && normalizedValue === normalizedExpected
+  if (normalizedValue === null) {
+    return false
+  }
+  return expected.some((candidate) => normalizeUrl(candidate) === normalizedValue)
 }
 
 function normalizeUrl(value: string | null) {

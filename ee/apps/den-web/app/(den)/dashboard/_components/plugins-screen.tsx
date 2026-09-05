@@ -1,14 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import {
   Cable,
+  GitFork,
   Plus,
   Puzzle,
   Search,
   Server,
-  Store,
   Terminal,
   Users,
   Webhook,
@@ -16,10 +17,11 @@ import {
 import { UnderlineTabs } from "../../_components/ui/tabs";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenInput } from "../../_components/ui/input";
-import { buttonVariants } from "../../_components/ui/button";
-import { getIntegrationsRoute, getNewPluginRoute, getPluginRoute } from "../../_lib/den-org";
+import { buttonVariants, DenButton } from "../../_components/ui/button";
+import { DenNotice } from "../../_components/ui/notice";
+import { getNewPluginRoute, getPluginRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { useHasAnyIntegration } from "./integration-data";
+import { useIntegrations } from "./integration-data";
 import {
   type DenPlugin,
   getPluginCategoryLabel,
@@ -29,8 +31,9 @@ import {
 } from "./plugin-data";
 import { DenCatalogList, DenCatalogRow } from "../../_components/ui/catalog-row";
 import { CatalogIdentityTile } from "./catalog-identity-tile";
+import { IntegrationsPanel } from "./integrations-screen";
 
-type PluginView = "plugins" | "agents" | "commands" | "hooks" | "mcps";
+type PluginView = "plugins" | "agents" | "commands" | "hooks" | "mcps" | "sources";
 
 const PLUGIN_TABS = [
   { value: "plugins" as const, label: "Plugins", icon: Puzzle },
@@ -38,13 +41,25 @@ const PLUGIN_TABS = [
   { value: "commands" as const, label: "Commands", icon: Terminal },
   { value: "hooks" as const, label: "Hooks", icon: Webhook },
   { value: "mcps" as const, label: "MCPs", icon: Server },
+  { value: "sources" as const, label: "Sources", icon: GitFork },
 ];
 
+const SEARCH_PLACEHOLDERS: Record<PluginView, string> = {
+  plugins: "Search plugins...",
+  agents: "Search agents...",
+  commands: "Search commands...",
+  hooks: "Search hooks...",
+  mcps: "Search MCPs...",
+  sources: "Search sources...",
+};
+
 export function PluginsScreen() {
+  const searchParams = useSearchParams();
   const { orgSlug } = useOrgDashboard();
   const { data: plugins = [], isLoading, error } = usePlugins();
-  const { hasAny: hasAnyIntegration, isLoading: integrationsLoading } = useHasAnyIntegration();
-  const [activeView, setActiveView] = useState<PluginView>("plugins");
+  const { data: connections = [], isLoading: integrationsLoading } = useIntegrations();
+  const hasAnyIntegration = connections.length > 0;
+  const [activeView, setActiveView] = useState<PluginView>(searchParams.get("view") === "sources" ? "sources" : "plugins");
   const [query, setQuery] = useState("");
 
   const normalizedQuery = query.trim().toLowerCase();
@@ -142,24 +157,16 @@ export function PluginsScreen() {
     commands: allCommands.length,
     hooks: allHooks.length,
     mcps: allMcps.length,
+    sources: connections.length,
   };
 
-  const searchPlaceholder =
-    activeView === "plugins"
-      ? "Search plugins..."
-      : activeView === "agents"
-          ? "Search agents..."
-          : activeView === "commands"
-            ? "Search commands..."
-            : activeView === "hooks"
-              ? "Search hooks..."
-              : "Search MCPs...";
+  const searchPlaceholder = SEARCH_PLACEHOLDERS[activeView];
 
   return (
     <DashboardPageTemplate
       icon={Puzzle}
       title="Plugin Directory"
-      description="Discover and manage plugins — bundles of skills, hooks, MCP servers, agents, and commands that extend your workers."
+      description="Discover and manage plugins — bundles of skills, hooks, MCP servers, agents, and commands — and the sources they are imported from."
       colors={["#EDE9FE", "#4C1D95", "#7C3AED", "#C4B5FD"]}
     >
       <div className="mb-8 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
@@ -170,34 +177,41 @@ export function PluginsScreen() {
             onChange={setActiveView}
             showZeroCounts
           />
-          <div>
-            <DenInput
-              type="search"
-              icon={Search}
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={searchPlaceholder}
-            />
-          </div>
+          {activeView !== "sources" ? (
+            <div>
+              <DenInput
+                type="search"
+                icon={Search}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={searchPlaceholder}
+              />
+            </div>
+          ) : null}
         </div>
-        <Link href={getNewPluginRoute(orgSlug)} className={buttonVariants({ variant: "primary" })}>
-          <Plus size={15} />
-          Create plugin
-        </Link>
+        {activeView !== "sources" ? (
+          <Link href={getNewPluginRoute(orgSlug)} className={buttonVariants({ variant: "primary" })}>
+            <Plus size={15} />
+            Create plugin
+          </Link>
+        ) : null}
       </div>
 
       {error ? (
-        <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700">
-          {error instanceof Error ? error.message : "Failed to load plugins."}
-        </div>
+        <DenNotice
+          message={error instanceof Error ? error.message : "Failed to load plugins."}
+          className="mb-6"
+        />
       ) : null}
 
-      {isLoading || integrationsLoading ? (
+      {activeView === "sources" ? (
+        <IntegrationsPanel />
+      ) : isLoading || integrationsLoading ? (
         <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
           Loading plugin catalog...
         </div>
       ) : !hasAnyIntegration && plugins.length === 0 ? (
-        <ConnectIntegrationEmptyState integrationsHref={getIntegrationsRoute(orgSlug)} />
+        <ConnectIntegrationEmptyState onOpenSources={() => setActiveView("sources")} />
       ) : activeView === "plugins" ? (
         filteredPlugins.length === 0 ? (
           <EmptyState
@@ -293,7 +307,7 @@ export function PluginsScreen() {
             title: mcp.name,
             description: mcp.description,
             pluginName: mcp.pluginName,
-            meta: `${mcp.transport} · ${mcp.toolCount} tool${mcp.toolCount === 1 ? "" : "s"}`,
+            meta: `${mcp.transport}${mcp.toolCount > 0 ? ` · ${mcp.toolCount} tool${mcp.toolCount === 1 ? "" : "s"}` : ""}`,
             href: getPluginRoute(orgSlug, mcp.pluginId),
           }))}
         />
@@ -320,27 +334,23 @@ function EmptyState({ title, description }: { title: string; description: string
   );
 }
 
-function ConnectIntegrationEmptyState({ integrationsHref }: { integrationsHref: string }) {
+function ConnectIntegrationEmptyState({ onOpenSources }: { onOpenSources: () => void }) {
   return (
     <div className="rounded-[32px] border border-dashed border-gray-200 bg-white px-6 py-12 text-center">
       <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-[14px] bg-gray-100 text-gray-500">
         <Cable className="h-6 w-6" />
       </div>
       <p className="text-[16px] font-medium tracking-[-0.03em] text-gray-900">
-        Connect an integration to discover plugins
+        Connect a source to discover plugins
       </p>
       <p className="mx-auto mt-3 max-w-[520px] text-[15px] leading-8 text-gray-500">
-        Plugins, skills, hooks, and MCP servers are sourced from the repositories you connect on the
-        Integrations page. Connect GitHub or Bitbucket to see your catalog populate.
+        Plugins, skills, hooks, and MCP servers are sourced from the repositories you connect in the
+        Sources tab. Connect GitHub to see your catalog populate.
       </p>
       <div className="mt-6 flex justify-center">
-        <Link
-          href={integrationsHref}
-          className={buttonVariants({ variant: "primary" })}
-        >
-          <Cable className="h-4 w-4" aria-hidden="true" />
-          Open Integrations
-        </Link>
+        <DenButton icon={Cable} onClick={onOpenSources}>
+          Open Sources
+        </DenButton>
       </div>
     </div>
   );

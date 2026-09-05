@@ -1,251 +1,51 @@
-import { and, desc, eq, gte, isNull, sql, type SQL } from "@openwork-ee/den-db/drizzle"
+import { and, desc, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   TelemetryEventTable,
-  TelemetryEventType,
   TelemetrySessionDimensionTable,
   MemberTable,
   InvitationTable,
 } from "@openwork-ee/den-db/schema"
+import {
+  ANALYTICS_TREND_WEEKS,
+  buildSessionDimensionUpsert,
+  isKnownTelemetryEventType,
+  isKnownTelemetrySource,
+  normalizeTelemetrySource,
+  readWindowMetrics,
+  sessionDimensionKey,
+  telemetryAdoptionResponseSchema,
+  telemetryAnalyticsQuerySchema,
+  telemetryAnalyticsResponseSchema,
+  telemetryDimensionListResponseSchema,
+  telemetryDimensionsQuerySchema,
+  telemetryIngestBatchSchema,
+  telemetryWindowConditions,
+  weekIndexExpression,
+  windowMetricsSelection,
+  type DimensionFilter,
+  type TelemetryDimensionInput,
+  type TelemetryOrgId,
+} from "@openwork-ee/telemetry"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
-import { z } from "zod"
 import { db } from "../../db.js"
 import { checkEntitlement } from "../../entitlements.js"
 import { jsonValidator, orgMemberRoute, orgRoleRoute, queryValidator } from "../../middleware/index.js"
 import { enterprisePlanRequiredSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema, emptyResponse } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 import type { UserOrganizationsContext, OrganizationContextVariables } from "../../middleware/index.js"
-import { deriveDimensionValue } from "./dimension-value.js"
 
 type TelemetryRouteVariables = AuthContextVariables & Partial<UserOrganizationsContext> & Partial<OrganizationContextVariables>
 
-const allowedEventTypes = new Set<string>(TelemetryEventType)
-const allowedSources = new Set(["app", "worker"])
-const DIMENSION_METADATA_MAX_BYTES = 4096
+const DAY_MS = 24 * 60 * 60 * 1000
 
-const dimensionTypeSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(64)
-  .transform((value) => value.toLowerCase())
-  .refine((value) => /^[a-z][a-z0-9_.-]{0,63}$/.test(value), {
-    message: "Dimension type must start with a lowercase letter and contain only lowercase letters, numbers, dots, underscores, or hyphens.",
-  })
-
-const dimensionValueSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(128)
-  .refine((value) => /^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,127}$/.test(value), {
-    message: "Dimension value must contain only letters, numbers, dots, underscores, colons, slashes, or hyphens.",
-  })
-
-const dimensionMetadataSchema = z
-  .record(z.string(), z.unknown())
-  .refine((value) => Buffer.byteLength(JSON.stringify(value), "utf8") <= DIMENSION_METADATA_MAX_BYTES, {
-    message: "Dimension metadata is too large.",
-  })
-
-const telemetryDimensionSchema = z.object({
-  type: dimensionTypeSchema,
-  value: dimensionValueSchema.optional(),
-  label: z.string().trim().min(1).max(255),
-  metadata: dimensionMetadataSchema.optional(),
-})
-
-const ingestBodySchema = z.object({
-  type: z.string().min(1).max(64),
-  timestamp: z.string().datetime(),
-  source: z.string().max(32).optional(),
-  sessionId: z.string().max(128).optional(),
-  durationMs: z.number().int().min(0).max(86_400_000).optional(),
-  success: z.boolean().optional(),
-  dimensions: z.array(telemetryDimensionSchema).max(8).optional(),
-})
-
-const ingestBatchSchema = z.object({
-  events: z.array(ingestBodySchema).min(1).max(50),
-})
-
-const dimensionsQuerySchema = z.object({
-  type: dimensionTypeSchema,
-})
-
-const analyticsQuerySchema = z
-  .object({
-    dimensionType: dimensionTypeSchema.optional(),
-    dimensionValue: dimensionValueSchema.optional(),
-  })
-  .refine((value) => {
-    return Boolean(value.dimensionType) === Boolean(value.dimensionValue)
-  }, {
-    message: "dimensionType and dimensionValue must be supplied together.",
-  })
-
-const adoptionResponseSchema = z.object({
-  members: z.number(),
-  pendingInvites: z.number(),
-  activeMembers7d: z.number(),
-  activeMembers30d: z.number(),
-  weeklyTrend: z.array(z.number()),
-}).meta({ ref: "TelemetryAdoptionResponse" })
-
-const analyticsWeekSchema = z.object({
-  weekStart: z.string(),
-  activeMembers: z.number(),
-  sessions: z.number(),
-  tasksCompleted: z.number(),
-  tasksFailed: z.number(),
-})
-
-const analyticsModelsSchema = z.object({
-  usage30d: z.array(z.object({
-    id: z.string(),
-    label: z.string(),
-    sessions: z.number(),
-  })),
-  selection30d: z.object({
-    default: z.number(),
-    manual: z.number(),
-  }),
-})
-
-const analyticsResponseSchema = z.object({
-  members: z.number(),
-  pendingInvites: z.number(),
-  activeMembers7d: z.number(),
-  activeMembers30d: z.number(),
-  sessions7d: z.number(),
-  sessions30d: z.number(),
-  tasksCompleted7d: z.number(),
-  tasksFailed7d: z.number(),
-  tasksCompleted30d: z.number(),
-  tasksFailed30d: z.number(),
-  avgTaskDurationMs30d: z.number().nullable(),
-  weekly: z.array(analyticsWeekSchema),
-  models: analyticsModelsSchema,
-}).meta({ ref: "TelemetryAnalyticsResponse" })
-
-const telemetryDimensionListResponseSchema = z.object({
-  items: z.array(z.object({
-    type: z.string(),
-    value: z.string(),
-    label: z.string(),
-    sessionCount: z.number(),
-    lastSeenAt: z.string(),
-  })),
-}).meta({ ref: "TelemetryDimensionListResponse" })
-
-const ANALYTICS_WEEKS = 12
-
-type WindowMetrics = {
-  activeMembers: number
-  sessions: number
-  tasksCompleted: number
-  tasksFailed: number
-  avgTaskDurationMs: number | null
-}
-
-type TelemetryOrgId = (typeof TelemetryEventTable.$inferSelect)["org_id"]
-
-type TelemetryDimensionInput = z.infer<typeof telemetryDimensionSchema>
-
-type DimensionFilter = {
-  type: string
-  value: string
-}
-
-type PendingDimensionUpsert = {
-  sessionId: string
-  source: string
-  dimension: TelemetryDimensionInput
-  seenAt: Date
-}
-
-function normalizeTelemetrySource(source: string | null | undefined) {
-  return source && allowedSources.has(source) ? source : "unknown"
-}
-
-function dimensionFilterCondition(filter: DimensionFilter): SQL {
-  return sql`exists (
-    select 1
-    from ${TelemetrySessionDimensionTable}
-    where ${TelemetrySessionDimensionTable.org_id} = ${TelemetryEventTable.org_id}
-      and ${TelemetrySessionDimensionTable.session_id} = ${TelemetryEventTable.session_id}
-      and ${TelemetrySessionDimensionTable.source} = coalesce(${TelemetryEventTable.source}, 'unknown')
-      and ${TelemetrySessionDimensionTable.dimension_type} = ${filter.type}
-      and ${TelemetrySessionDimensionTable.dimension_value} = ${filter.value}
-  )`
-}
-
-function telemetryWindowConditions(orgId: TelemetryOrgId, since: Date, filter: DimensionFilter | null): SQL[] {
-  const conditions = [
-    eq(TelemetryEventTable.org_id, orgId),
-    gte(TelemetryEventTable.event_timestamp, since),
-  ]
-  if (filter) conditions.push(dimensionFilterCondition(filter))
-  return conditions
-}
-
-async function upsertSessionDimension(params: {
-  orgId: TelemetryOrgId
-  sessionId: string
-  source: string
-  dimension: TelemetryDimensionInput
-  seenAt: Date
-}): Promise<void> {
-  const value = params.dimension.value ?? deriveDimensionValue(params.dimension.type, params.dimension.label)
-  const metadata = params.dimension.metadata ?? null
-
-  await db
-    .insert(TelemetrySessionDimensionTable)
-    .values({
-      id: createDenTypeId("telemetrySessionDimension"),
-      org_id: params.orgId,
-      session_id: params.sessionId,
-      source: params.source,
-      dimension_type: params.dimension.type,
-      dimension_value: value,
-      dimension_label: params.dimension.label,
-      metadata,
-      created_at: params.seenAt,
-      updated_at: params.seenAt,
-      last_seen_at: params.seenAt,
-    })
-    .onDuplicateKeyUpdate({
-      set: {
-        ...(params.dimension.value ? { dimension_value: params.dimension.value } : {}),
-        dimension_label: params.dimension.label,
-        metadata,
-        updated_at: params.seenAt,
-        last_seen_at: params.seenAt,
-      },
-    })
-}
-
-async function loadWindowMetrics(orgId: TelemetryOrgId, since: Date, filter: DimensionFilter | null): Promise<WindowMetrics> {
+async function queryWindowMetrics(orgId: TelemetryOrgId, since: Date, filter: DimensionFilter | null) {
   const rows = await db
-    .select({
-      activeMembers: sql<number>`count(distinct ${TelemetryEventTable.member_id})`,
-      sessions: sql<number>`count(distinct ${TelemetryEventTable.session_id})`,
-      tasksCompleted: sql<number>`coalesce(sum(${TelemetryEventTable.event_type} = 'task.completed'), 0)`,
-      tasksFailed: sql<number>`coalesce(sum(${TelemetryEventTable.event_type} = 'task.failed'), 0)`,
-      avgTaskDurationMs: sql<number | null>`avg(case when ${TelemetryEventTable.event_type} = 'task.completed' then ${TelemetryEventTable.duration_ms} end)`,
-    })
+    .select(windowMetricsSelection())
     .from(TelemetryEventTable)
     .where(and(...telemetryWindowConditions(orgId, since, filter)))
-
-  const row = rows[0]
-  return {
-    activeMembers: Number(row?.activeMembers ?? 0),
-    sessions: Number(row?.sessions ?? 0),
-    tasksCompleted: Number(row?.tasksCompleted ?? 0),
-    tasksFailed: Number(row?.tasksFailed ?? 0),
-    avgTaskDurationMs: row?.avgTaskDurationMs == null ? null : Math.round(Number(row.avgTaskDurationMs)),
-  }
+  return readWindowMetrics(rows[0])
 }
 
 export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVariables }>(app: Hono<T>) {
@@ -263,43 +63,44 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
       },
     }),
     orgMemberRoute(),
-    jsonValidator(ingestBatchSchema),
+    jsonValidator(telemetryIngestBatchSchema),
     async (c) => {
       const orgContext = c.get("organizationContext")
       const orgId = c.get("activeOrganizationId")
-
       if (!orgContext || !orgId) {
         return c.body(null, 204)
       }
 
       const memberId = orgContext.currentMember.id
-      const body = c.req.valid("json")
+      const batch = c.req.valid("json")
 
       try {
-        const acceptedEvents = body.events.filter((event) => allowedEventTypes.has(event.type))
-        const rows = acceptedEvents.map((event) => ({
+        const accepted = batch.events.filter((event) => isKnownTelemetryEventType(event.type))
+
+        const eventRows = accepted.map((event) => ({
           id: createDenTypeId("telemetryEvent"),
           org_id: orgId,
           member_id: memberId,
           event_type: event.type,
           event_timestamp: new Date(event.timestamp),
-          source: event.source && allowedSources.has(event.source) ? event.source : null,
+          source: isKnownTelemetrySource(event.source) ? event.source : null,
           session_id: event.sessionId ?? null,
           duration_ms: event.durationMs ?? null,
           success: event.success ?? null,
         }))
-
-        if (rows.length > 0) {
-          await db.insert(TelemetryEventTable).values(rows)
+        if (eventRows.length > 0) {
+          await db.insert(TelemetryEventTable).values(eventRows)
         }
 
-        const pendingDimensions = new Map<string, PendingDimensionUpsert>()
-        for (const event of acceptedEvents) {
+        // Deduplicate dimension sightings within the batch: last write per
+        // (source, session, dimension type) wins.
+        const pending = new Map<string, { sessionId: string; source: string; dimension: TelemetryDimensionInput; seenAt: Date }>()
+        for (const event of accepted) {
           if (!event.sessionId || !event.dimensions?.length) continue
           const source = normalizeTelemetrySource(event.source)
           const seenAt = new Date(event.timestamp)
           for (const dimension of event.dimensions) {
-            pendingDimensions.set(`${source}\u0000${event.sessionId}\u0000${dimension.type}`, {
+            pending.set(sessionDimensionKey(source, event.sessionId, dimension.type), {
               sessionId: event.sessionId,
               source,
               dimension,
@@ -307,14 +108,15 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
             })
           }
         }
-        for (const pendingDimension of pendingDimensions.values()) {
-          await upsertSessionDimension({
-            orgId,
-            ...pendingDimension,
-          })
+        for (const sighting of pending.values()) {
+          const upsert = buildSessionDimensionUpsert({ orgId, ...sighting })
+          await db
+            .insert(TelemetrySessionDimensionTable)
+            .values(upsert.values)
+            .onDuplicateKeyUpdate({ set: upsert.update })
         }
       } catch {
-        // Swallow errors -- telemetry should never break the app
+        // Telemetry must never break the app: drop the batch on any failure.
       }
 
       return c.body(null, 204)
@@ -335,7 +137,7 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
       },
     }),
     orgMemberRoute(),
-    queryValidator(dimensionsQuerySchema),
+    queryValidator(telemetryDimensionsQuerySchema),
     async (c) => {
       const orgId = c.get("activeOrganizationId")
       if (!orgId) return c.json({ items: [] })
@@ -380,24 +182,24 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
       summary: "Get adoption metrics",
       description: "Returns org adoption metrics: member count, pending invites, active members in 7d and 30d windows, and a 12-week weekly active member trend.",
       responses: {
-        200: jsonResponse("Adoption metrics returned.", adoptionResponseSchema),
+        200: jsonResponse("Adoption metrics returned.", telemetryAdoptionResponseSchema),
         401: jsonResponse("Caller must be signed in.", unauthorizedSchema),
       },
     }),
     orgMemberRoute({ useUserOrganizations: true }),
     async (c) => {
       const orgId = c.get("activeOrganizationId")
-
       if (!orgId) {
         return c.json({ members: 0, pendingInvites: 0, activeMembers7d: 0, activeMembers30d: 0, weeklyTrend: [] })
       }
 
-      const now = new Date()
-      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
-      const twelveWeeksAgo = new Date(now.getTime() - 12 * 7 * 24 * 60 * 60 * 1000)
+      const now = Date.now()
+      const sevenDaysAgo = new Date(now - 7 * DAY_MS)
+      const thirtyDaysAgo = new Date(now - 30 * DAY_MS)
+      const trendStart = new Date(now - ANALYTICS_TREND_WEEKS * 7 * DAY_MS)
+      const weekIndex = weekIndexExpression(trendStart)
 
-      const [memberRows, inviteRows, active7dRows, active30dRows, weeklyRows] = await Promise.all([
+      const [memberRows, inviteRows, active7d, active30d, weeklyRows] = await Promise.all([
         db
           .select({ count: sql<number>`count(*)` })
           .from(MemberTable)
@@ -406,35 +208,20 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
           .select({ count: sql<number>`count(*)` })
           .from(InvitationTable)
           .where(and(eq(InvitationTable.organizationId, orgId), eq(InvitationTable.status, "pending"))),
-        db
-          .select({ count: sql<number>`count(distinct ${TelemetryEventTable.member_id})` })
-          .from(TelemetryEventTable)
-          .where(and(
-            eq(TelemetryEventTable.org_id, orgId),
-            gte(TelemetryEventTable.event_timestamp, sevenDaysAgo),
-          )),
-        db
-          .select({ count: sql<number>`count(distinct ${TelemetryEventTable.member_id})` })
-          .from(TelemetryEventTable)
-          .where(and(
-            eq(TelemetryEventTable.org_id, orgId),
-            gte(TelemetryEventTable.event_timestamp, thirtyDaysAgo),
-          )),
+        queryWindowMetrics(orgId, sevenDaysAgo, null),
+        queryWindowMetrics(orgId, thirtyDaysAgo, null),
         db
           .select({
-            week: sql<number>`FLOOR(DATEDIFF(${TelemetryEventTable.event_timestamp}, ${twelveWeeksAgo}) / 7)`,
+            week: weekIndex,
             count: sql<number>`count(distinct ${TelemetryEventTable.member_id})`,
           })
           .from(TelemetryEventTable)
-          .where(and(
-            eq(TelemetryEventTable.org_id, orgId),
-            gte(TelemetryEventTable.event_timestamp, twelveWeeksAgo),
-          ))
-          .groupBy(sql`FLOOR(DATEDIFF(${TelemetryEventTable.event_timestamp}, ${twelveWeeksAgo}) / 7)`)
-          .orderBy(sql`FLOOR(DATEDIFF(${TelemetryEventTable.event_timestamp}, ${twelveWeeksAgo}) / 7)`),
+          .where(and(...telemetryWindowConditions(orgId, trendStart, null)))
+          .groupBy(weekIndex)
+          .orderBy(weekIndex),
       ])
 
-      const weeklyTrend = Array.from({ length: 12 }, (_, i) => {
+      const weeklyTrend = Array.from({ length: ANALYTICS_TREND_WEEKS }, (_, i) => {
         const row = weeklyRows.find((r) => Number(r.week) === i)
         return row ? Number(row.count) : 0
       })
@@ -442,8 +229,8 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
       return c.json({
         members: Number(memberRows[0]?.count ?? 0),
         pendingInvites: Number(inviteRows[0]?.count ?? 0),
-        activeMembers7d: Number(active7dRows[0]?.count ?? 0),
-        activeMembers30d: Number(active30dRows[0]?.count ?? 0),
+        activeMembers7d: active7d.activeMembers,
+        activeMembers30d: active30d.activeMembers,
         weeklyTrend,
       })
     },
@@ -457,42 +244,37 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
       summary: "Get usage analytics",
       description: "Returns Layer 1 (who is using AI) and Layer 2 (how often) analytics for the active org: member counts, active members, session and task volume in 7d/30d windows, average task duration, model usage and selection in 30d, and a 12-week trend of active members, sessions, and tasks.",
       responses: {
-        200: jsonResponse("Analytics returned.", analyticsResponseSchema),
+        200: jsonResponse("Analytics returned.", telemetryAnalyticsResponseSchema),
         400: jsonResponse("Invalid analytics query.", invalidRequestSchema),
         401: jsonResponse("Caller must be signed in.", unauthorizedSchema),
         402: jsonResponse("Usage analytics requires an Enterprise plan.", enterprisePlanRequiredSchema),
       },
     }),
     orgRoleRoute(["admin"]),
-    queryValidator(analyticsQuerySchema),
+    queryValidator(telemetryAnalyticsQuerySchema),
     async (c) => {
       const orgId = c.get("activeOrganizationId")
       const query = c.req.valid("query")
-      const dimensionFilter = query.dimensionType && query.dimensionValue
+      const dimensionFilter: DimensionFilter | null = query.dimensionType && query.dimensionValue
         ? { type: query.dimensionType, value: query.dimensionValue }
         : null
 
-      const empty = {
-        members: 0,
-        pendingInvites: 0,
-        activeMembers7d: 0,
-        activeMembers30d: 0,
-        sessions7d: 0,
-        sessions30d: 0,
-        tasksCompleted7d: 0,
-        tasksFailed7d: 0,
-        tasksCompleted30d: 0,
-        tasksFailed30d: 0,
-        avgTaskDurationMs30d: null,
-        weekly: [],
-        models: {
-          usage30d: [],
-          selection30d: { default: 0, manual: 0 },
-        },
-      }
-
       if (!orgId) {
-        return c.json(empty)
+        return c.json({
+          members: 0,
+          pendingInvites: 0,
+          activeMembers7d: 0,
+          activeMembers30d: 0,
+          sessions7d: 0,
+          sessions30d: 0,
+          tasksCompleted7d: 0,
+          tasksFailed7d: 0,
+          tasksCompleted30d: 0,
+          tasksFailed30d: 0,
+          avgTaskDurationMs30d: null,
+          weekly: [],
+          models: { usage30d: [], selection30d: { default: 0, manual: 0 } },
+        })
       }
 
       // Same enterprise gate as SSO / desktop policies (see entitlements.ts):
@@ -503,10 +285,11 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
         return c.json(entitlement.response, entitlement.status)
       }
 
-      const now = new Date()
-      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
-      const trendStart = new Date(now.getTime() - ANALYTICS_WEEKS * 7 * 24 * 60 * 60 * 1000)
+      const now = Date.now()
+      const sevenDaysAgo = new Date(now - 7 * DAY_MS)
+      const thirtyDaysAgo = new Date(now - 30 * DAY_MS)
+      const trendStart = new Date(now - ANALYTICS_TREND_WEEKS * 7 * DAY_MS)
+      const weekIndex = weekIndexExpression(trendStart)
 
       const [memberRows, inviteRows, window7d, window30d, weeklyRows, modelDimensionRows] = await Promise.all([
         db
@@ -517,11 +300,11 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
           .select({ count: sql<number>`count(*)` })
           .from(InvitationTable)
           .where(and(eq(InvitationTable.organizationId, orgId), eq(InvitationTable.status, "pending"))),
-        loadWindowMetrics(orgId, sevenDaysAgo, dimensionFilter),
-        loadWindowMetrics(orgId, thirtyDaysAgo, dimensionFilter),
+        queryWindowMetrics(orgId, sevenDaysAgo, dimensionFilter),
+        queryWindowMetrics(orgId, thirtyDaysAgo, dimensionFilter),
         db
           .select({
-            week: sql<number>`FLOOR(DATEDIFF(${TelemetryEventTable.event_timestamp}, ${trendStart}) / 7)`,
+            week: weekIndex,
             activeMembers: sql<number>`count(distinct ${TelemetryEventTable.member_id})`,
             sessions: sql<number>`count(distinct ${TelemetryEventTable.session_id})`,
             tasksCompleted: sql<number>`coalesce(sum(${TelemetryEventTable.event_type} = 'task.completed'), 0)`,
@@ -529,8 +312,8 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
           })
           .from(TelemetryEventTable)
           .where(and(...telemetryWindowConditions(orgId, trendStart, dimensionFilter)))
-          .groupBy(sql`FLOOR(DATEDIFF(${TelemetryEventTable.event_timestamp}, ${trendStart}) / 7)`)
-          .orderBy(sql`FLOOR(DATEDIFF(${TelemetryEventTable.event_timestamp}, ${trendStart}) / 7)`),
+          .groupBy(weekIndex)
+          .orderBy(weekIndex),
         db
           .select({
             type: TelemetrySessionDimensionTable.dimension_type,
@@ -556,18 +339,18 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
           .orderBy(desc(sql`count(distinct ${TelemetrySessionDimensionTable.session_id})`)),
       ])
 
-      const weekly = Array.from({ length: ANALYTICS_WEEKS }, (_, i) => {
-        const weekStart = new Date(trendStart.getTime() + i * 7 * 24 * 60 * 60 * 1000)
+      const weekly = Array.from({ length: ANALYTICS_TREND_WEEKS }, (_, i) => {
         const row = weeklyRows.find((r) => Number(r.week) === i)
         return {
-          weekStart: weekStart.toISOString().slice(0, 10),
+          weekStart: new Date(trendStart.getTime() + i * 7 * DAY_MS).toISOString().slice(0, 10),
           activeMembers: Number(row?.activeMembers ?? 0),
           sessions: Number(row?.sessions ?? 0),
           tasksCompleted: Number(row?.tasksCompleted ?? 0),
           tasksFailed: Number(row?.tasksFailed ?? 0),
         }
       })
-      const selectionCount = (value: "default" | "manual") => Number(
+
+      const selectionSessions = (value: "default" | "manual") => Number(
         modelDimensionRows.find((row) => row.type === "model_selection" && row.value === value)?.sessions ?? 0,
       )
 
@@ -587,14 +370,10 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
         models: {
           usage30d: modelDimensionRows
             .filter((row) => row.type === "model")
-            .map((row) => ({
-              id: row.value,
-              label: row.label,
-              sessions: Number(row.sessions ?? 0),
-            })),
+            .map((row) => ({ id: row.value, label: row.label, sessions: Number(row.sessions ?? 0) })),
           selection30d: {
-            default: selectionCount("default"),
-            manual: selectionCount("manual"),
+            default: selectionSessions("default"),
+            manual: selectionSessions("manual"),
           },
         },
       })

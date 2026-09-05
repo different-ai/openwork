@@ -5,6 +5,7 @@ import { GET } from "../app/api/runtime-config/route";
 
 const originalEnv = {
   DEN_API_BASE: process.env.DEN_API_BASE,
+  DEN_BASE_URL: process.env.DEN_BASE_URL,
   DEN_ORG_MODE: process.env.DEN_ORG_MODE,
   DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP: process.env.DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP,
 };
@@ -28,6 +29,7 @@ function readBooleanProperty(value: unknown, key: string) {
 
 afterEach(() => {
   restoreEnvValue("DEN_API_BASE");
+  restoreEnvValue("DEN_BASE_URL");
   restoreEnvValue("DEN_ORG_MODE");
   restoreEnvValue("DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP");
 });
@@ -35,6 +37,7 @@ afterEach(() => {
 describe("single-org public signup UI policy", () => {
   test("runtime config exposes private public-signup default for single-org deployments", async () => {
     delete process.env.DEN_API_BASE;
+    process.env.DEN_BASE_URL = "https://app.openworklabs.com";
     process.env.DEN_ORG_MODE = "single_org";
     delete process.env.DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP;
 
@@ -45,6 +48,7 @@ describe("single-org public signup UI policy", () => {
 
   test("runtime config parses Helm string public-signup values", async () => {
     delete process.env.DEN_API_BASE;
+    process.env.DEN_BASE_URL = "https://app.openworklabs.com";
     process.env.DEN_ORG_MODE = "single_org";
     process.env.DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP = "true";
 

@@ -1,5 +1,5 @@
-import { ScriptRunsScreen } from "../../_components/script-runs-screen";
+import { redirect } from "next/navigation";
 
-export default function ScriptRunsPage() {
-  return <ScriptRunsScreen />;
+export default function LegacyScriptRunsPage() {
+  redirect("/dashboard/workflow-runs");
 }

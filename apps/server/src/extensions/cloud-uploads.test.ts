@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { ServerConfig } from "../types.js";
-import { callOpenWorkCloudUploadAction } from "./cloud-uploads.js";
+import { OPENWORK_CLOUD_UPLOAD_ACTIONS, callOpenWorkCloudUploadAction } from "./cloud-uploads.js";
 
 const roots: string[] = [];
 
@@ -45,8 +45,34 @@ async function tempRoot() {
   return root;
 }
 
+function payloadFieldNames(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(payloadFieldNames);
+  if (typeof value !== "object" || value === null) return [];
+  return [
+    ...Object.keys(value),
+    ...Object.values(value).flatMap(payloadFieldNames),
+  ];
+}
+
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+test("cloud upload action schemas expose paths and metadata, never inline bytes", () => {
+  const fields = OPENWORK_CLOUD_UPLOAD_ACTIONS.flatMap((action) => Object.keys(action.inputSchema.properties));
+
+  expect(fields.sort()).toEqual([
+    "bcc",
+    "body",
+    "cc",
+    "folderId",
+    "path",
+    "paths",
+    "subject",
+    "threadId",
+    "to",
+  ]);
+  expect(fields.filter((field) => /base64|bytes|content|raw/i.test(field))).toEqual([]);
 });
 
 test("drive upload sends exact workspace bytes and server-derived Office metadata", async () => {
@@ -77,6 +103,8 @@ test("drive upload sends exact workspace bytes and server-derived Office metadat
   );
 
   expect(result).toEqual({ ok: true, file: { id: "file_1" } });
+  expect(payloadFieldNames(result).filter((field) => /base64|bytes|content|raw/i.test(field))).toEqual([]);
+  expect(JSON.stringify(result)).not.toContain(bytes.toString("base64"));
   expect(capturedUrl).toBe("https://api.openwork.test/v1/direct-uploads/google-workspace/drive-files");
   expect(captured.file?.name).toBe("agreement.docx");
   expect(captured.file?.type).toBe("application/vnd.openxmlformats-officedocument.wordprocessingml.document");
@@ -116,6 +144,8 @@ test("Gmail attachment action reuses the same direct multipart transport for mul
   );
 
   expect(result).toEqual({ ok: true, draftId: "draft_1" });
+  expect(payloadFieldNames(result).filter((field) => /base64|bytes|content|raw/i.test(field))).toEqual([]);
+  expect(JSON.stringify(result)).not.toContain(Buffer.from("notes").toString("base64"));
   expect(capturedFiles.map((file) => [file.name, file.type])).toEqual([
     ["notes.txt", "text/plain;charset=utf-8"],
     ["table.csv", "text/csv"],
@@ -146,6 +176,33 @@ test("direct upload rejects files above the deployed 4 MiB transport ceiling bef
     },
   )).rejects.toMatchObject({ status: 413, code: "file_too_large" });
   expect(fetchCalled).toBe(false);
+});
+
+test("direct upload rejects aggregate attachment bytes above 4 MiB with no network calls", async () => {
+  const root = await tempRoot();
+  await writeFile(join(root, "part-a.bin"), Buffer.alloc((2 * 1024 * 1024) + 1));
+  await writeFile(join(root, "part-b.bin"), Buffer.alloc(2 * 1024 * 1024));
+  let networkCalls = 0;
+
+  await expect(callOpenWorkCloudUploadAction(
+    testConfig(root),
+    "gmail_create_draft_with_attachments",
+    {
+      to: "sam@example.com",
+      subject: "Too large",
+      body: "This must fail locally.",
+      paths: ["part-a.bin", "part-b.bin"],
+    },
+    { directory: root },
+    {
+      readCloudMcp: async () => cloudMcp(),
+      fetchImpl: async () => {
+        networkCalls += 1;
+        return new Response();
+      },
+    },
+  )).rejects.toMatchObject({ status: 413, code: "files_too_large" });
+  expect(networkCalls).toBe(0);
 });
 
 test("direct upload rejects symlinks that resolve outside authorized roots", async () => {

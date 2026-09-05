@@ -136,7 +136,7 @@ function createTestServer(options: TestServerOptions = {}) {
   }
 
   registerProxyRoutes(app, {
-    async findActiveInferenceKey(_rawKey: string) {
+    async findActiveInferenceKey(_key) {
       calls.findActiveInferenceKey += 1
       return {
         id: "inference_key_123",

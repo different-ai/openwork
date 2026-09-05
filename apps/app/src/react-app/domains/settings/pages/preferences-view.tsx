@@ -40,12 +40,6 @@ export type PreferencesViewProps = {
   onToggleAnalytics: () => void;
   desktopNotifications: DesktopNotificationPreference;
   onDesktopNotificationsChange: (value: DesktopNotificationPreference) => void;
-  continuousEngineAvailable: boolean;
-  continuousEngineEnabled: boolean;
-  continuousEngineBusy: boolean;
-  onToggleContinuousEngine: () => void;
-  memoryEnabled: boolean;
-  onToggleMemory: () => void;
 };
 
 function desktopNotificationPreferenceLabel(value: DesktopNotificationPreference) {
@@ -149,30 +143,6 @@ export function PreferencesView(props: PreferencesViewProps) {
 
       <DesktopIntegrationSection />
 
-      {props.continuousEngineAvailable ? (
-        <LayoutSection>
-          <LayoutSectionHeader>
-            <LayoutSectionTitle>{t("settings.engine_rollover_title")}</LayoutSectionTitle>
-            <LayoutSectionDescription>{t("settings.engine_rollover_section_desc")}</LayoutSectionDescription>
-          </LayoutSectionHeader>
-
-          <LayoutSectionItem>
-            <LayoutSectionItemHeader>
-              <LayoutSectionItemTitle>{t("settings.engine_rollover_toggle")}</LayoutSectionItemTitle>
-              <LayoutSectionItemDescription>{t("settings.engine_rollover_toggle_desc")}</LayoutSectionItemDescription>
-              <LayoutSectionItemHeaderActions>
-                <Switch
-                  aria-label={t("settings.engine_rollover_toggle")}
-                  checked={props.continuousEngineEnabled}
-                  disabled={props.busy || props.continuousEngineBusy}
-                  onCheckedChange={props.onToggleContinuousEngine}
-                />
-              </LayoutSectionItemHeaderActions>
-            </LayoutSectionItemHeader>
-          </LayoutSectionItem>
-        </LayoutSection>
-      ) : null}
-
       <LayoutSection>
         <LayoutSectionHeader>
           <LayoutSectionTitle>{t("settings.privacy_title")}</LayoutSectionTitle>
@@ -189,28 +159,6 @@ export function PreferencesView(props: PreferencesViewProps) {
                 checked={props.analyticsEnabled}
                 disabled={props.busy}
                 onCheckedChange={props.onToggleAnalytics}
-              />
-            </LayoutSectionItemHeaderActions>
-          </LayoutSectionItemHeader>
-        </LayoutSectionItem>
-      </LayoutSection>
-
-      <LayoutSection>
-        <LayoutSectionHeader>
-          <LayoutSectionTitle>{t("memory.preferences_title")}</LayoutSectionTitle>
-          <LayoutSectionDescription>{t("memory.preferences_section_desc")}</LayoutSectionDescription>
-        </LayoutSectionHeader>
-
-        <LayoutSectionItem>
-          <LayoutSectionItemHeader>
-            <LayoutSectionItemTitle>{t("memory.preferences_toggle")}</LayoutSectionItemTitle>
-            <LayoutSectionItemDescription>{t("memory.preferences_toggle_desc")}</LayoutSectionItemDescription>
-            <LayoutSectionItemHeaderActions>
-              <Switch
-                aria-label={t("memory.preferences_toggle")}
-                checked={props.memoryEnabled}
-                disabled={props.busy}
-                onCheckedChange={props.onToggleMemory}
               />
             </LayoutSectionItemHeaderActions>
           </LayoutSectionItemHeader>

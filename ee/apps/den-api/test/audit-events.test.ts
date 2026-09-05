@@ -203,7 +203,27 @@ test("organization audit alerting covers sensitive access changes", () => {
   expect(isOrganizationAuditAlertAction(ORGANIZATION_AUDIT_ACTIONS.roleUpdated)).toBe(true)
   expect(isOrganizationAuditAlertAction(ORGANIZATION_AUDIT_ACTIONS.scimTokenRotated)).toBe(true)
   expect(isOrganizationAuditAlertAction(ORGANIZATION_AUDIT_ACTIONS.ssoConnectionRegistered)).toBe(true)
+  expect(isOrganizationAuditAlertAction(ORGANIZATION_AUDIT_ACTIONS.openWorkWebComplimentaryAccessGranted)).toBe(true)
+  expect(isOrganizationAuditAlertAction(ORGANIZATION_AUDIT_ACTIONS.openWorkWebComplimentaryAccessRevoked)).toBe(true)
   expect(isOrganizationAuditAlertAction(ORGANIZATION_AUDIT_ACTIONS.scimReconciliationRun)).toBe(false)
+})
+
+test("organization audit events record complimentary Web access changes without storing access metadata", () => {
+  const event = buildOrganizationAuditEvent({
+    organizationId: createDenTypeId("organization"),
+    actorUserId: createDenTypeId("user"),
+    action: ORGANIZATION_AUDIT_ACTIONS.openWorkWebComplimentaryAccessGranted,
+    payload: {
+      reason: "Internal administration organization",
+      complimentaryAccess: true,
+    },
+  })
+
+  expect(event.action).toBe("organization.openwork_web.complimentary_access_granted")
+  expect(event.payload).toEqual({
+    reason: "Internal administration organization",
+    complimentaryAccess: true,
+  })
 })
 
 test("organization audit alert log line is structured and secret-free", () => {

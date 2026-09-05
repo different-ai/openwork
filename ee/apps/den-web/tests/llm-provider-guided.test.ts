@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
     buildGuidedCustomProviderConfig,
     buildGuidedProviderEnvName,
+    normalizeAzureResourceNameInput,
     parseGuidedModelIds,
     readEnvNamesFromCustomProviderText,
     readGuidedCustomProviderFields,
@@ -30,6 +31,24 @@ describe("parseGuidedModelIds", () => {
 describe("buildGuidedProviderEnvName", () => {
     test("builds an uppercase env var name", () => {
         expect(buildGuidedProviderEnvName("azure-foundry")).toBe("AZURE_FOUNDRY_API_KEY");
+    });
+});
+
+describe("normalizeAzureResourceNameInput", () => {
+    test("extracts the resource name from Azure Foundry project URLs", () => {
+        expect(
+            normalizeAzureResourceNameInput(
+                "https://foundry-ow-instant.services.ai.azure.com/api/projects/instant-test",
+            ),
+        ).toBe("foundry-ow-instant");
+    });
+
+    test("extracts the resource name from Azure OpenAI endpoint URLs", () => {
+        expect(normalizeAzureResourceNameInput("https://my-resource.openai.azure.com/openai/v1/")).toBe("my-resource");
+    });
+
+    test("keeps an already-entered resource name", () => {
+        expect(normalizeAzureResourceNameInput(" foundry-ow-instant ")).toBe("foundry-ow-instant");
     });
 });
 

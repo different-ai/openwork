@@ -121,11 +121,11 @@ describe("finished turn step fold (single OpenCode message per turn)", () => {
 
     expect(markup).not.toContain("Worked for");
     // Both calls merge into one aggregate summary line.
-    expect(markup).toContain("Edited 1 file, ran 1 command");
+    expect(markup).toContain("Edited 1 file, ran command");
     expect(markup).toContain("Done.");
   });
 
-  test("reasoning between calls does not fragment the aggregate", () => {
+  test("reasoning between calls stays one aggregate line that advertises its thought", () => {
     const assistant: UIMessage = {
       id: "assistant-3",
       role: "assistant",
@@ -142,6 +142,15 @@ describe("finished turn step fold (single OpenCode message per turn)", () => {
 
     const markup = renderList([userMessage, assistant]);
 
+    // No thought/command ladder: the run is ONE aggregate line…
     expect(markup).toContain("Ran 2 commands");
+    // …that counts the thought it carries.
+    expect(markup).toContain("1 thought");
+
+    // The turn-opening thought still renders as its own line above the run.
+    const openingThought = markup.indexOf("Thought");
+    const run = markup.indexOf("Ran 2 commands");
+    expect(openingThought).toBeGreaterThan(-1);
+    expect(run).toBeGreaterThan(openingThought);
   });
 });

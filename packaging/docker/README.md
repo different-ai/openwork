@@ -1,5 +1,25 @@
 # OpenWork Host (Docker)
 
+## Pull-only evaluation stack
+
+Run Den API, Den web, and MySQL from published images without cloning or building the repository:
+
+```bash
+curl -fsSLo docker-compose.eval.yml \
+  https://raw.githubusercontent.com/different-ai/openwork/9f8645ebc482c15ab99c0cf155aabaa411e1ca6a/packaging/docker/docker-compose.eval.yml
+printf '%s  %s\n' \
+  '69cc7f2666157b7697ebf69b31b0c83887dd99e796c7d956f9ccaab8fa8bf2fc' \
+  'docker-compose.eval.yml' | shasum -a 256 --check
+umask 077
+printf 'OPENWORK_AUTH_SECRET=%s\nOPENWORK_DB_ENCRYPTION_KEY=%s\n' \
+  "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" > .env
+docker compose -f docker-compose.eval.yml up -d --wait
+```
+
+Open `http://localhost:3005` and create an account. See the [evaluation guide](../../packages/docs/self-host/evaluate-with-docker-compose.mdx) for configuration, secure remote access, limitations, and cleanup.
+
+This stack is for evaluation only. Its HTTP ports bind to loopback, but it still enables public signup, uses development credentials, and does not provide production workers, sandboxes, or email delivery.
+
 ## Den local stack (Docker)
 
 One command for the Den control plane, local MySQL, and the cloud web app.

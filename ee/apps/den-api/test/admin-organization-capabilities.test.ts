@@ -10,7 +10,7 @@ const adminEmail = `admin-capabilities+${adminUserId}@test.local`
 const organizationSlug = `admin-capabilities-${organizationId}`
 
 function seedRequiredEnv() {
-  process.env.DATABASE_URL = "mysql://root:password@127.0.0.1:3306/openwork_test"
+  process.env.DATABASE_URL ??= "mysql://root:password@127.0.0.1:3306/openwork_test"
   process.env.DEN_DB_ENCRYPTION_KEY = "x".repeat(32)
   process.env.BETTER_AUTH_SECRET = "y".repeat(32)
   process.env.BETTER_AUTH_URL = "http://127.0.0.1:8790"
@@ -62,6 +62,8 @@ async function cleanup() {
     return
   }
 
+  await db.delete(schema.AuditEventTable).where(drizzle.eq(schema.AuditEventTable.org_id, organizationId))
+  await db.delete(schema.OrgSubscriptionTable).where(drizzle.eq(schema.OrgSubscriptionTable.organization_id, organizationId))
   await db.delete(schema.OrganizationTable).where(drizzle.eq(schema.OrganizationTable.id, organizationId))
   await db.delete(schema.AuthUserTable).where(drizzle.eq(schema.AuthUserTable.id, adminUserId))
   await db.delete(schema.AdminAllowlistTable).where(drizzle.eq(schema.AdminAllowlistTable.id, adminAllowlistId))
@@ -90,11 +92,19 @@ async function replaceOrganizationMetadata(metadata: Record<string, unknown>) {
     .where(drizzle.eq(schema.OrganizationTable.id, organizationId))
 }
 
-async function putCapabilities(capabilities: { installLinks?: boolean | null; mcpConnections?: boolean | null; remoteMcpApps?: boolean | null; cloud?: boolean | null }) {
+async function putCapabilities(capabilities: { installLinks?: boolean | null; mcpConnections?: boolean | null }) {
   return routeApp().request(`http://den.local/v1/admin/organizations/${organizationId}/capabilities`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ capabilities }),
+  })
+}
+
+async function putOpenWorkWebAccess(enabled: boolean, reason: string) {
+  return routeApp().request(`http://den.local/v1/admin/organizations/${organizationId}/openwork-web-access`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ enabled, reason }),
   })
 }
 
@@ -187,12 +197,12 @@ test("admin capability routes show effective defaults while preserving raw overr
 
   const getAbsent = await routeApp().request(`http://den.local/v1/admin/organizations/${organizationId}/capabilities`)
   expect(getAbsent.status).toBe(200)
-  await expect(getAbsent.json()).resolves.toMatchObject({ capabilities: { installLinks: true, mcpConnections: true, remoteMcpApps: false, cloud: false } })
+  await expect(getAbsent.json()).resolves.toMatchObject({ capabilities: { installLinks: true, mcpConnections: true } })
 
   const listAbsent = await routeApp().request(`http://den.local/v1/admin/organizations?search=${organizationId}`)
   expect(listAbsent.status).toBe(200)
   await expect(listAbsent.json()).resolves.toMatchObject({
-    organizations: [{ id: organizationId, capabilities: { installLinks: true, mcpConnections: true, remoteMcpApps: false, cloud: false } }],
+    organizations: [{ id: organizationId, capabilities: { installLinks: true, mcpConnections: true } }],
   })
 
   const enableInstallLinks = await putCapabilities({ installLinks: true })
@@ -211,25 +221,27 @@ test("admin capability routes show effective defaults while preserving raw overr
   await expect(clearConnect.json()).resolves.toMatchObject({ capabilities: { installLinks: true, mcpConnections: true } })
   expect("mcpConnections" in readCapabilityMetadata(await readOrganizationMetadata())).toBe(false)
 
-  const enableCloud = await putCapabilities({ cloud: true })
-  expect(enableCloud.status).toBe(200)
-  await expect(enableCloud.json()).resolves.toMatchObject({ capabilities: { cloud: true } })
-  expect(readCapabilityMetadata(await readOrganizationMetadata())).toMatchObject({ installLinks: true, cloud: true })
+  // The retired Cloud alpha flag is no longer accepted or reported: Cloud is
+  // entitled by OpenWork Web access instead.
+  const rejectCloud = await routeApp().request(`http://den.local/v1/admin/organizations/${organizationId}/capabilities`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ capabilities: { cloud: true } }),
+  })
+  expect(rejectCloud.status).toBe(200)
+  const rejectCloudPayload = await rejectCloud.json() as { capabilities: Record<string, unknown> }
+  expect("cloud" in rejectCloudPayload.capabilities).toBe(false)
+  expect("cloud" in readCapabilityMetadata(await readOrganizationMetadata())).toBe(false)
 
-  const disableCloud = await putCapabilities({ cloud: false })
-  expect(disableCloud.status).toBe(200)
-  await expect(disableCloud.json()).resolves.toMatchObject({ capabilities: { cloud: false } })
-  expect(readCapabilityMetadata(await readOrganizationMetadata())).toMatchObject({ installLinks: true, cloud: false })
-
-  const enableRemoteMcpApps = await putCapabilities({ remoteMcpApps: true })
-  expect(enableRemoteMcpApps.status).toBe(200)
-  await expect(enableRemoteMcpApps.json()).resolves.toMatchObject({ capabilities: { remoteMcpApps: true } })
-  expect(readCapabilityMetadata(await readOrganizationMetadata())).toMatchObject({ remoteMcpApps: true })
-
-  const clearRemoteMcpApps = await putCapabilities({ remoteMcpApps: null })
-  expect(clearRemoteMcpApps.status).toBe(200)
-  await expect(clearRemoteMcpApps.json()).resolves.toMatchObject({ capabilities: { remoteMcpApps: false } })
-  expect("remoteMcpApps" in readCapabilityMetadata(await readOrganizationMetadata())).toBe(false)
+  await replaceOrganizationMetadata({ capabilities: { installLinks: true, workflows: false, codemodeScripts: true, remoteMcpApps: true, cloud: true } })
+  const dropRetired = await putCapabilities({ installLinks: true })
+  expect(dropRetired.status).toBe(200)
+  const retiredMetadata = readCapabilityMetadata(await readOrganizationMetadata())
+  expect("workflows" in retiredMetadata).toBe(false)
+  expect("codemodeScripts" in retiredMetadata).toBe(false)
+  expect("remoteMcpApps" in retiredMetadata).toBe(false)
+  expect("cloud" in retiredMetadata).toBe(false)
+  expect(retiredMetadata).toMatchObject({ installLinks: true })
 
   await replaceOrganizationMetadata({ connectEnabled: true, capabilities: { installLinks: true } })
   const disableFlatEnabledConnect = await putCapabilities({ mcpConnections: false })
@@ -246,4 +258,83 @@ test("admin capability routes show effective defaults while preserving raw overr
   const getEnabledOverride = await routeApp().request(`http://den.local/v1/admin/organizations/${organizationId}/capabilities`)
   expect(getEnabledOverride.status).toBe(200)
   await expect(getEnabledOverride.json()).resolves.toMatchObject({ capabilities: { mcpConnections: true } })
+})
+
+test("platform admins grant and revoke audited complimentary Web access", async () => {
+  if (routeTestUnavailable) {
+    console.warn(`admin complimentary Web route DB coverage skipped: ${routeTestUnavailable}`)
+    return
+  }
+
+  const invalid = await putOpenWorkWebAccess(true, "x")
+  expect(invalid.status).toBe(400)
+
+  const grant = await putOpenWorkWebAccess(true, "Internal administration organization")
+  expect(grant.status).toBe(200)
+  await expect(grant.json()).resolves.toMatchObject({
+    organization: {
+      id: organizationId,
+      openworkWebAccess: {
+        hasAccess: true,
+        accessSource: "complimentary",
+        complimentaryAccess: true,
+        hasOngoingSubscription: false,
+      },
+    },
+  })
+  expect(await readOrganizationMetadata()).toMatchObject({
+    mcpConnectionsEnabled: false,
+    capabilities: { installLinks: true, mcpConnections: true },
+    complimentaryAccess: { openworkWeb: true },
+  })
+
+  const listed = await routeApp().request(`http://den.local/v1/admin/organizations?search=${organizationId}`)
+  expect(listed.status).toBe(200)
+  await expect(listed.json()).resolves.toMatchObject({
+    organizations: [{
+      id: organizationId,
+      openworkWebAccess: { complimentaryAccess: true, hasOngoingSubscription: false },
+    }],
+  })
+
+  const { db, schema, drizzle } = testDatabase()
+  const auditRows = await db
+    .select({ action: schema.AuditEventTable.action, payload: schema.AuditEventTable.payload })
+    .from(schema.AuditEventTable)
+    .where(drizzle.eq(schema.AuditEventTable.org_id, organizationId))
+  expect(auditRows).toHaveLength(1)
+  expect(auditRows[0]).toMatchObject({
+    action: "organization.openwork_web.complimentary_access_granted",
+    payload: { reason: "Internal administration organization", complimentaryAccess: true },
+  })
+
+  const revoke = await putOpenWorkWebAccess(false, "Return organization to standard billing")
+  expect(revoke.status).toBe(200)
+  expect(await readOrganizationMetadata()).not.toHaveProperty("complimentaryAccess.openworkWeb")
+
+  const revokedAuditRows = await db
+    .select({ action: schema.AuditEventTable.action })
+    .from(schema.AuditEventTable)
+    .where(drizzle.eq(schema.AuditEventTable.org_id, organizationId))
+  expect(revokedAuditRows.map((row) => row.action).sort()).toEqual([
+    "organization.openwork_web.complimentary_access_granted",
+    "organization.openwork_web.complimentary_access_revoked",
+  ])
+
+  await db.insert(schema.OrgSubscriptionTable).values({
+    id: createDenTypeId("orgSubscription"),
+    organization_id: organizationId,
+    created_by_org_membership_id: null,
+    type: "web",
+    status: "active",
+    stripe_customer_id: "cus_admin_web_access_test",
+    stripe_subscription_id: "sub_admin_web_access_test",
+    stripe_price_id: "price_admin_web_access_test",
+    stripe_subscription_item_id: "si_admin_web_access_test",
+    quantity: 1,
+  })
+  const paidConflict = await putOpenWorkWebAccess(true, "Would overlap paid billing")
+  expect(paidConflict.status).toBe(409)
+  await expect(paidConflict.json()).resolves.toMatchObject({ error: "openwork_web_subscription_exists" })
+  expect(await readOrganizationMetadata()).not.toHaveProperty("complimentaryAccess.openworkWeb")
 })

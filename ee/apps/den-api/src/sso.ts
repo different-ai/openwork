@@ -9,6 +9,7 @@ import { env } from "./env.js"
 import { isMicrosoftEntraManagedDomain } from "./sso-entra-domain.js"
 import { SSO_IDENTITY_EXTRA_FIELDS } from "./sso-jit.js"
 import { ORGANIZATION_SAML_WANT_ASSERTIONS_SIGNED } from "./sso-saml-policy.js"
+import { createSsoConfigRevision } from "./sso-test-lifecycle.js"
 
 type SsoConnection = typeof SsoConnectionTable.$inferSelect
 type OrganizationId = SsoConnection["organizationId"]
@@ -60,6 +61,14 @@ export function getOrganizationSsoSignInPath(organizationSlug: string) {
   return `/sso/${encodeURIComponent(organizationSlug)}`
 }
 
+function authCallbackBaseUrl() {
+  return env.apiPublicUrl ?? env.betterAuthUrl
+}
+
+// Better Auth builds the SAML SP metadata and AuthnRequest ACS location from
+// its own baseURL (the web origin), not from samlConfig.callbackUrl. The URLs
+// we display and store must match what the SP actually advertises to the IdP,
+// otherwise the IdP posts to the web origin and response validation rejects it.
 export function getSsoAcsUrl(providerId: string) {
   return `${env.betterAuthUrl}/api/auth/sso/saml2/sp/acs/${encodeURIComponent(providerId)}`
 }
@@ -69,7 +78,7 @@ export function getSsoMetadataUrl(providerId: string) {
 }
 
 export function getSsoOidcRedirectUrl(providerId: string) {
-  return `${env.betterAuthUrl}/api/auth/sso/callback/${encodeURIComponent(providerId)}`
+  return `${authCallbackBaseUrl()}/api/auth/sso/callback/${encodeURIComponent(providerId)}`
 }
 
 function isDevLoopbackIssuer(issuer: string) {
@@ -140,6 +149,39 @@ async function getSsoProviderByProviderId(providerId: string) {
     .limit(1)
 
   return rows[0] ?? null
+}
+
+function getConfigRevision(input: OrganizationSsoRegistrationInput, provider: NonNullable<Awaited<ReturnType<typeof getSsoProviderByProviderId>>>) {
+  return createSsoConfigRevision({
+    kind: input.kind,
+    issuer: input.issuer,
+    domain: input.domain,
+    oidcConfig: provider.oidcConfig,
+    samlConfig: provider.samlConfig,
+  })
+}
+
+function disabledConnectionUpdate(input: OrganizationSsoRegistrationInput, providerId: string, configRevision: string) {
+  return {
+    providerId,
+    kind: input.kind,
+    issuer: input.issuer,
+    domain: input.domain,
+    status: "disabled",
+    signInPath: getOrganizationSsoSignInPath(input.organizationSlug),
+    configRevision,
+    testStatus: "untested",
+    lastTestedAt: null,
+    lastTestedRevision: null,
+    lastError: null,
+    domainVerificationToken: null,
+    activeTestIntentId: null,
+    activeTestUserId: null,
+    activeTestProviderId: null,
+    activeTestConfigRevision: null,
+    activeTestExpiresAt: null,
+    activeTestStartedAt: null,
+  }
 }
 
 async function registerBetterAuthSsoProvider(input: OrganizationSsoRegistrationInput, providerId: string) {
@@ -297,20 +339,15 @@ export async function registerOrganizationSsoConnection(input: OrganizationSsoRe
           .set({ domainVerified: true })
           .where(eq(SsoProviderTable.providerId, providerId))
       }
+      const provider = await getSsoProviderByProviderId(providerId)
+      if (!provider) {
+        throw new Error("SSO provider was not created.")
+      }
       await db.transaction(async (tx) => {
         await cleanupLegacySsoProvider(tx, existing, providerId)
         await tx
           .update(SsoConnectionTable)
-          .set({
-            providerId,
-            kind: input.kind,
-            issuer: input.issuer,
-            domain: input.domain,
-            status: "enabled",
-            signInPath: getOrganizationSsoSignInPath(input.organizationSlug),
-            lastTestedAt: new Date(),
-            lastError: null,
-          })
+          .set(disabledConnectionUpdate(input, providerId, getConfigRevision(input, provider)))
           .where(eq(SsoConnectionTable.id, existing.id))
       })
 
@@ -345,16 +382,7 @@ export async function registerOrganizationSsoConnection(input: OrganizationSsoRe
       await cleanupLegacySsoProvider(tx, existing, providerId)
       await tx
         .update(SsoConnectionTable)
-        .set({
-          providerId,
-          kind: input.kind,
-          issuer: input.issuer,
-          domain: input.domain,
-          status: "enabled",
-          signInPath: getOrganizationSsoSignInPath(input.organizationSlug),
-          lastTestedAt: new Date(),
-          lastError: null,
-        })
+        .set(disabledConnectionUpdate(input, providerId, getConfigRevision(input, draftProvider)))
         .where(eq(SsoConnectionTable.id, existing.id))
 
       await tx
@@ -378,6 +406,11 @@ export async function registerOrganizationSsoConnection(input: OrganizationSsoRe
       .where(eq(SsoProviderTable.providerId, providerId))
   }
 
+  const provider = await getSsoProviderByProviderId(providerId)
+  if (!provider) {
+    throw new Error("SSO provider was not created.")
+  }
+
   await db.insert(SsoConnectionTable).values({
     id: createDenTypeId("ssoConnection"),
     organizationId: input.organizationId,
@@ -385,9 +418,12 @@ export async function registerOrganizationSsoConnection(input: OrganizationSsoRe
     kind: input.kind,
     issuer: input.issuer,
     domain: input.domain,
-    status: "enabled",
+    status: "disabled",
     signInPath: getOrganizationSsoSignInPath(input.organizationSlug),
-    lastTestedAt: new Date(),
+    configRevision: getConfigRevision(input, provider),
+    testStatus: "untested",
+    lastTestedAt: null,
+    lastTestedRevision: null,
     lastError: null,
   })
 

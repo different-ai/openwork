@@ -35,8 +35,6 @@ For normal signed-in desktop traffic, prefer one desktop-facing Den web origin. 
 
 If `DEN_API_PUBLIC_URL` is configured as a separate API origin, the one-time **Open OpenWork** install-link exchange must also reach that API origin. External MCP clients that use the published MCP URL must reach it too. This does not mean every steady-state desktop request needs both origins in the single-origin topology.
 
-## MDM bootstrap alternative
+## Managed fleets: enterprise binary + MDM
 
-Managed fleets can skip the install-link handoff by deploying the standard installer through MDM and writing the desktop bootstrap configuration file during provisioning. Use that path when you already have reliable software distribution and want the first launch to know the Den base URL without a browser deep-link step.
-
-See the repository guide for the exact bootstrap file paths, JSON shape, and security properties.
+This page covers install-link delivery of the standard installer. Managed fleets typically skip the install-link handoff entirely: deploy the **OpenWork Enterprise binary** through MDM and write `desktop-bootstrap.json` during provisioning so the first launch already targets your Den server. See [Enterprise desktop deployment](/start-here/enterprise-desktop-deployment) for the artifact names, bootstrap file reference, and what MDM does not need to push.

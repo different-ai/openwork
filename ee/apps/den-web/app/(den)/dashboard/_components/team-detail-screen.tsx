@@ -9,6 +9,7 @@ import { DenNotice } from "../../_components/ui/notice";
 import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
 import { getMarketplaceRoute, getMembersRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { TeamPermissionsPanel } from "./team-permissions-panel";
 import { OrgMemberIdentity } from "./org-member-identity";
 import {
   type TeamPluginAccessItem,
@@ -122,6 +123,9 @@ export function TeamDetailScreen({ teamId }: { teamId: string }) {
 
         {activeTab === "access" ? (
           <div role="tabpanel" aria-label="Access">
+            <TeamPermissionsPanel teamId={teamId} />
+            <h2 className="mb-2 text-lg font-semibold text-gray-950">Plugins & connections</h2>
+            <p className="mb-4 text-sm text-gray-500">Review what this team can use and where access comes from.</p>
             {accessQuery.isLoading ? (
               <div className="rounded-2xl border border-gray-100 bg-white px-6 py-8 text-[13px] text-gray-400">
                 Loading team access…

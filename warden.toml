@@ -1,9 +1,10 @@
 version = 1
 
-# Warden gates clearance on blocking findings from two skills:
-# diff-security-review (all findings block) and desktop-den-sync-review (only
-# high findings block; medium findings are advisory). The clearance itself is
-# granted by .github/workflows/warden-clearance.yml.
+# Warden gates clearance on blocking findings from three skills:
+# diff-security-review and confidentiality-review (all findings block) and
+# desktop-den-sync-review (only high findings block; medium findings are
+# advisory). The clearance itself is granted by
+# .github/workflows/warden-clearance.yml.
 
 [defaults]
 reportOn = "low"
@@ -28,10 +29,33 @@ name = "diff-security-review"
 
 [[skills.triggers]]
 type = "pull_request"
-actions = ["opened", "synchronize", "reopened"]
-draft = false
+# Omitting draft matches both draft and ready PRs.
+actions = ["opened", "synchronize", "reopened", "ready_for_review"]
 
 # Lets developers run `warden` locally on uncommitted changes before pushing.
+[[skills.triggers]]
+type = "local"
+
+# Public repo: customer/prospect/partner identities must never land in the
+# tree (see AGENTS.md, Confidentiality).
+[[skills]]
+name = "confidentiality-review"
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize", "reopened", "ready_for_review"]
+
+[[skills.triggers]]
+type = "local"
+
+[[skills]]
+name = "spec-provenance-review"
+paths = ["evals/specs/**", "evals/worlds/**"]
+
+[[skills.triggers]]
+type = "pull_request"
+actions = ["opened", "synchronize", "reopened", "ready_for_review"]
+
 [[skills.triggers]]
 type = "local"
 
@@ -46,8 +70,7 @@ paths = [
 
 [[skills.triggers]]
 type = "pull_request"
-actions = ["opened", "synchronize", "reopened"]
-draft = false
+actions = ["opened", "synchronize", "reopened", "ready_for_review"]
 
 [[skills.triggers]]
 type = "local"

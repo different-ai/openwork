@@ -52,7 +52,7 @@ services:
         export PATH="$$BUN_INSTALL/bin:$$PATH"
         if ! command -v bun >/dev/null 2>&1; then
           echo "[openwork-server] Installing bun..."
-          curl -fsSL https://bun.sh/install | bash
+          curl -fsSL https://bun.sh/install | bash -s "bun-v1.3.14"
         fi
 
         # --- Enable pnpm via corepack ---
@@ -144,7 +144,7 @@ services:
         export BUN_INSTALL="/root/.bun"
         export PATH="$$BUN_INSTALL/bin:$$PATH"
         if ! command -v bun >/dev/null 2>&1; then
-          curl -fsSL https://bun.sh/install | bash
+          curl -fsSL https://bun.sh/install | bash -s "bun-v1.3.14"
         fi
         corepack enable && corepack prepare pnpm@10.27.0 --activate
 

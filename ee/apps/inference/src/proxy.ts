@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { inferenceBearerKey } from "@openwork-ee/utils/inference-bearer-key"
 import type { Context, Hono } from "hono"
 import { env } from "./env.js"
 import type { findActiveInferenceKey as findActiveInferenceKeyFn, getOpenRouterProviderKey as getOpenRouterProviderKeyFn } from "./keys.js"
@@ -38,9 +39,9 @@ const blockedServerToolTypes = new Set([
 ])
 
 const defaultProxyDependencies: ProxyDependencies = {
-  async findActiveInferenceKey(rawKey) {
+  async findActiveInferenceKey(key) {
     const keys = await import("./keys.js")
-    return keys.findActiveInferenceKey(rawKey)
+    return keys.findActiveInferenceKey(key)
   },
   async getOpenRouterProviderKey(organizationId) {
     const keys = await import("./keys.js")
@@ -61,12 +62,14 @@ type ProxyDependencies = {
   reporter?: InferenceReporter
 }
 
-function readApiKey(request: Request) {
+function readInferenceBearerKey(request: Request) {
   const auth = request.headers.get("authorization")
   if (auth?.toLowerCase().startsWith("bearer ")) {
-    return auth.slice(7).trim()
+    const value = auth.slice(7).trim()
+    return value ? inferenceBearerKey(value) : null
   }
-  return request.headers.get("x-api-key")?.trim() ?? null
+  const value = request.headers.get("x-api-key")?.trim()
+  return value ? inferenceBearerKey(value) : null
 }
 
 function isJsonRequest(request: Request) {
@@ -497,13 +500,13 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
   const reporter = dependencies.reporter ?? sentryInferenceReporter
 
   async function handleApiRequest(c: Context) {
-    const rawKey = readApiKey(c.req.raw)
-    if (!rawKey) {
+    const bearerKey = readInferenceBearerKey(c.req.raw)
+    if (!bearerKey) {
       logProxyError("Missing inference API key", { path: c.req.path, method: c.req.method })
       return c.json({ error: { message: "Missing OpenWork inference API key.", type: "authentication_error", code: "missing_api_key" } }, 401)
     }
 
-    const inferenceKey = await dependencies.findActiveInferenceKey(rawKey)
+    const inferenceKey = await dependencies.findActiveInferenceKey(bearerKey)
     if (!inferenceKey) {
       logProxyError("Invalid inference API key", { path: c.req.path, method: c.req.method })
       return c.json({ error: { message: "Invalid OpenWork inference API key.", type: "authentication_error", code: "invalid_api_key" } }, 401)

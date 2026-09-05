@@ -22,20 +22,20 @@ The app consumes OpenWork server surfaces (self-hosted or hosted) rather than
 inventing parallel behavior. Anything OpenCode can do is available in OpenWork,
 even before a dedicated UI exists.
 
+## Confidentiality (hard rule — this repo is public)
+
+Never let a branch name, commit, PR text, comment, fixture, or evidence identify
+a customer, prospect, partner, or outside person; use internal ticket IDs, and
+escalate any leak instead of rewriting history.
+
 ## Verification (every change)
 
-- The only proof path is `evals/specs/**/*.test.ts` with `test` from
-  `@openwork/testkit`; app-driving E2E tests use `.e2e.test.ts`. Prose,
-  screenshots, and recordings never decide pass/fail — test evidence does.
-- Skills own the mechanics: `prove-a-pr` → `write-a-spec` → `run-tests` →
-  `diagnose-a-red-run` when red → `publish-evidence`. Evidence is ambient; never
-  create or pass test-evidence recorder handles.
-- Verdicts: `Passed` only when every claim has an observable assertion in the
-  test run; otherwise `Incomplete` or `Failed` with repro steps. Skips are never
-  passed.
-- Prefer Daytona when credentials are available; local fallback is an expected
-  OSS path, not a failure. Report which lane ran.
+- Proof is a journey spec in `evals/specs/**` (`*.e2e.test.ts` drives the app/Den; `*.test.ts` hits a server or gateway boundary). Unit tests are not proof and never live in `evals/specs`; the boundary ratchet rejects new ones that import product source, read the repo, or spawn test runners.
+- Default is zero new test files: run the journey spec that covers the change; extend it for a gap; new file only for a new user journey.
+- Run `pnpm evals:e2e <slug>` or `pnpm evals:pr specs/<name>.test.ts`; report the printed placement and verdict.
+- `Passed` requires an observable assertion for every claim; skips are never passed.
 - Docs/comments, types-only, and inert agent config may skip runtime proof — say so.
+- Skill chain: `write-a-spec` → `run-tests` → `diagnose-a-red-run` when red → `publish-evidence`.
 
 ## Pull requests
 
@@ -48,14 +48,18 @@ even before a dedicated UI exists.
   say why and give exact repro steps.
 ## Local headless web (agents)
 
-- `pnpm dev:headless-web --detach` launches an isolated browser UI + local
- `openwork-server` without Electron, detached from the invoking shell. Read
- `tmp/dev-headless-web.json` for `webUrl`, tokens, logs, and Den proxy URLs.
- It does not use `~/.config/openwork/server.json`. Re-running reuses a healthy
- instance; `--replace` restarts it with fresh tokens (`--keep-tokens` to
- keep the previous ones). Cloud sign-in is copy/paste handoff (Den cannot
- redirect grants to localhost): Account → Sign in → copy OpenWork link on Den
- → Paste sign-in code in Settings.
+- `pnpm world up dev-headless --detach` launches an isolated browser UI +
+ local `openwork-server` without Electron as a detached script world.
+ `pnpm dev:headless-web` remains a compatibility alias with its prior foreground
+ default (`--detach` still works). Read
+ `tmp/dev-headless-web.json` for the owner-only runtime manifest.
+ It does not use `~/.config/openwork/server.json`, and its engine keeps its own
+ sessions database at `tmp/dev-headless-opencode.db` instead of the desktop
+ app's `~/.local/share/opencode/opencode.db`. Stop a running script with
+ `pnpm world down dev-headless`; pass script options after `--`, for example
+ `pnpm world up dev-headless --detach -- --replace --keep-tokens`. Cloud sign-in
+ is copy/paste handoff (Den cannot redirect grants to localhost): Account → Sign
+ in → copy OpenWork link on Den → Paste sign-in code in Settings.
 
 ## Coding
 

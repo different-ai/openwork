@@ -12,6 +12,6 @@
     "skipLibCheck": true,
     "types": ["node", "vitest/globals"]
   },
-  "include": ["runner/**/*.ts", "packages/**/*.ts", "scripts/**/*.ts", "specs/**/*.ts", "vitest.config.ts"],
+  "include": ["docs-shots/**/*.ts", "runner/**/*.ts", "packages/**/*.ts", "scripts/**/*.ts", "specs/**/*.ts", "worlds/**/*.ts", "vitest.config.ts"],
   "exclude": ["results"]
 }

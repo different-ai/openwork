@@ -17,11 +17,15 @@ import {
 import {
   resolveWorkspaceListSelectedId,
   workspaceBootstrap,
+  workspaceSetRuntimeActive,
+  workspaceSetSelected,
   type OpenworkServerInfo,
   type WorkspaceList,
 } from "@/app/lib/desktop";
-import { createClient } from "@/app/lib/opencode";
-import { createOpenworkServerClient, type OpenworkServerClient } from "@/app/lib/openwork-server";
+import { createClient, unwrap } from "@/app/lib/opencode";
+import { createClientV2 } from "@/app/lib/opencode-v2-adapter";
+import { getNativeSession } from "@/app/lib/opencode-session-native";
+import { createOpenworkServerClient, OpenworkServerError, type OpenworkServerClient } from "@/app/lib/openwork-server";
 import { readDenBootstrapConfig } from "@/app/lib/den";
 import { isDesktopRuntime } from "@/app/lib/runtime-env";
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
@@ -45,21 +49,31 @@ import {
   shouldAttemptDesktopLocalReconnect,
 } from "./desktop-local-openwork";
 import { resolveOpenworkConnection } from "./openwork-connection";
-import { createRouteRefreshLifecycle, planRouteConnectionGap } from "./route-refresh-control";
+import {
+  commitRouteWorkspaceSelection,
+  createRouteRefreshLifecycle,
+  createRouteWorkspaceLoadCoalescer,
+  mapRouteWorkspaceLoads,
+  planRouteConnectionGap,
+  planRouteWorkspaceLoads,
+  routeWorkspaceSelectionCommitter,
+} from "./route-refresh-control";
 import {
   classifyRouteSessionReadError,
   describeRouteError,
-  isTransientStartupError,
+  listRouteSessions,
   mapDesktopWorkspace,
-  orderRouteWorkspaces,
   refreshRouteWorkspaceListState,
+  stabilizeRouteWorkspaceOrder,
   type RouteSession,
   type RouteWorkspace,
+  v2RouteSessionList,
 } from "./route-workspaces";
 import {
   readActiveWorkspaceId,
   readWorkspaceOrderIds,
   writeActiveWorkspaceId,
+  writeWorkspaceOrderIds,
 } from "./session-memory";
 import {
   legacySessionRoute,
@@ -68,13 +82,14 @@ import {
   removeWorkspaceRouteSession,
   sessionIdForLegacyWorkspaceInference,
   automationsRoute,
+  dashboardRoute,
   workspaceExtensionsRoute,
   workspaceSessionRoute,
 } from "./workspace-routes";
 
 export type UseWorkspaceRouteStateInput = {
   developerMode: boolean;
-  workspaceRoute?: "session" | "automations";
+  workspaceRoute?: "session" | "automations" | "dashboard" | "apps";
   /** Invoked when the openwork-server settings-changed event fires (the route bumps its settings version). */
   onServerSettingsChanged: () => void;
   /** Receives the local openwork-server host info discovered during refresh. */
@@ -89,6 +104,7 @@ type ModernRouteSessionResolution =
  * bridge or unresponsive server otherwise leaves `loading` true forever,
  * which the session pane renders as an indefinite loading state. */
 const ROUTE_REFRESH_STEP_TIMEOUT_MS = 15_000;
+const ROUTE_WORKSPACE_ACTIVATION_SETTLE_MS = 750;
 
 function withRouteRefreshTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -126,6 +142,11 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       .replace(/^\/+|\/+$/g, "")
     : "";
   const workspaceInferenceSessionId = sessionIdForLegacyWorkspaceInference(routeWorkspaceId, selectedSessionId);
+  const legacyWorkspaceInferenceKey = routeWorkspaceId ? "" : workspaceInferenceSessionId;
+  const routeWorkspaceIdRef = useRef(routeWorkspaceId);
+  routeWorkspaceIdRef.current = routeWorkspaceId;
+  const workspaceInferenceSessionIdRef = useRef(workspaceInferenceSessionId);
+  workspaceInferenceSessionIdRef.current = workspaceInferenceSessionId;
   const navigateToWorkspaceSession = useCallback((workspaceId: string, sessionId?: string | null, options?: { replace?: boolean }) => {
     const id = workspaceId.trim();
     if (!id) {
@@ -144,6 +165,16 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       navigate(automationsRoute(), options);
       return;
     }
+    if (workspaceRoute === "apps") {
+      if (/^(?:\/apps|\/dashboard\/apps)(?:\/|$)/.test(location.pathname)) return;
+      navigate("/apps", options);
+      return;
+    }
+    if (workspaceRoute === "dashboard") {
+      if (/^\/dashboard(?:\/|$)/.test(location.pathname)) return;
+      navigate(dashboardRoute(), options);
+      return;
+    }
     navigateToWorkspaceSession(workspaceId, sessionId, options);
   }, [extensionsRouteActive, extensionsRoutePath, location.pathname, navigate, navigateToWorkspaceSession, workspaceRoute]);
 
@@ -156,6 +187,11 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   const [client, setClient] = useState<OpenworkServerClient | null>(null);
   const [baseUrl, setBaseUrl] = useState("");
   const [token, setToken] = useState("");
+  const [engineV2ChatRouting, setEngineV2ChatRouting] = useState(false);
+  const [engineRoutingReady, setEngineRoutingReady] = useState(false);
+  const engineV2ChatRoutingRef = useRef(engineV2ChatRouting);
+  engineV2ChatRoutingRef.current = engineV2ChatRouting;
+  const previousEngineV2ChatRoutingRef = useRef<boolean | null>(null);
   const [workspaces, setWorkspaces] = useState<RouteWorkspace[]>([]);
   const [workspaceOrderIds, setWorkspaceOrderIds] = useState<string[]>(() => readWorkspaceOrderIds());
   const [sessionsByWorkspaceId, setSessionsByWorkspaceId] = useState<Record<string, RouteSession[]>>({});
@@ -209,9 +245,25 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   const hydratedRouteSessionIdsRef = useRef<Record<string, string>>({});
   const startupRetryTimerRef = useRef<number | null>(null);
   const [retryingWorkspaceIds, setRetryingWorkspaceIds] = useState<string[]>([]);
-  const launchActivatedWorkspaceIdsRef = useRef(new Set<string>());
   const reconnectAttemptedWorkspaceIdRef = useRef("");
-  const backgroundSessionLoadInFlight = useRef<Map<string, number>>(new Map());
+  const backgroundSessionLoadCoalescerRef = useRef(createRouteWorkspaceLoadCoalescer());
+  const loadedWorkspaceIdsRef = useRef(new Set<string>());
+  const serverActiveWorkspaceIdRef = useRef("");
+  const workspaceSelectionCommitTimerRef = useRef<number | null>(null);
+  const commitStableWorkspaceOrder = useCallback((nextWorkspaces: RouteWorkspace[]) => {
+    const currentOrderIds = workspaceOrderIdsRef.current;
+    const stable = stabilizeRouteWorkspaceOrder(nextWorkspaces, currentOrderIds);
+    const orderChanged = stable.orderIds.length !== currentOrderIds.length
+      || stable.orderIds.some((id, index) => id !== currentOrderIds[index]);
+
+    if (orderChanged) {
+      workspaceOrderIdsRef.current = stable.orderIds;
+      setWorkspaceOrderIds(stable.orderIds);
+      writeWorkspaceOrderIds(stable.orderIds);
+    }
+
+    return stable.workspaces;
+  }, []);
   const rememberPendingCreatedSession = useCallback((workspaceId: string, sessionId: string) => {
     const id = sessionId.trim();
     if (!workspaceId || !id) return;
@@ -269,7 +321,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       const MAX_ATTEMPTS = 6;
       const backoffMs = (attempt: number) => Math.min(500 * Math.pow(2, attempt), 4_000);
 
-      const fetchOnce = async (workspace: RouteWorkspace, attempt: number): Promise<void> => {
+      const fetchWithRetries = async (workspace: RouteWorkspace, attempt: number): Promise<void> => {
         const isRemoteOpenworkWorkspace = workspace.workspaceType === "remote" && workspace.remoteType !== "opencode";
         const endpoint = endpointForWorkspace(workspace);
         if (!endpoint) {
@@ -290,10 +342,6 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
           }
           return;
         }
-        const startedAt = backgroundSessionLoadInFlight.current.get(workspace.id) ?? 0;
-        if (startedAt && Date.now() - startedAt < 5_000) return;
-        const requestStartedAt = Date.now();
-        backgroundSessionLoadInFlight.current.set(workspace.id, requestStartedAt);
         if (isRemoteOpenworkWorkspace) {
           setWorkspaceConnectionOverrides((current) => ({
             ...current,
@@ -305,20 +353,22 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
           }));
         }
         try {
-          const response = await endpoint.client.listSessions(endpoint.workspaceId, { limit: 200 });
-          const fetchedItems = response.items ?? [];
+          // The sidebar lists from whichever engine chat is routed to.
+          const fetchedItems = workspace.workspaceType !== "remote" && engineV2ChatRoutingRef.current
+            ? await listRouteSessions(endpoint, v2RouteSessionList)
+            : await listRouteSessions(endpoint);
           const workspaceRoot = normalizeDirectoryPath(workspace.path ?? "");
           const items = workspaceRoot && !isRemoteOpenworkWorkspace
             ? fetchedItems.filter((session) =>
                 normalizeDirectoryPath(session?.directory ?? "") === workspaceRoot,
               )
             : fetchedItems;
-          setSessionsByWorkspaceId((current) => {
-            const nextItems = mergeFetchedSessionsWithPending(workspace.id, items, current[workspace.id] ?? []);
-            const next = { ...current, [workspace.id]: nextItems };
-            sessionsByWorkspaceIdRef.current = next;
-            return next;
-          });
+          const current = sessionsByWorkspaceIdRef.current;
+          const nextItems = mergeFetchedSessionsWithPending(workspace.id, items, current[workspace.id] ?? []);
+          const next = { ...current, [workspace.id]: nextItems };
+          sessionsByWorkspaceIdRef.current = next;
+          setSessionsByWorkspaceId(next);
+          loadedWorkspaceIdsRef.current.add(workspace.id);
           setErrorsByWorkspaceId((current) => ({ ...current, [workspace.id]: null }));
           setWorkspaceConnectionOverrides((current) => {
             if (isRemoteOpenworkWorkspace) {
@@ -347,9 +397,11 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
           // empty while the managed engine finishes starting.
           if (items.length === 0 && attempt === 0) {
             window.setTimeout(() => {
-              if (backgroundSessionLoadInFlight.current.get(workspace.id)) return;
-              backgroundSessionLoadInFlight.current.delete(workspace.id);
-              void fetchOnce(workspace, 1);
+              if (backgroundSessionLoadCoalescerRef.current.isInFlight(workspace.id)) return;
+              void backgroundSessionLoadCoalescerRef.current.run(
+                workspace.id,
+                () => fetchWithRetries(workspace, 1),
+              );
             }, 3_000);
           }
         } catch (error) {
@@ -360,12 +412,9 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
           // or run out of attempts — the sidebar keeps its "loading" state
           // in the meantime instead of flashing "error" next to the
           // workspace name.
-          if (attempt + 1 < MAX_ATTEMPTS && isTransientStartupError(message)) {
-            if (backgroundSessionLoadInFlight.current.get(workspace.id) === requestStartedAt) {
-              backgroundSessionLoadInFlight.current.delete(workspace.id);
-            }
+          if (attempt + 1 < MAX_ATTEMPTS && classifyRouteSessionReadError(error) === "retryable") {
             await new Promise((r) => window.setTimeout(r, backoffMs(attempt)));
-            await fetchOnce(workspace, attempt + 1);
+            await fetchWithRetries(workspace, attempt + 1);
             return;
           }
           // Final failure: keep local workspace startup quiet, but give
@@ -386,17 +435,41 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
           setRetryingWorkspaceIds((current) =>
             current.includes(workspace.id) ? current.filter((id) => id !== workspace.id) : current,
           );
-        } finally {
-          if (backgroundSessionLoadInFlight.current.get(workspace.id) === requestStartedAt) {
-            backgroundSessionLoadInFlight.current.delete(workspace.id);
-          }
         }
       };
 
-      await Promise.all(workspaces.map((workspace) => fetchOnce(workspace, 0)));
+      await mapRouteWorkspaceLoads(workspaces, (workspace) =>
+        backgroundSessionLoadCoalescerRef.current.run(
+          workspace.id,
+          () => fetchWithRetries(workspace, 0),
+        ),
+      );
     },
     [endpointForWorkspace, mergeFetchedSessionsWithPending],
   );
+  const reloadWorkspaceSessions = useCallback(async (workspaceId: string): Promise<void> => {
+    const workspace = workspacesRef.current.find((item) => item.id === workspaceId);
+    if (!workspace) return;
+    loadedWorkspaceIdsRef.current.delete(workspaceId);
+    await loadWorkspaceSessionsInBackground([workspace]);
+  }, [loadWorkspaceSessionsInBackground]);
+  const workspaceSelectionCommitRef = useRef<(workspaceId: string) => Promise<void>>(async () => undefined);
+  workspaceSelectionCommitRef.current = async (workspaceId) => {
+    await commitRouteWorkspaceSelection({
+      workspaceId,
+      desktopRuntime: isDesktopRuntime(),
+      setDesktopSelected: workspaceSetSelected,
+      setDesktopRuntimeActive: workspaceSetRuntimeActive,
+      activateWorkspace: async (selectedId) => {
+        const workspace = workspacesRef.current.find((item) => item.id === selectedId) ?? null;
+        const endpoint = endpointForWorkspace(workspace);
+        if (!endpoint) throw new Error(`Workspace endpoint unavailable for ${selectedId}.`);
+        if (workspace?.workspaceType === "local" && serverActiveWorkspaceIdRef.current === selectedId) return;
+        await endpoint.client.activateWorkspace(endpoint.workspaceId, { persist: true });
+        if (workspace?.workspaceType === "local") serverActiveWorkspaceIdRef.current = selectedId;
+      },
+    });
+  };
 
   const refreshRouteState = useCallback(async (options?: { supersede?: boolean }) => {
     // Dedupe: if a refresh is already running, skip this call. Fast workspace
@@ -456,7 +529,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
           setBaseUrl("");
           setToken("");
           if (workspacesRef.current.length === 0 && desktopWorkspaces.length > 0) {
-            const orderedDesktopWorkspaces = orderRouteWorkspaces(desktopWorkspaces, workspaceOrderIdsRef.current);
+            const orderedDesktopWorkspaces = commitStableWorkspaceOrder(desktopWorkspaces);
             setWorkspaces(orderedDesktopWorkspaces);
             setLegacySelectedWorkspaceId(
               (current) => current || resolveWorkspaceListSelectedId(desktopList) || orderedDesktopWorkspaces[0]?.id || "",
@@ -472,7 +545,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         setClient(null);
         setBaseUrl("");
         setToken("");
-        const orderedDesktopWorkspaces = orderRouteWorkspaces(desktopWorkspaces, workspaceOrderIdsRef.current);
+        const orderedDesktopWorkspaces = commitStableWorkspaceOrder(desktopWorkspaces);
         setWorkspaces(orderedDesktopWorkspaces);
         sessionsByWorkspaceIdRef.current = {};
         setSessionsByWorkspaceId({});
@@ -486,11 +559,10 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       // workspace-scoped requests below. `endpointForWorkspace` reads from
       // this resolver synchronously; the render that mirrors `[baseUrl,
       // token]` into the resolver doesn't run until after the next React commit,
-      // which is too late for the `activateWorkspace` and
-      // `loadWorkspaceSessionsInBackground` calls that fire later in this
-      // function. Stale ref => `resolveWorkspaceEndpoint` returns null for
+      // which is too late for the `loadWorkspaceSessionsInBackground` call
+      // later in this function. Stale ref => `resolveWorkspaceEndpoint` returns null for
       // local workspaces => sidebar gets stuck in "loading" forever.
-      const routeWorkspaceServerClientResolver = updateLocalServer({ baseUrl: normalizedBaseUrl, token: resolvedToken });
+      updateLocalServer({ baseUrl: normalizedBaseUrl, token: resolvedToken });
 
       const openworkClient = createOpenworkServerClient({
         baseUrl: normalizedBaseUrl,
@@ -517,11 +589,12 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         });
         setRouteError(message);
       }
-      const nextWorkspaces = workspaceListState.workspaces;
+      const nextWorkspaces = commitStableWorkspaceOrder(workspaceListState.workspaces);
+      serverActiveWorkspaceIdRef.current = workspaceListState.activeId ?? "";
 
       // Preserve any sessions we already have cached so switching routes
       // doesn't erase the sidebar while we refetch.
-      const alreadyLoadedWorkspaceIds = new Set(Object.keys(sessionsByWorkspaceIdRef.current));
+      const alreadyLoadedWorkspaceIds = new Set(loadedWorkspaceIdsRef.current);
       const cachedEntries = nextWorkspaces.map((workspace) => ({
         workspaceId: workspace.id,
         sessions: sessionsByWorkspaceIdRef.current[workspace.id] ?? [],
@@ -531,8 +604,8 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       // activeId, the server's activeId, then the first known workspace.
       const persistedActiveId = readActiveWorkspaceId();
       let nextWorkspaceId =
-        (routeWorkspaceId && nextWorkspaces.some((w) => w.id === routeWorkspaceId)
-          ? routeWorkspaceId
+        (routeWorkspaceIdRef.current && nextWorkspaces.some((w) => w.id === routeWorkspaceIdRef.current)
+          ? routeWorkspaceIdRef.current
           : "") ||
         (persistedActiveId && nextWorkspaces.some((w) => w.id === persistedActiveId)
           ? persistedActiveId
@@ -541,12 +614,17 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         workspaceListState.activeId ||
         nextWorkspaces[0]?.id ||
         "";
-      if (workspaceInferenceSessionId) {
+      if (workspaceInferenceSessionIdRef.current) {
         const match = cachedEntries.find((entry) =>
-          entry.sessions.some((session) => session?.id === workspaceInferenceSessionId),
+          entry.sessions.some((session) => session?.id === workspaceInferenceSessionIdRef.current),
         );
         if (match?.workspaceId) nextWorkspaceId = match.workspaceId;
       }
+      const backgroundWorkspaceIds = planRouteWorkspaceLoads(
+        nextWorkspaces.map((workspace) => workspace.id),
+        nextWorkspaceId,
+        alreadyLoadedWorkspaceIds,
+      );
 
       updateLocalServer({ baseUrl: normalizedBaseUrl, token: resolvedToken });
 
@@ -565,28 +643,9 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         }
         return next;
       });
-      setRetryingWorkspaceIds(
-        cachedEntries.flatMap((entry) =>
-          entry.sessions.length === 0 &&
-          (entry.workspaceId === nextWorkspaceId || !alreadyLoadedWorkspaceIds.has(entry.workspaceId))
-            ? [entry.workspaceId]
-            : [],
-        ),
-      );
+      setRetryingWorkspaceIds(backgroundWorkspaceIds);
       setLegacySelectedWorkspaceId(nextWorkspaceId);
       writeActiveWorkspaceId(nextWorkspaceId || null);
-      // Mark the chosen workspace as active on the server so that the
-      // OpenCode engine bound to it re-reads opencode.jsonc and applies
-      // permissions. Fire-and-forget; the route is idempotent and any
-      // transport failure is non-fatal. See issue #870.
-      if (nextWorkspaceId && workspaceListState.activeId !== nextWorkspaceId && !launchActivatedWorkspaceIdsRef.current.has(nextWorkspaceId)) {
-        launchActivatedWorkspaceIdsRef.current.add(nextWorkspaceId);
-        const nextWorkspace = nextWorkspaces.find((workspace) => workspace.id === nextWorkspaceId) ?? null;
-        const nextEndpoint = routeWorkspaceServerClientResolver(nextWorkspace);
-        if (nextEndpoint) {
-          void nextEndpoint.client.activateWorkspace(nextEndpoint.workspaceId).catch(() => undefined);
-        }
-      }
       recordInspectorEvent("route.refresh.complete", {
         workspaces: nextWorkspaces.length,
         selectedWorkspaceId: nextWorkspaceId,
@@ -597,15 +656,9 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       // boot. Kick it off in the background instead of blocking the route
       // so the UI is interactive immediately; the sidebar shows a
       // loading state per-workspace until the list arrives.
-      const selectedWorkspace = nextWorkspaces.find((workspace) => workspace.id === nextWorkspaceId);
-      const backgroundWorkspaces = nextWorkspaces.filter(
-        (workspace) => workspace.id === nextWorkspaceId || !alreadyLoadedWorkspaceIds.has(workspace.id),
-      );
+      const backgroundWorkspaces = nextWorkspaces.filter((workspace) => backgroundWorkspaceIds.includes(workspace.id));
       if (backgroundWorkspaces.length > 0) {
-        const orderedWorkspaces = selectedWorkspace
-          ? [selectedWorkspace, ...backgroundWorkspaces.filter((workspace) => workspace.id !== selectedWorkspace.id)]
-          : backgroundWorkspaces;
-        void loadWorkspaceSessionsInBackground(orderedWorkspaces);
+        void loadWorkspaceSessionsInBackground(backgroundWorkspaces);
       }
     } catch (error) {
       if (!attempt.isCurrent()) return;
@@ -618,7 +671,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       });
       setRouteError(message);
       if (desktopWorkspaces.length > 0) {
-        const orderedDesktopWorkspaces = orderRouteWorkspaces(desktopWorkspaces, workspaceOrderIdsRef.current);
+        const orderedDesktopWorkspaces = commitStableWorkspaceOrder(desktopWorkspaces);
         setWorkspaces(orderedDesktopWorkspaces);
         setLegacySelectedWorkspaceId((current) =>
           current || resolveWorkspaceListSelectedId(desktopList) || orderedDesktopWorkspaces[0]?.id || "",
@@ -640,7 +693,51 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         }
       }
     }
-  }, [loadWorkspaceSessionsInBackground, markBootRouteReady, routeWorkspaceId, updateLocalServer, workspaceInferenceSessionId]);
+  }, [commitStableWorkspaceOrder, legacyWorkspaceInferenceKey, loadWorkspaceSessionsInBackground, markBootRouteReady, updateLocalServer]);
+
+  const routeWorkspaceKnown = Boolean(
+    routeWorkspaceId && workspaces.some((workspace) => workspace.id === routeWorkspaceId),
+  );
+  useEffect(() => {
+    if (workspaceSelectionCommitTimerRef.current !== null) {
+      window.clearTimeout(workspaceSelectionCommitTimerRef.current);
+      workspaceSelectionCommitTimerRef.current = null;
+    }
+    if (!routeWorkspaceId) return;
+
+    // The URL is the user's newest selection. Persist it synchronously so a
+    // slow refresh or activation can never leave storage on an older route.
+    setLegacySelectedWorkspaceId(routeWorkspaceId);
+    writeActiveWorkspaceId(routeWorkspaceId);
+    if (!routeWorkspaceKnown) return;
+
+    workspaceSelectionCommitTimerRef.current = window.setTimeout(() => {
+      workspaceSelectionCommitTimerRef.current = null;
+      routeWorkspaceSelectionCommitter.request(
+        routeWorkspaceId,
+        (workspaceId) => workspaceSelectionCommitRef.current(workspaceId),
+      );
+    }, ROUTE_WORKSPACE_ACTIVATION_SETTLE_MS);
+    // On navigation only the routed workspace needs a load: boot already
+    // scheduled background loads for every other unloaded workspace. The
+    // routed one is refetched even when it loaded before — a non-selected
+    // workspace receives no engine events, so sessions created outside this
+    // window (agents, other clients) only reach its list through a refetch.
+    // A first load shows the loading indicator; a refresh stays silent so the
+    // existing rows and the New task control never flicker.
+    const workspace = workspacesRef.current.find((item) => item.id === routeWorkspaceId);
+    if (workspace) {
+      if (!loadedWorkspaceIdsRef.current.has(workspace.id)) {
+        setRetryingWorkspaceIds((current) => Array.from(new Set([...current, workspace.id])));
+      }
+      void loadWorkspaceSessionsInBackground([workspace]);
+    }
+    return () => {
+      if (workspaceSelectionCommitTimerRef.current === null) return;
+      window.clearTimeout(workspaceSelectionCommitTimerRef.current);
+      workspaceSelectionCommitTimerRef.current = null;
+    };
+  }, [loadWorkspaceSessionsInBackground, routeWorkspaceId, routeWorkspaceKnown]);
   const handleRuntimeSessionUpdated = useCallback((update: { sessionId: string; info: Record<string, unknown> }) => {
     if (!selectedWorkspaceId) return;
     setSessionsByWorkspaceId((current) => {
@@ -658,6 +755,8 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   }, [selectedWorkspaceId]);
   const handleRuntimeSessionCreated = useCallback((session: Session) => {
     if (!selectedWorkspaceId) return;
+    const workspace = workspacesRef.current.find((item) => item.id === selectedWorkspaceId);
+    if (workspace?.path && normalizeDirectoryPath(session.directory) !== normalizeDirectoryPath(workspace.path)) return;
     rememberPendingCreatedSession(selectedWorkspaceId, session.id);
     setSessionsByWorkspaceId((current) => {
       const list = current[selectedWorkspaceId] ?? [];
@@ -915,7 +1014,49 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
   // local workspaces it's the user's local OpenWork server.
   const selectedWorkspaceEndpoint = useWorkspaceServerClient(selectedWorkspace, { baseUrl, token });
   const selectedWorkspaceServerToken = selectedWorkspaceEndpoint?.token ?? "";
-  const opencodeBaseUrl = selectedWorkspaceEndpoint?.opencodeBaseUrl ?? "";
+  const defaultOpencodeBaseUrl = selectedWorkspaceEndpoint?.opencodeBaseUrl ?? "";
+  const opencode2BaseUrl = selectedWorkspaceEndpoint ? `${selectedWorkspaceEndpoint.mountedBaseUrl}/opencode2` : "";
+  const routingServerUrl = selectedWorkspaceEndpoint?.baseUrl ?? "";
+  const routingServerToken = selectedWorkspaceEndpoint?.token ?? "";
+  useEffect(() => {
+    if (!routingServerUrl || !routingServerToken) {
+      setEngineV2ChatRouting(false);
+      return;
+    }
+    const openworkClient = createOpenworkServerClient({ baseUrl: routingServerUrl, token: routingServerToken });
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const status = await openworkClient.getEngineV2PreviewStatus();
+        if (!cancelled) {
+          setEngineV2ChatRouting(status.enabled && status.chatRouting);
+          setEngineRoutingReady(true);
+        }
+      } catch (error) {
+        if (cancelled) return;
+        // Older servers do not expose the preview endpoint and use v1.
+        if (error instanceof OpenworkServerError && error.status === 404) setEngineRoutingReady(true);
+        console.warn("[opencode-v2] failed to read chat routing status; retaining the current engine", error);
+      }
+    };
+    setEngineV2ChatRouting(false);
+    setEngineRoutingReady(false);
+    void refresh();
+    window.addEventListener("openwork-server-settings-changed", refresh);
+    const interval = window.setInterval(() => { void refresh(); }, 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      window.removeEventListener("openwork-server-settings-changed", refresh);
+    };
+  }, [routingServerUrl, routingServerToken]);
+  useEffect(() => {
+    const previous = previousEngineV2ChatRoutingRef.current;
+    previousEngineV2ChatRoutingRef.current = engineV2ChatRouting;
+    if (previous === null || previous === engineV2ChatRouting || !selectedWorkspaceId) return;
+    void reloadWorkspaceSessions(selectedWorkspaceId);
+  }, [engineV2ChatRouting, reloadWorkspaceSessions, selectedWorkspaceId]);
+  const opencodeBaseUrl = engineV2ChatRouting ? opencode2BaseUrl : defaultOpencodeBaseUrl;
   const selectedWorkspaceError = errorsByWorkspaceId[selectedWorkspaceId] ?? null;
   const selectedSessionKnown = Boolean(
     selectedSessionId &&
@@ -929,6 +1070,8 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
         selectedWorkspaceEndpoint.workspaceId,
         selectedWorkspaceEndpoint.token,
         routeRefreshVersion,
+        engineV2ChatRouting,
+        engineRoutingReady,
       ])
     : "";
   const modernRouteSessionLoadPending = Boolean(
@@ -960,7 +1103,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     });
   }, [selectedSessionId, selectedWorkspaceId]);
   useEffect(() => {
-    if (!modernRouteSessionLoadKey || !selectedWorkspaceEndpoint || !selectedSessionId) {
+    if (!engineRoutingReady || !modernRouteSessionLoadKey || !selectedWorkspaceEndpoint || !selectedSessionId) {
       setModernRouteSessionResolution(null);
       return;
     }
@@ -976,12 +1119,13 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
         if (cancelled) return;
         try {
-          const response = await selectedWorkspaceEndpoint.client.getSession(
-            selectedWorkspaceEndpoint.workspaceId,
-            selectedSessionId,
-          );
+          const session = engineV2ChatRouting
+            ? unwrap(await createClientV2(opencode2BaseUrl, selectedWorkspaceRoot || undefined, {
+                token: selectedWorkspaceServerToken,
+              }).session.get({ sessionID: selectedSessionId }))
+            : await getNativeSession(selectedWorkspaceEndpoint, selectedSessionId);
           if (cancelled) return;
-          if (response.item.id !== selectedSessionId) {
+          if (session.id !== selectedSessionId) {
             setModernRouteSessionResolution({
               key: modernRouteSessionLoadKey,
               status: "error",
@@ -996,7 +1140,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
               return current;
             }
             hydratedRouteSessionIdsRef.current[selectedWorkspaceId] = selectedSessionId;
-            const nextItems = mergeWorkspaceRouteSession(currentItems, response.item);
+            const nextItems = mergeWorkspaceRouteSession(currentItems, session);
             const next = { ...current, [selectedWorkspaceId]: nextItems };
             sessionsByWorkspaceIdRef.current = next;
             return next;
@@ -1047,13 +1191,17 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
 
   const opencodeClient = useMemo(
     () =>
-      opencodeBaseUrl && selectedWorkspaceServerToken && !selectedWorkspaceError
-        ? createClient(opencodeBaseUrl, selectedWorkspaceRoot || undefined, {
-            token: selectedWorkspaceServerToken,
-            mode: "openwork",
-          })
+      engineRoutingReady && opencodeBaseUrl && selectedWorkspaceServerToken && !selectedWorkspaceError
+        ? engineV2ChatRouting
+          ? createClientV2(opencodeBaseUrl, selectedWorkspaceRoot || undefined, {
+              token: selectedWorkspaceServerToken,
+            })
+          : createClient(opencodeBaseUrl, selectedWorkspaceRoot || undefined, {
+              token: selectedWorkspaceServerToken,
+              mode: "openwork",
+            })
         : null,
-    [opencodeBaseUrl, selectedWorkspaceError, selectedWorkspaceRoot, selectedWorkspaceServerToken],
+    [engineRoutingReady, engineV2ChatRouting, opencodeBaseUrl, selectedWorkspaceError, selectedWorkspaceRoot, selectedWorkspaceServerToken],
   );
   useEffect(() => {
     if (!developerMode || !opencodeClient) return;
@@ -1158,6 +1306,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
     routeNotFoundMessage,
     endpointForWorkspace,
     refreshRouteState,
+    reloadWorkspaceSessions,
     loadWorkspaceSessionsInBackground,
     rememberPendingCreatedSession,
     handleRuntimeSessionCreated,

@@ -6,22 +6,25 @@ import { DashboardOverviewScreen } from "./dashboard-overview-screen";
 import { MemberDashboardScreen } from "./member-dashboard-screen";
 
 export function DashboardHomeScreen() {
-  const { orgBusy, orgContext, mutationBusy } = useOrgDashboard();
-  const access = getOrgAccessFlags(
-    orgContext?.currentMember.role ?? "member",
-    orgContext?.currentMember.isOwner ?? false,
-    orgContext?.roles,
-  );
+  const { orgContext, orgBusy, mutationBusy } = useOrgDashboard();
 
-  // Switching keeps the old orgContext until the new one loads; route switches
-  // through the placeholder so admin/member home layouts don't hard-swap and jump.
-  if (orgBusy || mutationBusy === "switch-organization" || !orgContext) {
+  // A workspace switch keeps the previous orgContext around while the next one
+  // loads. Rendering the neutral placeholder during that window (and while the
+  // directory is loading) avoids flashing the wrong admin/member home layout.
+  const switching = mutationBusy === "switch-organization";
+  if (!orgContext || orgBusy || switching) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center px-6 text-[14px] text-gray-500">
         Loading your workspace...
       </div>
     );
   }
+
+  const access = getOrgAccessFlags(
+    orgContext.currentMember.role,
+    orgContext.currentMember.isOwner,
+    orgContext.roles,
+  );
 
   return access.isAdmin ? <DashboardOverviewScreen /> : <MemberDashboardScreen />;
 }

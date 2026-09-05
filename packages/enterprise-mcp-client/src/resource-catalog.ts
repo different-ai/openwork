@@ -1,6 +1,5 @@
 import { Buffer } from "node:buffer"
-import type { Client } from "@modelcontextprotocol/sdk/client/index.js"
-import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js"
+import type { Client, RequestOptions } from "@modelcontextprotocol/client"
 import { EnterpriseMcpCatalogError } from "./errors.js"
 
 export const ENTERPRISE_MCP_RESOURCE_PAGE_LIMIT = 20

@@ -30,15 +30,23 @@ config:
     passwordBreachScreeningEnabled: "false"
   public:
     webOrigin: "https://REPLACE_WEB_HOST"
+    # Split-origin compatibility override for this two-host ingress example.
+    # Leave blank in single-origin deployments so Den derives it from webOrigin.
     apiOrigin: "https://REPLACE_API_HOST"
     mcpResourceUrl: "https://REPLACE_API_HOST/mcp"
     mcpClaimNamespace: "https://REPLACE_WEB_HOST"
-    desktopDenBaseUrl: "https://REPLACE_WEB_HOST"
+    desktopDenBaseUrl: ""
     corsOrigins: "https://REPLACE_WEB_HOST,https://REPLACE_API_HOST"
     betterAuthTrustedOrigins: "https://REPLACE_WEB_HOST"
     webAppHosts: "REPLACE_WEB_HOST"
     bootstrapAdminEmails: "REPLACE_ADMIN_EMAIL"
     authCallbackUrl: "https://REPLACE_WEB_HOST"
+    # Automations are opt-in for self-hosted deployments. A fresh install has no
+    # legacy Desktop clients, so both values stay "false" and the routes,
+    # scheduler, and MCP resources are omitted. Set both to "true" to turn them
+    # on. See the "Automations rollout" section in the chart README first.
+    automationsEnabled: "false"
+    automationsRuntimeEnabled: "false"
   provisioner:
     mode: stub
 

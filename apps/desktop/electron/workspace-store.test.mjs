@@ -102,6 +102,43 @@ test("recovers missing desktop workspace state from token store paths", async ()
   }
 });
 
+test("reads live shared workspace state from the explicit production path", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "openwork-workspace-store-shared-"));
+  const isolatedUserData = path.join(root, "isolated-userData");
+  const workspace = path.join(root, "production-workspace");
+  const sharedState = path.join(root, "production-userData", "openwork-workspaces.json");
+  await mkdir(isolatedUserData, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  await mkdir(path.dirname(sharedState), { recursive: true });
+  await writeFile(sharedState, JSON.stringify({
+    selectedId: "ws_production",
+    watchedId: "ws_production",
+    activeId: "ws_production",
+    workspaces: [{ id: "ws_production", name: "Production", path: workspace, workspaceType: "local" }],
+  }), "utf8");
+
+  const previousStatePath = process.env.OPENWORK_DESKTOP_WORKSPACE_STATE_PATH;
+  const previousRecovery = process.env.OPENWORK_DESKTOP_DISABLE_WORKSPACE_RECOVERY;
+  process.env.OPENWORK_DESKTOP_WORKSPACE_STATE_PATH = sharedState;
+  process.env.OPENWORK_DESKTOP_DISABLE_WORKSPACE_RECOVERY = "1";
+  try {
+    const store = createWorkspaceStore({
+      app: { getPath: (name) => name === "userData" ? isolatedUserData : root },
+      defaultDenBaseUrl: "https://example.test",
+      defaultRequireSignin: false,
+      forceRequireSignin: false,
+    });
+    const state = await store.readWorkspaceState();
+    assert.equal(state.selectedId, "ws_production");
+    assert.equal(state.workspaces.length, 1);
+    assert.equal(state.workspaces[0].path, workspace);
+    await assert.rejects(readFile(path.join(isolatedUserData, "openwork-workspaces.json"), "utf8"));
+  } finally {
+    restoreEnv("OPENWORK_DESKTOP_WORKSPACE_STATE_PATH", previousStatePath);
+    restoreEnv("OPENWORK_DESKTOP_DISABLE_WORKSPACE_RECOVERY", previousRecovery);
+  }
+});
+
 test("keeps persisted empty desktop workspace state authoritative", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "openwork-workspace-store-"));
   const userData = path.join(root, "userData");

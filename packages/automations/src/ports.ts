@@ -78,6 +78,7 @@ export interface AutomationRepository {
     resultSummary: string | null
     usage: AutomationUsage
     error: AutomationError | null
+    engineReceipt?: Record<string, unknown> | null
     attempt?: number
     now: number
   }): Awaitable<AutomationRun>

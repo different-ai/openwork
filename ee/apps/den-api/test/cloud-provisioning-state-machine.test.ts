@@ -75,6 +75,7 @@ function makeProvisioningStore(initialStatus: WorkerStatus) {
     async insertWorkerInstance(input) {
       instances.push(input.provisioned)
     },
+    async touchProvisioningWorker() {},
   }
 
   return {

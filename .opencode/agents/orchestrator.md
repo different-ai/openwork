@@ -1,5 +1,5 @@
 ---
-description: Orchestrator. Plans, delegates, and verifies; never writes code. Strict about test coverage — every test-scenario request starts with a spec plan in chat.
+description: Orchestrator. Plans, delegates, and verifies; never writes code. Default is zero new test files — extend the journey spec, never launder unit tests through evals/specs.
 mode: primary
 model: anthropic/claude-fable-5
 variant: max
@@ -21,21 +21,17 @@ Every task prompt contains: **Goal** · **Files** (exact `path:line`) · **Const
 
 Failed verification → resume the same executor session (`task_id`) with only the failing output and precise repair instructions. Start fresh if anything else touched those files since. Two repair rounds max, then re-decompose (usually to `executor-deep`). Fix it yourself only when trivial.
 
-## Test scenarios (strict)
+## Coverage decision
 
-Any request to create or extend coverage ("create a test scenario", "test X", "cover Y") starts with a **spec plan** in your reply — before any file is written. For coverage-only requests, stop after the plan and wait for approval.
+Before planning any test, decide one of three: **(a) covered** — an existing journey spec in `evals/specs/*.e2e.test.ts` observes this behaviour → run it, that is the verification; **(b) journey gap** — extend that journey's spec with the missing assertion (and its negative half); create a new file only for a new user journey, and say which journey; **(c) pure function** — a colocated unit test next to the module, run by that package; it is not PR evidence and never goes in `evals/specs`.
 
-1. **Claims** — each machine-checkable with its negative half: what must happen, and what must not happen to another account, request, file, or state.
-2. **Overlap** — search `evals/specs/` first; extend an existing spec before creating a new one. Name what you checked.
-3. **Lane** — app-less PR lane `*.test.ts`, or app/Den-driving E2E lane `*.e2e.test.ts`. Justify the choice.
-4. **Resources** — `needs()` opt-ins and env; `server()` orgs and mocks (`mcpMock()` witnesses instead of real providers); which surfaces and how many: `app()` desktops (`profileDir` continuity, `localServerDelayMs` races), `chrome()` for Den Web, `inviteMember()` for multi-member, `faultProxy()` for failure injection, `daytonaSandbox()` per-sandbox desktops (`OPENWORK_EVAL_DAYTONA_SANDBOX_A/B`).
-5. **Environment** — Daytona (`OPENWORK_EVAL_DAYTONA=1`) when credentials are available, else local fallback; name the lane and its prerequisites.
-6. **Budget** — smallest spec count that covers the claims; one scenario per spec; one spec per run so each failure has one owner. Push app-less mechanisms to unit coverage and say so.
-7. **Run + verdict** — exact commands; `Passed` / `Incomplete` / `Failed`; any skip is `Incomplete`, never passed.
+Default is zero new test files. "No spec covers this" is a finding to report, not a license to write one.
 
-Scoping decisions — what the spec deliberately does not click, mock, or assert — go in the plan with reasons, not discovered later as code comments.
+A spec observes the product through a boundary a user or client crosses (`app()`, `chrome()`, `server()`, Den HTTP, the MCP gateway). Anything that imports product source, reads the repo with `node:fs`, or spawns another test runner is not a spec; CI's boundary ratchet rejects new ones.
 
-Then: `write-a-spec` → delegate authoring to an executor → `run-tests` → `diagnose-a-red-run` when red → `publish-evidence`. Load the skills; never restate their mechanics.
+When (b) needs a plan, it is short: claim + negative half · journey spec being extended (or the new journey) · run command + verdict (`Passed` / `Incomplete` / `Failed`; skips are `Incomplete`). Stop after the plan for coverage-only requests.
+
+Then: `write-a-spec` → `run-tests` → `diagnose-a-red-run` when red → `publish-evidence`.
 
 ## Verification
 

@@ -24,6 +24,7 @@ export type ComposerSessionState = {
 };
 
 export type ComposerStateStore = {
+  pendingFocusSessionId: string | null;
   sessions: Record<string, ComposerSessionState>;
   queuedDrafts: Record<string, QueuedComposerItem[]>;
   /**
@@ -34,6 +35,7 @@ export type ComposerStateStore = {
   history: Record<string, string[]>;
   setDraft: (sessionId: string, draft: string) => void;
   replaceDraft: (sessionId: string, draft: string, revertMessageId?: string | null) => void;
+  hydrateDraft: (sessionId: string, draft: string) => void;
   clearRevertTarget: (sessionId: string) => void;
   setAttachments: (sessionId: string, attachments: ComposerAttachment[]) => void;
   setMentions: (sessionId: string, mentions: Record<string, ComposerMentionKind>) => void;
@@ -54,6 +56,31 @@ const EMPTY_PASTE_PARTS: ComposerPastePart[] = [];
 const EMPTY_HISTORY: string[] = [];
 const EMPTY_QUEUED_DRAFTS: QueuedComposerItem[] = [];
 const HISTORY_LIMIT = 50;
+const composerSessionDraftScopes = new Map<string, string>();
+
+export function claimComposerSessionDraftScope(sessionId: string, scopeKey: string) {
+  const session = sessionId.trim();
+  if (!session) return;
+  composerSessionDraftScopes.set(session, scopeKey);
+}
+
+export function getComposerSessionDraftScope(sessionId: string) {
+  return composerSessionDraftScopes.get(sessionId.trim()) ?? null;
+}
+
+export function persistableComposerDraftText(text: string) {
+  return text.replace(/\[attachment [^\]]+\]/g, "");
+}
+
+export function composerDraftNeedsHydration(input: {
+  claimedScopeKey: string | null;
+  nextScopeKey: string;
+  currentText: string;
+  storedText: string;
+}) {
+  return input.claimedScopeKey !== input.nextScopeKey
+    || persistableComposerDraftText(input.currentText) !== input.storedText;
+}
 
 function createEmptyComposerSession(): ComposerSessionState {
   return {
@@ -74,6 +101,7 @@ function createQueuedItem(draft: ComposerDraft, id?: string): QueuedComposerItem
 }
 
 export const useComposerStateStore = create<ComposerStateStore>((set) => ({
+  pendingFocusSessionId: null,
   sessions: {},
   queuedDrafts: {},
   history: {},
@@ -88,6 +116,28 @@ export const useComposerStateStore = create<ComposerStateStore>((set) => ({
     const target = revertMessageId?.trim() || null;
     if (current.draft === draft && current.revertMessageId === target) return state;
     return { sessions: { ...state.sessions, [sessionId]: { ...current, draft, revertMessageId: target } } };
+  }),
+  hydrateDraft: (sessionId, draft) => set((state) => {
+    const current = state.sessions[sessionId];
+    if (!draft) {
+      if (!current) return state;
+      const sessions = { ...state.sessions };
+      delete sessions[sessionId];
+      return { sessions };
+    }
+    if (
+      current?.draft === draft
+      && current.attachments.length === 0
+      && Object.keys(current.mentions).length === 0
+      && current.pasteParts.length === 0
+      && current.revertMessageId === null
+    ) return state;
+    return {
+      sessions: {
+        ...state.sessions,
+        [sessionId]: { ...createEmptyComposerSession(), draft },
+      },
+    };
   }),
   clearRevertTarget: (sessionId) => set((state) => {
     const current = state.sessions[sessionId];

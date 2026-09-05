@@ -101,6 +101,35 @@ describe("extractGmailMessage", () => {
     expect(extractGmailMessage({ snippet: "Snippet text", payload: {} }).body).toBe("Snippet text")
   })
 
+  test("parses malformed nested HTML and entities without including executable content", () => {
+    const html = [
+      "<!doctype html><p>Alpha&nbsp;&amp; Beta &lt;tag&gt; &amp;lt;once&amp;gt;<br>",
+      "<span>nested <b>bold</span> tail",
+      '<script src="https://example.invalid/script.js">SCRIPT_SENTINEL</script >',
+      "<style>STYLE_SENTINEL { color: red }</style></p>",
+    ].join("")
+    const body = extractGmailMessage({
+      snippet: "Snippet text",
+      payload: { mimeType: "text/html", body: { data: base64Url(html) } },
+    }).body
+
+    expect(body).toContain("Alpha & Beta <tag> &lt;once&gt;\nnested bold tail")
+    expect(body).not.toContain("SCRIPT_SENTINEL")
+    expect(body).not.toContain("STYLE_SENTINEL")
+    expect(body).not.toContain("example.invalid")
+  })
+
+  test("does not resolve DTD entities from HTML bodies", () => {
+    const html = '<!DOCTYPE html [<!ENTITY xxe SYSTEM "https://example.invalid/xxe">]><p>Safe body &xxe;</p>'
+    const body = extractGmailMessage({
+      snippet: "Snippet text",
+      payload: { mimeType: "text/html", body: { data: base64Url(html) } },
+    }).body
+
+    expect(body).toBe("Safe body &xxe;")
+    expect(body).not.toContain("example.invalid")
+  })
+
   test("truncates long bodies to Gmail's route budget", () => {
     const message = extractGmailMessage({
       snippet: "short",

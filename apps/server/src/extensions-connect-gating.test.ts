@@ -227,11 +227,8 @@ describe("Connect-aware legacy extension gating", () => {
 
     expectAllActions(await listActions(base));
     await expectLegacyCallPassesThrough(base);
-    const status = await readSchema(
-      await fetch(`${base}/experimental/google-workspace/status`, { headers: clientHeaders() }),
-      googleWorkspaceStatusSchema,
-    );
-    expect(status.connect).toBeUndefined();
+    const statusAction = await readSchema(await callGoogleWorkspaceStatus(base), googleWorkspaceStatusActionSchema);
+    expect(statusAction.result.connect).toBeUndefined();
   });
 
   test("keeps legacy extension behavior unchanged when legacy Google Workspace is configured", async () => {
@@ -242,11 +239,8 @@ describe("Connect-aware legacy extension gating", () => {
 
     expectAllActions(await listActions(base));
     await expectLegacyCallPassesThrough(base);
-    const status = await readSchema(
-      await fetch(`${base}/experimental/google-workspace/status`, { headers: clientHeaders() }),
-      googleWorkspaceStatusSchema,
-    );
-    expect(status.connect).toBeUndefined();
+    const statusAction = await readSchema(await callGoogleWorkspaceStatus(base), googleWorkspaceStatusActionSchema);
+    expect(statusAction.result.connect).toBeUndefined();
     const state = await readSchema(
       await fetch(`${base}/experimental/connect/state`, { headers: clientHeaders() }),
       connectStateResponseSchema,
@@ -274,18 +268,12 @@ describe("Connect-aware legacy extension gating", () => {
     expect(gatedBody.message).toContain("Settings > Connect");
     expect(gatedBody.message).toContain("Do not direct them to Settings > Extensions");
 
-    const status = await readSchema(
-      await fetch(`${base}/experimental/google-workspace/status`, { headers: clientHeaders() }),
-      googleWorkspaceStatusSchema,
-    );
-    expect(status.connect).toEqual({
+    const statusAction = await readSchema(await callGoogleWorkspaceStatus(base), googleWorkspaceStatusActionSchema);
+    expect(statusAction.result.connect).toEqual({
       enabled: true,
       cloudMcpPresent: false,
       guidance: gatedBody.message,
     });
-
-    const statusAction = await readSchema(await callGoogleWorkspaceStatus(base), googleWorkspaceStatusActionSchema);
-    expect(statusAction.result.connect).toEqual(status.connect);
 
     await writeRuntimeOpencodeConfig(config, "ws_1", (current) => ({
       ...current,
@@ -302,11 +290,8 @@ describe("Connect-aware legacy extension gating", () => {
     expect(cloudBody.message).not.toContain("Repair and test");
     expect(cloudBody.message).toContain("Settings > Connect");
 
-    const cloudStatus = await readSchema(
-      await fetch(`${base}/experimental/google-workspace/status`, { headers: clientHeaders() }),
-      googleWorkspaceStatusSchema,
-    );
-    expect(cloudStatus.connect).toEqual({
+    const cloudStatusAction = await readSchema(await callGoogleWorkspaceStatus(base), googleWorkspaceStatusActionSchema);
+    expect(cloudStatusAction.result.connect).toEqual({
       enabled: true,
       cloudMcpPresent: false,
       guidance: cloudBody.message,

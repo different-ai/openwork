@@ -1,0 +1,1 @@
+ALTER TABLE `automation_runner` ADD `capabilities` json;

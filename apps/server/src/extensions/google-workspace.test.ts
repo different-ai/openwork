@@ -1,5 +1,7 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, writeFile } from "node:fs/promises";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import type { LookupAddress } from "node:dns";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
+import type { LookupFunction } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -7,10 +9,12 @@ import { ApiError } from "../errors.js";
 import type { ServerConfig } from "../types.js";
 import {
   callGoogleWorkspaceExtensionAction,
+  createGmailAttachmentPublicLookup,
   createGoogleWorkspaceConnectFlowManager,
   googleWorkspaceDisconnect,
   googleWorkspaceSetActiveAccount,
   googleWorkspaceStatus,
+  setGmailAttachmentFetchForTests,
 } from "./google-workspace.js";
 
 function createTestConfig(): ServerConfig {
@@ -61,6 +65,11 @@ function base64Url(text: string): string {
   return Buffer.from(text, "utf8").toString("base64url");
 }
 
+function decodeRawFromRequestBody(body: string): string {
+  const raw = body.match(/"raw":"([^"]+)"/)?.[1] ?? "";
+  return Buffer.from(raw.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
+}
+
 const previousEnv = {
   devMode: process.env.OPENWORK_DEV_MODE,
   plaintextVault: process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT,
@@ -70,18 +79,51 @@ const previousEnv = {
 };
 const previousFetch = globalThis.fetch;
 
+// Attachment url validation resolves hostnames; answer from a fixture map so
+// tests never touch real DNS. Unmapped hostnames resolve to a public address.
+const dnsAnswers = new Map<string, string | Error>();
+mock.module("node:dns/promises", () => ({
+  lookup: async (hostname: string) => {
+    const answer = dnsAnswers.get(hostname);
+    if (answer instanceof Error) throw answer;
+    return [{ address: typeof answer === "string" ? answer : "93.184.216.34", family: 4 }];
+  },
+}));
+
 function restoreEnv(key: string, value: string | undefined) {
   if (typeof value === "string") process.env[key] = value;
   else delete process.env[key];
 }
 
+async function lookupAll(lookupFunction: LookupFunction, hostname: string): Promise<LookupAddress[]> {
+  return await new Promise<LookupAddress[]>((resolve, reject) => {
+    lookupFunction(hostname, { all: true }, (error, addresses) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      if (!Array.isArray(addresses)) {
+        reject(new Error("Expected an all-address DNS lookup result."));
+        return;
+      }
+      resolve(addresses);
+    });
+  });
+}
+
+beforeEach(() => {
+  setGmailAttachmentFetchForTests((input, init) => globalThis.fetch(input, init));
+});
+
 afterEach(() => {
+  dnsAnswers.clear();
   restoreEnv("OPENWORK_DEV_MODE", previousEnv.devMode);
   restoreEnv("OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT", previousEnv.plaintextVault);
   restoreEnv("GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET", previousEnv.clientSecret);
   restoreEnv("OPENWORK_GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET", previousEnv.legacyClientSecret);
   restoreEnv("OPENWORK_GOOGLE_WORKSPACE_TOKEN_BROKER_URL", previousEnv.brokerUrl);
   globalThis.fetch = previousFetch;
+  setGmailAttachmentFetchForTests();
 });
 
 describe("Google Workspace extension", () => {
@@ -263,6 +305,30 @@ describe("Google Workspace extension", () => {
     expect(requestedUrls[0]).toBe("https://gmail.googleapis.com/gmail/v1/users/me/messages/m1/attachments/att-1");
   });
 
+  test("drive_search_files escapes backslashes before apostrophes in query literals", async () => {
+    process.env.OPENWORK_DEV_MODE = "1";
+    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
+    const config = createTestConfig();
+    await writePlaintextVault(config, {
+      version: 2,
+      activeAccountId: "sub-one",
+      accounts: [accountRecord("one@example.com", "sub-one")],
+    });
+    let requestedUrl = "";
+    globalThis.fetch = Object.assign(
+      async (input: string | URL | Request) => {
+        requestedUrl = String(input instanceof Request ? input.url : input);
+        return new Response(JSON.stringify({ files: [] }), { status: 200 });
+      },
+      { preconnect: previousFetch.preconnect },
+    );
+
+    await callGoogleWorkspaceExtensionAction(config, "drive_search_files", { query: String.raw`reports\O'Brien` }, {});
+
+    expect(new URL(requestedUrl).searchParams.get("q")).toBe(String.raw`name contains 'reports\\O\'Brien' and trashed = false`);
+  });
+
   test("gmail_create_draft attaches local workspace files", async () => {
     process.env.OPENWORK_DEV_MODE = "1";
     process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
@@ -311,7 +377,10 @@ describe("Google Workspace extension", () => {
     expect(decoded).toContain("Cc: purchasing.admin@acme.test, casey.jordan@acme.test");
     expect(decoded).toContain("Subject: Invoice ACME-2026-001 for PO-000123");
     expect(decoded).toContain("Content-Type: multipart/mixed;");
-    expect(decoded).toContain("Please find attached invoice ACME-2026-001 for PO-000123 and review the proposed commercial terms before our next call.\n\nThanks,\nOpenWork");
+    expect(decoded).toContain("Content-Type: multipart/alternative;");
+    expect(decoded).toContain("Content-Type: text/html; charset=UTF-8");
+    expect(decoded).toContain("MIME-Version: 1.0");
+    expect(decoded).toContain("Please find attached invoice ACME-2026-001 for PO-000123 and review the proposed commercial terms before our next call.\r\n\r\nThanks,\r\nOpenWork");
     expect(decoded).toContain("Content-Type: application/pdf; name=\"acme-invoice-2026-001.pdf\"");
     expect(decoded).toContain("Content-Disposition: attachment; filename=\"acme-invoice-2026-001.pdf\"");
     expect(decoded).toContain(Buffer.from("%PDF-1.4\ninvoice bytes\n", "utf8").toString("base64"));
@@ -374,7 +443,7 @@ describe("Google Workspace extension", () => {
       "```",
       "# keep fenced heading",
       "```",
-    ].join("\n"));
+    ].join("\r\n"));
   });
 
   test("gmail_create_reply_draft rejects accounts without the gmail.readonly scope", async () => {
@@ -454,8 +523,516 @@ describe("Google Workspace extension", () => {
       "On Thu, 16 Jul 2026 at 15:21 UTC, Alice <alice@example.com> wrote:",
       "> Original line",
       "> > previous quote",
-    ].join("\n"));
+    ].join("\r\n"));
+    expect(decoded).toContain("MIME-Version: 1.0");
+    expect(decoded).toContain("Content-Type: multipart/alternative;");
+    expect(decoded).toContain("Content-Type: text/html; charset=UTF-8");
+    expect(decoded).toContain('<div class="gmail_quote"><div dir="ltr" class="gmail_attr">On Thu, 16 Jul 2026 at 15:21 UTC, Alice &lt;alice@example.com&gt; wrote:</div><blockquote class="gmail_quote" style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex">');
+    expect(decoded).toContain("<div>Original line</div><div>&gt; previous quote</div>");
     expect(decoded).not.toContain("one@example.com");
+    expect(result?.result).toMatchObject({
+      reply: {
+        threadId: "thread-1",
+        subject: "Re: Project update",
+        to: ["Alice <alice@example.com>", "Bob <bob@example.com>"],
+        cc: ["Carol <carol@example.com>"],
+        inReplyTo: "<message-1@example.com>",
+        original: { subject: "Project update", from: "Alice <alice@example.com>", date: "Thu, 16 Jul 2026 15:21:00 +0000" },
+      },
+    });
+  });
+
+  test("gmail_create_reply_draft quotes HTML-only originals in both parts", async () => {
+    process.env.OPENWORK_DEV_MODE = "1";
+    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
+    const config = createTestConfig();
+    await writePlaintextVault(config, {
+      version: 2,
+      activeAccountId: "sub-one",
+      accounts: [accountRecord("one@example.com", "sub-one", ["openid", "https://www.googleapis.com/auth/gmail.readonly"])],
+    });
+    const requests: { url: string; body: string }[] = [];
+    globalThis.fetch = Object.assign(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.includes("/messages/m1")) {
+          return new Response(JSON.stringify({
+            id: "m1",
+            threadId: "thread-1",
+            payload: {
+              headers: [
+                { name: "Message-ID", value: "<message-1@example.com>" },
+                { name: "Subject", value: "Design review" },
+                { name: "From", value: "Alice <alice@example.com>" },
+                { name: "Date", value: "Thu, 16 Jul 2026 15:21:00 +0000" },
+              ],
+              parts: [{ mimeType: "text/html", body: { data: base64Url("<div>Hello<br>world &amp; more</div>") } }],
+            },
+          }), { status: 200 });
+        }
+        requests.push({ url, body: typeof init?.body === "string" ? init.body : "" });
+        return new Response(JSON.stringify({ id: "draft-1", message: { id: "draft-message-1", threadId: "thread-1" } }), { status: 200 });
+      },
+      { preconnect: previousFetch.preconnect },
+    );
+
+    const result = await callGoogleWorkspaceExtensionAction(config, "gmail_create_reply_draft", { messageId: "m1", body: "Thanks!" }, {});
+    expect(result?.ok).toBe(true);
+    const decoded = decodeRawFromRequestBody(requests[0]?.body ?? "");
+    expect(decoded).toContain("On Thu, 16 Jul 2026 at 15:21 UTC, Alice <alice@example.com> wrote:");
+    expect(decoded).toContain("> Hello\r\n> world & more");
+    expect(decoded).toContain('<blockquote class="gmail_quote"');
+    expect(decoded).toContain("<div>Hello</div><div>world &amp; more</div>");
+  });
+
+  test("gmail_create_reply_draft does not append a second quote when the body already includes one", async () => {
+    process.env.OPENWORK_DEV_MODE = "1";
+    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
+    const config = createTestConfig();
+    await writePlaintextVault(config, {
+      version: 2,
+      activeAccountId: "sub-one",
+      accounts: [accountRecord("one@example.com", "sub-one", ["openid", "https://www.googleapis.com/auth/gmail.readonly"])],
+    });
+    const requests: { url: string; body: string }[] = [];
+    globalThis.fetch = Object.assign(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.includes("/messages/m1")) {
+          return new Response(JSON.stringify({
+            id: "m1",
+            threadId: "thread-1",
+            payload: {
+              headers: [
+                { name: "Message-ID", value: "<message-1@example.com>" },
+                { name: "Subject", value: "Project update" },
+                { name: "From", value: "Alice <alice@example.com>" },
+                { name: "Date", value: "Thu, 16 Jul 2026 15:21:00 +0000" },
+              ],
+              parts: [{ mimeType: "text/plain", body: { data: base64Url("Original line") } }],
+            },
+          }), { status: 200 });
+        }
+        requests.push({ url, body: typeof init?.body === "string" ? init.body : "" });
+        return new Response(JSON.stringify({ id: "draft-1", message: { id: "draft-message-1", threadId: "thread-1" } }), { status: 200 });
+      },
+      { preconnect: previousFetch.preconnect },
+    );
+
+    const body = [
+      "Looks good to me.",
+      "",
+      "On Mon, 20 Jul 2026 at 10:00 UTC, Bob <bob@example.com> wrote:",
+      "> earlier message",
+    ].join("\n");
+    const result = await callGoogleWorkspaceExtensionAction(config, "gmail_create_reply_draft", { messageId: "m1", body }, {});
+    expect(result?.ok).toBe(true);
+    const decoded = decodeRawFromRequestBody(requests[0]?.body ?? "");
+    expect(decoded).toContain("> earlier message");
+    expect(decoded).not.toContain("On Thu, 16 Jul 2026 at 15:21 UTC");
+    expect(decoded).not.toContain("<blockquote");
+    expect(decoded).not.toContain("gmail_attr");
+  });
+
+  test("gmail_create_reply_draft rejects messages without thread metadata", async () => {
+    process.env.OPENWORK_DEV_MODE = "1";
+    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
+    const config = createTestConfig();
+    await writePlaintextVault(config, {
+      version: 2,
+      activeAccountId: "sub-one",
+      accounts: [accountRecord("one@example.com", "sub-one", ["openid", "https://www.googleapis.com/auth/gmail.readonly"])],
+    });
+    globalThis.fetch = Object.assign(
+      async () => new Response(JSON.stringify({
+        id: "m1",
+        threadId: "thread-1",
+        payload: { headers: [{ name: "Subject", value: "No message id" }, { name: "From", value: "Alice <alice@example.com>" }] },
+      }), { status: 200 }),
+      { preconnect: previousFetch.preconnect },
+    );
+
+    await expect(callGoogleWorkspaceExtensionAction(config, "gmail_create_reply_draft", { messageId: "m1", body: "Thanks" }, {})).rejects.toThrow(
+      "Gmail message is missing thread metadata required to create a reply draft.",
+    );
+  });
+
+  test("gmail_create_reply_draft attaches workspace files inside the threaded reply", async () => {
+    process.env.OPENWORK_DEV_MODE = "1";
+    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
+    const config = createTestConfig();
+    const workspaceRoot = join(dirname(config.configPath ?? ""), "workspace");
+    const reportPath = join(workspaceRoot, "reports", "summary-q3.pdf");
+    config.workspaces = [{ id: "workspace-1", name: "Workspace", path: workspaceRoot, preset: "starter", workspaceType: "local" }];
+    config.authorizedRoots = [workspaceRoot];
+    await mkdir(dirname(reportPath), { recursive: true });
+    await writeFile(reportPath, "%PDF-1.4\nsummary\n", "utf8");
+    await writePlaintextVault(config, {
+      version: 2,
+      activeAccountId: "sub-one",
+      accounts: [accountRecord("one@example.com", "sub-one", ["openid", "https://www.googleapis.com/auth/gmail.readonly"])],
+    });
+    const requests: { url: string; body: string }[] = [];
+    globalThis.fetch = Object.assign(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.includes("/messages/m1")) {
+          return new Response(JSON.stringify({
+            id: "m1",
+            threadId: "thread-1",
+            payload: {
+              headers: [
+                { name: "Message-ID", value: "<message-1@example.com>" },
+                { name: "Subject", value: "Project update" },
+                { name: "From", value: "Alice <alice@example.com>" },
+                { name: "Date", value: "Thu, 16 Jul 2026 15:21:00 +0000" },
+              ],
+              parts: [{ mimeType: "text/plain", body: { data: base64Url("Original line") } }],
+            },
+          }), { status: 200 });
+        }
+        requests.push({ url, body: typeof init?.body === "string" ? init.body : "" });
+        return new Response(JSON.stringify({ id: "draft-1", message: { id: "draft-message-1", threadId: "thread-1" } }), { status: 200 });
+      },
+      { preconnect: previousFetch.preconnect },
+    );
+
+    const result = await callGoogleWorkspaceExtensionAction(config, "gmail_create_reply_draft", {
+      messageId: "m1",
+      body: "Summary attached.",
+      attachments: [{ path: "reports/summary-q3.pdf" }],
+    }, { directory: workspaceRoot });
+    expect(result?.ok).toBe(true);
+    expect(requests[0]?.body).toContain('"threadId":"thread-1"');
+    const decoded = decodeRawFromRequestBody(requests[0]?.body ?? "");
+    expect(decoded).toContain("In-Reply-To: <message-1@example.com>");
+    expect(decoded).toContain("Content-Type: multipart/mixed;");
+    expect(decoded).toContain("Content-Type: multipart/alternative;");
+    expect(decoded).toContain("Content-Disposition: attachment; filename=\"summary-q3.pdf\"");
+    expect(decoded).toContain(Buffer.from("%PDF-1.4\nsummary\n", "utf8").toString("base64"));
+  });
+
+  test("gmail_create_reply_draft folds long References headers", async () => {
+    process.env.OPENWORK_DEV_MODE = "1";
+    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
+    const config = createTestConfig();
+    await writePlaintextVault(config, {
+      version: 2,
+      activeAccountId: "sub-one",
+      accounts: [accountRecord("one@example.com", "sub-one", ["openid", "https://www.googleapis.com/auth/gmail.readonly"])],
+    });
+    const references = Array.from({ length: 8 }, (_, index) => `<thread-ref-${index + 1}@example.com>`).join(" ");
+    const requests: { url: string; body: string }[] = [];
+    globalThis.fetch = Object.assign(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.includes("/messages/m1")) {
+          return new Response(JSON.stringify({
+            id: "m1",
+            threadId: "thread-1",
+            payload: {
+              headers: [
+                { name: "Message-ID", value: "<message-1@example.com>" },
+                { name: "References", value: references },
+                { name: "Subject", value: "Project update" },
+                { name: "From", value: "Alice <alice@example.com>" },
+                { name: "Date", value: "Thu, 16 Jul 2026 15:21:00 +0000" },
+              ],
+              parts: [{ mimeType: "text/plain", body: { data: base64Url("Original line") } }],
+            },
+          }), { status: 200 });
+        }
+        requests.push({ url, body: typeof init?.body === "string" ? init.body : "" });
+        return new Response(JSON.stringify({ id: "draft-1", message: { id: "draft-message-1", threadId: "thread-1" } }), { status: 200 });
+      },
+      { preconnect: previousFetch.preconnect },
+    );
+
+    const result = await callGoogleWorkspaceExtensionAction(config, "gmail_create_reply_draft", { messageId: "m1", body: "Thanks!" }, {});
+    expect(result?.ok).toBe(true);
+    const decoded = decodeRawFromRequestBody(requests[0]?.body ?? "");
+    const headerSection = decoded.split("\r\n\r\n")[0] ?? "";
+    for (const line of headerSection.split("\r\n")) {
+      expect(line.length).toBeLessThanOrEqual(78);
+    }
+    expect(headerSection).toContain("\r\n <thread-ref-");
+    const unfolded = headerSection.replace(/\r\n /g, " ");
+    expect(unfolded).toContain(`References: ${references} <message-1@example.com>`);
+  });
+
+  test("gmail_create_reply_draft drops display-name fragments from unquoted commas", async () => {
+    process.env.OPENWORK_DEV_MODE = "1";
+    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
+    const config = createTestConfig();
+    await writePlaintextVault(config, {
+      version: 2,
+      activeAccountId: "sub-one",
+      accounts: [accountRecord("one@example.com", "sub-one", ["openid", "https://www.googleapis.com/auth/gmail.readonly"])],
+    });
+    const requests: { url: string; body: string }[] = [];
+    globalThis.fetch = Object.assign(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.includes("/messages/m1")) {
+          return new Response(JSON.stringify({
+            id: "m1",
+            threadId: "thread-1",
+            payload: {
+              headers: [
+                { name: "Message-ID", value: "<message-1@example.com>" },
+                { name: "Subject", value: "Project update" },
+                { name: "From", value: "Alice <alice@example.com>" },
+                { name: "To", value: "Doe, John <j@x.example>" },
+                { name: "Date", value: "Thu, 16 Jul 2026 15:21:00 +0000" },
+              ],
+              parts: [{ mimeType: "text/plain", body: { data: base64Url("Original line") } }],
+            },
+          }), { status: 200 });
+        }
+        requests.push({ url, body: typeof init?.body === "string" ? init.body : "" });
+        return new Response(JSON.stringify({ id: "draft-1", message: { id: "draft-message-1", threadId: "thread-1" } }), { status: 200 });
+      },
+      { preconnect: previousFetch.preconnect },
+    );
+
+    const result = await callGoogleWorkspaceExtensionAction(config, "gmail_create_reply_draft", { messageId: "m1", body: "Thanks!", replyAll: true }, {});
+    expect(result?.ok).toBe(true);
+    const reply = (result?.result as { reply?: { to?: string[] } })?.reply;
+    expect(reply?.to).toEqual(["Alice <alice@example.com>", "John <j@x.example>"]);
+  });
+
+  test("gmail_create_draft rejects forward-looking subjects", async () => {
+    await expect(callGoogleWorkspaceExtensionAction(createTestConfig(), "gmail_create_draft", {
+      to: ["sam@acme.test"],
+      subject: "Fwd: Project update",
+      body: "Thanks",
+    }, {})).rejects.toThrow(
+      new ApiError(400, "invalid_payload", "Subject looks like a reply. Use gmail_create_reply_draft instead so the Gmail thread is preserved."),
+    );
+  });
+
+  test("gmail_create_draft encodes non-ASCII subjects", async () => {
+    process.env.OPENWORK_DEV_MODE = "1";
+    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
+    const config = createTestConfig();
+    await writePlaintextVault(config, {
+      version: 2,
+      activeAccountId: "sub-one",
+      accounts: [accountRecord("one@example.com", "sub-one")],
+    });
+    const requests: { url: string; body: string }[] = [];
+    globalThis.fetch = Object.assign(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        requests.push({ url: String(input instanceof Request ? input.url : input), body: typeof init?.body === "string" ? init.body : "" });
+        return new Response(JSON.stringify({ id: "draft-1", message: { id: "draft-message-1" } }), { status: 200 });
+      },
+      { preconnect: previousFetch.preconnect },
+    );
+
+    await callGoogleWorkspaceExtensionAction(config, "gmail_create_draft", {
+      to: ["sam@acme.test"],
+      subject: "Résumé update ✓",
+      body: "New details inside.",
+    }, {});
+    const decoded = decodeRawFromRequestBody(requests[0]?.body ?? "");
+    expect(decoded).toContain("Subject: =?UTF-8?B?");
+    expect(decoded).not.toContain("Subject: Résumé");
+    const subjectLine = decoded.split("\r\n").find((line) => line.startsWith("Subject: ")) ?? "";
+    const encodedWords = [...subjectLine.matchAll(/=\?UTF-8\?B\?([A-Za-z0-9+/=]+)\?=/g)].map((match) => Buffer.from(match[1] ?? "", "base64").toString("utf8"));
+    expect(encodedWords.join("")).toBe("Résumé update ✓");
+  });
+
+  test("gmail_create_draft neutralizes CRLF header injection", async () => {
+    process.env.OPENWORK_DEV_MODE = "1";
+    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
+    const config = createTestConfig();
+    await writePlaintextVault(config, {
+      version: 2,
+      activeAccountId: "sub-one",
+      accounts: [accountRecord("one@example.com", "sub-one")],
+    });
+    const requests: { url: string; body: string }[] = [];
+    globalThis.fetch = Object.assign(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        requests.push({ url: String(input instanceof Request ? input.url : input), body: typeof init?.body === "string" ? init.body : "" });
+        return new Response(JSON.stringify({ id: "draft-1", message: { id: "draft-message-1" } }), { status: 200 });
+      },
+      { preconnect: previousFetch.preconnect },
+    );
+
+    await callGoogleWorkspaceExtensionAction(config, "gmail_create_draft", {
+      to: ["sam@acme.test\r\nX-Evil: injected"],
+      subject: "Hello\r\nBcc: evil@example.com",
+      body: "Greetings.",
+    }, {});
+    const decoded = decodeRawFromRequestBody(requests[0]?.body ?? "");
+    expect(decoded).toContain("Subject: Hello Bcc: evil@example.com");
+    expect(decoded).not.toContain("\r\nBcc: evil@example.com");
+    expect(decoded).toContain("To: sam@acme.test X-Evil: injected");
+    expect(decoded).not.toContain("\r\nX-Evil: injected");
+  });
+
+  test("gmail_create_draft attaches files downloaded from https URLs", async () => {
+    process.env.OPENWORK_DEV_MODE = "1";
+    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
+    const config = createTestConfig();
+    await writePlaintextVault(config, {
+      version: 2,
+      activeAccountId: "sub-one",
+      accounts: [accountRecord("one@example.com", "sub-one")],
+    });
+    const fetchCalls: { url: string; redirect?: string }[] = [];
+    const requests: { url: string; body: string }[] = [];
+    globalThis.fetch = Object.assign(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input instanceof Request ? input.url : input);
+        fetchCalls.push({ url, redirect: typeof init?.redirect === "string" ? init.redirect : undefined });
+        if (url === "https://files.example.test/docs/report.pdf") {
+          return new Response(null, { status: 302, headers: { location: "https://cdn.example.test/report-final.pdf" } });
+        }
+        if (url === "https://cdn.example.test/report-final.pdf") {
+          return new Response("PDF BYTES", { status: 200, headers: { "content-type": "application/pdf", "content-disposition": "attachment; filename=\"quarterly-report.pdf\"" } });
+        }
+        requests.push({ url, body: typeof init?.body === "string" ? init.body : "" });
+        return new Response(JSON.stringify({ id: "draft-1", message: { id: "draft-message-1" } }), { status: 200 });
+      },
+      { preconnect: previousFetch.preconnect },
+    );
+
+    const result = await callGoogleWorkspaceExtensionAction(config, "gmail_create_draft", {
+      to: ["sam@acme.test"],
+      subject: "Quarterly report",
+      body: "Report attached.",
+      attachments: [{ url: "https://files.example.test/docs/report.pdf" }],
+    }, {});
+    expect(result?.ok).toBe(true);
+    expect(fetchCalls.find((call) => call.url === "https://files.example.test/docs/report.pdf")?.redirect).toBe("manual");
+    expect(fetchCalls.find((call) => call.url === "https://cdn.example.test/report-final.pdf")?.redirect).toBe("manual");
+    const decoded = decodeRawFromRequestBody(requests[0]?.body ?? "");
+    expect(decoded).toContain("Content-Type: application/pdf; name=\"quarterly-report.pdf\"");
+    expect(decoded).toContain("Content-Disposition: attachment; filename=\"quarterly-report.pdf\"");
+    expect(decoded).toContain(Buffer.from("PDF BYTES", "utf8").toString("base64"));
+  });
+
+  test("gmail_create_draft rejects non-https, private, and redirect-downgraded attachment urls", async () => {
+    process.env.OPENWORK_DEV_MODE = "1";
+    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
+    const draftArgs = (attachment: Record<string, unknown>) => ({
+      to: ["sam@acme.test"],
+      subject: "Files",
+      body: "See attached.",
+      attachments: [attachment],
+    });
+
+    await expect(callGoogleWorkspaceExtensionAction(createTestConfig(), "gmail_create_draft", draftArgs({ url: "http://files.example.test/report.pdf" }), {})).rejects.toThrow("Attachment url must be a public https URL");
+    await expect(callGoogleWorkspaceExtensionAction(createTestConfig(), "gmail_create_draft", draftArgs({ url: "https://localhost/report.pdf" }), {})).rejects.toThrow("Attachment url must be a public https URL");
+    await expect(callGoogleWorkspaceExtensionAction(createTestConfig(), "gmail_create_draft", draftArgs({ url: "https://192.168.1.10/report.pdf" }), {})).rejects.toThrow("Attachment url must be a public https URL");
+    dnsAnswers.set("internal.corp.example", "10.0.0.5");
+    await expect(callGoogleWorkspaceExtensionAction(createTestConfig(), "gmail_create_draft", draftArgs({ url: "https://internal.corp.example/report.pdf" }), {})).rejects.toThrow("Attachment url must resolve to a public address");
+    dnsAnswers.set("missing.example.test", new Error("NXDOMAIN"));
+    await expect(callGoogleWorkspaceExtensionAction(createTestConfig(), "gmail_create_draft", draftArgs({ url: "https://missing.example.test/report.pdf" }), {})).rejects.toThrow("Attachment url hostname could not be resolved");
+    await expect(callGoogleWorkspaceExtensionAction(createTestConfig(), "gmail_create_draft", draftArgs({}), {})).rejects.toThrow("Each attachment must provide exactly one of url or path");
+    await expect(callGoogleWorkspaceExtensionAction(createTestConfig(), "gmail_create_draft", draftArgs({ path: "report.pdf", url: "https://files.example.test/report.pdf" }), {})).rejects.toThrow("Each attachment must provide exactly one of url or path");
+
+    globalThis.fetch = Object.assign(
+      async (input: string | URL | Request) => {
+        const url = String(input instanceof Request ? input.url : input);
+        if (url === "https://files.example.test/report.pdf") {
+          return new Response(null, { status: 302, headers: { location: "http://cdn.example.test/report.pdf" } });
+        }
+        return new Response("{}", { status: 200 });
+      },
+      { preconnect: previousFetch.preconnect },
+    );
+    await expect(callGoogleWorkspaceExtensionAction(createTestConfig(), "gmail_create_draft", draftArgs({ url: "https://files.example.test/report.pdf" }), {})).rejects.toThrow("Attachment url must be a public https URL");
+  });
+
+  test("gmail attachment socket lookup rejects a private DNS-rebinding answer", async () => {
+    let resolverCalls = 0;
+    const socketLookup = createGmailAttachmentPublicLookup(async () => {
+      resolverCalls += 1;
+      return resolverCalls === 1
+        ? [{ address: "93.184.216.34", family: 4 }]
+        : [{ address: "169.254.169.254", family: 4 }];
+    });
+
+    await expect(lookupAll(socketLookup, "files.example.test")).resolves.toEqual([
+      { address: "93.184.216.34", family: 4 },
+    ]);
+    await expect(lookupAll(socketLookup, "files.example.test")).rejects.toThrow(
+      "resolved to a private or reserved address",
+    );
+    expect(resolverCalls).toBe(2);
+  });
+
+  test("gmail_create_draft enforces the attachment size cap on url downloads", async () => {
+    process.env.OPENWORK_DEV_MODE = "1";
+    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
+    const draftArgs = {
+      to: ["sam@acme.test"],
+      subject: "Files",
+      body: "See attached.",
+      attachments: [{ url: "https://files.example.test/huge.bin" }],
+    };
+
+    globalThis.fetch = Object.assign(
+      async () => new Response("x", { status: 200, headers: { "content-length": String(21 * 1024 * 1024) } }),
+      { preconnect: previousFetch.preconnect },
+    );
+    await expect(callGoogleWorkspaceExtensionAction(createTestConfig(), "gmail_create_draft", draftArgs, {})).rejects.toThrow("Gmail draft attachments support files up to");
+
+    const chunk = new Uint8Array(1024 * 1024);
+    let sent = 0;
+    globalThis.fetch = Object.assign(
+      async () => new Response(new ReadableStream({
+        pull(controller) {
+          if (sent >= 21) {
+            controller.close();
+            return;
+          }
+          sent += 1;
+          controller.enqueue(chunk);
+        },
+      }), { status: 200 }),
+      { preconnect: previousFetch.preconnect },
+    );
+    await expect(callGoogleWorkspaceExtensionAction(createTestConfig(), "gmail_create_draft", draftArgs, {})).rejects.toThrow("Gmail draft attachments support files up to");
+  });
+
+  test("gmail_create_draft rejects oversized and symlink-escaping path attachments", async () => {
+    process.env.OPENWORK_DEV_MODE = "1";
+    process.env.OPENWORK_GOOGLE_WORKSPACE_ALLOW_PLAINTEXT_VAULT = "1";
+    process.env.GOOGLE_WORKSPACE_OAUTH_CLIENT_SECRET = "secret";
+    const config = createTestConfig();
+    const workspaceRoot = join(dirname(config.configPath ?? ""), "workspace");
+    const outsideDir = join(dirname(config.configPath ?? ""), "outside");
+    config.workspaces = [{ id: "workspace-1", name: "Workspace", path: workspaceRoot, preset: "starter", workspaceType: "local" }];
+    config.authorizedRoots = [workspaceRoot];
+    await mkdir(workspaceRoot, { recursive: true });
+    await mkdir(outsideDir, { recursive: true });
+    await writeFile(join(workspaceRoot, "huge.bin"), Buffer.alloc(21 * 1024 * 1024));
+    await writeFile(join(outsideDir, "secret.txt"), "secret", "utf8");
+    await symlink(join(outsideDir, "secret.txt"), join(workspaceRoot, "leak.txt"));
+
+    const draftArgs = (path: string) => ({
+      to: ["sam@acme.test"],
+      subject: "Files",
+      body: "See attached.",
+      attachments: [{ path }],
+    });
+    await expect(callGoogleWorkspaceExtensionAction(config, "gmail_create_draft", draftArgs("huge.bin"), { directory: workspaceRoot })).rejects.toThrow("Gmail draft attachments support files up to");
+    await expect(callGoogleWorkspaceExtensionAction(config, "gmail_create_draft", draftArgs("leak.txt"), { directory: workspaceRoot })).rejects.toThrow("Attachment path must resolve inside an authorized workspace root");
   });
 
   test("calendar_create_event rejects accounts without the calendar.events scope", async () => {

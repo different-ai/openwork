@@ -5,6 +5,8 @@ description: Local OpenWork Electron browser automation with CDP. Use when drivi
 
 # Browser Automation
 
+For verdicts, do not drive CDP by hand — write or run an `evals/specs` test (`write-a-spec`, `run-tests`). This skill is for exploration and debugging only.
+
 ## What I Do
 
 - Attach OpenCode browser tools to the OpenWork Electron app during local development.
@@ -48,7 +50,7 @@ OPENWORK_ELECTRON_REMOTE_DEBUG_PORT=0 pnpm dev
 Use a detached launch when the user wants the app running in the background:
 
 ```sh
-nohup pnpm dev > /var/folders/d9/xqhkvsp94rg0n0n523snqztm0000gn/T/opencode/openwork-dev.log 2>&1 &
+nohup pnpm dev > /tmp/openwork-dev.log 2>&1 &
 ```
 
 Then wait for the CDP port:

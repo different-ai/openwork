@@ -46,7 +46,7 @@ let windowErrorHandlerRef: ((event: ErrorEvent) => void) | null = null;
 let windowUnhandledRejectionHandlerRef: ((event: PromiseRejectionEvent) => void) | null = null;
 let visibilityHandlerRef: (() => void) | null = null;
 let disposeInspectorSliceRef: (() => void) | null = null;
-const sessionKey = `react-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+const sessionKey = `react-${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}`;
 
 // Cached availability of the server-side /dev/log sink, keyed by base URL.
 // Prevents the debug-logger from spamming 404s into the console when the

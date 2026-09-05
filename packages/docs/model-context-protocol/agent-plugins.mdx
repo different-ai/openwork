@@ -1,0 +1,92 @@
+---
+title: "OpenWork Connect as an Agent Plugin"
+sidebarTitle: "Agent Plugins"
+description: "Install OpenWork Connect as one portable Agent Plugin, or import compatible Agent Plugins into your organization's Library."
+---
+
+[Agent Plugins](https://agent-plugins.org/) is an open package format that can
+ship Agent Skills and MCP configuration together. OpenWork publishes a
+standards-compliant package for OpenWork Connect at
+[`integrations/agent-plugins/openwork-connect`](https://github.com/different-ai/openwork/tree/dev/integrations/agent-plugins/openwork-connect).
+
+## What the OpenWork package installs
+
+The package contains:
+
+- `plugin.json`, targeting the published Agent Plugins 1.0.0 schema for broad
+  client compatibility;
+- `mcp.json`, pointing at the OpenWork Connect Streamable HTTP endpoint;
+- an `openwork-connect` skill that teaches the agent to search for an exact
+  organizational capability before executing it.
+
+Install or copy the complete package directory using your client's Agent
+Plugins workflow. The standard does not define a registry or one universal
+installation command, so the last installation step depends on the client.
+
+The package does not contain credentials or an `Authorization` header. Your
+MCP client discovers OpenWork OAuth from the endpoint, opens browser sign-in,
+and scopes the resulting authorization grant to the selected organization.
+
+The Agent Plugin selects the `streamable-http` transport; it does not pin a
+wire-protocol revision. OpenWork Connect negotiates stateless MCP 2026-07-28
+with current clients while retaining its MCP 2025-11-25 compatibility path.
+Existing clients can therefore continue using the same endpoint as they move
+to the current MCP protocol.
+
+## What this enables for an organization
+
+An administrator can manage skills, shared MCP connections, and connected
+services once in OpenWork. Members can then install one portable OpenWork
+package in a compatible agent and receive only the capabilities granted to
+them through their organization, teams, and individual access rules.
+
+This separates distribution from access control:
+
+1. the Agent Plugin tells the client how to reach OpenWork;
+2. OpenWork determines what the signed-in member can discover;
+3. `search_capabilities` returns relevant authorized capabilities;
+4. `execute_capability` runs the selected capability or returns an actionable
+   connection or permission state.
+
+The result is one reusable organization capability layer across compatible
+agents instead of a separate MCP and skill configuration for every client,
+teammate, and machine.
+
+## Import Agent Plugins into OpenWork Library
+
+OpenWork's GitHub plugin importer recognizes the published Agent Plugins 1.0.0
+schema and the schema-identical 1.1.0 working draft at a repository root or
+subdirectory. It validates `plugin.json`, requires `mcp.json` to target the
+same schema version, discovers only immediate `skills/<name>/SKILL.md`
+entrypoints, and reads the package-root `mcp.json`. Existing 1.0.0 packages
+remain valid when 1.1.0 packages are imported.
+
+The Den import path currently supports:
+
+- standards-compliant Agent Skills whose instructions are contained in
+  `SKILL.md`;
+- remote `streamable-http` MCP servers;
+- legacy remote `sse` entries supported by the existing connection runtime;
+- independent failure reporting, so one invalid skill or server does not hide
+  valid siblings;
+- Agent Plugin format and schema-version provenance on the imported Plugin.
+
+The Den import path reports but does not install:
+
+- local `stdio` servers, because they require a desktop execution and trust
+  policy;
+- remote entries with static headers, because OpenWork does not yet persist or
+  forward arbitrary package headers;
+- additional scripts or assets referenced by a skill. The `SKILL.md`
+  entrypoint is imported and the omitted assets are reported.
+
+These limits are explicit in the import preview so an administrator cannot
+mistake a partial package for a fully configured organizational Plugin.
+
+## Authentication
+
+Agent Plugins does not define portable OAuth fields. Do not add an OAuth object,
+bearer token, or secret header to the package. OpenWork Connect uses MCP
+protected-resource discovery, browser authorization, PKCE, and the client's
+credential store as described in the
+[OpenWork Connect reference](/cloud/run-in-the-cloud/cloud-mcp).

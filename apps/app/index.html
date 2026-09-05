@@ -29,6 +29,78 @@
         }
       })();
     </script>
+    <script>
+      // Pre-boot error beacon for web deployments: reports a web instance
+      // that fails to load (entry bundle error, early exception) to Sentry
+      // before the app's own error monitoring can start. Inert unless the
+      // build sets VITE_OPENWORK_DEPLOYMENT=web and VITE_OPENWORK_SENTRY_DSN.
+      // Once src/app/lib/error-monitoring.ts starts, it takes over via
+      // window.__openworkWebErrorMonitorActive.
+      (function () {
+        try {
+          var dsn = "%VITE_OPENWORK_SENTRY_DSN%";
+          var deployment = "%VITE_OPENWORK_DEPLOYMENT%";
+          if (deployment !== "web" || !dsn || dsn.charAt(0) === "%") return;
+          var match = dsn.match(/^https:\/\/([\w.-]+)@([\w.-]+(?::\d+)?)\/(\d+)$/);
+          if (!match) return;
+          var envelopeUrl =
+            "https://" + match[2] + "/api/" + match[3] +
+            "/envelope/?sentry_key=" + match[1] + "&sentry_version=7";
+          var sent = 0;
+          function analyticsAllowed() {
+            try {
+              var raw = localStorage.getItem("openwork.preferences");
+              if (!raw) return true;
+              return JSON.parse(raw).analyticsEnabled !== false;
+            } catch (e) {
+              return true;
+            }
+          }
+          function send(type, message) {
+            if (sent >= 3 || window.__openworkWebErrorMonitorActive === true) return;
+            if (!analyticsAllowed()) return;
+            sent += 1;
+            var id = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now())).replace(/-/g, "");
+            var event = {
+              event_id: id,
+              timestamp: Date.now() / 1000,
+              platform: "javascript",
+              level: "error",
+              environment: "web",
+              tags: { boot_phase: "boot" },
+              // Origin + path only: sign-in and deep-link URLs can carry
+              // credentials in the query string that must never leave the page.
+              request: { url: location.origin + location.pathname },
+              exception: { values: [{ type: type, value: String(message).slice(0, 1000) }] },
+            };
+            var body =
+              JSON.stringify({ event_id: id, sent_at: new Date().toISOString() }) +
+              "\n" + JSON.stringify({ type: "event" }) +
+              "\n" + JSON.stringify(event);
+            try {
+              fetch(envelopeUrl, { method: "POST", body: body, keepalive: true })["catch"](function () {});
+            } catch (e) {}
+          }
+          window.addEventListener(
+            "error",
+            function (e) {
+              var t = e.target;
+              var src = t && (t.tagName === "SCRIPT" ? t.src : t.tagName === "LINK" ? t.href : "");
+              if (src) {
+                send("WebBootLoadFailure", "failed to load " + String(src).split("?")[0].split("#")[0]);
+                return;
+              }
+              if (e.message) send("WebBootError", e.message);
+            },
+            true
+          );
+          window.addEventListener("unhandledrejection", function (e) {
+            var reason = e.reason;
+            send("WebBootRejection", reason && reason.message ? reason.message : reason);
+          });
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body class="bg-dls-surface text-dls-text mac:bg-transparent">
     <div id="root"></div>

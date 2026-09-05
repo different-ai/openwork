@@ -4,6 +4,21 @@ import { t } from "@/i18n";
 import type { SessionOption } from "./command-palette";
 import type { RouteSession, RouteWorkspace } from "./route-workspaces";
 
+export type CommandPaletteSessionRef = {
+  workspaceId: string;
+  sessionId: string;
+};
+
+export function buildCommandPaletteSplitSessions(
+  sessions: SessionOption[],
+  current: CommandPaletteSessionRef | null | undefined,
+) {
+  if (!current) return [];
+  return sessions.filter((session) => (
+    session.workspaceId !== current.workspaceId || session.sessionId !== current.sessionId
+  ));
+}
+
 export function buildCommandPaletteSessions(
   workspaces: RouteWorkspace[],
   sessionsByWorkspaceId: Record<string, RouteSession[]>,

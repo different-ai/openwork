@@ -8,6 +8,7 @@ import { getMcpOAuthSelectOrganizationRoute } from "../_lib/mcp-oauth-route";
 import { useWebGlSupported } from "../_lib/use-webgl-supported";
 import { useDenFlow } from "../_providers/den-flow-provider";
 import { AuthPanel } from "./auth-panel";
+import { TemporaryAuthNotice } from "./temporary-auth-notice";
 
 function SessionStatusPanel({ mode }: { mode: "checking" | "redirecting" }) {
   const status = mode === "checking"
@@ -111,7 +112,10 @@ export function AuthScreen() {
             ) : hasResolvedSession ? (
               <SessionStatusPanel mode="redirecting" />
             ) : (
-              <AuthPanel bare emailFirstFlow />
+              <div className="grid gap-5">
+                <TemporaryAuthNotice />
+                <AuthPanel bare emailFirstFlow />
+              </div>
             )}
           </div>
         </div>

@@ -1,0 +1,219 @@
+{
+  "lane": "engines",
+  "createdAt": "2026-09-04T05:41:31.270Z",
+  "machine": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpus": 16,
+    "cpuModel": "Apple M3 Max",
+    "memGB": 48,
+    "node": "v24.15.0"
+  },
+  "versions": {
+    "v1": "1.18.18",
+    "v2": "0.0.0-beta-18707"
+  },
+  "iterations": 5,
+  "pacingMs": 20,
+  "tokens": 20,
+  "results": {
+    "v1": {
+      "boot_ready": [
+        731,
+        985,
+        1310,
+        1026,
+        981
+      ],
+      "spawn_to_first_api_ok": [
+        927,
+        1387,
+        1636,
+        1276,
+        1260
+      ],
+      "session_create": [
+        19,
+        8,
+        10,
+        6,
+        11
+      ],
+      "first_prompt_cold": [
+        1581
+      ],
+      "message_rtt": [
+        {
+          "accepted": 27,
+          "witnessFirstByte": 81,
+          "firstToken": 527,
+          "complete": 530
+        },
+        {
+          "accepted": 9,
+          "witnessFirstByte": 30,
+          "firstToken": 476,
+          "complete": 479
+        },
+        {
+          "accepted": 7,
+          "witnessFirstByte": 24,
+          "firstToken": 492,
+          "complete": 503
+        },
+        {
+          "accepted": 28,
+          "witnessFirstByte": 75,
+          "firstToken": 513,
+          "complete": 515
+        },
+        {
+          "accepted": 7,
+          "witnessFirstByte": 23,
+          "firstToken": 467,
+          "complete": 476
+        }
+      ],
+      "directory_switch": [
+        22,
+        19,
+        20,
+        11,
+        19
+      ],
+      "long_message": [
+        {
+          "accepted": 7,
+          "witnessFirstByte": 36,
+          "complete": 479
+        },
+        {
+          "accepted": 13,
+          "witnessFirstByte": 35,
+          "complete": 493
+        },
+        {
+          "accepted": 8,
+          "witnessFirstByte": 30,
+          "complete": 488
+        },
+        {
+          "accepted": 8,
+          "witnessFirstByte": 31,
+          "complete": 482
+        },
+        {
+          "accepted": 12,
+          "witnessFirstByte": 36,
+          "complete": 471
+        }
+      ],
+      "compaction": [
+        455,
+        463,
+        460,
+        455,
+        458
+      ]
+    },
+    "v2": {
+      "boot_ready": [
+        513,
+        511,
+        512,
+        511,
+        512
+      ],
+      "spawn_to_first_api_ok": [
+        518,
+        515,
+        515,
+        514,
+        516
+      ],
+      "session_create": [
+        130,
+        69,
+        73,
+        77,
+        72
+      ],
+      "first_prompt_cold": [
+        1980
+      ],
+      "message_rtt": [
+        {
+          "accepted": 3,
+          "witnessFirstByte": 13,
+          "firstToken": 502,
+          "complete": 504
+        },
+        {
+          "accepted": 4,
+          "witnessFirstByte": 12,
+          "firstToken": 502,
+          "complete": 504
+        },
+        {
+          "accepted": 5,
+          "witnessFirstByte": 22,
+          "firstToken": 542,
+          "complete": 543
+        },
+        {
+          "accepted": 3,
+          "witnessFirstByte": 12,
+          "firstToken": 530,
+          "complete": 531
+        },
+        {
+          "accepted": 3,
+          "witnessFirstByte": 12,
+          "firstToken": 527,
+          "complete": 529
+        }
+      ],
+      "directory_switch": [
+        75,
+        73,
+        74,
+        70,
+        78
+      ],
+      "long_message": [
+        {
+          "accepted": 19,
+          "witnessFirstByte": 15,
+          "complete": 511
+        },
+        {
+          "accepted": 17,
+          "witnessFirstByte": 13,
+          "complete": 531
+        },
+        {
+          "accepted": 25,
+          "witnessFirstByte": 21,
+          "complete": 518
+        },
+        {
+          "accepted": 23,
+          "witnessFirstByte": 19,
+          "complete": 508
+        },
+        {
+          "accepted": 16,
+          "witnessFirstByte": 12,
+          "complete": 499
+        }
+      ],
+      "compaction": [
+        438,
+        448,
+        456,
+        453,
+        428
+      ]
+    }
+  }
+}

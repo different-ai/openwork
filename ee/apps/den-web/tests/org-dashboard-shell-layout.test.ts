@@ -35,4 +35,10 @@ describe("OrgDashboardShell layout", () => {
     expect(source).toContain('target.hasAttribute("data-workspace-switcher-root")');
     expect(source).toContain("if (!clickedInsideSwitcher)");
   });
+
+  test("links Docs to the public documentation site", () => {
+    const source = readFileSync(shellPath, "utf8");
+
+    expect(source).toContain('const OPENWORK_DOCS_URL = "https://openworklabs.com/docs";');
+  });
 });

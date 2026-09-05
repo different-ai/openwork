@@ -174,11 +174,9 @@ export async function sendComposerMessage(app: Surface, text: string): Promise<C
   const before = await waitForComposerReady(app, 60_000);
   await writeComposerText(app, text);
   await waitFor(app, `Boolean([...document.querySelectorAll("button")]
-    .find((button) => (button.textContent ?? "").trim() === "Run task" && !button.disabled))
-    || Boolean(window.__openworkControl?.listActions?.()
-      .find((entry) => entry.id === "composer.send" && entry.disabled === false))`, {
+    .find((button) => (button.textContent ?? "").trim() === "Run task" && !button.disabled))`, {
     timeoutMs: 30_000,
-    label: "enabled composer send control",
+    label: "enabled Run task button",
   });
   const clicked = await evalIn(app, `(() => {
     const button = [...document.querySelectorAll("button")]
@@ -189,7 +187,7 @@ export async function sendComposerMessage(app: Surface, text: string): Promise<C
     }
     return false;
   })()`);
-  if (clicked !== true) await control(app, "composer.send", undefined, { timeoutMs: 120_000 });
+  if (clicked !== true) throw new Error("Run task was no longer clickable; composer.send was not substituted.");
   await waitFor(app, `document.querySelectorAll('[data-message-role="user"]').length > ${before.userMessageCount}`, {
     timeoutMs: 60_000,
     label: "sent user message",

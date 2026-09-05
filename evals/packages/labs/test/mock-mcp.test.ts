@@ -29,3 +29,67 @@ test("records an unauthenticated initialize attempt as a handshake", async () =>
   assert.equal(handshakes[0]?.method, "POST");
   assert.equal(handshakes[0]?.path, "/mcp");
 });
+
+function completionBody(marker: string, completedTools: number): Record<string, unknown> {
+  return {
+    model: "mock-agent-workload-model",
+    stream: true,
+    tools: [
+      { type: "function", function: { name: "write", parameters: { type: "object" } } },
+      { type: "function", function: { name: "read", parameters: { type: "object" } } },
+    ],
+    messages: [
+      { role: "user", content: `run ${marker}` },
+      ...Array.from({ length: completedTools }, (_, index) => ({
+        role: "tool",
+        tool_call_id: `call-${index}`,
+        content: `tool result ${index}`,
+      })),
+    ],
+  };
+}
+
+test("scripts and records deterministic OpenAI-compatible agent tool rounds", async () => {
+  const marker = "agent-workload-unit-marker";
+  await using mock = await startMockMcp({
+    port: await allocateFreePort(),
+    agentWorkloads: [{
+      promptMarker: marker,
+      finalReply: "unit workload complete",
+      steps: [
+        { tool: "write", arguments: { filePath: "/tmp/unit.txt", content: marker } },
+        { tool: "read", arguments: { filePath: "/tmp/unit.txt" } },
+      ],
+    }],
+  });
+  const startedAt = new Date().toISOString();
+
+  const first = await fetch(`${mock.url}/v1/chat/completions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(completionBody(marker, 0)),
+  });
+  const firstText = await first.text();
+  assert.equal(first.status, 200);
+  assert.match(firstText, /"name":"write"/);
+  assert.match(firstText, /unit\.txt/);
+
+  const second = await fetch(`${mock.url}/v1/chat/completions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(completionBody(marker, 1)),
+  });
+  assert.match(await second.text(), /"name":"read"/);
+
+  const final = await fetch(`${mock.url}/v1/chat/completions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(completionBody(marker, 2)),
+  });
+  assert.match(await final.text(), /unit workload complete/);
+
+  const requests = await mock.agentRequests({ promptMarker: marker, sinceIso: startedAt, atLeast: 3, timeoutMs: 5_000 });
+  assert.deepEqual(requests.map((request) => request.kind), ["tool", "tool", "final"]);
+  assert.deepEqual(requests.map((request) => request.completedTools), [0, 1, 2]);
+  assert.deepEqual(requests.map((request) => request.matchedMarkers), [[marker], [marker], [marker]]);
+});

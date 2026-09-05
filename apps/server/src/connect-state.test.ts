@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { OPENWORK_CLOUD_EXPECTED_TOOLS, OPENWORK_CLOUD_PLUGIN_CANARIES } from "./cloud-mcp-health.js";
+import { resolveConnectWorkspace } from "./connect-state.js";
 import { writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import { startServer } from "./server.js";
 import type { ServerConfig, WorkspaceInfo } from "./types.js";
@@ -124,6 +125,33 @@ function requireRecord(value: unknown, label: string): Record<string, unknown> {
 }
 
 describe("connect state Cloud health scoping", () => {
+  test("normalizes a slash-heavy workspace directory", () => {
+    const root = "/workspace";
+    const entry = workspace("ws_a", root, "http://127.0.0.1:1");
+    const config: ServerConfig = {
+      host: "127.0.0.1",
+      port: 0,
+      token: CLIENT_TOKEN,
+      hostToken: HOST_TOKEN,
+      configPath: "/unused/server.json",
+      approval: { mode: "auto", timeoutMs: 1000 },
+      corsOrigins: ["*"],
+      workspaces: [entry],
+      authorizedRoots: [root],
+      readOnly: false,
+      startedAt: 0,
+      tokenSource: "cli",
+      hostTokenSource: "cli",
+      logFormat: "pretty",
+      logRequests: false,
+    };
+
+    expect(resolveConnectWorkspace(config, { directory: `${root}${"/".repeat(100_000)}` })).toEqual({
+      workspace: entry,
+      directory: root,
+    });
+  });
+
   test("uses verified health for the exact requested directory without borrowing another workspace", async () => {
     const rootA = await createRoot("openwork-connect-state-a-");
     const rootB = await createRoot("openwork-connect-state-b-");

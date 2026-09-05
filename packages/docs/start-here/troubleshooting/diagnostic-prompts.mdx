@@ -64,7 +64,7 @@ State which world you are in:
 9. If a stale local server process is still listening: show the process, then stop it, so nothing can silently serve old answers again.
 10. Tell me to do these steps in OpenWork, then wait:
     - Restart the OpenWork app.
-    - In the affected workspace, open Settings → Extensions and click Refresh (re-mints the token and rewrites the Cloud MCP config).
+    - In the affected workspace, open Settings → Library and click Refresh (re-mints the token and rewrites the Cloud MCP config).
     - Click Show hidden, then verify OpenWork Cloud Control under Your apps.
     - Run Reload OpenCode config from the command palette.
     - Start a NEW task so it receives the current tool set.
@@ -144,7 +144,7 @@ Finish with a concise redacted report. Never reveal bearer tokens, Authorization
 
 **Verify inside OpenWork**
 
-1. In the affected workspace, open **Settings → Extensions** and click **Refresh**.
+1. In the affected workspace, open **Settings → Library** and click **Refresh**.
 2. Click **Show hidden**, then find **OpenWork Cloud Control** under **Your apps**. This row shows live OpenCode MCP status; the catalog card only proves that the entry is configured.
 3. Expand the row and retain its status and non-secret error: **Ready**, **Issue**, **Sign in needed**, **Offline**, or **Paused**.
 4. Return to the task, open the command palette, run **Reload OpenCode config**, and create a new task in the same workspace.

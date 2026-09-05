@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto"
 import { eq, sql } from "@openwork-ee/den-db/drizzle"
+import { inferenceBearerKey } from "@openwork-ee/utils/inference-bearer-key"
 import type { Hono } from "hono"
 import {
   InferenceOrgUsageBucketTable,
@@ -45,12 +46,14 @@ const OPENWORK_VOICE_REALTIME_TOOLS = [
   },
 ]
 
-function readApiKey(request: Request) {
+function readInferenceBearerKey(request: Request) {
   const auth = request.headers.get("authorization")
   if (auth?.toLowerCase().startsWith("bearer ")) {
-    return auth.slice(7).trim()
+    const value = auth.slice(7).trim()
+    return value ? inferenceBearerKey(value) : null
   }
-  return request.headers.get("x-api-key")?.trim() ?? null
+  const value = request.headers.get("x-api-key")?.trim()
+  return value ? inferenceBearerKey(value) : null
 }
 
 function buildRequestId() {
@@ -226,12 +229,12 @@ async function chargeVoiceSession(input: {
 
 export function registerVoiceRoutes(app: Hono) {
   app.post("/voice/realtime/session", async (c) => {
-    const rawKey = readApiKey(c.req.raw)
-    if (!rawKey) {
+    const bearerKey = readInferenceBearerKey(c.req.raw)
+    if (!bearerKey) {
       return c.json({ error: { message: "Missing OpenWork inference API key.", type: "authentication_error", code: "missing_api_key" } }, 401)
     }
 
-    const inferenceKey = await findActiveInferenceKey(rawKey)
+    const inferenceKey = await findActiveInferenceKey(bearerKey)
     if (!inferenceKey) {
       return c.json({ error: { message: "Invalid OpenWork inference API key.", type: "authentication_error", code: "invalid_api_key" } }, 401)
     }

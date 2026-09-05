@@ -9,6 +9,17 @@ import type { ApprovalRequest, ServerConfig, TokenScope, WorkspaceInfo } from ".
 import { ensureDir, exists, shortId } from "../utils.js";
 import { addRoute, type RequestContext, type Route } from "./registry.js";
 
+/**
+ * Build a Content-Disposition header value that is safe for Unicode filenames.
+ * Uses RFC 6266 `filename*` (UTF-8 percent-encoded) with an ASCII fallback.
+ */
+function contentDisposition(disposition: "attachment" | "inline", filename: string): string {
+  // ASCII fallback: replace any non-ASCII character with '_'
+  const asciiName = filename.replace(/[^\x20-\x7E]/g, "_");
+  const encodedName = encodeURIComponent(filename);
+  return `${disposition}; filename="${asciiName}"; filename*=UTF-8''${encodedName}`;
+}
+
 const FILE_SESSION_DEFAULT_TTL_MS = 15 * 60 * 1000;
 const FILE_SESSION_MIN_TTL_MS = 30 * 1000;
 const FILE_SESSION_MAX_TTL_MS = 24 * 60 * 60 * 1000;
@@ -16,6 +27,7 @@ const FILE_SESSION_MAX_BATCH_ITEMS = 64;
 const FILE_SESSION_MAX_FILE_BYTES = 5_000_000;
 const FILE_SESSION_CATALOG_DEFAULT_LIMIT = 2000;
 const FILE_SESSION_CATALOG_MAX_LIMIT = 10000;
+const FILE_BROWSER_EXCLUDED_DIRECTORIES = new Set([".git", "node_modules"]);
 const MAX_PATH_COMPONENT_BYTES = 255;
 const WINDOWS_RESERVED_PATH_COMPONENT = /^(?:con|prn|aux|nul|clock\$|conin\$|conout\$|com[1-9¹²³]|lpt[1-9¹²³])(?:\..*)?$/i;
 
@@ -111,6 +123,7 @@ export function isSupportedWorkspaceTextFilePath(relativePath: string): boolean 
     ".md",
     ".mdx",
     ".markdown",
+    ".mmd",
     ".csv",
     ".tsv",
     ".json",
@@ -129,6 +142,34 @@ export function isSupportedWorkspaceTextFilePath(relativePath: string): boolean 
     ".cjs",
     ".css",
     ".scss",
+    ".astro",
+    ".bash",
+    ".c",
+    ".cc",
+    ".cpp",
+    ".cs",
+    ".dart",
+    ".ex",
+    ".exs",
+    ".go",
+    ".graphql",
+    ".h",
+    ".hpp",
+    ".java",
+    ".kt",
+    ".kts",
+    ".lua",
+    ".php",
+    ".prisma",
+    ".py",
+    ".rb",
+    ".rs",
+    ".sh",
+    ".sql",
+    ".svelte",
+    ".swift",
+    ".vue",
+    ".zig",
     ".txt",
     ".log",
   ].some((ext) =>
@@ -201,13 +242,14 @@ type ArtifactTargetInput = {
 
 function artifactPreviewForPath(path: string): string {
   const lowered = path.toLowerCase();
-  if (/\.(md|markdown|mdx)$/.test(lowered)) return "markdown";
+  if (/\.(md|markdown|mdx|mmd)$/.test(lowered)) return "markdown";
   if (/\.(csv|tsv|xlsx|xls|ods)$/.test(lowered)) return "sheet";
   if (/\.(ppt|pptx|pptm|pot|potx|odp|key|sxi)$/.test(lowered)) return "slides";
   if (lowered.endsWith(".docx")) return "document";
   if (/\.(png|jpe?g|gif|webp|svg)$/.test(lowered)) return "image";
   if (lowered.endsWith(".pdf")) return "pdf";
   if (/\.(html|htm)$/.test(lowered)) return "html";
+  if (/\.(astro|bash|c|cc|cpp|cs|css|dart|ex|exs|go|graphql|h|hpp|java|js|jsx|json|jsonc|kt|kts|lua|mjs|cjs|php|prisma|py|rb|rs|scss|sh|sql|svelte|swift|toml|ts|tsx|vue|xml|yaml|yml|zig)$/.test(lowered)) return "code";
   if (isSupportedWorkspaceTextFilePath(path)) return "text";
   return "external";
 }
@@ -388,13 +430,6 @@ function parseCatalogLimit(input: string | null): number {
   return Math.min(Math.floor(parsed), FILE_SESSION_CATALOG_MAX_LIMIT);
 }
 
-function parseSessionCursor(input: string | null): number {
-  if (!input) return 0;
-  const parsed = Number(input);
-  if (!Number.isFinite(parsed) || parsed < 0) return 0;
-  return Math.floor(parsed);
-}
-
 function parseCatalogPathFilter(input: string | null): string | null {
   if (!input) return null;
   if (!input.trim()) return null;
@@ -420,7 +455,7 @@ function normalizeResolvedRelativePath(input: string): string {
   return parts.join("/");
 }
 
-async function listWorkspaceCatalogEntries(workspaceRoot: string): Promise<FileSessionCatalogEntry[]> {
+async function listWorkspaceCatalogEntries(workspaceRoot: string, excludeHeavyDirectories = false): Promise<FileSessionCatalogEntry[]> {
   const rootResolved = resolve(workspaceRoot);
   const items: FileSessionCatalogEntry[] = [];
 
@@ -429,6 +464,9 @@ async function listWorkspaceCatalogEntries(workspaceRoot: string): Promise<FileS
     entries.sort((a, b) => a.name.localeCompare(b.name));
 
     for (const entry of entries) {
+      if (excludeHeavyDirectories && entry.isDirectory() && FILE_BROWSER_EXCLUDED_DIRECTORIES.has(entry.name)) {
+        continue;
+      }
       const absPath = join(dirPath, entry.name);
       const relRaw = relative(rootResolved, absPath).replace(/\\/g, "/");
       const rel = normalizeResolvedRelativePath(relRaw);
@@ -466,51 +504,6 @@ async function listWorkspaceCatalogEntries(workspaceRoot: string): Promise<FileS
   return items;
 }
 
-function parseBatchPathList(input: unknown): string[] {
-  if (!Array.isArray(input)) {
-    throw new ApiError(400, "invalid_payload", "paths must be an array");
-  }
-  if (!input.length) {
-    throw new ApiError(400, "invalid_payload", "paths must not be empty");
-  }
-  if (input.length > FILE_SESSION_MAX_BATCH_ITEMS) {
-    throw new ApiError(400, "invalid_payload", `paths must include <= ${FILE_SESSION_MAX_BATCH_ITEMS} items`);
-  }
-  return input.map((raw) => normalizeWorkspaceRelativePath(String(raw ?? ""), { allowSubdirs: true }));
-}
-
-function parseBatchWriteList(input: unknown): Array<{ path: string; contentBase64: string; ifMatchRevision?: string; force?: boolean }> {
-  if (!Array.isArray(input)) {
-    throw new ApiError(400, "invalid_payload", "writes must be an array");
-  }
-  if (!input.length) {
-    throw new ApiError(400, "invalid_payload", "writes must not be empty");
-  }
-  if (input.length > FILE_SESSION_MAX_BATCH_ITEMS) {
-    throw new ApiError(400, "invalid_payload", `writes must include <= ${FILE_SESSION_MAX_BATCH_ITEMS} items`);
-  }
-
-  return input.map((raw) => {
-    if (!raw || typeof raw !== "object") {
-      throw new ApiError(400, "invalid_payload", "write entries must be objects");
-    }
-    const record = raw as Record<string, unknown>;
-    const contentBase64 = typeof record.contentBase64 === "string" ? record.contentBase64.trim() : "";
-    if (!contentBase64) {
-      throw new ApiError(400, "invalid_payload", "contentBase64 is required");
-    }
-    const ifMatchRevision =
-      typeof record.ifMatchRevision === "string" && record.ifMatchRevision.trim().length
-        ? record.ifMatchRevision.trim()
-        : undefined;
-    return {
-      path: normalizeWorkspaceRelativePath(String(record.path ?? ""), { allowSubdirs: true }),
-      contentBase64,
-      ...(ifMatchRevision ? { ifMatchRevision } : {}),
-      ...(record.force === true ? { force: true } : {}),
-    };
-  });
-}
 
 export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
   const {
@@ -595,7 +588,7 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     const headers = new Headers();
     headers.set("Content-Type", "application/octet-stream");
     headers.set("Content-Length", String(info.size));
-    headers.set("Content-Disposition", `attachment; filename=\"${basename(relativePath)}\"`);
+    headers.set("Content-Disposition", contentDisposition("attachment", basename(relativePath)));
     const stream = Readable.toWeb(createReadStream(absPath)) as unknown as ReadableStream;
     return new Response(stream, { status: 200, headers });
   });
@@ -685,7 +678,7 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     const headers = new Headers();
     headers.set("Content-Type", "application/octet-stream");
     headers.set("Content-Length", String(info.size));
-    headers.set("Content-Disposition", `attachment; filename="${basename(relativePath)}"`);
+    headers.set("Content-Disposition", contentDisposition("attachment", basename(relativePath)));
     const stream = Readable.toWeb(createReadStream(absPath)) as unknown as ReadableStream;
     return new Response(stream, { status: 200, headers });
   });
@@ -719,17 +712,6 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     return jsonResponse({ session: serializeFileSession(session) });
   });
 
-  addRoute(routes, "POST", "/files/sessions/:sessionId/renew", "client", async (ctx) => {
-    const body = await readJsonBody(ctx.request);
-    const ttlMs = parseFileSessionTtlMs(body.ttlSeconds);
-    const { session } = resolveFileSession(ctx, ctx.params.sessionId);
-    const renewed = fileSessions.renew(session.id, ttlMs);
-    if (!renewed) {
-      throw new ApiError(404, "file_session_not_found", "File session not found");
-    }
-    return jsonResponse({ session: serializeFileSession(renewed) });
-  });
-
   addRoute(routes, "DELETE", "/files/sessions/:sessionId", "client", async (ctx) => {
     const { session } = resolveFileSession(ctx, ctx.params.sessionId);
     fileSessions.close(session.id);
@@ -742,8 +724,9 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     const after = parseCatalogPathFilter(ctx.url.searchParams.get("after"));
     const includeDirs = ctx.url.searchParams.get("includeDirs") !== "false";
     const limit = parseCatalogLimit(ctx.url.searchParams.get("limit"));
+    const excludeHeavyDirectories = ctx.url.searchParams.get("excludeHeavyDirectories") === "true";
 
-    const entries = await listWorkspaceCatalogEntries(workspace.path);
+    const entries = await listWorkspaceCatalogEntries(workspace.path, excludeHeavyDirectories);
     const filtered = entries.filter((entry) => {
       if (!includeDirs && entry.kind === "dir") return false;
       if (!matchesCatalogFilter(entry.path, prefix)) return false;
@@ -766,195 +749,6 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
       nextAfter,
       items,
     });
-  });
-
-  addRoute(routes, "GET", "/files/sessions/:sessionId/catalog/events", "client", async (ctx) => {
-    const { workspace } = resolveFileSession(ctx, ctx.params.sessionId);
-    const since = parseSessionCursor(ctx.url.searchParams.get("since"));
-    const events = fileSessions.listWorkspaceEvents(workspace.id, since);
-    return jsonResponse(events);
-  });
-
-  addRoute(routes, "POST", "/files/sessions/:sessionId/read-batch", "client", async (ctx) => {
-    const { workspace } = resolveFileSession(ctx, ctx.params.sessionId);
-    const body = await readJsonBody(ctx.request);
-    const paths = parseBatchPathList(body.paths);
-    const items: Array<Record<string, unknown>> = [];
-
-    for (const relativePath of paths) {
-      try {
-        const absPath = resolveSafeChildPath(workspace.path, relativePath);
-        if (!(await exists(absPath))) {
-          items.push({ ok: false, path: relativePath, code: "file_not_found", message: "File not found" });
-          continue;
-        }
-        const info = await stat(absPath);
-        if (!info.isFile()) {
-          items.push({ ok: false, path: relativePath, code: "file_not_found", message: "File not found" });
-          continue;
-        }
-        if (info.size > FILE_SESSION_MAX_FILE_BYTES) {
-          items.push({
-            ok: false,
-            path: relativePath,
-            code: "file_too_large",
-            message: "File exceeds size limit",
-            maxBytes: FILE_SESSION_MAX_FILE_BYTES,
-            size: info.size,
-          });
-          continue;
-        }
-
-        const content = await readFile(absPath);
-        items.push({
-          ok: true,
-          path: relativePath,
-          kind: "file",
-          bytes: info.size,
-          updatedAt: info.mtimeMs,
-          revision: fileRevision(info),
-          contentBase64: content.toString("base64"),
-        });
-      } catch (error) {
-        const message = error instanceof ApiError ? error.message : "Unable to read file";
-        const code = error instanceof ApiError ? error.code : "read_failed";
-        items.push({ ok: false, path: relativePath, code, message });
-      }
-    }
-
-    return jsonResponse({ items });
-  });
-
-  addRoute(routes, "POST", "/files/sessions/:sessionId/write-batch", "client", async (ctx) => {
-    ensureWritable(config);
-    requireClientScope(ctx, "collaborator");
-    const { session, workspace } = resolveFileSession(ctx, ctx.params.sessionId);
-    if (!session.canWrite) {
-      throw new ApiError(403, "forbidden", "File session is read-only");
-    }
-
-    const body = await readJsonBody(ctx.request);
-    const writes = parseBatchWriteList(body.writes);
-    const items: Array<Record<string, unknown>> = [];
-
-    const plan: Array<{
-      path: string;
-      absPath: string;
-      bytes: Buffer;
-      ifMatchRevision?: string;
-      force?: boolean;
-      beforeRevision: string | null;
-    }> = [];
-
-    for (const write of writes) {
-      try {
-        const absPath = resolveSafeChildPath(workspace.path, write.path);
-        const bytes = Buffer.from(write.contentBase64, "base64");
-        if (bytes.byteLength > FILE_SESSION_MAX_FILE_BYTES) {
-          items.push({
-            ok: false,
-            path: write.path,
-            code: "file_too_large",
-            message: "File exceeds size limit",
-            maxBytes: FILE_SESSION_MAX_FILE_BYTES,
-            size: bytes.byteLength,
-          });
-          continue;
-        }
-
-        const before = (await exists(absPath)) ? await stat(absPath) : null;
-        if (before && !before.isFile()) {
-          items.push({ ok: false, path: write.path, code: "invalid_path", message: "Path must point to a file" });
-          continue;
-        }
-        const beforeRevision = before ? fileRevision(before) : null;
-        if (!write.force && write.ifMatchRevision && write.ifMatchRevision !== beforeRevision) {
-          items.push({
-            ok: false,
-            path: write.path,
-            code: "conflict",
-            message: "File changed since it was loaded",
-            expectedRevision: write.ifMatchRevision,
-            currentRevision: beforeRevision,
-          });
-          continue;
-        }
-
-        plan.push({
-          path: write.path,
-          absPath,
-          bytes,
-          beforeRevision,
-          ...(write.ifMatchRevision ? { ifMatchRevision: write.ifMatchRevision } : {}),
-          ...(write.force ? { force: true } : {}),
-        });
-      } catch (error) {
-        const message = error instanceof ApiError ? error.message : "Invalid write request";
-        const code = error instanceof ApiError ? error.code : "invalid_payload";
-        items.push({ ok: false, path: write.path, code, message });
-      }
-    }
-
-    if (plan.length) {
-      await requireApproval(ctx, {
-        workspaceId: workspace.id,
-        action: "workspace.files.session.write",
-        summary: `Write ${plan.length} file(s) via file session`,
-        paths: plan.map((item) => item.absPath),
-      });
-    }
-
-    for (const entry of plan) {
-      try {
-        const before = (await exists(entry.absPath)) ? await stat(entry.absPath) : null;
-        const currentRevision = before ? fileRevision(before) : null;
-        if (!entry.force && entry.ifMatchRevision && currentRevision !== entry.ifMatchRevision) {
-          items.push({
-            ok: false,
-            path: entry.path,
-            code: "conflict",
-            message: "File changed before write could be applied",
-            expectedRevision: entry.ifMatchRevision,
-            currentRevision,
-          });
-          continue;
-        }
-
-        await ensureDir(dirname(entry.absPath));
-        const tmp = `${entry.absPath}.tmp-${shortId()}`;
-        await writeFile(tmp, entry.bytes);
-        await rename(tmp, entry.absPath);
-        const after = await stat(entry.absPath);
-        const revision = fileRevision(after);
-
-        recordWorkspaceFileEvent(workspace.id, { type: "write", path: entry.path, revision });
-
-        await recordAudit(workspace.path, {
-          id: shortId(),
-          workspaceId: workspace.id,
-          actor: ctx.actor ?? { type: "remote" },
-          action: "workspace.files.session.write",
-          target: entry.absPath,
-          summary: `Wrote ${entry.path} via file session`,
-          timestamp: Date.now(),
-        });
-
-        items.push({
-          ok: true,
-          path: entry.path,
-          bytes: entry.bytes.byteLength,
-          updatedAt: after.mtimeMs,
-          revision,
-          previousRevision: entry.beforeRevision,
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Failed to write file";
-        items.push({ ok: false, path: entry.path, code: "write_failed", message });
-      }
-    }
-
-    const events = fileSessions.listWorkspaceEvents(workspace.id, Number.MAX_SAFE_INTEGER);
-    return jsonResponse({ items, cursor: events.cursor });
   });
 
   addRoute(routes, "POST", "/files/sessions/:sessionId/ops", "client", async (ctx) => {
@@ -1112,7 +906,7 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     const headers = new Headers();
     headers.set("Content-Type", contentTypeForPath(relativePath));
     headers.set("Content-Length", String(info.size));
-    headers.set("Content-Disposition", `inline; filename="${basename(relativePath)}"`);
+    headers.set("Content-Disposition", contentDisposition("inline", basename(relativePath)));
     const stream = Readable.toWeb(createReadStream(absPath)) as unknown as ReadableStream;
     return new Response(stream, { status: 200, headers });
   });

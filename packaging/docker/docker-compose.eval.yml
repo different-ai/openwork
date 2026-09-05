@@ -1,0 +1,119 @@
+# OpenWork evaluation stack — pull-only, no repository clone or build:
+#
+#   umask 077
+#   printf 'OPENWORK_AUTH_SECRET=%s\nOPENWORK_DB_ENCRYPTION_KEY=%s\n' \
+#     "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" > .env
+#   docker compose -f docker-compose.eval.yml up -d --wait
+#
+# Then open http://localhost:3005 and sign up.
+#
+# No repo clone, no build, no launcher script. Uses the published GHCR images.
+# NOT a production posture: dev-grade MySQL credentials, stub worker provisioner,
+# no cloud sandboxes, no email delivery, public signup enabled by default.
+#
+# Required secrets:
+#   OPENWORK_AUTH_SECRET       Better Auth secret (at least 32 random characters)
+#   OPENWORK_DB_ENCRYPTION_KEY Den DB encryption key (at least 32 random characters)
+#
+# Optional knobs:
+#   OPENWORK_WEB_PORT      host port for the web app                (default: 3005)
+#   OPENWORK_API_PORT      host port for the Den API                (default: 8788)
+#   OPENWORK_ALLOW_SIGNUP  allow public signup for evaluation       (default: true)
+#   OPENWORK_ORG_NAME      single organization name                 (default: OpenWork Evaluation)
+
+name: openwork-eval
+
+services:
+  mysql:
+    image: mysql:8.4@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb
+    command:
+      - --performance_schema=OFF
+      - --innodb-buffer-pool-size=128M
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: openwork_den
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -ppassword --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+    volumes:
+      - openwork-eval-mysql:/var/lib/mysql
+    # intentionally no host port: MySQL stays internal to the compose network
+
+  den-migrate:
+    image: ghcr.io/different-ai/openwork-den-api:0.18.37@sha256:5ae1fab94ae2badd49ae74649cfb38ca679a7afc7e9ae8926c927553a34caabd
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: ["sh", "-lc"]
+    command: ["cd /app/ee/packages/den-db && (node ./dist/scripts/bootstrap.js || node --import tsx ./dist/scripts/bootstrap.js)"]
+    environment:
+      DATABASE_URL: mysql://root:password@mysql:3306/openwork_den
+      DEN_DB_ENCRYPTION_KEY: ${OPENWORK_DB_ENCRYPTION_KEY:?Set OPENWORK_DB_ENCRYPTION_KEY to at least 32 random characters}
+
+  den:
+    image: ghcr.io/different-ai/openwork-den-api:0.18.37@sha256:5ae1fab94ae2badd49ae74649cfb38ca679a7afc7e9ae8926c927553a34caabd
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      den-migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${OPENWORK_API_PORT:-8788}:8788"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8788/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    environment:
+      PORT: "8788"
+      DATABASE_URL: mysql://root:password@mysql:3306/openwork_den
+      BETTER_AUTH_SECRET: ${OPENWORK_AUTH_SECRET:?Set OPENWORK_AUTH_SECRET to at least 32 random characters}
+      DEN_DB_ENCRYPTION_KEY: ${OPENWORK_DB_ENCRYPTION_KEY:?Set OPENWORK_DB_ENCRYPTION_KEY to at least 32 random characters}
+      BETTER_AUTH_URL: http://localhost:${OPENWORK_WEB_PORT:-3005}
+      DEN_ORG_MODE: single_org
+      DEN_SINGLE_ORG_NAME: ${OPENWORK_ORG_NAME:-OpenWork Evaluation}
+      DEN_SINGLE_ORG_SLUG: default
+      DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP: ${OPENWORK_ALLOW_SIGNUP:-true}
+      DEN_REQUIRE_EMAIL_VERIFICATION: "false"
+      DEN_API_PUBLIC_URL: http://localhost:${OPENWORK_API_PORT:-8788}
+      DEN_MCP_RESOURCE_URL: http://localhost:${OPENWORK_API_PORT:-8788}/mcp
+      CORS_ORIGINS: http://localhost:${OPENWORK_WEB_PORT:-3005},http://127.0.0.1:${OPENWORK_WEB_PORT:-3005},http://localhost:${OPENWORK_API_PORT:-8788},http://127.0.0.1:${OPENWORK_API_PORT:-8788}
+      DEN_BETTER_AUTH_TRUSTED_ORIGINS: http://localhost:${OPENWORK_WEB_PORT:-3005},http://127.0.0.1:${OPENWORK_WEB_PORT:-3005},http://localhost:${OPENWORK_API_PORT:-8788},http://127.0.0.1:${OPENWORK_API_PORT:-8788}
+      PROVISIONER_MODE: stub
+      WORKER_URL_TEMPLATE: https://workers.local/{workerId}
+
+  web:
+    image: ghcr.io/different-ai/openwork-den-web:0.18.37@sha256:9ca96fb73bc3512852409f1508876e418cd56f6d5187ff4e0c683f5b69a2dda3
+    restart: unless-stopped
+    depends_on:
+      den:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${OPENWORK_WEB_PORT:-3005}:3005"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3005/api/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+    environment:
+      # Browser-reachable API origin (what runtime-config hands to clients).
+      DEN_API_BASE: http://localhost:${OPENWORK_API_PORT:-8788}
+      # Container-internal fallback for server-side calls.
+      DEN_AUTH_FALLBACK_BASE: http://den:8788
+      DEN_AUTH_ORIGIN: http://localhost:${OPENWORK_WEB_PORT:-3005}
+      DEN_WEB_PUBLIC_ORIGIN: http://localhost:${OPENWORK_WEB_PORT:-3005}
+      DEN_WEB_OPENWORK_AUTH_CALLBACK_URL: http://localhost:${OPENWORK_WEB_PORT:-3005}
+      DEN_ORG_MODE: single_org
+      DEN_SINGLE_ORG_NAME: ${OPENWORK_ORG_NAME:-OpenWork Evaluation}
+      DEN_SINGLE_ORG_SLUG: default
+      DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP: ${OPENWORK_ALLOW_SIGNUP:-true}
+
+volumes:
+  openwork-eval-mysql:

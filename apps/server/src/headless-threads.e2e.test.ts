@@ -241,18 +241,18 @@ test("leaves the thread readable through the session surface the app uses", asyn
     token: openwork.token,
   }).createThread({ title: "Refund policy" });
 
-  // The app lists and opens sessions through these routes. A headless thread
+  // The app lists and opens sessions through the native workspace mount. A headless thread
   // is an ordinary session, so it has to be visible here with the same id.
-  const listed = await fetch(`${base}/workspace/ws_1/sessions`, {
+  const listed = await fetch(`${base}/workspace/ws_1/opencode/session`, {
     headers: { Authorization: `Bearer ${openwork.token}` },
   });
   expect(listed.status).toBe(200);
   const listedBody = await listed.json();
-  expect(listedBody.items.map((item: { id: string }) => item.id)).toContain(thread.id);
+  expect(listedBody.map((item: { id: string }) => item.id)).toContain(thread.id);
 
-  const opened = await fetch(`${base}/workspace/ws_1/sessions/${thread.id}`, {
+  const opened = await fetch(`${base}/workspace/ws_1/opencode/session/${thread.id}`, {
     headers: { Authorization: `Bearer ${openwork.token}` },
   });
   expect(opened.status).toBe(200);
-  await expect(opened.json()).resolves.toMatchObject({ item: { id: thread.id, title: "Refund policy" } });
+  await expect(opened.json()).resolves.toMatchObject({ id: thread.id, title: "Refund policy" });
 });

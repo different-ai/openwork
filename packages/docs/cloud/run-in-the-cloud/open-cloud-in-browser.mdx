@@ -1,32 +1,43 @@
 ---
-title: "Open Cloud in your browser"
+title: "Open OpenWork Web in your browser"
 description: "Open a full OpenWork instance in your browser with nothing to install"
 ---
 
-OpenWork Cloud is currently marked `Alpha` in the dashboard. When your organization has Cloud enabled, you can open a full OpenWork instance in your browser. There is nothing to install and nothing to set up on your computer.
+<Warning>
+**Hosted access.** OpenWork Web is available to every organization when an OpenWork-hosted deployment explicitly enables it. A platform admin in Den `/admin` can also grant complimentary access to one specific organization while deployment-wide availability is off. Web billing must be configured before an owner or admin can purchase it. It costs **$50 per joined organization member per month**; pending invitations are not billed until they are accepted.
+</Warning>
+
+Open `/dashboard/web` to see the price, billable member quantity, expected monthly total, and purchase action. Access opens only after the organization's subscription is confirmed.
 
 ## Who can use it
 
-Cloud is enabled per organization by an OpenWork admin. If you do not see `Cloud` in the sidebar, your organization does not have the alpha enabled yet.
+Every joined member can see OpenWork Web when the hosted deployment offers it. An organization owner or admin purchases the subscription; all joined members receive access after it becomes active.
 
-Cloud is only available on hosted OpenWork Cloud organizations. It is not available on self-hosted deployments.
+Self-hosted deployments do not show OpenWork Web by default: a missing or false `DEN_OPENWORK_WEB_ENABLED` value fails closed unless a platform admin in Den `/admin` has explicitly granted complimentary access to that organization. If you use an OpenWork-hosted organization and do not see it in the sidebar, email [team@openworklabs.com](mailto:team@openworklabs.com) so the deployment configuration or organization grant can be checked.
 
-## Open Cloud
+## Open OpenWork Web
 
-1. Sign in to OpenWork Cloud.
-2. Open your organization dashboard.
-3. Click `Cloud` in the sidebar.
-4. Wait a few seconds while Cloud starts.
-5. Open the new browser tab when it is ready.
+1. Sign in to your organization dashboard.
+2. Click `OpenWork Web` in the sidebar.
+3. If prompted, purchase OpenWork Web and wait for the subscription to be confirmed.
+4. Click `Open OpenWork Web`.
+
+<Frame>
+  ![The OpenWork Web page in the organization dashboard with the Open OpenWork Web button](/images/cloud-openwork-web.png)
+</Frame>
 
 You are now looking at the full OpenWork interface in your browser.
 
+<Frame>
+  ![OpenWork Web open in a browser tab showing the full OpenWork interface](/images/openwork-web-browser-tab.png)
+</Frame>
+
 ## Sleep and persistence
 
-The Cloud instance sleeps when it is idle and wakes when you open Cloud again. Files in the workspace persist across sleep, so you can close the tab and come back later without losing your work.
+The hosted instance sleeps when it is idle and wakes when you open it again. Files in the workspace persist across sleep, so you can close the tab and come back later without losing your work.
 
-## Alpha limitation
+## Early-access limitation
 
-During the alpha, the Cloud instance URL is itself the credential. Do not share it, paste it into public chats, or publish it anywhere public.
+During early access, the instance URL is itself the credential. Do not share it, paste it into public chats, or publish it anywhere public.
 
 If you accidentally share the URL, ask an OpenWork admin for help.

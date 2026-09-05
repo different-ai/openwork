@@ -20,6 +20,7 @@ export type ConnectionsModalsProps = {
   onReloadEngine: () => void | Promise<void>;
   modalState: ConnectionsModalsState;
   onCloseMcpAuthModal: () => void;
+  onMcpAuthenticated: (name: string) => void;
   onCompleteMcpAuthModal: () => void | Promise<void>;
 };
 
@@ -36,6 +37,7 @@ export default function ConnectionsModals(props: ConnectionsModalsProps) {
       isRemoteWorkspace={props.isRemoteWorkspace}
       onForceStopSession={props.onForceStopSession}
       onClose={props.onCloseMcpAuthModal}
+      onAuthenticated={props.onMcpAuthenticated}
       onComplete={props.onCompleteMcpAuthModal}
       onReloadEngine={props.onReloadEngine}
     />

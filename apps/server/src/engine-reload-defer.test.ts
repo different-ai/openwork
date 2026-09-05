@@ -19,9 +19,8 @@ const second: WorkspaceInfo = {
   path: "/tmp/second",
   baseUrl: "http://127.0.0.1:4096/",
 };
-function fixtureConfig(engineRollover = false): ServerConfig {
+function fixtureConfig(): ServerConfig {
   return {
-    engineRollover,
     workspaces: [first, second],
   } as ServerConfig;
 }
@@ -52,7 +51,7 @@ describe("shouldDeferInPlaceEngineReload", () => {
   });
 
   test("does not probe or defer when a rollover pool exists", async () => {
-    const config = fixtureConfig(true);
+    const config = fixtureConfig();
     setEnginePoolForConfig(config, { adoptPrimary: () => undefined } as unknown as EnginePool);
     let probed = false;
     try {

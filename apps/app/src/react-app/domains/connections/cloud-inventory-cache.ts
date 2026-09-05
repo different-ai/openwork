@@ -158,7 +158,6 @@ function denClientForCurrentSession() {
   const settings = readDenSettings();
   return createDenClient({
     baseUrl: settings.baseUrl,
-    apiBaseUrl: settings.apiBaseUrl,
     token: settings.authToken?.trim() ?? "",
   });
 }

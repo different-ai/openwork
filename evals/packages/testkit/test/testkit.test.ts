@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { deriveMockEnv } from "../src/mock.ts";
-import { checkNeeds, needs, SkipError } from "../src/needs.ts";
-import { ephemeralDatabaseName, resolvePlace } from "../src/place.ts";
-import { trustedOrigins } from "../src/server.ts";
+import {
+  checkNeeds,
+  deriveMockEnv,
+  ephemeralDatabaseName,
+  needs,
+  resolvePlace,
+  SkipError,
+  trustedOrigins,
+} from "@openwork/env";
 
 test("resolvePlace selects local unless OPENWORK_EVAL_DAYTONA is exactly 1", () => {
   const local = resolvePlace({});

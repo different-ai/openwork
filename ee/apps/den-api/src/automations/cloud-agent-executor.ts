@@ -1,15 +1,21 @@
 import { createHash } from "node:crypto"
 import { createHeadlessThreadClient, type HeadlessThreadTranscript } from "@openwork/headless-threads"
 import { and, asc, eq, isNull } from "@openwork-ee/den-db/drizzle"
-import { MemberTable, OrganizationTable, WorkerTable } from "@openwork-ee/den-db/schema"
+import { MemberTable, WorkerTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { AutomationAction, AutomationError, AutomationUsage } from "@openwork/types/automations"
 import { db } from "../db.js"
 import { env } from "../env.js"
-import { loadCloudWorkerAccess, type CloudWorkerAccess } from "../workers/worker-access.js"
-import { organizationCloudEnabled } from "../capability-sources/cloud-rollout.js"
+import {
+  getOpenWorkWebRuntimeAccess,
+  OPENWORK_WEB_ACCESS_REQUIRED_CODE,
+  OPENWORK_WEB_ACCESS_REQUIRED_MESSAGE,
+} from "../openwork-web-runtime-access.js"
+import { resolveCloudRuntimeAccess, type CloudWorkerAccess } from "../workers/worker-access.js"
+import { cloudHostingAvailable } from "../capability-sources/cloud-hosting.js"
 import { CLOUD_INSTANCE_BACKEND } from "../workers/cloud-constants.js"
 import { wakeCloudWorker } from "../workers/cloud-lifecycle.js"
+import { fetchPreviewNoRedirect, previewFetch } from "../workers/preview-fetch.js"
 import { resolveAutomationModelAccess } from "./authority.js"
 
 const WORKER_READY_TIMEOUT_MS = 120_000
@@ -20,6 +26,10 @@ const RESULT_SUMMARY_LIMIT = 20_000
 
 type OwnerScope = { organizationId: string; ownerMemberId: string }
 type AgentAction = Extract<AutomationAction, { kind: "agent" }>
+type CloudAgentRuntimeUnavailableReason = "missing" | "failed" | "waking" | "unreachable"
+type CloudAgentRuntimeResult =
+  | { ok: true; workerId: string; access: CloudWorkerAccess; baseUrl: string; workspaceId: string }
+  | { ok: false; reason: CloudAgentRuntimeUnavailableReason; message: string }
 type CloudAgentReceipt = {
   workerId: string
   workspaceId: string
@@ -60,6 +70,8 @@ export type CloudAgentExecutorInput = OwnerScope & {
   previousReceipt: Record<string, unknown> | null
   signal: AbortSignal
   onAdmitted: (receipt: Record<string, unknown>) => Promise<void>
+  /** Workspace pinned on the revision; null falls back to the worker's active workspace. */
+  workspaceId?: string | null
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -115,7 +127,7 @@ function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
   })
 }
 
-async function ownerCloudWorker(scope: OwnerScope) {
+async function ownerCloudUserId(scope: OwnerScope) {
   const organizationId = normalizeDenTypeId("organization", scope.organizationId)
   const ownerMemberId = normalizeDenTypeId("member", scope.ownerMemberId)
   const members = await db.select({ userId: MemberTable.userId }).from(MemberTable).where(and(
@@ -123,7 +135,12 @@ async function ownerCloudWorker(scope: OwnerScope) {
     eq(MemberTable.organizationId, organizationId),
     isNull(MemberTable.removedAt),
   )).limit(1)
-  const userId = members[0]?.userId
+  return members[0]?.userId ?? null
+}
+
+async function ownerCloudWorker(scope: OwnerScope) {
+  const organizationId = normalizeDenTypeId("organization", scope.organizationId)
+  const userId = await ownerCloudUserId(scope)
   if (!userId) return null
   const workers = await db.select({ id: WorkerTable.id, status: WorkerTable.status })
     .from(WorkerTable).where(and(
@@ -144,11 +161,11 @@ export async function cloudAgentRuntimeAvailable(scope: OwnerScope): Promise<boo
     isNull(MemberTable.removedAt),
   )).limit(1)
   if (!members[0]) return false
-  const organizations = await db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable)
-    .where(eq(OrganizationTable.id, organizationId)).limit(1)
+  if (!cloudHostingAvailable({ orgMode: env.orgMode })) return false
+  const webAccess = await getOpenWorkWebRuntimeAccess(organizationId)
+  if (!webAccess.hasAccess) return false
   const worker = await ownerCloudWorker(scope)
-  return organizationCloudEnabled(organizations[0]?.metadata, { orgMode: env.orgMode })
-    && worker !== null && worker.status !== "failed"
+  return worker !== null && worker.status !== "failed"
 }
 
 function workerHeaders(access: CloudWorkerAccess) {
@@ -159,46 +176,123 @@ function workerHeaders(access: CloudWorkerAccess) {
   }
 }
 
-async function readWorkspace(access: CloudWorkerAccess, signal: AbortSignal) {
-  for (const baseUrl of access.candidates) {
-    try {
-      const response = await fetch(`${baseUrl}/workspaces`, {
-        headers: workerHeaders(access),
-        signal: AbortSignal.any([signal, AbortSignal.timeout(WORKER_REQUEST_TIMEOUT_MS)]),
-      })
-      if (!response.ok) continue
-      const payload: unknown = await response.json()
-      if (isRecord(payload) && typeof payload.activeId === "string" && payload.activeId) {
-        return { baseUrl, workspaceId: payload.activeId }
-      }
-    } catch (error) {
-      if (signal.aborted) throw error
+export async function resolveCloudAgentWorkspace(
+  access: CloudWorkerAccess,
+  signal: AbortSignal,
+  fetchImpl: typeof fetch = fetch,
+) {
+  try {
+    const response = await fetchPreviewNoRedirect(fetchImpl, `${access.url}/workspaces`, {
+      headers: workerHeaders(access),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(WORKER_REQUEST_TIMEOUT_MS)]),
+    })
+    if (!response.ok) return null
+    const payload: unknown = await response.json()
+    if (isRecord(payload) && typeof payload.activeId === "string" && payload.activeId) {
+      return { baseUrl: access.url, workspaceId: payload.activeId }
     }
+  } catch (error) {
+    if (signal.aborted) throw error
+    return null
   }
   return null
 }
 
-async function readyWorker(scope: OwnerScope, signal: AbortSignal) {
-  const worker = await ownerCloudWorker(scope)
-  if (!worker) return { ok: false as const, message: "Set up OpenWork Cloud before creating a Cloud Automation." }
-  if (worker.status === "failed") return { ok: false as const, message: "The OpenWork Cloud runtime needs repair before this Automation can run." }
-  if (worker.status === "stopped") await abortable(wakeCloudWorker(worker.id), signal)
-  const deadline = Date.now() + WORKER_READY_TIMEOUT_MS
-  while (!signal.aborted && Date.now() < deadline) {
-    const access = await loadCloudWorkerAccess({
-      organizationId: normalizeDenTypeId("organization", scope.organizationId),
-      workerId: worker.id,
-    })
-    if (access) {
-      const workspace = await readWorkspace(access, signal)
-      if (workspace) return { ok: true as const, workerId: worker.id, access, ...workspace }
-    }
-    const current = await ownerCloudWorker(scope)
-    if (!current || current.status === "failed") break
-    if (current.status === "stopped") await abortable(wakeCloudWorker(current.id), signal)
-    await abortableSleep(WORKER_READY_POLL_MS, signal)
+export type CloudAgentReadyWorkerDeps = {
+  ownerUserId: typeof ownerCloudUserId
+  resolveAccess: typeof resolveCloudRuntimeAccess
+  wakeWorker: typeof wakeCloudWorker
+  resolveWorkspace: typeof resolveCloudAgentWorkspace
+  now: () => number
+  sleep: typeof abortableSleep
+}
+
+export async function resolveCloudAgentReadyWorker(
+  scope: OwnerScope,
+  signal: AbortSignal,
+  options: Partial<CloudAgentReadyWorkerDeps> = {},
+): Promise<CloudAgentRuntimeResult> {
+  const deps: CloudAgentReadyWorkerDeps = {
+    ownerUserId: options.ownerUserId ?? ownerCloudUserId,
+    resolveAccess: options.resolveAccess ?? resolveCloudRuntimeAccess,
+    wakeWorker: options.wakeWorker ?? wakeCloudWorker,
+    resolveWorkspace: options.resolveWorkspace ?? resolveCloudAgentWorkspace,
+    now: options.now ?? Date.now,
+    sleep: options.sleep ?? abortableSleep,
   }
-  return { ok: false as const, message: "OpenWork Cloud could not be started for this Automation run." }
+  const userId = await deps.ownerUserId(scope)
+  if (!userId) return { ok: false, reason: "missing", message: "Set up OpenWork Cloud before creating a Cloud Automation." }
+  let deadline = deps.now() + WORKER_READY_TIMEOUT_MS
+  let waitedForLifecycle = false
+  let pending: Extract<CloudAgentRuntimeResult, { ok: false }> = {
+    ok: false,
+    reason: "waking",
+    message: "OpenWork Cloud is still starting for this Automation run.",
+  }
+  while (!signal.aborted && deps.now() < deadline) {
+    const access = await deps.resolveAccess({
+      organizationId: normalizeDenTypeId("organization", scope.organizationId),
+      userId,
+    })
+    if (access.status === "missing") {
+      return { ok: false, reason: "missing", message: "Set up OpenWork Cloud before creating a Cloud Automation." }
+    }
+    if (
+      !waitedForLifecycle &&
+      access.status === "waking" &&
+      (access.reason === "stopped" || access.reason === "recovering")
+    ) {
+      waitedForLifecycle = true
+      await abortable(deps.wakeWorker(access.workerId), signal)
+      deadline = deps.now() + WORKER_READY_TIMEOUT_MS
+      continue
+    }
+    if (access.status !== "ready" && access.reason === "unreachable") {
+      pending = { ok: false, reason: "unreachable", message: "The OpenWork Cloud runtime is healthy but unreachable for this Automation run." }
+      await deps.sleep(WORKER_READY_POLL_MS, signal)
+      continue
+    }
+    if (access.status === "failed") {
+      return { ok: false, reason: "failed", message: "The OpenWork Cloud runtime needs repair before this Automation can run." }
+    }
+    if (access.status === "ready") {
+      const workspace = await deps.resolveWorkspace(access, signal)
+      if (workspace) return { ok: true, workerId: access.workerId, access, ...workspace }
+      pending = { ok: false, reason: "unreachable", message: "The OpenWork Cloud runtime session API is unreachable for this Automation run." }
+    } else {
+      pending = { ok: false, reason: "waking", message: "OpenWork Cloud is still starting for this Automation run." }
+    }
+    await deps.sleep(WORKER_READY_POLL_MS, signal)
+  }
+  return pending
+}
+
+export function cloudAgentRuntimeUnavailableResult(input: {
+  reason: CloudAgentRuntimeUnavailableReason
+  message: string
+  cancelled: boolean
+  timedOut: boolean
+}): CloudAgentExecution {
+  if (input.cancelled) {
+    return { ok: false, status: "cancelled", code: "cancelled", message: "The Automation run was cancelled.", retryable: false }
+  }
+  if (input.timedOut) {
+    return {
+      ok: false,
+      status: "failed",
+      code: "execution_timed_out",
+      message: "The Automation run exceeded its maximum runtime while starting OpenWork Cloud.",
+      retryable: false,
+    }
+  }
+  return {
+    ok: false,
+    status: "failed",
+    code: "execution_runtime_unavailable",
+    message: input.message,
+    retryable: false,
+    needsAttention: true,
+  }
 }
 
 async function connectHealth(input: {
@@ -215,7 +309,7 @@ async function connectHealth(input: {
     probe: "true",
   })
   const request = async (method: "GET" | "POST", path: string, body?: unknown) => {
-    const response = await fetch(`${input.baseUrl}${path}`, {
+    const response = await fetchPreviewNoRedirect(previewFetch(), `${input.baseUrl}${path}`, {
       method,
       headers: {
         ...workerHeaders(input.access),
@@ -324,6 +418,17 @@ async function abortAndObserve(
 }
 
 async function currentAgentAuthority(input: OwnerScope & { action: AgentAction }): Promise<CloudAgentExecution | null> {
+  const webAccess = await getOpenWorkWebRuntimeAccess(input.organizationId)
+  if (!webAccess.hasAccess) {
+    return {
+      ok: false,
+      status: "failed",
+      code: OPENWORK_WEB_ACCESS_REQUIRED_CODE,
+      message: OPENWORK_WEB_ACCESS_REQUIRED_MESSAGE,
+      retryable: false,
+      needsAttention: true,
+    }
+  }
   const access = await resolveAutomationModelAccess({
     organizationId: input.organizationId,
     ownerMemberId: input.ownerMemberId,
@@ -350,18 +455,14 @@ export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise
   try {
     const initialAuthorityFailure = await currentAgentAuthority(input)
     if (initialAuthorityFailure) return initialAuthorityFailure
-    const runtime = await readyWorker(input, signal)
+    const runtime = await resolveCloudAgentReadyWorker(input, signal)
     if (!runtime.ok) {
-      const cancelled = input.signal.aborted
-      return {
-        ok: false,
-        status: cancelled ? "cancelled" : "failed",
-        code: cancelled ? "cancelled" : deadlineController.signal.aborted ? "execution_timed_out" : "execution_runtime_unavailable",
-        message: cancelled ? "The Automation run was cancelled."
-          : deadlineController.signal.aborted ? "The Automation run exceeded its maximum runtime while starting OpenWork Cloud." : runtime.message,
-        retryable: false,
-        needsAttention: !cancelled && !deadlineController.signal.aborted,
-      }
+      return cloudAgentRuntimeUnavailableResult({
+        reason: runtime.reason,
+        message: runtime.message,
+        cancelled: input.signal.aborted,
+        timedOut: deadlineController.signal.aborted,
+      })
     }
 
     const previousReceipt = parseReceipt(input.previousReceipt)
@@ -372,7 +473,9 @@ export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise
       return { ok: false, status: "failed", code: "execution_runtime_unavailable", message: "The Cloud worker changed while this Automation run was recovering.", retryable: false, needsAttention: true }
     }
 
-    const workspaceId = previousReceipt?.workspaceId ?? runtime.workspaceId
+    // Recovery keeps the receipt's workspace (the turn may already be running
+    // there); otherwise the revision pin wins over the worker's active workspace.
+    const workspaceId = previousReceipt?.workspaceId ?? input.workspaceId ?? runtime.workspaceId
     const connect = await connectHealth({ ...runtime, workspaceId, action: input.action, signal })
     if (!connect.ok) {
       return { ok: false, status: "failed", code: connect.code, message: connect.message, retryable: false, needsAttention: true }
@@ -384,6 +487,7 @@ export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise
       token: runtime.access.clientToken,
       hostToken: runtime.access.hostToken,
       requestTimeoutMs: WORKER_REQUEST_TIMEOUT_MS,
+      fetch: (url, init = {}) => fetchPreviewNoRedirect(previewFetch(), url, init),
       defaultModel: {
         providerId: input.action.model.providerId,
         modelId: input.action.model.modelId,

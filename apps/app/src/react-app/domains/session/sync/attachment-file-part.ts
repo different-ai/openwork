@@ -27,6 +27,13 @@ type InboxUploadResult = {
 
 type ChatAttachmentUploadClient = {
   uploadInbox: (workspaceId: string, file: File, options?: { path?: string }) => Promise<InboxUploadResult>;
+  /**
+   * True when the upload transport streams the original file from disk (for
+   * example the Electron main-process transfer used for remote workspaces).
+   * Re-encoding such a file would strip its local path and corrupt the upload
+   * route, so callers must send it unmodified.
+   */
+  uploadInboxPrefersOriginalFile?: (file: File) => boolean;
 };
 
 export type ChatAttachmentWorkspaceEndpoint = {
@@ -299,12 +306,13 @@ function attachmentPathNotePart(uploaded: UploadedChatAttachment[]): TextPartInp
   };
 }
 
-async function uploadedAttachmentFilePart(item: UploadedChatAttachment): Promise<FilePartInput> {
-  // Binary/unknown mimes also get a `text/plain` file part: opencode expands
-  // text/plain `file://` parts through the Read tool (which fails gracefully
-  // with "Cannot read binary file") and never forwards them to the provider,
-  // so the transcript keeps an attachment badge without any provider risk.
-  const modelMime = modelFacingAttachmentMime(item.mime) ?? "text/plain";
+async function uploadedAttachmentFilePart(item: UploadedChatAttachment): Promise<FilePartInput | null> {
+  // Binary/unknown mimes get no model-facing file part. A `text/plain`
+  // `file://` part would make opencode run the Read tool on the bytes, which
+  // refuses with "Cannot read binary file" as a session error and drops the
+  // part anyway; the synthetic workspace-path note already gives tools the file.
+  const modelMime = modelFacingAttachmentMime(item.mime);
+  if (!modelMime) return null;
 
   // Images need a browser-displayable URL so the transcript can show the same
   // expandable miniature preview as paste/composer attachments. Workspace
@@ -326,14 +334,21 @@ async function uploadedAttachmentFilePart(item: UploadedChatAttachment): Promise
   };
 }
 
+export type WorkspaceAttachmentParts = {
+  /** Synthetic note listing every uploaded workspace path for tools. */
+  note: TextPartInput;
+  /** One entry per attachment, in order; `null` when the model gets no file part. */
+  files: Array<FilePartInput | null>;
+};
+
 export async function composerAttachmentsToWorkspaceFileParts(input: {
   attachments: ComposerAttachment[];
   endpoint: ChatAttachmentWorkspaceEndpoint;
   sessionId: string;
   workspaceRoot: string;
   createId?: () => string;
-}): Promise<Array<TextPartInput | FilePartInput>> {
-  if (input.attachments.length === 0) return [];
+}): Promise<WorkspaceAttachmentParts | null> {
+  if (input.attachments.length === 0) return null;
 
   const workspaceRoot = input.workspaceRoot.trim();
   if (!workspaceRoot) {
@@ -349,8 +364,12 @@ export async function composerAttachmentsToWorkspaceFileParts(input: {
   for (const attachment of input.attachments) {
     // Oversized images are re-encoded here, at send time, so the composer chip
     // appears instantly at attach time and the canvas work happens while the
-    // chip already shows its uploading state.
-    const file = await compressImageFile(attachment.file);
+    // chip already shows its uploading state. When the transport uploads the
+    // original file from its local path, re-encoding would detach that path,
+    // so the original bytes are sent instead.
+    const file = input.endpoint.client.uploadInboxPrefersOriginalFile?.(attachment.file)
+      ? attachment.file
+      : await compressImageFile(attachment.file);
     const metadata = resolveAttachmentFileMetadata(file);
     const id = input.createId ? input.createId() : randomAttachmentId();
     const inboxPath = buildChatAttachmentInboxPath({
@@ -388,10 +407,10 @@ export async function composerAttachmentsToWorkspaceFileParts(input: {
     });
   }
 
-  return [
-    attachmentPathNotePart(uploaded),
-    ...(await Promise.all(uploaded.map(uploadedAttachmentFilePart))),
-  ];
+  return {
+    note: attachmentPathNotePart(uploaded),
+    files: await Promise.all(uploaded.map(uploadedAttachmentFilePart)),
+  };
 }
 
 export async function composerAttachmentToFilePart(attachment: ComposerAttachment): Promise<FilePartInput | null> {

@@ -1,6 +1,8 @@
 import { isReasoningUIPart, isToolUIPart, type DynamicToolUIPart, type FileUIPart, type ToolUIPart, type UIMessage } from "ai"
 import type { ThreadStatus } from "@/lib/messages"
-import { isAggregatableToolPart } from "@/lib/tool-aggregate"
+// Relative so the pure grouping contract stays importable from alias-free
+// test workspaces (evals specs import this module directly).
+import { isAggregatableToolPart, type AggregateThought } from "../../lib/tool-aggregate"
 
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -170,7 +172,7 @@ type AssistantRenderGroup =
   | { kind: "reasoning"; text: string; isStreaming: boolean }
   | { kind: "file"; part: FileUIPart }
   | { kind: "tool"; part: ToolUIPart | DynamicToolUIPart }
-  | { kind: "tool-aggregate"; parts: (ToolUIPart | DynamicToolUIPart)[] }
+  | { kind: "tool-aggregate"; parts: (ToolUIPart | DynamicToolUIPart)[]; thoughts: AggregateThought[] }
 
 /**
  * Steps often arrive as one assistant message per tool call. When a
@@ -272,6 +274,25 @@ export function getAssistantRenderGroups(
       return
     }
 
+    // A thought in the middle of an aggregate run embeds into the run at
+    // its chronological slot instead of opening a new top-level group.
+    // Alternating thought/command turns then read as ONE aggregate line
+    // that advertises its thoughts, not a ladder of repeated single lines.
+    if (previous?.kind === "tool-aggregate") {
+      const lastThought = previous.thoughts.at(-1)
+      if (lastThought && lastThought.afterIndex === previous.parts.length) {
+        lastThought.text += lastThought.text ? `\n\n${part.text}` : part.text
+        lastThought.isStreaming = lastThought.isStreaming || part.state === "streaming"
+        return
+      }
+      previous.thoughts.push({
+        afterIndex: previous.parts.length,
+        text: part.text,
+        isStreaming: part.state === "streaming",
+      })
+      return
+    }
+
     groups.push({ kind: "reasoning", text: part.text, isStreaming: part.state === "streaming" })
   }
 
@@ -296,15 +317,17 @@ export function getAssistantRenderGroups(
     if (isToolUIPart(part)) {
       // Paper aggregation rule: consecutive command/edit/read/search calls
       // collapse into one aggregate group. Prose, files, and other tools
-      // break the run; reasoning does not — thinking models emit a
-      // reasoning part before nearly every call, and letting it split the
-      // run degrades every aggregate to a single call.
+      // break the run. A thought inside the run embeds at its chronological
+      // slot (see appendReasoning), so the run stays one compact line and
+      // still reads in the order the model produced it. A thought before
+      // any call — after prose or at the turn's start — remains its own
+      // top-level group and starts a fresh run.
       if (isAggregatableToolPart(part)) {
-        const previous = groups.findLast((group) => group.kind !== "reasoning")
+        const previous = groups.at(-1)
         if (previous?.kind === "tool-aggregate") {
           previous.parts.push(part)
         } else {
-          groups.push({ kind: "tool-aggregate", parts: [part] })
+          groups.push({ kind: "tool-aggregate", parts: [part], thoughts: [] })
         }
         continue
       }

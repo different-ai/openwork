@@ -282,7 +282,13 @@ export function registerOrgResourceRoutes<T extends { Variables: OrgRouteVariabl
           gatingEnabled: env.mcpConnectionsGatingEnabled,
         }),
       })
-      return c.json({ items })
+      return c.json({
+        items: items.map((item) => ({
+          ...item,
+          // Published desktops only recognize the legacy wire value.
+          objectType: item.objectType === "workflow" ? "script" : item.objectType,
+        })),
+      })
     },
   )
 

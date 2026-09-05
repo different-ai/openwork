@@ -59,14 +59,12 @@ describe("Den DB migration readiness wiring", () => {
     assertNoForbiddenDeployTools(migrationsBlock)
   })
 
-  test("Dockerfile.den builds Den DB dist assets before the Den API image build", () => {
+  test("Dockerfile.den uses the Den API's graph-aware production build", () => {
     const dockerfile = readRepoFile("packaging/docker/Dockerfile.den")
-    const denDbBuildIndex = dockerfile.indexOf("RUN pnpm --dir /app/ee/packages/den-db run build")
-    const denApiBuildIndex = dockerfile.indexOf("pnpm --dir /app/ee/apps/den-api run build")
 
-    assert.notEqual(denDbBuildIndex, -1, "Dockerfile.den builds @openwork-ee/den-db")
-    assert.notEqual(denApiBuildIndex, -1, "Dockerfile.den builds @openwork-ee/den-api")
-    assert.ok(denDbBuildIndex < denApiBuildIndex, "den-db dist assets are built before den-api")
+    assert.match(dockerfile, /pnpm --dir \/app\/ee\/apps\/den-api run build/)
+    assert.equal(dockerfile.includes("/app/ee/packages/den-db run build"), false)
+    assert.equal(dockerfile.includes("/app/ee/packages/telemetry run build"), false)
   })
 
   test("hosted Den API build includes den-db assets but start does not run migrations", () => {
@@ -74,8 +72,9 @@ describe("Den DB migration readiness wiring", () => {
     const denApiBuild = readRepoFile("ee/apps/den-api/scripts/build.mjs")
     const startLine = denApiPackage.split("\n").find((line) => line.includes('"start"')) ?? ""
 
-    assert.match(denApiPackage, /"build:den-db": "pnpm --filter @openwork-ee\/den-db build"/)
-    assert.match(denApiBuild, /run\(pnpmCommand, \["run", "build:den-db"\]\)/)
+    assert.match(denApiPackage, /"build:workspace-dependencies": "pnpm --filter '@openwork-ee\/den-api\^\.\.\.' --if-present run build"/)
+    assert.match(denApiBuild, /run\(pnpmCommand, \["run", "build:workspace-dependencies"\]\)/)
+    assert.match(denApiBuild, /verifyProductionWorkspaceExports\(\)/)
     assert.match(startLine, /"start": "node dist\/main\.js"/)
     assert.equal(startLine.includes("db:migrate"), false, "hosted start alone does not migrate")
     assert.equal(startLine.includes("db:bootstrap"), false, "hosted start alone does not bootstrap")
@@ -115,7 +114,7 @@ describe("Den DB migration readiness wiring", () => {
     assert.match(bootstrap, /drizzle-orm\/mysql2\/migrator/)
     assert.match(bootstrap, /await migrate\(db, \{ migrationsFolder \}\)/)
     assert.match(bootstrap, /current-schema\.sql/)
-    assert.match(bootstrap, /await ensureFulltextIndexes\(indexExecutor\)/)
+    assert.match(bootstrap, /await ensureSchemaRepairs\(repairExecutor\)/)
     assertNoForbiddenDeployTools(bootstrap)
   })
 

@@ -91,6 +91,12 @@ function lockoutKey(email: string) {
   return `auth:email-password-lockout:${digest}`
 }
 
+/**
+ * SHA-1 is the Have I Been Pwned k-anonymity protocol, not credential
+ * storage: only the first five hex characters ever leave this process, the
+ * digest is compared against the returned range, and the value is never
+ * persisted. Password-at-rest hashing is handled by better-auth.
+ */
 function hashPasswordForRangeLookup(password: string) {
   return createHash("sha1").update(password).digest("hex").toUpperCase()
 }
@@ -331,24 +337,20 @@ export async function getBreachedPasswordResponse(
     return null
   }
 
-  let compromised: boolean
   try {
-    compromised = await isPasswordCompromised(password, fetchPasswordRange)
+    const compromised = await isPasswordCompromised(password, fetchPasswordRange)
+    return compromised
+      ? jsonError(400, {
+          error: "password_compromised",
+          message: "This password appeared in a data breach. Choose a different one.",
+        })
+      : null
   } catch {
     return jsonError(503, {
       error: "password_screening_unavailable",
       message: "Something went wrong. Please try again in a moment.",
     })
   }
-
-  if (!compromised) {
-    return null
-  }
-
-  return jsonError(400, {
-    error: "password_compromised",
-    message: "This password appeared in a data breach. Choose a different one.",
-  })
 }
 
 export async function getPasswordPolicyResponse(request: Request) {
@@ -358,7 +360,10 @@ export async function getPasswordPolicyResponse(request: Request) {
   }
 
   const violation = getPasswordPolicyViolation(password)
-  return violation ? jsonError(400, violation) : null
+  if (!violation) {
+    return null
+  }
+  return jsonError(400, violation)
 }
 
 export async function getWeakPasswordResponse(request: Request) {

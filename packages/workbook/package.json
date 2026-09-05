@@ -1,0 +1,27 @@
+{
+  "name": "@openwork/workbook",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Bounded, dependency-light .xlsx reading and writing that runs in Node, Bun, and the browser.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "htmlparser2": "8.0.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

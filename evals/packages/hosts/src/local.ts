@@ -1,10 +1,19 @@
 import { execFile, spawn } from "node:child_process";
 import { constants, existsSync, openSync } from "node:fs";
-import { access, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { delimiter, dirname, join } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { allocateFreePort, allocateFreePorts, listTargets, waitForCdp } from "@openwork/cdp";
-import { ensureDenStack } from "../../../runner/den-stack.ts";
+import {
+  desktopBootstrapPath,
+  globalOpencodeConfigDir,
+  opencodeDbCandidates,
+  openworkEnvStorePath,
+  openworkServerConfigPath,
+  openworkServerDataDir,
+} from "@openwork/paths";
+import { ensureDenStack } from "./den-stack.ts";
+import { resolveEvalEngineValue } from "./eval-engine.ts";
 import type { ChildProcess } from "node:child_process";
 import type { DisposableHost, SurfaceHandle, ElectronSurfaceOptions, ChromeSurfaceOptions, DenServiceOptions, DenServiceHandle, ShareLinks } from "./types.ts";
 
@@ -32,6 +41,25 @@ export interface ElectronProfilePaths {
   userDataDir: string;
 }
 
+export interface InstalledProductionDesktopState {
+  bootstrapPath: string;
+  dataDir: string;
+  envStorePath: string;
+  homeDir: string;
+  opencodeDb: string;
+  opencodeConfigDir: string;
+  serverConfigPath: string;
+  serverStatePath: string;
+  serverTokenStorePath: string;
+  workspaceStatePath: string;
+}
+
+export interface InstalledProductionDesktopStateOptions {
+  env?: NodeJS.ProcessEnv;
+  homeDir?: string;
+  platform?: NodeJS.Platform;
+}
+
 interface ElectronSurfaceEnvOptions {
   appName: string;
   appIdentifier: string;
@@ -48,6 +76,16 @@ interface SpawnDetachedOptions {
   cwd: string;
   env: NodeJS.ProcessEnv;
   logPath: string;
+}
+
+const liveProfileRoots = new Set<string>();
+
+export function registerLiveProfileRoot(profileRoot: string): void {
+  liveProfileRoots.add(resolve(profileRoot));
+}
+
+export function unregisterLiveProfileRoot(profileRoot: string): void {
+  liveProfileRoots.delete(resolve(profileRoot));
 }
 
 interface KillLocalPidOptions {
@@ -373,7 +411,7 @@ async function writeBootstrap(filePath: string, bootstrap: ElectronSurfaceOption
   await mkdir(dirname(filePath), { recursive: true });
   await writeFile(
     filePath,
-    `${JSON.stringify({ baseUrl: bootstrap.baseUrl, apiBaseUrl: bootstrap.apiBaseUrl, requireSignin: bootstrap.requireSignin }, null, 2)}\n`,
+    `${JSON.stringify(bootstrap, null, 2)}\n`,
     "utf8",
   );
 }
@@ -436,10 +474,14 @@ function hostPnpmHome(): string | null {
   return null;
 }
 
-export function electronSurfaceEnv(paths: ElectronProfilePaths, options: ElectronSurfaceEnvOptions): Record<string, string> {
+export function electronSurfaceEnv(
+  paths: ElectronProfilePaths,
+  options: ElectronSurfaceEnvOptions,
+  overrides: Record<string, string> = {},
+): Record<string, string> {
   const pnpmHome = hostPnpmHome();
-  // Provenance: mirrors scripts/dev-two-electron-demo.mjs demoEnv() so local
-  // eval Electron surfaces stay fully isolated from the user's real desktop app.
+  // Give local eval Electron surfaces isolated app data, config, and identity so
+  // they cannot affect the user's real desktop app.
   return {
     ...(pnpmHome ? { PNPM_HOME: pnpmHome } : {}),
     APPDATA: paths.appDataDir,
@@ -450,6 +492,7 @@ export function electronSurfaceEnv(paths: ElectronProfilePaths, options: Electro
     OPENWORK_DESKTOP_DISABLE_WORKSPACE_RECOVERY: "1",
     OPENWORK_DEV_MODE: "1",
     OPENWORK_ENV_STORE: paths.envStorePath,
+    ...(resolveEvalEngineValue(process.env.OPENWORK_EVAL_ENGINE) === "v2" ? { OPENWORK_ENGINE_V2_PREVIEW: "1" } : {}),
     OPENCODE_CONFIG_DIR: paths.opencodeConfigDir,
     VITE_DISABLE_OPENWORK_MODELS: "1",
     OPENWORK_ELECTRON_APP_IDENTIFIER: options.appIdentifier,
@@ -464,6 +507,105 @@ export function electronSurfaceEnv(paths: ElectronProfilePaths, options: Electro
     XDG_CONFIG_HOME: paths.configHome,
     XDG_DATA_HOME: paths.dataHome,
     XDG_STATE_HOME: paths.stateHome,
+    ...overrides,
+  };
+}
+
+export function liveSharedProductionStateEnv(state: InstalledProductionDesktopState): Record<string, string> {
+  return {
+    HOME: state.homeDir,
+    USERPROFILE: state.homeDir,
+    XDG_CONFIG_HOME: join(state.homeDir, ".config"),
+    XDG_DATA_HOME: join(state.homeDir, ".local", "share"),
+    XDG_CACHE_HOME: join(state.homeDir, ".cache"),
+    XDG_STATE_HOME: join(state.homeDir, ".local", "state"),
+    OPENWORK_DATA_DIR: state.dataDir,
+    OPENWORK_DESKTOP_BOOTSTRAP_PATH: state.bootstrapPath,
+    OPENWORK_DESKTOP_DISABLE_WORKSPACE_RECOVERY: "0",
+    OPENWORK_DESKTOP_WORKSPACE_STATE_PATH: state.workspaceStatePath,
+    OPENWORK_DEV_SHARED_STATE: "1",
+    OPENWORK_ENV_STORE: state.envStorePath,
+    OPENWORK_SERVER_CONFIG: state.serverConfigPath,
+    OPENWORK_SERVER_STATE_PATH: state.serverStatePath,
+    OPENWORK_SERVER_TOKEN_STORE_PATH: state.serverTokenStorePath,
+    OPENCODE_DB: state.opencodeDb,
+    OPENCODE_CONFIG_DIR: state.opencodeConfigDir,
+  };
+}
+
+async function requireInstalledPath(path: string, kind: "directory" | "file", label: string): Promise<void> {
+  let metadata;
+  try {
+    metadata = await stat(path);
+  } catch {
+    throw new Error(`${label} is unavailable at ${path}. Start the installed production OpenWork desktop once and confirm its local state exists.`);
+  }
+  const matches = kind === "directory" ? metadata.isDirectory() : metadata.isFile();
+  if (!matches) throw new Error(`${label} at ${path} is not a ${kind}.`);
+}
+
+/** Resolve installed production stores without launching, copying, linking, or mutating them. */
+export async function resolveInstalledProductionDesktopState(
+  options: InstalledProductionDesktopStateOptions = {},
+): Promise<InstalledProductionDesktopState> {
+  const platform = options.platform ?? process.platform;
+  if (platform !== "darwin") {
+    throw new Error(`Live shared installed-production state is currently supported only on macOS; received ${platform}.`);
+  }
+  const env = options.env ?? process.env;
+  const homeDir = options.homeDir ?? homedir();
+  const dataDir = openworkServerDataDir({ env, homeDir, platform });
+  await requireInstalledPath(dataDir, "directory", "Installed production OpenWork data directory");
+  const userDataDir = join(homeDir, "Library", "Application Support", "com.differentai.openwork");
+  const workspaceStatePath = join(userDataDir, "openwork-workspaces.json");
+  const serverTokenStorePath = join(userDataDir, "openwork-server-tokens.json");
+  const serverStatePath = join(userDataDir, "openwork-server-state.json");
+  const serverConfigPath = openworkServerConfigPath({ env, homeDir, platform });
+  const envStorePath = openworkEnvStorePath({ env, homeDir, platform });
+  const bootstrapPath = desktopBootstrapPath({ env, homeDir, platform, userDataDir });
+  const opencodeConfigDir = globalOpencodeConfigDir({ env, homeDir, platform });
+  for (const [path, label] of [
+    [workspaceStatePath, "Installed production workspace state"],
+    [serverTokenStorePath, "Installed production server token store"],
+    [serverStatePath, "Installed production server state"],
+    [serverConfigPath, "Installed production server config"],
+    [envStorePath, "Installed production environment store"],
+    [bootstrapPath, "Installed production desktop bootstrap"],
+  ]) {
+    await requireInstalledPath(path, "file", label);
+  }
+  await requireInstalledPath(opencodeConfigDir, "directory", "Installed production OpenCode config directory");
+
+  const candidates = opencodeDbCandidates({
+    env,
+    homeDir,
+    platform,
+    defaultChannel: "latest",
+  });
+  let opencodeDb: string | undefined;
+  for (const candidate of candidates) {
+    const metadata = await stat(candidate).catch(() => null);
+    if (metadata?.isFile()) {
+      opencodeDb = candidate;
+      break;
+    }
+  }
+  if (!opencodeDb) {
+    throw new Error(
+      `Installed production OpenCode database is unavailable. Checked channel-aware candidates: ${candidates.join(", ")}.`,
+    );
+  }
+  return {
+    bootstrapPath,
+    dataDir,
+    envStorePath,
+    homeDir,
+    opencodeDb,
+    opencodeConfigDir,
+    serverConfigPath,
+    serverStatePath,
+    serverTokenStorePath,
+    workspaceStatePath,
   };
 }
 
@@ -503,6 +645,68 @@ export async function killLocalPid(pid: number, options: KillLocalPidOptions = {
   else if (killedDirect) options.log?.(`Sent SIGKILL to pid ${pid}`);
   await waitUntilGone(pid, 1_000);
   return true;
+}
+
+export function ownedSurfaceFilePaths(handle: SurfaceHandle): string[] {
+  return handle.kind === "electron" && handle.profileDir && handle.meta?.profileOwner !== "caller"
+    ? [handle.profileDir]
+    : [];
+}
+
+export async function removeOwnedSurfaceFiles(handle: SurfaceHandle): Promise<void> {
+  for (const path of ownedSurfaceFilePaths(handle)) {
+    await rm(path, { recursive: true, force: true });
+  }
+}
+
+/** Stop a detached eval Electron only when its process environment still names its isolated profile. */
+export async function stopOwnedElectronSurface(pid: number, profileDir: string): Promise<void> {
+  if (!Number.isInteger(pid) || pid <= 1 || !profileDir.trim()) {
+    throw new Error("Detached Electron ownership requires a valid pid and profile directory.");
+  }
+  const processDescription = await new Promise<string>((resolveDescription, reject) => {
+    execFile("ps", ["eww", "-p", String(pid)], { encoding: "utf8", timeout: 5_000 }, (error, stdout) => {
+      if (error) {
+        reject(new Error(`Detached Electron process ${pid} is not running.`));
+        return;
+      }
+      resolveDescription(stdout);
+    });
+  });
+  if (!processDescription.includes(`OPENWORK_ELECTRON_USERDATA=${join(profileDir, "electron-userdata")}`)) {
+    throw new Error(`Refusing to stop pid ${pid}: it does not own the expected eval Electron profile.`);
+  }
+  await killLocalPid(pid);
+  await rm(profileDir, { recursive: true, force: true });
+}
+
+export async function pruneStaleSurfaceProfiles(
+  rootDir: string,
+  options: {
+    live?: ReadonlySet<string>;
+    log?: (message: string) => void;
+    kill?: (path: string) => Promise<void>;
+  },
+): Promise<{ removed: string[]; kept: string[] }> {
+  const entries = await readdir(rootDir).catch(() => []);
+  const removed: string[] = [];
+  const kept: string[] = [];
+  const live = options.live ?? liveProfileRoots;
+  const kill = options.kill ?? ((path: string) => new Promise<void>((done) => {
+    execFile("pkill", ["-f", path], () => done());
+  }));
+  for (const entry of entries) {
+    const path = resolve(rootDir, entry);
+    if (live.has(path)) {
+      kept.push(path);
+      continue;
+    }
+    await kill(path);
+    await rm(path, { recursive: true, force: true });
+    removed.push(path);
+  }
+  options.log?.(`Cleared ${removed.length} stale profile director${removed.length === 1 ? "y" : "ies"} in ${rootDir} (kept ${kept.length} live).`);
+  return { removed, kept };
 }
 
 function explicitPort(url: string): number | null {
@@ -616,26 +820,14 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
  * `Runtime.evaluate` for 240s, which reads exactly like a broken app. Pruning
  * here is cheap and keeps that failure from being invented again.
  */
-async function clearStaleSurfaces(rootDir: string, log: (message: string) => void): Promise<void> {
-  await new Promise<void>((resolve) => {
-    execFile("pkill", ["--full", rootDir], () => resolve());
-  });
-  // The default root is worker-scoped, so parallel files cannot kill or remove
-  // another worker's desktop while pruning their own stale profiles.
-  const stale = await readdir(rootDir).catch(() => []);
-  let removed = 0;
-  for (const entry of stale) {
-    await rm(join(rootDir, entry), { recursive: true, force: true }).then(() => { removed += 1; }).catch(() => undefined);
-  }
-  log(`Cleared Electron processes and ${removed} stale profile director${removed === 1 ? "y" : "ies"} in ${rootDir}.`);
-}
-
   return {
     kind: "local",
     workspaceRoot: options.repoRoot,
 
     async spawnElectron(name: string, opts: ElectronSurfaceOptions = {}): Promise<SurfaceHandle> {
-      await prepareSharedElectronResources(options.repoRoot, log);
+      if (opts.prepareSharedResources !== false) {
+        await prepareSharedElectronResources(options.repoRoot, log);
+      }
       const spawnEnvForChecks: NodeJS.ProcessEnv = { ...process.env, ...opts.env };
       if (insideContainerSandbox() && (spawnEnvForChecks.DISPLAY ?? "").trim().length === 0) spawnEnvForChecks.DISPLAY = ":99";
       await ensureDisplay(options.repoRoot, spawnEnvForChecks, log);
@@ -643,8 +835,9 @@ async function clearStaleSurfaces(rootDir: string, log: (message: string) => voi
         throw new Error("Electron profileDir must not be empty.");
       }
       const callerOwnedProfile = opts.profileDir !== undefined;
-      if (!callerOwnedProfile) await clearStaleSurfaces(rootDir, log);
-      const profileRoot = opts.profileDir ?? join(rootDir, `${sanitizeSlug(name)}-${timestamp()}-${process.pid}`);
+      if (!callerOwnedProfile) await pruneStaleSurfaceProfiles(rootDir, { live: liveProfileRoots, log });
+      const profileRoot = opts.profileDir ?? resolve(rootDir, `${sanitizeSlug(name)}-${timestamp()}-${process.pid}`);
+      if (!callerOwnedProfile) registerLiveProfileRoot(profileRoot);
       const paths = electronProfilePaths(profileRoot);
       await ensureElectronProfile(paths);
       await writeBootstrap(paths.bootstrapPath, opts.bootstrap);
@@ -652,8 +845,8 @@ async function clearStaleSurfaces(rootDir: string, log: (message: string) => voi
       if (port === undefined || cdpPort === undefined) throw new Error("Could not allocate Electron Vite/CDP ports.");
       const appName = `OpenWork Eval ${name}`;
       const appIdentifier = `com.differentai.openwork.eval.${sanitizeSlug(name)}`;
-      const isolationEnv = electronSurfaceEnv(paths, { appName, appIdentifier, port, cdpPort });
-      const env: NodeJS.ProcessEnv = { ...process.env, ...isolationEnv, ...opts.env };
+      const isolationEnv = electronSurfaceEnv(paths, { appName, appIdentifier, port, cdpPort }, opts.env);
+      const env: NodeJS.ProcessEnv = { ...process.env, ...isolationEnv };
       const launchArgs = containerLaunchArgs(env.ELECTRON_EXTRA_LAUNCH_ARGS);
       if (launchArgs !== undefined) env.ELECTRON_EXTRA_LAUNCH_ARGS = launchArgs;
       // appendSwitch() in the main process runs too late for the SUID sandbox
@@ -665,17 +858,20 @@ async function clearStaleSurfaces(rootDir: string, log: (message: string) => voi
       // segfaults instead of opening a window.
       if (insideContainerSandbox() && (env.DISPLAY ?? "").trim().length === 0) env.DISPLAY = ":99";
       const logPath = join(profileRoot, "electron.log");
-      const packagedBinary = process.env.OPENWORK_EVAL_ELECTRON_BINARY?.trim();
+      const packagedBinary = opts.devCommand === undefined
+        ? process.env.OPENWORK_EVAL_ELECTRON_BINARY?.trim()
+        : undefined;
       let spawned: SpawnedDetached;
       if (packagedBinary) {
         await access(packagedBinary, constants.F_OK).catch(() => {
           throw new Error(`OPENWORK_EVAL_ELECTRON_BINARY does not exist: ${packagedBinary}`);
         });
         log(`Starting local Electron surface ${name} from packaged binary ${packagedBinary} (CDP :${cdpPort})...`);
-        spawned = spawnDetached(packagedBinary, [], { cwd: options.repoRoot, env, logPath });
+        // An installed artifact must not resolve assets from the checkout's cwd.
+        spawned = spawnDetached(packagedBinary, [], { cwd: profileRoot, env, logPath });
       } else {
         log(`Starting local Electron surface ${name} (Vite :${port}, CDP :${cdpPort})...`);
-        spawned = spawnDetached(pnpmCommand(), ["dev:electron"], { cwd: options.repoRoot, env, logPath });
+        spawned = spawnDetached(pnpmCommand(), [opts.devCommand ?? "dev:electron"], { cwd: options.repoRoot, env, logPath });
       }
       const cdpUrl = `http://127.0.0.1:${cdpPort}`;
       try {
@@ -695,14 +891,16 @@ async function clearStaleSurfaces(rootDir: string, log: (message: string) => voi
         cdpUrl,
         pid: spawned.pid,
         profileDir: profileRoot,
-        meta: { vitePort: String(port), cdpPort: String(cdpPort), log: logPath, profileOwner: callerOwnedProfile ? "caller" : "host" },
+        meta: { vitePort: String(port), cdpPort: String(cdpPort), log: logPath, profileRoot, profileOwner: callerOwnedProfile ? "caller" : "host" },
       };
       spawnedSurfaces.add(handle);
       return handle;
     },
 
     async spawnChrome(name: string, opts: ChromeSurfaceOptions = {}): Promise<SurfaceHandle> {
-      const profileRoot = join(rootDir, `${sanitizeSlug(name)}-${timestamp()}-${process.pid}`);
+      await pruneStaleSurfaceProfiles(rootDir, { live: liveProfileRoots, log });
+      const profileRoot = resolve(rootDir, `${sanitizeSlug(name)}-${timestamp()}-${process.pid}`);
+      registerLiveProfileRoot(profileRoot);
       const profileDir = join(profileRoot, "chrome-profile");
       await mkdir(profileDir, { recursive: true });
       const cdpPort = await allocateFreePort();
@@ -739,7 +937,7 @@ async function clearStaleSurfaces(rootDir: string, log: (message: string) => voi
         cdpUrl,
         pid: spawned.pid,
         profileDir,
-        meta: { cdpPort: String(cdpPort), log: logPath },
+        meta: { cdpPort: String(cdpPort), log: logPath, profileRoot },
       };
       spawnedSurfaces.add(handle);
       return handle;
@@ -775,9 +973,8 @@ async function clearStaleSurfaces(rootDir: string, log: (message: string) => voi
         await killLocalPid(handle.pid, { log });
       }
       await disposeKnownPorts(handle);
-      if (handle.kind === "electron" && handle.profileDir && handle.meta?.profileOwner !== "caller") {
-        await rm(handle.profileDir, { recursive: true, force: true });
-      }
+      await removeOwnedSurfaceFiles(handle);
+      if (handle.meta?.profileOwner !== "caller" && handle.meta?.profileRoot) unregisterLiveProfileRoot(handle.meta.profileRoot);
       spawnedSurfaces.delete(handle);
     },
 

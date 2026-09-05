@@ -42,6 +42,7 @@ export function ReactSessionRuntime(props: ReactSessionRuntimeProps) {
       workspaceId: props.workspaceId,
       baseUrl: props.opencodeBaseUrl,
       openworkToken: props.openworkToken,
+      visibleSessionId: props.sessionId,
       ...stableCallbacks,
     };
     const releaseWorkspace = ensureWorkspaceSessionSync(input);

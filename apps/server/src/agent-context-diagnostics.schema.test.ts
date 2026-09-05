@@ -108,7 +108,7 @@ describe("agent context diagnostics safe output schema", () => {
         prompt: {
           length: 0,
           sha256: null,
-          markers: { searchCapabilities: true, executeCapability: true, memoryBank: true },
+          markers: { searchCapabilities: true, executeCapability: true, artifacts: true },
         },
         connectToolPermissions: {
           searchCapabilities: "unspecified" as const,

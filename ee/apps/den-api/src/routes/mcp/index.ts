@@ -14,6 +14,7 @@ import { DEN_FIRST_PARTY_MCP_TOKEN_TTL_MS } from "../../mcp/token-lifetime.js"
 import {
   jsonValidator,
   orgMemberRoute,
+  userSessionRoute,
   type OrganizationContextVariables,
 } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
@@ -74,21 +75,14 @@ export function registerMcpTokenRoutes<T extends { Variables: McpRouteVariables 
       },
     }),
     orgMemberRoute(),
+    userSessionRoute(),
     jsonValidator(mintMcpTokenSchema),
     async (c) => {
       const user = c.get("user")
       const session = c.get("session")
-      const apiKey = c.get("apiKey")
       const organizationContext = c.get("organizationContext")
       const orgId = organizationContext.organization.id
       const input = c.req.valid("json")
-
-      if (apiKey) {
-        return c.json({
-          error: "forbidden",
-          message: "Use a signed-in user session to mint MCP tokens.",
-        }, 403)
-      }
 
       const scopes = resolveMcpTokenScopes(input.scopes)
       const secret = crypto.randomBytes(32).toString("base64url")

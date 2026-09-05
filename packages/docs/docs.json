@@ -22,16 +22,19 @@
         "pages": [
           "start-here/get-started",
           "start-here/downloads",
+          "start-here/pricing-and-licensing",
+          "start-here/stewardship",
           "start-here/migrate-from-claude-cowork",
           {
             "group": "Connect your stack",
             "pages": [
               "start-here/connect-your-stack/sign-in-with-chatgpt",
+              "start-here/connect-your-stack/openwork-vs-opencode-models",
+              "start-here/connect-your-stack/using-opencode-zen-go-models",
               "start-here/connect-your-stack/add-anthropic-api-key",
               "start-here/connect-your-stack/add-a-custom-llm",
               "start-here/connect-your-stack/connect-services",
               "start-here/connect-your-stack/add-an-mcp-server",
-              "start-here/connect-your-stack/connect-slack-mcp",
               "start-here/connect-your-stack/enable-exa-search"
             ]
           },
@@ -40,6 +43,7 @@
             "pages": [
               "start-here/do-work-with-it/control-the-browser",
               "start-here/do-work-with-it/cross-chat-memory",
+              "start-here/do-work-with-it/work-with-excel-workbooks",
               "start-here/do-work-with-it/what-uses-tokens",
               "start-here/do-work-with-it/workflows",
               "start-here/do-work-with-it/skills-plugins-and-mcp",
@@ -69,7 +73,8 @@
           {
             "group": "Overview",
             "pages": [
-              "start-here/self-host"
+              "start-here/self-host",
+              "self-host/evaluate-with-docker-compose"
             ]
           },
           {
@@ -94,6 +99,8 @@
           {
             "group": "Install and operate",
             "pages": [
+              "start-here/enterprise-desktop-deployment",
+              "self-host/declarative-configuration",
               "start-here/installer-delivery",
               "start-here/on-prem-branding",
               "start-here/github-connector-helm"
@@ -115,12 +122,14 @@
           {
             "group": "Share with your team",
             "pages": [
-              "cloud/share-with-your-team/team-templates",
+              "cloud/share-with-your-team/collections",
               "cloud/share-with-your-team/desktop-policies",
               "cloud/share-with-your-team/team-prompt-cards",
               "cloud/share-with-your-team/managed-llm-provider",
+              "cloud/share-with-your-team/per-member-llm-credentials",
               "cloud/share-with-your-team/custom-llm-provider",
-              "cloud/share-with-your-team/shared-mcp-connections"
+              "cloud/share-with-your-team/shared-mcp-connections",
+              "cloud/share-with-your-team/dashboards"
             ]
           },
           {
@@ -131,9 +140,10 @@
             ]
           },
           {
-            "group": "Model Context Protocol (MCP)",
+            "group": "MCP Gateway",
             "pages": [
               "cloud/run-in-the-cloud/cloud-mcp",
+              "model-context-protocol/agent-plugins",
               "model-context-protocol/opencode",
               "model-context-protocol/claude-code",
               "model-context-protocol/codex",
@@ -148,6 +158,8 @@
             ]
           },
           "cloud/members-and-rbac",
+          "cloud/sso-google-workspace",
+          "cloud/scim-google-workspace",
           "cloud/sso-okta",
           "cloud/scim-okta",
           "cloud/sso-microsoft-entra",
@@ -198,6 +210,14 @@
     {
       "source": "/changelog/changelog",
       "destination": "/changelog"
+    },
+    {
+      "source": "/cloud/share-with-your-team/team-templates",
+      "destination": "/cloud/share-with-your-team/collections"
+    },
+    {
+      "source": "/start-here/connect-your-stack/connect-slack-mcp",
+      "destination": "/cloud/share-with-your-team/shared-mcp-connections#slack"
     }
   ],
   "errors": {

@@ -23,9 +23,12 @@ COPY packages/enterprise-mcp-client/package.json /app/packages/enterprise-mcp-cl
 COPY packages/install-config/package.json /app/packages/install-config/package.json
 COPY packages/connect-link/package.json /app/packages/connect-link/package.json
 COPY packages/headless-threads/package.json /app/packages/headless-threads/package.json
+COPY packages/mcp-apps/package.json /app/packages/mcp-apps/package.json
 # apps/desktop/package.json is copied below for version metadata, and it depends
-# on @openwork/paths, so the package must exist for workspace resolution.
+# on @openwork/paths and @openwork/browser-tabs, so those packages must exist for
+# workspace resolution.
 COPY packages/paths/package.json /app/packages/paths/package.json
+COPY packages/browser-tabs/package.json /app/packages/browser-tabs/package.json
 # The root workspace declares the shared evaluator helpers as dev dependencies.
 # Their manifests must be present even though the Den API image does not build
 # or ship their source.
@@ -35,6 +38,8 @@ COPY evals/packages/labs/package.json /app/evals/packages/labs/package.json
 COPY evals/packages/matchers/package.json /app/evals/packages/matchers/package.json
 COPY ee/packages/utils/package.json /app/ee/packages/utils/package.json
 COPY ee/packages/den-db/package.json /app/ee/packages/den-db/package.json
+COPY ee/packages/telemetry-contracts/package.json /app/ee/packages/telemetry-contracts/package.json
+COPY ee/packages/telemetry/package.json /app/ee/packages/telemetry/package.json
 COPY ee/apps/den-api/package.json /app/ee/apps/den-api/package.json
 
 RUN pnpm install --frozen-lockfile --trust-lockfile
@@ -47,20 +52,16 @@ COPY packages/enterprise-mcp-client /app/packages/enterprise-mcp-client
 COPY packages/install-config /app/packages/install-config
 COPY packages/connect-link /app/packages/connect-link
 COPY packages/headless-threads /app/packages/headless-threads
+COPY packages/mcp-apps /app/packages/mcp-apps
 COPY packages/paths /app/packages/paths
+COPY packages/browser-tabs /app/packages/browser-tabs
 COPY ee/packages/utils /app/ee/packages/utils
 COPY ee/packages/den-db /app/ee/packages/den-db
+COPY ee/packages/telemetry-contracts /app/ee/packages/telemetry-contracts
+COPY ee/packages/telemetry /app/ee/packages/telemetry
 COPY ee/apps/den-api /app/ee/apps/den-api
 COPY apps/desktop/package.json /app/apps/desktop/package.json
 
-RUN pnpm --dir /app/packages/types run build
-RUN pnpm --dir /app/packages/automations run build
-RUN pnpm --dir /app/packages/email run build
-RUN pnpm --dir /app/packages/enterprise-mcp-client run build
-RUN pnpm --dir /app/packages/install-config run build
-RUN pnpm --dir /app/packages/connect-link run build
-RUN pnpm --dir /app/ee/packages/utils run build
-RUN pnpm --dir /app/ee/packages/den-db run build
 # Source-map upload is build-only; runtime Sentry still requires its own backend and DSN configuration.
 ARG DEN_UPLOAD_SENTRY_SOURCEMAPS=0
 ARG DEN_SENTRY_UPLOAD_BUILD_ID=disabled

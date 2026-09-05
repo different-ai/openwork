@@ -111,7 +111,7 @@ describe("getArtifactsFromMessages", () => {
     expect(canPreviewArtifact(artifacts[2])).toBe(false);
   });
 
-  it("lets verified unsupported file artifacts open outside the sidebar", () => {
+  it("previews verified code artifacts in the sidebar", () => {
     const messages: UIMessage[] = [{
       id: "msg_unsupported",
       role: "assistant",
@@ -122,7 +122,7 @@ describe("getArtifactsFromMessages", () => {
       kind: "file",
       value: "src/widget.tsx",
       name: "widget.tsx",
-      preview: "text",
+      preview: "code",
       confidence: 65,
       reason: "message",
       exists: true,
@@ -130,8 +130,8 @@ describe("getArtifactsFromMessages", () => {
 
     const artifact = getArtifactsFromMessages(messages, targets, { includeTargetFallbacks: false })[0];
 
-    expect(artifact).toMatchObject({ path: "src/widget.tsx", legacy_target: { exists: true, preview: "text" } });
-    expect(artifact ? canPreviewArtifact(artifact) : true).toBe(false);
+    expect(artifact).toMatchObject({ path: "src/widget.tsx", legacy_target: { exists: true, preview: "code" } });
+    expect(artifact ? canPreviewArtifact(artifact) : false).toBe(true);
     expect(artifact ? canOpenArtifact(artifact) : false).toBe(true);
   });
 });

@@ -33,12 +33,24 @@ export function PlainText({ content, className, ...props }: PlainTextProps) {
 
 interface MarkdownPreviewProps extends React.ComponentProps<"div"> {
   content: string;
+  mermaidSource?: boolean;
 }
 
-export function MarkdownPreview({ content, className, ...props }: MarkdownPreviewProps) {
+function mermaidSourceMarkdown(content: string) {
+  let longestBacktickRun = 2;
+  let currentBacktickRun = 0;
+  for (const character of content) {
+    currentBacktickRun = character === "`" ? currentBacktickRun + 1 : 0;
+    if (currentBacktickRun > longestBacktickRun) longestBacktickRun = currentBacktickRun;
+  }
+  const fence = "`".repeat(longestBacktickRun + 1);
+  return `${fence}mermaid\n${content}\n${fence}`;
+}
+
+export function MarkdownPreview({ content, mermaidSource = false, className, ...props }: MarkdownPreviewProps) {
   return (
-    <div data-openwork-markdown-preview="" className={cn("h-full overflow-auto p-4", className)} {...props}>
-      <MarkdownBlock text={content} />
+    <div data-openwork-markdown-preview="" data-openwork-mermaid-artifact={mermaidSource ? "" : undefined} className={cn("h-full overflow-auto p-4", className)} {...props}>
+      <MarkdownBlock text={mermaidSource ? mermaidSourceMarkdown(content) : content} />
     </div>
   );
 }

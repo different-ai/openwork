@@ -6,7 +6,7 @@ import React from "react"
 import type {
   GeneratedArtifactViewBuildDiagnostic,
   GeneratedArtifactViewCsp,
-} from "@openwork/types/dynamic-artifacts"
+} from "@openwork/types/workflows"
 
 const MAX_SOURCE_BYTES = 200_000
 const MAX_CSS_BYTES = 100_000

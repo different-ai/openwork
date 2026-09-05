@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
 import type { ProviderListItem } from "../src/app/types";
-import { getModelBehaviorOptions } from "../src/app/lib/model-behavior";
+import {
+  getModelBehaviorOptions,
+  nextModelBehaviorValue,
+  previousModelBehaviorValue,
+} from "../src/app/lib/model-behavior";
 
 type ProviderModel = ProviderListItem["models"][string];
 
@@ -73,5 +77,31 @@ describe("model behavior options", () => {
       { value: "xhigh", label: "Xhigh" },
       { value: "max", label: "Max" },
     ]);
+  });
+
+  test("cycles explicit effort values and wraps", () => {
+    const options = getModelBehaviorOptions("openai", model);
+
+    expect(nextModelBehaviorValue(options, "low")).toBe("medium");
+    expect(nextModelBehaviorValue(options, "max")).toBe("none");
+    expect(nextModelBehaviorValue(options, null)).toBe("none");
+  });
+
+  test("does not cycle models with fewer than two effort values", () => {
+    expect(nextModelBehaviorValue([], null)).toBeNull();
+    expect(nextModelBehaviorValue([{ value: "high" }], "high")).toBeNull();
+  });
+
+  test("cycles explicit effort values backward and wraps", () => {
+    const options = getModelBehaviorOptions("openai", model);
+
+    expect(previousModelBehaviorValue(options, "medium")).toBe("low");
+    expect(previousModelBehaviorValue(options, "none")).toBe("max");
+    expect(previousModelBehaviorValue(options, null)).toBe("max");
+  });
+
+  test("does not cycle backward with fewer than two effort values", () => {
+    expect(previousModelBehaviorValue([], null)).toBeNull();
+    expect(previousModelBehaviorValue([{ value: "high" }], "high")).toBeNull();
   });
 });

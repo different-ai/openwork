@@ -22,7 +22,22 @@ import type { AuthContextVariables } from "../../session.js"
 import { materializeCloudWorkerProviders } from "../../llm/cloud-provider-materialization.js"
 import { deprovisionWorker, provisionWorker } from "../../workers/provisioner.js"
 import { withProvisionDeadline } from "../../workers/provision-deadline.js"
+import { touchProvisioningWorker, withProvisioningHeartbeat } from "../../workers/provisioning-heartbeat.js"
+import {
+  cloudStartupFailureUpdate,
+  createCloudStartupFailure,
+  type CloudStartupFailure,
+} from "../../workers/cloud-failure.js"
 import { customDomainForWorker } from "../../workers/vanity-domain.js"
+import { resolveCloudRuntimeAccess } from "../../workers/worker-access.js"
+import { CLOUD_INSTANCE_BACKEND } from "../../workers/cloud-constants.js"
+import { fetchPreviewNoRedirect } from "../../workers/preview-fetch.js"
+import {
+  getOpenWorkWebRuntimeAccess,
+  openWorkWebAccessRequiredPayload,
+  requireOpenWorkWebRuntimeAccess,
+  type OpenWorkWebRuntimeAccessResolver,
+} from "../../openwork-web-runtime-access.js"
 
 const logger = appLogger.child({ component: "worker_routes" })
 
@@ -64,21 +79,30 @@ type OrgId = typeof MemberTable.$inferSelect.organizationId
 type UserId = typeof AuthUserTable.$inferSelect.id
 type ProvisionWorker = typeof provisionWorker
 type ProvisionedWorker = Awaited<ReturnType<ProvisionWorker>>
+type ResolveCloudRuntimeAccess = typeof resolveCloudRuntimeAccess
+type LoadActiveWorkerTokens = (workerId: WorkerId) => Promise<Array<{
+  scope: typeof WorkerTokenTable.$inferSelect.scope
+  token: string
+}>>
 type CloudProvisioningStore = {
   updateWorkerStatus: (input: {
     workerId: WorkerId
     status: WorkerStatus
     imageVersion?: string | null
+    failure?: CloudStartupFailure | null
     onlyWhenStatus?: WorkerStatus
     onlyWhenStatusIn?: WorkerStatus[]
   }) => Promise<void>
   insertWorkerInstance: (input: { workerId: WorkerId; provisioned: ProvisionedWorker }) => Promise<void>
+  touchProvisioningWorker: (workerId: WorkerId) => Promise<void>
 }
 type ContinueCloudProvisioningOptions = {
+  getOpenWorkWebAccess?: OpenWorkWebRuntimeAccessResolver
   provisionWorker?: ProvisionWorker
   store?: CloudProvisioningStore
   materializeProviders?: typeof materializeCloudWorkerProviders
   deadlineMs?: number
+  heartbeatIntervalMs?: number
 }
 
 export const token = () => randomBytes(32).toString("hex")
@@ -93,9 +117,11 @@ const databaseCloudProvisioningStore: CloudProvisioningStore = {
         ? eq(WorkerTable.status, input.onlyWhenStatus)
         : undefined
 
-    const update = input.imageVersion === undefined
-      ? { status: input.status }
-      : { status: input.status, image_version: input.imageVersion }
+    const update = {
+      status: input.status,
+      ...(input.imageVersion === undefined ? {} : { image_version: input.imageVersion }),
+      ...(input.failure === undefined ? {} : cloudStartupFailureUpdate(input.failure)),
+    }
 
     await db
       .update(WorkerTable)
@@ -110,10 +136,23 @@ const databaseCloudProvisioningStore: CloudProvisioningStore = {
       worker_id: input.workerId,
       provider: input.provisioned.provider,
       region: input.provisioned.region,
-      url: input.provisioned.url,
+      url: persistedWorkerInstanceUrl(input.provisioned),
       status: input.provisioned.status,
     })
   },
+  touchProvisioningWorker,
+}
+
+export function persistedWorkerInstanceUrl(provisioned: Pick<ProvisionedWorker, "provider" | "url">) {
+  const lifecycleBaseUrl = env.apiPublicUrl ?? env.betterAuthUrl
+  return provisioned.provider === "daytona"
+    ? `${lifecycleBaseUrl.replace(/\/+$/, "")}/v1/cloud/instance`
+    : provisioned.url
+}
+
+export function workerSandboxBackend(input: Pick<z.infer<typeof createWorkerSchema>, "destination" | "sandboxBackend">) {
+  if (input.destination === "cloud" && env.provisionerMode === "daytona") return CLOUD_INSTANCE_BACKEND
+  return input.sandboxBackend ?? null
 }
 
 export function parseWorkerIdParam(value: string): WorkerId {
@@ -137,13 +176,13 @@ function parseWorkspaceSelection(payload: unknown): { workspaceId: string; openw
     return null
   }
 
-  const activeId = typeof payload.activeId === "string" ? payload.activeId : null
+  const activeId = typeof payload.activeId === "string" && payload.activeId.trim() ? payload.activeId.trim() : null
   let workspaceId = activeId
 
   if (!workspaceId) {
     for (const item of payload.items) {
       if (isRecord(item) && typeof item.id === "string" && item.id.trim()) {
-        workspaceId = item.id
+        workspaceId = item.id.trim()
         break
       }
     }
@@ -160,14 +199,14 @@ function parseWorkspaceSelection(payload: unknown): { workspaceId: string; openw
   }
 }
 
-async function resolveConnectUrlFromWorker(instanceUrl: string, clientToken: string) {
+async function resolveConnectUrlFromWorker(instanceUrl: string, clientToken: string, fetchImpl: typeof fetch = fetch) {
   const baseUrl = normalizeUrl(instanceUrl)
   if (!baseUrl || !clientToken.trim()) {
     return null
   }
 
   try {
-    const response = await fetch(`${baseUrl}/workspaces`, {
+    const response = await fetchPreviewNoRedirect(fetchImpl, `${baseUrl}/workspaces`, {
       method: "GET",
       headers: {
         Accept: "application/json",
@@ -216,6 +255,14 @@ export function readBearerToken(value: string | undefined) {
   return tokenValue ? tokenValue : null
 }
 
+export function cloudWorkerCompatibilityUrl(workerId: WorkerId, apiPublicUrl: string | undefined, workspaceId?: string | null) {
+  if (!apiPublicUrl) return null
+  const base = apiPublicUrl.replace(/\/+$/, "")
+  const route = `${base}/v1/cloud/workers/${encodeURIComponent(workerId)}`
+  const workspace = workspaceId?.trim()
+  return workspace ? `${route}/w/${encodeURIComponent(workspace)}` : route
+}
+
 export function parseHeartbeatTimestamp(value: string | null | undefined) {
   if (!value) {
     return null
@@ -248,12 +295,18 @@ async function resolveConnectUrlFromCandidates(workerId: WorkerId, instanceUrl: 
   return null
 }
 
-async function getWorkerRuntimeAccess(workerId: WorkerId) {
-  const instance = await getLatestWorkerInstance(workerId)
+async function getWorkerRuntimeAccess(worker: WorkerRow, resolveCloudAccess: ResolveCloudRuntimeAccess) {
+  if (worker.destination === "cloud" && worker.sandbox_backend === CLOUD_INSTANCE_BACKEND) {
+    const resolved = await resolveCloudAccess({ organizationId: worker.org_id, workerId: worker.id })
+    if (resolved.status !== "ready") return null
+    return { hostToken: resolved.hostToken, candidates: [resolved.url] }
+  }
+
+  const instance = await getLatestWorkerInstance(worker.id)
   const tokenRows = await db
     .select()
     .from(WorkerTokenTable)
-    .where(and(eq(WorkerTokenTable.worker_id, workerId), isNull(WorkerTokenTable.revoked_at)))
+    .where(and(eq(WorkerTokenTable.worker_id, worker.id), isNull(WorkerTokenTable.revoked_at)))
     .orderBy(asc(WorkerTokenTable.created_at))
 
   const hostToken = tokenRows.find((entry) => entry.scope === "host")?.token ?? null
@@ -264,17 +317,34 @@ async function getWorkerRuntimeAccess(workerId: WorkerId) {
   return {
     instance,
     hostToken,
-    candidates: getConnectUrlCandidates(workerId, instance.url),
+    candidates: getConnectUrlCandidates(worker.id, instance.url),
   }
 }
 
 export async function fetchWorkerRuntimeJson(input: {
-  workerId: WorkerId
+  worker: WorkerRow
   path: string
   method?: "GET" | "POST"
   body?: unknown
-}) {
-  const access = await getWorkerRuntimeAccess(input.workerId)
+}, options: {
+  getOpenWorkWebAccess?: OpenWorkWebRuntimeAccessResolver
+  resolveCloudAccess?: ResolveCloudRuntimeAccess
+  fetchImpl?: typeof fetch
+} = {}) {
+  // Published desktops hold cloud worker tokens only after OpenWorkWebAccessGate
+  // (v0.18.42+) granted Web access; this recheck covers lapsed entitlement and
+  // callers that bypass the gate. See openwork-web-runtime-access.ts.
+  if (input.worker.destination === "cloud") {
+    const webAccess = await (options.getOpenWorkWebAccess ?? getOpenWorkWebRuntimeAccess)(input.worker.org_id)
+    if (!webAccess.hasAccess) {
+      return {
+        ok: false as const,
+        status: 403,
+        payload: openWorkWebAccessRequiredPayload(),
+      }
+    }
+  }
+  const access = await getWorkerRuntimeAccess(input.worker, options.resolveCloudAccess ?? resolveCloudRuntimeAccess)
   if (!access) {
     return {
       ok: false as const,
@@ -291,7 +361,7 @@ export async function fetchWorkerRuntimeJson(input: {
 
   for (const candidate of access.candidates) {
     try {
-      const response = await fetch(`${normalizeUrl(candidate)}${input.path}`, {
+      const response = await fetchPreviewNoRedirect(options.fetchImpl ?? fetch, `${normalizeUrl(candidate)}${input.path}`, {
         method: input.method ?? "GET",
         headers: {
           Accept: "application/json",
@@ -341,6 +411,14 @@ export async function getLatestWorkerInstance(workerId: WorkerId) {
   return rows[0] ?? null
 }
 
+async function loadActiveWorkerTokens(workerId: WorkerId) {
+  return db
+    .select({ scope: WorkerTokenTable.scope, token: WorkerTokenTable.token })
+    .from(WorkerTokenTable)
+    .where(and(eq(WorkerTokenTable.worker_id, workerId), isNull(WorkerTokenTable.revoked_at)))
+    .orderBy(asc(WorkerTokenTable.created_at))
+}
+
 export function toInstanceResponse(instance: WorkerInstanceRow | null) {
   if (!instance) {
     return null
@@ -349,7 +427,7 @@ export function toInstanceResponse(instance: WorkerInstanceRow | null) {
   return {
     provider: instance.provider,
     region: instance.region,
-    url: instance.url,
+    url: instance.provider === "daytona" ? null : instance.url,
     status: instance.status,
     createdAt: instance.created_at,
     updatedAt: instance.updated_at,
@@ -390,48 +468,76 @@ async function runCloudProvisioning(input: {
   const deadlineMs = options.deadlineMs ?? env.cloudProvisionDeadlineMs
 
   try {
-    const provisioned = await withProvisionDeadline({
-      promise: provision({
-        workerId: input.workerId,
-        name: input.name,
-        hostToken: input.hostToken,
-        clientToken: input.clientToken,
-        activityToken: input.activityToken,
-      }),
-      deadlineMs,
-      label: `cloud provisioning for ${input.workerId}`,
-    })
+    if (!input.orgId) throw new Error("cloud_worker_organization_required")
+    // Entitlement can lapse between claim and provisioning; a lapse is recorded
+    // as the dedicated web_access_required failure (cloud-failure.ts), which the
+    // published desktop renders through its existing failed-instance state.
+    await requireOpenWorkWebRuntimeAccess(
+      input.orgId,
+      options.getOpenWorkWebAccess ?? getOpenWorkWebRuntimeAccess,
+    )
+    await withProvisioningHeartbeat({
+      workerId: input.workerId,
+      touch: store.touchProvisioningWorker,
+      intervalMs: options.heartbeatIntervalMs,
+      run: async () => {
+        const provisioned = await withProvisionDeadline({
+          promise: provision({
+            workerId: input.workerId,
+            name: input.name,
+            hostToken: input.hostToken,
+            clientToken: input.clientToken,
+            activityToken: input.activityToken,
+          }),
+          deadlineMs,
+          label: `cloud provisioning for ${input.workerId}`,
+        })
 
-    if (provisioned.status === "healthy" && input.orgId) {
-      try {
-        await materializeProviders({
-          organizationId: input.orgId,
+        if (provisioned.status === "healthy" && input.orgId) {
+          try {
+            await materializeProviders({
+              organizationId: input.orgId,
+              workerId: input.workerId,
+              instanceUrl: provisioned.url,
+              hostToken: input.hostToken,
+              clientToken: input.clientToken,
+              force: true,
+            })
+          } catch (error) {
+            logger.warn("worker provisioning provider materialization warning", {
+              worker_id: input.workerId,
+              message: error instanceof Error ? error.message : "provider_materialization_failed",
+            })
+          }
+        }
+
+        await store.updateWorkerStatus({
           workerId: input.workerId,
-          instanceUrl: provisioned.url,
-          hostToken: input.hostToken,
-          clientToken: input.clientToken,
-          force: true,
+          status: provisioned.status,
+          imageVersion: provisioned.imageVersion,
+          failure: null,
+          onlyWhenStatusIn: provisioningSuccessWritableStatuses,
         })
-      } catch (error) {
-        logger.warn("worker provisioning provider materialization warning", {
-          worker_id: input.workerId,
-          message: error instanceof Error ? error.message : "provider_materialization_failed",
-        })
-      }
-    }
 
+        await store.insertWorkerInstance({ workerId: input.workerId, provisioned })
+      },
+    })
+  } catch (error) {
+    const failure = createCloudStartupFailure({ stage: "provisioning", error })
     await store.updateWorkerStatus({
       workerId: input.workerId,
-      status: provisioned.status,
-      imageVersion: provisioned.imageVersion,
-      onlyWhenStatusIn: provisioningSuccessWritableStatuses,
+      status: "failed",
+      failure,
+      onlyWhenStatus: "provisioning",
     })
 
-    await store.insertWorkerInstance({ workerId: input.workerId, provisioned })
-  } catch (error) {
-    await store.updateWorkerStatus({ workerId: input.workerId, status: "failed", onlyWhenStatus: "provisioning" })
-
-    logger.error("worker provisioning failed", { worker_id: input.workerId, error })
+    logger.error("worker provisioning failed", {
+      worker_id: input.workerId,
+      failure_code: failure.code,
+      failure_stage: failure.stage,
+      failure_reference: failure.reference,
+      error,
+    })
   }
 }
 
@@ -469,7 +575,77 @@ export async function requireCloudAccessOrPayment(input: {
   return requireCloudWorkerAccess(input)
 }
 
-export async function getWorkerTokensAndConnect(worker: WorkerRow) {
+export async function getWorkerTokensAndConnect(worker: WorkerRow, options: {
+  getOpenWorkWebAccess?: OpenWorkWebRuntimeAccessResolver
+  resolveCloudAccess?: ResolveCloudRuntimeAccess
+  loadActiveTokens?: LoadActiveWorkerTokens
+  fetchImpl?: typeof fetch
+  includeExpiringOpenworkUrl?: boolean
+  apiPublicUrl?: string
+} = {}) {
+  // Same rollout note as fetchWorkerRuntimeJson: the desktop gate already ran
+  // before a published client asks for cloud worker tokens.
+  if (worker.destination === "cloud") {
+    const webAccess = await (options.getOpenWorkWebAccess ?? getOpenWorkWebRuntimeAccess)(worker.org_id)
+    if (!webAccess.hasAccess) {
+      return {
+        error: {
+          status: 403,
+          body: openWorkWebAccessRequiredPayload(),
+        },
+      }
+    }
+  }
+  if (worker.destination === "cloud" && worker.sandbox_backend === CLOUD_INSTANCE_BACKEND) {
+    const tokenRows = await (options.loadActiveTokens ?? loadActiveWorkerTokens)(worker.id)
+    const hostToken = tokenRows.find((entry) => entry.scope === "host")?.token ?? null
+    const clientToken = tokenRows.find((entry) => entry.scope === "client")?.token ?? null
+    if (!hostToken || !clientToken) {
+      return {
+        error: {
+          status: 409,
+          body: {
+            error: "worker_tokens_unavailable",
+            message: "Worker tokens are missing for this worker. Launch a new worker and try again.",
+          },
+        },
+      }
+    }
+
+    const stableRootUrl = cloudWorkerCompatibilityUrl(worker.id, options.apiPublicUrl ?? env.apiPublicUrl)
+    if (!options.includeExpiringOpenworkUrl) {
+      return {
+        tokens: { owner: hostToken, host: hostToken, client: clientToken },
+        connect: stableRootUrl ? { openworkUrl: stableRootUrl, workspaceId: null } : null,
+      }
+    }
+
+    const resolved = await (options.resolveCloudAccess ?? resolveCloudRuntimeAccess)({ organizationId: worker.org_id, workerId: worker.id })
+      .catch(() => null)
+    const previewConnect = resolved?.status === "ready"
+      ? await resolveConnectUrlFromWorker(resolved.url, clientToken, options.fetchImpl)
+      : null
+    const stableOpenworkUrl = cloudWorkerCompatibilityUrl(
+      worker.id,
+      options.apiPublicUrl ?? env.apiPublicUrl,
+      previewConnect?.workspaceId,
+    )
+    return {
+      tokens: { owner: hostToken, host: hostToken, client: clientToken },
+      connect: stableOpenworkUrl
+        ? { openworkUrl: stableOpenworkUrl, workspaceId: previewConnect?.workspaceId ?? null }
+        : null,
+      directPreview: resolved?.status === "ready" && previewConnect
+        ? {
+            version: 1 as const,
+            openworkUrl: previewConnect.openworkUrl,
+            workspaceId: previewConnect.workspaceId,
+            expiresAt: resolved.expiresAt.toISOString(),
+          }
+        : null,
+    }
+  }
+
   const tokenRows = await db
     .select()
     .from(WorkerTokenTable)

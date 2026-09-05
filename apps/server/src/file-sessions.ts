@@ -76,15 +76,6 @@ export class FileSessionStore {
     return value ?? null;
   }
 
-  renew(sessionId: string, ttlMs: number): FileSessionRecord | null {
-    this.pruneExpired();
-    const value = this.sessions.get(sessionId);
-    if (!value) return null;
-    value.expiresAt = Date.now() + ttlMs;
-    this.sessions.set(sessionId, value);
-    return value;
-  }
-
   close(sessionId: string): boolean {
     return this.sessions.delete(sessionId);
   }

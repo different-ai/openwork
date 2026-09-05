@@ -120,7 +120,7 @@ export async function ensureMemberSession(
   );
   if (isRecord(loginOptions.body) && loginOptions.body.allowPublicSignup === false) {
     throw new Error(
-      `Member bootstrap needs public signup, but this Den runs single-org mode with signup disabled. Start den-api with DEN_ORG_MODE=multi_org (like the demo:den script) or DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP=true, or pre-provision ${input.email}.`,
+      `Member bootstrap needs public signup, but this Den runs single-org mode with signup disabled. Start den-api with DEN_ORG_MODE=multi_org, use pnpm world up acme-demo, set DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP=true, or pre-provision ${input.email}.`,
     );
   }
   const invite = await denFetch(den, "/v1/invitations", {

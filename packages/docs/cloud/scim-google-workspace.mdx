@@ -1,0 +1,87 @@
+---
+title: "Google Workspace SCIM provisioning"
+description: "Current Google Workspace SCIM support for OpenWork"
+---
+
+Use [Google Workspace SAML SSO](/cloud/sso-google-workspace) when members
+should authenticate to OpenWork with Google. Google Workspace custom SAML apps do
+not currently expose a generic outbound SCIM connector that can provision users
+and groups into OpenWork.
+
+## Current support
+
+OpenWork supports SCIM provisioning through identity providers that can send
+SCIM requests to the OpenWork SCIM base URL with a bearer token. Google
+Workspace's automated user provisioning is app-catalog based: Google provides
+provisioning setup screens and app-specific guides for supported applications.
+
+For a custom SAML app created for OpenWork, Google Admin provides SAML settings,
+optional SAML attribute mappings, and service access controls, but does not show
+the SCIM fields OpenWork needs:
+
+- SCIM base URL or tenant URL
+- Bearer token or secret token
+- Create, update, deactivate, or reactivate user actions
+- Group push or group provisioning actions
+- SCIM attribute mappings such as `userName`, work email, given name, family
+  name, and display name
+
+Until Google adds OpenWork as a supported automated-provisioning app or exposes
+generic outbound SCIM settings for custom apps, Google Workspace can be used for
+OpenWork SSO but not for OpenWork SCIM lifecycle provisioning.
+
+## What still works with Google Workspace
+
+Google SAML SSO can authenticate OpenWork members and create first-login members
+through OpenWork's just-in-time SSO provisioning. JIT provisioning is not the
+same as SCIM:
+
+- It happens when a user signs in successfully.
+- It can create the OpenWork organization membership with the default `Member`
+  role after successful SAML authentication.
+- A standalone email/password signup with the same verified domain does not add
+  the user to the organization or replace the SAML sign-in requirement.
+- It does not continuously sync profile changes from Google.
+- It does not deactivate OpenWork access when a Google user is suspended or
+  deleted.
+- It does not create SCIM-managed OpenWork teams from Google groups.
+
+Use OpenWork member management, invitations, or another supported SCIM identity
+provider for lifecycle automation.
+
+## How to confirm in Google Admin
+
+After setting up the OpenWork custom SAML app, open the Google Admin console and
+check:
+
+1. **Apps → Web and mobile apps → OpenWork**.
+2. The app's configuration sections and side navigation.
+3. Any settings named **Provisioning**, **Auto-provisioning**, **User
+   provisioning**, or **SCIM**.
+
+If those sections are not present, the app cannot consume the OpenWork SCIM base
+URL or bearer token.
+
+Google's general automated user provisioning page points administrators to
+app-specific provisioning guides for supported apps. If OpenWork appears in that
+supported app list in the future, follow the Google app-specific provisioning
+guide and enter the OpenWork SCIM values from **Settings → SCIM**.
+
+## Do not expose the SCIM token unnecessarily
+
+Only create or rotate an OpenWork SCIM connector when you have an identity
+provider that can use it. The bearer token is shown once and should be treated
+like a password. Do not paste it into Google, tickets, screenshots, logs, or
+documentation unless a provisioning screen explicitly asks for it.
+
+## Alternatives for SCIM lifecycle automation
+
+For automatic member lifecycle and team synchronization, use an identity provider
+that supports OpenWork's SCIM connector:
+
+- [Okta SCIM provisioning](/cloud/scim-okta)
+- [Microsoft Entra SCIM provisioning](/cloud/scim-microsoft-entra)
+
+Do not broaden SCIM assignment scope in the alternate provider until your chosen
+SSO and SCIM lifecycle tests pass and at least one OpenWork owner has a working
+recovery path.

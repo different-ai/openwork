@@ -1,6 +1,9 @@
+import { setDenApiOriginOverride } from "./den-api-origin";
+
 export type DenOrgMode = "single_org" | "multi_org";
 
 export type DenWebRuntimeConfig = {
+  denApiUrl: string;
   openworkAppConnectUrl: string;
   openworkWebUrl: string;
   openworkAuthCallbackUrl: string;
@@ -14,6 +17,7 @@ export type DenWebRuntimeConfig = {
 export const DEFAULT_OPENWORK_WEB_URL = "https://web.openworklabs.com";
 
 export const EMPTY_RUNTIME_CONFIG: DenWebRuntimeConfig = {
+  denApiUrl: "",
   openworkAppConnectUrl: "",
   openworkWebUrl: DEFAULT_OPENWORK_WEB_URL,
   openworkAuthCallbackUrl: "",
@@ -47,6 +51,7 @@ function normalizeRuntimeConfig(value: unknown): DenWebRuntimeConfig {
   const singleOrgName = readStringProperty(value, "singleOrgName");
   const singleOrgSlug = readStringProperty(value, "singleOrgSlug");
   return {
+    denApiUrl: readStringProperty(value, "denApiUrl"),
     openworkAppConnectUrl: readStringProperty(value, "openworkAppConnectUrl"),
     openworkWebUrl: readStringProperty(value, "openworkWebUrl") || DEFAULT_OPENWORK_WEB_URL,
     openworkAuthCallbackUrl: readStringProperty(value, "openworkAuthCallbackUrl"),
@@ -67,7 +72,9 @@ export function getRuntimeConfig(): Promise<DenWebRuntimeConfig> {
           return EMPTY_RUNTIME_CONFIG;
         }
 
-        return normalizeRuntimeConfig(await response.json());
+        const config = normalizeRuntimeConfig(await response.json());
+        setDenApiOriginOverride(config.denApiUrl);
+        return config;
       })
       .catch(() => {
         runtimeConfigPromise = null;

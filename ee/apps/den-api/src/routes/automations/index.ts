@@ -5,8 +5,10 @@ import { streamSSE } from "hono/streaming"
 import {
   AUTOMATION_MODEL_ATTENTION_CAPABILITY,
   AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER,
+  REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY,
   automationDesktopRunnerAssignmentSchema,
   automationDesktopRunnerRegistrationSchema,
+  automationDesktopRunnerPresenceSchema,
   automationDesktopRunnerResultSchema,
   automationDetailSchema,
   automationListSchema,
@@ -20,6 +22,9 @@ import {
   automationRunnerWorkResponseSchema,
   createAutomationSchema,
   createCloudAutomationSchema,
+  remoteSessionCommandClaimResponseSchema,
+  remoteSessionCommandCompleteRequestSchema,
+  remoteSessionCommandCompleteResponseSchema,
   updateAutomationSchema,
 } from "@openwork/types/automations"
 import {
@@ -33,6 +38,8 @@ import { invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema 
 import { automationService, type AutomationService } from "../../automations/service.js"
 import { automationRunnerAudienceFromRequest, automationRunnerAuth } from "../../automations/runner-auth.js"
 import { env } from "../../env.js"
+import { OpenWorkWebAccessRequiredError } from "../../openwork-web-runtime-access.js"
+import { databaseRemoteSessionCommandStore } from "../../remote-sessions/commands.js"
 import {
   RUNNER_KEEPALIVE_INTERVAL_MS,
   RUNNER_NOTIFICATION_POLL_MIN_MS,
@@ -49,6 +56,10 @@ const paginationSchema = z.object({
 const runListSchema = z.object({ items: z.array(automationRunSchema), nextCursor: z.string().nullable() })
 const runResponseSchema = z.object({ run: automationRunSchema })
 const runnerClaimResponseSchema = z.object({ assignment: automationDesktopRunnerAssignmentSchema.nullable() })
+const openWorkWebAccessRequiredSchema = z.object({
+  error: z.literal("openwork_web_access_required"),
+  message: z.string(),
+}).meta({ ref: "AutomationOpenWorkWebAccessRequiredError" })
 type McpDescribeRouteOptions = DescribeRouteOptions & { "x-mcp": true }
 const describeMcpRoute = (options: McpDescribeRouteOptions) => describeRoute(options)
 // Runner-credential routes must never surface as MCP tools; an MCP caller with
@@ -72,6 +83,9 @@ function scope(c: {
 }
 
 function failure(error: unknown): { status: 400 | 403 | 404 | 409; body: { error: string; message?: string } } | null {
+  if (error instanceof OpenWorkWebAccessRequiredError) {
+    return { status: 403, body: { error: error.code, message: error.message } }
+  }
   if (!(error instanceof Error)) return null
   if (error.message === "automation_runner_identity_conflict") {
     return { status: 409, body: { error: error.message, message: "This desktop runner identity is already registered to a different organization member." } }
@@ -81,13 +95,13 @@ function failure(error: unknown): { status: 400 | 403 | 404 | 409; body: { error
     return { status: 400, body: { error: "automation_action_target_mismatch", message: "Desktop creates local Automations; Web creates OpenWork Cloud Automations." } }
   }
   if (error.message === "automation_saved_script_input_invalid") {
-    return { status: 400, body: { error: "automation_saved_script_input_invalid", message: "The existing Automation input does not match the selected Script version. Correct the input before creating the revision." } }
+    return { status: 400, body: { error: "automation_saved_script_input_invalid", message: "The existing Automation input does not match the selected Workflow version. Correct the input before creating the revision." } }
   }
   if (["automation_saved_script_version_not_found", "automation_saved_script_version_invalid"].includes(error.message)) {
-    return { status: 400, body: { error: error.message, message: "The selected Script version is unavailable." } }
+    return { status: 400, body: { error: error.message, message: "The selected Workflow version is unavailable." } }
   }
   if (error.message === "automation_saved_script_forbidden") {
-    return { status: 403, body: { error: error.message, message: "The Automation owner does not have access to this saved Script." } }
+    return { status: 403, body: { error: error.message, message: "The Automation owner does not have access to this Workflow." } }
   }
   if (error.message === "automation_owner_inactive") {
     return { status: 409, body: { error: error.message, message: "The Automation owner is no longer an active organization member." } }
@@ -149,6 +163,19 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
         }),
       ))
     },
+  )
+
+  app.get(
+    "/v1/automation-runners/presence",
+    describeNonMcpRoute({
+      tags: ["Automations"], operationId: "getAutomationDesktopRunnerPresence", "x-mcp": false,
+      summary: "Report whether a desktop runner is connected",
+      description: "Desktop Automations only run while one of the owner's desktops is connected. "
+        + "Management surfaces read this to warn before an occurrence is due rather than after it was missed.",
+      responses: { 200: jsonResponse("Desktop runner presence.", automationDesktopRunnerPresenceSchema) },
+    }),
+    orgMemberRoute(),
+    async (c) => c.json(await service.desktopRunnerPresence(scope(c))),
   )
 
   // Runner tokens are stateless 12h credentials, so authorization is re-derived
@@ -213,8 +240,79 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
   app.get("/v1/automation-runner/work", async (c) => {
     const identity = await authenticateRunner(c)
     if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
-    return c.json(automationRunnerWorkResponseSchema.parse({ items: await service.discoverDesktopRunnerWork(identity) }))
+    // Automation run items keep their long-standing wire shape untouched;
+    // remote-session command items are only appended for runners that
+    // registered the remote_session_v1 capability, so released runners never
+    // see the new item kind.
+    const automationItems = await service.discoverDesktopRunnerWork(identity)
+    const items: Array<
+      (typeof automationItems)[number] | { kind: "remote_session_create"; commandId: string }
+    > = [...automationItems]
+    if (identity.capabilities.includes(REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY)) {
+      const commands = await databaseRemoteSessionCommandStore.listPendingForRunner({
+        organizationId: identity.organizationId,
+        ownerMemberId: identity.ownerMemberId,
+        now: Date.now(),
+        limit: 5,
+      })
+      for (const command of commands) {
+        items.push({ kind: "remote_session_create", commandId: command.id })
+      }
+    }
+    return c.json(automationRunnerWorkResponseSchema.parse({ items }))
   })
+
+  app.post("/v1/remote-session-commands/:id/claim", paramValidator(idParamsSchema), async (c) => {
+    const identity = await authenticateRunner(c)
+    if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+    if (!identity.capabilities.includes(REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY)) {
+      return c.json({ error: "runner_capability_missing" }, 403)
+    }
+    const command = await databaseRemoteSessionCommandStore.claim({
+      commandId: c.req.valid("param").id,
+      organizationId: identity.organizationId,
+      ownerMemberId: identity.ownerMemberId,
+      runnerId: identity.runnerId,
+      now: Date.now(),
+    })
+    if (!command) return c.json({ error: "command_claim_conflict" }, 409)
+    return c.json(remoteSessionCommandClaimResponseSchema.parse({
+      assignment: {
+        commandId: command.id,
+        kind: "remote_session_create",
+        title: command.title,
+        prompt: command.prompt,
+        model: command.model,
+        expiresAt: command.expiresAt,
+      },
+    }))
+  })
+
+  app.post(
+    "/v1/remote-session-commands/:id/complete",
+    paramValidator(idParamsSchema), jsonValidator(remoteSessionCommandCompleteRequestSchema),
+    async (c) => {
+      const identity = await authenticateRunner(c)
+      if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+      if (!identity.capabilities.includes(REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY)) {
+        return c.json({ error: "runner_capability_missing" }, 403)
+      }
+      const command = await databaseRemoteSessionCommandStore.complete({
+        commandId: c.req.valid("param").id,
+        runnerId: identity.runnerId,
+        ...c.req.valid("json"),
+      })
+      if (!command) return c.json({ error: "command_complete_conflict" }, 409)
+      return c.json(remoteSessionCommandCompleteResponseSchema.parse({
+        command: {
+          id: command.id,
+          status: command.status,
+          sessionId: command.sessionId,
+          workspaceId: command.workspaceId,
+        },
+      }))
+    },
+  )
 
   app.post("/v1/automation-runs/:id/claim", paramValidator(automationRunParamsSchema), async (c) => {
     const identity = await authenticateRunner(c)
@@ -304,6 +402,7 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
         201: jsonResponse("Active Automation created.", automationDetailSchema),
         400: jsonResponse("Invalid request.", invalidRequestSchema),
         401: jsonResponse("Sign-in required.", unauthorizedSchema),
+        403: jsonResponse("OpenWork Web access is required.", openWorkWebAccessRequiredSchema),
         409: jsonResponse("Cloud runtime or model access is unavailable.", invalidRequestSchema),
       },
     }),
@@ -329,6 +428,7 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
         201: jsonResponse("Active Cloud Automation created.", automationDetailSchema),
         400: jsonResponse("Invalid request.", invalidRequestSchema),
         401: jsonResponse("Sign-in required.", unauthorizedSchema),
+        403: jsonResponse("OpenWork Web access is required.", openWorkWebAccessRequiredSchema),
         409: jsonResponse("Cloud runtime or model access is unavailable.", invalidRequestSchema),
       },
     }),
@@ -364,7 +464,11 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
       tags: ["Automations"], operationId: "updateAutomation", "x-mcp": true,
       summary: "Update an Automation",
       description: `${routeDescription} Every behavior-changing edit creates an immutable revision and applies it to future runs immediately.`,
-      responses: { 200: jsonResponse("Automation updated.", automationDetailSchema), 400: jsonResponse("Invalid request.", invalidRequestSchema) },
+      responses: {
+        200: jsonResponse("Automation updated.", automationDetailSchema),
+        400: jsonResponse("Invalid request.", invalidRequestSchema),
+        403: jsonResponse("OpenWork Web access is required for Cloud Automations.", openWorkWebAccessRequiredSchema),
+      },
     }),
     orgMemberRoute(), paramValidator(idParamsSchema), jsonValidator(updateAutomationSchema),
     async (c) => {
@@ -389,7 +493,13 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
       tags: ["Automations"], operationId, "x-mcp": true,
       summary: action === "activate" ? "Activate an Automation" : "Deactivate an Automation",
       description: routeDescription,
-      responses: { 200: jsonResponse("Automation state returned.", automationDetailSchema), 404: jsonResponse("Not found.", notFoundSchema) },
+      responses: {
+        200: jsonResponse("Automation state returned.", automationDetailSchema),
+        ...(action === "activate" ? {
+          403: jsonResponse("OpenWork Web access is required to activate a Cloud Automation.", openWorkWebAccessRequiredSchema),
+        } : {}),
+        404: jsonResponse("Not found.", notFoundSchema),
+      },
     }),
     orgMemberRoute(), paramValidator(idParamsSchema),
     async (c) => {
@@ -412,7 +522,11 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     describeMcpRoute({
       tags: ["Automations"], operationId: "runAutomationNow", "x-mcp": true,
       summary: "Run an Automation now", description: routeDescription,
-      responses: { 202: jsonResponse("Run queued.", runResponseSchema), 404: jsonResponse("Not found.", notFoundSchema) },
+      responses: {
+        202: jsonResponse("Run queued.", runResponseSchema),
+        403: jsonResponse("OpenWork Web access is required to run a Cloud Automation.", openWorkWebAccessRequiredSchema),
+        404: jsonResponse("Not found.", notFoundSchema),
+      },
     }),
     orgMemberRoute(), paramValidator(idParamsSchema),
     async (c) => {

@@ -23,7 +23,7 @@ test("Microsoft OAuth redirects with state and Graph serves deterministic mail, 
   const authorizeResponse = await fetch(authorizeUrl, { redirect: "manual" });
   assert.equal(authorizeResponse.status, 302);
   const callback = new URL(authorizeResponse.headers.get("location"));
-  assert.equal(callback.searchParams.get("code"), "mock-microsoft-authorization-code");
+  assert.match(callback.searchParams.get("code"), /^mock-microsoft-authorization-code\./);
   assert.equal(callback.searchParams.get("state"), "state-from-openwork");
 
   const headers = { authorization: `Bearer ${MOCK_MICROSOFT_ACCESS_TOKEN}` };
@@ -43,7 +43,7 @@ test("Microsoft OAuth redirects with state and Graph serves deterministic mail, 
   assert.match(await content.text(), /Ship cloud connections/);
 });
 
-test("worker mock rejects partial credentials and completes a prompt after a busy snapshot", async (context) => {
+test("worker mock rejects partial credentials and completes a prompt through native session reads", async (context) => {
   const mock = createCloudConnectMockServer();
   const { origin } = await mock.start();
   context.after(() => mock.stop());
@@ -73,11 +73,18 @@ test("worker mock rejects partial credentials and completes a prompt after a bus
   });
   assert.equal(prompt.status, 204);
 
-  const snapshotUrl = `${origin}/worker/workspace/ws_mock_cloud/sessions/${session.id}/snapshot`;
-  const busy = await json(await fetch(snapshotUrl, { headers }));
-  assert.equal(busy.item.status.type, "busy");
-  const idle = await json(await fetch(snapshotUrl, { headers }));
-  assert.equal(idle.item.status.type, "idle");
-  assert.equal(idle.item.messages.at(-1).info.role, "assistant");
-  assert.equal(idle.item.messages.at(-1).parts[0].text, "OpenWork worker reply: Summarize the launch notes");
+  const sessionBase = `${origin}/worker/workspace/ws_mock_cloud/opencode/session`;
+  const busyStatuses = await json(await fetch(`${sessionBase}/status`, { headers }));
+  assert.equal(busyStatuses[session.id].type, "busy");
+  const [detail, messages, todos, idleStatuses] = await Promise.all([
+    json(await fetch(`${sessionBase}/${session.id}`, { headers })),
+    json(await fetch(`${sessionBase}/${session.id}/message`, { headers })),
+    json(await fetch(`${sessionBase}/${session.id}/todo`, { headers })),
+    json(await fetch(`${sessionBase}/status`, { headers })),
+  ]);
+  assert.equal(detail.id, session.id);
+  assert.deepEqual(todos, []);
+  assert.equal(idleStatuses[session.id].type, "idle");
+  assert.equal(messages.at(-1).info.role, "assistant");
+  assert.equal(messages.at(-1).parts[0].text, "OpenWork worker reply: Summarize the launch notes");
 });

@@ -1,96 +1,60 @@
 import { expect } from "vitest";
-import { clickButton, evalIn, visibleText } from "@openwork/behaviors";
-import { desktop } from "@openwork/hosts";
-import { eventually, needs, test } from "@openwork/testkit";
+import { spec } from "@openwork/testkit";
+import { compatibleReleaseWorld } from "../worlds/first-run.ts";
 
-const e2eTestsEnabled = process.env.OPENWORK_EVAL_E2E_TESTS === "1";
-const title = e2eTestsEnabled
-  ? "recovery offers only recent stable releases with exact compatible artifacts"
-  : "compatible release picker skipped — needs: set OPENWORK_EVAL_E2E_TESTS=1";
+const test = spec.world(compatibleReleaseWorld);
 const currentArtifact = "https://releases.openwork.test/v2.4.0/OpenWork-darwin-arm64.dmg";
 const previousArtifact = "https://releases.openwork.test/v2.3.1/OpenWork-darwin-arm64.dmg";
 
-test.skipIf(!e2eTestsEnabled)(title, async ({ evidence, place }) => {
-  needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"] });
-  await using recoveryApp = await desktop({
-    name: "compatible-release-picker",
-    host: place.host(),
-    timeoutMs: 30_000,
-    env: {
-      OPENWORK_EVAL_FATAL_DESKTOP_BOOTSTRAP_FAILURE: "EVAL_FATAL_DESKTOP_BOOTSTRAP_FAILURE",
-      OPENWORK_EVAL_RECOVERY_TARGET: "darwin-arm64-public",
-      OPENWORK_EVAL_RECOVERY_RELEASES: JSON.stringify([
-        { version: "2.4.0", channel: "stable", artifact: { platform: "darwin", arch: "arm64", distribution: "public", url: currentArtifact } },
-        { version: "2.3.1", channel: "stable", artifact: { platform: "darwin", arch: "arm64", distribution: "public", url: previousArtifact } },
-        { version: "2.3.0", channel: "stable", artifact: { platform: "linux", arch: "x64", distribution: "public", url: "https://incompatible.invalid/OpenWork.AppImage" } },
-        { version: "2.2.9", channel: "stable", artifact: { platform: "darwin", arch: "arm64", distribution: "enterprise", url: "https://wrong-flavor.invalid/OpenWork.dmg" } },
-        { version: "2.2.8-beta.1", channel: "prerelease", artifact: { platform: "darwin", arch: "arm64", distribution: "public", url: "https://prerelease.invalid/OpenWork.dmg" } },
-      ]),
-    },
-  });
+function stringField(value: unknown, key: string): string | null {
+  if (typeof value !== "object" || value === null) return null;
+  const field = Reflect.get(value, key);
+  return typeof field === "string" ? field : null;
+}
 
-  const releaseObserverAvailable = await evalIn(
-    recoveryApp,
-    `typeof window.__openworkRecoveryControl?.snapshot === "function"
-      && typeof window.__openworkRecoveryControl?.select === "function"`,
-  );
-  expect(
-    releaseObserverAvailable,
-    "testkit cannot yet inject a release catalog or observe exact artifact selection",
-  ).toBe(true);
+test("recovery offers only recent stable releases with exact compatible artifacts", async ({ world, user, seed, probe }) => {
+  await user.click("Pick another version");
+  await user.see({ text: /2\.4\.0\s+current/i });
+  await user.see({ text: /Use 2\.3\.1\s+previous/i });
+  await user.notSee({ text: /Use 2\.4\.0/i });
+  await user.notSee({ text: /2\.3\.0|2\.2\.9|2\.2\.8-beta\.1/ });
 
-  await clickButton(recoveryApp, "Pick another version", { timeoutMs: 5_000 });
-  const text = await visibleText(recoveryApp);
-  expect(text).toContain("2.4.0");
-  expect(text).toMatch(/2\.4\.0\s+current/i);
-  expect(text).not.toMatch(/Use 2\.4\.0/i);
-  expect(text).toMatch(/Use 2\.3\.1\s+previous/i);
-  expect(text).not.toContain("2.3.0");
-  expect(text).not.toContain("2.2.9");
-  expect(text).not.toContain("2.2.8-beta.1");
-  expect(await evalIn(
-    recoveryApp,
-    `[...document.querySelectorAll("button")].some((button) => (button.textContent ?? "").trim() === "Use 2.4.0")`,
-  )).toBe(false);
-
-  const offeredReleases = await evalIn(
-    recoveryApp,
-    `window.__openworkRecoveryControl.snapshot().then((snapshot) => snapshot.releases.map((release) => ({
-      version: release.version,
-      marking: release.marking,
-      platform: release.artifact.platform,
-      arch: release.artifact.arch,
-      distribution: release.artifact.distribution,
-      url: release.artifact.url,
-    })))`,
-    { awaitPromise: true },
-  );
-  expect(offeredReleases).toEqual([
+  // TODO(primitive): inspect and negatively exercise the recovery catalog witness.
+  const initial = await world.snapshot();
+  const offered = typeof initial === "object" && initial !== null ? Reflect.get(initial, "releases") : null;
+  expect(Array.isArray(offered) ? offered.map((release) => {
+    const artifact = typeof release === "object" && release !== null ? Reflect.get(release, "artifact") : null;
+    return {
+      version: stringField(release, "version"),
+      marking: stringField(release, "marking"),
+      platform: stringField(artifact, "platform"),
+      arch: stringField(artifact, "arch"),
+      distribution: stringField(artifact, "distribution"),
+      url: stringField(artifact, "url"),
+    };
+  }) : null).toEqual([
     { version: "2.4.0", marking: "current", platform: "darwin", arch: "arm64", distribution: "public", url: currentArtifact },
     { version: "2.3.1", marking: "previous", platform: "darwin", arch: "arm64", distribution: "public", url: previousArtifact },
   ]);
+  await seed.evalIn(
+    world.app,
+    `Promise.all([window.__openworkRecoveryControl.select("2.3.0"), window.__openworkRecoveryControl.select("9.9.9")])`,
+    { awaitPromise: true },
+  );
+  const afterInvalid = await world.snapshot();
+  expect(typeof afterInvalid === "object" && afterInvalid !== null ? Reflect.get(afterInvalid, "openedArtifactUrls") : null).toEqual([]);
 
-  await evalIn(recoveryApp, `window.__openworkRecoveryControl.select("2.3.0")`, { awaitPromise: true });
-  await evalIn(recoveryApp, `window.__openworkRecoveryControl.select("9.9.9")`, { awaitPromise: true });
-  expect(await evalIn(recoveryApp, `window.__openworkRecoveryControl.snapshot().then((snapshot) => snapshot.openedArtifactUrls)`, { awaitPromise: true })).toEqual([]);
-
-  await clickButton(recoveryApp, "Use 2.3.1", { timeoutMs: 5_000 });
-  const openedArtifactUrls = await eventually(
-    () => evalIn(recoveryApp, `window.__openworkRecoveryControl.snapshot().then((snapshot) => snapshot.openedArtifactUrls)`, { awaitPromise: true }),
-    {
-      within: 5_000,
-      label: "exact compatible release artifact",
-      until: (urls) => Array.isArray(urls) && urls.length === 1,
+  await user.click("Use 2.3.1");
+  const opened = await probe.eventually(
+    async () => {
+      const value = await world.snapshot();
+      return typeof value === "object" && value !== null ? Reflect.get(value, "openedArtifactUrls") : null;
     },
+    { within: 5_000, label: "exact compatible release artifact", until: (urls) => Array.isArray(urls) && urls.length === 1 },
   );
-  expect(openedArtifactUrls).toEqual([previousArtifact]);
-  expect(openedArtifactUrls).not.toContain(currentArtifact);
-  expect(openedArtifactUrls).not.toContain("https://incompatible.invalid/OpenWork.AppImage");
-  expect(openedArtifactUrls).not.toContain("https://wrong-flavor.invalid/OpenWork.dmg");
-  expect(openedArtifactUrls).not.toContain("https://prerelease.invalid/OpenWork.dmg");
-  evidence.recordAssertionEvidence(
-    "The picker opened only the exact compatible previous stable artifact",
-    "Current and previous were marked, incompatible and prerelease targets were absent, and arbitrary selection opened nothing.",
-    true,
-  );
+  expect(opened).toEqual([previousArtifact]);
+  expect(opened).not.toContain(currentArtifact);
+  expect(opened).not.toContain("https://incompatible.invalid/OpenWork.AppImage");
+  expect(opened).not.toContain("https://wrong-flavor.invalid/OpenWork.dmg");
+  expect(opened).not.toContain("https://prerelease.invalid/OpenWork.dmg");
 });

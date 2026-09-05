@@ -15,6 +15,13 @@ import {
   type StopWorkerOnDaytonaResult,
 } from "./daytona.js"
 import { withProvisionDeadline } from "./provision-deadline.js"
+import { touchProvisioningWorker, withProvisioningHeartbeat } from "./provisioning-heartbeat.js"
+import {
+  cloudStartupFailureUpdate,
+  createCloudStartupFailure,
+  createKnownCloudStartupFailure,
+  type CloudStartupFailure,
+} from "./cloud-failure.js"
 
 type WorkerId = typeof WorkerTable.$inferSelect.id
 type WorkerStatus = typeof WorkerTable.$inferSelect.status
@@ -30,7 +37,14 @@ type CloudLifecycleStore = {
   listIdleWorkers: (input: { idleBefore: Date; limit: number }) => Promise<CloudWorker[]>
   reserveWake: (workerId: WorkerId) => Promise<boolean>
   reserveIdleStop: (input: { workerId: WorkerId; idleBefore: Date }) => Promise<boolean>
-  updateWorkerStatus: (input: { workerId: WorkerId; status: WorkerStatus; imageVersion?: string | null; onlyWhenStatus?: WorkerStatus }) => Promise<void>
+  updateWorkerStatus: (input: {
+    workerId: WorkerId
+    status: WorkerStatus
+    imageVersion?: string | null
+    failure?: CloudStartupFailure | null
+    onlyWhenStatus?: WorkerStatus
+  }) => Promise<void>
+  touchProvisioningWorker: (workerId: WorkerId) => Promise<void>
 }
 
 type WakeCloudWorkerOptions = {
@@ -39,6 +53,7 @@ type WakeCloudWorkerOptions = {
   provisionWorker?: ProvisionWorkerOnDaytona
   materializeProviders?: typeof materializeCloudWorkerProviders
   deadlineMs?: number
+  heartbeatIntervalMs?: number
 }
 
 type StopIdleCloudWorkersOptions = {
@@ -143,9 +158,11 @@ const databaseCloudLifecycleStore: CloudLifecycleStore = {
     return automationUpdateChangedRows(result)
   },
   async updateWorkerStatus(input) {
-    const update = input.imageVersion === undefined
-      ? { status: input.status }
-      : { status: input.status, image_version: input.imageVersion }
+    const update = {
+      status: input.status,
+      ...(input.imageVersion === undefined ? {} : { image_version: input.imageVersion }),
+      ...(input.failure === undefined ? {} : cloudStartupFailureUpdate(input.failure)),
+    }
 
     await db
       .update(WorkerTable)
@@ -154,6 +171,7 @@ const databaseCloudLifecycleStore: CloudLifecycleStore = {
         ? and(eq(WorkerTable.id, input.workerId), eq(WorkerTable.status, input.onlyWhenStatus))
         : eq(WorkerTable.id, input.workerId))
   },
+  touchProvisioningWorker,
 }
 
 export function cloudWorkerIdleReferenceTime(worker: Pick<CloudWorker, "last_active_at" | "updated_at">) {
@@ -164,19 +182,23 @@ export function isCloudWorkerIdleForStop(worker: Pick<CloudWorker, "last_active_
   return cloudWorkerIdleReferenceTime(worker).getTime() < idleBefore.getTime()
 }
 
-async function markWorkerFailed(store: CloudLifecycleStore, workerId: WorkerId) {
-  await store.updateWorkerStatus({ workerId, status: "failed", onlyWhenStatus: "provisioning" })
+async function markWorkerFailed(store: CloudLifecycleStore, workerId: WorkerId, failure: CloudStartupFailure) {
+  await store.updateWorkerStatus({ workerId, status: "failed", failure, onlyWhenStatus: "provisioning" })
 }
 
-async function safelyMarkWorkerFailed(store: CloudLifecycleStore, workerId: WorkerId) {
+async function safelyMarkWorkerFailed(store: CloudLifecycleStore, workerId: WorkerId, failure: CloudStartupFailure) {
   try {
-    await markWorkerFailed(store, workerId)
+    await markWorkerFailed(store, workerId, failure)
   } catch (error) {
-    logger.error("worker wake status update failed", { worker_id: workerId, error })
+    logger.error("worker wake status update failed", {
+      worker_id: workerId,
+      failure_reference: failure.reference,
+      error,
+    })
   }
 }
 
-async function runWakeCloudWorker(workerId: WorkerId, options: WakeCloudWorkerOptions) {
+async function runClaimedCloudWorkerRecovery(workerId: WorkerId, options: WakeCloudWorkerOptions) {
   const store = options.store ?? databaseCloudLifecycleStore
   const wakeWorker = options.wakeWorker ?? wakeWorkerOnDaytona
   const provisionWorker = options.provisionWorker ?? provisionWorkerOnDaytona
@@ -187,16 +209,14 @@ async function runWakeCloudWorker(workerId: WorkerId, options: WakeCloudWorkerOp
     const worker = await store.getWorker(workerId)
 
     if (!worker) {
-      logger.error("worker wake failed", { worker_id: workerId, reason: "worker_not_found" })
+      logger.error("claimed worker recovery failed", { worker_id: workerId, reason: "worker_not_found" })
       return
     }
 
-    // Another replica may already be waking or stopping this worker. Its
-    // durable status is the cross-replica mutex; callers poll until the
-    // transition resolves instead of issuing a competing provider action.
-    if (worker.status !== "stopped") return
-
-    if (!await store.reserveWake(workerId)) return
+    // The caller atomically moved the worker to provisioning before entering
+    // this primitive. Only that claimant invokes the provider action; other
+    // replicas observe provisioning and poll instead.
+    if (worker.status !== "provisioning") return
 
     const tokens = await store.getActiveTokens(workerId)
     const hostToken = tokenByScope(tokens, "host")
@@ -204,8 +224,14 @@ async function runWakeCloudWorker(workerId: WorkerId, options: WakeCloudWorkerOp
     const activityToken = tokenByScope(tokens, "activity")
 
     if (!hostToken || !clientToken || !activityToken) {
-      await safelyMarkWorkerFailed(store, workerId)
-      logger.error("worker wake failed", { worker_id: workerId, reason: "missing_worker_tokens" })
+      const failure = createKnownCloudStartupFailure({ code: "access_tokens_missing", stage: "recovery" })
+      await safelyMarkWorkerFailed(store, workerId, failure)
+      logger.error("worker wake failed", {
+        worker_id: workerId,
+        failure_code: failure.code,
+        failure_stage: failure.stage,
+        failure_reference: failure.reference,
+      })
       return
     }
 
@@ -216,63 +242,104 @@ async function runWakeCloudWorker(workerId: WorkerId, options: WakeCloudWorkerOp
       clientToken,
       activityToken,
     }
-    const woken = await withProvisionDeadline({
-      promise: (async () => {
-        try {
-          return await wakeWorker(wakeInput)
-        } catch (error) {
-          if (!isDaytonaSandboxMissingError(error)) {
-            throw error
+    await withProvisioningHeartbeat({
+      workerId,
+      touch: store.touchProvisioningWorker,
+      intervalMs: options.heartbeatIntervalMs,
+      run: async () => {
+        const woken = await withProvisionDeadline({
+          promise: (async () => {
+            try {
+              return await wakeWorker(wakeInput)
+            } catch (error) {
+              if (!isDaytonaSandboxMissingError(error)) {
+                throw error
+              }
+
+              logger.warn("worker wake sandbox missing; reprovisioning", { worker_id: workerId, error })
+              return provisionWorker(wakeInput)
+            }
+          })(),
+          deadlineMs,
+          label: `cloud wake for ${workerId}`,
+        })
+
+        if (woken.status === "healthy" && worker.org_id) {
+          try {
+            await materializeProviders({
+              organizationId: worker.org_id,
+              workerId,
+              instanceUrl: woken.url,
+              hostToken,
+              clientToken,
+              force: true,
+            })
+          } catch (error) {
+            logger.warn("worker wake provider materialization warning", {
+              worker_id: workerId,
+              message: error instanceof Error ? error.message : "provider_materialization_failed",
+            })
           }
-
-          logger.warn("worker wake sandbox missing; reprovisioning", { worker_id: workerId, error })
-          return provisionWorker(wakeInput)
         }
-      })(),
-      deadlineMs,
-      label: `cloud wake for ${workerId}`,
-    })
 
-    if (woken.status === "healthy" && worker.org_id) {
-      try {
-        await materializeProviders({
-          organizationId: worker.org_id,
+        await store.updateWorkerStatus({
           workerId,
-          instanceUrl: woken.url,
-          hostToken,
-          clientToken,
-          force: true,
+          status: woken.status,
+          imageVersion: woken.imageVersion,
+          failure: null,
+          onlyWhenStatus: "provisioning",
         })
-      } catch (error) {
-        logger.warn("worker wake provider materialization warning", {
-          worker_id: workerId,
-          message: error instanceof Error ? error.message : "provider_materialization_failed",
-        })
-      }
-    }
-
-    await store.updateWorkerStatus({ workerId, status: woken.status, imageVersion: woken.imageVersion, onlyWhenStatus: "provisioning" })
+      },
+    })
   } catch (error) {
-    await safelyMarkWorkerFailed(store, workerId)
-    logger.error("worker wake failed", { worker_id: workerId, error })
+    const failure = createCloudStartupFailure({ stage: "recovery", error })
+    await safelyMarkWorkerFailed(store, workerId, failure)
+    logger.error("worker wake failed", {
+      worker_id: workerId,
+      failure_code: failure.code,
+      failure_stage: failure.stage,
+      failure_reference: failure.reference,
+      error,
+    })
   }
 }
 
-export async function wakeCloudWorker(workerId: WorkerId, options: WakeCloudWorkerOptions = {}) {
-  const existing = wakeInFlight.get(workerId)
-  if (existing) {
-    return existing
+async function runWakeCloudWorker(workerId: WorkerId, options: WakeCloudWorkerOptions) {
+  const store = options.store ?? databaseCloudLifecycleStore
+  try {
+    const worker = await store.getWorker(workerId)
+    if (!worker) {
+      logger.error("worker wake failed", { worker_id: workerId, reason: "worker_not_found" })
+      return
+    }
+
+    // The durable status transition is the cross-replica claim. Only its
+    // winner enters the explicit claimed-recovery primitive below.
+    if (worker.status !== "stopped" || !await store.reserveWake(workerId)) return
+    await runClaimedCloudWorkerRecovery(workerId, { ...options, store })
+  } catch (error) {
+    logger.error("worker wake claim failed", { worker_id: workerId, error })
   }
+}
 
-  const promise = runWakeCloudWorker(workerId, options)
-    .finally(() => {
-      if (wakeInFlight.get(workerId) === promise) {
-        wakeInFlight.delete(workerId)
-      }
-    })
+function runWorkerRecoveryOnce(workerId: WorkerId, operation: () => Promise<void>) {
+  const existing = wakeInFlight.get(workerId)
+  if (existing) return existing
+
+  const promise = operation().finally(() => {
+    if (wakeInFlight.get(workerId) === promise) wakeInFlight.delete(workerId)
+  })
   wakeInFlight.set(workerId, promise)
-
   return promise
+}
+
+export async function wakeCloudWorker(workerId: WorkerId, options: WakeCloudWorkerOptions = {}) {
+  return runWorkerRecoveryOnce(workerId, () => runWakeCloudWorker(workerId, options))
+}
+
+/** Run provider recovery after the caller atomically claimed provisioning. */
+export async function recoverClaimedCloudWorker(workerId: WorkerId, options: WakeCloudWorkerOptions = {}) {
+  return runWorkerRecoveryOnce(workerId, () => runClaimedCloudWorkerRecovery(workerId, options))
 }
 
 function stopResultAllowsStoppedStatus(result: StopWorkerOnDaytonaResult) {

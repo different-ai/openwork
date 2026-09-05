@@ -53,6 +53,7 @@ import { resolveConnectLinkPublicKeys } from "./connect-link-keys.mjs";
 import { openExternalUrl } from "./open-external.mjs";
 import { resolveAppIdentifier, resolveUserDataPath } from "./dev-profile.mjs";
 import { fetchAgentContextDiagnosticsResponse } from "./agent-context-diagnostics-fetch.mjs";
+import { downloadBinaryToPath, uploadMultipartFromBytes } from "./binary-transfer.mjs";
 import {
   createLinuxDesktopIntegration,
 } from "./linux-desktop-integration.mjs";
@@ -80,6 +81,11 @@ import {
   setOpenworkSentrySession,
 } from "./sentry.mjs";
 import { installStdioErrorHandlers } from "./stdio-errors.mjs";
+import {
+  createRendererCrashRecovery,
+  installSocketTypeOfServiceGuard,
+  runDetachedTask,
+} from "./process-resilience.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.resolve(__dirname, "../../..");
@@ -96,6 +102,7 @@ const {
   nativeImage,
   nativeTheme,
   net: electronNet,
+  powerMonitor,
   Notification: ElectronNotification,
   session,
   shell,
@@ -103,6 +110,7 @@ const {
 } = require("electron");
 const pty = require(["node", "pty"].join("-"));
 const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
+const AUTOMATION_RUNNER_CREDENTIAL_REJECTED_EVENT = "openwork:automation-runner:credential-rejected";
 const isDevMode = process.env.OPENWORK_DEV_MODE === "1";
 const DESKTOP_DISTRIBUTION = resolveDesktopDistribution({
   isPackaged: app.isPackaged,
@@ -122,6 +130,7 @@ const BLANK_SLATE_LAUNCH = resolveBlankSlateLaunch({
 const APP_NAME = BLANK_SLATE_LAUNCH.appName;
 let currentDisplayAppName = APP_NAME;
 installStdioErrorHandlers();
+installSocketTypeOfServiceGuard();
 await initOpenworkSentry({
   app,
   distribution: DESKTOP_DISTRIBUTION,
@@ -155,6 +164,7 @@ const applicationMenu = createApplicationMenu({
 });
 
 const uiControlServer = createUiControlServer({
+  app,
   appName: APP_NAME,
   appIdentifier: APP_IDENTIFIER,
   getWindow: () => createMainWindow(),
@@ -680,7 +690,7 @@ function showDesktopNotification(input) {
   try {
     const notification = new ElectronNotification(options);
     notification.on("click", () => {
-      void focusMainWindowFromNotification();
+      runDetachedTask("focus window from notification", focusMainWindowFromNotification);
     });
     notification.show();
     return { ok: true };
@@ -1028,6 +1038,7 @@ const IDLE_OPENWORK_SERVER_INFO = Object.freeze({
   hostToken: null,
   managedOpencodeBinPath: null,
   managedOpencodeBinSource: null,
+  logFilePath: null,
   pid: null,
   lastStdout: null,
   lastStderr: null,
@@ -1059,6 +1070,45 @@ const workspaceStore = createWorkspaceStore({
   defaultRequireSignin: DEFAULT_DESKTOP_REQUIRE_SIGNIN,
   forceRequireSignin: FORCE_DESKTOP_REQUIRE_SIGNIN,
 });
+
+const activeDesktopTransfers = new Map();
+
+function desktopTransferKey(event, transferId) {
+  const normalizedId = typeof transferId === "string" ? transferId.trim() : "";
+  if (!normalizedId || normalizedId.length > 128 || !/^[a-zA-Z0-9._-]+$/.test(normalizedId)) {
+    throw new Error("A valid transferId is required.");
+  }
+  return `${event.sender.id}:${normalizedId}`;
+}
+
+async function runDesktopTransfer(event, input, operation) {
+  const key = desktopTransferKey(event, input?.transferId);
+  if (activeDesktopTransfers.has(key)) throw new Error("transferId is already active.");
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  activeDesktopTransfers.set(key, controller);
+  event.sender.once("destroyed", abort);
+  try {
+    // Both authorities come from app-owned state in userData; workspace-
+    // writable configuration must never widen where a transfer may write.
+    const [authorizedRoots, allowedUrlPrefixes] = await Promise.all([
+      workspaceStore.listLocalWorkspacePaths(),
+      workspaceStore.listRemoteWorkspaceUrlPrefixes(),
+    ]);
+    return await operation(input, {
+      authorizedRoots,
+      allowedUrlPrefixes,
+      // App-owned staging keeps in-flight downloads outside every authorized
+      // workspace root until they complete.
+      stagingDir: path.join(app.getPath("userData"), "binary-transfers"),
+      fetcher: electronNet.fetch,
+      signal: controller.signal,
+    });
+  } finally {
+    event.sender.removeListener("destroyed", abort);
+    activeDesktopTransfers.delete(key);
+  }
+}
 
 const connectLinkReplayGuard = createConnectLinkReplayGuard({
   filePath: path.join(app.getPath("userData"), "connect-link-seen.json"),
@@ -1256,7 +1306,23 @@ const desktopAutomationRunner = createDesktopAutomationRunner({
     return { baseUrl: server.baseUrl, token: server.clientToken ?? server.ownerToken };
   },
   log: (state) => console.info(`[automation-runner] ${state}`),
+  onCredentialRejected: () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send(AUTOMATION_RUNNER_CREDENTIAL_REJECTED_EVENT);
+  },
 });
+
+// Scheduled Automations are due at wall-clock times a laptop routinely sleeps
+// through. Waking the machine has to poll for work now, not up to a full poll
+// interval later, or a recovered occurrence sits queued while the desktop is
+// already back.
+const wakeAutomationRunner = (wakeEvent) => {
+  if (desktopAutomationRunner.wake().polled) {
+    console.info(`[automation-runner] polling for work after ${wakeEvent}`);
+  }
+};
+powerMonitor.on("resume", () => wakeAutomationRunner("resume"));
+powerMonitor.on("unlock-screen", () => wakeAutomationRunner("unlock-screen"));
 
 let runtimeDisposedForQuit = false;
 let runtimeDisposeInProgress = false;
@@ -1267,7 +1333,7 @@ function showShutdownScreen() {
   if (!win || win.isDestroyed()) return;
   try {
     win.show();
-    win.webContents.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html>
+    void win.webContents.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
@@ -1288,7 +1354,7 @@ function showShutdownScreen() {
       <div class="body">Closing local workers and background services...</div>
     </main>
   </body>
-</html>`)}`);
+</html>`)}`).catch(() => undefined);
   } catch {
     // Ignore renderer teardown races during quit.
   }
@@ -2257,6 +2323,18 @@ const desktopCommandHandlers = {
         body: await response.text(),
       };
   },
+  "__uploadMultipart": async (event, ...args) => {
+      return runDesktopTransfer(event, args[0] ?? {}, uploadMultipartFromBytes);
+  },
+  "__downloadBinary": async (event, ...args) => {
+      return runDesktopTransfer(event, args[0] ?? {}, downloadBinaryToPath);
+  },
+  "__cancelTransfer": async (event, ...args) => {
+      const controller = activeDesktopTransfers.get(desktopTransferKey(event, args[0]));
+      if (!controller) return false;
+      controller.abort();
+      return true;
+  },
   "__homeDir": async (event, ...args) => {
       return os.homedir();
   },
@@ -2453,12 +2531,28 @@ async function createMainWindow() {
     mainWindow = null;
   });
 
+  const recoverRendererCrash = createRendererCrashRecovery({
+    reload: () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      mainWindow.webContents.reload();
+    },
+    onRepeatedCrash: (details) => {
+      dialog.showErrorBox(
+        `${APP_NAME} could not recover`,
+        `The app renderer stopped repeatedly (${details.reason ?? "unknown reason"}). Quit and reopen OpenWork. Your workspace files were not deleted.`,
+      );
+    },
+  });
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    recoverRendererCrash(details);
+  });
+
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("file://")) {
       try {
-        void shell.openPath(fileURLToPath(url));
+        runDetachedTask("open local file", () => shell.openPath(fileURLToPath(url)));
       } catch {
-        void openExternalUrl(url);
+        runDetachedTask("open local file externally", () => openExternalUrl(url));
       }
 
       return { action: "deny" };
@@ -2468,7 +2562,7 @@ async function createMainWindow() {
       url.startsWith("http://127.0.0.1") ||
       url.startsWith("http://localhost");
     if (!local) {
-      void openExternalUrl(url);
+      runDetachedTask("open external URL", () => openExternalUrl(url));
       return { action: "deny" };
     }
     return { action: "allow" };
@@ -2629,34 +2723,38 @@ or use: pnpm dev:worktree`);
     if (runtimeDisposeInProgress) return;
     showShutdownScreen();
     desktopAutomationRunner.stop();
-    void Promise.all([
-      disposeRuntimeBeforeQuit(),
-      uiControlServer.stop(),
-    ]).finally(() => {
-      scheduleBlankSlateProfileCleanup();
-      app.quit();
+    runDetachedTask("stop services before quit", async () => {
+      try {
+        await Promise.all([
+          disposeRuntimeBeforeQuit(),
+          uiControlServer.stop(),
+        ]);
+      } finally {
+        scheduleBlankSlateProfileCleanup();
+        app.quit();
+      }
     });
   });
 
-  app.on("second-instance", async (_event, argv) => {
-    const win = await createMainWindow();
-    if (win.isMinimized()) {
-      win.restore();
-    }
-    win.show();
-    win.focus();
-    queueDeepLinks(forwardedDeepLinks(argv));
+  app.on("second-instance", (_event, argv) => {
+    runDetachedTask("focus second instance", async () => {
+      const win = await createMainWindow();
+      if (win.isMinimized()) win.restore();
+      win.show();
+      win.focus();
+      queueDeepLinks(forwardedDeepLinks(argv));
+    });
   });
 
-  app.on("open-url", async (event, url) => {
+  app.on("open-url", (event, url) => {
     event.preventDefault();
-    const win = await createMainWindow();
-    if (win.isMinimized()) {
-      win.restore();
-    }
-    win.show();
-    win.focus();
-    queueDeepLinks([url]);
+    runDetachedTask("open deep link", async () => {
+      const win = await createMainWindow();
+      if (win.isMinimized()) win.restore();
+      win.show();
+      win.focus();
+      queueDeepLinks([url]);
+    });
   });
 
   app.whenReady().then(async () => {
@@ -2734,17 +2832,22 @@ or use: pnpm dev:worktree`);
     // Initialize the packaged updater after the window is up so the user sees
     // a working app first. Renderer-owned checks pass the selected release
     // channel explicitly, avoiding stale stable-feed results for alpha users.
-    void ensureAutoUpdater();
+    runDetachedTask("initialize updater", ensureAutoUpdater);
+  }).catch((error) => {
+    console.error("[desktop] startup failed", error);
+    dialog.showErrorBox(
+      `${APP_NAME} could not start`,
+      "OpenWork hit an unexpected startup error. Quit and reopen the app. If it continues, switch to a Stable build and share the diagnostics with support.",
+    );
+    app.quit();
   });
 
-  app.on("activate", async () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      await createMainWindow();
-      return;
-    }
-    const win = await createMainWindow();
-    win.show();
-    win.focus();
+  app.on("activate", () => {
+    runDetachedTask("activate window", async () => {
+      const win = await createMainWindow();
+      win.show();
+      win.focus();
+    });
   });
 
   app.on("window-all-closed", () => {

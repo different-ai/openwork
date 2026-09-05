@@ -10,7 +10,6 @@ function seedRequiredEnv() {
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
   process.env.CORS_ORIGINS = process.env.CORS_ORIGINS ?? "http://127.0.0.1:8790"
   process.env.DAYTONA_API_KEY = "daytona-test-key"
-  process.env.DAYTONA_WORKER_PROXY_BASE_URL = "https://workers.example.test"
   process.env.DAYTONA_RUNTIME_DATA_PATH = "/tmp/openwork-data"
   process.env.DAYTONA_RUNTIME_WORKSPACE_PATH = "/tmp/openwork-workspace"
   process.env.DAYTONA_DATA_MOUNT_PATH = "/persist/openwork"

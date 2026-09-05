@@ -1,7 +1,10 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js"
-import { auth, UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js"
-import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
-import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js"
+import {
+  auth,
+  Client,
+  StreamableHTTPClientTransport,
+  UnauthorizedError,
+} from "@modelcontextprotocol/client"
+import type { RequestOptions } from "@modelcontextprotocol/client"
 import { z } from "zod"
 import type {
   EnterpriseMcpAuthorization,
@@ -64,7 +67,6 @@ const DEFAULT_OPERATION_TIMEOUT_MS = 30_000
 const DEFAULT_CLOSE_TIMEOUT_MS = 5_000
 const DEFAULT_AUTHORIZATION_TRANSACTION_TTL_MS = 10 * 60_000
 const DEFAULT_EXPIRATION_SKEW_MS = 30_000
-export const ENTERPRISE_MCP_PROTOCOL_VERSION_FALLBACK = "2025-06-18"
 const MCP_APP_EXTENSION = "io.modelcontextprotocol/ui"
 const MCP_APP_MIME_TYPE = "text/html;profile=mcp-app"
 
@@ -86,7 +88,6 @@ type Session = {
   controller: AbortController
   requestOptions: RequestOptions
   lifecycle: EnterpriseMcpLifecycle
-  createTransport: () => StreamableHTTPClientTransport
 }
 
 function requestInit(authorization: EnterpriseMcpAuthorization): RequestInit | undefined {
@@ -182,7 +183,8 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
   }
 
   function isMcpResourceRequest(phase: EnterpriseMcpRequestPhase): boolean {
-    return phase === "mcp-initialize"
+    return phase === "mcp-discovery"
+      || phase === "mcp-initialize"
       || phase === "mcp-tool-discovery"
       || phase === "mcp-tool-execution"
       || phase === "mcp-resource-discovery"
@@ -278,21 +280,27 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
           },
           authorizationTransactionTtlMs,
           expirationSkewMs,
+          fetch: observer.fetch,
           oauthConfiguration,
         })
       : undefined
-    const createTransport = () => new StreamableHTTPClientTransport(serverUrl, {
+    const transport = new StreamableHTTPClientTransport(serverUrl, {
       authProvider: oauthProvider,
       fetch: observer.fetch,
       requestInit: requestInit(input.connection.authorization),
     })
-    const transport = createTransport()
     const capabilities = {
       extensions: {
         [MCP_APP_EXTENSION]: { mimeTypes: [MCP_APP_MIME_TYPE] },
       },
     }
-    const client = new Client({ name: clientName, version: clientVersion }, { capabilities })
+    const client = new Client(
+      { name: clientName, version: clientVersion },
+      {
+        capabilities,
+        versionNegotiation: { mode: "auto" },
+      },
+    )
     const requestOptions: RequestOptions = {
       signal: requestSignal,
       timeout: requestTimeoutMs,
@@ -309,59 +317,24 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
       controller,
       requestOptions,
       lifecycle: { expiresAt: configuredExpiresAt, signal: requestSignal },
-      createTransport,
     }
   }
 
-  function hasInitializeHttp400(error: unknown): boolean {
-    let current: unknown = error
-    const seen = new Set<unknown>()
-    for (let depth = 0; depth < 5 && current && !seen.has(current); depth += 1) {
-      seen.add(current)
-      if (current instanceof StreamableHTTPError && current.code === 400) return true
-      current = typeof current === "object" && current !== null && "cause" in current
-        ? current.cause
-        : undefined
-    }
-    return false
-  }
-
-  async function connectWithProtocolVersionFallback(input: {
+  async function connectWithProtocolNegotiation(input: {
     session: Session
     connectionId: string
     operationPhase: EnterpriseMcpOperationPhase
   }): Promise<void> {
-    try {
-      await input.session.client.connect(input.session.transport, input.session.requestOptions)
-      return
-    } catch (error) {
-      if (
-        input.session.observer.lastFailedRequestPhase() !== "mcp-initialize"
-        || !hasInitializeHttp400(error)
-      ) throw error
-    }
-
+    await input.session.client.connect(input.session.transport, input.session.requestOptions)
     emitDiagnostic({
-      kind: "request",
+      kind: "operation",
       connectionId: input.connectionId,
       operationPhase: input.operationPhase,
-      requestPhase: "mcp-initialize",
-      outcome: "started",
-      protocolVersionFallback: ENTERPRISE_MCP_PROTOCOL_VERSION_FALLBACK,
+      requestPhase: input.session.observer.lastRequestPhase(),
+      outcome: "succeeded",
+      protocolEra: input.session.client.getProtocolEra(),
+      protocolVersion: input.session.client.getNegotiatedProtocolVersion(),
     })
-    input.session.client = new Client(
-      { name: clientName, version: clientVersion },
-      {
-        capabilities: {
-          extensions: {
-            [MCP_APP_EXTENSION]: { mimeTypes: [MCP_APP_MIME_TYPE] },
-          },
-        },
-        protocolVersion: ENTERPRISE_MCP_PROTOCOL_VERSION_FALLBACK,
-      },
-    )
-    input.session.transport = input.session.createTransport()
-    await input.session.client.connect(input.session.transport, input.session.requestOptions)
   }
 
   async function runOperation<T>(input: {
@@ -434,17 +407,10 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
       flow: { kind: "runtime" },
       operation: async (session) => {
         try {
-          await connectWithProtocolVersionFallback({
+          await connectWithProtocolNegotiation({
             session,
             connectionId: input.connection.id,
             operationPhase: input.operationPhase,
-          })
-          emitDiagnostic({
-            kind: "operation",
-            connectionId: input.connection.id,
-            operationPhase: input.operationPhase,
-            requestPhase: "mcp-initialize",
-            outcome: "succeeded",
           })
           let operationFailed = false
           try {
@@ -498,19 +464,12 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
             const hadOAuthCredential = session.oauthProvider
               ? Boolean(await session.oauthProvider.tokens())
               : false
-            await connectWithProtocolVersionFallback({
+            await connectWithProtocolNegotiation({
               session,
               connectionId: input.connection.id,
               operationPhase: "connection-handshake",
             })
-            emitDiagnostic({
-              kind: "operation",
-              connectionId: input.connection.id,
-              operationPhase: "connection-handshake",
-              requestPhase: "mcp-initialize",
-              outcome: "succeeded",
-            })
-            // Some providers allow initialize before challenging on tools/list.
+            // Some providers allow protocol negotiation before challenging on tools/list.
             // Probe only when the server advertised the tools capability: MCP
             // servers are allowed to expose resources and/or prompts without
             // implementing tools/list at all.
@@ -518,7 +477,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
               await session.client.listTools(undefined, session.requestOptions)
             }
             // OAuth connections must not be treated as member-connected merely
-            // because a provider exposes initialize and tools/list publicly.
+            // because a provider exposes protocol negotiation and tools/list publicly.
             // When no member credential exists, proactively run OAuth discovery
             // so providers such as BigQuery can return an authorization URL
             // without first issuing an MCP-level 401 challenge.
@@ -583,21 +542,15 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
           try {
             await session.transport.finishAuth(code)
             exchangedTokens = true
-            await connectWithProtocolVersionFallback({
+            await connectWithProtocolNegotiation({
               session,
               connectionId: input.connection.id,
               operationPhase: "authorization-callback",
             })
-            emitDiagnostic({
-              kind: "operation",
-              connectionId: input.connection.id,
-              operationPhase: "authorization-callback",
-              requestPhase: "mcp-initialize",
-              outcome: "succeeded",
-            })
             if (session.client.getServerCapabilities()?.tools) {
               await session.client.listTools(undefined, session.requestOptions)
             }
+            await session.oauthProvider?.commitPendingAuthorizationCodeCredential()
           } catch (error) {
             operationFailed = true
             let credentialCleanupError: unknown = null
@@ -690,7 +643,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
           const result = await session.client.callTool({
             name: toolName,
             arguments: input.arguments,
-          }, undefined, session.requestOptions)
+          }, session.requestOptions)
           return result
         },
       })
@@ -707,7 +660,7 @@ export function createEnterpriseMcpClient(options: EnterpriseMcpClientOptions): 
           const result = await session.client.callTool({
             name: toolName,
             arguments: input.arguments,
-          }, undefined, session.requestOptions)
+          }, session.requestOptions)
           if ("isError" in result && result.isError) throw new EnterpriseMcpToolResultError(result)
           return result
         },

@@ -6,7 +6,37 @@ import {
 } from "../src/react-app/domains/session/surface/connect-capability-inventory";
 
 describe("assigned OpenWork Connect capability inventory", () => {
-  test("keeps assigned scripts returned by Den", async () => {
+  test("keeps assigned Workflows returned by Den", async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock: typeof fetch = async () => new Response(JSON.stringify({
+      items: [{
+        marketplaceId: "marketplace_1",
+        pluginId: "plugin_1",
+        configObjectId: "script_1",
+        objectType: "workflow",
+      }],
+    }), {
+      headers: { "Content-Type": "application/json" },
+      status: 200,
+    });
+    Object.defineProperty(globalThis, "fetch", { configurable: true, value: fetchMock });
+
+    try {
+      const capabilities = await createDenClient({ baseUrl: "http://den.local", token: "token" })
+        .listAssignedMarketplaceCapabilities("organization_1");
+
+      expect(capabilities).toEqual([{
+        marketplaceId: "marketplace_1",
+        pluginId: "plugin_1",
+        configObjectId: "script_1",
+        objectType: "workflow",
+      }]);
+    } finally {
+      Object.defineProperty(globalThis, "fetch", { configurable: true, value: originalFetch });
+    }
+  });
+
+  test("normalizes legacy script inventory objects to Workflows", async () => {
     const originalFetch = globalThis.fetch;
     const fetchMock: typeof fetch = async () => new Response(JSON.stringify({
       items: [{
@@ -29,7 +59,7 @@ describe("assigned OpenWork Connect capability inventory", () => {
         marketplaceId: "marketplace_1",
         pluginId: "plugin_1",
         configObjectId: "script_1",
-        objectType: "script",
+        objectType: "workflow",
       }]);
     } finally {
       Object.defineProperty(globalThis, "fetch", { configurable: true, value: originalFetch });

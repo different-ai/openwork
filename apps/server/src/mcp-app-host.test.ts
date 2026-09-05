@@ -7,18 +7,24 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import {
   CallToolRequestSchema,
+  ErrorCode,
   ListToolsRequestSchema,
+  McpError,
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { addMcp } from "./mcp.js";
+import { addMcp, listMcp } from "./mcp.js";
 import {
+  CONNECT_MCP_SERVER_INDEX_URI,
   connectMcpAppHostName,
+  readOpenWorkConnectMcpAppHostCatalog,
   writeOpenWorkConnectMcpAppHostAuthorization,
   writeOpenWorkConnectMcpAppHostCatalog,
 } from "./connect-mcp-server-catalog.js";
-import { readRuntimeOpencodeConfig, runtimeMcpMap, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
+import { readRuntimeOpencodeConfig, runtimeMcpMap, writeRuntimeOpencodeConfig, writeGlobalRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import {
   callMcpAppTool,
+  listMcpAppCatalog,
+  McpAppHostError,
   projectedMcpToolName,
   resolveConnectMcpAppResource,
   resolveMcpAppResource,
@@ -58,8 +64,12 @@ function serverConfig(root: string): ServerConfig {
   };
 }
 
-async function startFixtureMcp(resourceContent: { text?: string; blob?: string } = { text: RESOURCE_HTML }) {
+async function startFixtureMcp(
+  resourceContent: { text?: string; blob?: string } = { text: RESOURCE_HTML },
+  connectionId?: string,
+) {
   let activeResourceUri = RESOURCE_URI;
+  let catalogReads = 0;
   const mcp = new Server(
     { name: "mcp-app-fixture", version: "1.0.0" },
     {
@@ -93,6 +103,20 @@ async function startFixtureMcp(resourceContent: { text?: string; blob?: string }
         description: "Save fixture state without rendering it",
         inputSchema: { type: "object", properties: {} },
         annotations: { readOnlyHint: false, destructiveHint: false },
+      },
+      {
+        name: "render_report",
+        description: "Render a report for one fixture id",
+        inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
+        annotations: { readOnlyHint: true, destructiveHint: false },
+        _meta: { ui: { resourceUri: activeResourceUri, visibility: ["model", "app"] } },
+      },
+      {
+        name: "render_editor",
+        description: "Render an editor that writes fixture state",
+        inputSchema: { type: "object", properties: {} },
+        annotations: { readOnlyHint: false, destructiveHint: false },
+        _meta: { ui: { resourceUri: activeResourceUri, visibility: ["model", "app"] } },
       },
       {
         name: "read_detail",
@@ -140,17 +164,68 @@ async function startFixtureMcp(resourceContent: { text?: string; blob?: string }
       }],
     };
   });
-  mcp.setRequestHandler(CallToolRequestSchema, async ({ params }) => ({
-    content: [{ type: "text", text: `detail:${String(params.arguments?.id ?? "")}` }],
-    structuredContent: { id: params.arguments?.id ?? null },
-  }));
+  mcp.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
+    if (params.name === "render_report" && typeof params.arguments?.id !== "string") {
+      // A control character and an oversized tail model a hostile provider;
+      // the host must relay neither verbatim.
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        `Invalid arguments for tool render_report: [{"path":["id"],"message":"Required"}]\u0007 ${"x".repeat(2_000)}`,
+      );
+    }
+    return {
+      content: [{ type: "text", text: `detail:${String(params.arguments?.id ?? "")}` }],
+      structuredContent: { id: params.arguments?.id ?? null },
+    };
+  });
 
   let transport: WebStandardStreamableHTTPServerTransport;
+  let serverOrigin = "";
   const http = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
-    fetch: (request) => transport.handleRequest(request),
+    fetch: async (request): Promise<Response> => {
+      if (new URL(request.url).pathname !== "/catalog" || !connectionId) {
+        return await transport.handleRequest(request);
+      }
+      if (request.method !== "POST") return new Response(null, { status: 405 });
+      const body: unknown = await request.json();
+      const method = body && typeof body === "object" ? Reflect.get(body, "method") : null;
+      const id = body && typeof body === "object" ? Reflect.get(body, "id") : null;
+      if (method === "initialize") {
+        return Response.json({
+          jsonrpc: "2.0",
+          id,
+          result: { protocolVersion: "2025-06-18", capabilities: { resources: {} } },
+        });
+      }
+      if (method === "notifications/initialized") return new Response(null, { status: 202 });
+      if (method === "resources/read") {
+        catalogReads += 1;
+        return Response.json({
+          jsonrpc: "2.0",
+          id,
+          result: {
+            contents: [{
+              uri: CONNECT_MCP_SERVER_INDEX_URI,
+              mimeType: "application/json",
+              text: JSON.stringify({
+                schemaVersion: "openwork.connect/mcp-servers/1",
+                servers: [{
+                  connectionId,
+                  name: "Fixture provider",
+                  description: null,
+                  url: `${serverOrigin}/provider`,
+                }],
+              }),
+            }],
+          },
+        });
+      }
+      return new Response(null, { status: 404 });
+    },
   });
+  serverOrigin = `http://127.0.0.1:${http.port}`;
   const reconnect = async () => {
     await mcp.close();
     transport = new WebStandardStreamableHTTPServerTransport({
@@ -167,7 +242,9 @@ async function startFixtureMcp(resourceContent: { text?: string; blob?: string }
     http.stop(true);
   });
   return {
-    url: `http://127.0.0.1:${http.port}`,
+    url: `${serverOrigin}/provider`,
+    catalogUrl: `${serverOrigin}/catalog`,
+    catalogReads: () => catalogReads,
     activateUpdatedResource: async () => {
       activeResourceUri = UPDATED_RESOURCE_URI;
       // A stateful SDK server transport owns one initialized MCP session. The
@@ -183,7 +260,12 @@ async function configuredFixture(
   resourceContent?: { text?: string; blob?: string },
   mcpName = "fixture",
   connectionId?: string,
-): Promise<{ config: ServerConfig; root: string; activateUpdatedResource: () => Promise<void> }> {
+): Promise<{
+  config: ServerConfig;
+  root: string;
+  activateUpdatedResource: () => Promise<void>;
+  catalogReads: () => number;
+}> {
   const root = await mkdtemp(join(tmpdir(), prefix));
   const previousRuntimeDb = process.env.OPENWORK_RUNTIME_DB;
   const previousDevMode = process.env.OPENWORK_DEV_MODE;
@@ -198,7 +280,7 @@ async function configuredFixture(
   });
   await mkdir(join(root, ".git"), { recursive: true });
   const config = serverConfig(root);
-  const fixture = await startFixtureMcp(resourceContent);
+  const fixture = await startFixtureMcp(resourceContent, connectionId);
   const mcpConfig = {
     type: "remote",
     url: fixture.url,
@@ -210,18 +292,32 @@ async function configuredFixture(
       ...current,
       mcp: {
         ...runtimeMcpMap(current),
-        "openwork-cloud": { ...mcpConfig, headers: { Authorization: "Bearer member-token" } },
+        "openwork-cloud": {
+          ...mcpConfig,
+          url: fixture.catalogUrl,
+          headers: { Authorization: "Bearer member-token" },
+        },
       },
     }));
     await writeOpenWorkConnectMcpAppHostCatalog(config, WORKSPACE_ID, {
       schemaVersion: "openwork.connect/mcp-servers/1",
       servers: [{ connectionId, name: "Fixture provider", description: null, url: fixture.url }],
     });
-    await writeOpenWorkConnectMcpAppHostAuthorization(config, WORKSPACE_ID, "Bearer app-host-token", fixture.url);
+    await writeOpenWorkConnectMcpAppHostAuthorization(
+      config,
+      WORKSPACE_ID,
+      "Bearer app-host-token",
+      fixture.catalogUrl,
+    );
   } else {
     await addMcp(config, WORKSPACE_ID, mcpName, mcpConfig);
   }
-  return { config, root, activateUpdatedResource: fixture.activateUpdatedResource };
+  return {
+    config,
+    root,
+    activateUpdatedResource: fixture.activateUpdatedResource,
+    catalogReads: fixture.catalogReads,
+  };
 }
 
 describe("MCP Apps host transport", () => {
@@ -250,10 +346,92 @@ describe("MCP Apps host transport", () => {
 
   });
 
+  test("lists cold-launchable MCP Apps with their input requirements", async () => {
+    const { config, root } = await configuredFixture("openwork-mcp-app-catalog-");
+
+    const servers = await listMcpAppCatalog({
+      serverConfig: config,
+      workspaceId: WORKSPACE_ID,
+      workspaceRoot: root,
+    });
+    expect(servers).toHaveLength(1);
+    const fixture = servers[0];
+    expect(fixture?.serverName).toBe("fixture");
+    expect(fixture?.reachable).toBe(true);
+    const names = fixture?.apps.map((app) => app.toolName) ?? [];
+    expect(names).toContain("render_fixture");
+    expect(names).toContain("render_report");
+    // App-only tools cannot resolve cold and unbound tools are not Apps.
+    expect(names).not.toContain("read_bound_detail");
+    expect(names).not.toContain("save_artifact_view");
+    expect(names).not.toContain("model_only_fixture");
+    const renderFixture = fixture?.apps.find((app) => app.toolName === "render_fixture");
+    expect(renderFixture?.projectedToolName).toBe("fixture_render_fixture");
+    expect(renderFixture?.resourceUri).toBe(RESOURCE_URI);
+    expect(renderFixture?.requiresInput).toBe(false);
+    expect(renderFixture?.requiresApproval).toBe(false);
+    const renderReport = fixture?.apps.find((app) => app.toolName === "render_report");
+    expect(renderReport?.requiresInput).toBe(true);
+    // Non-read-only launch tools need the same approval `callMcpAppTool` enforces.
+    const renderEditor = fixture?.apps.find((app) => app.toolName === "render_editor");
+    expect(renderEditor?.requiresInput).toBe(false);
+    expect(renderEditor?.requiresApproval).toBe(true);
+  });
+
+  test("lists Connect app-host apps with their connection references", async () => {
+    const connectionId = "emc_01mcpappcatalogfixture";
+    const serverName = connectMcpAppHostName(connectionId);
+    const { config, root } = await configuredFixture(
+      "openwork-mcp-app-catalog-connect-",
+      undefined,
+      serverName,
+      connectionId,
+    );
+
+    const servers = await listMcpAppCatalog({
+      serverConfig: config,
+      workspaceId: WORKSPACE_ID,
+      workspaceRoot: root,
+    });
+    // The gateway's own workspace entry may appear alongside the Connect
+    // provider section; the provider section is the one carrying references.
+    const connect = servers.find((server) => server.connectionId === connectionId);
+    expect(connect?.serverName).toBe(serverName);
+    expect(connect?.displayName).toBe("Fixture provider");
+    expect(connect?.reachable).toBe(true);
+    const names = connect?.apps.map((app) => app.toolName) ?? [];
+    expect(names).toContain("render_fixture");
+    // Connect launches resolve by connection reference, so app-only tools qualify.
+    expect(names).toContain("read_bound_detail");
+    expect(names).not.toContain("save_artifact_view");
+    const renderFixture = connect?.apps.find((app) => app.toolName === "render_fixture");
+    expect(renderFixture?.connectionId).toBe(connectionId);
+    expect(renderFixture?.requiresInput).toBe(false);
+    const renderReport = connect?.apps.find((app) => app.toolName === "render_report");
+    expect(renderReport?.requiresInput).toBe(true);
+  });
+
+  test("reports an unreachable server in the MCP App catalog instead of failing it", async () => {
+    const { config, root } = await configuredFixture("openwork-mcp-app-catalog-ghost-");
+    await addMcp(config, WORKSPACE_ID, "ghost", { type: "remote", url: "http://127.0.0.1:9/", enabled: true });
+
+    const servers = await listMcpAppCatalog({
+      serverConfig: config,
+      workspaceId: WORKSPACE_ID,
+      workspaceRoot: root,
+    });
+    const ghost = servers.find((server) => server.serverName === "ghost");
+    expect(ghost?.reachable).toBe(false);
+    expect(ghost?.apps).toHaveLength(0);
+    const fixture = servers.find((server) => server.serverName === "fixture");
+    expect(fixture?.reachable).toBe(true);
+    expect(fixture?.apps.map((app) => app.toolName)).toContain("render_fixture");
+  });
+
   test("resolves a capability gateway launch through its exact native Connect tool", async () => {
     const connectionId = "emc_01mcpappgatewayfixture";
     const serverName = connectMcpAppHostName(connectionId);
-    const { config, root } = await configuredFixture(
+    const { config, root, catalogReads } = await configuredFixture(
       "openwork-mcp-app-host-gateway-",
       undefined,
       serverName,
@@ -278,6 +456,42 @@ describe("MCP Apps host transport", () => {
       html: RESOURCE_HTML,
     });
     expect(Object.keys(runtimeMcpMap(await readRuntimeOpencodeConfig(config, WORKSPACE_ID)))).toEqual(["openwork-cloud"]);
+    expect(catalogReads()).toBe(0);
+  });
+
+  test("refreshes a missing private catalog entry when a capability gateway launch arrives", async () => {
+    const connectionId = "emc_01mcpappgatewayrefresh";
+    const serverName = connectMcpAppHostName(connectionId);
+    const { config, root, catalogReads } = await configuredFixture(
+      "openwork-mcp-app-host-gateway-refresh-",
+      undefined,
+      serverName,
+      connectionId,
+    );
+    await writeOpenWorkConnectMcpAppHostCatalog(config, WORKSPACE_ID, {
+      schemaVersion: "openwork.connect/mcp-servers/1",
+      servers: [],
+    });
+
+    const app = await resolveConnectMcpAppResource({
+      serverConfig: config,
+      workspaceId: WORKSPACE_ID,
+      workspaceRoot: root,
+      launch: {
+        connectionId,
+        toolName: "render_fixture",
+        resourceUri: RESOURCE_URI,
+      },
+    });
+
+    expect(app).toMatchObject({
+      serverName,
+      toolName: "render_fixture",
+      resourceUri: RESOURCE_URI,
+      html: RESOURCE_HTML,
+    });
+    expect((await readOpenWorkConnectMcpAppHostCatalog(config, WORKSPACE_ID)).servers[0]?.connectionId).toBe(connectionId);
+    expect(catalogReads()).toBe(1);
   });
 
   test("rejects a stale private catalog endpoint outside the credential's trusted origin", async () => {
@@ -328,6 +542,30 @@ describe("MCP Apps host transport", () => {
       resourceUri: RESOURCE_URI,
       html: RESOURCE_HTML,
     });
+  });
+
+  test("resolves and calls account-scoped gateway Apps from the effective runtime configuration", async () => {
+    const { config, root, activateUpdatedResource } = await configuredFixture("openwork-mcp-app-global-gateway-");
+    const fixture = (await listMcp(config, WORKSPACE_ID, root)).find(item => item.name === "fixture");
+    if (!fixture) throw new Error("Fixture server missing");
+    await writeGlobalRuntimeOpencodeConfig(config, () => ({ mcp: { "openwork-cloud": fixture.config } }));
+    const app = await resolveSameServerMcpAppResource({
+      serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root,
+      projectedToolName: "openwork-cloud_model_only_fixture",
+      launch: { toolName: "read_bound_detail", resourceUri: RESOURCE_URI },
+    });
+    expect(app).toMatchObject({ serverName: "openwork-cloud", html: RESOURCE_HTML });
+    await activateUpdatedResource();
+    expect(await callMcpAppTool({
+      serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root,
+      serverName: app.serverName, name: app.toolName, resourceUri: app.resourceUri,
+      arguments: { id: "account" },
+    })).toMatchObject({ structuredContent: { id: "account" } });
+    await writeGlobalRuntimeOpencodeConfig(config, () => ({}));
+    await expect(callMcpAppTool({
+      serverConfig: config, workspaceId: WORKSPACE_ID, workspaceRoot: root,
+      serverName: app.serverName, name: app.toolName, resourceUri: app.resourceUri,
+    })).rejects.toMatchObject({ code: "server_unavailable" });
   });
 
   test("rejects a stale gateway launch when the native tool changes its resource binding", async () => {
@@ -448,6 +686,36 @@ describe("MCP Apps host transport", () => {
       content: [{ type: "text", text: "detail:42" }],
       structuredContent: { id: "42" },
     });
+  });
+
+  test("surfaces a provider argument rejection as a typed host error, not an unhandled failure", async () => {
+    const { config, root } = await configuredFixture("openwork-mcp-app-call-rejected-");
+
+    // A dashboard tile launched with input that omits a required argument must
+    // show the provider's rejection, which names the missing key, instead of
+    // the generic 500 "Unexpected server error" an untyped throw produces.
+    let failure: unknown = null;
+    try {
+      await callMcpAppTool({
+        serverConfig: config,
+        workspaceId: WORKSPACE_ID,
+        workspaceRoot: root,
+        serverName: "fixture",
+        name: "render_report",
+        resourceUri: RESOURCE_URI,
+        arguments: {},
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(McpAppHostError);
+    if (!(failure instanceof McpAppHostError)) throw new Error("unreachable");
+    expect(failure.code).toBe("tool_call_failed");
+    // Provider text is relayed, but bounded: no control characters, capped length.
+    expect(failure.message).toContain('"path":["id"],"message":"Required"');
+    expect(failure.message).not.toContain("\u0007");
+    expect(failure.message.length).toBeLessThanOrEqual(512 + 1);
+    expect(failure.message.endsWith("…")).toBe(true);
   });
 
   test("mediates a resource-bound same-server tool for its exact MCP App", async () => {

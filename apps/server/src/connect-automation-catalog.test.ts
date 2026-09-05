@@ -33,16 +33,19 @@ describe("Automation catalog instruction", () => {
     expect(instruction).toContain("<name>Morning Slack check</name>");
     expect(instruction).toContain("<state>active</state>");
     expect(instruction).toContain("daily at 09:00 Europe/Berlin");
-    expect(instruction).toContain("<last-run>succeeded (scheduled)</last-run>");
     expect(instruction).toContain("Do not call the search capability to find one that is already listed here.");
   });
 
-  test("stamps the snapshot and forbids quoting live state as current truth", () => {
+  test("omits volatile run state so the prompt block stays byte-stable between runs", () => {
     const instruction = renderOpenWorkAutomationInstruction(index());
 
-    expect(instruction).toContain(new Date(FETCHED_AT).toISOString());
+    // Timestamps and run outcomes change every run (and every refresh); they
+    // would invalidate provider prompt caches while being forbidden to quote.
+    expect(instruction).not.toContain(new Date(FETCHED_AT).toISOString());
+    expect(instruction).not.toContain("<next-run>");
+    expect(instruction).not.toContain("<last-run>");
     expect(instruction).toContain("describes live state that changes as Automations run");
-    expect(instruction).toContain("Never quote <next-run> or <last-run> as current truth");
+    expect(instruction).toContain("never quote run timing from this listing");
     expect(instruction).toContain("listAutomations");
     expect(instruction).toContain("getAutomationRun");
   });

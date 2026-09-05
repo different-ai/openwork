@@ -1,0 +1,30 @@
+{
+  "name": "@openwork-ee/telemetry",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./src/index.ts",
+  "source": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@openwork-ee/den-db": "workspace:*",
+    "@openwork-ee/telemetry-contracts": "workspace:*",
+    "@openwork-ee/utils": "workspace:*",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "tsup": "^8.5.0",
+    "typescript": "^5.5.4"
+  }
+}

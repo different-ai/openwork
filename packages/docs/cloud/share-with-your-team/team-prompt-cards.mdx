@@ -3,7 +3,7 @@ title: "Team prompt cards"
 description: "Use desktop policies to show different suggested prompts to teams and members."
 ---
 
-Organization prompt cards are managed from OpenWork Cloud and appear in the desktop composer as task suggestions. Managing desktop policies requires an Enterprise plan; the API returns `402` when the org is not entitled.
+Organization prompt cards are an OpenWork Cloud desktop-policy feature. Admins manage them in Cloud, and assigned members see them in the desktop composer as task suggestions. Managing desktop policies requires an Enterprise plan; the API returns `402` when the org is not entitled.
 
 ## Create team prompts
 
@@ -14,6 +14,10 @@ Organization prompt cards are managed from OpenWork Cloud and appear in the desk
 5. Assign the policy to `Members` or `Teams`, then save. The API stores those choices as `memberIds` and `teamIds`, so different departments can use separate non-default policies.
 
 ## Know what members see
+
+<Frame>
+  ![OpenWork desktop composer showing organization prompt cards assigned through a Cloud desktop policy](/images/desktop-team-prompt-cards.png)
+</Frame>
 
 1. The admin's `Description` becomes the card title in the desktop app.
 2. The admin's `Prompt` becomes the card body and the text inserted into the composer.

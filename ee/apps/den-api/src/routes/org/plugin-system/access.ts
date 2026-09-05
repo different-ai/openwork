@@ -20,6 +20,7 @@ export type PluginArchRole = "viewer" | "editor" | "manager"
 export type PluginArchCapability = "config_object.create" | "connector_account.create" | "connector_instance.create" | "marketplace.create" | "plugin.create"
 
 export type PluginArchActorContext = {
+  apiKey?: true
   automation?: true
   memberTeams: MemberTeamSummary[]
   organizationContext: OrganizationContext
@@ -113,9 +114,9 @@ export function hasPluginArchCapability(context: PluginArchActorContext, capabil
 }
 
 function ensureFreshPluginArchAdmin(context: PluginArchActorContext) {
-  if (context.automation === true) {
-    // Session freshness is a step-up check for interactive humans. Connector automation runs
-    // server-side without a session and is authorized by the connector instance's stored creator membership.
+  if (context.apiKey === true || context.automation === true) {
+    // Session freshness is a step-up check for interactive humans. API keys and connector automation
+    // are non-interactive principals authorized by their scoped organization membership.
     return
   }
   if (!isPluginArchOrgAdmin(context) || hasFreshPrivilegedSession({ session: context.session })) {

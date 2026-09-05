@@ -158,6 +158,8 @@ describe("cloud provider runtime patch (re-import diff #2346)", () => {
 
     const mirrorSource = source.slice(mirrorStart, mirrorEnd);
     expect(mirrorSource).not.toContain('provider.source !== "openwork"');
+    expect(mirrorSource).toContain("resolvedEnvEntries");
+    expect(mirrorSource).toContain("const entries = [...resolvedEnvEntries]");
     expect(mirrorSource).toContain("getCloudProviderEnv(provider.providerConfig)");
     expect(mirrorSource).toContain(".slice(0, 1)");
   });

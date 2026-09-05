@@ -15,7 +15,10 @@ export function installStdioErrorHandlers({ stdout = process.stdout, stderr = pr
     if (!stream || typeof stream.on !== "function" || guardedStreams.has(stream)) continue;
 
     stream.on("error", (error) => {
-      if (isBrokenPipeError(error)) return;
+      // The in-process server also listens here. Do not rethrow expected
+      // output failures before its handler can disable the failed log sink.
+      if (isBrokenPipeError(error) || error?.code === "ERR_STREAM_DESTROYED"
+        || error?.code === "ENOSPC" || error?.code === "EDQUOT") return;
       throw error;
     });
     guardedStreams.add(stream);

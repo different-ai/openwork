@@ -46,8 +46,7 @@ export function quoteDesktopExec(value) {
   const cleaned = cleanDesktopValue(value);
   const quoted = cleaned
     .replaceAll("%", "%%")
-    .replace(/([\\`"$])/g, "\\$1")
-    .replaceAll("\\", "\\\\");
+    .replace(/([\\`"$])/g, "\\$1");
   return `"${quoted}"`;
 }
 

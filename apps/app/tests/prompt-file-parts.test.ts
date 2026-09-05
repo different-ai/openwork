@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import { firstLineLocalFileParts } from "../src/react-app/domains/session/sync/prompt-file-parts";
+import { draftToParts } from "../src/react-app/domains/session/sync/draft-parts";
+import { firstLineLocalFileParts, isReadInlineablePath } from "../src/react-app/domains/session/sync/prompt-file-parts";
 import {
   connectSkillSlashCommandOptions,
   getSlashCommandQuery,
@@ -61,6 +62,63 @@ describe("first-line local file parts", () => {
         url: "file:///C:/Users/omar/list.csv",
         filename: "list.csv",
       },
+    ]);
+  });
+
+  test("leaves binary media paths as plain text instead of a Read-expanded file part", () => {
+    // opencode expands text/plain file parts through the Read tool, which
+    // refuses binaries with "Cannot read binary file" as a session error.
+    expect(firstLineLocalFileParts(
+      "could you add this to descript /Users/ben/Downloads/C0217.MP4",
+      "/Users/ben/code/openwork",
+    )).toEqual([]);
+    expect(firstLineLocalFileParts("unzip ~/Downloads/archive.zip and C:\\Users\\ben\\deck.pptx", "/Users/ben/code")).toEqual([]);
+  });
+
+  test("keeps text, image, and PDF paths as file parts", () => {
+    const parts = firstLineLocalFileParts(
+      "compare /Users/ben/notes.md /Users/ben/shot.PNG /Users/ben/paper.pdf /Users/ben/Makefile",
+      "/Users/ben/code",
+    );
+
+    expect(parts.map((part) => part.filename)).toEqual(["notes.md", "shot.PNG", "paper.pdf", "Makefile"]);
+  });
+});
+
+describe("read-inlineable paths", () => {
+  test("classifies by extension only", () => {
+    expect(isReadInlineablePath("/Users/ben/Downloads/C0217.MP4")).toBe(false);
+    expect(isReadInlineablePath("C:\\Users\\ben\\report.docx")).toBe(false);
+    expect(isReadInlineablePath("/tmp/build/app.wasm")).toBe(false);
+    expect(isReadInlineablePath("/Users/ben/notes.md")).toBe(true);
+    expect(isReadInlineablePath("/Users/ben/shot.png")).toBe(true);
+    expect(isReadInlineablePath("/Users/ben/paper.pdf")).toBe(true);
+    expect(isReadInlineablePath("/Users/ben/.env")).toBe(true);
+    expect(isReadInlineablePath("/Users/ben/Makefile")).toBe(true);
+    expect(isReadInlineablePath("/Users/ben/weird.")).toBe(true);
+  });
+});
+
+describe("draft file mentions", () => {
+  test("binary @file mentions become the absolute path as text", async () => {
+    const parts = await draftToParts(
+      {
+        mode: "prompt",
+        text: "add @/Users/ben/Downloads/C0217.MP4 and @notes.md",
+        parts: [
+          { type: "file", path: "/Users/ben/Downloads/C0217.MP4" },
+          { type: "file", path: "notes.md" },
+        ],
+        attachments: [],
+      },
+      "/Users/ben/code",
+      "ses_test",
+      null,
+    );
+
+    expect(parts).toEqual([
+      { type: "text", text: "/Users/ben/Downloads/C0217.MP4" },
+      { type: "file", mime: "text/plain", url: "file:///Users/ben/code/notes.md", filename: "notes.md" },
     ]);
   });
 });
@@ -159,4 +217,27 @@ describe("Connect skill slash commands", () => {
     }]);
     expect(withoutProvenance?.description).toBe("");
   });
+});
+
+
+describe("computer task mentions", () => {
+  for (const target of ["cloud", "desktop"] satisfies Array<"cloud" | "desktop">) {
+    test(`${target} routing is hidden from the visible prompt and survives inline attachment parsing`, async () => {
+      for (const attachmentToken of ["", "[attachment removed]"]) {
+        const text = `@${target} Summarize notes for person@${target} ${attachmentToken}`;
+        const parts = await draftToParts({
+          mode: "prompt",
+          text,
+          parts: [{ type: "computer", target }, { type: "text", text: ` Summarize notes for person@${target} ` }],
+          attachments: [],
+        }, "/workspace", "ses_computer", null);
+        const instructions = parts.filter((part) => part.type === "text" && part.synthetic);
+        expect(instructions).toHaveLength(1);
+        expect(instructions[0]).toMatchObject({ text: expect.stringContaining(`target "${target}"`) });
+        expect(parts.filter((part) => part.type === "text" && !part.synthetic)
+          .map((part) => part.type === "text" ? part.text : "").join(""))
+          .toBe(`@${target} Summarize notes for person@${target} `);
+      }
+    });
+  }
 });

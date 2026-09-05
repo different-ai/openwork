@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto"
 import type { AutomationClaimResult, AutomationListItem } from "@openwork/automations"
+import { AUTOMATION_MIN_CLAIM_WINDOW_MS, desktopRunnerConnected } from "@openwork/automations"
 import type {
   AutomationDesktopRunnerCapability,
+  AutomationDesktopRunnerPresence,
   AutomationDesktopRunnerResult,
   AutomationDesktopRunnerRegistration,
   AutomationRunEventType,
@@ -14,12 +16,20 @@ import { env } from "../env.js"
 import { isActiveAutomationOwner, resolveAutomationModelAccess } from "./authority.js"
 import { shouldApplyAutomationModelAccessFailure } from "./model-attention-rollout.js"
 import { automationRepository } from "./repository.js"
-import { validateSavedScriptAutomationAction } from "../codemode-scripts.js"
+import { validateWorkflowAutomationAction } from "../workflows.js"
 import type { CloudAgentExecution, CloudAgentExecutorInput } from "./cloud-agent-executor.js"
 import { appLogger } from "../observability/logger.js"
+import {
+  getOpenWorkWebRuntimeAccess,
+  OPENWORK_WEB_ACCESS_REQUIRED_CODE,
+  OPENWORK_WEB_ACCESS_REQUIRED_MESSAGE,
+  requireOpenWorkWebRuntimeAccess,
+  type OpenWorkWebRuntimeAccessResolver,
+} from "../openwork-web-runtime-access.js"
 
 const schedulerOwner = `den:${process.pid}:${randomUUID()}`
 const logger = appLogger.child({ component: "automations" })
+const AUTOMATION_LIST_AUTHORITY_BATCH_SIZE = 4
 
 type OwnerScope = {
   organizationId: string
@@ -46,23 +56,23 @@ function supportsModelAttention(scope: OwnerScope | DesktopRunnerScope) {
     || ("capabilities" in scope && scope.capabilities?.includes("model_attention_v1") === true)
 }
 
-export type CloudSavedScriptExecution =
+export type CloudWorkflowExecution =
   | { ok: true; value: unknown; canonicalResult: string; receiptId: string }
   | { ok: false; message: string; retryable: boolean; receiptId?: string | null }
 
-export type CloudSavedScriptExecutor = (input: {
+export type CloudWorkflowExecutor = (input: {
   organizationId: string
   ownerMemberId: string
   automationRunId: string
   action: Extract<AutomationAction, { kind: "saved_script" }>
-}) => Promise<CloudSavedScriptExecution>
+}) => Promise<CloudWorkflowExecution>
 
-let cloudSavedScriptExecutor: CloudSavedScriptExecutor | null = null
+let cloudWorkflowExecutor: CloudWorkflowExecutor | null = null
 let cloudAgentExecutor: ((input: CloudAgentExecutorInput) => Promise<CloudAgentExecution>) | null = null
 let cloudAgentRuntimeAvailable: ((scope: OwnerScope) => Promise<boolean>) | null = null
 
-export function configureCloudSavedScriptExecutor(executor: CloudSavedScriptExecutor): void {
-  cloudSavedScriptExecutor = executor
+export function configureCloudWorkflowExecutor(executor: CloudWorkflowExecutor): void {
+  cloudWorkflowExecutor = executor
 }
 
 export function configureCloudAgentExecutor(input: {
@@ -73,15 +83,44 @@ export function configureCloudAgentExecutor(input: {
   cloudAgentRuntimeAvailable = input.runtimeAvailable
 }
 
+export type AutomationServiceOptions = {
+  getOpenWorkWebAccess?: OpenWorkWebRuntimeAccessResolver
+}
+
 export class AutomationService {
   private readonly cloudExecutions = new Map<string, Promise<void>>()
+  private readonly getOpenWorkWebAccess: OpenWorkWebRuntimeAccessResolver
+
+  constructor(options: AutomationServiceOptions = {}) {
+    this.getOpenWorkWebAccess = options.getOpenWorkWebAccess ?? getOpenWorkWebRuntimeAccess
+  }
 
   async list(scope: OwnerScope, input: { cursor?: string; limit?: number }) {
     const page = await automationRepository.list({ ...scope, cursor: input.cursor, limit: input.limit ?? 50 })
-    return {
-      ...page,
-      items: await Promise.all(page.items.map((item) => this.reconcileModelAttention(item, scope))),
+    const modelAccessBySelection = new Map<string, ReturnType<typeof resolveAutomationModelAccess>>()
+    const resolveModelAccess = (item: AutomationListItem) => {
+      const key = JSON.stringify([item.revision.model.providerId, item.revision.model.modelId])
+      const existing = modelAccessBySelection.get(key)
+      if (existing) return existing
+      const access = resolveAutomationModelAccess({
+        organizationId: item.automation.organizationId,
+        ownerMemberId: item.automation.ownerMemberId,
+        ...item.revision.model,
+      })
+      modelAccessBySelection.set(key, access)
+      return access
     }
+    const items: AutomationListItem[] = []
+    for (let offset = 0; offset < page.items.length; offset += AUTOMATION_LIST_AUTHORITY_BATCH_SIZE) {
+      items.push(...await Promise.all(
+        page.items.slice(offset, offset + AUTOMATION_LIST_AUTHORITY_BATCH_SIZE).map((item) => this.reconcileModelAttention(
+          item,
+          scope,
+          () => resolveModelAccess(item),
+        )),
+      ))
+    }
+    return { ...page, items }
   }
 
   async get(scope: OwnerScope, automationId: string) {
@@ -94,6 +133,7 @@ export class AutomationService {
       if (definition.executionTarget !== "cloud") {
         throw new Error("automation_action_target_mismatch")
       }
+      await requireOpenWorkWebRuntimeAccess(scope.organizationId, this.getOpenWorkWebAccess)
       if (definition.action.kind === "agent") {
         // Action-based creation is Cloud placement. The legacy Zen exception
         // exists only for already-published Desktop clients.
@@ -101,7 +141,7 @@ export class AutomationService {
       }
       else {
         if (!await isActiveAutomationOwner(scope)) throw new Error("automation_owner_inactive")
-        await validateSavedScriptAutomationAction({ ...scope, action: definition.action })
+        await validateWorkflowAutomationAction({ ...scope, action: definition.action })
       }
       if (definition.action.kind === "agent" && (!cloudAgentRuntimeAvailable || !await cloudAgentRuntimeAvailable(scope))) {
         throw new Error("automation_cloud_worker_required")
@@ -116,6 +156,9 @@ export class AutomationService {
   async update(scope: OwnerScope, automationId: string, changes: UpdateAutomation) {
     const current = await this.get(scope, automationId)
     if (!current) return null
+    if ((current.revision.executionTarget ?? "desktop") === "cloud") {
+      await requireOpenWorkWebRuntimeAccess(scope.organizationId, this.getOpenWorkWebAccess)
+    }
     if (changes.executionTarget !== undefined
       && changes.executionTarget !== (current.revision.executionTarget ?? "desktop")) {
       throw new Error("automation_action_target_mismatch")
@@ -125,7 +168,7 @@ export class AutomationService {
       throw new Error("automation_action_target_mismatch")
     }
     if (nextAction?.kind === "saved_script") {
-      await validateSavedScriptAutomationAction({ ...scope, action: nextAction })
+      await validateWorkflowAutomationAction({ ...scope, action: nextAction })
     } else if (nextAction?.kind === "agent") {
       if ((current.revision.executionTarget ?? "desktop") === "cloud"
         && (!cloudAgentRuntimeAvailable || !await cloudAgentRuntimeAvailable(scope))) {
@@ -150,6 +193,9 @@ export class AutomationService {
   async activate(scope: OwnerScope, automationId: string) {
     const current = await this.get(scope, automationId)
     if (!current) return null
+    if ((current.revision.executionTarget ?? "desktop") === "cloud") {
+      await requireOpenWorkWebRuntimeAccess(scope.organizationId, this.getOpenWorkWebAccess)
+    }
     if (current.revision.action?.kind === "saved_script") {
       if (!await isActiveAutomationOwner(scope)) throw new Error("automation_owner_inactive")
     } else {
@@ -179,6 +225,14 @@ export class AutomationService {
   async runNow(scope: OwnerScope, automationId: string): Promise<AutomationRun | null> {
     const current = await this.get(scope, automationId)
     if (!current || current.automation.state === "archived") return null
+    // Cloud Automations execute on an OpenWork VM, so a manual run is gated
+    // like every other VM boundary. Desktop-target Automations are untouched.
+    // openwork_web_access_required is already part of the shared Automation
+    // contract (packages/types/src/automations.ts) and published desktops
+    // surface the returned message in the Automations page action toast.
+    if ((current.revision.executionTarget ?? "desktop") === "cloud") {
+      await requireOpenWorkWebRuntimeAccess(scope.organizationId, this.getOpenWorkWebAccess)
+    }
     let blocked = current.automation.needsAttentionReason
     if (current.revision.action?.kind === "saved_script") {
       if (!await isActiveAutomationOwner(scope)) throw new Error("automation_owner_inactive")
@@ -217,7 +271,10 @@ export class AutomationService {
       nonce: randomUUID(),
       leaseOwner: schedulerOwner,
       leaseMs: env.automations.leaseMs,
-      claimDeadlineMs: env.automations.runnerClaimDeadlineMs,
+      // Someone is watching this one. The recovery window exists for occurrences
+      // that come due while nobody is at the machine; a manual run should say
+      // what happened promptly instead of sitting queued for minutes.
+      claimDeadlineMs: AUTOMATION_MIN_CLAIM_WINDOW_MS,
       now: Date.now(),
     })
     if (claim.kind === "claimed" && claim.run.executionTarget === "cloud") {
@@ -316,6 +373,7 @@ export class AutomationService {
       runnerId: registration.runnerId,
       protocolVersion: registration.protocolVersion,
       supportedExecutionTargets: registration.supportedExecutionTargets,
+      capabilities: registration.capabilities,
       appVersion: registration.appVersion,
       platform: registration.platform,
       concurrency: registration.concurrency,
@@ -330,6 +388,12 @@ export class AutomationService {
 
   touchDesktopRunner(scope: DesktopRunnerScope) {
     return automationRepository.touchDesktopRunner({ ...scope, now: Date.now() })
+  }
+
+  /** Lets a management client warn before a due occurrence instead of after it. */
+  async desktopRunnerPresence(scope: OwnerScope): Promise<AutomationDesktopRunnerPresence> {
+    const lastSeenAt = await automationRepository.desktopRunnerLastSeenAt(scope)
+    return { connected: desktopRunnerConnected({ lastSeenAt, now: Date.now() }), lastSeenAt }
   }
 
   async discoverDesktopRunnerWork(scope: DesktopRunnerScope) {
@@ -393,6 +457,7 @@ export class AutomationService {
       timeoutMs: claimed.revision.maximumRuntimeMs,
       leaseExpiresAt: claimed.run.leaseExpiresAt,
       attempt: claimed.run.attemptCount,
+      workspaceId: claimed.revision.workspaceId ?? null,
     }
   }
 
@@ -432,6 +497,10 @@ export class AutomationService {
       resultSummary: result.resultSummary,
       usage: result.usage,
       error: result.error,
+      engineReceipt: {
+        ...(result.sessionId ? { nativeThreadId: result.sessionId } : {}),
+        ...(result.workspaceId ? { workspaceId: result.workspaceId } : {}),
+      },
       attempt: result.attempt,
       now,
     })
@@ -472,13 +541,17 @@ export class AutomationService {
     }
   }
 
-  private async reconcileModelAttention(item: AutomationListItem, scope: OwnerScope): Promise<AutomationListItem> {
-    if (item.automation.state !== "active" || item.revision.action?.kind === "saved_script") return item
-    const access = await resolveAutomationModelAccess({
+  private async reconcileModelAttention(
+    item: AutomationListItem,
+    scope: OwnerScope,
+    resolveModelAccess: () => ReturnType<typeof resolveAutomationModelAccess> = () => resolveAutomationModelAccess({
       organizationId: item.automation.organizationId,
       ownerMemberId: item.automation.ownerMemberId,
       ...item.revision.model,
-    })
+    }),
+  ): Promise<AutomationListItem> {
+    if (item.automation.state !== "active" || item.revision.action?.kind === "saved_script") return item
+    const access = await resolveModelAccess()
     if (access.ok || !shouldApplyAutomationModelAccessFailure({
       model: item.revision.model,
       failure: access,
@@ -509,20 +582,41 @@ export class AutomationService {
       now: Date.now(),
     })
     if (!claimed) return
+    const webAccess = await this.getOpenWorkWebAccess(claimed.automation.organizationId)
+    if (!webAccess.hasAccess) {
+      const now = Date.now()
+      await automationRepository.skipRun({
+        runId: claimed.run.id,
+        code: OPENWORK_WEB_ACCESS_REQUIRED_CODE,
+        message: OPENWORK_WEB_ACCESS_REQUIRED_MESSAGE,
+        now,
+      })
+      await automationRepository.markNeedsAttention({
+        automationId: claimed.automation.id,
+        expectedRevisionId: claimed.revision.id,
+        reason: {
+          code: OPENWORK_WEB_ACCESS_REQUIRED_CODE,
+          message: OPENWORK_WEB_ACCESS_REQUIRED_MESSAGE,
+          occurredAt: now,
+        },
+        now,
+      })
+      return
+    }
     if (claimed.revision.action?.kind === "agent") {
       await this.executeCloudAgentRun(claimed, leaseOwner)
       return
     }
     if (claimed.revision.action?.kind !== "saved_script") return
-    const executor = cloudSavedScriptExecutor
+    const executor = cloudWorkflowExecutor
     if (!executor) {
       await automationRepository.completeCloud({
         automationId: claimed.automation.id,
         runId,
         leaseOwner,
         status: "failed",
-        resultSummary: "OpenWork Cloud script execution is unavailable.",
-        error: { code: "execution_runtime_unavailable", message: "OpenWork Cloud script execution is unavailable.", retryable: true },
+        resultSummary: "OpenWork Cloud Workflow execution is unavailable.",
+        error: { code: "execution_runtime_unavailable", message: "OpenWork Cloud Workflow execution is unavailable.", retryable: true },
         now: Date.now(),
       })
       return
@@ -532,9 +626,9 @@ export class AutomationService {
       ownerMemberId: claimed.automation.ownerMemberId,
       automationRunId: runId,
       action: claimed.revision.action,
-    }).catch((error): CloudSavedScriptExecution => ({
+    }).catch((error): CloudWorkflowExecution => ({
       ok: false,
-      message: error instanceof Error ? error.message : "Saved script execution failed.",
+      message: error instanceof Error ? error.message : "Workflow execution failed.",
       retryable: true,
     }))
     await automationRepository.completeCloud({
@@ -620,34 +714,50 @@ export class AutomationService {
       })
       return
     }
-    const interval = setInterval(() => void monitor(), heartbeatIntervalMs)
-    const state = await automationRepository.cloudRunState(claimed.run.id)
-    const result = await executor({
-      organizationId: claimed.automation.organizationId,
-      ownerMemberId: claimed.automation.ownerMemberId,
-      automationRunId: claimed.run.id,
-      automationName: claimed.automation.name,
-      action,
-      maximumRuntimeMs: claimed.revision.maximumRuntimeMs,
-      previousReceipt: state?.receipt ?? null,
-      signal: controller.signal,
-      onAdmitted: async (receipt) => automationRepository.setCloudExecution({
-        runId: claimed.run.id,
-        leaseOwner,
-        engineKind: "openwork-cloud-agent-v1",
-        receipt,
-        now: Date.now(),
-      }),
-    }).catch((error): CloudAgentExecution => ({
-      ok: false,
-      status: controller.signal.aborted ? "cancelled" : "failed",
-      code: controller.signal.aborted ? "cancelled" : "execution_failed",
-      message: controller.signal.aborted ? "The Automation run was cancelled." : error instanceof Error ? error.message : "Cloud agent execution failed.",
-      // The executor may have admitted a deterministic native turn before an
-      // unexpected exception escaped. A person must inspect that run instead
-      // of risking a second set of external side effects.
-      retryable: false,
-    })).finally(() => clearInterval(interval))
+    const interval = setInterval(() => {
+      if (controller.signal.aborted) return
+      void monitor().catch((error) => {
+        logger.error("Cloud Automation heartbeat monitor failed", {
+          run_id: claimed.run.id,
+          error,
+        })
+        controller.abort(error)
+      })
+    }, heartbeatIntervalMs)
+    interval.unref()
+    let result: CloudAgentExecution
+    try {
+      const state = await automationRepository.cloudRunState(claimed.run.id)
+      result = await executor({
+        organizationId: claimed.automation.organizationId,
+        ownerMemberId: claimed.automation.ownerMemberId,
+        automationRunId: claimed.run.id,
+        automationName: claimed.automation.name,
+        action,
+        maximumRuntimeMs: claimed.revision.maximumRuntimeMs,
+        previousReceipt: state?.receipt ?? null,
+        workspaceId: claimed.revision.workspaceId ?? null,
+        signal: controller.signal,
+        onAdmitted: async (receipt) => automationRepository.setCloudExecution({
+          runId: claimed.run.id,
+          leaseOwner,
+          engineKind: "openwork-cloud-agent-v1",
+          receipt,
+          now: Date.now(),
+        }),
+      }).catch((error): CloudAgentExecution => ({
+        ok: false,
+        status: controller.signal.aborted ? "cancelled" : "failed",
+        code: controller.signal.aborted ? "cancelled" : "execution_failed",
+        message: controller.signal.aborted ? "The Automation run was cancelled." : error instanceof Error ? error.message : "Cloud agent execution failed.",
+        // The executor may have admitted a deterministic native turn before an
+        // unexpected exception escaped. A person must inspect that run instead
+        // of risking a second set of external side effects.
+        retryable: false,
+      }))
+    } finally {
+      clearInterval(interval)
+    }
 
     if (!result.ok && result.retryable && await automationRepository.queueRetry({
       runId: claimed.run.id,
@@ -690,8 +800,9 @@ export class AutomationService {
         "model_access_lost",
         "provider_unavailable",
         "connect_access_unavailable",
+        "openwork_web_access_required",
         "execution_runtime_unavailable",
-      ].includes(result.code) ? result.code as "owner_membership_lost" | "model_access_lost" | "provider_unavailable" | "connect_access_unavailable" | "execution_runtime_unavailable" : "execution_runtime_unavailable"
+      ].includes(result.code) ? result.code as "owner_membership_lost" | "model_access_lost" | "provider_unavailable" | "connect_access_unavailable" | "openwork_web_access_required" | "execution_runtime_unavailable" : "execution_runtime_unavailable"
       await automationRepository.markNeedsAttention({
         automationId: claimed.automation.id,
         expectedRevisionId: claimed.revision.id,

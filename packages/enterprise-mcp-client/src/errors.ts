@@ -1,5 +1,4 @@
-import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js"
-
+import { SdkError, SdkErrorCode } from "@modelcontextprotocol/client"
 import type { EnterpriseMcpOperationPhase, EnterpriseMcpRequestPhase } from "./contracts.js"
 
 export type EnterpriseMcpErrorCode =
@@ -32,7 +31,7 @@ const phaseLabel: Record<EnterpriseMcpOperationPhase, string> = {
   "requirements-discovery": "MCP connection requirements discovery",
   "connection-handshake": "MCP connection handshake",
   "authorization-callback": "OAuth authorization callback",
-  "protocol-initialize": "MCP protocol initialization",
+  "protocol-initialize": "MCP protocol negotiation",
   "tool-discovery": "MCP tool discovery",
   "tool-execution": "MCP tool execution",
   "resource-discovery": "MCP resource discovery",
@@ -47,6 +46,7 @@ const requestPhaseLabel: Record<EnterpriseMcpRequestPhase, string> = {
   "oauth-client-registration": "OAuth client registration",
   "oauth-token-exchange": "OAuth token exchange",
   "oauth-token-refresh": "OAuth token refresh",
+  "mcp-discovery": "the MCP server/discover request",
   "mcp-initialize": "the MCP initialize request",
   "mcp-tool-discovery": "the MCP tools/list request",
   "mcp-tool-execution": "the MCP tools/call request",
@@ -76,17 +76,17 @@ export class EnterpriseMcpClientError extends Error {
 
 /**
  * Marks a lifecycle abort as ours on the `data` of an MCP error. The SDK
- * rethrows an `McpError` untouched but collapses any other abort reason into
+ * rethrows an `SdkError` untouched but collapses any other abort reason into
  * `String(reason)` on a RequestTimeout, leaving downstream diagnostics unable
  * to tell an OpenWork deadline apart from a provider-declared failure.
  */
 export const ENTERPRISE_MCP_LIFECYCLE_DEADLINE_DATA_KEY = "enterpriseMcpLifecycleDeadline"
 
-export class EnterpriseMcpLifecycleDeadlineError extends McpError {
+export class EnterpriseMcpLifecycleDeadlineError extends SdkError {
   readonly operationPhase: EnterpriseMcpOperationPhase
 
   constructor(operationPhase: EnterpriseMcpOperationPhase) {
-    super(ErrorCode.RequestTimeout, `Enterprise MCP ${operationPhase} exceeded its lifecycle deadline.`, {
+    super(SdkErrorCode.RequestTimeout, `Enterprise MCP ${operationPhase} exceeded its lifecycle deadline.`, {
       [ENTERPRISE_MCP_LIFECYCLE_DEADLINE_DATA_KEY]: true,
       operationPhase,
     })
@@ -123,6 +123,7 @@ export type EnterpriseMcpOAuthContractErrorCode =
   | "MCP_OAUTH_CLIENT_EXPIRED"
   | "MCP_OAUTH_CREDENTIAL_EXPIRED"
   | "MCP_OAUTH_CREDENTIAL_CHANGED"
+  | "MCP_OAUTH_CONFIGURATION_CHANGED"
   | "MCP_OAUTH_CONFIGURATION_REQUIRED"
   | "MCP_OAUTH_ISSUER_MISMATCH"
   | "MCP_OAUTH_PERSISTENCE_INVALID"

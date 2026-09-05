@@ -15,7 +15,7 @@ import { denTypeIdColumn, encryptedColumn, encryptedMediumTextColumn } from "../
 import { MemberTable, OrganizationTable } from "../org"
 import { TeamTable } from "../teams"
 
-export const configObjectTypeValues = ["skill", "agent", "command", "tool", "mcp", "hook", "context", "custom", "script", "app"] as const
+export const configObjectTypeValues = ["skill", "agent", "command", "tool", "mcp", "hook", "context", "custom", "script", "workflow", "app"] as const
 export const configObjectSourceModeValues = ["cloud", "import", "connector"] as const
 export const configObjectStatusValues = ["active", "inactive", "deleted", "archived", "ingestion_error"] as const
 export const configObjectCreatedViaValues = ["cloud", "import", "connector", "system"] as const
@@ -103,6 +103,8 @@ export const PluginTable = mysqlTable(
     name: varchar("name", { length: 255 }).notNull(),
     description: text("description"),
     sourceRepositoryUrl: varchar("source_repository_url", { length: 1024 }),
+    sourceFormat: varchar("source_format", { length: 64 }),
+    sourceSchemaVersion: varchar("source_schema_version", { length: 100 }),
     status: mysqlEnum("status", pluginStatusValues).notNull().default("active"),
     createdByOrgMembershipId: denTypeIdColumn("member", "created_by_org_membership_id").notNull(),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
@@ -120,6 +122,7 @@ export const PluginTable = mysqlTable(
 export const MarketplaceTable = mysqlTable(
   "marketplace",
   {
+    externalKey: varchar("external_key", { length: 128 }),
     id: denTypeIdColumn("marketplace", "id").notNull().primaryKey(),
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
     name: varchar("name", { length: 255 }).notNull(),
@@ -132,6 +135,7 @@ export const MarketplaceTable = mysqlTable(
     deletedAt: timestamp("deleted_at", { fsp: 3 }),
   },
   (table) => [
+    uniqueIndex("marketplace_org_external_key").on(table.organizationId, table.externalKey),
     index("marketplace_organization_id").on(table.organizationId),
     index("marketplace_created_by_org_membership_id").on(table.createdByOrgMembershipId),
     index("marketplace_status").on(table.status),
@@ -343,6 +347,7 @@ export const ConnectorTargetTable = mysqlTable(
   (table) => [
     index("connector_target_organization_id").on(table.organizationId),
     index("connector_target_connector_type").on(table.connectorType),
+    index("connector_target_type_created_id").on(table.connectorType, table.createdAt, table.id),
     index("connector_target_target_kind").on(table.targetKind),
     uniqueIndex("connector_target_instance_remote_id").on(table.connectorInstanceId, table.remoteId),
   ],

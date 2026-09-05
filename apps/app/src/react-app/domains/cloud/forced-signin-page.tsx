@@ -5,14 +5,12 @@ import { t } from "../../../i18n";
 import {
   buildDenAuthUrl,
   clearDenSession,
-  createDenClient,
   DEFAULT_DEN_BASE_URL,
   denOriginComparisonKey,
   normalizeDenBaseUrl,
   readDenBootstrapConfig,
   readDenSettings,
   resolveDenBaseUrls,
-  setDenBootstrapConfig,
 } from "../../../app/lib/den";
 import { markDesktopSignInInitiated } from "../../../app/lib/den-sign-in-intent";
 import { exchangeHandoffAndSignIn } from "../../../app/lib/den-handoff";
@@ -104,30 +102,28 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
     setStatusMessage(t("den.signing_in"));
 
     try {
-      const client = createDenClient({
-        baseUrl: nextBaseUrl,
-      });
-      // The helper exchanges, persists, and dispatches the success/error session events.
+      // The helper exchanges, commits, and dispatches the success/error session
+      // events. An enterprise activation stamp lands in the same durable
+      // commit as the enrollment it locks in.
       const result = await exchangeHandoffAndSignIn(grant, {
         baseUrl: nextBaseUrl,
-        client,
         // Pasted one-time codes are desktop-initiated sign-ins.
         desktopInitiated: true,
         fallbackErrorMessage: t("den.error_no_token"),
+        ...(readDesktopDistributionInfo().flavor === "enterprise"
+          ? {
+              bootstrap: {
+                requireSignin: true,
+                enterpriseActivation: {
+                  activatedAt: new Date().toISOString(),
+                  denBaseUrl: nextBaseUrl,
+                },
+              },
+            }
+          : {}),
       });
       if (!result.ok) {
         return false;
-      }
-
-      if (readDesktopDistributionInfo().flavor === "enterprise") {
-        await setDenBootstrapConfig({
-          baseUrl: nextBaseUrl,
-          requireSignin: true,
-          enterpriseActivation: {
-            activatedAt: new Date().toISOString(),
-            denBaseUrl: nextBaseUrl,
-          },
-        });
       }
 
       if (developerMode) {

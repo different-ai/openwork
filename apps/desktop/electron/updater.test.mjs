@@ -37,6 +37,8 @@ let isolatedUpdaterImportId = 0;
 function fakeUpdaterHarness({ version }) {
   const listeners = new Map();
   const calls = [];
+  const feeds = [];
+  const downloadFeeds = [];
   const updater = {
     autoDownload: true,
     autoInstallOnAppQuit: false,
@@ -44,16 +46,17 @@ function fakeUpdaterHarness({ version }) {
     allowPrerelease: false,
     allowDowngrade: false,
     on: (name, fn) => listeners.set(name, fn),
-    setFeedURL: () => {},
+    setFeedURL: (feed) => feeds.push(feed),
     checkForUpdates: async () => ({ updateInfo: { version } }),
     downloadUpdate: async () => {
       calls.push("download");
+      downloadFeeds.push(feeds.at(-1));
     },
     quitAndInstall: () => {
       calls.push("quitAndInstall");
     },
   };
-  return { updater, listeners, calls };
+  return { updater, listeners, calls, feeds, downloadFeeds };
 }
 
 async function registerFakeUpdaterIpc({ version }) {
@@ -516,6 +519,8 @@ describe("downloaded update lifecycle", () => {
 
       assert.equal((await check(null, "stable")).available, true);
       assert.deepEqual(await download(), { ok: true });
+      assert.equal(updater.autoInstallOnAppQuit, true);
+      assert.deepEqual(calls, ["download"], "downloading must not quit the app");
       updater.checkForUpdates = async () => {
         throw new Error("network flake");
       };
@@ -614,6 +619,94 @@ describe("release channel changes", () => {
       });
     } finally {
       await rm(userData, { recursive: true, force: true });
+    }
+  });
+
+  it("does not let a check overwrite the selected channel", {
+    skip: process.platform !== "darwin",
+  }, async () => {
+    const { tempDir, handlers } = await registerFakeUpdaterIpc({
+      version: "0.18.0",
+    });
+    try {
+      const check = handlers.get("openwork:updater:check");
+      const setChannel = handlers.get("openwork:updater:setChannel");
+      const getChannel = handlers.get("openwork:updater:getChannel");
+
+      assert.equal((await setChannel(null, "alpha")).channel, "alpha");
+      assert.equal((await check(null, "stable")).channel, "stable");
+      assert.equal((await getChannel()).channel, "alpha");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("downloads from the channel used by the successful check", {
+    skip: process.platform !== "darwin",
+  }, async () => {
+    const { tempDir, handlers, downloadFeeds } = await registerFakeUpdaterIpc({
+      version: "0.18.0-alpha.1",
+    });
+    try {
+      const check = handlers.get("openwork:updater:check");
+      const download = handlers.get("openwork:updater:download");
+
+      assert.equal((await check(null, "alpha")).channel, "alpha");
+      assert.deepEqual(await download(), { ok: true });
+      assert.equal(
+        downloadFeeds.at(-1)?.url,
+        "https://github.com/different-ai/openwork/releases/download/alpha-macos-latest",
+      );
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps Alpha selected when a Stable check is already in flight", {
+    skip: process.platform !== "darwin",
+  }, async () => {
+    const { tempDir, handlers, updater, feeds } = await registerFakeUpdaterIpc({
+      version: "0.18.0",
+    });
+    /** @type {{ finish: null | (() => void) }} */
+    const stableCheckControl = { finish: null };
+    const stableCheckStarted = new Promise((resolve) => {
+      updater.checkForUpdates = () => new Promise((finish) => {
+        stableCheckControl.finish = () => finish({ updateInfo: { version: "0.18.0" } });
+        resolve();
+        updater.checkForUpdates = async () => ({ updateInfo: { version: "0.18.0-alpha.1" } });
+      });
+    });
+    try {
+      const check = handlers.get("openwork:updater:check");
+      const setChannel = handlers.get("openwork:updater:setChannel");
+      const getChannel = handlers.get("openwork:updater:getChannel");
+
+      const stableCheck = check(null, "stable");
+      await stableCheckStarted;
+      const alphaSelection = setChannel(null, "alpha");
+      const alphaCheck = check(null, "alpha");
+      const finishStableCheck = stableCheckControl.finish;
+      if (!finishStableCheck) throw new Error("Stable update check did not start.");
+      finishStableCheck();
+
+      assert.equal((await stableCheck).channel, "stable");
+      assert.equal((await alphaSelection).channel, "alpha");
+      assert.equal((await alphaCheck).channel, "alpha");
+      assert.equal((await getChannel()).channel, "alpha");
+      assert.equal(
+        JSON.parse(await readFile(
+          path.join(tempDir, "userData", "electron-updater-channel.v1.json"),
+          "utf8",
+        )).channel,
+        "alpha",
+      );
+      assert.equal(
+        feeds.at(-1)?.url,
+        "https://github.com/different-ai/openwork/releases/download/alpha-macos-latest",
+      );
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
     }
   });
 });

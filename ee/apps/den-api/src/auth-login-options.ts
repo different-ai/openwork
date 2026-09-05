@@ -5,6 +5,19 @@ export type LoginOptionAccount = {
   hasPassword: boolean
 }
 
+const BETTER_AUTH_SECURE_SESSION_COOKIES = [
+  "__Secure-openwork-den.session_token",
+  "__Secure-better-auth.session_token",
+] as const
+
+export function buildLoginOptionsSessionCookieClearHeaders(cookieDomain?: string) {
+  const normalizedDomain = cookieDomain?.trim().toLowerCase()
+  return BETTER_AUTH_SECURE_SESSION_COOKIES.flatMap((cookieName) => {
+    const expiredCookie = `${cookieName}=; Max-Age=0; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; HttpOnly; SameSite=Lax`
+    return normalizedDomain ? [`${expiredCookie}; Domain=${normalizedDomain}`, expiredCookie] : [expiredCookie]
+  })
+}
+
 export function normalizeLoginEmail(email: string) {
   return email.trim().toLowerCase()
 }

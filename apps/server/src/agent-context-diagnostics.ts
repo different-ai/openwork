@@ -52,7 +52,9 @@ import {
 import { resolveWorkspaceOpencodeConnection } from "./opencode-connection.js";
 import { buildOpenworkRuntimeConfigObjectFromSnapshot } from "./openwork-runtime-config.js";
 import {
+  ENGINE_GLOBAL_RUNTIME_CONFIG_ID,
   inspectRuntimeOpencodeConfigState,
+  mergeRuntimeOpencodeConfigLayers,
   runtimeMcpMap,
   type RuntimeOpencodeConfig,
   type RuntimeOpencodeConfigInspection,
@@ -336,7 +338,7 @@ function promptEvidence(configuredAgent: Record<string, unknown> | null) {
     markers: {
       searchCapabilities: prompt.includes("search_capabilities"),
       executeCapability: prompt.includes("execute_capability"),
-      memoryBank: prompt.includes("Memory Bank"),
+      artifacts: prompt.includes("## OpenWork Artifacts"),
     },
   };
 }
@@ -1289,10 +1291,20 @@ export async function runAgentContextDiagnostics(input: {
   const managedVaultInspection = input.workspace.workspaceType === "remote"
     ? null
     : await inspectLocalManagedMcpVault(input.config);
+  const globalRuntimeInspection = await inspectRuntimeOpencodeConfigState(
+    input.config,
+    ENGINE_GLOBAL_RUNTIME_CONFIG_ID,
+    { signal: input.dependencies?.signal },
+  );
+  const runtime = input.workspace.workspaceType === "remote"
+    ? globalRuntimeInspection.config
+    : mergeRuntimeOpencodeConfigLayers(globalRuntimeInspection.config, runtimeInspection.config);
   input.dependencies?.signal?.throwIfAborted();
   const runtimeDuration = elapsed(runtimeStarted, now);
-  const runtime = runtimeInspection.config;
-  const expectedRuntimeConfig = buildOpenworkRuntimeConfigObjectFromSnapshot(runtime);
+  // The injected engine config file is rendered from the ENGINE_GLOBAL row
+  // only; the merged per-workspace runtime row informs MCP inventory below
+  // but is not part of the injected file.
+  const expectedRuntimeConfig = buildOpenworkRuntimeConfigObjectFromSnapshot(globalRuntimeInspection.config);
   const expectedAgents = isRecord(expectedRuntimeConfig.agent) ? expectedRuntimeConfig.agent : {};
   const expectedAgent = isRecord(expectedAgents.openwork) ? expectedAgents.openwork : null;
   const effectiveOpenworkAgent = effectiveEngine?.agents.find((agent) => agent.name === "openwork") ?? null;
@@ -1314,7 +1326,7 @@ export async function runAgentContextDiagnostics(input: {
   const expectedPrompt = promptEvidence(expectedAgent);
   const promptMarkersPresent = prompt.markers.searchCapabilities
     && prompt.markers.executeCapability
-    && prompt.markers.memoryBank;
+    && prompt.markers.artifacts;
   const canonicalPromptDigestMatch = prompt.sha256 !== null
     && expectedPrompt.sha256 !== null
     && prompt.sha256 === expectedPrompt.sha256;

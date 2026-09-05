@@ -34,7 +34,6 @@ The helper prints these values. Capture them exactly:
 ```bash
 DEN_WEB_URL="<printed Den Web URL>"
 DEN_API_URL="<printed Den API URL>"
-DEN_WORKER_PROXY_URL="<printed Worker Proxy URL>"
 ```
 
 ## Seed Demo Data
@@ -121,7 +120,6 @@ Daytona cloud demo is running and seeded.
 **Demo Access**
 - Den Web: <DEN_WEB_URL>
 - Den API: <DEN_API_URL>
-- Worker Proxy: <DEN_WORKER_PROXY_URL>
 - Sandbox: `<SANDBOX>`
 - Sandbox ID: `<id from daytona info>`
 

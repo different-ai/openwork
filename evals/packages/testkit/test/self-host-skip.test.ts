@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { Place } from "@openwork/env";
 import { selfHostServer } from "../src/self-host.ts";
-import type { Place } from "../src/place.ts";
 
 test("selfHostServer skips Daytona placement", async () => {
   const place: Place = {

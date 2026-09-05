@@ -9,6 +9,7 @@ import {
   legacyDesktopBootstrapPath,
   MAX_CONFIG_ROOT_LENGTH,
   normalizeWorkspaceRootPath,
+  opencodeDbCandidates,
   openworkEnvStorePath,
   openworkServerConfigPath,
   resolveGlobalOpencodeConfigPath,
@@ -77,6 +78,28 @@ describe("workspace root paths", () => {
 
   test("applies Windows validation only when Windows is injected", () => {
     expect(normalizeWorkspaceRootPath("\\\\?\\C:", { platform: "linux" })).toBe("\\\\?\\C:");
+  });
+});
+
+describe("OpenCode database paths", () => {
+  test("uses the production channel name and honors explicit overrides", () => {
+    expect(opencodeDbCandidates({
+      env: {},
+      homeDir: "/Users/ada",
+      platform: "darwin",
+      defaultChannel: "latest",
+    })).toContain("/Users/ada/Library/Application Support/opencode/opencode.db");
+    expect(opencodeDbCandidates({
+      env: { OPENCODE_CHANNEL: "preview" },
+      dataDirs: ["/tmp/opencode"],
+      homeDir: "/Users/ada",
+      platform: "darwin",
+    })[0]).toBe("/tmp/opencode/opencode-preview.db");
+    expect(opencodeDbCandidates({
+      env: { OPENCODE_DB: "/tmp/production.db" },
+      homeDir: "/Users/ada",
+      platform: "darwin",
+    })).toEqual(["/tmp/production.db"]);
   });
 });
 

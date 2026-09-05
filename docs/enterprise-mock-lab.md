@@ -354,30 +354,9 @@ No single test is allowed to stand in for all the others.
 | Protocol integration | OAuth discovery/token path, MCP initialize/lifecycle, pagination, tool calls, JSON/SSE, exact injected failures | Package integration tests |
 | Control-plane security | Loopback configuration, login/rate limit, session cookie, Origin/CSRF, write-only secrets, safe errors | `pnpm --filter @openwork-ee/enterprise-mock-lab test` |
 | App build | EE app imports only the public package contract and compiles as a standalone process | `pnpm --filter @openwork-ee/enterprise-mock-lab build` |
-| Legacy standalone journey | Real lab process and browser: create, start, inject fault, match first phase, reset, recover, delete | `pnpm evals:legacy:demo --flow enterprise-mock-lab --cdp-url <disposable-cdp-url>` |
+| Browser journey | Real lab process and browser: create, start, inject fault, match first phase, reset, recover, delete | The legacy flow runner was removed; executable coverage lives in `evals/specs/`. |
 | Future Den consumer | Den connects over the instance URL and renders the same phase/category without importing the lab | Separate follow-up PR and Den-specific tests |
 | Live-provider conformance | Target tenant, product, patch, permissions, policy, schemas, and provider IDs match reality | Approved Microsoft/ServiceNow test tenant; never silently run by this lab |
-
-The frozen legacy flow launches its own lab with generated synthetic secrets and random loopback ports. It does not start Den or modify a Den connection. Use a disposable Chrome/CDP profile because the flow navigates the selected page target to the lab UI.
-
-For example, on macOS:
-
-```bash
-export PROOF_CDP_PORT=9927
-export PROOF_BROWSER_PROFILE="$(mktemp -d)"
-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --headless=new \
-  --remote-debugging-address=127.0.0.1 \
-  --remote-debugging-port="$PROOF_CDP_PORT" \
-  --user-data-dir="$PROOF_BROWSER_PROFILE" \
-  about:blank >/dev/null 2>&1 &
-export PROOF_BROWSER_PID=$!
-trap 'kill "$PROOF_BROWSER_PID" 2>/dev/null || true; rm -rf "$PROOF_BROWSER_PROFILE"' EXIT
-
-pnpm evals:legacy:demo --flow enterprise-mock-lab --cdp-url "http://127.0.0.1:$PROOF_CDP_PORT"
-```
-
-Review the generated legacy `evals/results/<run-id>/fraimz.html`. This filename is retained only by the frozen runner. A valid run contains separate screenshots for the empty private lab, running ServiceNow endpoint, matched provider-authorization failure, explicit reset, matched healthy recovery, and clean deletion.
 
 ## Extension rules for `enterprise-*`
 

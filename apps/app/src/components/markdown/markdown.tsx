@@ -8,17 +8,22 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { useOpenTargets } from "@/lib/target-provider";
+import { useOpenArtifactPath } from "@/lib/artifacts";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 
 import { applyTextHighlights } from "./text-highlights";
 import {
+  createStreamingMarkdownRenderer,
   hasFencedCodeBlock,
   renderHighlightedMarkdownHtml,
   renderMarkdownHtml,
   setCodeCopyButtonState,
+  setCodeWrapButtonState,
   syncMarkdownImagePreviews,
+  type MarkdownBlockHtml,
 } from "./markdown-primitive";
 import { LinkActionMenu } from "./link-action-menu";
+import { useMermaidEnhancer } from "./mermaid";
 import { useSelectionStableValue } from "./selection-stability";
 
 export { renderHighlightedMarkdownHtml, renderMarkdownHtml } from "./markdown-primitive";
@@ -92,6 +97,15 @@ type MarkdownBlockInnerProps = {
   "ref" | "className" | "children" | "dangerouslySetInnerHTML"
 >;
 
+/**
+ * A streaming answer renders one payload per top-level block so a new token
+ * only re-parses and repaints the block it lands in; a settled answer renders
+ * the whole document at once, exactly as history does.
+ */
+type RenderedMarkdown =
+  | { kind: "document"; html: string }
+  | { kind: "blocks"; blocks: MarkdownBlockHtml[] };
+
 function MarkdownBlockInner({
   className,
   text,
@@ -101,12 +115,23 @@ function MarkdownBlockInner({
 }: MarkdownBlockInnerProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const codeCopyResetTimers = useRef(new Map<HTMLButtonElement, number>());
+  const codeWrapStates = useRef(new Map<number, boolean>());
   const { openTargets, onOpenTarget } = useOpenTargets();
+  const openArtifactPath = useOpenArtifactPath();
   const [linkMenu, setLinkMenu] = useState<{ target: OpenTarget; rect: DOMRect } | null>(null);
   const [imagePreview, setImagePreview] = useState<{ src: string; alt: string } | null>(null);
-  const syncHtml = useMemo(() => {
-    return renderMarkdownHtml(text);
-  }, [text]);
+  const [streamingRenderer] = useState(() => createStreamingMarkdownRenderer("chat"));
+  const streamedBlocks = useMemo(
+    () => (streaming ? streamingRenderer.render(text) : null),
+    [streaming, streamingRenderer, text],
+  );
+  useEffect(() => {
+    if (!streaming) streamingRenderer.reset();
+  }, [streaming, streamingRenderer]);
+  const syncHtml = useMemo(
+    () => (streamedBlocks ? "" : renderMarkdownHtml(text)),
+    [streamedBlocks, text],
+  );
   const [highlightedHtml, setHighlightedHtml] = useState<{ text: string; html: string } | null>(null);
 
   const handleCodeBlockCopy = useCallback(async (button: HTMLButtonElement, code: string) => {
@@ -129,6 +154,22 @@ function MarkdownBlockInner({
     }, CODE_COPY_RESET_DELAY_MS);
     codeCopyResetTimers.current.set(button, resetTimer);
   }, []);
+
+  const syncCodeWrapStates = useCallback(() => {
+    const root = rootRef.current;
+    if (!root) return;
+
+    for (const [index, codeBlock] of root.querySelectorAll("[data-openwork-code-block]").entries()) {
+      const button = codeBlock.querySelector("[data-openwork-code-wrap]");
+      if (button instanceof HTMLButtonElement) {
+        setCodeWrapButtonState(button, codeWrapStates.current.get(index) ?? false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    codeWrapStates.current.clear();
+  }, [text]);
 
   useEffect(() => {
     const timers = codeCopyResetTimers.current;
@@ -162,13 +203,24 @@ function MarkdownBlockInner({
     };
   }, [streaming, text]);
 
-  const candidateHtml = !streaming && highlightedHtml?.text === text ? highlightedHtml.html : syncHtml;
-  const html = useSelectionStableValue(rootRef, candidateHtml);
-  const stableInnerHtml = useMemo(() => ({ __html: html }), [html]);
-
+  const candidate = useMemo<RenderedMarkdown>(() => {
+    if (!streaming && highlightedHtml?.text === text) return { kind: "document", html: highlightedHtml.html };
+    if (streamedBlocks) return { kind: "blocks", blocks: streamedBlocks };
+    return { kind: "document", html: syncHtml };
+  }, [highlightedHtml, streamedBlocks, streaming, syncHtml, text]);
+  const rendered = useSelectionStableValue(rootRef, candidate);
   // Keep the innerHTML prop referentially stable too: a fresh wrapper object
   // can make an unrelated React render replace selected text nodes even when
   // the HTML string itself is unchanged.
+  const stableInnerHtml = useMemo(
+    () => ({ __html: rendered.kind === "document" ? rendered.html : "" }),
+    [rendered],
+  );
+  const isEmpty = rendered.kind === "document"
+    ? !rendered.html
+    : rendered.blocks.every((block) => !block.__html);
+  useMermaidEnhancer(rootRef, rendered, !streaming);
+
   useEffect(() => {
     const root = rootRef.current;
 
@@ -182,8 +234,9 @@ function MarkdownBlockInner({
       }
 
       applyTextHighlights(root, highlightQuery ?? "");
+      syncCodeWrapStates();
     });
-  }, [highlightQuery, html]);
+  }, [highlightQuery, rendered]);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -211,6 +264,30 @@ function MarkdownBlockInner({
         return;
       }
 
+      const inlineCodePath = event.target.closest("[data-openwork-inline-code-path]");
+      if (inlineCodePath instanceof HTMLElement) {
+        event.preventDefault();
+        event.stopPropagation();
+        openArtifactPath(inlineCodePath.dataset.openworkInlineCodePath ?? "");
+        return;
+      }
+
+      const wrapButton = event.target.closest("[data-openwork-code-wrap]");
+      if (wrapButton instanceof HTMLButtonElement) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const codeBlock = wrapButton.closest("[data-openwork-code-block]");
+        const codeBlocks = Array.from(root.querySelectorAll("[data-openwork-code-block]"));
+        const index = codeBlock ? codeBlocks.indexOf(codeBlock) : -1;
+        if (index >= 0) {
+          const wrapped = !(codeWrapStates.current.get(index) ?? false);
+          codeWrapStates.current.set(index, wrapped);
+          setCodeWrapButtonState(wrapButton, wrapped);
+        }
+        return;
+      }
+
       const chevron = event.target.closest("[data-openwork-link-chevron]");
       if (chevron instanceof HTMLElement) {
         event.preventDefault();
@@ -230,7 +307,7 @@ function MarkdownBlockInner({
 
         if (target && onOpenTarget) {
           event.preventDefault();
-          onOpenTarget(target, { external: true });
+          onOpenTarget(target);
           return;
         }
       }
@@ -245,13 +322,24 @@ function MarkdownBlockInner({
       setImagePreview({ src: image.src, alt: image.alt || "Image" });
     };
 
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      if (!(event.target instanceof HTMLElement) || !event.target.matches("[data-openwork-inline-code-path]")) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      openArtifactPath(event.target.dataset.openworkInlineCodePath ?? "");
+    };
+
     root.addEventListener("load", handleLoad, true);
     root.addEventListener("click", handleClick);
+    root.addEventListener("keydown", handleKeyDown);
 
     if (globalThis.ResizeObserver === undefined) {
       return () => {
         root.removeEventListener("load", handleLoad, true);
         root.removeEventListener("click", handleClick);
+        root.removeEventListener("keydown", handleKeyDown);
       };
     }
 
@@ -262,21 +350,35 @@ function MarkdownBlockInner({
       observer.disconnect();
       root.removeEventListener("load", handleLoad, true);
       root.removeEventListener("click", handleClick);
+      root.removeEventListener("keydown", handleKeyDown);
     };
-  }, [handleCodeBlockCopy, html, onOpenTarget, openTargets]);
+  }, [handleCodeBlockCopy, onOpenTarget, openArtifactPath, openTargets, rendered]);
 
-  if (!html) {
+  if (isEmpty) {
     return null;
   }
 
+  const rootClassName = cn("markdown-content max-w-none select-text text-foreground", className);
+
   return (
     <>
-      <div
-        ref={rootRef}
-        className={cn("markdown-content max-w-none select-text text-foreground", className)}
-        dangerouslySetInnerHTML={stableInnerHtml}
-        {...props}
-      />
+      {rendered.kind === "blocks" ? (
+        // Keyed by kind so the switch to the settled document remounts the root
+        // instead of mixing children with dangerouslySetInnerHTML.
+        <div key="blocks" ref={rootRef} className={rootClassName} {...props}>
+          {rendered.blocks.map((block, index) => (
+            block.__html ? <div key={index} dangerouslySetInnerHTML={block} /> : null
+          ))}
+        </div>
+      ) : (
+        <div
+          key="document"
+          ref={rootRef}
+          className={rootClassName}
+          dangerouslySetInnerHTML={stableInnerHtml}
+          {...props}
+        />
+      )}
       {linkMenu && onOpenTarget ? (
         <LinkActionMenu
           target={linkMenu.target}
@@ -291,13 +393,13 @@ function MarkdownBlockInner({
           if (!open) setImagePreview(null);
         }}
       >
-        <DialogContent className="max-h-[90vh] w-auto max-w-[min(90vw,56rem)] overflow-hidden border-none bg-transparent p-0 shadow-none sm:max-w-[min(90vw,56rem)]">
+        <DialogContent className="max-h-[95vh] w-auto max-w-[95vw] overflow-hidden border-none bg-transparent p-0 shadow-none ring-0 lg:w-max lg:max-w-[95vw]">
           <DialogTitle className="sr-only">{imagePreview?.alt ?? "Image"}</DialogTitle>
           {imagePreview ? (
             <img
               src={imagePreview.src}
               alt={imagePreview.alt}
-              className="max-h-[85vh] w-auto max-w-full rounded-xl object-contain"
+              className="max-h-[92vh] w-auto max-w-full rounded-xl object-contain"
             />
           ) : null}
         </DialogContent>

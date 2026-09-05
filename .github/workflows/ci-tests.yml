@@ -8,18 +8,170 @@ on:
     branches:
       - dev
 
+  schedule:
+    - cron: "37 7 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: openwork-tests-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
+
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
-  openwork-tests:
-    runs-on: ${{ matrix.os }}
+  classify-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      lane: ${{ steps.classify.outputs.lane }}
+    steps:
+      - name: Classify changed files
+        id: classify
+        uses: actions/github-script@v8
+        with:
+          script: |
+            if (context.eventName !== "pull_request") {
+              core.setOutput("lane", "full")
+              core.info("Selected lane: full")
+              return
+            }
 
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100,
+            })
+            const snapshotOnly = files.length === 1
+              && files[0].filename === "ee/apps/inference/src/models/base.json"
+            const docsOnly = files.length > 0
+              && files.every((file) => file.filename.startsWith("packages/docs/"))
+            const lane = snapshotOnly ? "snapshot" : docsOnly ? "docs" : "full"
+            core.setOutput("lane", lane)
+            core.info(`Selected lane: ${lane}`)
+
+  openwork-tests-core:
+    needs: classify-changes
+    if: needs.classify-changes.outputs.lane == 'full'
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup tests
+        id: setup
+        uses: ./.github/actions/setup-tests
+      - name: Run core product regressions
+        run: pnpm test:core
+
+  openwork-tests-build:
+    needs: classify-changes
+    if: needs.classify-changes.outputs.lane == 'full'
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Cache Electron and pinned sidecars
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+            apps/desktop/resources/sidecars
+          key: ${{ runner.os }}-${{ runner.arch }}-desktop-smoke-${{ hashFiles('constants.json', 'pnpm-lock.yaml', 'apps/desktop/scripts/prepare-sidecar.mjs') }}
+      - name: Setup tests
+        id: setup
+        uses: ./.github/actions/setup-tests
+      - name: Check outbound access manifest
+        run: pnpm check:outbound-access
+      # Test source resolution differs from packaged Node plugin resolution.
+      - name: Bundle the server plugins the way packaged builds do
+        run: |
+          rm -rf packages/types/dist
+          pnpm --filter openwork-server build
+      - name: Typecheck Electron main against the IPC contract
+        run: pnpm --filter @openwork/desktop typecheck:electron
+      - name: Prepare virtual display
+        run: |
+          if ! command -v xvfb-run >/dev/null || ! command -v xdpyinfo >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y xvfb x11-utils
+          fi
+      - name: Package and smoke-test the installed desktop
+        timeout-minutes: 7
+        env:
+          OPENWORK_PACKAGED_SMOKE_DIR: ${{ runner.temp }}/openwork-packaged-smoke
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: node apps/desktop/scripts/packaged-smoke.mjs --server-built
+      - name: Upload packaged smoke evidence and timings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaged-desktop-smoke-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/openwork-packaged-smoke/timing.json
+            ${{ runner.temp }}/openwork-packaged-smoke/profiles/**/electron.log
+            evals/results/test-runs/**
+          retention-days: 7
+
+  # Broad tests, source-layout guards, and test-framework checks remain visible
+  # here without blocking unrelated PRs. No retries or ignored failures.
+  openwork-tests-extended:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: [blacksmith-4vcpu-ubuntu-2204, macos-14]
+        os: [blacksmith-16vcpu-ubuntu-2204, blacksmith-12vcpu-macos-15]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup tests
+        id: setup
+        uses: ./.github/actions/setup-tests
+      - name: Run all app tests
+        if: (success() || failure()) && steps.setup.outcome == 'success'
+        run: pnpm --filter @openwork/app test
+      - name: Run all server tests
+        if: (success() || failure()) && steps.setup.outcome == 'success'
+        run: pnpm --filter openwork-server test
+      - name: Run Den API tests
+        if: (success() || failure()) && steps.setup.outcome == 'success'
+        run: pnpm --filter @openwork-ee/den-api test
+      - name: Run all desktop tests
+        if: (success() || failure()) && steps.setup.outcome == 'success'
+        run: pnpm --filter @openwork/desktop test
+      - name: Run release script tests
+        if: (success() || failure()) && steps.setup.outcome == 'success'
+        run: node --test scripts/release/*.test.mjs
+      - name: Run test-framework checks
+        if: (success() || failure()) && steps.setup.outcome == 'success'
+        run: pnpm test:eval-runner
+      - name: Run all PR specs
+        if: (success() || failure()) && steps.setup.outcome == 'success'
+        run: pnpm sdk:build && pnpm evals:pr
+      - name: Run engine smoke tests
+        if: (success() || failure()) && steps.setup.outcome == 'success'
+        run: pnpm test:e2e
+      - name: Build server plugins
+        if: (success() || failure()) && steps.setup.outcome == 'success'
+        run: pnpm --filter openwork-server build
+      - name: Typecheck Electron
+        if: (success() || failure()) && steps.setup.outcome == 'success'
+        run: pnpm --filter @openwork/desktop typecheck:electron
 
+  validate-models-snapshot:
+    needs: classify-changes
+    if: needs.classify-changes.outputs.lane == 'snapshot'
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -29,162 +181,117 @@ jobs:
         with:
           node-version: 24
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11.4.0
-
-      - name: Install OpenCode CLI
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
+      - name: Validate models snapshot
         run: |
           set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFile } from "node:fs/promises"
 
-          repo="${OPENCODE_GITHUB_REPO:-anomalyco/opencode}"
-          version="$(node -e "const fs=require('fs'); const parsed=JSON.parse(fs.readFileSync('constants.json','utf8')); process.stdout.write(String(parsed.opencodeVersion||'').trim().replace(/^v/,''));")"
-          version="$(echo "$version" | tr -d '\r\n' | sed 's/^v//')"
+          const path = "ee/apps/inference/src/models/base.json"
+          const fail = (message) => { throw new Error(`${path}: ${message}`) }
+          const isRecord = (value) => Boolean(value)
+            && typeof value === "object"
+            && !Array.isArray(value)
+          const isStringArray = (value) => Array.isArray(value)
+            && value.length > 0
+            && value.every((item) => typeof item === "string")
 
-          if [ -z "$version" ]; then
-            echo "Unable to resolve OpenCode version from constants.json." >&2
-            exit 1
-          fi
+          const parsed = JSON.parse(await readFile(path, "utf8"))
+          if (!isRecord(parsed)) fail("expected a JSON object")
 
-          arch="$(uname -m)"
-          case "${RUNNER_OS}" in
-            Linux)
-              if [ "$arch" = "aarch64" ] || [ "$arch" = "arm64" ]; then
-                opencode_asset="opencode-linux-arm64.tar.gz"
-              else
-                opencode_asset="opencode-linux-x64-baseline.tar.gz"
-              fi
-              ;;
-            macOS)
-              if [ "$arch" = "arm64" ]; then
-                opencode_asset="opencode-darwin-arm64.zip"
-              else
-                opencode_asset="opencode-darwin-x64-baseline.zip"
-              fi
-              ;;
-            *)
-              echo "Unsupported OS: ${RUNNER_OS}" >&2
-              exit 1
-              ;;
-          esac
+          const providers = Object.entries(parsed)
+          if (providers.length === 0) fail("expected at least one provider")
 
-          url="https://github.com/${repo}/releases/download/v${version}/${opencode_asset}"
-          tmp_dir="$RUNNER_TEMP/opencode"
-          extract_dir="$tmp_dir/extracted"
-          rm -rf "$tmp_dir"
-          mkdir -p "$extract_dir"
+          for (const [providerId, provider] of providers) {
+            if (!isRecord(provider)) fail(`provider ${providerId} was not an object`)
+            if (provider.id !== providerId) fail(`provider ${providerId} was missing a matching id`)
+            if (typeof provider.name !== "string" || provider.name.length === 0) {
+              fail(`provider ${providerId} was missing a name`)
+            }
+            if (!isRecord(provider.models) || Object.keys(provider.models).length === 0) {
+              fail(`provider ${providerId} did not include models`)
+            }
 
-          curl_headers=()
-          if [ -n "${GITHUB_TOKEN:-}" ]; then
-            curl_headers+=( -H "Authorization: Bearer ${GITHUB_TOKEN}" )
-          fi
+            for (const [modelId, model] of Object.entries(provider.models)) {
+              if (!isRecord(model)) fail(`model ${providerId}.${modelId} was not an object`)
+              if (model.id !== modelId) fail(`model ${providerId}.${modelId} was missing a matching id`)
+              if (typeof model.name !== "string" || model.name.length === 0) {
+                fail(`model ${providerId}.${modelId} was missing a name`)
+              }
+              if (!isRecord(model.modalities)) {
+                fail(`model ${providerId}.${modelId} was missing modalities`)
+              }
+              if (!isStringArray(model.modalities.input)) {
+                fail(`model ${providerId}.${modelId} was missing input modalities`)
+              }
+              if (!isStringArray(model.modalities.output)) {
+                fail(`model ${providerId}.${modelId} was missing output modalities`)
+              }
+              if (!isRecord(model.limit)) fail(`model ${providerId}.${modelId} was missing limits`)
+            }
+          }
+          NODE
 
-          curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 "${curl_headers[@]}" -o "$tmp_dir/$opencode_asset" "$url"
-
-          if [[ "$opencode_asset" == *.tar.gz ]]; then
-            tar -xzf "$tmp_dir/$opencode_asset" -C "$extract_dir"
-          else
-            unzip -q "$tmp_dir/$opencode_asset" -d "$extract_dir"
-          fi
-
-          if [ -f "$extract_dir/opencode" ]; then
-            bin_path="$extract_dir/opencode"
-          elif [ -f "$extract_dir/opencode.exe" ]; then
-            bin_path="$extract_dir/opencode.exe"
-          else
-            echo "OpenCode binary not found in archive" >&2
-            ls -la "$extract_dir"
-            exit 1
-          fi
-
-          install_dir="$HOME/.opencode/bin"
-          mkdir -p "$install_dir"
-          cp "$bin_path" "$install_dir/opencode"
-          chmod 755 "$install_dir/opencode"
-          echo "$install_dir" >> "$GITHUB_PATH"
-
-      - name: Verify OpenCode
-        run: opencode --version
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: Get pnpm store path
-        id: pnpm-store
-        shell: bash
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache pnpm store
-        uses: actions/cache@v5
-        continue-on-error: true
+  # Docs never reach a runtime path, so a docs-only PR only needs to prove the
+  # Mintlify site still builds and has no broken pages, anchors, or images.
+  validate-docs:
+    needs: classify-changes
+    if: needs.classify-changes.outputs.lane == 'docs'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/docs
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Setup Node
+        uses: actions/setup-node@v6
         with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml', 'evals/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile --prefer-offline
-
-      - name: Install eval workspace
-        run: pnpm --dir evals install --frozen-lockfile --prefer-offline
-
-      - name: Run eval spec lane
-        run: pnpm --dir evals run test:pr
-
-      - name: Run app unit tests
-        run: pnpm --filter @openwork/app test
-
-      - name: Run server unit tests
-        run: pnpm --filter openwork-server test
-
-      - name: Run desktop unit tests
-        run: pnpm --filter @openwork/desktop test
-
-      - name: Run release script tests
-        run: node --test scripts/release/*.test.mjs
-
-      - name: Run eval runner unit tests
-        run: pnpm test:eval-runner
-
-      - name: Check outbound access manifest
-        run: pnpm check:outbound-access
-
-      # The packaged builds bundle the server plugins with `--target node`,
-      # which resolves workspace packages through their published exports
-      # rather than TypeScript paths. Typechecks and bun tests never take that
-      # route, so an unbuildable import reached dev twice before this ran here.
-      - name: Bundle the server plugins the way packaged builds do
-        run: |
-          set -euo pipefail
-          rm -rf packages/types/dist
-          pnpm --filter openwork-server build
-
-      - name: Typecheck Electron main against the IPC contract
-        run: pnpm --filter @openwork/desktop typecheck:electron
-
-      - name: Run e2e tests
-        run: pnpm --filter @openwork/app test:e2e
+          node-version: 24
+      - name: Validate the docs build
+        run: npx -y mint@4.2.868 validate
+      - name: Check for broken links and images
+        run: npx -y mint@4.2.868 broken-links
 
   # Single stable context for branch rulesets to require. Green only when
-  # every openwork-tests matrix leg succeeded; runs even when legs fail or
-  # are cancelled so the required check always reports instead of hanging.
+  # the lane selected by classification succeeds; always reports.
   openwork-tests-required:
-    needs: openwork-tests
+    needs: [classify-changes, openwork-tests-core, openwork-tests-build, validate-models-snapshot, validate-docs]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Require every openwork-tests matrix leg to pass
+      - name: Require the selected test lane to pass
         env:
-          RESULT: ${{ needs.openwork-tests.result }}
+          CLASSIFY_RESULT: ${{ needs.classify-changes.result }}
+          LANE: ${{ needs.classify-changes.outputs.lane }}
+          CORE_RESULT: ${{ needs.openwork-tests-core.result }}
+          BUILD_RESULT: ${{ needs.openwork-tests-build.result }}
+          SNAPSHOT_RESULT: ${{ needs.validate-models-snapshot.result }}
+          DOCS_RESULT: ${{ needs.validate-docs.result }}
         run: |
-          echo "openwork-tests result: $RESULT"
-          if [ "$RESULT" != "success" ]; then
-            echo "One or more OpenWork Tests matrix legs did not succeed; blocking merge." >&2
+          echo "classification: $CLASSIFY_RESULT ($LANE)"
+          echo "core product regressions: $CORE_RESULT"
+          echo "packaging and IPC contract: $BUILD_RESULT"
+          echo "snapshot validation: $SNAPSHOT_RESULT"
+          echo "docs validation: $DOCS_RESULT"
+
+          if [ "$CLASSIFY_RESULT" != "success" ]; then
+            echo "Changed-file classification did not succeed; blocking merge." >&2
             exit 1
           fi
+
+          case "$LANE" in
+            full)
+              [ "$CORE_RESULT" = "success" ] && [ "$BUILD_RESULT" = "success" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] && [ "$DOCS_RESULT" = "skipped" ] || exit 1
+              ;;
+            snapshot)
+              [ "$SNAPSHOT_RESULT" = "success" ] && [ "$CORE_RESULT" = "skipped" ] && [ "$BUILD_RESULT" = "skipped" ] && [ "$DOCS_RESULT" = "skipped" ] || exit 1
+              ;;
+            docs)
+              [ "$DOCS_RESULT" = "success" ] && [ "$CORE_RESULT" = "skipped" ] && [ "$BUILD_RESULT" = "skipped" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] || exit 1
+              ;;
+            *)
+              echo "Changed-file classification returned an unexpected value; blocking merge." >&2
+              exit 1
+              ;;
+          esac

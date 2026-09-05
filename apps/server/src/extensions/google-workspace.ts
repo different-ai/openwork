@@ -1,10 +1,19 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import type { LookupAddress, LookupAllOptions } from "node:dns";
+import { lookup } from "node:dns/promises";
 import { createServer, type Server } from "node:http";
-import { chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { isIP, type LookupFunction } from "node:net";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { openworkServerConfigPath } from "@openwork/paths";
+import {
+  Agent,
+  fetch as undiciFetch,
+  type RequestInit as UndiciRequestInit,
+} from "undici";
 
 import { ApiError } from "../errors.js";
+import { isLocalManagedMcpPrivateAddress } from "../local-managed-mcp-url-guard.js";
 import { externalFetch } from "../server-fetch.js";
 import type { ServerConfig } from "../types.js";
 
@@ -13,6 +22,10 @@ export const GOOGLE_WORKSPACE_EXTENSION_ID = "google-workspace";
 const GMAIL_HARD_WRAP_MIN_LINE_LENGTH = 50;
 const GMAIL_QUOTE_BODY_LIMIT = 10_000;
 const GMAIL_REPLY_SUBJECT_RE = /^\s*(re|fwd?)\s*:/i;
+const GMAIL_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
+const GMAIL_RAW_MESSAGE_MAX_BYTES = 25 * 1024 * 1024;
+const GMAIL_ATTACHMENT_REDIRECT_LIMIT = 5;
+const GMAIL_HEADER_FOLD_LIMIT = 78;
 const UTC_WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const UTC_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const GOOGLE_WORKSPACE_DESKTOP_CLIENT_ID = "929071212606-pmkqimjhm2tnp68kbklnout0irllj99h.apps.googleusercontent.com";
@@ -51,6 +64,21 @@ function isGoogleWorkspaceOptionalFeature(value: string): value is GoogleWorkspa
   return Object.hasOwn(GOOGLE_WORKSPACE_OPTIONAL_FEATURES, value);
 }
 
+const GMAIL_DRAFT_ATTACHMENTS_SCHEMA = {
+  type: "array",
+  description: "Optional files to attach. Each item must provide exactly one of url or path.",
+  items: {
+    type: "object",
+    properties: {
+      url: { type: "string", description: "Public https URL to download and attach. Preferred over path; works from any surface." },
+      path: { type: "string", description: "Deprecated; prefer url. Workspace-relative path or authorized absolute file path." },
+      filename: { type: "string", description: "Optional attachment filename shown in Gmail." },
+      mimeType: { type: "string", description: "Optional attachment MIME type. Defaults from the download response or file extension when possible." },
+    },
+    additionalProperties: false,
+  },
+};
+
 export const GOOGLE_WORKSPACE_EXTENSION_ACTIONS = [
   {
     extensionId: GOOGLE_WORKSPACE_EXTENSION_ID,
@@ -79,7 +107,7 @@ export const GOOGLE_WORKSPACE_EXTENSION_ACTIONS = [
     extensionId: GOOGLE_WORKSPACE_EXTENSION_ID,
     action: "gmail_create_draft",
     title: "Create Gmail draft",
-    description: "Create a brand-new Gmail draft for the connected account. This does not send email. Returns draftUrl; always share it with the user so they can review and send in Gmail. Subjects starting with Re: or Fwd: are rejected here — use gmail_create_reply_draft so the thread is preserved.",
+    description: "Create a brand-new Gmail draft for a new conversation only — never for replies. This does not send email. body must contain only the new message text; never paste quoted history from an earlier email. Subjects starting with Re: or Fwd: are rejected here — use gmail_create_reply_draft so the thread is preserved. Returns draftUrl; always share it with the user so they can review and send in Gmail.",
     inputSchema: {
       type: "object",
       properties: {
@@ -88,20 +116,7 @@ export const GOOGLE_WORKSPACE_EXTENSION_ACTIONS = [
         bcc: { type: "array", items: { type: "string" }, description: "Optional BCC recipients." },
         subject: { type: "string", description: "Draft subject. Do not use Re: or Fwd: here; use gmail_create_reply_draft for replies." },
         body: { type: "string", description: "Plain text draft body. Write plain prose with no markdown syntax, separate paragraphs with blank lines, and do not hard-wrap prose." },
-        attachments: {
-          type: "array",
-          description: "Optional local files to attach. Paths may be relative to the active workspace/directory or absolute under an authorized workspace root.",
-          items: {
-            type: "object",
-            properties: {
-              path: { type: "string", description: "Workspace-relative path or authorized absolute file path." },
-              filename: { type: "string", description: "Optional attachment filename shown in Gmail." },
-              mimeType: { type: "string", description: "Optional attachment MIME type. Defaults from the file extension when possible." },
-            },
-            required: ["path"],
-            additionalProperties: false,
-          },
-        },
+        attachments: GMAIL_DRAFT_ATTACHMENTS_SCHEMA,
       },
       required: ["to", "subject", "body"],
       additionalProperties: false,
@@ -111,13 +126,14 @@ export const GOOGLE_WORKSPACE_EXTENSION_ACTIONS = [
     extensionId: GOOGLE_WORKSPACE_EXTENSION_ID,
     action: "gmail_create_reply_draft",
     title: "Create Gmail reply draft",
-    description: "Create a Gmail draft reply in an existing thread. This does not send email. Requires Gmail read access (gmail.readonly scope). OpenWork appends the quoted conversation automatically; do not include quoted history. Returns draftUrl and threadUrl; always share draftUrl with the user so they can review and send in Gmail.",
+    description: "Create a Gmail draft reply in an existing thread. This does not send email. Requires Gmail read access (gmail.readonly scope). body must contain only the new reply text — OpenWork automatically appends the quoted conversation below it in plain text and in Gmail's collapsible quote format; never include quoted history yourself. Returns draftUrl and threadUrl plus the resolved reply target; always share draftUrl with the user so they can review and send in Gmail.",
     inputSchema: {
       type: "object",
       properties: {
         messageId: { type: "string", description: "Gmail message id to reply to." },
         body: { type: "string", description: "Plain text reply body. Write plain prose with no markdown syntax; do not include quoted history because OpenWork appends it automatically." },
         replyAll: { type: "boolean", description: "Reply to everyone on the original message. Defaults to true." },
+        attachments: GMAIL_DRAFT_ATTACHMENTS_SCHEMA,
       },
       required: ["messageId", "body"],
       additionalProperties: false,
@@ -641,7 +657,8 @@ function stringArrayField(value: unknown): string[] {
 }
 
 type GmailDraftAttachmentRequest = {
-  path: string;
+  path?: string;
+  url?: string;
   filename?: string;
   mimeType?: string;
 };
@@ -651,6 +668,9 @@ type GmailDraftAttachment = {
   mimeType: string;
   content: Buffer;
 };
+
+type GmailAttachmentFetch = (input: string | URL, init?: RequestInit) => Promise<Response>;
+type GmailAttachmentAddressResolver = (hostname: string, options: LookupAllOptions) => Promise<LookupAddress[]>;
 
 function gmailHeaderValue(value: string): string {
   return value.replace(/[\r\n]+/g, " ").trim();
@@ -684,10 +704,11 @@ function gmailDraftAttachmentRequests(value: unknown): GmailDraftAttachmentReque
   for (const item of value) {
     if (!isRecord(item)) continue;
     const path = typeof item.path === "string" ? item.path.trim() : "";
-    if (!path) continue;
+    const url = typeof item.url === "string" ? item.url.trim() : "";
+    if ((path && url) || (!path && !url)) throw new ApiError(400, "invalid_payload", "Each attachment must provide exactly one of url or path");
     const filename = typeof item.filename === "string" && item.filename.trim() ? item.filename.trim() : undefined;
     const mimeType = typeof item.mimeType === "string" && item.mimeType.trim() ? item.mimeType.trim() : undefined;
-    attachments.push({ path, filename, mimeType });
+    attachments.push({ ...(path ? { path } : {}), ...(url ? { url } : {}), filename, mimeType });
   }
   return attachments;
 }
@@ -729,6 +750,29 @@ function isFileNotFoundError(error: unknown): boolean {
 async function assertGmailAttachmentFile(path: string) {
   const info = await stat(path);
   if (!info.isFile()) throw new ApiError(400, "invalid_payload", "Attachment path must point to a file", { path });
+  if (info.size > GMAIL_ATTACHMENT_MAX_BYTES) throw new ApiError(413, "file_too_large", `Gmail draft attachments support files up to ${GMAIL_ATTACHMENT_MAX_BYTES} bytes.`, { path, size: info.size, maxBytes: GMAIL_ATTACHMENT_MAX_BYTES });
+}
+
+async function gmailAttachmentRealRoots(allowedRoots: string[]): Promise<string[]> {
+  const realRoots: string[] = [];
+  for (const root of allowedRoots) {
+    try {
+      pushUniqueResolvedPath(realRoots, await realpath(root));
+    } catch (error) {
+      if (!isFileNotFoundError(error)) throw error;
+    }
+  }
+  return realRoots;
+}
+
+async function assertGmailAttachmentRealPath(path: string, allowedRoots: string[]): Promise<string> {
+  const realCandidate = await realpath(path);
+  const realRoots = await gmailAttachmentRealRoots(allowedRoots);
+  if (!realRoots.some((root) => isPathWithinRoot(realCandidate, root))) {
+    throw new ApiError(400, "invalid_payload", "Attachment path must resolve inside an authorized workspace root", { path });
+  }
+  await assertGmailAttachmentFile(realCandidate);
+  return realCandidate;
 }
 
 async function resolveGmailAttachmentPath(config: ServerConfig, context: Record<string, unknown>, path: string): Promise<string> {
@@ -738,7 +782,7 @@ async function resolveGmailAttachmentPath(config: ServerConfig, context: Record<
     const resolved = resolve(path);
     if (!allowedRoots.some((root) => isPathWithinRoot(resolved, root))) throw new ApiError(400, "invalid_payload", "Attachment path must be inside an authorized workspace root", { path });
     await assertGmailAttachmentFile(resolved);
-    return resolved;
+    return assertGmailAttachmentRealPath(resolved, allowedRoots);
   }
 
   for (const root of gmailAttachmentSearchRoots(config, context, allowedRoots)) {
@@ -746,7 +790,7 @@ async function resolveGmailAttachmentPath(config: ServerConfig, context: Record<
     if (!isPathWithinRoot(resolved, root) || !allowedRoots.some((allowedRoot) => isPathWithinRoot(resolved, allowedRoot))) continue;
     try {
       await assertGmailAttachmentFile(resolved);
-      return resolved;
+      return await assertGmailAttachmentRealPath(resolved, allowedRoots);
     } catch (error) {
       if (isFileNotFoundError(error)) continue;
       throw error;
@@ -756,10 +800,185 @@ async function resolveGmailAttachmentPath(config: ServerConfig, context: Record<
   throw new ApiError(400, "invalid_payload", "Attachment file was not found in an authorized workspace root", { path });
 }
 
+// Attachment url validation is unconditional: unlike the managed MCP url
+// guard, it must hold even under OPENWORK_DEV_MODE.
+function assertGmailAttachmentUrl(rawUrl: string): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new ApiError(400, "invalid_payload", "Attachment url must be a valid https URL", { url: rawUrl });
+  }
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, "");
+  const privateHost = hostname === "localhost" || hostname.endsWith(".localhost") || hostname.endsWith(".local") || (isIP(hostname) !== 0 && isLocalManagedMcpPrivateAddress(hostname));
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password || privateHost) {
+    throw new ApiError(400, "invalid_payload", "Attachment url must be a public https URL", { url: rawUrl });
+  }
+  return parsed;
+}
+
+// Hostnames must resolve to public addresses, unconditionally, like the
+// literal-address checks above. externalFetch re-resolves when it connects,
+// so this validates every answer we can observe but cannot pin the socket to
+// it the way the managed MCP undici dispatcher does.
+async function assertGmailAttachmentHostPublic(url: URL): Promise<void> {
+  const hostname = url.hostname.replace(/^\[|\]$/g, "");
+  if (isIP(hostname) !== 0) return;
+  let addresses: LookupAddress[];
+  try {
+    addresses = await lookup(hostname, { all: true, verbatim: true });
+  } catch {
+    throw new ApiError(502, "attachment_fetch_failed", "Attachment url hostname could not be resolved", { hostname });
+  }
+  if (!addresses.length || addresses.some((entry) => isLocalManagedMcpPrivateAddress(entry.address))) {
+    throw new ApiError(400, "invalid_payload", "Attachment url must resolve to a public address", { hostname });
+  }
+}
+
+const resolveGmailAttachmentAddresses: GmailAttachmentAddressResolver = (hostname, options) => lookup(hostname, options);
+
+function validateGmailAttachmentAddresses(hostname: string, addresses: LookupAddress[]): void {
+  if (!addresses.length) throw new Error(`Attachment hostname ${hostname} did not resolve.`);
+  const privateAddress = addresses.find((entry) => isLocalManagedMcpPrivateAddress(entry.address));
+  if (privateAddress) {
+    throw new Error(`Attachment hostname ${hostname} resolved to a private or reserved address (${privateAddress.address}).`);
+  }
+}
+
+/**
+ * Resolves and validates the attachment host inside the socket connector. The
+ * same answers are handed to net.connect, closing the DNS-rebinding window
+ * between a preflight lookup and the actual connection.
+ */
+export function createGmailAttachmentPublicLookup(
+  resolver: GmailAttachmentAddressResolver = resolveGmailAttachmentAddresses,
+): LookupFunction {
+  return (hostname, options, callback) => {
+    const lookupOptions: LookupAllOptions = { ...options, all: true, verbatim: true };
+    void resolver(hostname, lookupOptions).then((addresses) => {
+      try {
+        validateGmailAttachmentAddresses(hostname, addresses);
+      } catch (error) {
+        callback(error instanceof Error ? error : new Error("Attachment hostname lookup failed."), []);
+        return;
+      }
+      if (options.all) {
+        callback(null, addresses);
+        return;
+      }
+      const first = addresses[0];
+      callback(null, first.address, first.family);
+    }, (error: unknown) => {
+      callback(error instanceof Error ? error : new Error("Attachment hostname lookup failed."), []);
+    });
+  };
+}
+
+const gmailAttachmentDispatcher = new Agent({
+  connect: {
+    lookup: createGmailAttachmentPublicLookup(),
+    autoSelectFamily: true,
+    autoSelectFamilyAttemptTimeout: 1_000,
+  },
+});
+
+async function defaultGmailAttachmentFetch(input: string | URL, init?: RequestInit): Promise<Response> {
+  // DOM and Undici expose structurally equivalent fetch types from separate
+  // declarations. Keep the conversion at this transport boundary.
+  const requestInit = { ...init, dispatcher: gmailAttachmentDispatcher } as unknown as UndiciRequestInit;
+  return await undiciFetch(input, requestInit) as unknown as Response;
+}
+
+let gmailAttachmentFetch: GmailAttachmentFetch = defaultGmailAttachmentFetch;
+
+export function setGmailAttachmentFetchForTests(fetchImpl?: GmailAttachmentFetch): void {
+  gmailAttachmentFetch = fetchImpl ?? defaultGmailAttachmentFetch;
+}
+
+function gmailAttachmentFilenameFromResponse(url: URL, contentDisposition: string | null): string {
+  const disposition = contentDisposition ?? "";
+  const quoted = /filename\s*=\s*"([^"]+)"/i.exec(disposition)?.[1];
+  const bare = quoted ? undefined : /filename\s*=\s*([^;\s]+)/i.exec(disposition)?.[1];
+  const fromDisposition = (quoted ?? bare ?? "").trim();
+  if (fromDisposition) return basename(fromDisposition);
+  try {
+    const fromPath = basename(decodeURIComponent(url.pathname));
+    if (fromPath && fromPath !== "/") return fromPath;
+  } catch {
+    // fall through to the generic name on malformed percent-encoding
+  }
+  return "attachment";
+}
+
+async function readGmailAttachmentResponse(response: Response, url: string): Promise<Buffer> {
+  const oversize = () => new ApiError(413, "file_too_large", `Gmail draft attachments support files up to ${GMAIL_ATTACHMENT_MAX_BYTES} bytes.`, { url, maxBytes: GMAIL_ATTACHMENT_MAX_BYTES });
+  const declaredLength = Number(response.headers.get("content-length") ?? "");
+  if (Number.isFinite(declaredLength) && declaredLength > GMAIL_ATTACHMENT_MAX_BYTES) throw oversize();
+  const reader = response.body?.getReader();
+  if (!reader) {
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.byteLength > GMAIL_ATTACHMENT_MAX_BYTES) throw oversize();
+    return buffer;
+  }
+  const chunks: Buffer[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > GMAIL_ATTACHMENT_MAX_BYTES) {
+      await reader.cancel().catch(() => undefined);
+      throw oversize();
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks);
+}
+
+async function fetchGmailUrlAttachment(request: GmailDraftAttachmentRequest, url: string): Promise<GmailDraftAttachment> {
+  let currentUrl = assertGmailAttachmentUrl(url);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), GOOGLE_WORKSPACE_API_TIMEOUT_MS);
+  try {
+    for (let redirects = 0; ; redirects += 1) {
+      await assertGmailAttachmentHostPublic(currentUrl);
+      let response: Response;
+      try {
+        response = await gmailAttachmentFetch(currentUrl, { redirect: "manual", signal: controller.signal });
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") throw new ApiError(502, "attachment_fetch_failed", "Attachment download timed out", { url });
+        throw new ApiError(502, "attachment_fetch_failed", `Attachment download failed: ${error instanceof Error ? error.message : String(error)}`, { url });
+      }
+      if (response.status >= 300 && response.status < 400) {
+        await response.body?.cancel().catch(() => undefined);
+        const location = response.headers.get("location");
+        if (!location) throw new ApiError(502, "attachment_fetch_failed", "Attachment redirect did not include a location", { url });
+        if (redirects >= GMAIL_ATTACHMENT_REDIRECT_LIMIT) throw new ApiError(400, "invalid_payload", "Attachment url followed too many redirects", { url });
+        currentUrl = assertGmailAttachmentUrl(new URL(location, currentUrl).toString());
+        continue;
+      }
+      if (!response.ok) throw new ApiError(502, "attachment_fetch_failed", `Attachment download failed (${response.status})`, { url, status: response.status });
+      const content = await readGmailAttachmentResponse(response, url);
+      const filename = gmailHeaderValue(request.filename || gmailAttachmentFilenameFromResponse(currentUrl, response.headers.get("content-disposition")));
+      if (!filename) throw new ApiError(400, "invalid_payload", "Attachment filename is required", { url });
+      const responseMimeType = (response.headers.get("content-type") ?? "").split(";")[0]?.trim();
+      const mimeType = gmailAttachmentMimeType(currentUrl.pathname, request.mimeType || responseMimeType || undefined);
+      return { filename, mimeType, content };
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function loadGmailDraftAttachments(config: ServerConfig, context: Record<string, unknown>, requests: GmailDraftAttachmentRequest[]): Promise<GmailDraftAttachment[]> {
   const attachments: GmailDraftAttachment[] = [];
   for (const request of requests) {
-    const path = await resolveGmailAttachmentPath(config, context, request.path);
+    if (request.url) {
+      attachments.push(await fetchGmailUrlAttachment(request, request.url));
+      continue;
+    }
+    const path = await resolveGmailAttachmentPath(config, context, request.path ?? "");
     const content = await readFile(path);
     const filename = gmailHeaderValue(request.filename || basename(path));
     if (!filename) throw new ApiError(400, "invalid_payload", "Attachment filename is required", { path: request.path });
@@ -768,45 +987,166 @@ async function loadGmailDraftAttachments(config: ServerConfig, context: Record<s
   return attachments;
 }
 
-function gmailRawMessage(input: { to: string[]; cc?: string[]; bcc?: string[]; subject: string; body: string; headers?: { name: string; value: string }[]; attachments?: GmailDraftAttachment[] }): string {
-  const headers = [
-    `To: ${input.to.join(", ")}`,
-    input.cc?.length ? `Cc: ${input.cc.join(", ")}` : null,
-    input.bcc?.length ? `Bcc: ${input.bcc.join(", ")}` : null,
-    `Subject: ${input.subject}`,
-    ...(input.headers ?? []).map((header) => `${header.name}: ${header.value}`),
-  ].filter((line): line is string => typeof line === "string");
-  const attachments = input.attachments ?? [];
-  const body = normalizeGmailDraftBody(input.body);
-  if (!attachments.length) return [
-    ...headers,
-    "Content-Type: text/plain; charset=UTF-8",
-    "",
-    body,
-  ].filter((line): line is string => typeof line === "string").join("\r\n");
+function toCrlf(value: string): string {
+  return value.replace(/\r\n?|\n/g, "\r\n");
+}
 
-  const boundary = `openwork-${randomBytes(16).toString("hex")}`;
-  return [
-    ...headers,
+function encodeMimeWord(value: string): string {
+  if (/^[\x20-\x7e]*$/.test(value)) return value;
+  const words: string[] = [];
+  let chunk = "";
+  let chunkBytes = 0;
+  for (const character of value) {
+    const characterBytes = Buffer.byteLength(character, "utf8");
+    if (chunk && chunkBytes + characterBytes > 45) {
+      words.push(chunk);
+      chunk = "";
+      chunkBytes = 0;
+    }
+    chunk += character;
+    chunkBytes += characterBytes;
+  }
+  if (chunk) words.push(chunk);
+  return words.map((word) => `=?UTF-8?B?${Buffer.from(word, "utf8").toString("base64")}?=`).join(" ");
+}
+
+function foldHeaderLine(line: string): string {
+  if (line.length <= GMAIL_HEADER_FOLD_LIMIT) return line;
+  const words = line.split(" ");
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    if (!current) {
+      current = word;
+      continue;
+    }
+    if (current.length + 1 + word.length > GMAIL_HEADER_FOLD_LIMIT) {
+      lines.push(current);
+      current = ` ${word}`;
+      continue;
+    }
+    current += ` ${word}`;
+  }
+  if (current) lines.push(current);
+  return lines.join("\r\n");
+}
+
+function gmailHtmlDivs(text: string): string {
+  return text.replace(/\r\n?/g, "\n").split("\n").map((line) => line ? `<div>${escapeHtml(line)}</div>` : "<div><br></div>").join("");
+}
+
+const GMAIL_HTML_BREAK_TAGS = new Set(["p", "div", "tr", "li", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "table", "ul", "ol"]);
+
+// Character scan instead of regex tag-stripping: nested or malformed markup
+// can reassemble into tags after a single-pass replace, and an unterminated
+// tag consumes the rest of the input the way browsers treat it.
+function stripGmailHtmlMarkup(html: string): string {
+  let text = "";
+  let index = 0;
+  while (index < html.length) {
+    const character = html[index];
+    if (character !== "<") {
+      text += character;
+      index += 1;
+      continue;
+    }
+    const tagEnd = html.indexOf(">", index + 1);
+    if (tagEnd === -1) break;
+    const rawTag = html.slice(index + 1, tagEnd).trim();
+    index = tagEnd + 1;
+    const closing = rawTag.startsWith("/");
+    const name = (closing ? rawTag.slice(1) : rawTag).split(/[\s/]/, 1)[0]?.toLowerCase() ?? "";
+    if (!closing && (name === "script" || name === "style")) {
+      const closeMatch = new RegExp(`</${name}\\b[^>]*>`, "i").exec(html.slice(index));
+      if (!closeMatch) break;
+      index += closeMatch.index + closeMatch[0].length;
+      continue;
+    }
+    if (name === "br" || (closing && GMAIL_HTML_BREAK_TAGS.has(name))) text += "\n";
+  }
+  return text;
+}
+
+function gmailHtmlToText(html: string): string {
+  const text = stripGmailHtmlMarkup(html)
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&#x([0-9a-f]+);/gi, (match, hex: string) => {
+      const code = Number.parseInt(hex, 16);
+      return code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : match;
+    })
+    .replace(/&#(\d+);/g, (match, decimal: string) => {
+      const code = Number(decimal);
+      return Number.isInteger(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : match;
+    })
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, "\"")
+    .replace(/&apos;/gi, "'")
+    .replace(/&amp;/gi, "&");
+  return text.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function gmailRawMessage(input: { to: string[]; cc?: string[]; bcc?: string[]; subject: string; body: string; html?: string; headers?: { name: string; value: string }[]; attachments?: GmailDraftAttachment[] }): string {
+  const headers = [
+    `To: ${gmailHeaderValue(input.to.join(", "))}`,
+    input.cc?.length ? `Cc: ${gmailHeaderValue(input.cc.join(", "))}` : null,
+    input.bcc?.length ? `Bcc: ${gmailHeaderValue(input.bcc.join(", "))}` : null,
+    `Subject: ${encodeMimeWord(gmailHeaderValue(input.subject))}`,
+    ...(input.headers ?? []).map((header) => `${header.name}: ${gmailHeaderValue(header.value)}`),
     "MIME-Version: 1.0",
-    `Content-Type: multipart/mixed; boundary="${boundary}"`,
-    "",
-    `--${boundary}`,
+  ].filter((line): line is string => typeof line === "string").map(foldHeaderLine);
+  const attachments = input.attachments ?? [];
+  const body = toCrlf(normalizeGmailDraftBody(input.body));
+  const html = typeof input.html === "string" ? toCrlf(input.html) : null;
+  const textPartLines = [
     "Content-Type: text/plain; charset=UTF-8",
     "Content-Transfer-Encoding: 8bit",
     "",
     body,
-    ...attachments.flatMap((attachment) => [
-      `--${boundary}`,
-      `Content-Type: ${attachment.mimeType}; name="${gmailMimeParameter(attachment.filename)}"`,
-      `Content-Disposition: attachment; filename="${gmailMimeParameter(attachment.filename)}"`,
-      "Content-Transfer-Encoding: base64",
+  ];
+  const alternativePartLines = () => {
+    const boundary = `openwork-alt-${randomBytes(16).toString("hex")}`;
+    return [
+      foldHeaderLine(`Content-Type: multipart/alternative; boundary="${boundary}"`),
       "",
-      base64MimeContent(attachment.content),
-    ]),
-    `--${boundary}--`,
-    "",
-  ].join("\r\n");
+      `--${boundary}`,
+      ...textPartLines,
+      `--${boundary}`,
+      "Content-Type: text/html; charset=UTF-8",
+      "Content-Transfer-Encoding: 8bit",
+      "",
+      html ?? "",
+      `--${boundary}--`,
+    ];
+  };
+  let raw: string;
+  if (!attachments.length) {
+    raw = [...headers, ...(html === null ? textPartLines : alternativePartLines())].join("\r\n");
+  } else {
+    const boundary = `openwork-${randomBytes(16).toString("hex")}`;
+    raw = [
+      ...headers,
+      foldHeaderLine(`Content-Type: multipart/mixed; boundary="${boundary}"`),
+      "",
+      `--${boundary}`,
+      ...(html === null ? textPartLines : alternativePartLines()),
+      ...attachments.flatMap((attachment) => [
+        `--${boundary}`,
+        foldHeaderLine(`Content-Type: ${attachment.mimeType}; name="${gmailMimeParameter(attachment.filename)}"`),
+        foldHeaderLine(`Content-Disposition: attachment; filename="${gmailMimeParameter(attachment.filename)}"`),
+        "Content-Transfer-Encoding: base64",
+        "",
+        base64MimeContent(attachment.content),
+      ]),
+      `--${boundary}--`,
+      "",
+    ].join("\r\n");
+  }
+  const sizeBytes = Buffer.byteLength(raw, "utf8");
+  if (sizeBytes > GMAIL_RAW_MESSAGE_MAX_BYTES) {
+    throw new ApiError(413, "gmail_draft_too_large", `Gmail drafts support messages up to ${GMAIL_RAW_MESSAGE_MAX_BYTES} bytes including encoded attachments.`, { sizeBytes, maxBytes: GMAIL_RAW_MESSAGE_MAX_BYTES });
+  }
+  return raw;
 }
 
 // Generated prose is sometimes hard-wrapped before it reaches Gmail. Those
@@ -873,7 +1213,7 @@ function uniqueEmailHeaders(values: string[], exclude: string[]): string[] {
   const recipients: string[] = [];
   for (const value of values.flatMap(splitEmailHeader)) {
     const key = emailHeaderKey(value);
-    if (!key || seen.has(key)) continue;
+    if (!key || !key.includes("@") || seen.has(key)) continue;
     seen.add(key);
     recipients.push(value);
   }
@@ -901,12 +1241,30 @@ function gmailBodyHasQuotedHistory(body: string): boolean {
   return /^>\s?/m.test(body) && /^.*wrote:\s*$/m.test(body);
 }
 
+function gmailQuoteAttribution(input: { from: string; date: string }): string {
+  return input.date ? `On ${formatGmailQuoteDate(input.date)}, ${input.from} wrote:` : `${input.from} wrote:`;
+}
+
+function truncateGmailQuoteBody(body: string): { text: string; truncated: boolean } {
+  const normalized = body.replace(/\r\n?/g, "\n");
+  if (normalized.length <= GMAIL_QUOTE_BODY_LIMIT) return { text: normalized, truncated: false };
+  return { text: normalized.slice(0, GMAIL_QUOTE_BODY_LIMIT), truncated: true };
+}
+
 function buildGmailQuoteBlock(input: { from: string; date: string; body: string }): string {
-  const header = input.date ? `On ${formatGmailQuoteDate(input.date)}, ${input.from} wrote:` : `${input.from} wrote:`;
-  const truncated = input.body.length > GMAIL_QUOTE_BODY_LIMIT;
-  const quotedLines = input.body.slice(0, GMAIL_QUOTE_BODY_LIMIT).replace(/\r\n?/g, "\n").split("\n").map((line) => `> ${line}`);
+  const { text, truncated } = truncateGmailQuoteBody(input.body);
+  const quotedLines = text.split("\n").map((line) => `> ${line}`);
   if (truncated) quotedLines.push("> [message trimmed]");
-  return [header, ...quotedLines].join("\n");
+  return [gmailQuoteAttribution(input), ...quotedLines].join("\n");
+}
+
+// Gmail collapses quoted history behind its trimmed-content ellipsis only for
+// the gmail_quote/gmail_attr blockquote structure; the quoted content is the
+// escaped text rendition so the plain and HTML parts always agree.
+function buildGmailQuoteHtml(input: { from: string; date: string; body: string }): string {
+  const { text, truncated } = truncateGmailQuoteBody(input.body);
+  const quoted = truncated ? `${text}\n[message trimmed]` : text;
+  return `<div class="gmail_quote"><div dir="ltr" class="gmail_attr">${escapeHtml(gmailQuoteAttribution(input))}</div><blockquote class="gmail_quote" style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex">${gmailHtmlDivs(quoted)}</blockquote></div>`;
 }
 
 function gmailDraftMessageId(value: unknown): string | null {
@@ -1094,7 +1452,7 @@ async function googleWorkspaceCreateDraft(config: ServerConfig, args: Record<str
   const draft = await fetchGoogleJson("https://gmail.googleapis.com/gmail/v1/users/me/drafts", {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ message: { raw: base64UrlString(gmailRawMessage({ to, cc, bcc, subject, body, attachments })) } }),
+    body: JSON.stringify({ message: { raw: base64UrlString(gmailRawMessage({ to, cc, bcc, subject, body, html: gmailHtmlDivs(normalizeGmailDraftBody(body)), attachments })) } }),
   });
   return {
     ...(isRecord(draft) ? draft : {}),
@@ -1103,7 +1461,7 @@ async function googleWorkspaceCreateDraft(config: ServerConfig, args: Record<str
   };
 }
 
-async function googleWorkspaceCreateReplyDraft(config: ServerConfig, args: Record<string, unknown>) {
+async function googleWorkspaceCreateReplyDraft(config: ServerConfig, args: Record<string, unknown>, context: Record<string, unknown>) {
   const messageId = readStringField(args, "messageId");
   const body = typeof args.body === "string" ? args.body : "";
   const replyAll = args.replyAll !== false;
@@ -1116,17 +1474,26 @@ async function googleWorkspaceCreateReplyDraft(config: ServerConfig, args: Recor
   const payload = isRecord(message) ? message.payload : null;
   const threadId = isRecord(message) && typeof message.threadId === "string" ? message.threadId : "";
   const originalMessageId = gmailHeader(payload, "Message-ID");
-  if (!threadId || !originalMessageId) throw new Error("Gmail message is missing thread metadata required to create a reply draft.");
+  if (!threadId || !originalMessageId) throw new ApiError(400, "gmail_reply_target_invalid", "Gmail message is missing thread metadata required to create a reply draft.", { messageId });
   const account = googleWorkspaceSafeAccount(record.account);
   const ownEmail = typeof account?.email === "string" ? account.email : "";
   const replyTarget = gmailHeader(payload, "Reply-To") || gmailHeader(payload, "From");
   const to = uniqueEmailHeaders(replyAll ? [replyTarget, gmailHeader(payload, "To")] : [replyTarget], [ownEmail]);
   const cc = replyAll ? uniqueEmailHeaders([gmailHeader(payload, "Cc")], [ownEmail, ...to.map(emailHeaderKey)]) : [];
   if (!to.length) throw new ApiError(400, "invalid_payload", "Original message does not include reply recipients");
-  const originalBody = gmailMessageText(payload);
-  const quotedBody = originalBody && !gmailBodyHasQuotedHistory(body)
-    ? `${body}\n\n${buildGmailQuoteBlock({ from: gmailHeader(payload, "From"), date: gmailHeader(payload, "Date"), body: originalBody })}`
+  const attachments = await loadGmailDraftAttachments(config, context, gmailDraftAttachmentRequests(args.attachments));
+  const originalFrom = gmailHeader(payload, "From");
+  const originalDate = gmailHeader(payload, "Date");
+  const originalSubject = gmailHeader(payload, "Subject");
+  const replySubject = gmailReplySubject(originalSubject);
+  // HTML-only originals must still quote: fall back to the text/html part the
+  // same way the read path does.
+  const quoteSource = gmailMessageText(payload) || gmailHtmlToText(gmailMessageText(payload, "text/html"));
+  const includeQuote = !!quoteSource && !gmailBodyHasQuotedHistory(body);
+  const plainBody = includeQuote
+    ? `${body}\n\n${buildGmailQuoteBlock({ from: originalFrom, date: originalDate, body: quoteSource })}`
     : body;
+  const htmlBody = `${gmailHtmlDivs(normalizeGmailDraftBody(body))}${includeQuote ? `<div><br></div>${buildGmailQuoteHtml({ from: originalFrom, date: originalDate, body: quoteSource })}` : ""}`;
   const draft = await fetchGoogleJson("https://gmail.googleapis.com/gmail/v1/users/me/drafts", {
     method: "POST",
     headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
@@ -1136,12 +1503,14 @@ async function googleWorkspaceCreateReplyDraft(config: ServerConfig, args: Recor
         raw: base64UrlString(gmailRawMessage({
           to,
           cc,
-          subject: gmailReplySubject(gmailHeader(payload, "Subject")),
-          body: quotedBody,
+          subject: replySubject,
+          body: plainBody,
+          html: htmlBody,
           headers: [
             { name: "In-Reply-To", value: originalMessageId },
             { name: "References", value: gmailReplyReferences(gmailHeader(payload, "References"), originalMessageId) },
           ],
+          attachments,
         })),
       },
     }),
@@ -1150,6 +1519,14 @@ async function googleWorkspaceCreateReplyDraft(config: ServerConfig, args: Recor
     ...(isRecord(draft) ? draft : {}),
     draftUrl: gmailDraftUrl(gmailDraftMessageId(draft)),
     threadUrl: gmailThreadUrl(threadId),
+    reply: {
+      threadId,
+      subject: replySubject,
+      to,
+      cc,
+      inReplyTo: originalMessageId,
+      original: { subject: originalSubject, from: originalFrom, date: originalDate },
+    },
   };
 }
 
@@ -1159,7 +1536,8 @@ async function googleWorkspaceSearchFiles(config: ServerConfig, args: Record<str
   const maxResults = Math.min(Math.max(Number(args.maxResults ?? 10), 1), 50);
   const { accessToken } = await googleWorkspaceAccessToken(config);
   const url = new URL("https://www.googleapis.com/drive/v3/files");
-  url.searchParams.set("q", `name contains '${query.replace(/'/g, "\\'")}' and trashed = false`);
+  const escapedQuery = query.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+  url.searchParams.set("q", `name contains '${escapedQuery}' and trashed = false`);
   url.searchParams.set("pageSize", String(maxResults));
   url.searchParams.set("fields", "files(id,name,mimeType,webViewLink,modifiedTime,size)");
   return fetchGoogleJson(url.toString(), { headers: { Authorization: `Bearer ${accessToken}` } });
@@ -1271,7 +1649,7 @@ export async function callGoogleWorkspaceExtensionAction(config: ServerConfig, a
   }
   if (action === "calendar_list_events") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceListEvents(config, args), context };
   if (action === "gmail_create_draft") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceCreateDraft(config, args, context), context };
-  if (action === "gmail_create_reply_draft") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceCreateReplyDraft(config, args), context };
+  if (action === "gmail_create_reply_draft") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceCreateReplyDraft(config, args, context), context };
   if (action === "gmail_list_messages") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceListMessages(config, args), context };
   if (action === "gmail_get_message") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceGetMessage(config, args), context };
   if (action === "gmail_download_attachment") return { ok: true, extensionId: GOOGLE_WORKSPACE_EXTENSION_ID, action, result: await googleWorkspaceDownloadAttachment(config, args), context };

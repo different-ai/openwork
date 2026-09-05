@@ -1,5 +1,5 @@
 import { and, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
-import { LlmProviderAccessTable, LlmProviderTable } from "@openwork-ee/den-db/schema"
+import { LlmProviderAccessTable, LlmProviderTable, MemberTable, TeamMemberTable } from "@openwork-ee/den-db/schema"
 import { db } from "../../db.js"
 
 type MemberId = NonNullable<typeof LlmProviderAccessTable.$inferSelect.orgMembershipId>
@@ -31,4 +31,29 @@ export async function listAccessibleLlmProviderAccess(input: {
         ),
       ),
     ))
+}
+
+export async function listGrantedLlmProviderMemberIds(input: {
+  organizationId: typeof LlmProviderTable.$inferSelect.organizationId
+  llmProviderId: typeof LlmProviderTable.$inferSelect.id
+}) {
+  const rows = await db
+    .selectDistinct({ id: MemberTable.id })
+    .from(MemberTable)
+    .leftJoin(TeamMemberTable, eq(TeamMemberTable.orgMembershipId, MemberTable.id))
+    .innerJoin(LlmProviderAccessTable, or(
+      eq(LlmProviderAccessTable.orgMembershipId, MemberTable.id),
+      eq(LlmProviderAccessTable.teamId, TeamMemberTable.teamId),
+      and(
+        isNull(LlmProviderAccessTable.orgMembershipId),
+        isNull(LlmProviderAccessTable.teamId),
+      ),
+    ))
+    .where(and(
+      eq(MemberTable.organizationId, input.organizationId),
+      isNull(MemberTable.removedAt),
+      eq(LlmProviderAccessTable.llmProviderId, input.llmProviderId),
+    ))
+
+  return rows.map((row) => row.id)
 }

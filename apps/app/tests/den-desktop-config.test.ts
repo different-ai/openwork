@@ -7,68 +7,15 @@ import {
   selectEffectiveOnboardingPrompts,
 } from "@openwork/types/den/desktop-policies";
 import { createDenClient, normalizeDenDesktopConfig } from "../src/app/lib/den";
-import {
-  CONNECT_STATE_PUSH_MAX_ATTEMPTS,
-  CONNECT_STATE_PUSH_RETRY_DELAY_MS,
-  deliverConnectState,
-  resolveConnectStateToPush,
-} from "../src/react-app/domains/cloud/desktop-config-provider";
+import { resolveConnectStateToPush } from "../src/react-app/domains/cloud/desktop-config-provider";
 
 const originalFetch = globalThis.fetch;
 
 describe("Den desktop config client", () => {
-  test("only pushes an explicit Connect policy", () => {
+  test("only reconciles an explicit Connect policy", () => {
     expect(resolveConnectStateToPush({})).toBeNull();
     expect(resolveConnectStateToPush({ connectEnabled: false })).toBe(false);
     expect(resolveConnectStateToPush({ connectEnabled: true })).toBe(true);
-  });
-
-  test("retries the Connect push until the local server accepts it", async () => {
-    let attempts = 0;
-    const waits: number[] = [];
-
-    const delivered = await deliverConnectState(
-      async () => {
-        attempts += 1;
-        if (attempts === 1) return false;
-        if (attempts === 2) throw new Error("local server starting");
-        return true;
-      },
-      async (delayMs) => {
-        waits.push(delayMs);
-      },
-      () => false,
-    );
-
-    expect(delivered).toBe(true);
-    expect(attempts).toBe(3);
-    expect(waits).toEqual([CONNECT_STATE_PUSH_RETRY_DELAY_MS, CONNECT_STATE_PUSH_RETRY_DELAY_MS]);
-  });
-
-  test("stops the Connect push when cancelled or exhausted", async () => {
-    let cancelledAttempts = 0;
-    const cancelled = await deliverConnectState(
-      async () => {
-        cancelledAttempts += 1;
-        return false;
-      },
-      async () => {},
-      () => cancelledAttempts >= 2,
-    );
-    expect(cancelled).toBe(false);
-    expect(cancelledAttempts).toBe(2);
-
-    let exhaustedAttempts = 0;
-    const exhausted = await deliverConnectState(
-      async () => {
-        exhaustedAttempts += 1;
-        return false;
-      },
-      async () => {},
-      () => false,
-    );
-    expect(exhausted).toBe(false);
-    expect(exhaustedAttempts).toBe(CONNECT_STATE_PUSH_MAX_ATTEMPTS);
   });
 
   afterEach(() => {
@@ -118,7 +65,55 @@ describe("Den desktop config client", () => {
       minAppVersion: "0.11.207",
       latestAppVersion: "0.17.24",
       publishedDesktopVersions: ["0.17.24"],
+      webUrl: null,
     });
+  });
+
+  test("reads the deployment web app base URL advertised by Den version metadata", async () => {
+    const fetchMock: typeof fetch = async () => new Response(JSON.stringify({
+      minAppVersion: "0.11.207",
+      latestAppVersion: "0.17.24",
+      publishedDesktopVersions: ["0.17.24"],
+      webUrl: "https://app.den.test/",
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+
+    Object.defineProperty(globalThis, "fetch", {
+      configurable: true,
+      value: fetchMock,
+    });
+
+    await expect(
+      createDenClient({ baseUrl: "https://den.test" }).getAppVersionMetadata(),
+    ).resolves.toEqual({
+      minAppVersion: "0.11.207",
+      latestAppVersion: "0.17.24",
+      publishedDesktopVersions: ["0.17.24"],
+      webUrl: "https://app.den.test",
+    });
+  });
+
+  test("ignores a non-http web app base URL from Den version metadata", async () => {
+    const fetchMock: typeof fetch = async () => new Response(JSON.stringify({
+      minAppVersion: "0.11.207",
+      latestAppVersion: "0.17.24",
+      publishedDesktopVersions: ["0.17.24"],
+      webUrl: "javascript:alert(1)",
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+
+    Object.defineProperty(globalThis, "fetch", {
+      configurable: true,
+      value: fetchMock,
+    });
+
+    await expect(
+      createDenClient({ baseUrl: "https://den.test" }).getAppVersionMetadata(),
+    ).resolves.toMatchObject({ webUrl: null });
   });
 
   test("normalizes organization onboarding prompts from desktop config", () => {
@@ -147,6 +142,16 @@ describe("Den desktop config client", () => {
     expect(normalizeDenDesktopConfig({
       allowAlphaUpdates: "false",
     }).allowAlphaUpdates).toBeUndefined();
+  });
+
+  test("normalizes only explicit Automation deployment availability", () => {
+    expect(normalizeDenDesktopConfig({ automationsEnabled: false }).automationsEnabled).toBe(false);
+    expect(normalizeDenDesktopConfig({ automationsEnabled: true }).automationsEnabled).toBe(true);
+    expect(normalizeDenDesktopConfig({ automationsEnabled: "false" }).automationsEnabled).toBeUndefined();
+    expect(normalizeDenDesktopConfig({}).automationsEnabled).toBeUndefined();
+    expect(normalizeDenDesktopConfig({ dashboardEnabled: false }).dashboardEnabled).toBe(false);
+    expect(normalizeDenDesktopConfig({ dashboardEnabled: true }).dashboardEnabled).toBe(true);
+    expect(normalizeDenDesktopConfig({ dashboardEnabled: "true" }).dashboardEnabled).toBeUndefined();
   });
 
   test("selects targeted onboarding prompts by priority before default fallback", () => {

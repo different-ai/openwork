@@ -24,25 +24,25 @@ import { registerAdminRoutes } from "./routes/admin/index.js"
 import { registerAuthRoutes } from "./routes/auth/index.js"
 import { registerBootstrapRoutes } from "./routes/bootstrap/index.js"
 import { registerCloudRoutes } from "./routes/cloud/index.js"
+import { registerDeprecatedMemoryRoutes } from "./routes/deprecated-memory.js"
 import { registerDeprecatedSkillHubRoutes } from "./routes/deprecated-skill-hubs.js"
 import { registerDevRoutes } from "./routes/dev/index.js"
 import { registerMcpTokenRoutes } from "./routes/mcp/index.js"
-import { registerMemoryRoutes } from "./routes/memory/index.js"
 import { registerAutomationRoutes } from "./routes/automations/index.js"
-import { configureCloudAgentExecutor, configureCloudSavedScriptExecutor } from "./automations/service.js"
+import { configureCloudAgentExecutor, configureCloudWorkflowExecutor } from "./automations/service.js"
 import { cloudAgentRuntimeAvailable, executeCloudAgent } from "./automations/cloud-agent-executor.js"
 import { getCatalog } from "./mcp/index.js"
 import { buildCapabilityToolTree, createCapabilityRegistryContext } from "./mcp/capability-registry.js"
 import { executeMarketplaceCapability } from "./mcp/marketplace-capabilities.js"
 import { resolveMcpMemberIdentity } from "./mcp/external-capabilities.js"
 import { DEN_MCP_REQUESTED_SCOPES } from "./mcp/scopes.js"
-import { codemodeScriptsEnabled } from "./capability-sources/codemode-rollout.js"
 import { registerMeRoutes } from "./routes/me/index.js"
 import { registerOrgRoutes } from "./routes/org/index.js"
 import { registerTelemetryRoutes } from "./routes/telemetry/index.js"
 import { registerVersionRoutes } from "./routes/version/index.js"
 import { registerWebhookRoutes } from "./routes/webhooks/index.js"
 import { registerWorkerRoutes } from "./routes/workers/index.js"
+import { registerCloudWorkerCompatibilityPreflightRoute } from "./routes/workers/compatibility.js"
 import type { AuthContextVariables } from "./session.js"
 import { sessionMiddleware } from "./session.js"
 import { isOperationalErrorPath, normalizeOperationalErrorResponse, operationalErrorResponse } from "./operational-errors.js"
@@ -112,18 +112,24 @@ registerAppErrorHandler(app, (error, c, requestId) => {
 // without a valid grant. Registered before the global CORS middleware so it
 // answers the preflight for exactly this path; every other route keeps the
 // strict allowlist below.
-app.use(
-  "/v1/auth/desktop-handoff/exchange",
-  cors({
-    origin: (origin) => origin,
-    credentials: true,
-    allowHeaders: ["Content-Type", "Authorization", "X-Request-Id"],
-    allowMethods: ["POST", "OPTIONS"],
-    maxAge: 600,
-  }),
-)
+if (!env.corsHandledByEdge) {
+  app.use(
+    "/v1/auth/desktop-handoff/exchange",
+    cors({
+      origin: (origin) => origin,
+      credentials: true,
+      allowHeaders: ["Content-Type", "Authorization", "X-Request-Id"],
+      allowMethods: ["POST", "OPTIONS"],
+      maxAge: 600,
+    }),
+  )
+}
 
-if (env.corsOrigins.length > 0) {
+// This bearer-token-only compatibility surface must accept native/file-origin
+// preflights before the credentialed browser allowlist can intercept OPTIONS.
+registerCloudWorkerCompatibilityPreflightRoute(app)
+
+if (env.corsOrigins.length > 0 && !env.corsHandledByEdge) {
   app.use(
     "*",
       cors({
@@ -210,11 +216,11 @@ registerAdminRoutes(app)
 registerAuthRoutes(app)
 registerBootstrapRoutes(app)
 registerCloudRoutes(app)
+registerDeprecatedMemoryRoutes(app)
 registerDeprecatedSkillHubRoutes(app)
 registerDevRoutes(app)
 registerMeRoutes(app)
-registerMemoryRoutes(app)
-registerAutomationRoutes(app)
+registerAutomationRoutes(app, { enabled: env.automations.runtimeEnabled })
 registerOrgRoutes(app)
 registerVersionRoutes(app)
 registerWebhookRoutes(app)
@@ -228,7 +234,7 @@ registerTelemetryRoutes(app)
 
 configureCloudAgentExecutor({ execute: executeCloudAgent, runtimeAvailable: cloudAgentRuntimeAvailable })
 
-configureCloudSavedScriptExecutor(async ({ organizationId, ownerMemberId, automationRunId, action }) => {
+configureCloudWorkflowExecutor(async ({ organizationId, ownerMemberId, automationRunId, action }) => {
   const normalizedOrganizationId = normalizeDenTypeId("organization", organizationId)
   const normalizedOwnerMemberId = normalizeDenTypeId("member", ownerMemberId)
   const members = await db.select({ userId: MemberTable.userId }).from(MemberTable).where(and(
@@ -242,10 +248,6 @@ configureCloudSavedScriptExecutor(async ({ organizationId, ownerMemberId, automa
     eq(OrganizationTable.id, normalizedOrganizationId),
   ).limit(1)
   const organizationMetadata = organizations[0]?.metadata
-  const codemodeEnabled = codemodeScriptsEnabled(organizationMetadata)
-  if (!codemodeEnabled) {
-    return { ok: false, message: "Code Mode scripts are disabled for this organization.", retryable: false }
-  }
   const member = await resolveMcpMemberIdentity({ userId, organizationId })
   if (!member) return { ok: false, message: "The Automation owner is no longer active.", retryable: false }
   const catalog = await getCatalog(app as unknown as Hono, undefined)
@@ -258,7 +260,6 @@ configureCloudSavedScriptExecutor(async ({ organizationId, ownerMemberId, automa
     organizationId: normalizedOrganizationId,
     member,
     redirectUriBase: env.apiPublicUrl ?? "http://127.0.0.1",
-    codemodeEnabled,
     generatedArtifactViewsEnabled: env.generatedArtifactViewsEnabled,
     organizationMetadata,
     mcpConnectionsGatingEnabled: env.mcpConnectionsGatingEnabled,
@@ -271,7 +272,6 @@ configureCloudSavedScriptExecutor(async ({ organizationId, ownerMemberId, automa
     configObjectVersionId: action.script.configObjectVersionId,
     automationRunId: normalizeDenTypeId("automationRun", automationRunId),
     body: action.input,
-    codemodeEnabled: true,
     validateScriptOutput: true,
     buildTools: () => buildCapabilityToolTree(capabilityContext),
   })
@@ -282,10 +282,10 @@ configureCloudSavedScriptExecutor(async ({ organizationId, ownerMemberId, automa
     ...("receiptId" in result ? { receiptId: result.receiptId ?? null } : {}),
   }
   if (result.result.status !== "executed") {
-    return { ok: false, message: result.result.hint ?? "The saved Script could not execute.", retryable: false }
+    return { ok: false, message: result.result.hint ?? "The Workflow could not execute.", retryable: false }
   }
   if (!result.result.receiptId) {
-    return { ok: false, message: "The Script ran, but its durable artifact receipt could not be recorded.", retryable: true }
+    return { ok: false, message: "The Workflow ran, but its durable artifact receipt could not be recorded.", retryable: true }
   }
   return {
     ok: true,
@@ -317,7 +317,9 @@ app.get(
           "",
           "Authentication:",
           "- Use `Authorization: Bearer <session-token>` for user-authenticated routes that require a Den session.",
-          "- Use `x-api-key: <den-api-key>` for API-key-authenticated routes that accept organization API keys.",
+          "- Use `x-api-key: <den-api-key>` for organization API-key calls. API keys resolve to the issuing user and the organization member they were scoped to when created, so they can call ordinary user and organization routes without a separate signed-in session.",
+          "  Example: `curl https://api.openworklabs.com/v1/me -H \"x-api-key: den_...\"`.",
+          "- Session-only flows still require a signed-in user session, including organization creation, invitation acceptance, active-organization switching, and MCP token minting.",
           "- Public routes like health and documentation do not require authentication.",
           "",
           "Swagger tip: use the security schemes in the Authorize dialog to set either `bearerAuth` or `denApiKey` before trying protected endpoints.",
@@ -356,7 +358,7 @@ app.get(
             type: "apiKey",
             in: "header",
             name: "x-api-key",
-            description: "Organization API key passed as the `x-api-key` header for API-key-authenticated Den routes.",
+            description: "Organization API key passed as the `x-api-key` header. The raw key is the header value; do not prefix it with `Bearer`.",
           },
         },
       },

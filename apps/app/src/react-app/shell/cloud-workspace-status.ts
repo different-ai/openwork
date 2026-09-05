@@ -1,4 +1,13 @@
-import type { DenCloudInstance } from "@/app/lib/den";
+import type { DenCloudInstance, DenCloudStartupFailure } from "@/app/lib/den";
+
+export function cloudWorkspaceFailureLogFields(failure: DenCloudStartupFailure) {
+  return {
+    failure_code: failure.code,
+    failure_stage: failure.stage,
+    failure_reference: failure.reference,
+    failure_occurred_at: failure.occurredAt,
+  };
+}
 
 export type CloudWorkspacePillVariant =
   | "ready"
@@ -6,6 +15,8 @@ export type CloudWorkspacePillVariant =
   | "waking"
   | "provisioning"
   | "updating"
+  | "access-required"
+  | "unavailable"
   | "failed";
 
 export type CloudWorkspaceViewModel = {
@@ -20,7 +31,7 @@ export type CloudWorkspaceViewModel = {
   updateAvailable: boolean;
   showUpdate: boolean;
   showRetry: boolean;
-  pollMs: number;
+  pollMs: number | null;
 };
 
 export type CloudWorkspaceMainContentDecision = "takeover" | "error" | "content";
@@ -86,16 +97,28 @@ export function cloudWorkspaceTakeoverCopy(input: {
   variant: CloudWorkspacePillVariant;
   slow: boolean;
 }): { title: string; body: string } {
+  if (input.variant === "access-required") {
+    return {
+      title: "OpenWork Web needs an active plan",
+      body: "Your organization does not have an active OpenWork Web subscription or complimentary access. Get OpenWork Web in Den to start your cloud workspace.",
+    };
+  }
   if (input.variant === "failed") {
     return {
       title: "Workspace needs attention",
       body: "We couldn’t start the sandbox. Retry, or sign out and reconnect.",
     };
   }
+  if (input.variant === "unavailable") {
+    return {
+      title: "Couldn’t check your workspace",
+      body: "OpenWork Cloud didn’t answer. Your sandbox may still be running, so try checking again.",
+    };
+  }
   if (input.slow) {
     return {
       title: "Still working on it…",
-      body: "This is taking longer than usual. Nothing is broken — wait it out, or retry.",
+      body: "This is taking longer than usual. You can keep waiting or check again.",
     };
   }
   if (input.variant === "provisioning") {
@@ -177,7 +200,10 @@ export function shouldShowCloudWorkspaceStatusPill(input: {
   requestFailed: boolean;
 }): boolean {
   if (!input.hasInstance && !input.requestFailed) return false;
-  return input.variant === "waking" || input.variant === "provisioning" || input.variant === "failed";
+  return input.variant === "waking"
+    || input.variant === "provisioning"
+    || input.variant === "unavailable"
+    || input.variant === "failed";
 }
 
 export function mapCloudWorkspaceMainContentDecision(input: {
@@ -186,7 +212,7 @@ export function mapCloudWorkspaceMainContentDecision(input: {
   gatewayMode: boolean;
 }): CloudWorkspaceMainContentDecision {
   if (!input.gatewayMode) return "content";
-  if (input.status === "failed") return "takeover";
+  if (input.status === "failed" || input.status === "access-required") return "takeover";
   if (!cloudWorkspaceStatusHasReadyContent(input.status)) {
     return input.hasWorkspaces ? "content" : "takeover";
   }
@@ -234,12 +260,41 @@ function baseLines(instance: DenCloudInstance | null, updateAvailable: boolean) 
 export function mapCloudWorkspaceState(input: {
   instance: DenCloudInstance | null;
   updating: boolean;
+  accessRequired: boolean;
   requestFailed?: boolean;
 }): CloudWorkspaceViewModel {
   const updateAvailable = cloudWorkspaceUpdateAvailable(input.instance);
   const lines = baseLines(input.instance, updateAvailable);
 
-  if (input.requestFailed || input.instance?.status === "failed") {
+  if (input.accessRequired) {
+    return {
+      variant: "access-required",
+      label: "OpenWork Web plan required",
+      tone: "amber",
+      statusLine: "OpenWork Web plan required",
+      ...lines,
+      updateAvailable,
+      showUpdate: false,
+      showRetry: true,
+      pollMs: null,
+    };
+  }
+
+  if (input.requestFailed) {
+    return {
+      variant: "unavailable",
+      label: "Couldn’t check workspace",
+      tone: "amber",
+      statusLine: "Couldn’t check workspace status",
+      ...lines,
+      updateAvailable,
+      showUpdate: false,
+      showRetry: true,
+      pollMs: 5_000,
+    };
+  }
+
+  if (input.instance?.status === "failed") {
     return {
       variant: "failed",
       label: "Workspace needs attention",

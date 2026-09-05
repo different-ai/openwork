@@ -55,4 +55,21 @@ describe("session group management", () => {
       "session-3": "group-b",
     });
   });
+
+  test("does not publish an equivalent server group snapshot", () => {
+    const before = useSessionManagementStore.getState().groupsByWorkspace[workspaceId];
+    let notifications = 0;
+    const unsubscribe = useSessionManagementStore.subscribe(() => {
+      notifications += 1;
+    });
+
+    useSessionManagementStore.getState().replaceWorkspaceGroups(workspaceId, {
+      groups: before.groups.map((group) => ({ ...group })),
+      assignments: { ...before.assignments },
+    });
+
+    unsubscribe();
+    expect(useSessionManagementStore.getState().groupsByWorkspace[workspaceId]).toBe(before);
+    expect(notifications).toBe(0);
+  });
 });

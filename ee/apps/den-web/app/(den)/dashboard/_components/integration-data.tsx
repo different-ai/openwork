@@ -18,7 +18,7 @@ export type IntegrationAccount = {
   repositorySelection?: "all" | "selected";
 };
 
-export type IntegrationRepoManifestKind = "marketplace" | "plugin" | null;
+export type IntegrationRepoManifestKind = "agent-plugin" | "marketplace" | "plugin" | null;
 
 export type IntegrationRepo = {
   connectorInstanceId?: string;
@@ -479,12 +479,14 @@ export function useGithubInstallCompletion(input: { installationId: number | nul
               }
 
               const manifestKindValue = entry.manifestKind;
-              const manifestKind: IntegrationRepoManifestKind = manifestKindValue === "marketplace" || manifestKindValue === "plugin"
+              const manifestKind: IntegrationRepoManifestKind = manifestKindValue === "agent-plugin" || manifestKindValue === "marketplace" || manifestKindValue === "plugin"
                 ? manifestKindValue
                 : null;
               return [{
                 defaultBranch: asNullableString(entry.defaultBranch),
-                description: manifestKind === "marketplace"
+                description: manifestKind === "agent-plugin"
+                  ? "Agent Plugin manifest detected."
+                  : manifestKind === "marketplace"
                   ? "Claude marketplace manifest detected."
                   : manifestKind === "plugin"
                     ? "Claude plugin manifest detected."
@@ -542,12 +544,14 @@ export function useGithubAccountRepositories(connectorAccountId: string | null) 
             }
 
             const manifestKindValue = entry.manifestKind;
-            const manifestKind: IntegrationRepoManifestKind = manifestKindValue === "marketplace" || manifestKindValue === "plugin"
+            const manifestKind: IntegrationRepoManifestKind = manifestKindValue === "agent-plugin" || manifestKindValue === "marketplace" || manifestKindValue === "plugin"
               ? manifestKindValue
               : null;
             return [{
               defaultBranch: asNullableString(entry.defaultBranch),
-              description: manifestKind === "marketplace"
+              description: manifestKind === "agent-plugin"
+                ? "Agent Plugin manifest detected."
+                : manifestKind === "marketplace"
                 ? "Claude marketplace manifest detected."
                 : manifestKind === "plugin"
                   ? "Claude plugin manifest detected."

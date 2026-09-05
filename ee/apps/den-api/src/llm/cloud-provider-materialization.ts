@@ -9,8 +9,15 @@ import {
 import { db } from "../db.js"
 import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
-import { fetchWithConnectRetry, previewFetch } from "../workers/preview-fetch.js"
-import { decodeProviderCredential, readProviderEnvNames } from "./provider-credentials.js"
+import { fetchPreviewNoRedirect, fetchWithConnectRetry, previewFetch } from "../workers/preview-fetch.js"
+import {
+  decodeProviderCredential,
+  readProviderEnvNames,
+  runtimeProviderEnvNames,
+  selectLegacyScalarCredentialEnvName,
+  selectPrimaryCredentialEnvName,
+  toRuntimeProviderEnv,
+} from "./provider-credentials.js"
 
 type JsonRecord = Record<string, unknown>
 type OrganizationId = typeof LlmProviderTable.$inferSelect.organizationId
@@ -61,6 +68,12 @@ type PreparedMaterialization = {
   fingerprint: string
   providers: MaterializedProvider[]
   envEntries: EnvEntry[]
+  /**
+   * Entries an earlier release wrote under a catalog provider's declared name
+   * before runtime names were provider-scoped. Deleted only while the worker
+   * still holds exactly the value now written under the scoped name.
+   */
+  supersededEntries: EnvEntry[]
 }
 
 type FetchImpl = (input: string, init?: RequestInit) => Promise<Response>
@@ -111,6 +124,8 @@ const requestTimeoutMs = 8_000
  * picker.
  */
 const materializedFingerprintByWorkerInstance = new Map<string, string>()
+// Only write-phase failures are cached. Read failures can occur while the
+// sandbox engine is booting and are safe to retry immediately.
 const materializationFailureByWorkerInstance = new Map<string, {
   failedAt: number
   result: Extract<CloudProviderMaterializationResult, { ok: false }>
@@ -267,8 +282,16 @@ function readOpenWorkInferenceBaseUrl(providerConfig: JsonRecord) {
 
 function providerEnvEntries(provider: CloudProviderMaterializationProvider): EnvEntry[] {
   const entries: EnvEntry[] = []
-  const envNames = readProviderEnvNames(provider.providerConfig)
-  const credential = decodeProviderCredential(provider.apiKey)
+  const stored = decodeProviderCredential(provider.apiKey)
+  // Stored rows keep the catalog's declared names; the worker sees the
+  // provider-scoped runtime names for both the block and the multi-env map.
+  const credential = toRuntimeProviderEnv({
+    id: provider.id,
+    source: provider.source,
+    providerConfig: provider.providerConfig,
+    apiKeys: stored.apiKeys,
+  })
+  const envNames = readProviderEnvNames(credential.providerConfig)
 
   if (credential.apiKeys) {
     const keys = Object.keys(credential.apiKeys)
@@ -281,11 +304,16 @@ function providerEnvEntries(provider: CloudProviderMaterializationProvider): Env
     }
   }
 
-  if (credential.apiKey && envNames[0]) {
-    upsertEnvEntry(entries, envNames[0], credential.apiKey)
+  if (stored.apiKey && envNames[0]) {
+    upsertEnvEntry(
+      entries,
+      selectLegacyScalarCredentialEnvName(envNames) ?? envNames[0],
+      stored.apiKey,
+    )
   }
 
-  const primaryCredential = credential.apiKey?.trim() || entries[0]?.value || ""
+  const primaryCredentialEnvName = selectPrimaryCredentialEnvName(envNames, entries.map((entry) => entry.key))
+  const primaryCredential = stored.apiKey?.trim() || entries.find((entry) => entry.key === primaryCredentialEnvName)?.value || ""
   if (provider.source === "openwork" && primaryCredential) {
     upsertEnvEntry(entries, "OPENWORK_API_KEY", primaryCredential)
     const baseUrl = readOpenWorkInferenceBaseUrl(provider.providerConfig)
@@ -323,7 +351,7 @@ function buildProviderConfig(provider: CloudProviderMaterializationProvider) {
   const config: JsonRecord = {
     id: provider.providerId,
     name: provider.name,
-    env: readProviderEnvNames(provider.providerConfig),
+    env: runtimeProviderEnvNames(provider),
   }
 
   if (Object.keys(models).length > 0 || provider.source !== "openwork") {
@@ -359,12 +387,12 @@ function buildProviderConfig(provider: CloudProviderMaterializationProvider) {
 }
 
 function providerHasRequiredCredential(provider: CloudProviderMaterializationProvider, envEntries: EnvEntry[]) {
-  const envNames = readProviderEnvNames(provider.providerConfig)
+  const envNames = runtimeProviderEnvNames(provider)
   if (envNames.length === 0) {
     return true
   }
 
-  return envEntries.some((entry) => envNames.includes(entry.key))
+  return selectPrimaryCredentialEnvName(envNames, envEntries.map((entry) => entry.key)) !== null
 }
 
 function prepareMaterialization(providers: CloudProviderMaterializationProvider[]): PreparedMaterialization {
@@ -391,6 +419,18 @@ function prepareMaterialization(providers: CloudProviderMaterializationProvider[
       upsertEnvEntry(envEntries, entry.key, entry.value)
     }
   }
+  const desiredKeys = new Set(envEntries.map((entry) => entry.key))
+  const supersededEntries: EnvEntry[] = []
+  for (const { provider, envEntries: written } of materialized) {
+    const declared = readProviderEnvNames(provider.providerConfig)
+    runtimeProviderEnvNames(provider).forEach((runtimeName, index) => {
+      const declaredName = declared[index]
+      const value = written.find((entry) => entry.key === runtimeName)?.value
+      if (declaredName && declaredName !== runtimeName && value !== undefined && !desiredKeys.has(declaredName)) {
+        upsertEnvEntry(supersededEntries, declaredName, value)
+      }
+    })
+  }
 
   const fingerprintPayload = materialized.map((entry) => ({
     id: entry.provider.id,
@@ -407,7 +447,12 @@ function prepareMaterialization(providers: CloudProviderMaterializationProvider[
     fingerprint: `owp:v1:${hashString(stableJson(fingerprintPayload))}`,
     providers: materialized,
     envEntries,
+    supersededEntries,
   }
+}
+
+function staleSupersededKeys(supersededEntries: EnvEntry[], snapshot: EnvSnapshot) {
+  return supersededEntries.filter((entry) => snapshot.get(entry.key) === entry.value).map((entry) => entry.key)
 }
 
 export function computeCloudProviderMaterializationFingerprint(providers: CloudProviderMaterializationProvider[]) {
@@ -418,7 +463,7 @@ async function fetchWithTimeout(fetchImpl: FetchImpl, url: string, init: Request
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), requestTimeoutMs)
   try {
-    return await fetchImpl(url, { ...init, signal: controller.signal })
+    return await fetchPreviewNoRedirect(fetchImpl, url, { ...init, signal: controller.signal })
   } finally {
     clearTimeout(timeout)
   }
@@ -632,20 +677,20 @@ async function readEnvSnapshot(input: {
   fetchImpl: FetchImpl
   instanceUrl: string
   hostToken: string
-  entries: EnvEntry[]
+  keys: string[]
 }): Promise<EnvSnapshot> {
   const snapshot: EnvSnapshot = new Map()
-  for (const entry of input.entries) {
-    if (snapshot.has(entry.key)) {
+  for (const key of input.keys) {
+    if (snapshot.has(key)) {
       continue
     }
     const existing = await readEnvEntry({
       fetchImpl: input.fetchImpl,
       instanceUrl: input.instanceUrl,
       hostToken: input.hostToken,
-      key: entry.key,
+      key,
     })
-    snapshot.set(entry.key, existing?.value ?? null)
+    snapshot.set(key, existing?.value ?? null)
   }
 
   return snapshot
@@ -947,6 +992,7 @@ export async function materializeCloudWorkerProviders(input: {
   const cacheKey = materializationCacheKey(input.workerId, instanceUrl)
   let fingerprint: string | null = null
   let providerCount = 0
+  let writePhaseStarted = false
 
   try {
     if (!instanceUrl) {
@@ -989,11 +1035,17 @@ export async function materializeCloudWorkerProviders(input: {
       fetchImpl,
       instanceUrl,
       hostToken: tokens.hostToken,
-      entries: prepared.envEntries,
+      keys: [...prepared.envEntries, ...prepared.supersededEntries].map((entry) => entry.key),
     })
+    const staleKeys = staleSupersededKeys(prepared.supersededEntries, envSnapshot)
+    // Roll back only what this pass writes or deletes; a bare-name entry that
+    // is left alone is never touched on the way out either.
+    const touchedKeys = new Set([...prepared.envEntries.map((entry) => entry.key), ...staleKeys])
+    const envRollbackSnapshot: EnvSnapshot = new Map([...envSnapshot].filter(([key]) => touchedKeys.has(key)))
     if (
       materializedProviderStateMatches(prepared, currentManagedProviders)
       && materializedEnvStateMatches(prepared.envEntries, envSnapshot)
+      && staleKeys.length === 0
     ) {
       materializedFingerprintByWorkerInstance.set(cacheKey, fingerprint)
       materializationFailureByWorkerInstance.delete(cacheKey)
@@ -1004,6 +1056,7 @@ export async function materializeCloudWorkerProviders(input: {
     let providerPatched = false
 
     try {
+      writePhaseStarted = true
       await writeEnvEntries({
         fetchImpl,
         instanceUrl,
@@ -1067,7 +1120,7 @@ export async function materializeCloudWorkerProviders(input: {
           fetchImpl,
           instanceUrl,
           hostToken: tokens.hostToken,
-          snapshot: envSnapshot,
+          snapshot: envRollbackSnapshot,
         }).catch((rollbackError) => {
           materializationLogger.warn("cloud provider env rollback failed", {
             worker_id: input.workerId,
@@ -1077,6 +1130,24 @@ export async function materializeCloudWorkerProviders(input: {
         })
       }
       throw error
+    }
+
+    // The org credential an earlier release left under the bare catalog name
+    // would keep enabling OpenCode's built-in vendor catalog. Remove it only on
+    // an exact value match (a different value is the member's own), and only
+    // after the scoped names are in place; a failed delete is retried by the
+    // next pass because it keeps the state out of noop.
+    for (const key of staleKeys) {
+      await deleteEnvEntry({ fetchImpl, instanceUrl, hostToken: tokens.hostToken, key, ignoreNotFound: true }).catch(
+        (deleteError) => {
+          materializationLogger.warn("cloud provider stale env cleanup failed", {
+            worker_id: input.workerId,
+            organization_id: input.organizationId,
+            env_key: key,
+            reason: deleteError instanceof Error ? deleteError.message : "env_delete_failed",
+          })
+        },
+      )
     }
 
     materializedFingerprintByWorkerInstance.set(cacheKey, fingerprint)
@@ -1096,7 +1167,9 @@ export async function materializeCloudWorkerProviders(input: {
       result,
       cause: error,
     })
-    materializationFailureByWorkerInstance.set(cacheKey, { failedAt: now(), result })
+    if (writePhaseStarted) {
+      materializationFailureByWorkerInstance.set(cacheKey, { failedAt: now(), result })
+    }
     return result
   }
 }

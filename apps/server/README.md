@@ -99,10 +99,8 @@ Sandbox advertisement (for capability discovery):
 - `DELETE /workspace/:id/commands/:name`
 - `GET /workspace/:id/audit`
 - `GET /workspace/:id/export`
-- `POST /workspace/:id/import/preview`
-- `POST /workspace/:id/import`
 
-Token management (host/owner auth):
+Token management (collaborator or owner bearer token):
 
 - `GET /tokens`
 - `POST /tokens` (body: `{ "scope": "owner"|"collaborator"|"viewer", "label"?: string }`)
@@ -114,13 +112,21 @@ Inbox/outbox:
 - `GET /workspace/:id/artifacts`
 - `GET /workspace/:id/artifacts/:artifactId`
 - `POST /workspace/:id/files/sessions`
-- `POST /files/sessions/:sessionId/renew`
 - `DELETE /files/sessions/:sessionId`
 - `GET /files/sessions/:sessionId/catalog/snapshot`
-- `GET /files/sessions/:sessionId/catalog/events`
-- `POST /files/sessions/:sessionId/read-batch`
-- `POST /files/sessions/:sessionId/write-batch`
 - `POST /files/sessions/:sessionId/ops`
+
+UI control mailbox:
+
+- `POST /experimental/ui-control/request` (collaborator or owner bearer token)
+- `GET /experimental/ui-control/pending` (collaborator or owner bearer token; optional `?wait=1`)
+- `POST /experimental/ui-control/:id/reply` (collaborator or owner bearer token)
+
+Desktop and web renderers poll the same server they are connected to. The first
+polling window claims each request; commands are never broadcast to every tab.
+Requests expire after five seconds, and a server with no recent renderer poll
+returns an explicit no-window result. The external desktop UI MCP bridge remains
+available; in-app tools no longer discover or fall back to that bridge.
 
 OpenCode proxy:
 

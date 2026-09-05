@@ -68,7 +68,7 @@ Object.defineProperty(globalThis, "localStorage", {
   value: storage,
 });
 
-const { persistUiState, toggleSidePanelState, useUiStateStore } = await import(
+const { expandWorkspace, persistUiState, toggleSidePanelState, toggleWorkspaceExpanded, useUiStateStore } = await import(
   "../src/react-app/shell/ui-state-store"
 );
 const { usePanelTabStore } = await import("../src/react-app/domains/session/panel/panel-tab-store");
@@ -92,6 +92,7 @@ describe("ui state store", () => {
     const state: UiState = {
       sidebarOpen: true,
       sidePanelState: { ses_1: "extensions" },
+      expandedWorkspaceIds: ["ws_1"],
       applicationMenuVisible: false,
       workspaceLeftSidebarWidth: 260,
       workspaceLeftSidebarResizing: false,
@@ -103,6 +104,7 @@ describe("ui state store", () => {
 
     const parsed = requireJsonObject(storage.getItem(PERSISTED_UI_STATE_KEY));
     expect("sidePanelState" in parsed).toBe(false);
+    expect("expandedWorkspaceIds" in parsed).toBe(false);
     expect(objectValue(parsed, "workspaceRightSidebarExpanded")).toBe(true);
     expect(objectValue(parsed, "workspaceRightSidebarExpandedWidth")).toBe(520);
   });
@@ -116,6 +118,7 @@ describe("ui state store", () => {
     const state: UiState = {
       sidebarOpen: true,
       sidePanelState: {},
+      expandedWorkspaceIds: [],
       applicationMenuVisible: false,
       workspaceLeftSidebarWidth: 260,
       workspaceLeftSidebarResizing: false,
@@ -128,6 +131,37 @@ describe("ui state store", () => {
 
     const closed = toggleSidePanelState(opened, "ses_1", "extensions");
     expect(closed.sidePanelState).toEqual({ ses_1: null });
+  });
+
+  test("keeps sidebar workspace expansion in the store so it survives the sidebar unmounting", () => {
+    // Opening Settings unmounts the session sidebar. Expansion state must
+    // outlive that, so it lives in the store rather than component state.
+    const base: UiState = {
+      sidebarOpen: true,
+      sidePanelState: {},
+      expandedWorkspaceIds: [],
+      applicationMenuVisible: false,
+      workspaceLeftSidebarWidth: 260,
+      workspaceLeftSidebarResizing: false,
+      workspaceRightSidebarExpanded: false,
+      workspaceRightSidebarExpandedWidth: 520,
+    };
+
+    const one = expandWorkspace(base, " ws_1 ");
+    expect(one.expandedWorkspaceIds).toEqual(["ws_1"]);
+    expect(expandWorkspace(one, "ws_1")).toBe(one);
+    expect(expandWorkspace(one, "  ")).toBe(one);
+
+    const two = toggleWorkspaceExpanded(one, "ws_2");
+    expect(two.expandedWorkspaceIds).toEqual(["ws_1", "ws_2"]);
+    const collapsed = toggleWorkspaceExpanded(two, "ws_1");
+    expect(collapsed.expandedWorkspaceIds).toEqual(["ws_2"]);
+
+    useUiStateStore.getState().expandWorkspace("ws_store");
+    useUiStateStore.getState().toggleWorkspaceExpanded("ws_toggle");
+    expect(useUiStateStore.getState().expandedWorkspaceIds).toEqual(["ws_store", "ws_toggle"]);
+    useUiStateStore.getState().toggleWorkspaceExpanded("ws_toggle");
+    expect(useUiStateStore.getState().expandedWorkspaceIds).toEqual(["ws_store"]);
   });
 
   test("preserves active panel content while the panel closes and reopens", () => {
@@ -147,5 +181,32 @@ describe("ui state store", () => {
     expect(reopened.sidePanelState.ses_preserve).toBe("panel");
     expect(usePanelTabStore.getState().sessions.ses_preserve?.activeTabId).toBe("file:report.md");
     usePanelTabStore.getState().clearSession("ses_preserve");
+  });
+
+  test("preserves workspace-tree artifact tabs when transcript artifacts resync", () => {
+    const target = {
+      id: "file:src/example.ts",
+      kind: "file" as const,
+      value: "src/example.ts",
+      name: "example.ts",
+      preview: "code" as const,
+      confidence: 100,
+      reason: "workspace tree",
+      exists: true,
+    };
+    usePanelTabStore.getState().openTab("ses_tree", {
+      id: target.id,
+      type: "artifact",
+      label: target.name,
+      preview: target.preview,
+      target,
+    });
+
+    usePanelTabStore.getState().syncTranscriptArtifacts("ses_tree", []);
+
+    expect(usePanelTabStore.getState().sessions.ses_tree?.tabs).toEqual([
+      expect.objectContaining({ id: target.id, target }),
+    ]);
+    usePanelTabStore.getState().clearSession("ses_tree");
   });
 });

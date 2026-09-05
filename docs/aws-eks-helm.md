@@ -272,7 +272,7 @@ helm template openwork-ee oci://ghcr.io/different-ai/charts/openwork-ee \
   --namespace openwork-ee \
   -f values.aws.yaml > /tmp/openwork-rendered.yaml
 
-grep -E 'DATABASE_URL|BETTER_AUTH_URL|DEN_API_PUBLIC_URL|DEN_WEB_PUBLIC_ORIGIN|EMAIL_FROM|SMTP_HOST|SMTP_PORT|SMTP_SECURE' /tmp/openwork-rendered.yaml
+grep -E 'DATABASE_URL|DEN_BASE_URL|DEN_WEB_PUBLIC_ORIGIN|EMAIL_FROM|SMTP_HOST|SMTP_PORT|SMTP_SECURE' /tmp/openwork-rendered.yaml
 ```
 
 Redact secrets before sharing rendered manifests or terminal output.

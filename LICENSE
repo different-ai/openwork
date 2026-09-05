@@ -2,9 +2,16 @@ Copyright (c) 2026-present Different AI, Inc.
 
 Portions of this software are licensed as follows:
 
-* All content that resides under the /ee directory of this repository is licensed under the license defined in "ee/LICENSE" (Fair Source License).
-* All third party components incorporated into the OpenWork Software are licensed under the original license provided by the owner of the applicable component.
-* Content outside of the above mentioned directories or restrictions above is available under the "MIT" license as defined below.
+* All content that resides under the /ee directory of this repository is
+  licensed under the OpenWork Enterprise Edition (EE) License defined in
+  "ee/LICENSE". Versions of that content made available before the EE
+  License was adopted remain governed by the license they were distributed
+  under (the Functional Source License, Version 1.1, MIT Future License).
+* All third party components incorporated into the OpenWork Software are
+  licensed under the original license provided by the owner of the
+  applicable component.
+* Content outside of the above mentioned directories or restrictions above
+  is available under the "MIT" license as defined below.
 
 MIT License
 

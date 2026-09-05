@@ -300,7 +300,7 @@ export function AuthPanel({
     if (emailFirstInvite) {
       params.set("invite", emailFirstInvite);
     }
-    return `/v1/auth/login-options?${params.toString()}`;
+    return `/api/auth/login-options?${params.toString()}`;
   }
 
   useEffect(() => {

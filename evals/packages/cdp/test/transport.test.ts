@@ -5,12 +5,16 @@ import test from "node:test";
 import type { Server } from "node:http";
 import type { Duplex } from "node:stream";
 
-import { connect, evaluate } from "../src/cdp.ts";
+import { callFunction, connect, evaluate } from "../src/cdp.ts";
 import { evaluateOnSurface } from "../src/surface.ts";
 import type { Surface } from "../src/surface.ts";
 
 const TARGET_ID = "page-1";
 const WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 function portFromServer(server: Server): number {
   const address = server.address();
@@ -47,10 +51,19 @@ function handleClientFrames(socket: Duplex): void {
       }
       buffered = buffered.subarray(headerLength + payloadLength);
       const message: unknown = JSON.parse(payload.toString());
-      if (typeof message !== "object" || message === null || !("id" in message) || typeof message.id !== "number") continue;
-      const result = "method" in message && message.method === "Runtime.evaluate"
-        ? { result: { value: "recovered" } }
-        : {};
+      if (!isRecord(message) || typeof message.id !== "number") continue;
+      let result = {};
+      if (message.method === "Runtime.evaluate") {
+        const params = isRecord(message.params) ? message.params : {};
+        result = params.expression === "globalThis"
+          ? { result: { objectId: "global-object" } }
+          : { result: { value: "recovered" } };
+      } else if (message.method === "Runtime.callFunctionOn") {
+        const params = isRecord(message.params) ? message.params : {};
+        const args = Array.isArray(params.arguments) ? params.arguments : [];
+        const first = args[0];
+        result = { result: { value: isRecord(first) ? first.value : undefined } };
+      }
       socket.write(websocketFrame(JSON.stringify({ id: message.id, result })));
     }
   });
@@ -135,6 +148,19 @@ test("a stalled websocket can be condemned without awaiting close", async () => 
     await assert.rejects(pending, /CDP transport stalled: probe timed out/);
     await assert.rejects(evaluate(client, "3", { timeoutMs: 500 }), /CDP socket is not open/);
   } finally {
+    await server.close();
+  }
+});
+
+test("function calls pass dynamic values as structured CDP arguments", async () => {
+  const server = await startCdpServer(0);
+  const client = await connect(server.websocketUrl, { connectTimeoutMs: 500, sendTimeoutMs: 500 });
+  try {
+    const dynamicValue = `"); throw new Error("must stay data"); //`;
+    const value = await callFunction(client, "function (value) { return value; }", [dynamicValue]);
+    assert.equal(value, dynamicValue);
+  } finally {
+    client.close();
     await server.close();
   }
 });

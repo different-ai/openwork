@@ -156,7 +156,7 @@ function buildInstallConfig(input: { organization: { name: string; logo: string 
   return installConfigSchema.parse({
     appName: typeof metadata.brandAppName === "string" ? metadata.brandAppName : "OpenWork",
     clientName: input.organization.name,
-    webUrl: env.betterAuthUrl,
+    webUrl: env.webUrl,
     apiUrl: resolvePublicOrigin(input.request, env.apiPublicUrl),
     requireSignin: true,
     logoUrl: typeof metadata.brandLogoUrl === "string" ? metadata.brandLogoUrl : input.organization.logo ?? null,

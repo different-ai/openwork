@@ -35,6 +35,8 @@ export interface EvaluateOptions {
   timeoutMs?: number;
 }
 
+export type CdpFunctionArgument = string | number | boolean | null;
+
 /** Cheap DOM/CDP probes should fail quickly enough for their caller to retry. */
 export const DEFAULT_CDP_PROBE_TIMEOUT_MS = 8_000;
 
@@ -284,6 +286,10 @@ export async function evaluate(
     awaitPromise,
     returnByValue: true,
   }, { timeoutMs });
+  return runtimeResultValue(payload);
+}
+
+function runtimeResultValue(payload: unknown): unknown {
   if (!isRecord(payload)) return undefined;
   if (isRecord(payload.exceptionDetails)) {
     const exception = payload.exceptionDetails.exception;
@@ -295,6 +301,33 @@ export async function evaluate(
   }
   const result = payload.result;
   return isRecord(result) ? result.value : undefined;
+}
+
+export async function callFunction(
+  client: CdpClient,
+  functionDeclaration: string,
+  args: readonly CdpFunctionArgument[] = [],
+  { awaitPromise = false, timeoutMs = DEFAULT_CDP_PROBE_TIMEOUT_MS }: EvaluateOptions = {},
+): Promise<unknown> {
+  const receiverPayload = await client.send("Runtime.evaluate", {
+    expression: "globalThis",
+    returnByValue: false,
+  }, { timeoutMs });
+  if (!isRecord(receiverPayload) || !isRecord(receiverPayload.result)) {
+    throw new Error("CDP did not return the page global object.");
+  }
+  if (isRecord(receiverPayload.exceptionDetails)) runtimeResultValue(receiverPayload);
+  const objectId = stringField(receiverPayload.result.objectId);
+  if (!objectId) throw new Error("CDP did not identify the page global object.");
+
+  const payload = await client.send("Runtime.callFunctionOn", {
+    functionDeclaration,
+    objectId,
+    arguments: args.map((value) => ({ value })),
+    awaitPromise,
+    returnByValue: true,
+  }, { timeoutMs });
+  return runtimeResultValue(payload);
 }
 
 export async function navigate(client: CdpClient, url: string): Promise<void> {

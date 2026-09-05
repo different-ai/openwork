@@ -1,5 +1,10 @@
 name: Changelog
 
+# The release workflow publishes releases with GITHUB_TOKEN, and GitHub never
+# starts workflows from events created by that token, so `release: published`
+# only fires when a human publishes by hand. The primary entry point is the
+# `gh workflow run changelog.yml -f tag=...` dispatch issued by
+# release-macos-aarch64.yml right after it flips the draft.
 on:
   release:
     types: [published]
@@ -53,7 +58,7 @@ jobs:
         run: |
           if grep -Fq "[$TAG](https://github.com/different-ai/openwork/compare/" packages/docs/changelog.mdx; then
             echo "documented=true" >> "$GITHUB_OUTPUT"
-            echo "$TAG is already documented; skipping changelog automation."
+            echo "$TAG is already documented; skipping docs generation and only refreshing the release notes."
           else
             echo "documented=false" >> "$GITHUB_OUTPUT"
           fi
@@ -126,7 +131,7 @@ jobs:
           echo "PREV=$PREV" >> "$GITHUB_ENV"
 
       - name: Setup Node
-        if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'
+        if: steps.guard.outputs.stable == 'true'
         uses: actions/setup-node@v6
         with:
           node-version: 24
@@ -140,7 +145,7 @@ jobs:
       - name: Draft changelog entries
         if: steps.guard.outputs.stable == 'true' && steps.dedupe.outputs.documented == 'false'
         env:
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: opencode run --agent changelog "$(cat /tmp/changelog_prompt.txt)"
 
       - name: Discard opencode runtime churn
@@ -191,3 +196,18 @@ jobs:
             --title "docs(changelog): release notes for $TAG" \
             --body-file /tmp/pr_body.txt)"
           gh pr merge "$pr_url" --auto --squash --delete-branch
+
+      # Runs for already-documented tags too, so a manual dispatch can repair a
+      # release whose notes were hand-written or whose original dispatch failed.
+      - name: Update GitHub Release notes
+        if: steps.guard.outputs.stable == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          gh release view "$TAG" --json body -q .body > /tmp/existing_release_body.md
+          node scripts/release/release-notes-from-changelog.mjs "$TAG" \
+            --existing-body /tmp/existing_release_body.md > /tmp/release_notes.md
+          gh release edit "$TAG" --notes-file /tmp/release_notes.md
+          echo "Replaced the static release body of $TAG with the generated changelog entry."

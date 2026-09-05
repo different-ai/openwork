@@ -19,7 +19,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # pnpm + bun
 RUN corepack enable && corepack prepare pnpm@latest --activate
-RUN npm install -g bun
+# Pin bun to the CI-proven 1.3 line; unpinned installs picked up bun 1.4.0,
+# which breaks the Den/desktop sandbox stack (sign-in grant exchange fails).
+RUN npm install -g bun@1.3.14
 
 # noVNC index
 RUN ln -sf /usr/share/novnc/vnc.html /usr/share/novnc/index.html

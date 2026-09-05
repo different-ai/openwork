@@ -6,6 +6,7 @@ import { BrowserRouter, HashRouter } from "react-router";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { initializeDenBootstrapConfig } from "./app/lib/den";
+import { startWebErrorMonitoring } from "./app/lib/error-monitoring";
 import { getOpenWorkDeployment } from "./app/lib/openwork-deployment";
 import { bootstrapTheme } from "./app/theme";
 import { isDesktopRuntime } from "./app/utils";
@@ -21,6 +22,7 @@ import { setWebNotificationHandler } from "./react-app/shell/desktop-notificatio
 import { startDeepLinkBridge } from "./react-app/shell/startup-deep-links";
 import "./app/index.css";
 
+startWebErrorMonitoring();
 bootstrapTheme();
 initLocale();
 startDeepLinkBridge();

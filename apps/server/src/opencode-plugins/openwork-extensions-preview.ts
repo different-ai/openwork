@@ -1,12 +1,9 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
-import { homedir, platform } from "node:os";
+import { realpath } from "node:fs/promises";
 import { z } from "zod";
 import type { OpenworkAffordanceEffects } from "@openwork/types/openwork-affordance";
 import { automationProposalSchema } from "@openwork/types/automations";
 import {
-  combineInstructionSections,
-  composeAgentInstructions,
+  appendAgentInstructions,
   createInstructionSection,
 } from "./agent-instruction-compose.js";
 import {
@@ -99,20 +96,8 @@ const sessionTimeSchema = z.object({
 const sessionInfoSchema = z.object({
   id: z.string(),
   title: z.string().nullish(),
+  directory: z.string().optional(),
   time: sessionTimeSchema.optional(),
-}).passthrough();
-
-const sessionListEnvelopeSchema = z.object({
-  items: z.array(sessionInfoSchema),
-}).passthrough();
-
-const sessionEnvelopeSchema = z.object({
-  item: sessionInfoSchema,
-}).passthrough();
-
-const createdSessionEnvelopeSchema = z.object({
-  item: sessionInfoSchema,
-  started: z.boolean(),
 }).passthrough();
 
 const sessionPartSchema = z.object({
@@ -131,10 +116,6 @@ const sessionMessageSchema = z.object({
   parts: z.array(sessionPartSchema),
 }).passthrough();
 
-const sessionMessagesEnvelopeSchema = z.object({
-  items: z.array(sessionMessageSchema),
-}).passthrough();
-
 const OPENWORK_AGENT_SURFACE_INSTRUCTION =
   `## OpenWork app context
 Use openwork_context when the request depends on the current OpenWork screen, open tabs, split view, focused pane, sidebar, side panel, settings panel, or available app actions.
@@ -142,20 +123,12 @@ Each affordance declares its effects and executor. Use openwork_query only for s
 Reading another session does not require opening it. Prefer session.search then session.read for transcript questions; use session.create for new chats and a UI command only when the user asks to navigate.
 To open settings or navigate the app, use openwork_execute with ids from openwork_context such as settings.panel.open — never browser_* tools for the OpenWork app itself.`;
 
+// External-web mechanics only: the app-surface section above owns the rule
+// that browser_* tools never drive the OpenWork app itself.
 const OPENWORK_BROWSER_INSTRUCTION =
-  `Do NOT use browser_navigate, browser_click, or browser_snapshot to interact with the OpenWork app itself. Those are for browsing external websites.
-
-## Built-in Browser (external websites)
+  `## Built-in Browser (external websites)
 For web browsing tasks, ALWAYS start with openwork_execute id browser.open_url. It creates/selects a built-in OpenWork browser tab and returns browser_url plus target_id. Use that exact browser_url and target_id for every later browser_snapshot, browser_click, browser_fill, browser_eval, and browser_screenshot call.
-Do not call browser_navigate without a target_id returned by browser.open_url. Do not use browser_* tools on the OpenWork app target (avoid targets with title "OpenWork" or URLs containing ":5173/#/").`;
-
-// ── UI control bridge discovery ──
-
-type UiBridge = { baseUrl: string; token: string };
-let cachedBridge: UiBridge | null = null;
-let cachedBridgeAt = 0;
-const BRIDGE_CACHE_MS = 2_000;
-const BRIDGE_TIMEOUT_MS = 5_000;
+Do not call browser_navigate without a target_id returned by browser.open_url; a target titled "OpenWork" or whose URL contains ":5173/#/" is the app itself, not a web page.`;
 
 type OpenWorkWorkspace = z.infer<typeof workspaceSchema>;
 type SessionInfo = z.infer<typeof sessionInfoSchema>;
@@ -301,57 +274,14 @@ const SESSION_SEARCH_CONCURRENCY = 6;
 const SESSION_SNIPPET_BEFORE = 36;
 const SESSION_SNIPPET_AFTER = 72;
 
-function userAppDataDir(): string {
-  if (platform() === "darwin") return join(homedir(), "Library", "Application Support");
-  if (platform() === "win32") return process.env.APPDATA || join(homedir(), "AppData", "Roaming");
-  return process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
-}
-
-function uiControlDiscoveryPaths(): string[] {
-  return [
-    process.env.OPENWORK_UI_CONTROL_DISCOVERY?.trim(),
-    join(userAppDataDir(), "com.differentai.openwork", "openwork-ui-control.json"),
-    join(userAppDataDir(), "com.differentai.openwork.dev", "openwork-ui-control.json"),
-  ].filter((p): p is string => Boolean(p));
-}
-
-async function discoverUiBridge(): Promise<UiBridge | null> {
-  if (cachedBridge && Date.now() - cachedBridgeAt < BRIDGE_CACHE_MS) return cachedBridge;
-  for (const candidate of uiControlDiscoveryPaths()) {
-    try {
-      const raw = await readFile(candidate, "utf8");
-      const parsed = JSON.parse(raw) as Record<string, unknown>;
-      if (typeof parsed.baseUrl === "string" && typeof parsed.token === "string") {
-        cachedBridge = { baseUrl: parsed.baseUrl, token: parsed.token };
-        cachedBridgeAt = Date.now();
-        return cachedBridge;
-      }
-    } catch {
-      // Try next
-    }
-  }
-  return null;
-}
-
-async function uiBridgeRequest(path: string, options: { method?: string; body?: unknown } = {}): Promise<unknown> {
-  const bridge = await discoverUiBridge();
-  if (!bridge) return { ok: false, error: "OpenWork UI bridge not available. The desktop app may not be running." };
+async function uiControlRequest(
+  kind: "context" | "query" | "command",
+  input?: unknown,
+): Promise<unknown> {
   try {
-    const response = await fetch(`${bridge.baseUrl}${path}`, {
-      method: options.method || "GET",
-      signal: AbortSignal.timeout(BRIDGE_TIMEOUT_MS),
-      headers: {
-        Authorization: `Bearer ${bridge.token}`,
-        ...(options.body ? { "Content-Type": "application/json" } : {}),
-      },
-      ...(options.body ? { body: JSON.stringify(options.body) } : {}),
-    });
-    const text = await response.text();
-    try { return JSON.parse(text); } catch { return { ok: false, error: text || `HTTP ${response.status}` }; }
+    return await postJson("/experimental/ui-control/request", { kind, input }, AbortSignal.timeout(7_000));
   } catch (error) {
-    cachedBridge = null;
-    cachedBridgeAt = 0;
-    return { ok: false, error: `UI bridge unreachable: ${error instanceof Error ? error.message : String(error)}` };
+    return { ok: false, error: unknownErrorMessage(error) };
   }
 }
 
@@ -401,7 +331,7 @@ async function readOpenworkAgentContext(
   engineMcpStatusDirectory: string | undefined,
 ): Promise<Record<string, unknown>> {
   const [uiResult, skills, mcps] = await Promise.all([
-    uiBridgeRequest("/context"),
+    uiControlRequest("context"),
     readConnectSkillDescriptors(),
     readEngineMcpDescriptors(engineMcpStatusClient, engineMcpStatusDirectory),
   ]);
@@ -461,10 +391,7 @@ async function queryOpenworkAffordance(rawArgs: unknown): Promise<unknown> {
       "This affordance declares a dedicated Connect executor. Call the tool named in openwork_context.",
     );
   }
-  const result = await uiBridgeRequest("/query", {
-    method: "POST",
-    body: request,
-  });
+  const result = await uiControlRequest("query", request);
   return isRecord(result) && typeof result.ok === "boolean"
     ? result
     : unavailableAffordance(request.id, "OpenWork UI query returned an invalid response.");
@@ -485,7 +412,7 @@ async function executeOpenworkAffordance(
   if (request.id === "automation.propose") {
     return affordanceResult(
       request.id,
-      proposeAutomation(request.args ?? {}),
+      proposeAutomation(request.args ?? {}, context),
       affordanceProposalEffects,
     );
   }
@@ -508,13 +435,18 @@ async function executeOpenworkAffordance(
       "This affordance declares a dedicated Connect executor. Call the tool named in openwork_context.",
     );
   }
-  const result = await uiBridgeRequest("/command", {
-    method: "POST",
-    body: request,
-  });
+  // Keep the requesting conversation attached when commands cross the server.
+  const result = await uiControlRequest("command", { ...request, ...affordanceOrigin(context) });
   return isRecord(result) && typeof result.ok === "boolean"
     ? result
     : unavailableAffordance(request.id, "OpenWork UI command returned an invalid response.");
+}
+
+function affordanceOrigin(context: OpenCodeContext): { origin?: { sessionId: string; workspaceId?: string } } {
+  const sessionId = context.sessionID?.trim();
+  if (!sessionId) return {};
+  const workspaceId = (context.workspaceId ?? context.workspaceID)?.trim();
+  return { origin: { sessionId, ...(workspaceId ? { workspaceId } : {}) } };
 }
 
 function collapseWhitespace(value: string): string {
@@ -633,22 +565,42 @@ function filterWorkspaces(workspaces: OpenWorkWorkspace[], workspaceId?: string)
 
 async function listWorkspaceSessions(workspace: OpenWorkWorkspace, limit: number): Promise<SessionInfo[]> {
   const query = new URLSearchParams({ roots: "true", limit: String(limit) });
-  return sessionListEnvelopeSchema.parse(
-    await serverGet(`/workspace/${encodeURIComponent(workspace.id)}/sessions?${query.toString()}`),
-  ).items;
+  return z.array(sessionInfoSchema).parse(
+    await serverGet(`/workspace/${encodeURIComponent(workspace.id)}/opencode/session?${query.toString()}`),
+  );
+}
+
+// The removed wrapper route validated that a session actually belongs to the
+// requested workspace before exposing it (requireWorkspaceSession). The native
+// engine route only scopes the upstream request, so a caller supplying a
+// foreign session ID would otherwise read cross-workspace transcript data.
+async function assertSessionInWorkspace(workspace: OpenWorkWorkspace, session: SessionInfo): Promise<void> {
+  const workspacePath = workspace.path?.trim();
+  const sessionDirectory = session.directory?.trim();
+  if (!workspacePath || !sessionDirectory) return;
+  const [root, dir] = await Promise.all([
+    realpath(workspacePath).catch(() => workspacePath),
+    realpath(sessionDirectory).catch(() => sessionDirectory),
+  ]);
+  const normalizedRoot = normalizeDirPath(root);
+  const normalizedDir = normalizeDirPath(dir);
+  if (normalizedDir === normalizedRoot || normalizedDir.startsWith(`${normalizedRoot}/`)) return;
+  throw new Error(`Session ${session.id} not found in workspace ${workspaceLabel(workspace)}`);
 }
 
 async function readWorkspaceSession(workspace: OpenWorkWorkspace, sessionId: string): Promise<SessionInfo> {
-  return sessionEnvelopeSchema.parse(
-    await serverGet(`/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(sessionId)}`),
-  ).item;
+  const session = sessionInfoSchema.parse(
+    await serverGet(`/workspace/${encodeURIComponent(workspace.id)}/opencode/session/${encodeURIComponent(sessionId)}`),
+  );
+  await assertSessionInWorkspace(workspace, session);
+  return session;
 }
 
 async function readSessionMessages(workspace: OpenWorkWorkspace, sessionId: string, limit: number): Promise<SessionMessage[]> {
   const query = new URLSearchParams({ limit: String(limit) });
-  return sessionMessagesEnvelopeSchema.parse(
-    await serverGet(`/workspace/${encodeURIComponent(workspace.id)}/sessions/${encodeURIComponent(sessionId)}/messages?${query.toString()}`),
-  ).items;
+  return z.array(sessionMessageSchema).parse(
+    await serverGet(`/workspace/${encodeURIComponent(workspace.id)}/opencode/session/${encodeURIComponent(sessionId)}/message?${query.toString()}`),
+  );
 }
 
 async function forEachWithConcurrency<T>(items: T[], concurrency: number, run: (item: T) => Promise<void>): Promise<void> {
@@ -836,18 +788,24 @@ async function resolveContextWorkspace(workspaceId: string | undefined, context:
 async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext): Promise<object> {
   const args = sessionCreateArgsSchema.parse(rawArgs);
   const workspace = await resolveContextWorkspace(args.workspaceId, context);
+  let createdOnEngine = false;
   const results = await Promise.all(args.sessions.map(async (session): Promise<CreatedOpenWorkSessionResult | FailedOpenWorkSessionResult> => {
     try {
-      const payload = createdSessionEnvelopeSchema.parse(await postJson(
-        `/workspace/${encodeURIComponent(workspace.id)}/sessions`,
-        session,
+      const payload = sessionInfoSchema.parse(await postJson(
+        `/workspace/${encodeURIComponent(workspace.id)}/opencode/session`,
+        { title: session.title },
       ));
+      createdOnEngine = true;
+      await postJson(
+        `/workspace/${encodeURIComponent(workspace.id)}/opencode/session/${encodeURIComponent(payload.id)}/prompt_async`,
+        { parts: [{ type: "text", text: session.prompt }] },
+      );
       return {
         ok: true,
-        sessionId: payload.item.id,
-        title: payload.item.title?.trim() || session.title,
-        started: payload.started,
-        route: `/workspace/${encodeURIComponent(workspace.id)}/session/${encodeURIComponent(payload.item.id)}`,
+        sessionId: payload.id,
+        title: payload.title?.trim() || session.title,
+        started: true,
+        route: `/workspace/${encodeURIComponent(workspace.id)}/session/${encodeURIComponent(payload.id)}`,
       };
     } catch (error) {
       return {
@@ -859,6 +817,17 @@ async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext
   }));
   const created = results.filter((result): result is CreatedOpenWorkSessionResult => result.ok);
   const failures = results.filter((result): result is FailedOpenWorkSessionResult => !result.ok);
+  // The desktop only receives engine events for its selected workspace, so a
+  // session created here in any other workspace stays invisible until that
+  // list is refetched. A session whose prompt failed still exists, so it is
+  // refetched too. Best effort: headless runs without a connected window get
+  // a soft error.
+  if (createdOnEngine) {
+    await uiControlRequest("command", {
+      id: "workspace.reload_sessions",
+      args: { workspaceId: workspace.id },
+    });
+  }
   return {
     ok: failures.length === 0,
     workspaceId: workspace.id,
@@ -875,8 +844,15 @@ async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext
  * and the Den credential lives in the renderer, so an agent can describe an
  * Automation but only a person can create one.
  */
-function proposeAutomation(rawArgs: unknown): object {
-  const proposal = automationProposalSchema.parse(rawArgs);
+function proposeAutomation(rawArgs: unknown, context: OpenCodeContext): object {
+  const { workspaceId: _modelSupplied, ...parsed } = automationProposalSchema.parse(rawArgs);
+  // Pin the proposing conversation's workspace so the Automation keeps running
+  // there even after the person activates a different workspace. The pin comes
+  // from the engine-provided context only: a model-supplied workspaceId is
+  // discarded so a prompt-injected agent cannot retarget the Automation to a
+  // workspace the person is not looking at.
+  const workspaceId = context.workspaceId ?? context.workspaceID;
+  const proposal = workspaceId ? { ...parsed, workspaceId } : parsed;
   return {
     ok: true,
     kind: "automation-proposal",
@@ -886,9 +862,10 @@ function proposeAutomation(rawArgs: unknown): object {
   };
 }
 
-async function postJson(path: string, body: ExtensionActionPayload | Record<string, unknown>): Promise<unknown> {
+async function postJson(path: string, body: ExtensionActionPayload | Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
   const { url, token } = requireOpenWorkServer();
   const response = await fetch(url + path, {
+    signal,
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -944,17 +921,21 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
         directory: normalizeOpenCodeContext(mergedInput).directory ?? factoryContext.directory ?? null,
       });
     }
-    // One section id per concern — combine drops empties/duplicates so routing,
+    // One section id per concern — composition drops empties/duplicates so routing,
     // remote skills, session, and browser guidance never overlap by accident.
-    const sections = combineInstructionSections(
-      createInstructionSection("routing", extensionInstruction),
+    // Appended into the engine's existing system entry so the request still
+    // carries a single system message. Order: stable mechanics first, then the
+    // live Connect steering and skill-authoring mode, then the catalogs, so
+    // rules are read before the data they govern.
+    appendAgentInstructions(
+      output.system,
       createInstructionSection("agent-surface", OPENWORK_AGENT_SURFACE_INSTRUCTION),
+      createInstructionSection("browser", OPENWORK_BROWSER_INSTRUCTION),
+      createInstructionSection("routing", extensionInstruction),
       createInstructionSection("skill-authoring", skillAuthoring.prompt),
       createInstructionSection("connect-skills", skillInstruction),
       createInstructionSection("automations", automationInstruction),
-      createInstructionSection("browser", OPENWORK_BROWSER_INSTRUCTION),
     );
-    output.system.push(...composeAgentInstructions(sections));
   },
   tool: {
     openwork_context: {

@@ -13,6 +13,7 @@ function record(name: string, dir: string, createdAt: string, passed: boolean): 
     dir,
     createdAt,
     closedAt: createdAt,
+    engine: "v1",
     summary: {
       ok: passed,
       totalArtifacts: 1,
@@ -36,6 +37,9 @@ function record(name: string, dir: string, createdAt: string, passed: boolean): 
       results: [{ expectation: `${name} expectation`, passed, evidence: `${name} evidence` }],
       judgments: [{ expectation: `${name} expectation`, state: passed ? "passed" : "failed", reasoning: `${name} evidence` }],
     }],
+    trace: [],
+    steps: [],
+    outcome: passed ? "passed" : "failed",
   };
 }
 
@@ -45,8 +49,10 @@ function legacyRecord(testRun: TestRunRecord): Record<string, unknown> {
     void judgments;
     return legacyArtifact;
   });
+  const { engine, ...legacyTestRun } = testRun;
+  void engine;
   return {
-    ...testRun,
+    ...legacyTestRun,
     summary: {
       ok: testRun.summary.ok,
       totalFrames: testRun.summary.totalArtifacts,
@@ -81,6 +87,7 @@ test("scanTestRuns reads current and persisted legacy results while tolerating c
     assert.deepEqual(entries.map((entry) => entry.name), ["Current", "Persisted", "2026-06-01T10-00-00-000Z-legacy"]);
     const storedEntries = entries.filter((entry) => entry.kind === "test-run");
     assert.deepEqual(storedEntries.map((entry) => entry.format), ["current", "legacy"]);
+    assert.equal(storedEntries[1]?.testRun.engine, "v1");
     assert.deepEqual(storedEntries[1]?.testRun.artifacts[0]?.judgments, [{
       expectation: "Persisted expectation",
       state: "passed",
@@ -98,10 +105,61 @@ test("scanTestRuns reads current and persisted legacy results while tolerating c
 
 test("renderPrMarkdown writes only the new test-evidence marker", () => {
   const testRun = record("PR proof", "/tmp/2026-pr-proof", "2026-07-02T10:00:00.000Z", false);
+  testRun.engine = "v2";
+  testRun.trace = [
+    { seq: 1, at: testRun.createdAt, stage: "world", channel: "seed", verb: "den", detail: "den(local)", ok: true },
+    { seq: 2, at: testRun.createdAt, stage: "body", channel: "user", verb: "reload", detail: "reload", ok: true },
+    { seq: 3, at: testRun.createdAt, stage: "body", channel: "user", verb: "reload", detail: "reload", ok: true },
+  ];
+  testRun.steps = [{ seq: 1, name: "draft persists", depth: 0, ok: false, ms: 6_100, error: "missing draft" }];
   const markdown = renderPrMarkdown(testRun, { "01-first.png": "https://example.test/01-first.png" });
   assert.match(markdown, /<!-- test-evidence -->/);
   assert.doesNotMatch(markdown, /<!-- photo-roll -->|<!-- fraimz -->/);
   assert.match(markdown, /PR proof first validation/);
+  assert.match(markdown, /SHA unknown · engine v2/);
+  assert.match(markdown, /\*\*\[world\]\*\* den\(local\)/);
+  assert.match(markdown, /\*\*\[user\]\*\* reload ×2/);
+  assert.match(markdown, /\*\*steps\*\* 1 ❌ draft persists \(6\.1s\)/);
+  assert.match(markdown, /\*\*verdict\*\* failed/);
+});
+
+test("renderPrMarkdown leads with the test outcome and counts trace observations", () => {
+  const testRun = record("trace proof", "/tmp/2026-trace-proof", "2026-07-02T10:00:00.000Z", true);
+  testRun.artifacts = [];
+  testRun.summary = {
+    ok: true,
+    totalArtifacts: 0,
+    passedArtifacts: 0,
+    failedArtifacts: 0,
+    unvalidatedArtifacts: 0,
+    pendingArtifacts: 0,
+    passedExpectations: 0,
+    failedExpectations: 0,
+    pendingJudgments: 0,
+  };
+  testRun.trace = [
+    { seq: 1, at: testRun.createdAt, stage: "world", channel: "seed", verb: "tmpPath", detail: "tmpPath(ignored)", ok: true },
+    { seq: 2, at: testRun.createdAt, stage: "body", channel: "user", verb: "see", detail: "see(composer, editable)", ok: true },
+    { seq: 3, at: testRun.createdAt, stage: "body", channel: "user", verb: "see", detail: "see(composer, editable)", ok: true },
+    { seq: 4, at: testRun.createdAt, stage: "body", channel: "user", verb: "see", detail: "see(composer, editable)", ok: true },
+    { seq: 5, at: testRun.createdAt, stage: "body", channel: "probe", verb: "storage", detail: "storage(draft)", ok: true },
+    { seq: 6, at: testRun.createdAt, stage: "body", channel: "probe:raw", verb: "eval", detail: "eval(<expression>)", ok: true },
+  ];
+  testRun.steps = [{ seq: 1, name: "draft persists", depth: 0, ok: true }];
+
+  const markdown = renderPrMarkdown(testRun, {});
+  assert.match(markdown, /^<!-- test-evidence -->\n## Test evidence — trace proof — ✅ passed/m);
+  assert.match(markdown, /\*\*verdict\*\* passed · 3 user observations \(see ×3\) · 2 probes · steps 1\/1/);
+  assert.doesNotMatch(markdown, /tmpPath/);
+
+  const headings: Array<{ outcome: "failed" | "skipped"; heading: string }> = [
+    { outcome: "failed", heading: "❌ failed" },
+    { outcome: "skipped", heading: "⏭ skipped" },
+  ];
+  for (const entry of headings) {
+    testRun.outcome = entry.outcome;
+    assert.match(renderPrMarkdown(testRun, {}), new RegExp(`## Test evidence — trace proof — ${entry.heading}`));
+  }
 });
 
 test("scanTestRuns skips a symlinked test-run.json", async () => {

@@ -1,9 +1,9 @@
 name: Alpha Channel (macOS arm64)
 
-# Every push to `dev` publishes a fresh macOS arm64 build to the single
-# rolling `alpha-macos-latest` release. Each run appends uniquely-versioned
-# dmg, zip, and blockmap assets, then re-uploads `latest-mac.yml` last so the
-# manifest never references missing assets.
+# Every app-related push to `dev` publishes a fresh macOS arm64 build to the
+# single rolling `alpha-macos-latest` release. Each run appends
+# uniquely-versioned dmg, zip, and blockmap assets, then re-uploads
+# `latest-mac.yml` last so the manifest never references missing assets.
 #
 # Assets older than the retention window are pruned. Per-run GitHub releases
 # are no longer created.
@@ -14,6 +14,24 @@ on:
   push:
     branches:
       - dev
+    paths:
+      - apps/app/**
+      - apps/desktop/**
+      - apps/server/**
+      - packages/docs/**
+      - packages/enterprise-mcp-client/**
+      - packages/handsfree/**
+      - packages/install-config/**
+      - packages/paths/**
+      - packages/types/**
+      - packages/ui/**
+      - patches/**
+      - scripts/release/**
+      - constants.json
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - .github/workflows/alpha-macos-aarch64.yml
   workflow_dispatch:
     inputs:
       publish:

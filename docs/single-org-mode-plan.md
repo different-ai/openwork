@@ -403,7 +403,7 @@ Validation update on 2026-07-05:
 5. `bash -n packaging/docker/den-dev-up.sh` passed.
 6. `docker compose -f packaging/docker/docker-compose.den-dev.yml config | rg "DEN_ORG_MODE|DEN_SINGLE_ORG|DEN_REQUIRE_EMAIL_VERIFICATION"`
    showed `single_org`, singleton org settings, and disabled email verification.
-7. `pnpm dev:web-local` started Den API, Den Web, worker proxy, inference, and
+7. `pnpm dev:web-local` started Den API, Den Web, inference, and
    Docker MySQL. Health, readiness, runtime config, signup/signin, singleton
    membership, and org-create rejection checks passed.
 8. Historical legacy-runner record: `pnpm fraimz --flow den-single-org-mode --cdp-url http://127.0.0.1:9825`

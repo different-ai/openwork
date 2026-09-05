@@ -67,6 +67,14 @@ describe("deriveOpenTargets", () => {
     expect(targets[0]).toMatchObject({ value: "summary.md", preview: "markdown", confidence: 95 });
   });
 
+  it("opens standalone Mermaid files through the Markdown preview", () => {
+    const targets = deriveOpenTargets([
+      toolMessage("msg_tool", "write", { path: "diagrams/architecture.mmd" }, { path: "diagrams/architecture.mmd" }),
+    ]);
+
+    expect(targets[0]).toMatchObject({ value: "diagrams/architecture.mmd", preview: "markdown", confidence: 95 });
+  });
+
   it("extracts filePath metadata from write tools", () => {
     const targets = deriveOpenTargets([
       toolMessage("msg_tool", "write", { filePath: "reports/summary.md" }, { filePath: "reports/summary.md" }),
@@ -75,15 +83,15 @@ describe("deriveOpenTargets", () => {
     expect(targets[0]).toMatchObject({ value: "reports/summary.md", preview: "markdown", confidence: 95 });
   });
 
-  it("keeps written unsupported files available for opening externally", () => {
+  it("collects written code files for the artifact editor", () => {
     const targets = deriveOpenTargets([
       toolMessage("msg_tool", "write", { filePath: "src/widget.tsx" }, { filePath: "src/widget.tsx" }),
     ]);
 
     const target = targets[0];
 
-    expect(target).toMatchObject({ value: "src/widget.tsx", preview: "text", confidence: 95 });
-    expect(target ? isCollectibleArtifactTarget({ ...target, exists: true }) : true).toBe(false);
+    expect(target).toMatchObject({ value: "src/widget.tsx", preview: "code", confidence: 95 });
+    expect(target ? isCollectibleArtifactTarget({ ...target, exists: true }) : false).toBe(true);
   });
 
   it("uses markdown link href once when the label is the href basename", () => {

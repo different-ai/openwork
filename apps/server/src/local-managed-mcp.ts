@@ -9,10 +9,13 @@ import {
 } from "node:crypto";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import {
+  OAuthError,
+  RegistrationRejectedError,
+  SdkHttpError,
+} from "@modelcontextprotocol/client";
 import type { OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js";
-import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { OAuthError } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { OAuthClientInformationMixed } from "@modelcontextprotocol/sdk/shared/auth.js";
 import {
@@ -35,7 +38,6 @@ import {
 } from "@openwork/enterprise-mcp-client";
 import { ApiError } from "./errors.js";
 import { sanitizeDiagnosticString } from "./diagnostic-sanitizer.js";
-import { backupTimestamp } from "./legacy-config-sweep.js";
 import { runtimeStorageDir } from "./runtime-db.js";
 import {
   readRuntimeOpencodeConfig,
@@ -164,6 +166,7 @@ const MANAGED_MCP_CONNECTION_FAILED_MESSAGE =
   "OpenWork could not connect to this MCP server. Check its OAuth settings and availability, then try again.";
 const EXTERNAL_HANDSHAKE_REQUEST_PHASES = new Set<EnterpriseMcpRequestPhase>([
   "oauth-client-registration",
+  "mcp-discovery",
   "mcp-initialize",
 ]);
 const vaultQueueByPath = new Map<string, Promise<void>>();
@@ -431,6 +434,18 @@ async function pruneOrphanedManagedRuntimeEntries(config: ServerConfig, vault: L
  * rebuild the vault from the plaintext index (v2) or empty (v1) so members can
  * reconnect instead of hitting raw crypto errors.
  */
+function backupTimestamp(date: Date): string {
+  const parts = [
+    date.getFullYear(),
+    date.getMonth() + 1,
+    date.getDate(),
+    date.getHours(),
+    date.getMinutes(),
+    date.getSeconds(),
+  ];
+  return parts.map((part, index) => String(part).padStart(index === 0 ? 4 : 2, "0")).join("");
+}
+
 async function recoverVaultLocked(config: ServerConfig, file: VaultFileState): Promise<LoadedVault> {
   const path = vaultPath(config);
   const backupName = `${basename(path)}.openwork-backup-${backupTimestamp(new Date())}`;
@@ -1018,7 +1033,9 @@ function errorCauseChain(error: unknown): unknown[] {
   for (let depth = 0; depth < 6 && current !== undefined && current !== null && !seen.has(current); depth += 1) {
     chain.push(current);
     seen.add(current);
-    current = isRecord(current) ? current.cause : undefined;
+    current = isRecord(current)
+      ? current.cause ?? (isRecord(current.data) ? current.data.cause : undefined)
+      : undefined;
   }
   return chain;
 }
@@ -1028,7 +1045,9 @@ function hasConcreteRequestCause(error: EnterpriseMcpClientError, diagnostic: Co
   if (diagnostic.httpStatus !== undefined) {
     return diagnostic.httpStatus >= 400
       && diagnostic.httpStatus <= 599
-      && chain.some((cause) => cause instanceof OAuthError || cause instanceof StreamableHTTPError);
+      && chain.some((cause) => cause instanceof OAuthError
+        || cause instanceof RegistrationRejectedError
+        || cause instanceof SdkHttpError);
   }
   return chain.some((cause) => cause instanceof LocalManagedMcpPrivateUrlError
     || (cause instanceof TypeError && cause.message === "fetch failed")

@@ -1078,7 +1078,12 @@ describe("OpenWork Cloud catalog probe", () => {
       enterpriseEndpoint,
       enterpriseEndpoint,
     ]);
-    expect(requestedUrls.some((url) => url.includes("openworklabs.com"))).toBe(false);
+    const openWorkHostedOrigins = new Set([
+      "https://openworklabs.com",
+      "https://api.openworklabs.com",
+      "https://app.openworklabs.com",
+    ]);
+    expect(requestedUrls.some((url) => openWorkHostedOrigins.has(new URL(url).origin))).toBe(false);
     expect(activated).toMatchObject({
       performed: true,
       status: "observed",

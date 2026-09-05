@@ -33,6 +33,7 @@ type PermissionDetail = {
 
 type PermissionApprovalModalProps = {
   permission: PendingPermission;
+  sourceTitle?: string;
   busy?: boolean;
   respondPermission?: (requestID: string, reply: "once" | "always" | "reject") => void;
   safeStringify?: (value: unknown) => string;
@@ -269,6 +270,14 @@ export function PermissionApprovalModal(props: PermissionApprovalModalProps) {
               <AlertDialogDescription>
                 {presentation.message}
               </AlertDialogDescription>
+              {props.sourceTitle ? (
+                <div
+                  data-permission-source="child-session"
+                  className="mt-2 text-[12px] font-medium text-amber-11"
+                >
+                  {t("session.permission_requested_by", { session: props.sourceTitle })}
+                </div>
+              ) : null}
             </div>
           </div>
         </AlertDialogHeader>
@@ -388,6 +397,14 @@ export function PermissionApprovalPanel(props: PermissionApprovalModalProps) {
             <div className="min-w-0">
               <div className="text-[13px] font-medium leading-5 text-dls-text">{presentation.title}</div>
               <div className="mt-0.5 text-[12px] leading-5 text-dls-secondary">{presentation.message}</div>
+              {props.sourceTitle ? (
+                <div
+                  data-permission-source="child-session"
+                  className="mt-1 text-[12px] font-medium leading-5 text-amber-11"
+                >
+                  {t("session.permission_requested_by", { session: props.sourceTitle })}
+                </div>
+              ) : null}
               {presentation.note ? (
                 <div className="mt-1 text-[12px] leading-5 text-dls-secondary">{presentation.note}</div>
               ) : null}

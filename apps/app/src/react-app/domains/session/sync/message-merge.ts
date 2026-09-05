@@ -1,5 +1,16 @@
 import type { UIMessage } from "ai";
 
+const mergedMessageCache = new WeakMap<UIMessage, WeakMap<UIMessage, UIMessage>>();
+const messageSignatureCache = new WeakMap<UIMessage, string>();
+
+function messageSignature(message: UIMessage) {
+  const cached = messageSignatureCache.get(message);
+  if (cached) return cached;
+  const signature = JSON.stringify(message);
+  messageSignatureCache.set(message, signature);
+  return signature;
+}
+
 function mergeMessageParts(snapshotMessage: UIMessage, cachedMessage: UIMessage) {
   const parts = snapshotMessage.parts.map((part, index) => {
     const cachedPart = cachedMessage.parts[index];
@@ -24,13 +35,25 @@ function mergeMessageParts(snapshotMessage: UIMessage, cachedMessage: UIMessage)
 }
 
 function mergeSnapshotMessageWithCached(snapshotMessage: UIMessage, cachedMessage: UIMessage): UIMessage {
-  const metadata = snapshotMessage.metadata ?? cachedMessage.metadata;
+  const cachedMerges = mergedMessageCache.get(snapshotMessage);
+  const cachedMerge = cachedMerges?.get(cachedMessage);
+  if (cachedMerge) return cachedMerge;
 
-  return {
+  const metadata = snapshotMessage.metadata ?? cachedMessage.metadata;
+  const merged: UIMessage = {
     ...snapshotMessage,
     ...(metadata === undefined ? {} : { metadata }),
     parts: mergeMessageParts(snapshotMessage, cachedMessage),
   };
+  const result = messageSignature(merged) === messageSignature(cachedMessage)
+    ? cachedMessage
+    : merged;
+  if (cachedMerges) {
+    cachedMerges.set(cachedMessage, result);
+  } else {
+    mergedMessageCache.set(snapshotMessage, new WeakMap([[cachedMessage, result]]));
+  }
+  return result;
 }
 
 function messageCreated(message: UIMessage) {

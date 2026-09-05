@@ -30,9 +30,10 @@ import type {
   ModelRef,
 } from "../../../../app/types";
 import { addOpencodeCacheHint, safeStringify } from "../../../../app/utils";
-import { clearSessionDraft, saveSessionDraft } from "./draft-store";
-import { firstLineLocalFileParts } from "./prompt-file-parts";
+import { clearSessionDraft, LOCAL_SESSION_DRAFT_SCOPE, saveSessionDraft } from "./draft-store";
+import { firstLineLocalFileParts, isReadInlineablePath } from "./prompt-file-parts";
 import { composerAttachmentToFilePart } from "./attachment-file-part";
+import { computerMentionInstruction } from "../surface/composer/computer-mentions";
 import { appMentionInstruction } from "../surface/composer/app-mentions";
 
 type SessionModelConfig = {
@@ -162,6 +163,10 @@ export function createSessionActionsStore(options: {
         parts.push({ type: "agent", name: part.name } as AgentPartInput);
         continue;
       }
+      if (part.type === "computer") {
+        parts.push({ type: "text", text: computerMentionInstruction(part.target), synthetic: true });
+        continue;
+      }
       if (part.type === "app") {
         parts.push({ type: "text", text: appMentionInstruction(part.name) } as TextPartInput);
         continue;
@@ -169,6 +174,10 @@ export function createSessionActionsStore(options: {
       if (part.type === "file") {
         const absolute = toAbsolutePath(part.path);
         if (!absolute) continue;
+        if (!isReadInlineablePath(absolute)) {
+          parts.push({ type: "text", text: absolute } as TextPartInput);
+          continue;
+        }
         parts.push({
           type: "file",
           mime: "text/plain",
@@ -207,7 +216,7 @@ export function createSessionActionsStore(options: {
     for (const part of draft.parts) {
       if (part.type !== "file") continue;
       const absolute = toAbsolutePath(part.path);
-      if (!absolute) continue;
+      if (!absolute || !isReadInlineablePath(absolute)) continue;
       parts.push({
         type: "file",
         mime: "text/plain",
@@ -396,12 +405,12 @@ export function createSessionActionsStore(options: {
 
       const session = unwrap(rawResult);
       if (initialPrompt) {
-        saveSessionDraft(id, session.id, {
+        saveSessionDraft(LOCAL_SESSION_DRAFT_SCOPE, id, session.id, {
           text: initialPrompt,
           mode: "prompt",
         });
       } else {
-        clearSessionDraft(id, session.id);
+        clearSessionDraft(LOCAL_SESSION_DRAFT_SCOPE, id, session.id);
       }
 
       options.setBusyLabel("status.loading_session");
@@ -527,7 +536,7 @@ export function createSessionActionsStore(options: {
       if (!compactCommand) {
         setLastPromptSent(content);
       }
-      clearSessionDraft(options.selectedWorkspaceId().trim(), sessionID);
+      clearSessionDraft(LOCAL_SESSION_DRAFT_SCOPE, options.selectedWorkspaceId().trim(), sessionID);
       if (!hasExplicitDraft) {
         options.setPrompt("");
       }
@@ -791,7 +800,7 @@ export function createSessionActionsStore(options: {
     const directory = toSessionTransportDirectory(root);
     const params = directory ? { sessionID: trimmed, directory } : { sessionID: trimmed };
     unwrap(await c.session.delete(params));
-    clearSessionDraft(options.selectedWorkspaceId().trim(), trimmed);
+    clearSessionDraft(LOCAL_SESSION_DRAFT_SCOPE, options.selectedWorkspaceId().trim(), trimmed);
 
     options.setSessions(options.sessions().filter((s) => s.id !== trimmed));
     const activeWsId = options.selectedWorkspaceId();

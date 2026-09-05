@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "lib": ["es2023", "dom", "dom.iterable", "esnext.disposable"],
+    "jsx": "react-jsx",
+    "allowJs": true
+  },
+  "include": [
+    "packages/cdp/src/**/*.ts",
+    "packages/test-artifacts/src/**/*.ts",
+    "packages/test-evidence/src/**/*.ts",
+    "packages/testkit/src/**/*.ts",
+    "worlds/**/*.ts",
+    "specs/spec-primitives.test.ts",
+    "specs/composer-draft-reload.e2e.test.ts",
+    "specs/saved-app-creation.e2e.test.ts"
+  ]
+}

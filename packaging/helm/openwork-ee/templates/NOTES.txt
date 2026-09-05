@@ -1,0 +1,26 @@
+OpenWork EE has been rendered with:
+
+  DEN_BASE_URL={{ .Values.config.public.webOrigin }}
+
+DEN_BASE_URL is now the primary public Den URL. den-api derives Better Auth,
+CORS/trusted origins, web-app hosts, API defaults, and MCP resource defaults
+from this value unless compatibility overrides are set.
+
+{{- $overrides := list -}}
+{{- if .Values.config.public.apiOrigin }}{{- $overrides = append $overrides (printf "config.public.apiOrigin=%s" .Values.config.public.apiOrigin) -}}{{- end -}}
+{{- if .Values.config.public.mcpResourceUrl }}{{- $overrides = append $overrides (printf "config.public.mcpResourceUrl=%s" .Values.config.public.mcpResourceUrl) -}}{{- end -}}
+{{- if .Values.config.public.desktopDenBaseUrl }}{{- $overrides = append $overrides (printf "config.public.desktopDenBaseUrl=%s" .Values.config.public.desktopDenBaseUrl) -}}{{- end -}}
+{{- if .Values.config.public.corsOrigins }}{{- $overrides = append $overrides (printf "config.public.corsOrigins=%s" .Values.config.public.corsOrigins) -}}{{- end -}}
+{{- if .Values.config.public.betterAuthTrustedOrigins }}{{- $overrides = append $overrides (printf "config.public.betterAuthTrustedOrigins=%s" .Values.config.public.betterAuthTrustedOrigins) -}}{{- end -}}
+{{- if .Values.config.public.webAppHosts }}{{- $overrides = append $overrides (printf "config.public.webAppHosts=%s" .Values.config.public.webAppHosts) -}}{{- end -}}
+{{- if gt (len $overrides) 0 }}
+
+Compatibility URL overrides are still set:
+{{- range $overrides }}
+  - {{ . }}
+{{- end }}
+
+Keep these only for a deliberate split-origin/migration topology. For the
+single-origin recommended deployment, clear them so Den derives the values from
+config.public.webOrigin.
+{{- end }}

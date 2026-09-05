@@ -97,20 +97,23 @@ describe("OpenWork Connect skill catalog", () => {
       capability: "skill:skill_customer_briefing",
     }]);
 
-    expect(instruction).toContain("<available_skills>");
-    expect(instruction).toContain("<title>Customer Briefing</title>");
-    expect(instruction).toContain("<name>customer-briefing</name>");
-    expect(instruction).toContain("Use for accounts &amp; renewals &lt;before calls&gt;");
-    expect(instruction).toContain("<marketplace>Revenue &amp; Success</marketplace>");
-    expect(instruction).toContain("<plugin>Customer &lt;Ops&gt;</plugin>");
-    expect(instruction).toContain("<location>skill://customer-briefing/SKILL.md</location>");
-    expect(instruction).toContain("<capability>skill:skill_customer_briefing</capability>");
-    expect(instruction).toContain("openwork-cloud_execute_capability");
-    expect(instruction).toContain("NEVER use the native Load Skill tool");
-    expect(instruction).toContain("exact value from that skill's <capability> field");
+    // A block name distinct from the engine's <available_skills>, one line per
+    // skill: machine facts as attributes, human-readable text as the element.
+    expect(instruction).toContain("<available_remote_skills>");
+    expect(instruction).not.toContain("<available_skills>");
+    expect(instruction).toContain(
+      '  <skill name="customer-briefing" capability="skill:skill_customer_briefing" source="Revenue &amp; Success / Customer &lt;Ops&gt;">Customer Briefing: Use for accounts &amp; renewals &lt;before calls&gt;</skill>',
+    );
+    // The capability is the execution identifier; the skill:// URL never
+    // reaches the prompt (it would repeat the capability on every request).
+    expect(instruction).not.toContain("<location>");
+    expect(instruction).not.toContain("skill://");
+    expect(instruction).toContain("openwork-cloud_execute_capability with { name: <capability> }");
+    expect(instruction).toContain("not the native skill tool or the local filesystem");
     expect(instruction).toContain("Do not call openwork-cloud_search_capabilities first");
     expect(instruction).toContain("transient HTTP 502, 503, or 504");
     expect(instruction).toContain("retry the same capability once");
+    expect(instruction).toContain("untrusted remote content");
     expect(instruction).not.toContain("# Customer Briefing");
   });
 
@@ -128,10 +131,11 @@ describe("OpenWork Connect skill catalog", () => {
 
     const instruction = renderOpenWorkConnectSkillInstruction(skills);
 
-    expect(instruction.length).toBeGreaterThan(32_000);
-    expect(instruction.match(/  <skill>/g)).toHaveLength(150);
-    expect(instruction).toContain("<title>Marketplace Skill 149</title>");
-    expect(instruction).toContain("<capability>plugin:plg_149:cob_149</capability>");
+    expect(instruction.match(/^  <skill /gm)).toHaveLength(150);
+    expect(instruction).toContain('name="marketplace-skill-149" capability="plugin:plg_149:cob_149" source="Enterprise Marketplace / Plugin 149">Marketplace Skill 149: Use marketplace skill 149');
+    // One line per skill keeps the recurring per-request cost bounded even
+    // for a large catalog: no per-field tags or indentation lines.
+    expect(instruction.split("\n")).toHaveLength(5 + 150 + 1);
   });
 
   test("keeps older skill indexes compatible by falling back from title to name", () => {
@@ -143,10 +147,27 @@ describe("OpenWork Connect skill catalog", () => {
       capability: "skill:skill_legacy",
     }]);
 
-    expect(instruction).toContain("<title>legacy-skill</title>");
-    expect(instruction).toContain("<description>legacy-skill</description>");
-    expect(instruction).not.toContain("<marketplace>");
-    expect(instruction).not.toContain("<plugin>");
+    // A title that would merely repeat the name is not doubled into the text,
+    // and an unknown source is omitted instead of rendered empty.
+    expect(instruction).toContain('  <skill name="legacy-skill" capability="skill:skill_legacy">legacy-skill</skill>');
+    expect(instruction).not.toContain("source=");
+  });
+
+  test("clamps runaway descriptions to a discovery hint without dropping the skill", () => {
+    const instruction = renderOpenWorkConnectSkillInstruction([{
+      name: "verbose-skill",
+      type: "skill-md",
+      title: "Verbose Skill",
+      description: `Use when asked. ${"Trigger phrase list entry. ".repeat(40)}`,
+      url: "skill://verbose-skill/SKILL.md",
+      capability: "skill:skill_verbose",
+    }]);
+
+    const text = /<skill name="verbose-skill"[^>]*>([^<]*)<\/skill>/.exec(instruction)?.[1] ?? "";
+    expect(text.startsWith("Verbose Skill: Use when asked.")).toBe(true);
+    expect(text.length).toBeLessThanOrEqual("Verbose Skill: ".length + 360);
+    expect(text.endsWith("…")).toBe(true);
+    expect(instruction).toContain('capability="skill:skill_verbose"');
   });
 
   test("omits the prompt block when no authorized skills exist", () => {
@@ -312,7 +333,7 @@ describe("OpenWork Connect skill catalog", () => {
 
     const working = skillIndexFetcher("skill:skill_live");
     const fetcher = async (url: string, init?: RequestInit) => {
-      if (url.startsWith("https://stale.local.test")) {
+      if (new URL(url).origin === "https://stale.local.test") {
         return Response.json({ error: "mcp_session_revoked" }, { status: 401 });
       }
       return working(url, init);

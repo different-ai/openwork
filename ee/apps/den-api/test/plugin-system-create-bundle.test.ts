@@ -280,6 +280,24 @@ test("pluginCreateSchema accepts legacy and bundle bodies while rejecting empty 
     name: "Broken",
     components: [{ type: "skill", input: { metadata: { name: "Broken" } } }],
   }).success).toBe(false)
+
+  const connectionId = createDenTypeId("externalMcpConnection")
+  expect(schemas.pluginCreateSchema.safeParse({
+    name: "Conflicting MCP setup",
+    components: [{ type: "mcp", connectionId, connection: { authType: "none" } }],
+  }).success).toBe(false)
+  expect(schemas.pluginCreateSchema.safeParse({
+    name: "Existing connection MCP",
+    components: [{ type: "mcp", connectionId }],
+  }).success).toBe(true)
+  expect(schemas.pluginCreateSchema.safeParse({
+    name: "Invalid skill connection",
+    components: [{
+      type: "skill",
+      connectionId,
+      input: { rawSourceText: "---\nname: invalid-skill-connection\ndescription: Invalid skill connection.\n---\nInstructions." },
+    }],
+  }).success).toBe(false)
 })
 
 test("createPluginBundle rejects invalid standard SKILL.md content before any write", async () => {

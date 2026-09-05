@@ -52,7 +52,7 @@ describe("getAssistantRenderGroups tool aggregation", () => {
     }
   });
 
-  test("reasoning between tool calls does not break the run (thinking models)", () => {
+  test("mid-run thoughts embed inside one aggregate at their chronological slots", () => {
     const groups = getAssistantRenderGroups(
       [
         reasoningPart("let me look"),
@@ -66,14 +66,65 @@ describe("getAssistantRenderGroups tool aggregation", () => {
       true
     );
 
-    const aggregates = groups.filter((group) => group.kind === "tool-aggregate");
-    expect(aggregates).toHaveLength(1);
-    if (aggregates[0].kind === "tool-aggregate") {
-      expect(aggregates[0].parts.map((part) => part.toolCallId)).toEqual(["c1", "c2", "c3"]);
+    // The turn-opening thought stays its own line; the run stays ONE
+    // aggregate (no thought/command ladder) that carries its mid-run
+    // thoughts in order.
+    expect(groups.map((group) => group.kind)).toEqual(["reasoning", "tool-aggregate", "text"]);
+    const aggregate = groups[1];
+    if (aggregate.kind === "tool-aggregate") {
+      expect(aggregate.parts.map((part) => part.toolCallId)).toEqual(["c1", "c2", "c3"]);
+      expect(aggregate.thoughts).toEqual([
+        { afterIndex: 1, text: "now edit", isStreaming: false },
+        { afterIndex: 2, text: "one more", isStreaming: false },
+      ]);
     }
-    // Reasoning still renders, just without splitting the aggregate.
-    expect(groups.filter((group) => group.kind === "reasoning").length).toBeGreaterThan(0);
-    expect(groups.at(-1)?.kind).toBe("text");
+  });
+
+  test("consecutive mid-run reasoning parts merge into one embedded thought", () => {
+    const groups = getAssistantRenderGroups(
+      [bashPart("c1"), reasoningPart("first"), reasoningPart("second"), bashPart("c2")],
+      true
+    );
+
+    expect(groups.map((group) => group.kind)).toEqual(["tool-aggregate"]);
+    if (groups[0].kind === "tool-aggregate") {
+      expect(groups[0].thoughts).toEqual([
+        { afterIndex: 1, text: "first\n\nsecond", isStreaming: false },
+      ]);
+    }
+  });
+
+  test("hidden reasoning keeps the run as one compact aggregate without thoughts", () => {
+    const groups = getAssistantRenderGroups(
+      [
+        reasoningPart("let me look"),
+        bashPart("c1"),
+        reasoningPart("now edit"),
+        editPart("c2", "/tmp/a.ts"),
+        bashPart("c3"),
+        textPart("Done."),
+      ],
+      false
+    );
+
+    expect(groups.map((group) => group.kind)).toEqual(["tool-aggregate", "text"]);
+    if (groups[0].kind === "tool-aggregate") {
+      expect(groups[0].parts.map((part) => part.toolCallId)).toEqual(["c1", "c2", "c3"]);
+      expect(groups[0].thoughts).toEqual([]);
+    }
+  });
+
+  test("whitespace-only reasoning embeds no thought and does not break the run", () => {
+    const groups = getAssistantRenderGroups(
+      [bashPart("c1"), reasoningPart("  \n"), bashPart("c2")],
+      true
+    );
+
+    expect(groups.map((group) => group.kind)).toEqual(["tool-aggregate"]);
+    if (groups[0].kind === "tool-aggregate") {
+      expect(groups[0].parts.map((part) => part.toolCallId)).toEqual(["c1", "c2"]);
+      expect(groups[0].thoughts).toEqual([]);
+    }
   });
 
   test("prose between tool calls breaks the run", () => {

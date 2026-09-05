@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { UIMessage } from "ai";
 
 import { canOpenArtifact, getArtifactsFromMessages } from "../src/lib/artifacts";
-import { deriveOpenTargets, filePathFromFileUrl, type OpenTarget } from "../src/react-app/domains/session/artifacts/open-target";
+import { deriveOpenTargets, filePathFromFileUrl, sameOpenTargets, type OpenTarget } from "../src/react-app/domains/session/artifacts/open-target";
 
 const ATTACHMENT_URL = "file:///workspaces/Worker%20Root/.opencode/openwork/inbox/chat-attachments/ses_1/nonce-pge_natural_gas_billing_billing_data_service%202_2_2025-02-20_to_2025-12-05.csv";
 const ATTACHMENT_PATH = "/workspaces/Worker Root/.opencode/openwork/inbox/chat-attachments/ses_1/nonce-pge_natural_gas_billing_billing_data_service 2_2_2025-02-20_to_2025-12-05.csv";
@@ -24,6 +24,24 @@ function userMessageWithAttachment(): UIMessage {
 }
 
 describe("attachment artifacts", () => {
+  test("recognizes equivalent resolved target snapshots", () => {
+    const target: OpenTarget = {
+      id: "file:report.csv",
+      kind: "file",
+      value: "report.csv",
+      name: "report.csv",
+      preview: "sheet",
+      confidence: 100,
+      reason: "workspace tree",
+      exists: true,
+      size: 42,
+      updatedAt: 100,
+    };
+
+    expect(sameOpenTargets([target], [{ ...target }])).toBe(true);
+    expect(sameOpenTargets([target], [{ ...target, size: 43 }])).toBe(false);
+  });
+
   test("filePathFromFileUrl decodes workspace file URLs and rejects other schemes", () => {
     expect(filePathFromFileUrl(ATTACHMENT_URL)).toBe(ATTACHMENT_PATH);
     expect(filePathFromFileUrl("file:///C:/Users/Ada/%E5%B7%A5%E4%BD%9C/scan.pdf")).toBe("C:/Users/Ada/工作/scan.pdf");
@@ -53,6 +71,14 @@ describe("attachment artifacts", () => {
     const attachment = artifacts.find((artifact) => artifact.legacy_target.reason === "chat attachment");
 
     expect(attachment).toBeDefined();
+    expect(attachment && canOpenArtifact(attachment)).toBe(true);
+  });
+
+  test("unverified file-strip artifacts stay clickable for on-demand resolution", () => {
+    const artifacts = getArtifactsFromMessages([userMessageWithAttachment()], []);
+    const attachment = artifacts.find((artifact) => artifact.name.includes("pge_natural_gas"));
+
+    expect(attachment?.legacy_target.exists).toBeUndefined();
     expect(attachment && canOpenArtifact(attachment)).toBe(true);
   });
 });

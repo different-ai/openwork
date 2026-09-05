@@ -1,7 +1,10 @@
 export type BaseUrlEnv = Record<string, string | undefined>;
 
 export function normalizeBaseUrl(value: string | null | undefined): string {
-  return (value ?? "").trim().replace(/\/+$/, "");
+  const trimmed = (value ?? "").trim();
+  let end = trimmed.length;
+  while (end > 0 && trimmed[end - 1] === "/") end -= 1;
+  return end === trimmed.length ? trimmed : trimmed.slice(0, end);
 }
 
 export function joinBaseUrl(base: string | null | undefined, path: string): string {

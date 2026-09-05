@@ -19,6 +19,8 @@ describe("workspace endpoint resolution", () => {
     expect(endpoint?.baseUrl).toBe("http://127.0.0.1:4096");
     expect(endpoint?.isRemote).toBe(false);
     expect(endpoint?.mountedBaseUrl).toBe("http://127.0.0.1:4096/workspace/ws_local");
+    expect(endpoint?.opencodeBaseUrl).toBe("http://127.0.0.1:4096/workspace/ws_local/opencode");
+    expect(endpoint?.token).toBe("local-token");
   });
 
   test("remote workspaces use the owning worker URL and server-side workspace id", () => {
@@ -40,6 +42,8 @@ describe("workspace endpoint resolution", () => {
     expect(endpoint?.baseUrl).toBe("https://worker.example.test");
     expect(endpoint?.isRemote).toBe(true);
     expect(endpoint?.mountedBaseUrl).toBe("https://worker.example.test/workspace/server-workspace-b");
+    expect(endpoint?.opencodeBaseUrl).toBe("https://worker.example.test/workspace/server-workspace-b/opencode");
+    expect(endpoint?.token).toBe("remote-token");
   });
 
   test("remote workspace ids fall back to stripping rem_ when no explicit server id exists", () => {

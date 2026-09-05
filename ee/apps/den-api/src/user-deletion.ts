@@ -25,11 +25,18 @@ export async function deleteGlobalAuthUser(userId: UserId) {
     .from(MemberTable)
     .where(eq(MemberTable.userId, userId))
   const sessions = await db
-    .select({ token: AuthSessionTable.token })
+    .select({ id: AuthSessionTable.id, token: AuthSessionTable.token })
     .from(AuthSessionTable)
     .where(eq(AuthSessionTable.userId, userId))
-
-  await db.transaction(async (tx) => {
+  // Grant tombstones must cover exactly the deleted consent set. Snapshot the
+  // ids inside the transaction with a locking read so a concurrently authorized
+  // consent cannot slip between the snapshot and the delete (Warden RUD-WDK).
+  const oauthConsents = await db.transaction(async (tx) => {
+    const consentRows = await tx
+      .select({ id: OAuthConsentTable.id })
+      .from(OAuthConsentTable)
+      .where(eq(OAuthConsentTable.userId, userId))
+      .for("update")
     await tx.delete(OAuthAccessTokenTable).where(eq(OAuthAccessTokenTable.userId, userId))
     await tx.delete(OAuthRefreshTokenTable).where(eq(OAuthRefreshTokenTable.userId, userId))
     await tx.delete(OAuthConsentTable).where(eq(OAuthConsentTable.userId, userId))
@@ -43,7 +50,14 @@ export async function deleteGlobalAuthUser(userId: UserId) {
     await tx.update(MemberTable).set({ userId: null }).where(eq(MemberTable.userId, userId))
     await tx.update(WorkerTable).set({ created_by_user_id: null }).where(eq(WorkerTable.created_by_user_id, userId))
     await tx.delete(AuthUserTable).where(eq(AuthUserTable.id, userId))
+    return consentRows
   })
   await Promise.all(Array.from(new Set(memberships.map((membership) => membership.organizationId))).map((organizationId) => cache.org.deleteMembers(organizationId)))
-  await Promise.all(sessions.map((session) => cache.auth.deleteSession(session.token)))
+  // Auth session cache hits intentionally avoid a DB liveness check; user deletion must clear
+  // both token and session-id cache entries for every deleted session instead.
+  await Promise.all(sessions.flatMap((session) => [
+    cache.auth.revokeSession(session.token),
+    cache.auth.revokeSessionId(session.id),
+  ]))
+  await Promise.all(oauthConsents.map((consent) => cache.auth.revokeGrant(consent.id)))
 }

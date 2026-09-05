@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { joinBaseUrl, readBaseUrlEnv } from "@openwork/types/url";
 
 import { denWebLogger } from "../../../observability/runtime-logger";
+import { readPublicWebOrigin } from "../../_lib/public-web-origin";
 
 const NO_BODY_STATUS = new Set([204, 205, 304]);
 const HOP_BY_HOP_HEADERS = new Set([
@@ -37,6 +38,14 @@ const INTERNAL_RESPONSE_HEADERS = new Set([
   "x-vercel-id",
 ]);
 const SAFE_X_RESPONSE_HEADERS = new Set(["x-content-type-options"]);
+const AUTH_COOKIE_PREFIXES = [
+  "openwork-den.",
+  "__Secure-openwork-den.",
+  "openwork-den-",
+  "better-auth.",
+  "__Secure-better-auth.",
+  "better-auth-",
+];
 
 /**
  * OpenWork Cloud instances are served from Daytona preview origins that are
@@ -57,6 +66,7 @@ const DEN_API_ROUTE_PREFIX = "/api/den";
 const DEFAULT_CLOUD_INSTANCE_ORIGIN_SUFFIXES = [".daytonaproxy01.net"];
 const CORS_ALLOW_HEADERS = "authorization,content-type,x-openwork-org-id,x-openwork-legacy-org-id,x-request-id,accept";
 const CORS_ALLOW_METHODS = "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS";
+const UPSTREAM_DEADLINE_MS = 55_000;
 
 function cloudInstanceOriginSuffixes(): string[] {
   const configured = process.env.DEN_CLOUD_INSTANCE_ORIGIN_SUFFIXES?.trim();
@@ -99,10 +109,20 @@ type ProxyOptions = {
   routePrefix: string;
   upstreamPathPrefix?: string;
   rewriteAuthLocationsToRequestOrigin?: boolean;
+  upstreamDeadlineMs?: number;
+};
+
+type UpstreamAbortCause = "client" | "deadline" | "downstream";
+
+type UpstreamAbort = {
+  signal: AbortSignal;
+  cause: () => UpstreamAbortCause | null;
+  abort: (cause: UpstreamAbortCause) => void;
+  cleanup: () => void;
 };
 
 function requestPublicOrigin(request: NextRequest): URL {
-  const configuredOrigin = readBaseUrlEnv(process.env, "DEN_WEB_PUBLIC_ORIGIN");
+  const configuredOrigin = readPublicWebOrigin();
   if (configuredOrigin) {
     try {
       return new URL(configuredOrigin);
@@ -221,6 +241,7 @@ async function injectActiveTraceContext(headers: Headers): Promise<void> {
 async function cloneRequestHeaders(
   request: NextRequest,
   routePrefix: string,
+  referenceId: string,
   stripCookies = false,
 ): Promise<Headers> {
   const headers = new Headers();
@@ -229,19 +250,113 @@ async function cloneRequestHeaders(
     // Bearer-only for reflected instance origins - see the note above
     // isCloudInstanceOrigin. This is what makes reflection safe.
     if (stripCookies && name.toLowerCase() === "cookie") return;
+    if (routePrefix === "/api/auth" && name.toLowerCase() === "cookie") {
+      const authCookies = value
+        .split(";")
+        .map((cookie) => cookie.trim())
+        .filter((cookie) => AUTH_COOKIE_PREFIXES.some((prefix) => cookie.startsWith(prefix)));
+      if (authCookies.length > 0) {
+        headers.append(name, authCookies.join("; "));
+      }
+      return;
+    }
     headers.append(name, value);
   });
   const publicOrigin = requestPublicOrigin(request);
   headers.set("x-forwarded-host", publicOrigin.host);
   headers.set("x-forwarded-proto", publicOrigin.protocol.replace(/:$/, ""));
   headers.set("x-forwarded-prefix", routePrefix);
+  headers.set("x-request-id", referenceId);
   await injectActiveTraceContext(headers);
   return headers;
 }
 
-function copySetCookieHeaders(upstreamHeaders: Headers, responseHeaders: Headers): void {
-  for (const cookie of upstreamHeaders.getSetCookie()) {
-    if (cookie) responseHeaders.append("set-cookie", cookie);
+function isDomainCookieHostEligible(origin: URL): boolean {
+  const hostname = origin.hostname.toLowerCase();
+  return origin.protocol === "https:" && hostname.includes(".") && hostname !== "localhost";
+}
+
+function normalizeCookieDomainAttribute(value: string): string | null {
+  const domain = value.trim().replace(/^\.+/u, "").toLowerCase();
+  if (!domain || domain.includes(":")) return null;
+  return domain;
+}
+
+function cookieDomainAppliesToHost(domain: string, hostname: string): boolean {
+  return hostname === domain || hostname.endsWith(`.${domain}`);
+}
+
+function rewriteAuthSetCookieHeader(cookie: string, request: NextRequest, apiBase: string, options: ProxyOptions): string {
+  if (options.routePrefix !== "/api/auth") return cookie;
+
+  let apiOrigin: URL;
+  try {
+    apiOrigin = new URL(apiBase);
+  } catch {
+    return cookie;
+  }
+
+  const publicOrigin = requestPublicOrigin(request);
+  if (!isDomainCookieHostEligible(publicOrigin)) return cookie;
+  const publicHostname = publicOrigin.hostname.toLowerCase();
+  const apiHostname = apiOrigin.hostname.toLowerCase();
+  const canShareWithApiSubdomain = apiHostname.endsWith(`.${publicHostname}`);
+  let hasDomain = false;
+
+  const rewritten = cookie
+    .split(";")
+    .map((part, index) => {
+      const trimmed = part.trim();
+      if (!/^domain=/iu.test(trimmed)) return index === 0 ? trimmed : ` ${trimmed}`;
+      hasDomain = true;
+      const upstreamDomain = normalizeCookieDomainAttribute(trimmed.slice("domain=".length));
+      return upstreamDomain && cookieDomainAppliesToHost(upstreamDomain, publicHostname)
+        ? ` Domain=${upstreamDomain}`
+        : ` Domain=${publicHostname}`;
+    })
+    .join(";");
+
+  if (hasDomain || !canShareWithApiSubdomain || /^__Host-/u.test(cookie)) return rewritten;
+  return `${rewritten}; Domain=${publicHostname}`;
+}
+
+function splitCombinedSetCookieHeader(value: string): string[] {
+  const cookies: string[] = [];
+  let start = 0;
+  let inExpires = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (char === ";") {
+      inExpires = false;
+      continue;
+    }
+    if (!inExpires && value.slice(index, index + 8).toLowerCase() === "expires=") {
+      inExpires = true;
+      index += 7;
+      continue;
+    }
+    if (char === "," && !inExpires) {
+      const candidate = value.slice(start, index).trim();
+      if (candidate) cookies.push(candidate);
+      start = index + 1;
+    }
+  }
+
+  const finalCookie = value.slice(start).trim();
+  if (finalCookie) cookies.push(finalCookie);
+  return cookies;
+}
+
+function readSetCookieHeaders(upstreamHeaders: Headers): string[] {
+  const cookies = upstreamHeaders.getSetCookie();
+  if (cookies.length > 0) return cookies;
+  const combined = upstreamHeaders.get("set-cookie");
+  return combined ? splitCombinedSetCookieHeader(combined) : [];
+}
+
+function copySetCookieHeaders(upstreamHeaders: Headers, responseHeaders: Headers, request: NextRequest, apiBase: string, options: ProxyOptions): void {
+  for (const cookie of readSetCookieHeaders(upstreamHeaders)) {
+    if (cookie) responseHeaders.append("set-cookie", rewriteAuthSetCookieHeader(cookie, request, apiBase, options));
   }
 }
 
@@ -314,16 +429,93 @@ function cloneResponseHeaders(request: NextRequest, upstream: Response, options:
     }
     headers.append(name, value);
   });
-  copySetCookieHeaders(upstream.headers, headers);
+  copySetCookieHeaders(upstream.headers, headers, request, apiBase, options);
   sanitizeExposeHeaders(headers);
   return headers;
 }
 
-function buildUpstreamErrorResponse(status: number, error: string): Response {
-  return new Response(JSON.stringify({ error }), {
+function buildUpstreamErrorResponse(
+  status: number,
+  error: string,
+  message: string,
+  referenceId: string,
+): Response {
+  return new Response(JSON.stringify({ error, message, referenceId }), {
     status,
     headers: {
       "content-type": "application/json",
+      "x-request-id": referenceId,
+    },
+  });
+}
+
+function requestReference(request: NextRequest): string {
+  const incoming = request.headers.get("x-request-id")?.trim();
+  return incoming ? incoming.slice(0, 128) : crypto.randomUUID();
+}
+
+function createUpstreamAbort(clientSignal: AbortSignal, deadlineMs: number): UpstreamAbort {
+  const controller = new AbortController();
+  let abortCause: UpstreamAbortCause | null = null;
+  let cleanedUp = false;
+  let deadline: ReturnType<typeof setTimeout> | null = null;
+
+  const abortForClient = () => abort("client");
+  const cleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    if (deadline !== null) {
+      clearTimeout(deadline);
+    }
+    clientSignal.removeEventListener("abort", abortForClient);
+  };
+
+  function abort(cause: UpstreamAbortCause) {
+    if (controller.signal.aborted) return;
+    abortCause = cause;
+    controller.abort(cause === "client" ? clientSignal.reason : undefined);
+    cleanup();
+  }
+
+  if (clientSignal.aborted) {
+    abortForClient();
+  } else {
+    clientSignal.addEventListener("abort", abortForClient, { once: true });
+    deadline = setTimeout(() => abort("deadline"), deadlineMs);
+  }
+
+  return {
+    signal: controller.signal,
+    cause: () => abortCause,
+    abort,
+    cleanup,
+  };
+}
+
+function streamUpstreamBody(
+  upstreamBody: ReadableStream<Uint8Array>,
+  upstreamAbort: UpstreamAbort,
+): ReadableStream<Uint8Array> {
+  const reader = upstreamBody.getReader();
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const chunk = await reader.read();
+        if (chunk.done) {
+          upstreamAbort.cleanup();
+          controller.close();
+          return;
+        }
+        controller.enqueue(chunk.value);
+      } catch (error) {
+        upstreamAbort.cleanup();
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      upstreamAbort.abort("downstream");
+      upstreamAbort.cleanup();
+      await reader.cancel(reason);
     },
   });
 }
@@ -360,6 +552,7 @@ export async function proxyUpstream(
   options: ProxyOptions,
 ): Promise<Response> {
   const startedAtMs = Date.now();
+  const referenceId = requestReference(request);
   const apiBase = readBaseUrlEnv(process.env, "DEN_API_BASE");
   if (!apiBase) {
     denWebLogger.error("den-web upstream proxy misconfigured", {
@@ -368,7 +561,10 @@ export async function proxyUpstream(
       duration_ms: elapsedMs(startedAtMs),
       missing: "DEN_API_BASE",
     });
-    return buildUpstreamErrorResponse(503, "DEN_API_BASE must be configured.");
+    return new Response(JSON.stringify({ error: "DEN_API_BASE must be configured." }), {
+      status: 503,
+      headers: { "content-type": "application/json" },
+    });
   }
 
   const instanceOrigin = reflectsCloudInstanceOrigin(request, options)
@@ -392,43 +588,81 @@ export async function proxyUpstream(
 
   const targetPath = getTargetPath(request, segments, options.routePrefix);
   const targetUrl = buildTargetUrl(apiBase, request, targetPath, options.upstreamPathPrefix);
+  const requestHeaders = await cloneRequestHeaders(
+    request,
+    options.routePrefix,
+    referenceId,
+    instanceOrigin !== null,
+  );
+  const requestBody = await readRequestBody(request);
+  const upstreamAbort = createUpstreamAbort(
+    request.signal,
+    options.upstreamDeadlineMs ?? UPSTREAM_DEADLINE_MS,
+  );
+  let streamsResponse = false;
   let upstream: Response;
   try {
-    upstream = await fetch(targetUrl, {
-      method: request.method,
-      headers: await cloneRequestHeaders(request, options.routePrefix, instanceOrigin !== null),
-      body: await readRequestBody(request),
-      redirect: "manual",
-    });
-  } catch (error) {
-    denWebLogger.error("den-web upstream proxy failed", {
+    try {
+      upstream = await fetch(targetUrl, {
+        method: request.method,
+        headers: requestHeaders,
+        body: requestBody,
+        redirect: "manual",
+        signal: upstreamAbort.signal,
+      });
+    } catch (error) {
+      const cause = upstreamAbort.cause();
+      if (cause === "client") {
+        throw error;
+      }
+
+      const timedOut = cause === "deadline";
+      denWebLogger.error(timedOut ? "den-web upstream proxy timed out" : "den-web upstream proxy failed", {
+        route_prefix: options.routePrefix,
+        method: request.method,
+        upstream_origin: upstreamOrigin(apiBase),
+        upstream_path: `/${[normalizePathPrefix(options.upstreamPathPrefix ?? ""), targetPath].filter(Boolean).join("/")}`,
+        duration_ms: elapsedMs(startedAtMs),
+        error_name: errorName(error),
+        request_id: referenceId,
+      });
+      return buildUpstreamErrorResponse(
+        timedOut ? 504 : 502,
+        timedOut ? "upstream_timeout" : "upstream_unreachable",
+        timedOut
+          ? "The upstream service did not respond before the deadline."
+          : "The upstream service could not be reached.",
+        referenceId,
+      );
+    }
+
+    denWebLogger.log(upstream.ok ? "info" : "warn", "den-web upstream proxy completed", {
       route_prefix: options.routePrefix,
       method: request.method,
       upstream_origin: upstreamOrigin(apiBase),
       upstream_path: `/${[normalizePathPrefix(options.upstreamPathPrefix ?? ""), targetPath].filter(Boolean).join("/")}`,
+      status: upstream.status,
       duration_ms: elapsedMs(startedAtMs),
-      error_name: errorName(error),
+      request_id: referenceId,
     });
-    throw error;
+
+    const shouldDropBody = request.method === "HEAD" || NO_BODY_STATUS.has(upstream.status);
+    const responseHeaders = cloneResponseHeaders(request, upstream, options, apiBase);
+    if (instanceOrigin) {
+      applyCloudInstanceCorsHeaders(responseHeaders, instanceOrigin);
+    }
+
+    const responseBody = shouldDropBody || !upstream.body
+      ? null
+      : streamUpstreamBody(upstream.body, upstreamAbort);
+    streamsResponse = responseBody !== null;
+    return new Response(responseBody, {
+      status: upstream.status,
+      headers: responseHeaders,
+    });
+  } finally {
+    if (!streamsResponse) {
+      upstreamAbort.cleanup();
+    }
   }
-
-  denWebLogger.log(upstream.ok ? "info" : "warn", "den-web upstream proxy completed", {
-    route_prefix: options.routePrefix,
-    method: request.method,
-    upstream_origin: upstreamOrigin(apiBase),
-    upstream_path: `/${[normalizePathPrefix(options.upstreamPathPrefix ?? ""), targetPath].filter(Boolean).join("/")}`,
-    status: upstream.status,
-    duration_ms: elapsedMs(startedAtMs),
-  });
-
-  const shouldDropBody = request.method === "HEAD" || NO_BODY_STATUS.has(upstream.status);
-  const responseHeaders = cloneResponseHeaders(request, upstream, options, apiBase);
-  if (instanceOrigin) {
-    applyCloudInstanceCorsHeaders(responseHeaders, instanceOrigin);
-  }
-
-  return new Response(shouldDropBody ? null : upstream.body, {
-    status: upstream.status,
-    headers: responseHeaders,
-  });
 }

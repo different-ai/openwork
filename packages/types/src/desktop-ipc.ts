@@ -87,7 +87,14 @@ export type DesktopIntegrationResult = {
 
 export type OpenworkServerInfo = {
   running: boolean;
-  engineRollover: boolean;
+  /**
+   * Monotonic per-start identity of the embedded server within this desktop
+   * process. Sticky ports and persisted tokens keep the connection details
+   * identical across restarts, so clients that must re-deliver state to a new
+   * server lifetime (e.g. the Connect policy) key on this value. Null when
+   * the bridge predates the field or no start completed yet.
+   */
+  generation: number | null;
   remoteAccessEnabled: boolean;
   host: string | null;
   port: number | null;
@@ -100,6 +107,8 @@ export type OpenworkServerInfo = {
   hostToken: string | null;
   managedOpencodeBinPath: string | null;
   managedOpencodeBinSource: string | null;
+  /** Structured server log on disk, or null when the server runs without a file sink. */
+  logFilePath: string | null;
   pid: number | null;
   lastStdout: string | null;
   lastStderr: string | null;
@@ -304,6 +313,39 @@ export type DesktopFetchResult = {
   statusText: string;
   headers: [string, string][];
   body: string;
+};
+
+export type DesktopMultipartUploadInput = {
+  transferId: string;
+  url: string;
+  bytes: ArrayBuffer;
+  filename: string;
+  size: number;
+  contentType?: string;
+  fieldName?: string;
+  fields?: Record<string, string>;
+  method?: string;
+  headers?: Record<string, string>;
+  timeoutMs?: number;
+};
+
+export type DesktopBinaryDownloadInput = {
+  transferId: string;
+  url: string;
+  destinationPath: string;
+  maxBytes?: number;
+  method?: string;
+  headers?: Record<string, string>;
+  timeoutMs?: number;
+};
+
+export type DesktopBinaryDownloadResult = {
+  status: number;
+  statusText: string;
+  headers: [string, string][];
+  path: string | null;
+  bytes: number;
+  body?: string;
 };
 
 export type WorkspaceCreateInput = {
@@ -542,6 +584,9 @@ export type DesktopCommandMap = {
   __getApplicationsForFile: { args: [target: string]; result: { name: string; appPath: string; icon: string | null }[] };
   __openWithApp: { args: [target: string, appPath: string]; result: unknown };
   __fetch: { args: [url: string, init?: DesktopFetchInit]; result: DesktopFetchResult };
+  __uploadMultipart: { args: [input: DesktopMultipartUploadInput]; result: DesktopFetchResult };
+  __downloadBinary: { args: [input: DesktopBinaryDownloadInput]; result: DesktopBinaryDownloadResult };
+  __cancelTransfer: { args: [transferId: string]; result: boolean };
   __homeDir: { args: []; result: string };
   __joinPath: { args: [...segments: string[]]; result: string };
   __setZoomFactor: { args: [factor: number]; result: boolean };

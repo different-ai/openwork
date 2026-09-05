@@ -9,8 +9,7 @@ describe("SAML response policy", () => {
     expect(validateSamlResponsePolicy({
       samlResponse: samlResponse(),
       expectedAudience,
-      expectedRecipient: expectedAcsUrl,
-      expectedDestination: expectedAcsUrl,
+      expectedAcsUrls: [expectedAcsUrl],
     })).toEqual({ ok: true })
   })
 
@@ -18,8 +17,7 @@ describe("SAML response policy", () => {
     const result = validateSamlResponsePolicy({
       samlResponse: samlResponse({ assertionId: null }),
       expectedAudience,
-      expectedRecipient: expectedAcsUrl,
-      expectedDestination: expectedAcsUrl,
+      expectedAcsUrls: [expectedAcsUrl],
     })
 
     expect(result).toMatchObject({ ok: false, code: "missing_assertion_id" })
@@ -29,8 +27,7 @@ describe("SAML response policy", () => {
     const result = validateSamlResponsePolicy({
       samlResponse: samlResponse({ audience: "https://other-sp.example.com/saml/metadata" }),
       expectedAudience,
-      expectedRecipient: expectedAcsUrl,
-      expectedDestination: expectedAcsUrl,
+      expectedAcsUrls: [expectedAcsUrl],
     })
 
     expect(result).toMatchObject({ ok: false, code: "invalid_audience" })
@@ -40,8 +37,28 @@ describe("SAML response policy", () => {
     const result = validateSamlResponsePolicy({
       samlResponse: samlResponse({ destination: "https://evil.example.com/acs" }),
       expectedAudience,
-      expectedRecipient: expectedAcsUrl,
-      expectedDestination: expectedAcsUrl,
+      expectedAcsUrls: [expectedAcsUrl],
+    })
+
+    expect(result).toMatchObject({ ok: false, code: "invalid_destination" })
+  })
+
+  test("accepts delivery to the advertised web-origin ACS when the stored callback is on the API origin", () => {
+    const webOriginAcsUrl = "https://app.openwork.example.com/api/auth/sso/saml2/sp/acs/openwork-sso-org_123"
+    const apiOriginAcsUrl = "https://api.openwork.example.com/api/auth/sso/saml2/sp/acs/openwork-sso-org_123"
+
+    expect(validateSamlResponsePolicy({
+      samlResponse: samlResponse({ destination: webOriginAcsUrl, recipient: webOriginAcsUrl }),
+      expectedAudience,
+      expectedAcsUrls: [apiOriginAcsUrl, webOriginAcsUrl],
+    })).toEqual({ ok: true })
+  })
+
+  test("rejects destinations outside the expected ACS URL set", () => {
+    const result = validateSamlResponsePolicy({
+      samlResponse: samlResponse({ destination: "https://evil.example.com/acs" }),
+      expectedAudience,
+      expectedAcsUrls: [expectedAcsUrl, "https://api.openwork.example.com/api/auth/sso/saml2/sp/acs/openwork-sso-org_123"],
     })
 
     expect(result).toMatchObject({ ok: false, code: "invalid_destination" })
@@ -51,8 +68,7 @@ describe("SAML response policy", () => {
     const result = validateSamlResponsePolicy({
       samlResponse: samlResponse({ recipient: "https://evil.example.com/acs" }),
       expectedAudience,
-      expectedRecipient: expectedAcsUrl,
-      expectedDestination: expectedAcsUrl,
+      expectedAcsUrls: [expectedAcsUrl],
     })
 
     expect(result).toMatchObject({ ok: false, code: "invalid_recipient" })

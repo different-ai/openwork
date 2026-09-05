@@ -3,7 +3,7 @@ import { Tool } from "@openwork/codemode"
 import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import {
   AuthUserTable,
-  CodemodeRunTable,
+  WorkflowRunTable,
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
   ConfigObjectVersionTable,
@@ -33,9 +33,9 @@ type Db = typeof import("../src/db.js").db
 type MarketplaceCapabilities = typeof import("../src/mcp/marketplace-capabilities.js")
 type CapabilityRegistry = typeof import("../src/mcp/capability-registry.js")
 type PluginStore = typeof import("../src/routes/org/plugin-system/store.js")
-type SavedScripts = typeof import("../src/codemode-scripts.js")
-type CodemodeRuns = typeof import("../src/codemode-runs.js")
-type ProgramLibrary = typeof import("../src/program-library.js")
+type Workflows = typeof import("../src/workflows.js")
+type WorkflowRuns = typeof import("../src/workflow-runs.js")
+type WorkflowLibrary = typeof import("../src/workflow-library.js")
 
 type SeededScript = {
   configObjectId: DenTypeId<"configObject">
@@ -48,9 +48,9 @@ let db: Db
 let marketplaceCapabilities: MarketplaceCapabilities
 let capabilityRegistry: CapabilityRegistry
 let pluginStore: PluginStore
-let savedScripts: SavedScripts
-let codemodeRuns: CodemodeRuns
-let programLibrary: ProgramLibrary
+let workflows: Workflows
+let workflowRuns: WorkflowRuns
+let workflowLibrary: WorkflowLibrary
 const createdOrganizationIds: DenTypeId<"organization">[] = []
 const createdUserIds: DenTypeId<"user">[] = []
 
@@ -64,9 +64,9 @@ beforeAll(async () => {
   mock.module("../src/db.js", () => ({ db }))
   pluginStore = await import("../src/routes/org/plugin-system/store.js")
   marketplaceCapabilities = await import("../src/mcp/marketplace-capabilities.js")
-  savedScripts = await import("../src/codemode-scripts.js")
-  codemodeRuns = await import("../src/codemode-runs.js")
-  programLibrary = await import("../src/program-library.js")
+  workflows = await import("../src/workflows.js")
+  workflowRuns = await import("../src/workflow-runs.js")
+  workflowLibrary = await import("../src/workflow-library.js")
   capabilityRegistry = await import("../src/mcp/capability-registry.js")
 })
 
@@ -76,7 +76,7 @@ afterAll(() => {
 
 afterEach(async () => {
   if (createdOrganizationIds.length > 0) {
-    await db.delete(CodemodeRunTable).where(inArray(CodemodeRunTable.organization_id, createdOrganizationIds))
+    await db.delete(WorkflowRunTable).where(inArray(WorkflowRunTable.organization_id, createdOrganizationIds))
     await db.delete(ConfigObjectVersionTable).where(inArray(ConfigObjectVersionTable.organizationId, createdOrganizationIds))
     await db.delete(ConfigObjectAccessGrantTable).where(inArray(ConfigObjectAccessGrantTable.organizationId, createdOrganizationIds))
     await db.delete(PluginConfigObjectTable).where(inArray(PluginConfigObjectTable.organizationId, createdOrganizationIds))
@@ -98,6 +98,7 @@ afterEach(async () => {
 
 async function seedScript(input: {
   code: string
+  objectType?: "script" | "workflow"
   payload: Record<string, unknown>
   title: string
 }): Promise<SeededScript> {
@@ -161,7 +162,7 @@ async function seedScript(input: {
   }
   const plugin = await pluginStore.createPluginBundle({
     components: [{
-      type: "script",
+      type: input.objectType ?? "workflow",
       value: {
         metadata: { title: input.title, description: `${input.title} description` },
         normalizedPayloadJson: input.payload,
@@ -178,7 +179,7 @@ async function seedScript(input: {
     .from(PluginConfigObjectTable)
     .where(eq(PluginConfigObjectTable.pluginId, plugin.id))
   const configObjectId = memberships[0]?.configObjectId
-  if (!configObjectId) throw new Error("Saved script plugin has no config object")
+  if (!configObjectId) throw new Error("Workflow Plugin has no config object")
   return {
     configObjectId,
     member: { orgMembershipId: memberId, teamIds: [] },
@@ -190,13 +191,11 @@ async function seedScript(input: {
 function executeScript(seeded: SeededScript, input: {
   body?: unknown
   buildTools?: Parameters<MarketplaceCapabilities["executeMarketplaceCapability"]>[0]["buildTools"]
-  codemodeEnabled?: boolean
   validateScriptOutput?: boolean
 } = {}) {
   return marketplaceCapabilities.executeMarketplaceCapability({
     body: input.body,
     buildTools: input.buildTools,
-    codemodeEnabled: input.codemodeEnabled ?? true,
     validateScriptOutput: input.validateScriptOutput,
     configObjectId: seeded.configObjectId,
     enabled: true,
@@ -206,7 +205,7 @@ function executeScript(seeded: SeededScript, input: {
   })
 }
 
-describe("saved marketplace scripts", () => {
+describe("saved marketplace Workflows", () => {
   test("promotes a successful run using strict public capability references", async () => {
     const seeded = await seedScript({
       title: "Promotion Fixture",
@@ -215,12 +214,12 @@ describe("saved marketplace scripts", () => {
     })
     const code = "return { briefing: await tools.reports.echo({ text: input.topic }) }"
     const now = new Date()
-    await db.insert(CodemodeRunTable).values({
-      id: createDenTypeId("codemodeRun"),
+    await db.insert(WorkflowRunTable).values({
+      id: createDenTypeId("workflowRun"),
       organization_id: seeded.organizationId,
       org_membership_id: seeded.member.orgMembershipId,
       source: "mcp",
-      code_digest: codemodeRuns.codemodeCodeDigest(code),
+      code_digest: workflowRuns.codemodeCodeDigest(code),
       status: "succeeded",
       tool_calls: [{ name: "tools.reports.echo" }],
       tool_call_count: 1,
@@ -229,10 +228,10 @@ describe("saved marketplace scripts", () => {
       finished_at: now,
     })
 
-    const saved = await savedScripts.saveCodemodeScript({
+    const saved = await workflows.saveWorkflow({
       organizationId: seeded.organizationId,
       ownerMemberId: seeded.member.orgMembershipId,
-      script: {
+      workflow: {
         name: "Promoted briefing",
         code,
         currentInput: { topic: "launch" },
@@ -266,7 +265,7 @@ describe("saved marketplace scripts", () => {
     expect(versions[0]?.normalizedPayloadJson).not.toHaveProperty("requiredCapabilities.0.unattendedApproved")
   })
 
-  test("saves a Program directly into a chosen existing Plugin", async () => {
+  test("saves a Workflow directly into a chosen existing Plugin", async () => {
     const seeded = await seedScript({
       title: "Chosen Plugin Fixture",
       code: "return null",
@@ -274,12 +273,12 @@ describe("saved marketplace scripts", () => {
     })
     const code = "return { shared: true }"
     const now = new Date()
-    await db.insert(CodemodeRunTable).values({
-      id: createDenTypeId("codemodeRun"),
+    await db.insert(WorkflowRunTable).values({
+      id: createDenTypeId("workflowRun"),
       organization_id: seeded.organizationId,
       org_membership_id: seeded.member.orgMembershipId,
       source: "mcp",
-      code_digest: codemodeRuns.codemodeCodeDigest(code),
+      code_digest: workflowRuns.codemodeCodeDigest(code),
       status: "succeeded",
       tool_calls: [],
       tool_call_count: 0,
@@ -316,11 +315,11 @@ describe("saved marketplace scripts", () => {
       session: { createdAt: now },
     }
 
-    const saved = await savedScripts.saveCodemodeScript({
+    const saved = await workflows.saveWorkflow({
       organizationId: seeded.organizationId,
       ownerMemberId: seeded.member.orgMembershipId,
       context,
-      script: { pluginId: seeded.pluginId, name: "Shared Program", code },
+      workflow: { pluginId: seeded.pluginId, name: "Shared Workflow", code },
       buildTools: async () => ({ tools: {}, manifest: [] }),
     })
 
@@ -332,9 +331,9 @@ describe("saved marketplace scripts", () => {
     expect(memberships).toHaveLength(1)
   })
 
-  test("does not let a Plugin editor replace an existing Program version", async () => {
+  test("does not let a Plugin editor replace an existing Workflow version", async () => {
     const seeded = await seedScript({
-      title: "Manager-owned Program",
+      title: "Manager-owned Workflow",
       code: "return { owner: true }",
       payload: { language: "codemode-js", requiredCapabilities: [] },
     })
@@ -345,7 +344,7 @@ describe("saved marketplace scripts", () => {
     createdUserIds.push(editorUserId)
     await db.insert(AuthUserTable).values({
       id: editorUserId,
-      name: "Program Editor",
+      name: "Workflow Editor",
       email: `${editorUserId}@scripts.test.local`,
     })
     await db.insert(MemberTable).values({
@@ -364,12 +363,12 @@ describe("saved marketplace scripts", () => {
       role: "editor",
       createdByOrgMembershipId: seeded.member.orgMembershipId,
     })
-    await db.insert(CodemodeRunTable).values({
-      id: createDenTypeId("codemodeRun"),
+    await db.insert(WorkflowRunTable).values({
+      id: createDenTypeId("workflowRun"),
       organization_id: seeded.organizationId,
       org_membership_id: editorMemberId,
       source: "mcp",
-      code_digest: codemodeRuns.codemodeCodeDigest(code),
+      code_digest: workflowRuns.codemodeCodeDigest(code),
       status: "succeeded",
       tool_calls: [],
       tool_call_count: 0,
@@ -406,11 +405,11 @@ describe("saved marketplace scripts", () => {
       session: { createdAt: now },
     }
 
-    await expect(savedScripts.saveCodemodeScript({
+    await expect(workflows.saveWorkflow({
       organizationId: seeded.organizationId,
       ownerMemberId: editorMemberId,
       context,
-      script: { pluginId: seeded.pluginId, name: "Manager-owned Program", code },
+      workflow: { pluginId: seeded.pluginId, name: "Manager-owned Workflow", code },
       buildTools: async () => ({ tools: {}, manifest: [] }),
     })).rejects.toThrow("Missing manager access for config object.")
 
@@ -421,11 +420,15 @@ describe("saved marketplace scripts", () => {
     expect(versions).toHaveLength(1)
   })
 
-  test("does not disclose an inaccessible parent Plugin through a direct Program grant", async () => {
+  test("does not disclose an inaccessible parent Plugin through a direct Workflow grant", async () => {
     const seeded = await seedScript({
-      title: "Directly shared Program",
+      title: "Directly shared Workflow",
       code: "return { shared: true }",
-      payload: { language: "codemode-js", requiredCapabilities: [] },
+      payload: {
+        language: "codemode-js",
+        exampleInput: { token: "viewer-authoring-secret" },
+        requiredCapabilities: [],
+      },
     })
     const viewerUserId = createDenTypeId("user")
     const viewerMemberId = createDenTypeId("member")
@@ -433,7 +436,7 @@ describe("saved marketplace scripts", () => {
     createdUserIds.push(viewerUserId)
     await db.insert(AuthUserTable).values({
       id: viewerUserId,
-      name: "Direct Program Viewer",
+      name: "Direct Workflow Viewer",
       email: `${viewerUserId}@scripts.test.local`,
     })
     await db.insert(MemberTable).values({
@@ -489,19 +492,27 @@ describe("saved marketplace scripts", () => {
       session: { createdAt: now },
     }
 
-    const detail = await programLibrary.getProgramDetail({
+    const detail = await workflowLibrary.getWorkflowLibraryDetail({
       context,
       configObjectId: seeded.configObjectId,
     })
-    expect(detail.program.plugin).toBeNull()
-    expect(JSON.stringify(detail.program)).not.toContain("Directly shared Program Plugin")
+    expect(detail.workflow.plugin).toBeNull()
+    expect(detail.script.currentVersion.code).toBeNull()
+    expect(detail.script.currentVersion.exampleInput).toBeNull()
+    expect(JSON.stringify(detail)).not.toContain("viewer-authoring-secret")
+    expect(JSON.stringify(detail)).not.toContain("return { shared: true }")
+    expect(JSON.stringify(detail.workflow)).not.toContain("Directly shared Workflow Plugin")
 
-    const library = await programLibrary.listProgramLibraryItems({ context })
+    const library = await workflowLibrary.listWorkflowLibraryItems({ context })
     expect(library).toHaveLength(1)
     expect(library[0]?.plugin).toBeNull()
+    expect(library[0]).not.toHaveProperty("code")
+    expect(library[0]).not.toHaveProperty("data")
+    expect(library[0]).not.toHaveProperty("html")
+    expect(library[0]).not.toHaveProperty("compiledHtml")
   })
 
-  test("executes a createPluginBundle saved script with typed input binding", async () => {
+  test("executes a createPluginBundle Workflow with typed input binding", async () => {
     const seeded = await seedScript({
       title: "Summarize Account",
       code: "return { account: input.account, doubled: input.count * 2 }",
@@ -520,41 +531,66 @@ describe("saved marketplace scripts", () => {
     const result = await executeScript(seeded, { body: { account: "Acme", count: 4 } })
     if (!result.ok) throw new Error(result.message)
     expect(result.result).toMatchObject({
-      kind: "script",
+      kind: "workflow",
       status: "executed",
       value: { account: "Acme", doubled: 8 },
       toolCalls: [],
     })
     const matches = await marketplaceCapabilities.searchMarketplaceCapabilities({
-      codemodeEnabled: true,
       enabled: true,
       member: seeded.member,
       organizationId: seeded.organizationId,
       query: "summarize account",
     })
-    expect(matches[0]).toMatchObject({ kind: "script", hasBody: true })
+    expect(matches[0]).toMatchObject({ kind: "workflow", hasBody: true })
     expect(matches[0]?.path).toStartWith("plugin://")
   })
 
-  test("keeps saved scripts unknown and undiscoverable when Code Mode is disabled", async () => {
+  test("executes a legacy script object through the canonical Workflow capability", async () => {
+    const seeded = await seedScript({
+      title: "Legacy Script",
+      code: "return { migrated: input.value }",
+      objectType: "script",
+      payload: { language: "codemode-js", requiredCapabilities: [] },
+    })
+    const stored = await db.select({ objectType: ConfigObjectTable.objectType })
+      .from(ConfigObjectTable)
+      .where(eq(ConfigObjectTable.id, seeded.configObjectId))
+    expect(stored[0]?.objectType).toBe("script")
+
+    const matches = await marketplaceCapabilities.searchMarketplaceCapabilities({
+      enabled: true,
+      member: seeded.member,
+      organizationId: seeded.organizationId,
+      query: "legacy script",
+    })
+    expect(matches[0]).toMatchObject({ kind: "workflow", hasBody: true })
+
+    const result = await executeScript(seeded, { body: { value: "compatible" } })
+    if (!result.ok) throw new Error(result.message)
+    expect(result.result).toMatchObject({
+      kind: "workflow",
+      status: "executed",
+      value: { migrated: "compatible" },
+    })
+  })
+
+  test("keeps saved scripts discoverable and executable without any rollout flag", async () => {
     const seeded = await seedScript({
       title: "Hidden Script",
       code: "return 1",
       payload: { language: "codemode-js", requiredCapabilities: [] },
     })
     const matches = await marketplaceCapabilities.searchMarketplaceCapabilities({
-      codemodeEnabled: false,
       enabled: true,
       member: seeded.member,
       organizationId: seeded.organizationId,
       query: "hidden script",
     })
-    expect(matches).toEqual([])
-    expect(await executeScript(seeded, { codemodeEnabled: false })).toEqual({
-      ok: false,
-      error: "unknown_capability",
-      message: "No such capability.",
-    })
+    expect(matches[0]).toMatchObject({ kind: "workflow" })
+    const result = await executeScript(seeded)
+    if (!result.ok) throw new Error(result.message)
+    expect(result.result).toMatchObject({ kind: "workflow", status: "executed", value: 1 })
   })
 
   test("fails closed before running when a declared capability is unavailable", async () => {
@@ -620,7 +656,6 @@ describe("saved marketplace scripts", () => {
       organizationId: seeded.organizationId,
       member: seeded.member,
       redirectUriBase: "http://127.0.0.1:8790",
-      codemodeEnabled: true,
       externalMcpConnectionsEnabled: true,
       resolvePlatformAdmin: () => {
         platformAdmin ??= Promise.resolve(false)
@@ -647,7 +682,7 @@ describe("saved marketplace scripts", () => {
       providerCallAttempted: false,
       missing: requiredCapabilities,
     })
-    if (result.ok) throw new Error("Expected saved-script recursion to be blocked")
+    if (result.ok) throw new Error("Expected Workflow recursion to be blocked")
     expect(result.message).toContain("is unavailable or disabled")
   })
 
@@ -704,7 +739,7 @@ describe("saved marketplace scripts", () => {
     })
   })
 
-  test("lists accessible scripts with exact versions and artifact schemas", async () => {
+  test("lists accessible Workflows with exact versions and artifact schemas", async () => {
     const seeded = await seedScript({
       title: "Artifact Script",
       code: "return { briefing: input.topic }",
@@ -716,18 +751,18 @@ describe("saved marketplace scripts", () => {
       },
     })
 
-    const scripts = await marketplaceCapabilities.listAccessibleSavedCodemodeScripts({
+    const accessibleWorkflows = await marketplaceCapabilities.listAccessibleWorkflows({
       member: seeded.member,
       organizationId: seeded.organizationId,
     })
-    expect(scripts).toHaveLength(1)
-    expect(scripts[0]).toMatchObject({
+    expect(accessibleWorkflows).toHaveLength(1)
+    expect(accessibleWorkflows[0]).toMatchObject({
       pluginId: seeded.pluginId,
       configObjectId: seeded.configObjectId,
       title: "Artifact Script",
       inputSchema: { type: "object" },
       outputSchema: { type: "object" },
     })
-    expect(scripts[0]?.configObjectVersionId).toStartWith("cov_")
+    expect(accessibleWorkflows[0]?.configObjectVersionId).toStartWith("cov_")
   })
 })

@@ -1,13 +1,21 @@
 ---
 name: publish-evidence
-description: Publish test evidence, publish all test runs, update PR verification, or audit red evidence. Use after @openwork/testkit runs.
+description: Publish test evidence, publish all test runs, update PR verification, audit red evidence, prove a PR, or declare a PR verdict. Use after @openwork/testkit runs.
 ---
 
 # Skill: Publish Evidence
 
-The orchestrator owns this human-verification step. Publishing makes the
-agent-first verdict inspectable; it never decides pass/fail and never reruns a
-test.
+The orchestrator owns this verdict and human-verification step. It derives the
+verdict from completed evidence; publishing makes that verdict inspectable and
+never reruns a test.
+
+## Declare the verdict
+
+- `Passed`: every claim has an observable assertion in the completed test run.
+- `Failed`: an assertion disproves at least one expected outcome.
+- `Incomplete`: requirements, tooling, or evidence are missing. A skip is always
+  `Incomplete`, never `Passed`.
+- Prose, screenshots, and recordings do not decide the verdict.
 
 ## Make every claim auditable
 
@@ -20,6 +28,8 @@ test.
 
 ## Publish the PR head
 
+Run checks on the final PR head after any rebase or cherry-pick. Test runs are
+bound to a commit SHA, so history rewrites require rerunning and republishing.
 After a multi-test run, publish each test run whose `gitSha` matches the PR head:
 
 ```bash
@@ -37,6 +47,15 @@ flows, and never reruns tests.
 - Exit codes: `0` published, `1` failed claims published (or publish failed),
   `2` pending claims still need judging (set a vision key and rerun).
 
+## Stacked PRs
+
+- Inspect `gh pr view <n> --json baseRefName,headRefName,headRefOid` before
+  merging. A merged base can retarget the stack and recreate commits with new
+  SHAs, orphaning their evidence.
+- Check for stray commits with `git log --oneline <branch> ^origin/dev`. If the
+  stack is wrong, cherry-pick only the intended commits onto current `dev`, then
+  rerun and republish every check.
+
 ## Refuse misleading evidence
 
 - Never use `--force` to hide a SHA mismatch. Re-run the spec on the PR head.
@@ -44,5 +63,5 @@ flows, and never reruns tests.
   output is annotated; call the exception out explicitly. Red tapes are valid
   human-verification artifacts and should be published when they explain a
   `Failed` or `Incomplete` verdict.
-- Read `BLOB_READ_WRITE_TOKEN` from the environment or the Infisical fallback.
-  Without it, still post verdicts with a no-screenshots note.
+- Screenshots are attached with `gh pr comment --attach` (gh ≥ 2.99). Without it
+  the publisher still posts verdicts with a no-screenshots note.

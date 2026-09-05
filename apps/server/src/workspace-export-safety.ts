@@ -321,3 +321,32 @@ function formatSectionLabel(sectionKey: string): string {
     .replace(/[-_]+/g, " ")
     .replace(/^./, (char) => char.toUpperCase());
 }
+
+function readExportRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+/**
+ * Strips machine-local blueprint materialization state (session ids created on
+ * one machine) from an openwork config so exports stay portable.
+ */
+export function sanitizeOpenworkTemplateConfig(openwork: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  const next = cloneJson(openwork ?? {});
+  const blueprint = readExportRecord(next.blueprint);
+  if (!blueprint) return next;
+
+  const materialized = readExportRecord(blueprint.materialized);
+  if (materialized) {
+    delete materialized.sessions;
+    if (Object.keys(materialized).length === 0) {
+      delete blueprint.materialized;
+    } else {
+      blueprint.materialized = materialized;
+    }
+  }
+
+  next.blueprint = blueprint;
+  return next;
+}

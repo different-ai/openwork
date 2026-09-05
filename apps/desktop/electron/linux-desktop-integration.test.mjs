@@ -123,8 +123,9 @@ describe("Linux AppImage desktop integration", () => {
     const appImagePath = String.raw`/home/alice/Applications/Open Work "daily"$%draft\archive`;
     assert.equal(
       quoteDesktopExec(appImagePath),
-      String.raw`"/home/alice/Applications/Open Work \\"daily\\"\\$%%draft\\\\archive"`,
+      String.raw`"/home/alice/Applications/Open Work \"daily\"\$%%draft\\archive"`,
     );
+    assert.equal(quoteDesktopExec("`"), '"\\`"');
     const entry = buildOpenworkDesktopEntry({
       appImagePath,
       appName: "OpenWork",

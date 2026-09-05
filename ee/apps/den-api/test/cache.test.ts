@@ -10,9 +10,10 @@ const cachedValues = new Map<string, string>()
 const setCalls: Array<{ key: string; value: string; mode: string; ttl: number }> = []
 const deleteCalls: string[] = []
 let selectCount = 0
+let membershipSelectCount = 0
 let authSelectCount = 0
-let authLivenessCount = 0
-let authSessionExpiresAt = new Date("2026-08-10T14:00:00.000Z")
+let authSessionIdSelectCount = 0
+let authSessionExpiresAt = new Date("2026-08-17T12:00:00.000Z")
 let authSessionLive = true
 let cacheModule: typeof import("../src/cache.js")
 let restoreCacheDependencies: (() => void) | null = null
@@ -24,10 +25,20 @@ const redis = {
     cachedValues.set(key, value)
     return Promise.resolve("OK")
   },
-  del: (key: string) => {
-    deleteCalls.push(key)
-    cachedValues.delete(key)
+  del: (...keys: string[]) => {
+    for (const key of keys) {
+      deleteCalls.push(key)
+      cachedValues.delete(key)
+    }
     return Promise.resolve(1)
+  },
+  scan: (cursor: string, mode: "MATCH", pattern: string, countMode: "COUNT", count: number) => {
+    void cursor
+    void mode
+    void countMode
+    void count
+    const prefix = pattern.endsWith("*") ? pattern.slice(0, -1) : pattern
+    return Promise.resolve(["0", Array.from(cachedValues.keys()).filter((key) => key.startsWith(prefix))] as [string, string[]])
   },
 }
 
@@ -90,15 +101,19 @@ beforeAll(async () => {
       selectCount += 1
       return Promise.resolve(memberRows())
     },
+    orgMembershipLoader: () => {
+      membershipSelectCount += 1
+      return Promise.resolve({ id: memberId, role: "member", isOwner: false })
+    },
     authSessionLoader: () => {
       authSelectCount += 1
       return Promise.resolve(authSession())
     },
-    authSessionLivenessLoader: () => {
-      authLivenessCount += 1
+    authSessionIdLoader: () => {
+      authSessionIdSelectCount += 1
       return Promise.resolve(authSessionLive ? {
-        session: authSession().session,
-        userUpdatedAt: authSession().user.updatedAt,
+        id: sessionId,
+        expiresAt: authSessionExpiresAt,
       } : null)
     },
   })
@@ -109,9 +124,10 @@ beforeEach(() => {
   setCalls.length = 0
   deleteCalls.length = 0
   selectCount = 0
+  membershipSelectCount = 0
   authSelectCount = 0
-  authLivenessCount = 0
-  authSessionExpiresAt = new Date("2026-08-10T14:00:00.000Z")
+  authSessionIdSelectCount = 0
+  authSessionExpiresAt = new Date("2026-08-17T12:00:00.000Z")
   authSessionLive = true
   setSystemTime(new Date("2026-08-10T12:00:00.000Z"))
 })
@@ -133,7 +149,7 @@ test("cache.org.members stores and reuses org member query results", async () =>
   expect(setCalls[0]).toMatchObject({
     key: `cache:org:members:${organizationId}`,
     mode: "EX",
-    ttl: 60,
+    ttl: 300,
   })
 })
 
@@ -144,7 +160,7 @@ test("cache.auth.session uses the Den key and caps Redis TTL at one hour", async
   expect(first).toEqual(second)
   expect(first?.session.id).toBe(sessionId)
   expect(authSelectCount).toBe(1)
-  expect(authLivenessCount).toBe(1)
+  expect(authSessionIdSelectCount).toBe(0)
   expect(setCalls).toHaveLength(1)
   expect(setCalls[0]).toMatchObject({
     key: `cache:auth:session:${sessionToken}`,
@@ -153,14 +169,54 @@ test("cache.auth.session uses the Den key and caps Redis TTL at one hour", async
   })
 })
 
-test("cache.auth.session rejects stale Redis entries after database revocation", async () => {
+test("cache.auth.activeSessionId stores and reuses session id liveness", async () => {
+  const first = await cacheModule.cache.auth.activeSessionId(sessionId)
+  const second = await cacheModule.cache.auth.activeSessionId(sessionId)
+
+  expect(first).toEqual(second)
+  expect(first?.id).toBe(sessionId)
+  expect(authSessionIdSelectCount).toBe(1)
+  expect(setCalls).toHaveLength(1)
+  expect(setCalls[0]).toMatchObject({
+    key: `cache:auth:session-id:${sessionId}`,
+    mode: "EX",
+    ttl: 60,
+  })
+})
+
+test("cache.auth.activeSessionId does not re-check the database on cached liveness hits", async () => {
+  authSessionExpiresAt = new Date("2026-08-16T11:00:00.000Z")
+  const first = await cacheModule.cache.auth.activeSessionId(sessionId)
+  authSessionExpiresAt = new Date("2026-08-17T12:00:00.000Z")
+
+  const second = await cacheModule.cache.auth.activeSessionId(sessionId)
+
+  expect(first?.expiresAt).toEqual(new Date("2026-08-16T11:00:00.000Z"))
+  expect(second?.expiresAt).toEqual(new Date("2026-08-16T11:00:00.000Z"))
+  expect(authSessionIdSelectCount).toBe(1)
+  expect(setCalls).toHaveLength(1)
+})
+
+test("cache.auth.activeSessionId rejects missing database sessions", async () => {
+  authSessionLive = false
+
+  const resolved = await cacheModule.cache.auth.activeSessionId(sessionId)
+
+  expect(resolved).toBeNull()
+  expect(authSessionIdSelectCount).toBe(1)
+  expect(setCalls).toHaveLength(0)
+})
+
+test("cache.auth.session returns cached entries without a database liveness check", async () => {
   await cacheModule.cache.auth.session(sessionToken)
   authSessionLive = false
 
   const resolved = await cacheModule.cache.auth.session(sessionToken)
 
-  expect(resolved).toBeNull()
-  expect(deleteCalls).toEqual([`cache:auth:session:${sessionToken}`])
+  expect(resolved?.session.id).toBe(sessionId)
+  expect(authSelectCount).toBe(1)
+  expect(authSessionIdSelectCount).toBe(0)
+  expect(deleteCalls).toEqual([])
 })
 
 test("cache.auth.session limits TTL to the remaining session lifetime", async () => {
@@ -173,9 +229,90 @@ test("cache.auth.session limits TTL to the remaining session lifetime", async ()
 
 test("cache.auth.deleteSession invalidates the exact Den cache key", async () => {
   await cacheModule.cache.auth.session(sessionToken)
+  await cacheModule.cache.auth.activeSessionId(sessionId)
+  deleteCalls.length = 0
   await cacheModule.cache.auth.deleteSession(sessionToken)
 
-  expect(deleteCalls).toEqual([`cache:auth:session:${sessionToken}`])
+  expect(deleteCalls).toEqual([`cache:auth:session:${sessionToken}`, `cache:auth:session-id:${sessionId}`])
+})
+
+test("cache.auth.revokeSession blocks stale session cache repopulation", async () => {
+  await cacheModule.cache.auth.revokeSession(sessionToken)
+  authSessionLive = true
+
+  const resolved = await cacheModule.cache.auth.session(sessionToken)
+
+  expect(resolved).toBeNull()
+  expect(authSelectCount).toBe(0)
+  expect(cachedValues.has(`cache:auth:session:${sessionToken}`)).toBe(false)
+})
+
+test("cache.auth.deleteSessionId invalidates liveness without a token cache entry", async () => {
+  await cacheModule.cache.auth.activeSessionId(sessionId)
+  deleteCalls.length = 0
+
+  await cacheModule.cache.auth.deleteSessionId(sessionId)
+
+  expect(deleteCalls).toEqual([`cache:auth:session-id:${sessionId}`])
+})
+
+test("cache.auth.revokeSessionId blocks stale liveness cache repopulation", async () => {
+  await cacheModule.cache.auth.revokeSessionId(sessionId)
+  authSessionLive = true
+
+  const resolved = await cacheModule.cache.auth.activeSessionId(sessionId)
+
+  expect(resolved).toBeNull()
+  expect(authSessionIdSelectCount).toBe(0)
+  expect(cachedValues.has(`cache:auth:session-id:${sessionId}`)).toBe(false)
+})
+
+test("cache.org.membership stores and reuses user organization membership checks", async () => {
+  const first = await cacheModule.cache.org.membership({ organizationId, userId })
+  const second = await cacheModule.cache.org.membership({ organizationId, userId })
+
+  expect(first).toEqual(second)
+  expect(first?.id).toBe(memberId)
+  expect(membershipSelectCount).toBe(1)
+  expect(setCalls).toHaveLength(1)
+  expect(setCalls[0]).toMatchObject({
+    key: `cache:org:member:${organizationId}:${userId}`,
+    mode: "EX",
+    ttl: 300,
+  })
+})
+
+test("cache.org.deleteMembers invalidates aggregate and per-user membership caches", async () => {
+  await cacheModule.cache.org.members(organizationId)
+  await cacheModule.cache.org.membership({ organizationId, userId })
+  deleteCalls.length = 0
+
+  await cacheModule.cache.org.deleteMembers(organizationId)
+
+  expect(deleteCalls).toEqual([
+    `cache:org:members:${organizationId}`,
+    `cache:org:member:${organizationId}:${userId}`,
+  ])
+})
+
+test("cache.org.deleteMemberList invalidates only the aggregate member list", async () => {
+  await cacheModule.cache.org.members(organizationId)
+  await cacheModule.cache.org.membership({ organizationId, userId })
+  deleteCalls.length = 0
+
+  await cacheModule.cache.org.deleteMemberList(organizationId)
+
+  expect(deleteCalls).toEqual([`cache:org:members:${organizationId}`])
+})
+
+test("cache.org.deleteMembership invalidates one per-user membership cache", async () => {
+  await cacheModule.cache.org.members(organizationId)
+  await cacheModule.cache.org.membership({ organizationId, userId })
+  deleteCalls.length = 0
+
+  await cacheModule.cache.org.deleteMembership({ organizationId, userId })
+
+  expect(deleteCalls).toEqual([`cache:org:member:${organizationId}:${userId}`])
 })
 
 test("cache.auth.session falls back to the database loader without Redis", async () => {

@@ -286,7 +286,7 @@ afterAll(async () => {
   mock.restore()
 })
 
-test("the member library keeps Remote MCP Apps beside their parent plugins", async () => {
+test("the member library omits stored standalone URL Apps without deleting them", async () => {
   const response = await app.fetch(new Request(`${API_ORIGIN}/v1/me/library`))
   expect(response.status).toBe(200)
   const body = meLibraryListResponseSchema.parse(await response.json())
@@ -334,19 +334,6 @@ test("the member library keeps Remote MCP Apps beside their parent plugins", asy
         edges: [{ kind: "org_wide" }],
       },
       {
-        type: "app",
-        id: remoteAppConfigObjectId,
-        pluginId: remoteAppPluginId,
-        name: "Delta Dashboard",
-        description: "A portable remote MCP App",
-        sourceUrl: "https://example.test/apps/delta.html",
-        status: "active",
-        activeVersionId: null,
-        state: "ready",
-        edges: [{ kind: "org_wide" }],
-        role: "viewer",
-      },
-      {
         type: "plugin",
         id: remoteAppPluginId,
         name: "Delta Dashboard",
@@ -359,4 +346,7 @@ test("the member library keeps Remote MCP Apps beside their parent plugins", asy
       },
     ],
   })
+  const storedApps = await db.select().from(RemoteMcpAppTable).where(eq(RemoteMcpAppTable.organizationId, organizationId))
+  expect(storedApps).toHaveLength(1)
+  expect(storedApps[0]?.configObjectId).toBe(remoteAppConfigObjectId)
 })

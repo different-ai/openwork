@@ -104,6 +104,44 @@ describe("github connector app helpers", () => {
     ])
   })
 
+  test("detects a root Agent Plugin manifest", async () => {
+    const repositories = await listGithubInstallationRepositories({
+      config: { appId: "123456", privateKey: privateKeyPem },
+      fetchFn: async (url) => {
+        const requestUrl = String(url)
+        if (requestUrl.endsWith("/access_tokens")) {
+          return new Response(JSON.stringify({ token: "installation-token" }), { status: 201 })
+        }
+        if (requestUrl.includes("/contents/.claude-plugin/")) {
+          return new Response(JSON.stringify({ message: "not found" }), { status: 404 })
+        }
+        if (requestUrl.endsWith("/contents/plugin.json")) {
+          const content = Buffer.from(JSON.stringify({
+            $schema: "https://agent-plugins.org/schemas/1.1.0/plugin.schema.json",
+            name: "team-tools",
+          })).toString("base64")
+          return new Response(JSON.stringify({ content, encoding: "base64" }), { status: 200 })
+        }
+        return new Response(JSON.stringify({
+          repositories: [
+            { default_branch: "main", full_name: "different-ai/team-tools", id: 7, private: true },
+          ],
+        }), { status: 200 })
+      },
+      installationId: 777,
+    })
+
+    expect(repositories).toEqual([{
+      defaultBranch: "main",
+      fullName: "different-ai/team-tools",
+      hasPluginManifest: true,
+      id: 7,
+      manifestKind: "agent-plugin",
+      marketplacePluginCount: null,
+      private: true,
+    }])
+  })
+
   test("follows pagination when an installation exposes more than one page of repositories", async () => {
     const requestUrls: string[] = []
     const repositories = await listGithubInstallationRepositories({

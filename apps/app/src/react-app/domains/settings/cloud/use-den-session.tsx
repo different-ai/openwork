@@ -5,7 +5,6 @@ import { toast } from "@/components/ui/sonner";
 import {
   buildDenAuthUrl,
   clearDenSession,
-  createDenClient,
   DEFAULT_DEN_BASE_URL,
   DenApiError,
   ensureDenActiveOrganization,
@@ -142,8 +141,15 @@ export function useDenSession({
   }, [activeOrg, activeOrgId, authToken, baseUrl]);
 
   React.useEffect(() => {
-    if (authToken.trim() && denAuth.user) {
-      setUser(denAuth.user);
+    const nextUser = denAuth.user;
+    if (authToken.trim() && nextUser) {
+      setUser((current) => (
+        current?.id === nextUser.id
+        && current.email === nextUser.email
+        && current.name === nextUser.name
+          ? current
+          : nextUser
+      ));
     }
   }, [authToken, denAuth.user, setUser]);
 
@@ -370,7 +376,18 @@ export function useDenSession({
 
       try {
         const response = await client.listOrgs();
-        setOrgs(response.orgs);
+        setOrgs((currentOrgs) => (
+          currentOrgs.length === response.orgs.length
+          && currentOrgs.every((org, index) => {
+            const nextOrg = response.orgs[index];
+            return org.id === nextOrg?.id
+              && org.name === nextOrg.name
+              && org.slug === nextOrg.slug
+              && org.role === nextOrg.role;
+          })
+            ? currentOrgs
+            : response.orgs
+        ));
         const current = activeOrgId.trim();
 
         // Determine the next org to select:
@@ -386,7 +403,7 @@ export function useDenSession({
         // else: leave next = "" so the org picker is shown
 
         const nextOrg = next ? (response.orgs.find((org) => org.id === next) ?? null) : null;
-        setActiveOrgId(next);
+        setActiveOrgId((currentId) => currentId === next ? currentId : next);
         writeDenSettings({
           baseUrl,
           authToken: authToken || null,
@@ -396,7 +413,14 @@ export function useDenSession({
         });
         // Push to context immediately so consumers see the new org
         if (nextOrg) {
-          setActiveOrganization({ id: nextOrg.id, name: nextOrg.name, role: nextOrg.role, slug: nextOrg.slug });
+          setActiveOrganization((currentOrg) => (
+            currentOrg?.id === nextOrg.id
+            && currentOrg.name === nextOrg.name
+            && currentOrg.role === nextOrg.role
+            && currentOrg.slug === nextOrg.slug
+              ? currentOrg
+              : { id: nextOrg.id, name: nextOrg.name, role: nextOrg.role, slug: nextOrg.slug }
+          ));
         } else if (!next) {
           setActiveOrganization(null);
         }
@@ -415,10 +439,11 @@ export function useDenSession({
     [activeOrgId, authToken, baseUrl, client, setActiveOrganization],
   );
 
+  const userId = user?.id ?? "";
   React.useEffect(() => {
-    if (!user) return;
+    if (!userId) return;
     void refreshOrgs(true);
-  }, [refreshOrgs, user]);
+  }, [refreshOrgs, userId]);
 
   React.useEffect(() => {
     const handler = (event: WindowEventMap[typeof denSessionUpdatedEvent]) => {
@@ -473,11 +498,9 @@ export function useDenSession({
     setStatusMessage(t("den.signing_in"));
 
     try {
-      const exchangeClient = createDenClient({ baseUrl: nextBaseUrl });
       // The helper exchanges, persists, and dispatches the success/error session events.
       const result = await exchangeHandoffAndSignIn(parsed.grant, {
         baseUrl: nextBaseUrl,
-        client: exchangeClient,
         // Pasted one-time codes are desktop-initiated sign-ins.
         desktopInitiated: true,
         fallbackErrorMessage: t("den.error_no_token"),

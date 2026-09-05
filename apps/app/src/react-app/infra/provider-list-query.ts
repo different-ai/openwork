@@ -21,6 +21,10 @@ export type ConnectedProviderSnapshotChange = {
   next: ConnectedProviderSnapshot;
 };
 
+// Bounded module-scope cache: snapshots are keyed by (baseUrl, directory) and
+// would otherwise accumulate for every workspace ever opened in this app run.
+// Recording refreshes a key's recency; the oldest keys are evicted past the cap.
+const CONNECTED_PROVIDER_SNAPSHOT_LIMIT = 16;
 const connectedProviderSnapshots = new Map<string, ConnectedProviderSnapshot>();
 const connectedProviderSnapshotChanges = new Map<string, ConnectedProviderSnapshotChange>();
 
@@ -111,8 +115,17 @@ function recordConnectedProviderSnapshot(
   const previous = connectedProviderSnapshots.get(key) ?? null;
   const next = getConnectedProviderSnapshot(value);
   const changed = previous !== null && JSON.stringify(previous) !== JSON.stringify(next);
+  // Delete before set so a refreshed key moves to the newest insertion slot.
+  connectedProviderSnapshots.delete(key);
+  connectedProviderSnapshotChanges.delete(key);
   connectedProviderSnapshots.set(key, next);
   connectedProviderSnapshotChanges.set(key, { changed, previous, next });
+  while (connectedProviderSnapshots.size > CONNECTED_PROVIDER_SNAPSHOT_LIMIT) {
+    const oldest = connectedProviderSnapshots.keys().next().value;
+    if (oldest === undefined) break;
+    connectedProviderSnapshots.delete(oldest);
+    connectedProviderSnapshotChanges.delete(oldest);
+  }
   if (changed) {
     dispatchConnectedProviderChanges(previous, next);
   }

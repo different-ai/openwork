@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
+import type { McpServer } from "@modelcontextprotocol/server"
 import type { ExternalMcpConnectionRow } from "../capability-sources/external-mcp-connections.js"
 
 export const CONNECT_MCP_SERVER_INDEX_URI = "openwork://connect/mcp-servers/index.json"
@@ -18,6 +18,25 @@ export type ConnectMcpServerIndexEntry = {
   name: string
   description: string | null
   url: string
+  /** True when an administrator opted this connection into direct exposure as a standard MCP server. */
+  exposeDirectly: boolean
+}
+
+/**
+ * Which member-usable connections an index reader may see. The App host sees
+ * every ready connection; an ordinary client sees only the ones an
+ * administrator exposed directly, because those are the only per-connection
+ * URLs that serve it a provider catalog, and none at all while the
+ * organization has member-facing MCP connections disabled.
+ */
+export function selectConnectMcpServerIndexConnections(input: {
+  appHostClient: boolean
+  memberFacingMcpConnectionsEnabled: boolean
+  connections: ExternalMcpConnectionRow[]
+}): ExternalMcpConnectionRow[] {
+  if (input.appHostClient) return input.connections
+  if (!input.memberFacingMcpConnectionsEnabled) return []
+  return input.connections.filter((connection) => connection.exposeDirectly)
 }
 
 export function buildConnectMcpServerIndex(input: {
@@ -33,6 +52,7 @@ export function buildConnectMcpServerIndex(input: {
         name: connection.name,
         description: null,
         url: `${input.publicOrigin}/mcp/agent/connections/${encodeURIComponent(connection.id)}`,
+        exposeDirectly: connection.exposeDirectly,
       }))
       .sort((left, right) => left.name.localeCompare(right.name) || left.connectionId.localeCompare(right.connectionId)),
   }

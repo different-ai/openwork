@@ -32,6 +32,88 @@ export function readProviderEnvNames(providerConfig: JsonRecord): string[] {
     : []
 }
 
+function credentialEnvRank(name: string): number | null {
+  const normalized = name.trim().toUpperCase()
+  if (/(^|_)API_KEY$/.test(normalized)) return 0
+  if (/(^|_)ACCESS_KEY_ID$/.test(normalized)) return 1
+  if (/(^|_)BEARER_TOKEN(_|$)/.test(normalized) || /(^|_)TOKEN$/.test(normalized)) return 2
+  if (/(^|_)KEY$/.test(normalized)) return 3
+  return null
+}
+
+export function selectPrimaryCredentialEnvName(envNames: string[], availableNames: Iterable<string>): string | null {
+  const available = new Set([...availableNames].filter((name) => name.trim().length > 0))
+  const orderedNames = envNames.filter((name) => available.has(name))
+  const ranked = orderedNames
+    .map((name, index) => ({ name, index, rank: credentialEnvRank(name) }))
+    .filter((entry): entry is { name: string; index: number; rank: number } => entry.rank !== null)
+    .sort((left, right) => left.rank - right.rank || left.index - right.index)
+  if (ranked[0]) return ranked[0].name
+  if (envNames.length > 1 && envNames.some((name) => credentialEnvRank(name) !== null)) return null
+  return orderedNames[0] ?? null
+}
+
+export function selectLegacyScalarCredentialEnvName(envNames: string[]): string | null {
+  return selectPrimaryCredentialEnvName(envNames, envNames) ?? envNames[0] ?? null
+}
+
+const RUNTIME_ENV_TAG_LENGTH = 5
+
+/**
+ * The tag that scopes a catalog provider's env names to one provider row:
+ * `LPR_` plus the last five alphanumerics of the row id, upper-cased
+ * (`lpr_01kx…120jv` → `LPR_120JV`). It is a pure function of the id, so the
+ * same row always yields the same names and nothing has to be stored or
+ * migrated.
+ */
+export function runtimeProviderEnvTag(providerRowId: string): string {
+  const tail = providerRowId.replace(/[^0-9A-Za-z]/g, "").toUpperCase().slice(-RUNTIME_ENV_TAG_LENGTH)
+  return `LPR_${tail}`
+}
+
+export type RuntimeEnvProvider = {
+  id: string
+  source: string
+  providerConfig: JsonRecord
+}
+
+/**
+ * Only providers created from the models.dev catalog get scoped names. Their
+ * declared names are well-known (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …):
+ * materialized bare, one organization provider would switch on OpenCode's whole
+ * built-in catalog for that vendor and shadow a key the member set themselves,
+ * and two rows for the same vendor would share one credential slot. Custom
+ * providers keep the exact names their author declared, and the hosted
+ * OpenWork provider keeps `OPENWORK_API_KEY`.
+ */
+export function usesRuntimeProviderEnvTag(provider: Pick<RuntimeEnvProvider, "source">): boolean {
+  return provider.source === "models_dev"
+}
+
+/** The env name a member's machine or a cloud worker sees for one declared name. */
+export function runtimeProviderEnvName(provider: Pick<RuntimeEnvProvider, "id" | "source">, declaredName: string): string {
+  return usesRuntimeProviderEnvTag(provider) ? `${runtimeProviderEnvTag(provider.id)}_${declaredName}` : declaredName
+}
+
+export function runtimeProviderEnvNames(provider: RuntimeEnvProvider): string[] {
+  return readProviderEnvNames(provider.providerConfig).map((name) => runtimeProviderEnvName(provider, name))
+}
+
+/**
+ * Rewrite a provider's declared env names (and the keys of a decoded multi-env
+ * credential) to their runtime names. Stored rows are never rewritten; this is
+ * applied where a provider leaves Den for a machine or worker.
+ */
+export function toRuntimeProviderEnv<T extends RuntimeEnvProvider & { apiKeys?: Record<string, string> | null }>(provider: T): T {
+  if (!usesRuntimeProviderEnvTag(provider) || provider.providerConfig.env === undefined) return provider
+  const providerConfig: JsonRecord = { ...provider.providerConfig, env: runtimeProviderEnvNames(provider) }
+  if (!provider.apiKeys) return { ...provider, providerConfig }
+  const apiKeys = Object.fromEntries(
+    Object.entries(provider.apiKeys).map(([name, value]) => [runtimeProviderEnvName(provider, name), value]),
+  )
+  return { ...provider, providerConfig, apiKeys }
+}
+
 /**
  * A stored credential is a multi-env map only when it parses to a non-empty
  * JSON object whose values are all strings. Real API keys never take that
@@ -86,7 +168,8 @@ export function listConfiguredEnvKeys(stored: string | null, envNames: string[])
   }
 
   if (credential.apiKey) {
-    return envNames.length > 0 ? [envNames[0]] : []
+    const envName = selectLegacyScalarCredentialEnvName(envNames)
+    return envName ? [envName] : []
   }
 
   return []
@@ -122,7 +205,7 @@ export function resolveProviderCredential(input: {
     const existing = decodeProviderCredential(existingValue)
     const values: Record<string, string> = { ...(existing.apiKeys ?? {}) }
     if (!existing.apiKeys && existing.apiKey) {
-      const legacyEnvName = input.existing?.envNames[0]
+      const legacyEnvName = selectLegacyScalarCredentialEnvName(input.existing?.envNames ?? [])
       if (legacyEnvName) {
         values[legacyEnvName] = existing.apiKey
       }

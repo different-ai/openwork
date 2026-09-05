@@ -1,5 +1,5 @@
 import Stripe from "stripe"
-import { and, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
+import { and, eq, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   MemberTable,
   OrgSubscriptionStatus,
@@ -13,6 +13,8 @@ import { env } from "./env.js"
 import type { DenOrgMode } from "./env.js"
 import { setInferenceEnabled } from "./inference.js"
 import { appLogger } from "./observability/logger.js"
+import { isOpenWorkWebAvailable } from "./openwork-web-availability.js"
+import { hasOpenWorkWebComplimentaryAccess, resolveOpenWorkWebAccess } from "./openwork-web-access.js"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
@@ -22,12 +24,18 @@ type OrgSubscriptionTypeValue = (typeof OrgSubscriptionType)[number]
 const STRIPE_API_VERSION = "2026-04-22.dahlia"
 const INFERENCE_SUBSCRIPTION_TYPE = "inference" as const
 const SEAT_SUBSCRIPTION_TYPE = "seat" as const
+const WEB_SUBSCRIPTION_TYPE = "web" as const
 export const FREE_ORG_SEAT_COUNT = 5
+export const OPENWORK_WEB_UNIT_AMOUNT = 5000
+export const OPENWORK_WEB_CURRENCY = "usd" as const
+export const OPENWORK_WEB_INTERVAL = "month" as const
+export const OPENWORK_WEB_QUANTITY_DEFINITION = "joined_non_removed_members" as const
 const ACTIVE_STATUSES = new Set<OrgSubscriptionStatusValue>(["active", "trialing"])
+const ONGOING_STATUSES = new Set<OrgSubscriptionStatusValue>(["active", "trialing", "incomplete", "past_due", "unpaid", "paused"])
 const EXPIRED_STATUSES = new Set<OrgSubscriptionStatusValue>(["past_due", "canceled", "unpaid", "incomplete_expired", "expired"])
 const logger = appLogger.child({ component: "stripe_billing" })
 
-export type StripeCheckoutSubscriptionType = typeof INFERENCE_SUBSCRIPTION_TYPE | typeof SEAT_SUBSCRIPTION_TYPE
+export type StripeCheckoutSubscriptionType = typeof INFERENCE_SUBSCRIPTION_TYPE | typeof SEAT_SUBSCRIPTION_TYPE | typeof WEB_SUBSCRIPTION_TYPE
 
 let stripeClient: Stripe | null = null
 
@@ -57,10 +65,23 @@ function requireSeatPriceId() {
   return env.stripe.seatPriceId
 }
 
+function requireOpenWorkWebPriceId() {
+  const priceId = env.stripe.openworkWebPriceId
+  if (!isOpenWorkWebAvailable() || !priceId) {
+    throw new Error("stripe_openwork_web_not_available")
+  }
+  return priceId
+}
+
 function requirePriceIdForSubscriptionType(subscriptionType: StripeCheckoutSubscriptionType) {
-  return subscriptionType === INFERENCE_SUBSCRIPTION_TYPE
-    ? requireInferencePriceId()
-    : requireSeatPriceId()
+  switch (subscriptionType) {
+    case INFERENCE_SUBSCRIPTION_TYPE:
+      return requireInferencePriceId()
+    case SEAT_SUBSCRIPTION_TYPE:
+      return requireSeatPriceId()
+    case WEB_SUBSCRIPTION_TYPE:
+      return requireOpenWorkWebPriceId()
+  }
 }
 
 function fromUnixSeconds(value: number | null | undefined) {
@@ -98,6 +119,9 @@ function parseSubscriptionType(value: string | null | undefined): OrgSubscriptio
     case SEAT_SUBSCRIPTION_TYPE:
     case "seats":
       return SEAT_SUBSCRIPTION_TYPE
+    case WEB_SUBSCRIPTION_TYPE:
+    case "openwork_web":
+      return WEB_SUBSCRIPTION_TYPE
     default:
       return null
   }
@@ -127,6 +151,9 @@ function subscriptionTypeFromStripeSubscription(subscription: Stripe.Subscriptio
   if (env.stripe.seatPriceId && priceId === env.stripe.seatPriceId) {
     return SEAT_SUBSCRIPTION_TYPE
   }
+  if (env.stripe.openworkWebPriceId && priceId === env.stripe.openworkWebPriceId) {
+    return WEB_SUBSCRIPTION_TYPE
+  }
 
   return INFERENCE_SUBSCRIPTION_TYPE
 }
@@ -137,6 +164,70 @@ async function activeMemberCount(organizationId: OrgId) {
     .from(MemberTable)
     .where(and(eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt)))
   return Math.max(0, Number(row?.count ?? 0))
+}
+
+async function joinedMemberCount(organizationId: OrgId) {
+  const [row] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(MemberTable)
+    .where(and(
+      eq(MemberTable.organizationId, organizationId),
+      isNotNull(MemberTable.joinedAt),
+      isNull(MemberTable.removedAt),
+    ))
+  return normalizeSeatCount(Number(row?.count ?? 0))
+}
+
+async function organizationOpenWorkWebComplimentaryAccess(organizationId: OrgId) {
+  const rows = await db
+    .select({ metadata: OrganizationTable.metadata })
+    .from(OrganizationTable)
+    .where(eq(OrganizationTable.id, organizationId))
+    .limit(1)
+  return hasOpenWorkWebComplimentaryAccess(rows[0]?.metadata)
+}
+
+export function isOpenWorkWebBillableMember(input: { joinedAt: Date | null; removedAt: Date | null }) {
+  return input.joinedAt !== null && input.removedAt === null
+}
+
+export function calculateOpenWorkWebBilling(input: { joinedMemberCount: number }) {
+  const quantity = normalizeSeatCount(input.joinedMemberCount)
+  return {
+    quantity,
+    unitAmount: OPENWORK_WEB_UNIT_AMOUNT,
+    expectedMonthlyTotal: quantity * OPENWORK_WEB_UNIT_AMOUNT,
+  }
+}
+
+export function isEligibleOpenWorkWebSubscriptionStatus(status: string | null | undefined) {
+  return status === "active" || status === "trialing"
+}
+
+export function isOngoingOpenWorkWebSubscriptionStatus(status: string | null | undefined) {
+  return typeof status === "string" && ONGOING_STATUSES.has(subscriptionStatus(status)) && status !== "expired"
+}
+
+export function openWorkWebPaymentStatus(status: string | null | undefined, paymentFailed = false) {
+  if (paymentFailed) {
+    return "payment_failed" as const
+  }
+  switch (status) {
+    case "active":
+      return "paid" as const
+    case "trialing":
+      return "trialing" as const
+    case "past_due":
+      return "past_due" as const
+    case "unpaid":
+      return "unpaid" as const
+    case "incomplete":
+      return "incomplete" as const
+    case "paused":
+      return "paused" as const
+    default:
+      return "inactive" as const
+  }
 }
 
 function normalizeSeatCount(value: number) {
@@ -218,6 +309,10 @@ async function findSeatSubscriptionByOrg(organizationId: OrgId) {
   return findOrgSubscriptionByType(organizationId, SEAT_SUBSCRIPTION_TYPE)
 }
 
+async function findWebSubscriptionByOrg(organizationId: OrgId) {
+  return findOrgSubscriptionByType(organizationId, WEB_SUBSCRIPTION_TYPE)
+}
+
 async function findOrgSubscriptionByStripeId(stripeSubscriptionId: string) {
   return db
     .select()
@@ -289,6 +384,20 @@ async function findStripeCustomerIdByOrgMetadata(organizationId: string) {
   }
 }
 
+async function stripeCustomerBelongsToOrganization(customerId: string, organizationId: string) {
+  try {
+    const customer = await stripe().customers.retrieve(customerId)
+    return !customer.deleted && customer.metadata.org_id?.trim() === organizationId
+  } catch (error) {
+    logger.warn("failed to verify Stripe customer organization metadata", {
+      organization_id: organizationId,
+      stripe_customer_id: customerId,
+      error,
+    })
+    return false
+  }
+}
+
 export async function organizationHasActiveInferenceSubscription(organizationId: OrgId) {
   const row = await findInferenceSubscriptionByOrg(organizationId)
   return Boolean(row && ACTIVE_STATUSES.has(row.status))
@@ -297,6 +406,37 @@ export async function organizationHasActiveInferenceSubscription(organizationId:
 export async function organizationHasActiveSeatSubscription(organizationId: OrgId) {
   const row = await findSeatSubscriptionByOrg(organizationId)
   return Boolean(row && ACTIVE_STATUSES.has(row.status))
+}
+
+function isEligibleOpenWorkWebSubscriptionRow(row: Awaited<ReturnType<typeof findWebSubscriptionByOrg>>) {
+  return Boolean(
+    row
+    && isEligibleOpenWorkWebSubscriptionStatus(row.status)
+    && env.stripe.openworkWebPriceId
+    && row.stripe_price_id === env.stripe.openworkWebPriceId
+    && row.payment_failed !== true,
+  )
+}
+
+function isOngoingConfiguredOpenWorkWebSubscriptionRow(row: Awaited<ReturnType<typeof findWebSubscriptionByOrg>>) {
+  return Boolean(
+    row
+    && isOngoingOpenWorkWebSubscriptionStatus(row.status)
+    && env.stripe.openworkWebPriceId
+    && row.stripe_price_id === env.stripe.openworkWebPriceId,
+  )
+}
+
+export async function organizationHasEligibleOpenWorkWebSubscription(organizationId: OrgId) {
+  return isEligibleOpenWorkWebSubscriptionRow(await findWebSubscriptionByOrg(organizationId))
+}
+
+export async function organizationHasOngoingOpenWorkWebSubscription(organizationId: OrgId) {
+  let row = await findWebSubscriptionByOrg(organizationId)
+  if (row?.stripe_subscription_id) {
+    row = await refreshOrgSubscriptionFromStripe(row.stripe_subscription_id)
+  }
+  return Boolean(row && isOngoingOpenWorkWebSubscriptionStatus(row.status))
 }
 
 export async function getOrganizationSeatAddEligibility(organizationId: OrgId) {
@@ -335,6 +475,20 @@ export async function upsertOrgSubscriptionFromStripe(subscription: Stripe.Subsc
 
   const status = subscriptionStatus(subscription.status)
   const subscriptionType = subscriptionTypeFromStripeSubscription(subscription, item)
+  const existingWebSubscription = subscriptionType === WEB_SUBSCRIPTION_TYPE
+    ? await findWebSubscriptionByOrg(metadata.organizationId as OrgId)
+    : null
+  const sameWebSubscription = existingWebSubscription?.stripe_subscription_id === subscription.id
+  // An active Stripe subscription is not proof that its latest payment was
+  // collected (notably for asynchronous payment methods). New or replacement
+  // active Web subscriptions therefore fail closed until Checkout or an
+  // invoice event positively confirms payment. Trialing subscriptions remain
+  // eligible because Stripe does not require an initial payment for a trial.
+  const paymentFailed = subscriptionType === WEB_SUBSCRIPTION_TYPE
+    ? sameWebSubscription
+      ? existingWebSubscription?.payment_failed ?? status === "active"
+      : status === "active"
+    : false
   const quantity = item?.quantity ?? 0
   const priceId = typeof item?.price?.id === "string" ? item.price.id : null
   const now = new Date()
@@ -352,6 +506,7 @@ export async function upsertOrgSubscriptionFromStripe(subscription: Stripe.Subsc
     current_period_start: fromUnixSeconds((subscription as Stripe.Subscription & { current_period_start?: number }).current_period_start),
     current_period_end: fromUnixSeconds((subscription as Stripe.Subscription & { current_period_end?: number }).current_period_end),
     cancel_at_period_end: subscription.cancel_at_period_end,
+    payment_failed: paymentFailed,
     canceled_at: fromUnixSeconds(subscription.canceled_at),
     ended_at: fromUnixSeconds(subscription.ended_at),
     last_event_id: eventId ?? null,
@@ -371,6 +526,9 @@ export async function upsertOrgSubscriptionFromStripe(subscription: Stripe.Subsc
       current_period_start: values.current_period_start,
       current_period_end: values.current_period_end,
       cancel_at_period_end: values.cancel_at_period_end,
+      ...(subscriptionType !== WEB_SUBSCRIPTION_TYPE || !sameWebSubscription
+        ? { payment_failed: values.payment_failed }
+        : {}),
       canceled_at: values.canceled_at,
       ended_at: values.ended_at,
       last_event_id: values.last_event_id,
@@ -394,11 +552,15 @@ export async function refreshOrgSubscriptionFromStripe(stripeSubscriptionId: str
     return findOrgSubscriptionByStripeId(stripeSubscriptionId)
   }
 
+  const existing = await findOrgSubscriptionByStripeId(stripeSubscriptionId)
   const subscription = await stripe().subscriptions.retrieve(stripeSubscriptionId)
   const item = firstSubscriptionItem(subscription)
   const status = subscriptionStatus(subscription.status)
   const quantity = item?.quantity ?? 0
   const priceId = typeof item?.price?.id === "string" ? item.price.id : null
+  const paymentFailed = existing?.type === WEB_SUBSCRIPTION_TYPE
+    ? existing.payment_failed
+    : false
 
   await db
     .update(OrgSubscriptionTable)
@@ -411,6 +573,7 @@ export async function refreshOrgSubscriptionFromStripe(stripeSubscriptionId: str
       current_period_start: fromUnixSeconds((subscription as Stripe.Subscription & { current_period_start?: number }).current_period_start),
       current_period_end: fromUnixSeconds((subscription as Stripe.Subscription & { current_period_end?: number }).current_period_end),
       cancel_at_period_end: subscription.cancel_at_period_end,
+      ...(existing?.type !== WEB_SUBSCRIPTION_TYPE ? { payment_failed: paymentFailed } : {}),
       canceled_at: fromUnixSeconds(subscription.canceled_at),
       ended_at: fromUnixSeconds(subscription.ended_at),
       updated_at: new Date(),
@@ -429,20 +592,40 @@ export async function findOrCreateStripeCustomer(input: {
 }) {
   const existingCustomerId = input.existingCustomerId?.trim()
   if (existingCustomerId) {
-    return existingCustomerId
+    const organizationId = input.organizationId?.trim()
+    if (!organizationId || await stripeCustomerBelongsToOrganization(existingCustomerId, organizationId)) {
+      return existingCustomerId
+    }
   }
 
   const organizationId = input.organizationId?.trim()
   if (organizationId) {
     const dbCustomerId = await findStripeCustomerIdByOrg(organizationId)
-    if (dbCustomerId) {
+    if (dbCustomerId && await stripeCustomerBelongsToOrganization(dbCustomerId, organizationId)) {
       return dbCustomerId
     }
 
     const stripeCustomerId = await findStripeCustomerIdByOrgMetadata(organizationId)
-    if (stripeCustomerId) {
+    if (stripeCustomerId && await stripeCustomerBelongsToOrganization(stripeCustomerId, organizationId)) {
       return stripeCustomerId
     }
+
+    const email = input.email.trim()
+    if (!email) {
+      throw new Error("stripe_customer_email_missing")
+    }
+
+    const customer = await stripe().customers.create({
+      email,
+      name: input.name,
+      metadata: {
+        ...input.metadata,
+        org_id: organizationId,
+      },
+    }, {
+      idempotencyKey: `openwork-org-customer:${organizationId}`,
+    })
+    return customer.id
   }
 
   const email = input.email.trim()
@@ -463,6 +646,150 @@ export async function findOrCreateStripeCustomer(input: {
   return customer.id
 }
 
+export function openWorkWebCheckoutIdempotencyKey(input: {
+  organizationId: string
+  quantity: number
+  previousSessionId?: string | null
+}) {
+  return `openwork-web-checkout:${input.organizationId}:${input.quantity}:${input.previousSessionId ?? "initial"}`
+}
+
+function subscriptionHasConfiguredOpenWorkWebPrice(subscription: Stripe.Subscription) {
+  const item = firstSubscriptionItem(subscription)
+  return Boolean(
+    env.stripe.openworkWebPriceId
+    && typeof item?.price?.id === "string"
+    && item.price.id === env.stripe.openworkWebPriceId,
+  )
+}
+
+async function validateOpenWorkWebPrice(priceId: string) {
+  const price = await stripe().prices.retrieve(priceId)
+  if (
+    !price.active
+    || price.type !== "recurring"
+    || price.billing_scheme !== "per_unit"
+    || price.transform_quantity !== null
+    || price.unit_amount !== OPENWORK_WEB_UNIT_AMOUNT
+    || price.currency.toLowerCase() !== OPENWORK_WEB_CURRENCY
+    || price.recurring?.interval !== OPENWORK_WEB_INTERVAL
+    || price.recurring.interval_count !== 1
+    || price.recurring.usage_type !== "licensed"
+  ) {
+    throw new Error("stripe_openwork_web_price_contract_invalid")
+  }
+}
+
+function checkoutSessionMatchesOpenWorkWeb(input: {
+  session: Stripe.Checkout.Session
+  organizationId: string
+}) {
+  const metadata = getBillingMetadata(input.session.metadata)
+  return input.session.mode === "subscription"
+    && input.session.client_reference_id === input.organizationId
+    && metadata.organizationId === input.organizationId
+    && metadata.subscriptionType === WEB_SUBSCRIPTION_TYPE
+}
+
+async function createOpenWorkWebCheckoutSession(input: {
+  organizationId: OrgId
+  orgMemberId: MemberId
+  email: string
+  name: string
+  priceId: string
+  metadata: Stripe.MetadataParam
+  successUrl: string
+  cancelUrl: string
+}) {
+  await validateOpenWorkWebPrice(input.priceId)
+  const quantity = await joinedMemberCount(input.organizationId)
+  if (quantity < 1) {
+    throw new Error("stripe_openwork_web_quantity_empty")
+  }
+
+  const storedWebSubscription = await findWebSubscriptionByOrg(input.organizationId)
+  if (storedWebSubscription?.stripe_subscription_id) {
+    const refreshedWebSubscription = await refreshOrgSubscriptionFromStripe(storedWebSubscription.stripe_subscription_id)
+    if (isOngoingConfiguredOpenWorkWebSubscriptionRow(refreshedWebSubscription)) {
+      throw new Error("stripe_openwork_web_subscription_exists")
+    }
+  }
+
+  const customer = await findOrCreateStripeCustomer({
+    organizationId: input.organizationId,
+    email: input.email,
+    name: input.name,
+    metadata: {
+      org_id: input.organizationId,
+      created_by_org_member_id: input.orgMemberId,
+      openwork_product: "openwork_web",
+    },
+  })
+
+  const subscriptions = await stripe().subscriptions.list({
+    customer,
+    status: "all",
+    limit: 100,
+  })
+  const existingOngoingSubscription = subscriptions.data.find((subscription) => {
+    const metadata = getSubscriptionMetadata(subscription)
+    return metadata.organizationId === input.organizationId
+      && metadata.subscriptionType === WEB_SUBSCRIPTION_TYPE
+      && isOngoingOpenWorkWebSubscriptionStatus(subscription.status)
+      && subscriptionHasConfiguredOpenWorkWebPrice(subscription)
+  })
+  if (existingOngoingSubscription) {
+    await upsertOrgSubscriptionFromStripe(existingOngoingSubscription)
+    throw new Error("stripe_openwork_web_subscription_exists")
+  }
+
+  const checkoutSessions = await stripe().checkout.sessions.list({
+    customer,
+    limit: 100,
+  })
+  const latestMatchingSession = checkoutSessions.data.find((session) => checkoutSessionMatchesOpenWorkWeb({
+    session,
+    organizationId: input.organizationId,
+  }))
+
+  if (latestMatchingSession?.status === "open" && latestMatchingSession.url) {
+    const lineItems = await stripe().checkout.sessions.listLineItems(latestMatchingSession.id, { limit: 1 })
+    const lineItem = lineItems.data[0]
+    const lineItemPriceId = typeof lineItem?.price?.id === "string" ? lineItem.price.id : null
+    if (lineItemPriceId === input.priceId && lineItem?.quantity === quantity) {
+      return latestMatchingSession
+    }
+
+    await stripe().checkout.sessions.expire(latestMatchingSession.id).catch((error) => {
+      logger.warn("failed to expire stale OpenWork Web Checkout session", {
+        organization_id: input.organizationId,
+        stripe_checkout_session_id: latestMatchingSession.id,
+        error,
+      })
+    })
+  }
+
+  return stripe().checkout.sessions.create({
+    mode: "subscription",
+    customer,
+    allow_promotion_codes: true,
+    line_items: [{ price: input.priceId, quantity }],
+    success_url: input.successUrl,
+    cancel_url: input.cancelUrl,
+    client_reference_id: input.organizationId,
+    metadata: input.metadata,
+    subscription_data: {
+      metadata: input.metadata,
+    },
+  }, {
+    idempotencyKey: openWorkWebCheckoutIdempotencyKey({
+      organizationId: input.organizationId,
+      quantity,
+      previousSessionId: latestMatchingSession?.id,
+    }),
+  })
+}
+
 export async function createOrgSubscriptionCheckoutSession(input: {
   subscriptionType: StripeCheckoutSubscriptionType
   organizationId: OrgId
@@ -473,13 +800,30 @@ export async function createOrgSubscriptionCheckoutSession(input: {
   cancelUrl: string
 }) {
   const priceId = requirePriceIdForSubscriptionType(input.subscriptionType)
-  const openworkProduct = input.subscriptionType === SEAT_SUBSCRIPTION_TYPE ? "openwork_seats" : "openwork_models"
+  const openworkProduct = input.subscriptionType === SEAT_SUBSCRIPTION_TYPE
+    ? "openwork_seats"
+    : input.subscriptionType === WEB_SUBSCRIPTION_TYPE
+      ? "openwork_web"
+      : "openwork_models"
   const metadata = {
     org_id: input.organizationId,
     created_by_org_member_id: input.orgMemberId,
     openwork_product: openworkProduct,
     subscription_type: input.subscriptionType,
   }
+  if (input.subscriptionType === WEB_SUBSCRIPTION_TYPE) {
+    return createOpenWorkWebCheckoutSession({
+      organizationId: input.organizationId,
+      orgMemberId: input.orgMemberId,
+      email: input.email,
+      name: input.name,
+      priceId,
+      metadata,
+      successUrl: input.successUrl,
+      cancelUrl: input.cancelUrl,
+    })
+  }
+
   const customer = await findOrCreateStripeCustomer({
     organizationId: input.organizationId,
     email: input.email,
@@ -528,8 +872,15 @@ export async function createSeatCheckoutSession(input: Omit<Parameters<typeof cr
   return createOrgSubscriptionCheckoutSession({ ...input, subscriptionType: SEAT_SUBSCRIPTION_TYPE })
 }
 
+export async function createOpenWorkWebCheckout(input: Omit<Parameters<typeof createOrgSubscriptionCheckoutSession>[0], "subscriptionType">) {
+  return createOrgSubscriptionCheckoutSession({ ...input, subscriptionType: WEB_SUBSCRIPTION_TYPE })
+}
+
 export async function createStripePortalSession(input: { organizationId: OrgId; returnUrl: string }) {
-  const stripeCustomerId = await findStripeCustomerIdByOrg(input.organizationId)
+  const storedCustomerId = await findStripeCustomerIdByOrg(input.organizationId)
+  const stripeCustomerId = storedCustomerId && await stripeCustomerBelongsToOrganization(storedCustomerId, input.organizationId)
+    ? storedCustomerId
+    : await findStripeCustomerIdByOrgMetadata(input.organizationId)
   if (!stripeCustomerId) {
     throw new Error("stripe_customer_missing")
   }
@@ -547,23 +898,91 @@ function serializeSubscription(row: Awaited<ReturnType<typeof findOrgSubscriptio
   return row ? {
     id: row.id,
     status: row.status,
+    paymentStatus: openWorkWebPaymentStatus(row.status, row.payment_failed),
     stripeCustomerId: row.stripe_customer_id,
     stripeSubscriptionId: row.stripe_subscription_id,
+    stripePriceId: row.stripe_price_id,
     quantity: row.quantity,
     currentPeriodStart: row.current_period_start?.toISOString() ?? null,
     currentPeriodEnd: row.current_period_end?.toISOString() ?? null,
     cancelAtPeriodEnd: row.cancel_at_period_end,
+    canceledAt: row.canceled_at?.toISOString() ?? null,
+    endedAt: row.ended_at?.toISOString() ?? null,
   } : null
+}
+
+function serializeOpenWorkWebSubscription(row: Awaited<ReturnType<typeof findWebSubscriptionByOrg>>) {
+  return row ? {
+    status: row.status,
+    paymentStatus: openWorkWebPaymentStatus(row.status, row.payment_failed),
+    quantity: row.quantity,
+    currentPeriodStart: row.current_period_start?.toISOString() ?? null,
+    currentPeriodEnd: row.current_period_end?.toISOString() ?? null,
+    cancelAtPeriodEnd: row.cancel_at_period_end,
+    canceledAt: row.canceled_at?.toISOString() ?? null,
+    endedAt: row.ended_at?.toISOString() ?? null,
+  } : null
+}
+
+async function loadOpenWorkWebBillingSummary(organizationId: OrgId) {
+  const [row, memberCount, complimentaryAccess] = await Promise.all([
+    findWebSubscriptionByOrg(organizationId),
+    joinedMemberCount(organizationId),
+    organizationOpenWorkWebComplimentaryAccess(organizationId),
+  ])
+  const billing = calculateOpenWorkWebBilling({ joinedMemberCount: memberCount })
+  const hasEligibleSubscription = isEligibleOpenWorkWebSubscriptionRow(row)
+  const access = resolveOpenWorkWebAccess({
+    deploymentAvailable: isOpenWorkWebAvailable(),
+    hasEligibleSubscription,
+    complimentaryAccess,
+  })
+  return {
+    row,
+    summary: {
+      configured: isOpenWorkWebAvailable()
+        && Boolean(env.stripe.secretKey && env.stripe.openworkWebPriceId),
+      unitAmount: OPENWORK_WEB_UNIT_AMOUNT,
+      currency: OPENWORK_WEB_CURRENCY,
+      interval: OPENWORK_WEB_INTERVAL,
+      quantityDefinition: OPENWORK_WEB_QUANTITY_DEFINITION,
+      quantityDescription: "Every joined, non-removed organization member; pending invitations are excluded.",
+      quantity: billing.quantity,
+      expectedMonthlyTotal: billing.expectedMonthlyTotal,
+      hasEligibleSubscription,
+      ...access,
+      subscription: serializeOpenWorkWebSubscription(row),
+    },
+  }
+}
+
+export async function getOpenWorkWebAccess(organizationId: OrgId) {
+  const [row, complimentaryAccess] = await Promise.all([
+    findWebSubscriptionByOrg(organizationId),
+    organizationOpenWorkWebComplimentaryAccess(organizationId),
+  ])
+  return resolveOpenWorkWebAccess({
+    deploymentAvailable: isOpenWorkWebAvailable(),
+    hasEligibleSubscription: isEligibleOpenWorkWebSubscriptionRow(row),
+    complimentaryAccess,
+  })
+}
+
+export async function getOpenWorkWebBillingSummary(organizationId: OrgId) {
+  return (await loadOpenWorkWebBillingSummary(organizationId)).summary
 }
 
 export async function getOrgBillingSummary(input: { organizationId: OrgId; includePortalUrl?: boolean; returnUrl: string }) {
   const row = await findInferenceSubscriptionByOrg(input.organizationId)
   const seatRow = await findSeatSubscriptionByOrg(input.organizationId)
+  const webBillingState = await loadOpenWorkWebBillingSummary(input.organizationId)
+  const webRow = webBillingState.row
   const seatCounts = await getOrganizationSeatBillingCounts({ organizationId: input.organizationId })
   const hasActiveSubscription = Boolean(row && ACTIVE_STATUSES.has(row.status))
   const hasActiveSeatSubscription = Boolean(seatRow && ACTIVE_STATUSES.has(seatRow.status))
+  const hasEligibleWebSubscription = isEligibleOpenWorkWebSubscriptionRow(webRow)
   let portalUrl: string | null = null
-  if (input.includePortalUrl && (row?.stripe_customer_id || seatRow?.stripe_customer_id)) {
+  if (input.includePortalUrl && (row?.stripe_customer_id || seatRow?.stripe_customer_id || webRow?.stripe_customer_id)) {
     try {
       portalUrl = (await createInferencePortalSession({ organizationId: input.organizationId, returnUrl: input.returnUrl })).url
     } catch (error) {
@@ -593,6 +1012,13 @@ export async function getOrgBillingSummary(input: { organizationId: OrgId; inclu
         billableSeatCount: seatCounts.chargeable,
         hasActiveSubscription: hasActiveSeatSubscription,
         subscription: serializeSubscription(seatRow),
+      },
+      web: {
+        ...webBillingState.summary,
+        priceId: env.stripe.openworkWebPriceId ?? null,
+        hasEligibleSubscription: hasEligibleWebSubscription,
+        portalUrl,
+        subscription: serializeSubscription(webRow),
       },
     },
   }
@@ -633,6 +1059,27 @@ export async function syncSeatSubscriptionQuantityAfterMemberChange(input: { org
     quantity: seatCounts.chargeable,
     // See syncInferenceSubscriptionQuantityAfterMemberChange: one invoice per
     // cycle instead of a card charge per seat change.
+    proration_behavior: "create_prorations",
+  })
+}
+
+export async function syncWebSubscriptionQuantityAfterMemberChange(input: { organizationId: OrgId; memberCount: number }) {
+  if (!env.stripe.secretKey) {
+    return
+  }
+
+  const row = await findWebSubscriptionByOrg(input.organizationId)
+  if (!isEligibleOpenWorkWebSubscriptionRow(row) || !row?.stripe_subscription_item_id) {
+    return
+  }
+
+  const quantity = await joinedMemberCount(input.organizationId)
+  if (quantity < 1 || row.quantity === quantity) {
+    return
+  }
+
+  await stripe().subscriptionItems.update(row.stripe_subscription_item_id, {
+    quantity,
     proration_behavior: "create_prorations",
   })
 }
@@ -694,6 +1141,174 @@ export async function syncSeatCheckoutSession(input: { organizationId: OrgId; se
   return createSeatSubscriptionFromSetupCheckoutSession(session, `checkout-session-sync:${session.id}`)
 }
 
+export async function syncStripeCheckoutSession(input: { organizationId: OrgId; sessionId: string }) {
+  const session = await stripe().checkout.sessions.retrieve(input.sessionId)
+  const metadata = getBillingMetadata(session.metadata)
+  if (metadata.organizationId !== input.organizationId) {
+    throw new Error("stripe_checkout_session_org_mismatch")
+  }
+  if (session.status !== "complete") {
+    return null
+  }
+  if (session.mode === "setup") {
+    return createSeatSubscriptionFromSetupCheckoutSession(session, `checkout-session-sync:${session.id}`)
+  }
+  if (typeof session.subscription !== "string") {
+    return null
+  }
+
+  const subscription = await stripe().subscriptions.retrieve(session.subscription)
+  const subscriptionMetadata = getSubscriptionMetadata(subscription)
+  if (subscriptionMetadata.organizationId !== input.organizationId) {
+    throw new Error("stripe_checkout_session_org_mismatch")
+  }
+  const eventId = `checkout-session-sync:${session.id}`
+  let row = await syncCurrentStripeSubscription(subscription.id, eventId)
+  if (row?.type === WEB_SUBSCRIPTION_TYPE) {
+    row = await syncOpenWorkWebPaymentStateFromCurrentInvoice({
+      row,
+      stripeSubscriptionId: subscription.id,
+      eventId,
+    })
+  }
+  if (row?.type === INFERENCE_SUBSCRIPTION_TYPE && ACTIVE_STATUSES.has(subscriptionStatus(subscription.status))) {
+    await setInferenceEnabled({ organizationId: row.organization_id, enabled: true })
+  }
+  return row
+}
+
+async function syncCurrentStripeSubscription(stripeSubscriptionId: string, eventId: string) {
+  const subscription = await stripe().subscriptions.retrieve(stripeSubscriptionId)
+  const item = firstSubscriptionItem(subscription)
+  const metadata = getSubscriptionMetadata(subscription)
+  const subscriptionType = subscriptionTypeFromStripeSubscription(subscription, item)
+
+  if (subscriptionType === WEB_SUBSCRIPTION_TYPE && metadata.organizationId) {
+    const existing = await findWebSubscriptionByOrg(metadata.organizationId as OrgId)
+    if (existing?.stripe_subscription_id && existing.stripe_subscription_id !== subscription.id) {
+      const refreshedExisting = await refreshOrgSubscriptionFromStripe(existing.stripe_subscription_id)
+      if (isOngoingConfiguredOpenWorkWebSubscriptionRow(refreshedExisting)) {
+        return refreshedExisting
+      }
+    }
+  }
+
+  return upsertOrgSubscriptionFromStripe(subscription, eventId)
+}
+
+async function syncOpenWorkWebPaymentStateFromCurrentInvoice(input: {
+  row: Awaited<ReturnType<typeof findOrgSubscriptionByStripeId>>
+  stripeSubscriptionId: string
+  eventId: string
+}) {
+  if (
+    !input.row
+    || input.row.type !== WEB_SUBSCRIPTION_TYPE
+    || input.row.stripe_subscription_id !== input.stripeSubscriptionId
+  ) {
+    return input.row
+  }
+
+  const subscription = await stripe().subscriptions.retrieve(input.stripeSubscriptionId)
+  if (subscription.id !== input.stripeSubscriptionId) {
+    return input.row
+  }
+
+  const latestInvoiceId = stripeResourceId(subscription.latest_invoice)
+  if (!latestInvoiceId) {
+    return input.row
+  }
+
+  const currentInvoice = await stripe().invoices.retrieve(latestInvoiceId)
+  if (currentInvoice.id !== latestInvoiceId) {
+    return input.row
+  }
+
+  const paymentFailed = currentInvoice.status !== "paid"
+  await db
+    .update(OrgSubscriptionTable)
+    .set({ payment_failed: paymentFailed, last_event_id: input.eventId, updated_at: new Date() })
+    .where(eq(OrgSubscriptionTable.id, input.row.id))
+
+  return { ...input.row, payment_failed: paymentFailed }
+}
+
+function stripeResourceId(resource: string | { id: string } | null | undefined) {
+  return typeof resource === "string" ? resource : resource?.id ?? null
+}
+
+async function expireNonWebSubscriptionAfterPaymentFailure(
+  row: NonNullable<Awaited<ReturnType<typeof findOrgSubscriptionByStripeId>>>,
+  eventId: string,
+) {
+  await db
+    .update(OrgSubscriptionTable)
+    .set({ status: "expired", last_event_id: eventId, updated_at: new Date() })
+    .where(eq(OrgSubscriptionTable.id, row.id))
+  if (row.type === INFERENCE_SUBSCRIPTION_TYPE) {
+    await setInferenceEnabled({ organizationId: row.organization_id, enabled: false })
+  }
+}
+
+async function syncPaymentStateFromInvoiceEvent(input: {
+  invoice: Stripe.Invoice
+  eventType: "invoice.paid" | "invoice.payment_failed"
+  eventId: string
+}) {
+  const subscriptionId = stripeResourceId(input.invoice.parent?.subscription_details?.subscription)
+  if (!subscriptionId) {
+    return null
+  }
+
+  const existingRow = await findOrgSubscriptionByStripeId(subscriptionId)
+  if (input.eventType === "invoice.payment_failed" && existingRow && existingRow.type !== WEB_SUBSCRIPTION_TYPE) {
+    await expireNonWebSubscriptionAfterPaymentFailure(existingRow, input.eventId)
+    return null
+  }
+
+  const subscription = await stripe().subscriptions.retrieve(subscriptionId)
+  const subscriptionType = subscriptionTypeFromStripeSubscription(subscription, firstSubscriptionItem(subscription))
+  if (subscriptionType !== WEB_SUBSCRIPTION_TYPE) {
+    const row = await syncCurrentStripeSubscription(subscription.id, input.eventId)
+    if (input.eventType === "invoice.payment_failed" && row) {
+      await expireNonWebSubscriptionAfterPaymentFailure(row, input.eventId)
+      return null
+    }
+    return row
+  }
+
+  const latestInvoiceId = stripeResourceId(subscription.latest_invoice)
+  if (!latestInvoiceId || latestInvoiceId !== input.invoice.id) {
+    return null
+  }
+
+  const currentInvoice = await stripe().invoices.retrieve(latestInvoiceId)
+  if (currentInvoice.id !== latestInvoiceId) {
+    return null
+  }
+
+  const paymentFailed = currentInvoice.status === "paid"
+    ? false
+    : input.eventType === "invoice.payment_failed"
+      ? true
+      : null
+  if (paymentFailed === null) {
+    return null
+  }
+
+  const row = await syncCurrentStripeSubscription(subscription.id, input.eventId)
+  if (!row || row.type !== WEB_SUBSCRIPTION_TYPE || row.stripe_subscription_id !== subscription.id) {
+    return null
+  }
+
+  await db
+    .update(OrgSubscriptionTable)
+    .set({ payment_failed: paymentFailed, last_event_id: input.eventId, updated_at: new Date() })
+    .where(eq(OrgSubscriptionTable.id, row.id))
+
+  return { ...row, payment_failed: paymentFailed }
+}
+
 export async function handleStripeWebhook(input: { payload: string; signature: string | null }) {
   if (!env.stripe.webhookSecret) {
     throw new Error("stripe_webhook_secret_missing")
@@ -704,15 +1319,46 @@ export async function handleStripeWebhook(input: { payload: string; signature: s
 
   const event = stripe().webhooks.constructEvent(input.payload, input.signature, env.stripe.webhookSecret)
   switch (event.type) {
-    case "checkout.session.completed": {
+    case "checkout.session.async_payment_failed": {
+      const session = event.data.object as Stripe.Checkout.Session
+      if (typeof session.subscription === "string") {
+        const subscription = await stripe().subscriptions.retrieve(session.subscription)
+        let row = await syncCurrentStripeSubscription(subscription.id, event.id)
+        if (row?.type === WEB_SUBSCRIPTION_TYPE) {
+          row = await syncOpenWorkWebPaymentStateFromCurrentInvoice({
+            row,
+            stripeSubscriptionId: subscription.id,
+            eventId: event.id,
+          })
+        } else if (row) {
+          await expireNonWebSubscriptionAfterPaymentFailure(row, event.id)
+        }
+      }
+      break
+    }
+    case "checkout.session.completed":
+    case "checkout.session.async_payment_succeeded": {
       const session = event.data.object as Stripe.Checkout.Session
       if (session.mode === "setup") {
         await createSeatSubscriptionFromSetupCheckoutSession(session, event.id)
       } else if (typeof session.subscription === "string") {
         const subscription = await stripe().subscriptions.retrieve(session.subscription)
-        const row = await upsertOrgSubscriptionFromStripe(subscription, event.id)
+        let row = await syncCurrentStripeSubscription(subscription.id, event.id)
+        if (row?.type === WEB_SUBSCRIPTION_TYPE) {
+          row = await syncOpenWorkWebPaymentStateFromCurrentInvoice({
+            row,
+            stripeSubscriptionId: subscription.id,
+            eventId: event.id,
+          })
+        }
         if (row?.type === INFERENCE_SUBSCRIPTION_TYPE && ACTIVE_STATUSES.has(subscriptionStatus(subscription.status))) {
           await setInferenceEnabled({ organizationId: row.organization_id, enabled: true })
+        }
+        if (row?.type === WEB_SUBSCRIPTION_TYPE && isEligibleOpenWorkWebSubscriptionStatus(subscription.status)) {
+          await syncWebSubscriptionQuantityAfterMemberChange({
+            organizationId: row.organization_id,
+            memberCount: row.quantity,
+          })
         }
       }
       break
@@ -720,25 +1366,27 @@ export async function handleStripeWebhook(input: { payload: string; signature: s
     case "customer.subscription.created":
     case "customer.subscription.updated":
     case "customer.subscription.deleted": {
-      await upsertOrgSubscriptionFromStripe(event.data.object as Stripe.Subscription, event.id)
+      const row = await syncCurrentStripeSubscription((event.data.object as Stripe.Subscription).id, event.id)
+      if (row?.type === WEB_SUBSCRIPTION_TYPE && isEligibleOpenWorkWebSubscriptionStatus(row.status)) {
+        await syncWebSubscriptionQuantityAfterMemberChange({
+          organizationId: row.organization_id,
+          memberCount: row.quantity,
+        })
+      }
       break
     }
+    case "invoice.paid":
     case "invoice.payment_failed": {
-      const invoice = event.data.object as Stripe.Invoice
-      const subscriptionId = typeof (invoice as Stripe.Invoice & { subscription?: unknown }).subscription === "string"
-        ? (invoice as Stripe.Invoice & { subscription: string }).subscription
-        : null
-      if (subscriptionId) {
-        const row = await findOrgSubscriptionByStripeId(subscriptionId)
-        if (row) {
-          await db
-            .update(OrgSubscriptionTable)
-            .set({ status: "expired", last_event_id: event.id, updated_at: new Date() })
-            .where(eq(OrgSubscriptionTable.id, row.id))
-          if (row.type === INFERENCE_SUBSCRIPTION_TYPE) {
-            await setInferenceEnabled({ organizationId: row.organization_id, enabled: false })
-          }
-        }
+      const row = await syncPaymentStateFromInvoiceEvent({
+        invoice: event.data.object as Stripe.Invoice,
+        eventType: event.type,
+        eventId: event.id,
+      })
+      if (row && isEligibleOpenWorkWebSubscriptionRow(row)) {
+        await syncWebSubscriptionQuantityAfterMemberChange({
+          organizationId: row.organization_id,
+          memberCount: row.quantity,
+        })
       }
       break
     }

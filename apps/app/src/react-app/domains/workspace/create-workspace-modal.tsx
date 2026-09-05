@@ -24,6 +24,7 @@ import { CreateWorkspaceLocalPanel } from "./create-workspace-local-panel";
 import {
   createInitialWorkspaceLocalState,
   createWorkspaceLocalReducer,
+  shouldTickWorkspaceElapsedClock,
   type CreateWorkspaceLocalState,
 } from "./create-workspace-modal-state";
 import {
@@ -126,15 +127,22 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
     dispatchLocal({ type: "reset" });
   }, [props.open]);
 
-  // Tick the "elapsed" clock while submitting.
+  // The modal remains mounted when closed. Only publish elapsed-time updates
+  // while its progress UI is both visible and backed by a real start time.
   useEffect(() => {
     if (!submitting) {
       setShowProgressDetails(false);
-      return;
     }
-    const id = window.setInterval(() => setNow(Date.now()), 500);
+    if (!shouldTickWorkspaceElapsedClock({
+      open: props.open,
+      submitting,
+      startedAt: progress?.startedAt,
+    })) return;
+
+    setNow(Date.now());
+    const id = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(id);
-  }, [submitting]);
+  }, [progress?.startedAt, props.open, submitting]);
 
   // Focus the URL field when the remote screen opens.
   useEffect(() => {

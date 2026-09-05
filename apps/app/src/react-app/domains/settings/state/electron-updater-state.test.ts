@@ -7,6 +7,7 @@ declare const expect: (value: unknown) => {
 
 import {
   ELECTRON_UPDATER_UNSUPPORTED_REASON,
+  resolveCheckedUpdateState,
   shouldScheduleElectronUpdateAutoCheck,
   unsupportedElectronUpdaterEnvState,
 } from "./electron-updater-state";
@@ -29,5 +30,15 @@ describe("electron updater web unsupported state", () => {
       autoCheckKey: null,
       nextAutoCheckKey: "stable:unknown",
     })).toBe(false);
+  });
+});
+
+describe("electron updater availability state", () => {
+  test("does not report a policy-blocked available update as current", () => {
+    expect(resolveCheckedUpdateState({ available: true, allowed: false })).toBe("blocked");
+  });
+
+  test("reports current only when the feed has no available update", () => {
+    expect(resolveCheckedUpdateState({ available: false, allowed: false })).toBe("idle");
   });
 });

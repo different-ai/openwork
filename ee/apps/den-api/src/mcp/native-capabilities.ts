@@ -6,6 +6,7 @@ import type { AgentToolContentPart } from "./tool-content.js"
 import {
   getJsonRequestBodySchema,
   getParameters,
+  getQueryParameterSchema,
   hasJsonRequestBody,
   pathParameterNamesFromTemplate,
   type McpToolOperation,
@@ -37,7 +38,6 @@ export function parseNativeCapabilityName(name: string): { connectionId: string;
 }
 
 export type NativeCapabilityMatch = CapabilityMatch & {
-  inputSchema?: McpToolOperation["inputSchema"]
   kind?: ExternalCapabilityMatch["kind"]
   status?: ExternalCapabilityMatch["status"]
   hint?: string
@@ -74,6 +74,7 @@ function capabilityMatch(
   scriptNamespace?: string,
 ): NativeCapabilityMatch {
   const bodySchema = getJsonRequestBodySchema(operation.operation)
+  const querySchema = getQueryParameterSchema(operation.operation)
   return {
     name: buildNativeCapabilityName(connection.id, operation.name),
     method: operation.method,
@@ -84,8 +85,8 @@ function capabilityMatch(
     queryParams: getParameters(operation.operation, "query")
       .flatMap((parameter) => typeof parameter.name === "string" ? [parameter.name] : []),
     hasBody: hasJsonRequestBody(operation.operation),
-    inputSchema: operation.inputSchema,
     ...(bodySchema === undefined ? {} : { bodySchema }),
+    ...(querySchema === undefined ? {} : { querySchema }),
     ...(scriptNamespace ? { scriptPath: codemodeScriptPath(scriptNamespace, operation.name) } : {}),
   }
 }
@@ -122,16 +123,13 @@ export async function searchNativeCapabilities(input: {
   query: string
   catalog: readonly McpToolOperation[]
   limit: number
-  includeScriptPaths?: boolean
   namespaceContext?: CodemodeConnectionNamespaceContext
 }): Promise<NativeCapabilityMatch[]> {
   if (!input.member) return []
-  const namespaceContext = input.includeScriptPaths
-    ? input.namespaceContext ?? await resolveCodemodeConnectionNamespaceContext({
-      organizationId: input.organizationId,
-      member: input.member,
-    })
-    : input.namespaceContext
+  const namespaceContext = input.namespaceContext ?? await resolveCodemodeConnectionNamespaceContext({
+    organizationId: input.organizationId,
+    member: input.member,
+  })
   const connections = namespaceContext?.nativeProviderEntries ?? await listNativeProviderUsableEntries({
     organizationId: input.organizationId,
     orgMembershipId: input.member.orgMembershipId,
@@ -152,7 +150,7 @@ export async function searchNativeCapabilities(input: {
         connection,
         operation,
         score,
-        input.includeScriptPaths ? namespaceContext?.namespaces.native.get(connection.id) : undefined,
+        namespaceContext?.namespaces.native.get(connection.id),
       ))
     }
   }

@@ -226,6 +226,12 @@ body {
   text-decoration: var(--shiki-dark-text-decoration) !important;
 }
 
+/* Inline Shiki-highlighted shell commands (chat tool rows) use the same
+   dual-theme variables as the markdown code blocks above. */
+:is(.dark, [data-theme="dark"]) [data-shell-command-highlighted] span {
+  color: var(--shiki-dark) !important;
+}
+
 /* KaTeX sets its own absolute font-size; keep formulas at the surrounding text size
    so inline math does not tower over the sentence it sits in. */
 .markdown-content .katex {
@@ -260,11 +266,20 @@ body {
   mask-image: linear-gradient(to right, black calc(100% - 18px), transparent);
 }
 
-/* Session titles move once from their resting edge; the row and controls stay fixed. */
-.ow-session-title-moving {
+/* Fade only edges that still have hidden session-title text beyond them. */
+.ow-session-title-hidden-start {
+  mask-image: linear-gradient(to right, transparent, black 10px);
+}
+
+.ow-session-title-hidden-both {
   mask-image: linear-gradient(to right, transparent, black 10px, black calc(100% - 10px), transparent);
 }
 
+.ow-session-title-hidden-end {
+  mask-image: linear-gradient(to right, black calc(100% - 10px), transparent);
+}
+
+/* Session titles move once from their resting edge; the row and controls stay fixed. */
 .ow-session-title-moving > span {
   will-change: transform;
 }
@@ -472,7 +487,14 @@ select:disabled {
 }
 
 /* Quiet text shimmer for lightweight loading hints (e.g. cloud worker
-   sessions catching up): a soft highlight sweeps across muted text. */
+   sessions catching up): a soft highlight sweeps across muted text.
+
+   `background-position` is not a compositor-animatable property, so a smooth
+   sweep repaints the text mask on the main thread every vsync (120/s on
+   ProMotion) for as long as a run is active. On the macOS shell that damage
+   sits under the pane backdrop blur, so every one of those paints also
+   re-runs the full-pane blur pass. Stepping the sweep keeps the same look
+   while repainting twenty times a second instead of every frame. */
 @keyframes ow-text-shimmer {
   0% {
     background-position: 150% 0;
@@ -495,7 +517,15 @@ select:disabled {
   background-clip: text;
   -webkit-background-clip: text;
   color: transparent;
-  animation: ow-text-shimmer 2.4s linear infinite;
+  animation: ow-text-shimmer 2.4s steps(48, end) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ow-text-shimmer {
+    background-image: none;
+    color: rgb(var(--dls-secondary-rgb) / 0.7);
+    animation: none;
+  }
 }
 
 /* Quiet, small dot ticker (`:: :: ::`). Each dot pulses briefly in sequence,
@@ -522,10 +552,137 @@ select:disabled {
   background-color: rgb(var(--dls-secondary-rgb) / 0.22);
 }
 
+/* The running-work mark used to advance these frames with a React interval,
+   causing every mounted loader to commit about five times per second. Opacity
+   animation keeps the same four frames on the compositor instead. */
+.ow-dot-matrix-dot {
+  animation-duration: 720ms;
+  animation-iteration-count: infinite;
+  animation-timing-function: step-end;
+}
+
+.ow-dot-matrix-on {
+  opacity: 0.9;
+}
+
+.ow-dot-matrix-off {
+  opacity: 0.25;
+}
+
+@keyframes ow-dot-matrix-a {
+  0%,
+  75%,
+  100% {
+    opacity: 0.9;
+  }
+  25%,
+  50% {
+    opacity: 0.25;
+  }
+}
+
+@keyframes ow-dot-matrix-b {
+  0%,
+  50% {
+    opacity: 0.25;
+  }
+  25%,
+  75%,
+  100% {
+    opacity: 0.9;
+  }
+}
+
+@keyframes ow-dot-matrix-c {
+  0%,
+  25%,
+  75%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+@keyframes ow-dot-matrix-d {
+  0%,
+  25%,
+  100% {
+    opacity: 0.9;
+  }
+  50%,
+  75% {
+    opacity: 0.25;
+  }
+}
+
+@keyframes ow-dot-matrix-e {
+  0%,
+  50%,
+  75%,
+  100% {
+    opacity: 0.9;
+  }
+  25% {
+    opacity: 0.25;
+  }
+}
+
+@keyframes ow-dot-matrix-f {
+  0%,
+  75%,
+  100% {
+    opacity: 0.25;
+  }
+  25%,
+  50% {
+    opacity: 0.9;
+  }
+}
+
+@keyframes ow-dot-matrix-g {
+  0%,
+  25%,
+  75%,
+  100% {
+    opacity: 0.9;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.ow-dot-matrix-frame-a {
+  animation-name: ow-dot-matrix-a;
+}
+.ow-dot-matrix-frame-b {
+  animation-name: ow-dot-matrix-b;
+}
+.ow-dot-matrix-frame-c {
+  animation-name: ow-dot-matrix-c;
+}
+.ow-dot-matrix-frame-d {
+  animation-name: ow-dot-matrix-d;
+}
+.ow-dot-matrix-frame-e {
+  animation-name: ow-dot-matrix-e;
+}
+.ow-dot-matrix-frame-f {
+  animation-name: ow-dot-matrix-f;
+}
+.ow-dot-matrix-frame-g {
+  animation-name: ow-dot-matrix-g;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ow-dot-ticker {
     animation: none;
     background-color: rgb(var(--dls-accent-rgb) / 0.6);
+  }
+
+  .ow-dot-matrix-dot {
+    animation: none;
   }
 }
 

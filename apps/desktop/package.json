@@ -24,12 +24,18 @@
     "check:electron": "node ./scripts/check-electron-bridge.mjs",
     "typecheck:electron": "pnpm --dir ../server exec tsc -p ../desktop/tsconfig.electron.json --noEmit",
     "prepare:sidecar": "node ./scripts/prepare-sidecar.mjs",
-    "test": "node --test electron/after-pack-paths.test.mjs electron/agent-context-diagnostics-fetch.test.mjs electron/automation-runner.test.mjs electron/blank-slate-profile.test.mjs electron/brand-app-name.test.mjs electron/brand-icon-darwin.test.mjs electron/brand-icon-windows.test.mjs electron/connect-link.test.mjs electron/desktop-distribution.test.mjs electron/dev-profile.test.mjs electron/electron-builder-config.test.mjs electron/linux-desktop-integration.test.mjs electron/no-bare-external-fetch.test.mjs electron/nuke.test.mjs electron/open-external.test.mjs electron/runtime.test.mjs electron/runtime-ca.test.mjs electron/runtime-chain-repair.test.mjs electron/sentry.test.mjs electron/server-dependency-mirror.test.mjs electron/secure-vault-key.test.mjs electron/stdio-errors.test.mjs electron/ui-control-server.test.mjs electron/updater.test.mjs electron/remote-workspace.test.mjs electron/workspace-archive.test.mjs electron/workspace-store.test.mjs"
+    "pretest": "pnpm --filter @openwork/headless-threads build",
+    "test": "node --test scripts/prepare-server-constants.test.mjs electron/after-pack-paths.test.mjs electron/agent-context-diagnostics-fetch.test.mjs electron/automation-runner.test.mjs electron/binary-transfer.test.mjs electron/blank-slate-profile.test.mjs electron/blank-slate-profile-isolation.test.mjs electron/brand-app-name.test.mjs electron/brand-icon-darwin.test.mjs electron/brand-icon-windows.test.mjs electron/browser-panel.test.mjs electron/connect-link.test.mjs electron/desktop-distribution.test.mjs electron/dev-profile.test.mjs electron/electron-builder-config.test.mjs electron/linux-desktop-integration.test.mjs electron/no-bare-external-fetch.test.mjs electron/nuke.test.mjs electron/open-external.test.mjs electron/process-resilience.test.mjs electron/runtime.test.mjs electron/runtime-ca.test.mjs electron/runtime-chain-repair.test.mjs electron/sentry.test.mjs electron/server-dependency-mirror.test.mjs electron/secure-vault-key.test.mjs electron/stdio-errors.test.mjs electron/ui-control-server.test.mjs electron/updater.test.mjs electron/remote-workspace.test.mjs electron/workspace-archive.test.mjs electron/workspace-store.test.mjs",
+    "test:core": "node --test scripts/prepare-server-constants.test.mjs electron/workspace-store.test.mjs electron/workspace-archive.test.mjs electron/connect-link.test.mjs electron/open-external.test.mjs electron/secure-vault-key.test.mjs electron/process-resilience.test.mjs electron/stdio-errors.test.mjs electron/runtime-ca.test.mjs electron/runtime-chain-repair.test.mjs electron/automation-runner.test.mjs",
+    "pretest:core": "pnpm --filter @openwork/headless-threads build"
   },
   "dependencies": {
+    "@modelcontextprotocol/client": "^2.0.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@opencode-ai/sdk": "^1.18.15",
+    "@openwork/browser-tabs": "workspace:*",
     "@openwork/enterprise-mcp-client": "workspace:*",
+    "@openwork/headless-threads": "workspace:*",
     "@openwork/paths": "workspace:*",
     "@sentry/electron": "^7.16.0",
     "ajv": "^8.17.1",
@@ -37,6 +43,7 @@
     "better-sqlite3": "^13.0.2",
     "drizzle-orm": "^0.45.2",
     "electron-updater": "^6.3.9",
+    "htmlparser2": "8.0.2",
     "jsonc-parser": "^3.2.1",
     "minimatch": "^10.2.5",
     "node-pty": "npm:@lydell/node-pty@1.2.0-beta.12",

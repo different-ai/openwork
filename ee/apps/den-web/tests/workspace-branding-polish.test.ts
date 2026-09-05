@@ -40,10 +40,16 @@ describe("workspace branding polish", () => {
     expect(source).toContain("icons: { icon: iconUrl }");
   });
 
-  test("does not show the artificial loading line in the desktop identity preview", () => {
+  test("does not render the desktop identity preview presentation", () => {
     const source = readFileSync(appearancePath, "utf8");
 
-    expect(source).not.toContain("data-brand-accent");
-    expect(source).not.toContain("w-2/3 rounded-full bg-violet-400");
+    expect(source).not.toContain(">Preview</p>");
+    expect(source).not.toContain("lg:grid-cols-[minmax(0,1fr)_280px]");
+    expect(source).not.toContain("logoPreviewUrl");
+    expect(source).not.toContain("iconPreviewUrl");
+    expect(source).toContain("Application name");
+    expect(source).toContain("Accent color");
+    expect(source).toContain('title="Wordmark"');
+    expect(source).toContain('title="Square app icon"');
   });
 });

@@ -7,6 +7,7 @@ describe("url primitives", () => {
     expect(normalizeBaseUrl("http://host/")).toBe("http://host");
     expect(normalizeBaseUrl("http://host//")).toBe("http://host");
     expect(normalizeBaseUrl("http://host///")).toBe("http://host");
+    expect(normalizeBaseUrl(`http://host${"/".repeat(100_000)}`)).toBe("http://host");
   });
 
   test("trims whitespace and preserves missing schemes", () => {

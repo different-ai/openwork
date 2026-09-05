@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from "react";
 
-import { THINKING_PREF_KEY } from "../../app/constants";
+import { MODEL_PREF_KEY, THINKING_PREF_KEY } from "../../app/constants";
 import { coerceReleaseChannel } from "../../app/lib/release-channels";
 import type { ModelRef, ReleaseChannel, SettingsTab, View } from "../../app/types";
 import {
@@ -48,14 +48,6 @@ export type LocalPreferences = {
   releaseChannel: ReleaseChannel;
   featureFlags: {
     microsandboxCreateSandbox: boolean;
-    /** Keep active tasks on a draining engine while a fresh engine takes new work. */
-    continuousEngine: boolean;
-    /**
-     * Memory Bank preview. Client-only, per-device, never synced. Gates desktop
-     * UI surfacing (the management panel + copy-prompt affordance); the routes
-     * stay callable (owner-scoped + authz'd). Off by default — opt-in preview.
-     */
-    memory: boolean;
   };
   /**
    * Set to true after the user completes the welcome/onboarding flow
@@ -95,7 +87,7 @@ const INITIAL_PREFS: LocalPreferences = {
   defaultModel: null,
   selectedAgent: null,
   releaseChannel: "stable",
-  featureFlags: { microsandboxCreateSandbox: true, continuousEngine: false, memory: false },
+  featureFlags: { microsandboxCreateSandbox: true },
   hasCompletedOnboarding: false,
   analyticsEnabled: true,
   desktopNotifications: DEFAULT_DESKTOP_NOTIFICATION_PREFERENCE,
@@ -138,14 +130,33 @@ export function LocalProvider({ children }: LocalProviderProps) {
     persisted.desktopNotifications = isDesktopNotificationPreference(persisted.desktopNotifications)
       ? persisted.desktopNotifications
       : DEFAULT_DESKTOP_NOTIFICATION_PREFERENCE;
-    if (persisted.defaultModel) {
-      return persisted;
+    try {
+      if (window.localStorage.getItem(MODEL_PREF_KEY) !== null) {
+        return { ...persisted, defaultModel: readStoredDefaultModel() };
+      }
+    } catch {
+      // Retain the preferences migration when storage is unavailable.
     }
+    if (persisted.defaultModel) return persisted;
     return {
       ...persisted,
       defaultModel: readStoredDefaultModel(),
     };
   });
+  const prefsRef = useRef(prefs);
+  const setPrefs = useCallback(
+    (updater: (previous: LocalPreferences) => LocalPreferences) => {
+      const previous = prefsRef.current;
+      const next = updater(previous);
+      prefsRef.current = next;
+      setPrefsRaw(next);
+      if (next.defaultModel && (
+        next.defaultModel.providerID !== previous.defaultModel?.providerID ||
+        next.defaultModel.modelID !== previous.defaultModel?.modelID
+      )) writeStoredDefaultModel(next.defaultModel);
+    },
+    [],
+  );
   const ready = true;
   const migratedThinkingRef = useRef(false);
 
@@ -155,13 +166,12 @@ export function LocalProvider({ children }: LocalProviderProps) {
 
   useEffect(() => {
     writePersisted(LOCAL_PREFERENCES_KEY, prefs);
-    if (prefs.defaultModel) writeStoredDefaultModel(prefs.defaultModel);
   }, [prefs]);
 
   useEffect(() => {
     const updateDefaultModel = () => {
       const model = readStoredDefaultModel();
-      setPrefsRaw((previous) => {
+      setPrefs((previous) => {
         if (
           previous.defaultModel?.providerID === model.providerID &&
           previous.defaultModel.modelID === model.modelID
@@ -178,8 +188,16 @@ export function LocalProvider({ children }: LocalProviderProps) {
     };
 
     window.addEventListener(storedDefaultModelChangedEvent, updateDefaultModel);
+    try {
+      if (window.localStorage.getItem(MODEL_PREF_KEY) === null && prefsRef.current.defaultModel) {
+        writeStoredDefaultModel(prefsRef.current.defaultModel);
+      }
+    } catch {
+      // Storage may be unavailable.
+    }
+    updateDefaultModel();
     return () => window.removeEventListener(storedDefaultModelChangedEvent, updateDefaultModel);
-  }, []);
+  }, [setPrefs]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -192,7 +210,7 @@ export function LocalProvider({ children }: LocalProviderProps) {
     try {
       const parsed = JSON.parse(raw);
       if (typeof parsed === "boolean") {
-        setPrefsRaw((previous) => ({ ...previous, showThinking: parsed }));
+        setPrefs((previous) => ({ ...previous, showThinking: parsed }));
       }
     } catch {
       // ignore invalid legacy values
@@ -203,18 +221,11 @@ export function LocalProvider({ children }: LocalProviderProps) {
     } catch {
       // ignore
     }
-  }, []);
+  }, [setPrefs]);
 
   const setUi = useCallback(
     (updater: (previous: LocalUIState) => LocalUIState) => {
       setUiRaw(updater);
-    },
-    [],
-  );
-
-  const setPrefs = useCallback(
-    (updater: (previous: LocalPreferences) => LocalPreferences) => {
-      setPrefsRaw(updater);
     },
     [],
   );

@@ -124,8 +124,11 @@ async function claimExistingRateLimit(key: string, maxRequests: number, windowMs
   return latestRow ? retryAfterSeconds(latestRow, maxRequests, windowMs, now) : null
 }
 
-export async function checkRateLimit(key: string, maxRequests: number, windowMs: number, now: number) {
+export async function checkRateLimit(key: string, maxRequests: number, windowMs: number, now: number, consume = true) {
   const row = await readRateLimit(key)
+  if (!consume) {
+    return row ? retryAfterSeconds(row, maxRequests, windowMs, now) : null
+  }
   if (row) {
     return claimExistingRateLimit(key, maxRequests, windowMs, now, row)
   }

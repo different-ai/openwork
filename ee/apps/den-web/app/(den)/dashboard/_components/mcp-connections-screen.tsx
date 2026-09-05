@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeft, Check, ChevronDown, ChevronRight, Loader2, Minus, MoreHorizontal, Pencil, Plug, Puzzle, RefreshCw, Search, Server, Trash2, Users, Wrench } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, Loader2, Minus, MoreHorizontal, Pencil, Plug, Puzzle, Search, Server, Trash2, Users, Wrench } from "lucide-react";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenNotice } from "../../_components/ui/notice";
@@ -23,6 +23,14 @@ import {
 } from "./mcp-connection-editing";
 import { formatConnectionCreatorAttribution } from "./mcp-connection-display";
 import {
+  AUTH_TYPE_OPTIONS,
+  CREDENTIAL_MODE_OPTIONS,
+  credentialModeDescription,
+  MCP_OAUTH_REDIRECT_DOCS_URL,
+  SegmentedControl,
+  type SegmentedControlOption,
+} from "./mcp-connection-form-controls";
+import {
   connectionNeedsOAuthClientConfiguration,
   marketplaceConnectionNeedsAdminSetup,
 } from "./mcp-connection-setup";
@@ -36,7 +44,6 @@ import {
   type ExternalMcpConnection,
   type ExternalMcpCredentialMode,
   type ExternalMcpPreset,
-  type ExternalMcpTool,
   type McpConnectionResolution,
   type McpIssuerReview,
   type McpRequirementsDiscovery,
@@ -55,7 +62,6 @@ import {
   useDiscoverMcpConnectionRequirements,
   useMcpConnectionPresets,
   useMcpConnections,
-  useMcpConnectionTools,
   useNativeProviderClient,
   useResolveMcpConnection,
   useReviewMcpIssuer,
@@ -86,8 +92,6 @@ const MCP_REQUIREMENTS_DISCOVERY_DELAY_MS = 500;
 // Smart resolve fans out server-side probes, so it debounces longer than the
 // single-URL requirements discovery.
 const SMART_RESOLVE_DELAY_MS = 800;
-const MCP_TOOL_PAGE_SIZE = 50;
-const MCP_OAUTH_REDIRECT_DOCS_URL = "https://openworklabs.com/docs/cloud/share-with-your-team/shared-mcp-connections#oauth-redirect-url";
 
 function isDiscoverableMcpUrl(value: string): boolean {
   try {
@@ -161,7 +165,7 @@ async function copyTextToClipboard(text: string): Promise<boolean> {
   }
 }
 
-type GithubPluginImportSkippedReason = "missing_url" | "local_unsupported" | "invalid_url" | "unsupported_auth";
+type GithubPluginImportSkippedReason = "headers_unsupported" | "invalid_config" | "invalid_url" | "local_unsupported" | "missing_url" | "unsupported_auth";
 
 type GithubPluginImportServer = {
   name: string;
@@ -195,7 +199,7 @@ function asString(value: unknown): string | null {
 }
 
 function parseSkippedReason(value: unknown): GithubPluginImportSkippedReason | null {
-  if (value === "missing_url" || value === "local_unsupported" || value === "invalid_url" || value === "unsupported_auth") {
+  if (value === "headers_unsupported" || value === "invalid_config" || value === "invalid_url" || value === "local_unsupported" || value === "missing_url" || value === "unsupported_auth") {
     return value;
   }
   return null;
@@ -244,6 +248,9 @@ function parseGithubPluginImportPreview(payload: unknown): GithubPluginImportPre
 function importServerStatus(server: GithubPluginImportServer): string {
   if (server.supported) return "ready";
   if (server.skippedReason === "missing_url") return "missing URL";
+  if (server.skippedReason === "local_unsupported") return "desktop-only";
+  if (server.skippedReason === "headers_unsupported") return "static headers unsupported";
+  if (server.skippedReason === "invalid_config") return "invalid config";
   return "unsupported";
 }
 
@@ -279,7 +286,6 @@ export function McpConnectionsScreen() {
   const [oauthClientConfigurationRequiredIds, setOAuthClientConfigurationRequiredIds] = useState<string[]>([]);
   const [connectionActionError, setConnectionActionError] = useState<{ connectionId: string; message: string } | null>(null);
   const [connectionActionNotice, setConnectionActionNotice] = useState<ReactNode | null>(null);
-  const [toolsConnectionId, setToolsConnectionId] = useState<string | null>(null);
   const [smartQuery, setSmartQuery] = useState("");
   const [smartBarState, setSmartBarState] = useState<"idle" | "waiting" | "resolving" | "done" | "error">("idle");
   const [smartBarError, setSmartBarError] = useState<unknown>(null);
@@ -806,6 +812,7 @@ export function McpConnectionsScreen() {
             const setupPluginId = connection.identityManagedBy[0]?.pluginId;
             return <ConnectionRow
               key={connection.id}
+              orgSlug={orgSlug}
               connection={connection}
               needsPluginSetup={needsPluginSetup}
               needsOAuthClientConfiguration={needsOAuthClientConfiguration}
@@ -834,8 +841,6 @@ export function McpConnectionsScreen() {
               onRemove={() => handleRemove(connection)}
               disconnecting={disconnectConnection.isPending && disconnectConnection.variables === connection.id}
               removing={deleteConnection.isPending && deleteConnection.variables === connection.id}
-              toolsOpen={toolsConnectionId === connection.id}
-              onToggleTools={() => setToolsConnectionId((current) => current === connection.id ? null : connection.id)}
             />;
           })}
         </div>
@@ -1641,6 +1646,7 @@ function accessSummaryLabel(connection: ExternalMcpConnection): string {
 }
 
 function ConnectionRow({
+  orgSlug,
   connection,
   needsPluginSetup,
   needsOAuthClientConfiguration,
@@ -1656,9 +1662,8 @@ function ConnectionRow({
   onRemove,
   disconnecting,
   removing,
-  toolsOpen,
-  onToggleTools,
 }: {
+  orgSlug: string | null;
   connection: ExternalMcpConnection;
   needsPluginSetup: boolean;
   needsOAuthClientConfiguration: boolean;
@@ -1674,8 +1679,6 @@ function ConnectionRow({
   onRemove: () => void;
   disconnecting: boolean;
   removing: boolean;
-  toolsOpen: boolean;
-  onToggleTools: () => void;
 }) {
   const isPerMember = connection.credentialMode === "per_member";
   const isNativeProvider = isNativeProviderConnectionId(connection.id, connection.nativeProviderKey);
@@ -1842,20 +1845,25 @@ function ConnectionRow({
                   <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
                   Edit
                 </button>
-                <button
-                  type="button"
+                <Link
+                  href={`${getToolTesterRoute(orgSlug)}?connectionId=${encodeURIComponent(connection.id)}`}
                   role="menuitem"
-                  onClick={() => {
+                  onClick={(event) => {
+                    if (!canInspectTools) {
+                      event.preventDefault();
+                      return;
+                    }
                     setActionsOpen(false);
-                    onToggleTools();
                   }}
-                  disabled={!canInspectTools}
-                  title={canInspectTools ? "Inspect the tools this MCP exposes" : "Connect this account before inspecting tools"}
-                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 transition hover:bg-gray-50 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-disabled={!canInspectTools}
+                  tabIndex={canInspectTools ? undefined : -1}
+                  title={canInspectTools ? "Test the tools this MCP exposes" : "Connect this account before testing tools"}
+                  className={`flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-gray-600 transition ${canInspectTools ? "hover:bg-gray-50 hover:text-gray-900" : "cursor-not-allowed opacity-50"}`}
+                  data-testid={`test-mcp-tools-${connection.id}`}
                 >
-                  {toolsOpen ? <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" /> : <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />}
-                  {toolsOpen ? "Hide tools" : "View tools"}
-                </button>
+                  <Wrench className="h-3.5 w-3.5" aria-hidden="true" />
+                  Test tools
+                </Link>
                 {!isLegacyGoogleConnection ? (
                   <>
                     <div className="my-1 border-t border-gray-100" />
@@ -1880,245 +1888,39 @@ function ConnectionRow({
           </div>
         </div>
       </div>
-      {toolsOpen && canInspectTools ? <McpToolCatalog connection={connection} /> : null}
-    </div>
-  );
-}
-
-function schemaInputs(schema: Record<string, unknown>): Array<{ name: string; required: boolean; type: string | null }> {
-  const properties = isRecord(schema.properties) ? schema.properties : {};
-  const required = new Set(Array.isArray(schema.required) ? schema.required.filter((item): item is string => typeof item === "string") : []);
-  return Object.entries(properties).map(([name, definition]) => ({
-    name,
-    required: required.has(name),
-    type: isRecord(definition) && typeof definition.type === "string" ? definition.type : null,
-  }));
-}
-
-function toolHints(tool: ExternalMcpTool): Array<{ label: string; className: string }> {
-  const annotations = tool.annotations;
-  if (!annotations) return [];
-  return [
-    annotations.readOnlyHint ? { label: "Read-only hint", className: "bg-blue-50 text-blue-700" } : null,
-    annotations.destructiveHint ? { label: "Destructive hint", className: "bg-red-50 text-red-700" } : null,
-    annotations.idempotentHint ? { label: "Idempotent hint", className: "bg-emerald-50 text-emerald-700" } : null,
-    annotations.openWorldHint ? { label: "External access hint", className: "bg-amber-50 text-amber-700" } : null,
-  ].filter((hint): hint is { label: string; className: string } => hint !== null);
-}
-
-function McpToolCatalog({ connection }: { connection: ExternalMcpConnection }) {
-  const catalog = useMcpConnectionTools(connection.id, true);
-  const [toolSearch, setToolSearch] = useState("");
-  const [visibleToolLimit, setVisibleToolLimit] = useState(MCP_TOOL_PAGE_SIZE);
-  const filteredTools = useMemo(() => {
-    const needle = toolSearch.trim().toLowerCase();
-    if (!needle) return catalog.data?.tools ?? [];
-    return (catalog.data?.tools ?? []).filter((tool) =>
-      [tool.name, tool.title, tool.annotations?.title, tool.description]
-        .some((value) => value?.toLowerCase().includes(needle)),
-    );
-  }, [catalog.data, toolSearch]);
-  const visibleTools = filteredTools.slice(0, visibleToolLimit);
-  const remainingToolCount = filteredTools.length - visibleTools.length;
-
-  return (
-    <div className="border-t border-gray-100 bg-gray-50/70 px-6 py-5" data-mcp-tool-catalog={connection.id}>
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <Wrench className="h-4 w-4 text-gray-500" />
-            <p className="text-[13px] font-semibold text-gray-900">Tools available to your agents</p>
-          </div>
-          <p className="mt-1 text-[12px] leading-5 text-gray-500">
-            Live from {connection.name}. Inspecting this list does not run a tool. Provider annotations are hints, not guarantees.
-          </p>
-        </div>
-        <DenButton variant="secondary" size="sm" loading={catalog.isFetching} onClick={() => void catalog.refetch()}>
-          <RefreshCw className="h-3.5 w-3.5" />
-          Refresh
-        </DenButton>
-      </div>
-
-      {catalog.data && catalog.data.tools.length > 0 ? (
-        <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div className="w-full sm:max-w-sm">
-            <DenInput
-              aria-label="Search MCP tools"
-              icon={Search}
-              value={toolSearch}
-              onChange={(event) => {
-                setToolSearch(event.target.value);
-                setVisibleToolLimit(MCP_TOOL_PAGE_SIZE);
-              }}
-              placeholder="Search tools by name or description"
-            />
-          </div>
-          <p className="shrink-0 text-[11px] font-medium text-gray-500" role="status">
-            {toolSearch.trim()
-              ? `${filteredTools.length} of ${catalog.data.tools.length} tools`
-              : `${catalog.data.tools.length} ${catalog.data.tools.length === 1 ? "tool" : "tools"} exposed`}
-          </p>
-        </div>
-      ) : null}
-
-      {catalog.isLoading ? (
-        <div className="mt-4 flex items-center gap-2 text-[12px] text-gray-500">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Reading the MCP tool catalog…
-        </div>
-      ) : catalog.error ? (
-        <div className="mt-4 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-[12px] leading-5 text-red-700">
-          {catalog.error instanceof Error ? catalog.error.message : "Could not read this MCP's tools."}
-        </div>
-      ) : catalog.data?.tools.length === 0 ? (
-        <div className="mt-4 rounded-xl border border-gray-200 bg-white px-4 py-3 text-[12px] text-gray-500">
-          This MCP is connected but does not currently expose any tools.
-        </div>
-      ) : filteredTools.length === 0 ? (
-        <div className="mt-4 rounded-xl border border-gray-200 bg-white px-4 py-3 text-[12px] text-gray-500">
-          No tools match “{toolSearch.trim()}”.
-        </div>
-      ) : (
-        <>
-          <div className="mt-4 grid gap-3 lg:grid-cols-2">
-            {visibleTools.map((tool) => {
-              const inputs = schemaInputs(tool.inputSchema);
-              const hints = toolHints(tool);
-              const displayTitle = tool.title || tool.annotations?.title;
-              return (
-                <details key={tool.name} className="group rounded-2xl border border-gray-200 bg-white p-4">
-                  <summary className="cursor-pointer list-none">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        {displayTitle ? (
-                          <>
-                            <p className="break-words text-[12px] font-semibold text-gray-900">{displayTitle}</p>
-                            <p className="mt-0.5 break-words font-mono text-[10px] text-gray-500">{tool.name}</p>
-                          </>
-                        ) : (
-                          <p className="break-words font-mono text-[12px] font-semibold text-gray-900">{tool.name}</p>
-                        )}
-                        <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-gray-500">
-                          {tool.description || "No description provided by this MCP."}
-                        </p>
-                      </div>
-                      <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-gray-400 transition group-open:rotate-90" />
-                    </div>
-                    <div className="mt-3 flex flex-wrap items-center gap-2">
-                      <p className="text-[11px] font-medium text-gray-500">
-                        {inputs.length === 0 ? "No inputs" : `${inputs.length} ${inputs.length === 1 ? "input" : "inputs"}`}
-                      </p>
-                      {hints.map((hint) => (
-                        <span
-                          key={hint.label}
-                          className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${hint.className}`}
-                          title="Provider-supplied MCP annotation; treat as a hint."
-                        >
-                          {hint.label}
-                        </span>
-                      ))}
-                    </div>
-                  </summary>
-                  <div className="mt-4 border-t border-gray-100 pt-4">
-                    {inputs.length > 0 ? (
-                      <div className="flex flex-wrap gap-2">
-                        {inputs.map((input) => (
-                          <span key={input.name} className="rounded-full bg-gray-100 px-2.5 py-1 font-mono text-[11px] text-gray-700">
-                            {input.name}{input.type ? `: ${input.type}` : ""}{input.required ? " · required" : ""}
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
-                    <details className="mt-3">
-                      <summary className="cursor-pointer text-[11px] font-medium text-gray-500">View input schema</summary>
-                      <pre className="mt-2 max-h-64 overflow-auto rounded-xl bg-gray-950 p-3 text-[10px] leading-4 text-gray-100">{JSON.stringify(tool.inputSchema, null, 2)}</pre>
-                    </details>
-                    {tool.outputSchema ? (
-                      <details className="mt-3">
-                        <summary className="cursor-pointer text-[11px] font-medium text-gray-500">View output schema</summary>
-                        <pre className="mt-2 max-h-64 overflow-auto rounded-xl bg-gray-950 p-3 text-[10px] leading-4 text-gray-100">{JSON.stringify(tool.outputSchema, null, 2)}</pre>
-                      </details>
-                    ) : null}
-                  </div>
-                </details>
-              );
-            })}
-          </div>
-          {remainingToolCount > 0 ? (
-            <div className="mt-4 flex justify-center">
-              <DenButton
-                variant="secondary"
-                size="sm"
-                onClick={() => setVisibleToolLimit((current) => current + MCP_TOOL_PAGE_SIZE)}
-              >
-                Show {Math.min(MCP_TOOL_PAGE_SIZE, remainingToolCount)} more
-              </DenButton>
-            </div>
-          ) : null}
-        </>
-      )}
-    </div>
-  );
-}
-
-type SegmentedControlOption<TValue extends string> = {
-  value: TValue;
-  label: string;
-};
-
-function SegmentedControl<TValue extends string>({
-  options,
-  value,
-  onChange,
-  disabled = false,
-}: {
-  options: SegmentedControlOption<TValue>[];
-  value: TValue;
-  onChange: (value: TValue) => void;
-  disabled?: boolean;
-}) {
-  const gridColumns = options.length === 2 ? "grid-cols-2" : "grid-cols-3";
-
-  return (
-    <div className={`grid ${gridColumns} gap-1 rounded-full border border-gray-200 bg-gray-50 p-1`} role="group">
-      {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          disabled={disabled}
-          aria-pressed={value === option.value}
-          onClick={() => onChange(option.value)}
-          className={`rounded-full px-3 py-1.5 text-[12px] font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
-            value === option.value
-              ? "bg-white text-gray-900 shadow-[0_1px_2px_rgba(15,23,42,0.08)]"
-              : "text-gray-500 hover:text-gray-900"
-          }`}
-        >
-          {option.label}
-        </button>
-      ))}
     </div>
   );
 }
 
 type AddConnectionAccessMode = McpConnectionAccessMode;
 
-const AUTH_TYPE_OPTIONS: SegmentedControlOption<ExternalMcpAuthType>[] = [
-  { value: "oauth", label: "OAuth" },
-  { value: "apikey", label: "API key" },
-  { value: "none", label: "None" },
-];
-
-const CREDENTIAL_MODE_OPTIONS: SegmentedControlOption<ExternalMcpCredentialMode>[] = [
-  { value: "per_member", label: "Individual accounts" },
-  { value: "shared", label: "One org account" },
-];
-
 const ACCESS_MODE_OPTIONS: SegmentedControlOption<AddConnectionAccessMode>[] = [
   { value: "everyone", label: "Everyone" },
   { value: "teams", label: "Specific teams" },
   { value: "people", label: "Specific people" },
 ];
+
+function ExposeDirectlyField({ checked, onChange }: { checked: boolean; onChange: (value: boolean) => void }) {
+  return (
+    <div>
+      <label className="flex items-start gap-2 text-[12px] text-gray-700">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={checked}
+          onChange={(event) => onChange(event.target.checked)}
+        />
+        <span>
+          <span className="font-medium">Expose directly as an MCP server</span>
+          <span className="mt-0.5 block text-[11px] leading-5 text-gray-500">
+            The agent sees this server&apos;s own tools instead of going through search and execute.
+            Access grants and the tool policy still apply.
+          </span>
+        </span>
+      </label>
+    </div>
+  );
+}
 
 function EditConnectionDialog({
   connection,
@@ -2140,6 +1942,7 @@ function EditConnectionDialog({
   const [url, setUrl] = useState("");
   const [authType, setAuthType] = useState<ExternalMcpAuthType>("oauth");
   const [credentialMode, setCredentialMode] = useState<ExternalMcpCredentialMode>("shared");
+  const [exposeDirectly, setExposeDirectly] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [showOAuthClient, setShowOAuthClient] = useState(false);
   const [oauthClientId, setOAuthClientId] = useState("");
@@ -2156,6 +1959,7 @@ function EditConnectionDialog({
     setUrl(connection.url);
     setAuthType(connection.authType);
     setCredentialMode(connection.credentialMode);
+    setExposeDirectly(connection.exposeDirectly);
     setApiKey("");
     setShowOAuthClient(configureOAuthClient || Boolean(connection.oauthClientId));
     setOAuthClientId(connection.oauthClientId ?? "");
@@ -2218,6 +2022,7 @@ function EditConnectionDialog({
       url: url.trim(),
       authType,
       credentialMode: proposedCredentialMode,
+      exposeDirectly,
       ...(!marketplaceManaged && authType === "apikey" && trimmedApiKey ? { apiKey: trimmedApiKey } : {}),
       ...(authType === "oauth" && showOAuthClient && trimmedClientId
         ? {
@@ -2404,6 +2209,8 @@ function EditConnectionDialog({
             ) : null}
           </div>
 
+          <ExposeDirectlyField checked={exposeDirectly} onChange={setExposeDirectly} />
+
           <div>
             <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Who can use this?</label>
             <SegmentedControl
@@ -2529,6 +2336,7 @@ function AddConnectionDialog({
   const [url, setUrl] = useState(preset?.url ?? "");
   const [authType, setAuthType] = useState<ExternalMcpAuthType>(preset?.authType ?? "oauth");
   const [credentialMode, setCredentialMode] = useState<ExternalMcpCredentialMode>("per_member");
+  const [exposeDirectly, setExposeDirectly] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [showOAuthClient, setShowOAuthClient] = useState(Boolean(preset?.requiresOAuthClient));
   const [oauthClientId, setOAuthClientId] = useState("");
@@ -2557,6 +2365,7 @@ function AddConnectionDialog({
     setUrl(preset?.url ?? initialUrl ?? "");
     setAuthType(preset?.authType ?? "oauth");
     setCredentialMode("per_member");
+    setExposeDirectly(false);
     setApiKey("");
     setShowOAuthClient(Boolean(preset?.requiresOAuthClient));
     setOAuthClientId("");
@@ -2754,6 +2563,7 @@ function AddConnectionDialog({
       url: url.trim(),
       authType,
       credentialMode: authType === "oauth" ? credentialMode : "shared",
+      exposeDirectly,
       apiKey: authType === "apikey" ? apiKey.trim() : undefined,
       oauthClient: showOAuthClientFields && trimmedClientId
         ? {
@@ -3122,12 +2932,12 @@ function AddConnectionDialog({
               <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Whose account does the AI use?</label>
               <SegmentedControl options={CREDENTIAL_MODE_OPTIONS} value={credentialMode} onChange={setCredentialMode} />
               <p className="mt-1.5 text-[12px] leading-5 text-gray-500">
-                {credentialMode === "per_member"
-                  ? "Each person signs in with their own account from Your Connections. Their AI acts as them, with their permissions."
-                  : "You sign in once with a single account — everyone granted access acts as it. Good for bot or service accounts."}
+                {credentialModeDescription(credentialMode)}
               </p>
             </div>
           ) : null}
+
+          <ExposeDirectlyField checked={exposeDirectly} onChange={setExposeDirectly} />
 
           <div>
             <label className="mb-1.5 block text-[12px] font-medium text-gray-700">Who can use this?</label>

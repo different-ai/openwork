@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises"
 import { STATUS_CODES } from "node:http"
 import { dirname, relative, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
+import { parseArgs } from "node:util"
 
 type NormalizationCounts = {
   descriptionsFilled: number
@@ -21,7 +22,9 @@ function seedSnapshotEnv() {
   setEnvDefault("DATABASE_URL", "mysql://root:password@127.0.0.1:3306/openwork_den")
   setEnvDefault("DEN_DB_ENCRYPTION_KEY", "local-dev-db-encryption-key-please-change-1234567890")
   setEnvDefault("BETTER_AUTH_SECRET", "local-dev-secret-not-for-production-use!!")
-  setEnvDefault("BETTER_AUTH_URL", "http://den.local")
+  setEnvDefault("BETTER_AUTH_URL", "http://localhost:8790")
+  setEnvDefault("DEN_AUTOMATIONS_ENABLED", "true")
+  setEnvDefault("DEN_AUTOMATIONS_RUNTIME_ENABLED", "true")
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -105,7 +108,10 @@ async function main() {
   const counts = normalizeOpenApiDocument(document)
   const scriptDir = dirname(fileURLToPath(import.meta.url))
   const repoRoot = resolve(scriptDir, "../../../..")
-  const outputPath = resolve(repoRoot, "packages/docs/openapi.json")
+  const { values } = parseArgs({ options: { output: { type: "string" } } })
+  const outputPath = values.output
+    ? resolve(values.output)
+    : resolve(repoRoot, "packages/docs/openapi.json")
   await mkdir(dirname(outputPath), { recursive: true })
   await writeFile(outputPath, JSON.stringify(document))
 
@@ -117,3 +123,6 @@ async function main() {
 }
 
 await main()
+// Importing the app starts background service timers; this one-shot exporter
+// must finish without waiting for those services after the file is written.
+process.exit(0)

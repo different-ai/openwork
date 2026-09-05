@@ -1,6 +1,6 @@
-import { ProgramDetailScreen } from "../../../_components/program-detail-screen";
+import { redirect } from "next/navigation";
 
-export default async function ProgramPage({ params }: { params: Promise<{ programId: string }> }) {
+export default async function LegacyProgramPage({ params }: { params: Promise<{ programId: string }> }) {
   const { programId } = await params;
-  return <ProgramDetailScreen programId={programId} />;
+  redirect(`/dashboard/library/workflows/${encodeURIComponent(programId)}`);
 }

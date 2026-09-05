@@ -1,17 +1,18 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { workflowArtifactSnapshotSchema } from "@openwork/types/workflows"
 import {
   artifactDigest,
   artifactFreshness,
   canonicalArtifactJson,
-  renderSavedScriptMarkdown,
-  savedScriptArtifactSource,
-} from "../src/saved-script-artifacts.js"
-import { recordCodemodeRun } from "../src/codemode-runs.js"
+  renderWorkflowMarkdown,
+  workflowArtifactSource,
+} from "../src/workflow-artifacts.js"
+import { recordWorkflowRun } from "../src/workflow-runs.js"
 import {
-  redactSavedScriptNormalizedPayloadAuthoringDetails,
-  redactSavedScriptVersionAuthoringDetails,
-} from "../src/saved-script-projections.js"
+  redactWorkflowNormalizedPayloadAuthoringDetails,
+  redactWorkflowVersionAuthoringDetails,
+} from "../src/workflow-projections.js"
 
 test("canonical JSON and digests are stable across object key order", () => {
   assert.equal(canonicalArtifactJson({ b: 2, a: { d: 4, c: 3 } }), '{"a":{"c":3,"d":4},"b":2}')
@@ -29,9 +30,9 @@ test("durable receipts keep only the input digest", async () => {
   }
   const inputDigest = artifactDigest({ token: "api-secret" })
 
-  const receiptId = await recordCodemodeRun(database as never, {
+  const receiptId = await recordWorkflowRun(database as never, {
     organizationId: "org_test" as never,
-    source: "saved-script-test",
+    source: "workflow-test",
     code: "return input",
     status: "succeeded",
     toolCalls: [],
@@ -50,10 +51,29 @@ test("durable receipts keep only the input digest", async () => {
   assert.equal(JSON.stringify(stored).includes("api-secret"), false)
 })
 
-test("viewer and editor projections omit manager-only Script authoring data", () => {
-  const projected = redactSavedScriptVersionAuthoringDetails({
+test("viewer and editor projections omit manager-only Workflow authoring data", () => {
+  const projected = redactWorkflowVersionAuthoringDetails({
     id: "cov_test",
     code: "return input.token",
+    graph: {
+      nodes: [
+        { id: "input", kind: "input", label: "Input", fields: ["token"] },
+        {
+          id: "tool1",
+          kind: "tool",
+          label: "tools.reports.list",
+          namespace: "reports",
+          tool: "list",
+          scriptPath: "tools.reports.list",
+          assignsTo: "reports",
+          parallelGroup: null,
+        },
+        { id: "branch1", kind: "branch", label: "input.apiKey === \"sk-live-123\"" },
+        { id: "return1", kind: "return", label: "secret" },
+      ],
+      edges: [],
+      parseError: null,
+    },
     inputSchema: { type: "object" },
     outputSchema: { type: "string" },
     exampleInput: { token: "authoring-secret" },
@@ -72,14 +92,29 @@ test("viewer and editor projections omit manager-only Script authoring data", ()
   })
 
   assert.equal(projected.code, null)
+  assert.deepEqual(projected.graph?.nodes, [
+    { id: "input", kind: "input", label: "Input", fields: ["token"] },
+    {
+      id: "tool1",
+      kind: "tool",
+      label: "tools.reports.list",
+      namespace: "reports",
+      tool: "list",
+      scriptPath: "tools.reports.list",
+      assignsTo: "reports",
+      parallelGroup: null,
+    },
+    { id: "branch1", kind: "branch", label: "Condition" },
+    { id: "return1", kind: "return", label: "Result" },
+  ])
   assert.equal(projected.exampleInput, null)
   assert.equal("input" in projected.automationReferences[0]!, false)
   assert.equal(JSON.stringify(projected).includes("authoring-secret"), false)
   assert.equal(JSON.stringify(projected).includes("automation-secret"), false)
 })
 
-test("generic config-object projections omit saved Script example input", () => {
-  const projected = redactSavedScriptNormalizedPayloadAuthoringDetails({
+test("generic config-object projections omit Workflow example input", () => {
+  const projected = redactWorkflowNormalizedPayloadAuthoringDetails({
     language: "codemode-js",
     inputSchema: { type: "object" },
     outputSchema: { type: "string" },
@@ -96,22 +131,49 @@ test("generic config-object projections omit saved Script example input", () => 
   assert.equal(JSON.stringify(projected).includes("authoring-secret"), false)
 })
 
+test("artifact snapshot projections expose tool calls", () => {
+  const projected = workflowArtifactSnapshotSchema.parse({
+    receiptId: "cmr_test",
+    pluginId: "plg_test",
+    configObjectId: "cob_test",
+    configObjectVersionId: "cov_test",
+    automationRunId: null,
+    value: { count: 1 },
+    markdown: "| count |\n| --- |\n| 1 |",
+    codeDigest: `sha256:${"a".repeat(64)}`,
+    resultDigest: `sha256:${"b".repeat(64)}`,
+    inputSchemaDigest: null,
+    outputSchemaDigest: null,
+    rendererVersion: "codemode-markdown-v1",
+    toolCalls: [{ name: "tools.reports.list" }],
+    status: "succeeded",
+    errorKind: null,
+    errorMessage: null,
+    source: "manual",
+    startedAt: "2026-08-13T12:00:00.000Z",
+    finishedAt: "2026-08-13T12:00:01.000Z",
+    contentDeletedAt: null,
+  })
+
+  assert.deepEqual(projected.toolCalls, [{ name: "tools.reports.list" }])
+})
+
 test("Markdown rendering is deterministic and never emits raw HTML", () => {
-  assert.equal(renderSavedScriptMarkdown("<script>alert(1)</script>"), "&lt;script&gt;alert(1)&lt;/script&gt;")
-  assert.equal(renderSavedScriptMarkdown({ b: true, a: "<strong>x</strong>" }), [
+  assert.equal(renderWorkflowMarkdown("<script>alert(1)</script>"), "&lt;script&gt;alert(1)&lt;/script&gt;")
+  assert.equal(renderWorkflowMarkdown({ b: true, a: "<strong>x</strong>" }), [
     "| Key | Value |",
     "| --- | --- |",
     "| a | &lt;strong&gt;x&lt;/strong&gt; |",
     "| b | true |",
   ].join("\n"))
-  assert.equal(renderSavedScriptMarkdown([{ b: 2, a: 1 }, { a: 3, b: 4 }]), [
+  assert.equal(renderWorkflowMarkdown([{ b: 2, a: 1 }, { a: 3, b: 4 }]), [
     "| a | b |",
     "| --- | --- |",
     "| 1 | 2 |",
     "| 3 | 4 |",
   ].join("\n"))
-  assert.equal(renderSavedScriptMarkdown({ nested: { value: 1 } }), '```json\n{"nested":{"value":1}}\n```')
-  assert.equal(renderSavedScriptMarkdown({ path: String.raw`C:\reports\a|b` }), [
+  assert.equal(renderWorkflowMarkdown({ nested: { value: 1 } }), '```json\n{"nested":{"value":1}}\n```')
+  assert.equal(renderWorkflowMarkdown({ path: String.raw`C:\reports\a|b` }), [
     "| Key | Value |",
     "| --- | --- |",
     String.raw`| path | C:\\reports\\a\|b |`,
@@ -161,8 +223,8 @@ test("freshness preserves last-good state after failures", () => {
 })
 
 test("recovery-triggered Automation artifacts keep scheduled lineage", () => {
-  assert.equal(savedScriptArtifactSource("scheduled"), "scheduled")
-  assert.equal(savedScriptArtifactSource("recovery"), "scheduled")
-  assert.equal(savedScriptArtifactSource("manual"), "manual")
-  assert.equal(savedScriptArtifactSource(null), "manual")
+  assert.equal(workflowArtifactSource("scheduled"), "scheduled")
+  assert.equal(workflowArtifactSource("recovery"), "scheduled")
+  assert.equal(workflowArtifactSource("manual"), "manual")
+  assert.equal(workflowArtifactSource(null), "manual")
 })

@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto"
-import type { Tool } from "@modelcontextprotocol/sdk/types.js"
-import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv"
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/server/validators/ajv"
 
 export type ExternalMcpArgumentIssue = {
   path: string
@@ -38,12 +37,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-export function externalMcpToolSchemaDigest(schema: Tool["inputSchema"]): string {
+export function externalMcpToolSchemaDigest(schema: Record<string, unknown>): string {
   return `sha256:${createHash("sha256").update(canonicalJson(schema)).digest("hex")}`
 }
 
 export function validateExternalMcpToolArguments(
-  schema: Tool["inputSchema"],
+  schema: Record<string, unknown>,
   value: unknown,
 ): ExternalMcpArgumentValidation {
   if (!isRecord(value)) {

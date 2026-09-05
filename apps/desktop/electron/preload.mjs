@@ -1,10 +1,11 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 const NATIVE_DEEP_LINK_EVENT = "openwork:deep-link-native";
 const NATIVE_MENU_OPEN_SETTINGS_EVENT = "openwork:native-menu:open-settings";
 const NATIVE_MENU_TOGGLE_SIDEBAR_EVENT = "openwork:native-menu:toggle-sidebar";
 const NATIVE_MENU_CHECK_UPDATES_EVENT = "openwork:native-menu:check-updates";
 const NATIVE_MENU_ZOOM_EVENT = "openwork:native-menu:zoom";
+const AUTOMATION_RUNNER_CREDENTIAL_REJECTED_EVENT = "openwork:automation-runner:credential-rejected";
 
 function normalizePlatform(value) {
   if (value === "darwin" || value === "linux") return value;
@@ -61,6 +62,18 @@ try {
 contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
   invokeDesktop(command, ...args) {
     return ipcRenderer.invoke("openwork:desktop", command, ...args);
+  },
+  automationRunner: {
+    onCredentialRejected(callback) {
+      const handler = () => callback();
+      ipcRenderer.on(AUTOMATION_RUNNER_CREDENTIAL_REJECTED_EVENT, handler);
+      return () => ipcRenderer.removeListener(AUTOMATION_RUNNER_CREDENTIAL_REJECTED_EVENT, handler);
+    },
+  },
+  fileSystem: {
+    getPathForFile(file) {
+      return webUtils.getPathForFile(file);
+    },
   },
   shell: {
     openExternal(url) {
@@ -150,16 +163,17 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     },
   },
   browser: {
-    show(bounds) { return ipcRenderer.invoke("openwork:browser:show", bounds); },
+    show(bounds, sessionId) { return ipcRenderer.invoke("openwork:browser:show", bounds, sessionId); },
     hide() { return ipcRenderer.invoke("openwork:browser:hide"); },
-    openUrl(url, provider) { return ipcRenderer.invoke("openwork:browser:openUrl", url, provider); },
+    openUrl(url, provider, options) { return ipcRenderer.invoke("openwork:browser:openUrl", url, provider, options); },
+    setVisibleSession(sessionId) { return ipcRenderer.invoke("openwork:browser:setVisibleSession", sessionId); },
     navigate(url) { return ipcRenderer.invoke("openwork:browser:navigate", url); },
     back() { return ipcRenderer.invoke("openwork:browser:back"); },
     forward() { return ipcRenderer.invoke("openwork:browser:forward"); },
     reload() { return ipcRenderer.invoke("openwork:browser:reload"); },
     setBounds(bounds) { return ipcRenderer.invoke("openwork:browser:bounds", bounds); },
     getState() { return ipcRenderer.invoke("openwork:browser:state"); },
-    createTab(url) { return ipcRenderer.invoke("openwork:browser:createTab", url); },
+    createTab(url, sessionId) { return ipcRenderer.invoke("openwork:browser:createTab", url, sessionId); },
     closeTab(tabId) { return ipcRenderer.invoke("openwork:browser:closeTab", tabId); },
     closeAllTabs() { return ipcRenderer.invoke("openwork:browser:closeAllTabs"); },
     selectTab(tabId) { return ipcRenderer.invoke("openwork:browser:selectTab", tabId); },
@@ -175,12 +189,12 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
       return () => ipcRenderer.removeListener("openwork:browser:state", handler);
     },
     onPanelOpened(callback) {
-      const handler = () => callback();
+      const handler = (_event, payload) => callback(payload);
       ipcRenderer.on("openwork:browser:panel-opened", handler);
       return () => ipcRenderer.removeListener("openwork:browser:panel-opened", handler);
     },
     onPanelClosed(callback) {
-      const handler = () => callback();
+      const handler = (_event, payload) => callback(payload);
       ipcRenderer.on("openwork:browser:panel-closed", handler);
       return () => ipcRenderer.removeListener("openwork:browser:panel-closed", handler);
     },

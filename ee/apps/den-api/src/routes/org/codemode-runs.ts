@@ -1,19 +1,19 @@
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
-import { listCodemodeRuns } from "../../codemode-runs.js"
+import { listWorkflowRuns } from "../../workflow-runs.js"
 import { db } from "../../db.js"
 import { orgMemberRoute, queryValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { memberHasRole } from "./shared.js"
 
-const listCodemodeRunsQuerySchema = z.object({
+const listWorkflowRunsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional().default(50),
 })
 
-const codemodeRunSchema = z.object({
-  id: denTypeIdSchema("codemodeRun"),
+const workflowRunSchema = z.object({
+  id: denTypeIdSchema("workflowRun"),
   source: z.string(),
   status: z.enum(["succeeded", "failed"]),
   errorKind: z.string().nullable(),
@@ -27,30 +27,30 @@ const codemodeRunSchema = z.object({
   orgMembershipId: denTypeIdSchema("member").nullable(),
 })
 
-const codemodeRunListResponseSchema = z.object({
-  runs: z.array(codemodeRunSchema),
-}).meta({ ref: "CodemodeRunListResponse" })
+const workflowRunListResponseSchema = z.object({
+  runs: z.array(workflowRunSchema),
+}).meta({ ref: "WorkflowRunListResponse" })
 
-export function registerOrgCodemodeRunRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
+export function registerOrgWorkflowRunRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
-    "/v1/codemode-runs",
+    "/v1/workflow-runs",
     describeRoute({
-      tags: ["Codemode Runs"],
-      summary: "List Code Mode script runs",
-      description: "Lists Code Mode script run receipts visible to the active organization member.",
+      tags: ["Workflow Runs"],
+      summary: "List Workflow runs",
+      description: "Lists Workflow run receipts visible to the active organization member.",
       responses: {
-        200: jsonResponse("Code Mode script runs returned successfully.", codemodeRunListResponseSchema),
-        400: jsonResponse("The Code Mode script run list query was invalid.", invalidRequestSchema),
-        401: jsonResponse("The caller must be signed in to list Code Mode script runs.", unauthorizedSchema),
+        200: jsonResponse("Workflow runs returned successfully.", workflowRunListResponseSchema),
+        400: jsonResponse("The Workflow run list query was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to list Workflow runs.", unauthorizedSchema),
       },
     }),
     orgMemberRoute(),
-    queryValidator(listCodemodeRunsQuerySchema),
+    queryValidator(listWorkflowRunsQuerySchema),
     async (c) => {
       const context = c.get("organizationContext")
       const member = context.currentMember
       const isAdmin = member.isOwner || memberHasRole(member.role, "admin")
-      const rows = await listCodemodeRuns(db, {
+      const rows = await listWorkflowRuns(db, {
         organizationId: context.organization.id,
         ...(isAdmin ? {} : { orgMembershipId: member.id }),
         limit: c.req.valid("query").limit,
@@ -74,4 +74,11 @@ export function registerOrgCodemodeRunRoutes<T extends { Variables: OrgRouteVari
       })
     },
   )
+
+  // TODO(workflows): remove this one-release compatibility alias.
+  app.all("/v1/codemode-runs", (c) => {
+    const url = new URL(c.req.raw.url)
+    url.pathname = "/v1/workflow-runs"
+    return app.fetch(new Request(url, c.req.raw))
+  })
 }

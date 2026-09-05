@@ -1,4 +1,3 @@
-import { createHash, randomBytes } from "node:crypto"
 import { and, eq, inArray, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   InferenceKeyTable,
@@ -12,6 +11,12 @@ import {
   OrganizationTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+import {
+  createInferenceBearerKey,
+  inferenceBearerKeyPrefix,
+  inferenceBearerKeyStorageDigest,
+  type InferenceBearerKey,
+} from "@openwork-ee/utils/inference-bearer-key"
 import {
   INFERENCE_RESET_STRATEGY_BY_WINDOW_TYPE,
   INFERENCE_TIER_LIMITS,
@@ -32,15 +37,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-function sha256(value: string) {
-  return createHash("sha256").update(value).digest("hex")
-}
-
-function createUserFacingInferenceKey() {
-  return `ow_inf_${randomBytes(32).toString("base64url")}`
-}
-
-function keyPrefix(key: string) {
+function upstreamKeyPrefix(key: string) {
   return key.slice(0, 16)
 }
 
@@ -142,20 +139,20 @@ async function deleteOpenWorkProviders(where: { organizationId: OrgId; memberId?
 }
 
 async function createMemberInferenceKey(input: { organizationId: OrgId; memberId: MemberId }) {
-  const key = createUserFacingInferenceKey()
+  const key = createInferenceBearerKey()
   await db.insert(InferenceKeyTable).values({
     id: createDenTypeId("inferenceKey"),
     organization_id: input.organizationId,
     org_membership_id: input.memberId,
     name: "OpenWork Models",
-    key_hash: sha256(key),
-    key_prefix: keyPrefix(key),
+    key_hash: await inferenceBearerKeyStorageDigest(key),
+    key_prefix: inferenceBearerKeyPrefix(key),
     status: "active",
   })
   return key
 }
 
-async function ensureOpenWorkLlmProviderForMember(input: { organizationId: OrgId; memberId: MemberId; inferenceKey: string }) {
+async function ensureOpenWorkLlmProviderForMember(input: { organizationId: OrgId; memberId: MemberId; inferenceKey: InferenceBearerKey }) {
   const now = new Date()
   const providerRows = await db
     .select({ id: LlmProviderTable.id })
@@ -175,7 +172,7 @@ async function ensureOpenWorkLlmProviderForMember(input: { organizationId: OrgId
     if (providerRows[0]) {
       await tx
         .update(LlmProviderTable)
-        .set({ name: "OpenWork Models", providerConfig, apiKey: input.inferenceKey, updatedAt: now })
+        .set({ name: "OpenWork Models", providerConfig, apiKey: input.inferenceKey.value, updatedAt: now })
         .where(eq(LlmProviderTable.id, providerId))
       await tx.delete(LlmProviderModelTable).where(eq(LlmProviderModelTable.llmProviderId, providerId))
       await tx.delete(LlmProviderAccessTable).where(eq(LlmProviderAccessTable.llmProviderId, providerId))
@@ -188,7 +185,7 @@ async function ensureOpenWorkLlmProviderForMember(input: { organizationId: OrgId
         providerId: OPENWORK_PROVIDER_ID,
         name: "OpenWork Models",
         providerConfig,
-        apiKey: input.inferenceKey,
+        apiKey: input.inferenceKey.value,
         createdAt: now,
         updatedAt: now,
       })
@@ -514,7 +511,7 @@ async function ensureOrgUpstreamProviderKey(organizationId: OrgId) {
       external_key_hash: openRouterKey.externalKeyHash,
       external_workspace_id: openRouterKey.externalWorkspaceId,
       encrypted_api_key: openRouterKey.key,
-      key_prefix: keyPrefix(openRouterKey.key),
+      key_prefix: upstreamKeyPrefix(openRouterKey.key),
       status: "active",
       revoked_at: null,
     })
@@ -523,7 +520,7 @@ async function ensureOrgUpstreamProviderKey(organizationId: OrgId) {
         external_key_hash: openRouterKey.externalKeyHash,
         external_workspace_id: openRouterKey.externalWorkspaceId,
         encrypted_api_key: openRouterKey.key,
-        key_prefix: keyPrefix(openRouterKey.key),
+        key_prefix: upstreamKeyPrefix(openRouterKey.key),
         status: "active",
         revoked_at: null,
       },

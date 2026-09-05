@@ -241,6 +241,14 @@ export async function syncCloudControlMcpInBackground(input: {
       ? async () => input.mintToken?.() ?? null
       : mintCloudControlMcpToken,
     force: input.force,
+    // Session maintenance is the automatic upgrade path for already-signed-in
+    // desktops. OpenCode can keep reporting a stale Cloud MCP entry as
+    // connected even after the hosted API moved origins, while actual tool
+    // calls fail at the remote endpoint with `missing_mcp_token` when the
+    // persisted Authorization header is no longer delivered. Include the
+    // server-side direct probe here so those auth failures trigger a silent
+    // re-mint instead of waiting for the user to open Settings → Repair.
+    probe: true,
     refreshMarginMs: CLOUD_MCP_REFRESH_MARGIN_MS,
     now: input.now,
     configuredEnabled: configured === undefined ? null : configured.config.enabled !== false,

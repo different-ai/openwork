@@ -992,6 +992,8 @@ jobs:
       (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') &&
       needs.publish-daytona-snapshot.result != 'cancelled'
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    outputs:
+      published_stable: ${{ steps.publish.outputs.published_stable }}
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
       RELEASE_PRERELEASE: ${{ needs.resolve-release.outputs.prerelease }}
@@ -1023,6 +1025,7 @@ jobs:
         run: node scripts/release/publish-electron-assets.mjs --manifests-only "${{ runner.temp }}/electron-dist" "$RELEASE_TAG"
 
       - name: Publish release after assets are ready
+        id: publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -1041,6 +1044,37 @@ jobs:
             gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
           else
             gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+            echo "published_stable=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  dispatch-changelog:
+    name: Dispatch changelog
+    needs: [resolve-release, publish-release]
+    # always() is required: resolve-benchmark is a skipped ancestor on every
+    # production release, and the implicit success() would skip this job.
+    if: |
+      always() &&
+      needs.publish-release.result == 'success' &&
+      needs.publish-release.outputs.published_stable == 'true'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # This job deliberately checks out nothing and runs no repository code, so
+    # actions: write is never available to code executed from the release tag.
+    permissions:
+      actions: write
+    env:
+      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+    steps:
+      - name: Dispatch changelog.yml for the published stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          # GitHub does not start workflows from `release: published` events
+          # created by GITHUB_TOKEN, so hand the stable tag to the changelog
+          # workflow explicitly. It writes docs + rewrites the release notes.
+          if ! gh workflow run changelog.yml --repo "$GITHUB_REPOSITORY" --ref dev -f "tag=$RELEASE_TAG"; then
+            echo "::warning::Could not dispatch changelog.yml for $RELEASE_TAG; run it manually: gh workflow run changelog.yml -f tag=$RELEASE_TAG"
           fi
 
   prepare-npm:
@@ -1151,7 +1185,7 @@ jobs:
       needs.verify-release.result == 'success' &&
       needs.prepare-npm.result == 'success' &&
       needs.prepare-npm.outputs.publish_server == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     permissions:
       actions: read
       contents: read

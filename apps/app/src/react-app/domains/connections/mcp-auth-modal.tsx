@@ -14,12 +14,13 @@ import {
 import type { McpDirectoryInfo } from "@/app/constants";
 import { openDesktopUrl, opencodeMcpAuth } from "@/app/lib/desktop";
 import { unwrap } from "@/app/lib/opencode";
-import { validateMcpServerName } from "@/app/mcp";
+import { getMcpIdentityKey, validateMcpServerName } from "@/app/mcp";
 import type { Client } from "@/app/types";
 import { isDesktopRuntime, normalizeDirectoryPath } from "@/app/utils";
 import { t } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import { TextInput } from "../../design-system/text-input";
+import { resolveMcpStatusByIdentity } from "./mcp-status-synchronization";
 
 const MCP_AUTH_POLL_INTERVAL_MS = 2_000;
 const MCP_AUTH_TIMEOUT_MS = 90_000;
@@ -39,9 +40,15 @@ function isDynamicClientRegistrationError(message: string | undefined): boolean 
   return normalized.includes("dynamic client registration") && normalized.includes("does not support");
 }
 
+function readStatusError(status: unknown): string | undefined {
+  if (!status || typeof status !== "object" || !("error" in status)) return undefined;
+  return typeof status.error === "string" ? status.error : undefined;
+}
+
 export type McpAuthModalProps = {
   open: boolean;
   onClose: () => void;
+  onAuthenticated?: (name: string) => void;
   onComplete: () => void | Promise<void>;
   onReloadEngine?: () => void | Promise<void>;
   reloadRequired?: boolean;
@@ -139,7 +146,11 @@ export function McpAuthModal(props: McpAuthModalProps) {
       const directory = resolvedDir.trim();
       if (!directory) return null;
       const result = await props.client.mcp.status({ directory });
-      const status = result.data?.[slug] as McpStatusEntry | undefined;
+      const status = resolveMcpStatusByIdentity(result.data ?? {}, [
+        slug,
+        props.entry.serverName,
+        props.entry.name,
+      ]);
       return status ?? null;
     } catch {
       return null;
@@ -164,8 +175,12 @@ export function McpAuthModal(props: McpAuthModalProps) {
     }
   };
 
-  const resolveSlug = (name: string) =>
-    validateMcpServerName(name).toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  const resolveSlug = (entry: McpDirectoryInfo) => validateMcpServerName(getMcpIdentityKey(entry));
+
+  const markAuthenticated = (slug: string) => {
+    setAlreadyConnected(true);
+    props.onAuthenticated?.(slug);
+  };
 
   const waitForMcpAvailability = async (slug: string) => {
     const startedAt = Date.now();
@@ -191,7 +206,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
 
       const status = await fetchMcpStatus(slug);
       if (status?.status === "connected") {
-        setAlreadyConnected(true);
+        markAuthenticated(slug);
         setError(null);
         stopStatusPolling();
       }
@@ -203,7 +218,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
 
     let slug = "";
     try {
-      slug = resolveSlug(props.entry.name);
+      slug = resolveSlug(props.entry);
     } catch (err) {
       const message = err instanceof Error ? err.message : t("mcp.auth.failed_to_start_oauth");
       setError(message);
@@ -234,7 +249,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
       }
 
       const statusEntry = await fetchMcpStatus(slug);
-      if (isSlackMcpEntry(props.entry, slug) && isDynamicClientRegistrationError(statusEntry?.error)) {
+      if (isSlackMcpEntry(props.entry, slug) && isDynamicClientRegistrationError(readStatusError(statusEntry))) {
         setError(t("mcp.auth.slack_client_registration_required"));
         return;
       }
@@ -249,7 +264,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
       }
 
       if (statusEntry?.status === "connected") {
-        setAlreadyConnected(true);
+        markAuthenticated(slug);
         return;
       }
 
@@ -261,7 +276,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
         const status = unwrap(result) as McpStatusEntry;
 
         if (status.status === "connected") {
-          setAlreadyConnected(true);
+          markAuthenticated(slug);
           await props.onComplete();
           return;
         }
@@ -285,7 +300,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
       const auth = unwrap(authResult) as { authorizationUrl?: string };
 
       if (!auth.authorizationUrl) {
-        setAlreadyConnected(true);
+        markAuthenticated(slug);
         return;
       }
 
@@ -410,7 +425,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
         await props.onReloadEngine?.();
         if (cancelled) return;
 
-        const slug = resolveSlug(props.entry!.name);
+        const slug = resolveSlug(props.entry!);
         const status = await waitForMcpAvailability(slug);
         if (cancelled) return;
 
@@ -518,7 +533,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
 
     let slug = "";
     try {
-      slug = resolveSlug(props.entry.name);
+      slug = resolveSlug(props.entry);
     } catch (err) {
       const message = err instanceof Error ? err.message : t("mcp.auth.failed_to_start_oauth");
       setError(message);
@@ -549,7 +564,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
       });
       const status = unwrap(result) as McpStatusEntry;
       if (status.status === "connected") {
-        setAlreadyConnected(true);
+        markAuthenticated(slug);
         setManualAuthBusy(false);
         await props.onComplete();
         return;
@@ -580,7 +595,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
 
     let slug = "";
     try {
-      slug = resolveSlug(props.entry.name);
+      slug = resolveSlug(props.entry);
     } catch (err) {
       const message = err instanceof Error ? err.message : t("mcp.auth.failed_to_start_oauth");
       setError(message);
@@ -590,7 +605,7 @@ export function McpAuthModal(props: McpAuthModalProps) {
 
     const statusEntry = await fetchMcpStatus(slug);
     if (statusEntry?.status === "connected") {
-      setAlreadyConnected(true);
+      markAuthenticated(slug);
       setStatusChecking(false);
       await props.onComplete();
       return;

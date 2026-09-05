@@ -2,12 +2,14 @@ import { beforeAll, expect, mock, test } from "bun:test"
 import {
   AuthSessionTable,
   OAuthAccessTokenTable,
+  OAuthConsentTable,
   OAuthRefreshTokenTable,
 } from "@openwork-ee/den-db/schema"
 
 const selectedRows = {
   sessions: [{ id: "session_one" }, { id: "session_two" }],
   oauthAccessTokens: [{ id: "oauth_access_one" }],
+  oauthConsents: [{ id: "oauth_consent_one" }],
   oauthRefreshTokens: [{ id: "oauth_refresh_one" }],
 }
 
@@ -25,6 +27,9 @@ function rowsForTable(table: unknown) {
   if (table === OAuthRefreshTokenTable) {
     return selectedRows.oauthRefreshTokens
   }
+  if (table === OAuthConsentTable) {
+    return selectedRows.oauthConsents
+  }
   return []
 }
 
@@ -37,6 +42,11 @@ function resetCalls() {
 let credentialRevocationModule: typeof import("../src/credential-revocation.js")
 
 beforeAll(async () => {
+  process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
+  process.env.DEN_DB_ENCRYPTION_KEY = process.env.DEN_DB_ENCRYPTION_KEY ?? "x".repeat(32)
+  process.env.BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "y".repeat(32)
+  process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
+
   mock.module("../src/db.js", () => ({
     db: {
       select: () => ({
@@ -80,10 +90,11 @@ test("membership credential revocation deletes sessions and org-scoped OAuth acc
     oauthAccessTokens: 1,
     oauthRefreshTokens: 1,
   })
-  expect(selectCalls).toBe(3)
+  expect(selectCalls).toBe(4)
   expect(deleteCalls).toEqual([
     AuthSessionTable,
     OAuthAccessTokenTable,
+    OAuthConsentTable,
   ])
   expect(updateCalls).toHaveLength(1)
   expect(updateCalls[0]?.table).toBe(OAuthRefreshTokenTable)

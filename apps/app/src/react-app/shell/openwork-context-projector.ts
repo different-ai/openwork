@@ -24,6 +24,7 @@ type OpenworkContextProjectorInput = {
     "sidebarOpen" | "sidePanelState" | "applicationMenuVisible" | "workspaceRightSidebarExpanded"
   >;
   panelSessions: PanelTabStore["sessions"];
+  pinnedSessionIds: string[];
   availableAffordances: OpenworkAffordanceDescriptor[];
 };
 
@@ -98,25 +99,27 @@ function panelTab(tab: PanelTabStore["sessions"][string]["tabs"][number]): Openw
 export function buildOpenworkContext(
   input: OpenworkContextProjectorInput,
 ): OpenworkContextSnapshot {
-  const primarySessionId = input.workbench.primarySessionId;
-  const splitSessionId = input.workbench.splitSessionId;
-  const layout: OpenworkConversationLayout = primarySessionId && splitSessionId
+  const primary = input.workbench.primary;
+  const secondary = input.workbench.secondary;
+  const layout: OpenworkConversationLayout = primary && secondary
     ? {
         kind: "split",
-        primarySessionId,
-        secondarySessionId: splitSessionId,
+        primarySessionId: primary.sessionId,
+        primaryWorkspaceId: primary.workspaceId,
+        secondarySessionId: secondary.sessionId,
+        secondaryWorkspaceId: secondary.workspaceId,
         focused: input.workbench.focusedPane,
       }
-    : primarySessionId
-      ? { kind: "single", sessionId: primarySessionId }
+    : primary
+      ? { kind: "single", workspaceId: primary.workspaceId, sessionId: primary.sessionId }
       : { kind: "empty" };
 
-  const focusedSessionId = input.workbench.focusedPane === "secondary" && splitSessionId
-    ? splitSessionId
-    : primarySessionId;
+  const focusedSessionId = input.workbench.focusedPane === "secondary" && secondary
+    ? secondary.sessionId
+    : primary?.sessionId ?? null;
   const panelOwnerSessionId = focusedSessionId && input.ui.sidePanelState[focusedSessionId]
     ? focusedSessionId
-    : primarySessionId;
+    : primary?.sessionId ?? null;
   const sessionPanelKind = panelOwnerSessionId
     ? input.ui.sidePanelState[panelOwnerSessionId] ?? null
     : null;
@@ -133,31 +136,34 @@ export function buildOpenworkContext(
     provider,
     state: { kind: screen.kind, route: input.route },
   }];
-  if (input.workbench.workspaceId) {
+  const visibleWorkspaces = [primary, secondary].flatMap((session) => session ? [session] : []);
+  for (const [index, session] of visibleWorkspaces.entries()) {
+    if (visibleWorkspaces.slice(0, index).some((candidate) => candidate.workspaceId === session.workspaceId)) continue;
     resources.push({
-      ref: `workspace:${input.workbench.workspaceId}`,
+      ref: `workspace:${session.workspaceId}`,
       kind: "workspace",
-      title: input.workbench.workspaceTitle ?? input.workbench.workspaceId,
+      title: session.workspaceTitle ?? session.workspaceId,
       provider,
-      state: { active: true },
+      state: { active: primary?.workspaceId === session.workspaceId, visible: true },
     });
   }
   for (const tab of input.workbench.tabs) {
-    const primary = tab.sessionId === primarySessionId;
-    const secondary = tab.sessionId === splitSessionId;
+    const inPrimary = tab.workspaceId === primary?.workspaceId && tab.sessionId === primary.sessionId;
+    const inSecondary = tab.workspaceId === secondary?.workspaceId && tab.sessionId === secondary.sessionId;
     resources.push({
-      ref: `session:${tab.sessionId}`,
+      ref: `session:${tab.workspaceId}:${tab.sessionId}`,
       kind: "session",
       title: tab.title ?? tab.sessionId,
       provider,
       state: {
         workspaceId: tab.workspaceId,
         open: true,
-        visible: primary || secondary,
-        pane: primary ? "primary" : secondary ? "secondary" : null,
-        focused: primary
+        visible: inPrimary || inSecondary,
+        pinned: input.pinnedSessionIds.includes(tab.sessionId),
+        pane: inPrimary ? "primary" : inSecondary ? "secondary" : null,
+        focused: inPrimary
           ? input.workbench.focusedPane === "primary"
-          : secondary && input.workbench.focusedPane === "secondary",
+          : inSecondary && input.workbench.focusedPane === "secondary",
       },
     });
   }
@@ -192,6 +198,7 @@ export function buildOpenworkContext(
     conversations: {
       tabs: input.workbench.tabs,
       layout,
+      pinnedSessionIds: input.pinnedSessionIds,
     },
     chrome: {
       sidebarOpen: input.ui.sidebarOpen,

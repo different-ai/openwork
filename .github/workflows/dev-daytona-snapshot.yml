@@ -248,8 +248,10 @@ jobs:
       # Per-push dev snapshots accumulate forever. Keep the pinned snapshot plus
       # the 5 newest and skip snapshots referenced by active sandboxes. Old
       # stopped/archived sandboxes do not block pruning because they keep their own disks.
-      # This also runs nightly as a pruning backstop when the snapshot already exists.
-      - name: Prune old dev snapshots
+      # This also runs nightly as a pruning backstop when the snapshot already exists,
+      # and additionally prunes tagged release snapshots (keep 20) so old releases
+      # drain even when no new release is published.
+      - name: Prune old dev and release snapshots
         if: steps.channel.outputs.enabled == 'true' && steps.resolve.outcome == 'success'
         shell: bash
         env:
@@ -290,5 +292,20 @@ jobs:
             echo
             echo '```'
             echo "$result"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          release_result="$(node scripts/prune-daytona-dev-snapshots.mjs \
+            ${DAYTONA_API_URL:+--api-url "$DAYTONA_API_URL"} \
+            --channel release \
+            --name-base "${DAYTONA_SNAPSHOT_NAME_BASE:-openwork}" \
+            --keep "$current_pin" \
+            --keep-count 20)"
+          echo "$release_result"
+          {
+            echo "### Daytona release snapshot prune"
+            echo
+            echo '```'
+            echo "$release_result"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

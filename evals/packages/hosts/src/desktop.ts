@@ -34,6 +34,8 @@ async function appendDesktopLog(error: unknown, handle: SurfaceHandle): Promise<
 export interface DesktopOptions {
   name?: string;
   mode?: "spawn" | "attach";
+  /** Explicit CDP endpoint for attach mode; falls back to OPENWORK_EVAL_CDP_URL. */
+  cdpUrl?: string;
   /**
    * Where this desktop runs. Defaults to the ambient host (`resolveHost()`).
    * Pass one from `localHost()` / `daytonaSandbox(id)` to place it explicitly —
@@ -47,6 +49,10 @@ export interface DesktopOptions {
     requireSignin?: boolean;
   };
   env?: Record<string, string>;
+  /** Root package script used for a source Electron launch. */
+  devCommand?: "dev" | "dev:electron";
+  /** Skip host-side sidecar/helper preparation for an explicitly constrained launch. */
+  prepareSharedResources?: boolean;
   /** Exact caller-owned Electron profile root, for restart scenarios. */
   profileDir?: string;
   timeoutMs?: number;
@@ -110,9 +116,9 @@ export async function desktop(opts: DesktopOptions = {}): Promise<DesktopHandle>
   let handle: SurfaceHandle;
 
   if (mode === "attach") {
-    const cdpUrl = process.env.OPENWORK_EVAL_CDP_URL?.trim();
+    const cdpUrl = opts.cdpUrl?.trim() || process.env.OPENWORK_EVAL_CDP_URL?.trim();
     if (!cdpUrl) {
-      throw new Error('desktop({ mode: "attach" }) requires OPENWORK_EVAL_CDP_URL to point at a running Electron app.');
+      throw new Error('desktop({ mode: "attach" }) requires cdpUrl or OPENWORK_EVAL_CDP_URL to point at a running Electron app.');
     }
     handle = {
       name: opts.name ?? "attached-app",
@@ -127,6 +133,8 @@ export async function desktop(opts: DesktopOptions = {}): Promise<DesktopHandle>
       profileDir: opts.profileDir,
       bootstrap: opts.bootstrap,
       env: opts.env,
+      devCommand: opts.devCommand,
+      prepareSharedResources: opts.prepareSharedResources,
     });
   }
 

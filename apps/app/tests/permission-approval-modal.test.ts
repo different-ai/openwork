@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { DomUtils, parseDocument } from "htmlparser2";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { PendingPermission } from "../src/app/types";
@@ -23,6 +24,12 @@ function pendingPermission(overrides: Partial<PendingPermission> = {}): PendingP
     protocol: "legacy",
     ...overrides,
   };
+}
+
+function buttonText(markup: string): string[] {
+  const document = parseDocument(markup);
+  return DomUtils.findAll((element) => element.name === "button", document.children)
+    .map((button) => DomUtils.textContent(button).replace(/\s+/g, " ").trim());
 }
 
 describe("permission approval modal helpers", () => {
@@ -76,11 +83,7 @@ describe("permission approval modal helpers", () => {
       }),
     );
 
-    const buttonLabels = Array.from(html.matchAll(/<button\b[\s\S]*?<\/button>/g)).map((match) =>
-      match[0].replace(/<[^>]*>/g, "").trim(),
-    );
-
-    expect(buttonLabels).toEqual(["Deny", "Allow once", "Allow for session"]);
+    expect(buttonText(html)).toEqual(["Deny", "Allow once", "Allow for session"]);
   });
 
   test("uses readable labels for generic permission titles", () => {
@@ -93,5 +96,18 @@ describe("permission approval modal helpers", () => {
 
     expect(html).toContain("Approve Todo write?");
     expect(html).not.toContain("Approve todowrite?");
+  });
+
+  test("identifies a permission requested by a child session", () => {
+    const html = renderToStaticMarkup(
+      React.createElement(PermissionApprovalPanel, {
+        permission: pendingPermission({ sessionID: "session-child" }),
+        sourceTitle: "Investigate the deployment failure",
+        respondPermission: () => {},
+      }),
+    );
+
+    expect(html).toContain('data-permission-source="child-session"');
+    expect(html).toContain("Requested by Investigate the deployment failure");
   });
 });

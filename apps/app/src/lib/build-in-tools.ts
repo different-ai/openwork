@@ -389,3 +389,12 @@ export type TaskToolPart = BuiltInDynamicToolPart<"task", TaskInput>;
 export function isTaskToolPart(part: ToolUIPart | DynamicToolUIPart): part is TaskToolPart {
   return part.type === "dynamic-tool" && part.toolName === "task";
 }
+
+/**
+ * The sub-agent session a task tool call runs in. Forwarded from the engine's
+ * task metadata by session sync (`callProviderMetadata.openwork.childSessionId`).
+ */
+export function taskChildSessionId(part: TaskToolPart): string | null {
+  const value = part.callProviderMetadata?.openwork?.childSessionId;
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}

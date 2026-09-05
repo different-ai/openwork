@@ -25,25 +25,36 @@ config:
     appId: ""
     clientId: ""
   public:
+    # Single public Den web origin. The chart passes this as DEN_BASE_URL; den-api
+    # derives Better Auth, CORS/trusted origins, web-app hosts, API defaults, and
+    # MCP resource defaults from it unless the compatibility overrides below are set.
     webOrigin: https://openwork.example.com
-    apiOrigin: https://api.openwork.example.com
-    mcpResourceUrl: https://api.openwork.example.com/mcp
+    # Compatibility overrides for split-origin or migration deployments.
+    apiOrigin: ""
+    mcpResourceUrl: ""
     mcpAdditionalResources: ""
     # Leave blank to keep External MCP URL SSRF protection enabled.
     # Set "1" only for trusted private-network MCP servers.
     allowPrivateMcpUrls: ""
     mcpClaimNamespace: ""
-    desktopDenBaseUrl: https://openwork.example.com
-    corsOrigins: https://openwork.example.com,https://api.openwork.example.com
-    betterAuthTrustedOrigins: https://openwork.example.com
-    webAppHosts: openwork.example.com
+    desktopDenBaseUrl: ""
+    corsOrigins: ""
+    betterAuthCookieDomain: ""
+    betterAuthTrustedOrigins: ""
+    webAppHosts: ""
     bootstrapAdminEmails: ""
     installLinksGatingEnabled: "false"
+    # Self-hosted Automations are opt-in. Hosted OpenWork Cloud enables them.
+    automationsEnabled: "false"
+    # Self-hosted Dashboards are opt-in. Hosted environments use the same Den flag.
+    dashboardsEnabled: "false"
+    # OpenWork Web is hosted-only by default. OpenWork Cloud enables it explicitly.
+    openworkWebEnabled: "false"
+    # Preserve the Den runtime for published legacy Desktops during upgrades.
+    # Set false only after every Desktop is v0.18.35+ to hard-disable Automations.
+    automationsRuntimeEnabled: "true"
     # Enable only after compatible Desktop MCP Apps hosts are deployed.
     generatedArtifactViewsEnabled: "false"
-    # Master opt-in for native and imported MCP Apps. Each organization must
-    # also be explicitly enabled in Den admin settings.
-    remoteMcpAppsEnabled: "false"
     connectLinkMode: exchange
     connectLinkKeyId: ""
     openworkAppConnectUrl: ""

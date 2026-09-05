@@ -1,17 +1,17 @@
 import { createDenDb } from "@openwork-ee/den-db"
 import { eq, sql } from "@openwork-ee/den-db/drizzle"
-import { CodemodeRunTable } from "@openwork-ee/den-db/schema"
+import { WorkflowRunTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { afterAll, beforeAll, expect, test } from "bun:test"
 import {
   codemodeCodeDigest,
-  listCodemodeRuns,
+  listWorkflowRuns,
   parseCodemodeToolCalls,
-  recordCodemodeRun,
-  type RecordCodemodeRunInput,
-} from "../src/codemode-runs.js"
+  recordWorkflowRun,
+  type RecordWorkflowRunInput,
+} from "../src/workflow-runs.js"
 
-const databaseUrl = "mysql://root:password@127.0.0.1:3306/openwork_test_codemode_runs"
+const databaseUrl = "mysql://root:password@127.0.0.1:3306/openwork_test_workflow_runs"
 const database = createDenDb({ databaseUrl, mode: "mysql" }).db
 const organizationId = createDenTypeId("organization")
 const otherOrganizationId = createDenTypeId("organization")
@@ -24,14 +24,14 @@ beforeAll(async () => {
     await database.execute(sql`select 1`)
   } catch (error) {
     databaseAvailable = false
-    console.warn("Skipping codemode run DB assertions because local MySQL is unavailable.", error)
+    console.warn("Skipping Workflow run DB assertions because local MySQL is unavailable.", error)
   }
 }, 20_000)
 
 afterAll(async () => {
   if (databaseAvailable) {
-    await database.delete(CodemodeRunTable).where(eq(CodemodeRunTable.organization_id, organizationId))
-    await database.delete(CodemodeRunTable).where(eq(CodemodeRunTable.organization_id, otherOrganizationId))
+    await database.delete(WorkflowRunTable).where(eq(WorkflowRunTable.organization_id, organizationId))
+    await database.delete(WorkflowRunTable).where(eq(WorkflowRunTable.organization_id, otherOrganizationId))
   }
 })
 
@@ -44,14 +44,14 @@ test("code digest is stable and sha256-prefixed", () => {
 test("tool call receipts accept MySQL JSON text and reject malformed entries", () => {
   expect(parseCodemodeToolCalls('[{"name":"tools.reports.echo"}]')).toEqual([{ name: "tools.reports.echo" }])
   expect(parseCodemodeToolCalls("[]")).toEqual([])
-  expect(() => parseCodemodeToolCalls('[{}]')).toThrow("codemode_run_tool_calls_invalid")
+  expect(() => parseCodemodeToolCalls('[{}]')).toThrow("workflow_run_tool_calls_invalid")
 })
 
 test("records and lists organization and member-scoped runs", async () => {
   if (!databaseAvailable) return
 
   const now = new Date()
-  const common: Omit<RecordCodemodeRunInput, "organizationId" | "orgMembershipId"> = {
+  const common: Omit<RecordWorkflowRunInput, "organizationId" | "orgMembershipId"> = {
     code: "return true",
     source: "adhoc",
     status: "succeeded",
@@ -60,13 +60,14 @@ test("records and lists organization and member-scoped runs", async () => {
     startedAt: now,
     finishedAt: now,
   }
-  await recordCodemodeRun(database, { ...common, organizationId, orgMembershipId: firstMemberId })
-  await recordCodemodeRun(database, { ...common, organizationId, orgMembershipId: secondMemberId })
-  await recordCodemodeRun(database, { ...common, organizationId: otherOrganizationId, orgMembershipId: firstMemberId })
+  const workflowRunId = await recordWorkflowRun(database, { ...common, organizationId, orgMembershipId: firstMemberId })
+  await recordWorkflowRun(database, { ...common, organizationId, orgMembershipId: secondMemberId })
+  await recordWorkflowRun(database, { ...common, organizationId: otherOrganizationId, orgMembershipId: firstMemberId })
 
-  const adminRuns = await listCodemodeRuns(database, { organizationId })
-  const memberRuns = await listCodemodeRuns(database, { organizationId, orgMembershipId: firstMemberId })
+  const adminRuns = await listWorkflowRuns(database, { organizationId })
+  const memberRuns = await listWorkflowRuns(database, { organizationId, orgMembershipId: firstMemberId })
 
+  expect(workflowRunId).toStartWith("wfr_")
   expect(adminRuns).toHaveLength(2)
   expect(memberRuns).toHaveLength(1)
   expect(memberRuns[0]?.org_membership_id).toBe(firstMemberId)

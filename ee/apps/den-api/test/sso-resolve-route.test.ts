@@ -154,6 +154,7 @@ test("login-options also requires BotID before deterministic auth-method routing
     error: "bot_verification_failed",
     message: "Request verification failed.",
   })
+  expect(response.headers.getSetCookie()).toContain("__Secure-better-auth.session_token=; Max-Age=0; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; HttpOnly; SameSite=Lax")
 })
 
 test("login-options returns SSO as the first step for verified SSO domains", async () => {

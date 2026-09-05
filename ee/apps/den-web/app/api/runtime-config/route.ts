@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { joinBaseUrl, readBaseUrlEnv } from "@openwork/types/url";
+import { denUrls } from "@openwork-ee/utils";
 import { DEFAULT_OPENWORK_WEB_URL } from "../../(den)/_lib/runtime-config";
 
 export const dynamic = "force-dynamic";
@@ -10,6 +11,10 @@ function readPublicRuntimeEnv(name: string) {
 
 function readOrgMode() {
   return readPublicRuntimeEnv("DEN_ORG_MODE") === "multi_org" ? "multi_org" : "single_org";
+}
+
+function readDenApiUrl() {
+  return readBaseUrlEnv(process.env, "DEN_API_PUBLIC_URL") ?? denUrls(process.env).api;
 }
 
 function readBooleanEnv(name: string, defaultValue: boolean) {
@@ -69,6 +74,7 @@ export async function GET() {
 
   return NextResponse.json(
     {
+      denApiUrl: readDenApiUrl(),
       openworkAppConnectUrl: readPublicRuntimeEnv("DEN_WEB_OPENWORK_APP_CONNECT_URL"),
       openworkWebUrl: readPublicRuntimeEnv("DEN_WEB_OPENWORK_WEB_URL") || DEFAULT_OPENWORK_WEB_URL,
       openworkAuthCallbackUrl: readPublicRuntimeEnv("DEN_WEB_OPENWORK_AUTH_CALLBACK_URL"),

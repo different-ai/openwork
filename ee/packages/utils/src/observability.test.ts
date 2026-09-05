@@ -60,7 +60,7 @@ describe("observability env contract", () => {
         OTEL_TRACES_SAMPLER: "parentbased_traceidratio",
         OTEL_TRACES_SAMPLER_ARG: "0.25",
       },
-      { serviceName: "den-worker-proxy" },
+      { serviceName: "den-api" },
     )
 
     expect(config.backend).toBe("otel")

@@ -1,8 +1,8 @@
 import { probeAppState } from "./app-state.ts";
-import { DEFAULT_CDP_PROBE_TIMEOUT_MS, connect, debuggerUrlFor, evaluate, pickAppTarget } from "./cdp.ts";
+import { callFunction, DEFAULT_CDP_PROBE_TIMEOUT_MS, connect, debuggerUrlFor, evaluate, pickAppTarget } from "./cdp.ts";
 import { firstPageTarget, targetById, waitForCdp } from "./targets.ts";
 import type { AppStateProbe } from "./app-state.ts";
-import type { CdpClient, CdpTarget, EvaluateOptions } from "./cdp.ts";
+import type { CdpClient, CdpFunctionArgument, CdpTarget, EvaluateOptions } from "./cdp.ts";
 
 export type SurfaceKind = "electron" | "chrome";
 
@@ -135,6 +135,20 @@ export async function evaluateOnSurface(
   return readOnSurface(
     surface,
     (client, attemptTimeoutMs) => evaluate(client, expression, { ...evaluateOptions, timeoutMs: attemptTimeoutMs }),
+    { timeoutMs: Math.max(1, timeoutMs), reattachAttempts },
+  );
+}
+
+export async function callFunctionOnSurface(
+  surface: Surface,
+  functionDeclaration: string,
+  args: readonly CdpFunctionArgument[] = [],
+  opts: EvaluateOptions & { reattachAttempts?: number } = {},
+): Promise<unknown> {
+  const { reattachAttempts = 1, timeoutMs = DEFAULT_CDP_PROBE_TIMEOUT_MS, ...callOptions } = opts;
+  return readOnSurface(
+    surface,
+    (client, attemptTimeoutMs) => callFunction(client, functionDeclaration, args, { ...callOptions, timeoutMs: attemptTimeoutMs }),
     { timeoutMs: Math.max(1, timeoutMs), reattachAttempts },
   );
 }

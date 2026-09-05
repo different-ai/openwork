@@ -13,7 +13,6 @@ import { useDenFlow } from "../../_providers/den-flow-provider";
 import { getErrorMessage, getOrgLimitError, getOrgPaymentRequiredError, getRequestError, isReauthRequiredError, requestJson, WORKSPACE_REAUTH_SECURITY_MESSAGE } from "../../_lib/den-flow";
 import { ReauthDialog } from "../../_components/reauth-dialog";
 import {
-  PENDING_ORG_SELECTION_STORAGE_KEY,
   type DenOrgContext,
   type DenOrgSummary,
   getOrgDashboardRoute,
@@ -21,9 +20,8 @@ import {
   parseOrgContextPayload,
   parseOrgListPayload,
   roleIncludesCanonicalRole,
-  shouldOfferOrgSelection,
-  shouldRequireOrgSelection,
 } from "../../_lib/den-org";
+import { shouldOpenOrgSelection } from "../../_lib/org-selection";
 import { ORG_SCOPE_HEADER, OrganizationNotFoundError, setRequestOrgScope } from "../../_lib/org-scope";
 
 type OrgDashboardContextValue = {
@@ -32,7 +30,7 @@ type OrgDashboardContextValue = {
   orgDirectory: DenOrgSummary[];
   activeOrg: DenOrgSummary | null;
   orgContext: DenOrgContext | null;
-  orgSelectionRequired: boolean;
+  orgSelectionOpen: boolean;
   orgBusy: boolean;
   orgError: string | null;
   mutationBusy: string | null;
@@ -74,16 +72,6 @@ const OrgDashboardContext = createContext<OrgDashboardContextValue | null>(null)
 const ORG_SETTINGS_PATH = "/dashboard/org-settings";
 const ORG_SETTINGS_UPDATED_MESSAGE = "Workspace settings updated.";
 
-function consumePendingOrgSelectionRequest(): boolean {
-  if (typeof window === "undefined") {
-    return false;
-  }
-
-  const pending = window.sessionStorage.getItem(PENDING_ORG_SELECTION_STORAGE_KEY) === "1";
-  window.sessionStorage.removeItem(PENDING_ORG_SELECTION_STORAGE_KEY);
-  return pending;
-}
-
 export function OrgDashboardProvider({
   children,
 }: {
@@ -94,7 +82,7 @@ export function OrgDashboardProvider({
   const { user, sessionHydrated, signOut, refreshWorkers, workersLoadedOnce, runtimeConfig, runtimeConfigLoaded } = useDenFlow();
   const [orgDirectory, setOrgDirectory] = useState<DenOrgSummary[]>([]);
   const [orgContext, setOrgContext] = useState<DenOrgContext | null>(null);
-  const [orgSelectionRequired, setOrgSelectionRequired] = useState(false);
+  const [orgSelectionOpen, setOrgSelectionOpen] = useState(false);
   const [orgBusy, setOrgBusy] = useState(false);
   const [orgError, setOrgError] = useState<string | null>(null);
   const [mutationBusy, setMutationBusy] = useState<string | null>(null);
@@ -222,13 +210,13 @@ export function OrgDashboardProvider({
       setRequestOrgScope(null);
       setOrgDirectory([]);
       setOrgContext(null);
-      setOrgSelectionRequired(false);
+      setOrgSelectionOpen(false);
       setOrgError(null);
       return;
     }
 
     setOrgBusy(true);
-    setOrgSelectionRequired(false);
+    setOrgSelectionOpen(false);
     setOrgError(null);
 
     try {
@@ -267,18 +255,14 @@ export function OrgDashboardProvider({
 
       setRequestOrgScope(targetOrg.id);
 
-      const shouldShowOrgSelection =
-        !isSingleOrgMode &&
-        (
-          shouldRequireOrgSelection(directoryPayload.orgs) ||
-          (consumePendingOrgSelectionRequest() && shouldOfferOrgSelection(directoryPayload.orgs))
-        );
-
-      if (shouldShowOrgSelection) {
+      // Single-org deployments never surface the picker; otherwise the
+      // org-selection module decides from the directory plus any pending
+      // sign-in request.
+      if (!isSingleOrgMode && shouldOpenOrgSelection(directoryPayload.orgs)) {
         setRequestOrgScope(null);
         setOrgDirectory(directoryPayload.orgs);
         setOrgContext(null);
-        setOrgSelectionRequired(true);
+        setOrgSelectionOpen(true);
         return;
       }
 
@@ -315,7 +299,7 @@ export function OrgDashboardProvider({
     if (directoryPayload.orgs.length === 0) {
       setOrgDirectory([]);
       setOrgContext(null);
-      setOrgSelectionRequired(false);
+      setOrgSelectionOpen(false);
       setOrgError(null);
       router.replace("/organization");
       return;
@@ -323,7 +307,7 @@ export function OrgDashboardProvider({
 
     setOrgDirectory(directoryPayload.orgs.map((entry) => ({ ...entry, isActive: false })));
     setOrgContext(null);
-    setOrgSelectionRequired(true);
+    setOrgSelectionOpen(true);
     setOrgError(null);
   }
 
@@ -494,7 +478,7 @@ export function OrgDashboardProvider({
         const context = await loadOrgContext(targetOrg.id, shouldRefreshRolesForPage(targetOrg));
         setOrgDirectory((current) => current.map((entry) => ({ ...entry, isActive: entry.id === context.organization.id })));
         setOrgContext(context);
-        setOrgSelectionRequired(false);
+        setOrgSelectionOpen(false);
         await refreshWorkers({ keepSelection: false, quiet: workersLoadedOnce });
 
         router.replace(getOrgDashboardRoute(context.organization.slug));
@@ -919,7 +903,7 @@ export function OrgDashboardProvider({
     orgDirectory,
     activeOrg,
     orgContext,
-    orgSelectionRequired,
+    orgSelectionOpen,
     orgBusy,
     orgError,
     mutationBusy,

@@ -1,38 +1,40 @@
 import { expect, test } from "bun:test"
-import { deriveDimensionValue } from "../src/routes/telemetry/dimension-value.js"
+import { deriveDimensionValue } from "@openwork-ee/telemetry"
 
-const dimensionValuePattern = /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$/
+const VALUE_CONTRACT = /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$/
 
-test("deriveDimensionValue is deterministic", () => {
-  expect(deriveDimensionValue("project", "Billing API")).toBe(deriveDimensionValue("project", "Billing API"))
+test("same type and label always derive the same value", () => {
+  const first = deriveDimensionValue("project", "Billing API")
+  const second = deriveDimensionValue("project", "Billing API")
+  expect(first).toBe(second)
 })
 
-test("deriveDimensionValue ignores label trim and case", () => {
-  expect(deriveDimensionValue("project", "Billing API")).toBe(deriveDimensionValue("project", "  billing api  "))
+test("derivation is insensitive to label whitespace and casing", () => {
+  expect(deriveDimensionValue("project", "  billing api  ")).toBe(deriveDimensionValue("project", "Billing API"))
 })
 
-test("deriveDimensionValue includes a slug prefix", () => {
-  expect(deriveDimensionValue("project", "Billing API").startsWith("billing-api-")).toBe(true)
+test("derived values start with a readable slug of the label", () => {
+  expect(deriveDimensionValue("project", "Billing API")).toStartWith("billing-api-")
 })
 
-test("deriveDimensionValue changes for different labels", () => {
+test("different labels derive different values", () => {
   expect(deriveDimensionValue("project", "Billing API")).not.toBe(deriveDimensionValue("project", "Support API"))
 })
 
-test("deriveDimensionValue changes for different types", () => {
+test("the dimension type participates in derivation", () => {
   expect(deriveDimensionValue("project", "Billing API")).not.toBe(deriveDimensionValue("team", "Billing API"))
 })
 
-test("deriveDimensionValue slugifies accented labels", () => {
-  expect(deriveDimensionValue("project", "Café Ops").startsWith("cafe-ops-")).toBe(true)
+test("accented labels fold to ascii slugs", () => {
+  expect(deriveDimensionValue("project", "Café Ops")).toStartWith("cafe-ops-")
 })
 
-test("deriveDimensionValue falls back for symbol-only labels", () => {
-  expect(deriveDimensionValue("project", "!!!").startsWith("dimension-")).toBe(true)
+test("labels with no usable characters fall back to a generic slug", () => {
+  expect(deriveDimensionValue("project", "!!!")).toStartWith("dimension-")
 })
 
-test("deriveDimensionValue returns a valid bounded dimension value", () => {
+test("derived values satisfy the dimension value contract at any label length", () => {
   const value = deriveDimensionValue("project", "A".repeat(300))
-  expect(value).toMatch(dimensionValuePattern)
+  expect(value).toMatch(VALUE_CONTRACT)
   expect(value.length).toBeLessThanOrEqual(128)
 })

@@ -19,3 +19,9 @@ OpenWork can be deployed inside your VPC or on-prem, with SSO, audit logs, and c
 - Rollout plan and support model
 
 Prefer email? Reach us at [team@openworklabs.com](mailto:team@openworklabs.com?subject=Enterprise%20deployment).
+
+## How desktop deployment works
+
+Rolling OpenWork out to a fleet does not involve a custom installer build. You deploy the standard **OpenWork Enterprise binary** — a dedicated distribution that requires sign-in and administrator activation, on its own update channel — and optionally push a single `desktop-bootstrap.json` file through your MDM so every machine targets your Den server on first launch. Certificates come from the OS trust stores you already manage, and desktop policies are delivered by the server after sign-in, so no MDM scripting is needed beyond that one file.
+
+See [Enterprise desktop deployment](/start-here/enterprise-desktop-deployment) for the full reference.

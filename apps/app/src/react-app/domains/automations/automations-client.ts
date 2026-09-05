@@ -6,6 +6,7 @@ export type AutomationsClient = Pick<
   | "archiveAutomation"
   | "cancelAutomationRun"
   | "createAutomation"
+  | "createCloudAutomation"
   | "deactivateAutomation"
   | "getAutomation"
   | "getAutomationRun"

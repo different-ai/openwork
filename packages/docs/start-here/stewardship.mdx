@@ -1,0 +1,60 @@
+---
+title: "Stewardship"
+description: "The promises behind OpenWork's open-core split: what stays open, what can move between tiers, and how the MIT conversion works."
+---
+
+OpenWork is an open-core product: the desktop app and core platform are MIT,
+and the `ee/` directory (OpenWork Den, the org control plane) is
+source-available under the
+[OpenWork EE License](https://github.com/different-ai/openwork/blob/dev/ee/LICENSE).
+That split only works if you can trust how we steward it, so we make these
+promises in public.
+
+## Our promises
+
+1. **The MIT core stays MIT.** We do not relicense code that has shipped under
+   MIT. Features do not move from the MIT core into `ee/` retroactively — a
+   feature you already have under MIT is yours under MIT.
+2. **Released versions keep their license.** Every release is governed by the
+   license text it shipped with. License changes apply to future releases
+   only, never to code you already deployed.
+3. **Every EE release becomes MIT after two years.** The EE License contains
+   an irrevocable grant: each version of the `ee/` code converts to MIT on
+   the second anniversary of its public release. The grant is written into
+   the license itself and requires no future action or approval from us —
+   your long-term rights to the software never depend on anyone's roadmap,
+   including ours.
+4. **The free grants are floor commitments.** Free production use for
+   organizations of up to 5 users (core features), free 30-day evaluation at
+   any scale with all features (extendable in writing), and free development
+   and testing use are commitments we intend to keep. If the boundaries ever
+   change, the change applies to future releases only (see promise 2).
+5. **Paid tiers do not shrink mid-term.** If we move a capability between
+   tiers, the change is prospective and never removes a feature from your
+   current paid plan during a paid term.
+6. **The enterprise source stays readable.** We publish the `ee/` source so
+   security teams can audit exactly what they deploy, before they deploy it.
+
+## Trademarks and white-labeling
+
+The OpenWork name, logo, and product names are trademarks of Different AI,
+Inc. The EE License and MIT license grant rights to the *code*, not the
+brand:
+
+- **Allowed without permission:** factually identifying that you use or built
+  on OpenWork ("powered by OpenWork", "built with OpenWork"), unmodified use
+  of the app with its own branding, and nominative references in
+  documentation, reviews, and talks.
+- **Requires an Enterprise plan (internal white-labeling):** replacing OpenWork
+  product names, logos, or accent branding with your own inside the deployed
+  product — for example a custom app name, logo, or brand color for your
+  organization's workspace.
+- **Requires a separate written agreement (external resale):** distributing,
+  operating as a managed service, or reselling a white-labeled deployment to
+  third parties under your branding.
+- **Never allowed:** implying that Different AI, Inc. endorses your product
+  or service, using the marks in a confusingly similar product name, or
+  removing copyright and license notices from the source.
+
+Questions about a use case the above does not cover:
+[sales@openworklabs.com](mailto:sales@openworklabs.com).

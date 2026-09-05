@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
 import type * as React from "react";
+import { DesktopUpdateButton } from "../state/desktop-updater-provider";
 import { ChevronDown, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -19,20 +20,16 @@ import {
 } from "@/components/ui/sidebar";
 import { t } from "../../../../i18n";
 import { NotificationBell } from "../../../shell/notification-center";
-import { usePlatform } from "../../../kernel/platform";
 import type { SettingsTab } from "../../../../app/types";
 import {
   SettingsPage,
   SettingsBetaBadge,
   SettingsSidebar,
-  getCloudSettingsTabs,
-  getGlobalSettingsTabs,
   getSettingsTabIcon,
   getSettingsTabLabel,
-  getWorkspaceSettingsTabs,
   isSettingsTabBeta,
+  useSettingsNavGroups,
 } from "./settings-page";
-import { useFeatureFlagsPreferences } from "../state/feature-flags-preferences";
 
 type SettingsPageFrameProps = Omit<React.ComponentProps<typeof SettingsPage>, "children">;
 
@@ -113,11 +110,11 @@ export function SettingsShell(props: SettingsShellProps) {
           workspaces={props.workspaces}
           onSelectWorkspace={props.onSelectWorkspace}
         />
-        <SidebarInset className="min-h-0 overflow-hidden bg-background mac:bg-background/80 mac:[&_header]:transition-[padding-left] mac:[&_header]:duration-200 mac:[&_header]:ease-linear mac:peer-data-[state=collapsed]:[&_header]:pl-16 [&_header]:pl-16 md:[&_header]:pl-6">
+        <SidebarInset className="min-h-0 overflow-hidden bg-background mac:bg-background/80 mac:[&_header]:transition-[padding-left] mac:[&_header]:duration-200 mac:[&_header]:ease-linear mac:peer-data-[state=collapsed]:[&_header]:pl-16 [&_header]:pl-16 lg:[&_header]:pl-6">
           <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
             <header className="shrink-0 flex h-10 items-center justify-between border-b border-dls-border px-4 md:px-6 mac:titlebar-drag">
               <div className="flex min-w-0 items-center gap-3">
-                <SidebarTrigger className="mac:titlebar-no-drag md:hidden" />
+                <SidebarTrigger className="mac:titlebar-no-drag lg:hidden" />
                 {props.headerLeadingSlot}
                 <div className="truncate text-[15px] font-semibold text-dls-text">{title}</div>
                 <span className="hidden truncate text-[13px] text-dls-secondary lg:inline">
@@ -134,12 +131,13 @@ export function SettingsShell(props: SettingsShellProps) {
                   </span>
                 ) : null}
               </div>
-              <div className="flex items-center gap-1.5 text-gray-10 mac:titlebar-no-drag">
+              <div className="flex shrink-0 items-center gap-1.5 text-gray-10 mac:titlebar-no-drag">
+                <DesktopUpdateButton />
                 <NotificationBell />
                 <Button
                   variant="ghost"
                   type="button"
-                  className="flex size-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text md:hidden"
+                  className="flex size-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text lg:hidden"
                   onClick={props.onClose}
                   title={t("dashboard.close_settings")}
                   aria-label={t("dashboard.close_settings")}
@@ -164,14 +162,13 @@ export function SettingsShell(props: SettingsShellProps) {
 }
 
 function SettingsSectionMenu(props: Pick<SettingsPageFrameProps, "activeTab" | "developerMode" | "onSelectTab">) {
-  const platform = usePlatform();
-  const { memoryEnabled } = useFeatureFlagsPreferences();
+  const groups = useSettingsNavGroups(props.developerMode);
   const sections: Array<{ label: string | null; tabs: SettingsTab[] }> = [
-    { label: null, tabs: ["general"] },
-    { label: t("settings.group_workspace"), tabs: getWorkspaceSettingsTabs() },
-    { label: t("settings.group_global"), tabs: getGlobalSettingsTabs(props.developerMode, platform.capabilities) },
-    { label: t("settings.group_cloud"), tabs: getCloudSettingsTabs(memoryEnabled) },
-  ];
+    { label: null, tabs: groups.hub },
+    { label: t("settings.group_workspace"), tabs: groups.workspace },
+    { label: t("settings.group_global"), tabs: groups.global },
+    { label: t("settings.group_cloud"), tabs: groups.cloud },
+  ].filter((section) => section.tabs.length > 0);
   const ActiveIcon = getSettingsTabIcon(props.activeTab);
 
   return (

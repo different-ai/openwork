@@ -3,23 +3,25 @@ title: "Connectors, skills, and plugins"
 description: "Use connectors for systems and plugins for the skills that make a system usable"
 ---
 
-OpenWork gives agents three building blocks. The connector reaches the system; the skill is the playbook; the plugin is the bundle.
+OpenWork gives agents a small set of building blocks. The connector reaches the system; the skill is the playbook; the plugin is the bundle; the Library is where you see what you have.
 
 ## Choose the right unit
 
 | Use | Means | Reach for it when |
 | --- | --- | --- |
-| Connector | How OpenWork reaches mail, calendar, CRM, or your ticketing system. | The agent needs to act in that system after you connect it once. |
+| Connector | An MCP service your organization adds standalone, without wrapping it in a plugin. | The agent needs to act in that system after you connect it once. |
+| Connection | Your own signed-in instance of a connector, one per user. | You sign in so the agent acts as you in that system. |
 | Skill | Written instructions the agent loads when a task matches. | One repeatable way of doing work needs a playbook. |
-| Plugin | A bundle OpenWork can install or distribute as one thing. | Several related skills should travel together. |
+| Plugin | A bundle — skills, MCP servers, and other components packaged and distributed as one thing. | Several related pieces should travel together. |
+| Library | The list of active elements you have access to, in the desktop app and the Cloud dashboard. | You want to see or manage what is already available to you. |
 
-MCP is the open standard underneath many connectors, but day to day you can think in terms of apps, connectors, skills, and plugins.
+MCP is the open standard underneath many connectors, and the [OpenWork MCP Gateway](/cloud/run-in-the-cloud/cloud-mcp) is how all of it reaches your agent — but day to day you can think in terms of connectors, skills, plugins, and your Library.
 
 ## Connect the system first
 
 Use connectors for the apps themselves. In the desktop app, start in `Settings` > `OpenWork Connect`; for the click-by-click flow, see [Connect your services](/start-here/connect-your-stack/connect-services).
 
-Everything your agent can use is listed in `Settings` > `Extensions`, under `Available apps` and `Your apps`. Use `Add Custom App` to connect something we do not list yet.
+Everything your agent can use is listed in `Settings` > `Library`, under `Available apps` and `Your apps`. Use `Add Custom App` to connect something we do not list yet.
 
 ## Add skills when the connector is thin
 

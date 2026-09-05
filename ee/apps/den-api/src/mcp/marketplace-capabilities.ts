@@ -29,7 +29,7 @@ import { resolvePluginArchGrantRole } from "../routes/org/plugin-system/access.j
 import { openworkOrganizationConnectionsUrl, openworkYourConnectionsUrl } from "./connection-navigation.js"
 import { parseCodemodeScriptPayload, type CodemodeScriptInputIssue } from "./codemode-script-object.js"
 import { type BuiltCodemodeTools } from "./codemode-tools.js"
-import { executeSavedCodemodeScript } from "./saved-codemode-script-service.js"
+import { executeWorkflow } from "./workflow-service.js"
 import { listPluginMcpRequirementBindings, type PluginMcpRequirementBindingRow } from "./plugin-mcp-requirement-bindings.js"
 import { scoreText, tokenize } from "./search.js"
 import type { McpMemberIdentity } from "./external-capabilities.js"
@@ -91,6 +91,11 @@ type MarketplaceCapabilityRow = {
   marketplace: typeof MarketplaceTable.$inferSelect | null
   plugin: typeof PluginTable.$inferSelect
 }
+
+function canonicalConfigObjectType(objectType: ConfigObjectType): ConfigObjectType {
+  return objectType === "script" ? "workflow" : objectType
+}
+
 type GrantRow = {
   orgMembershipId: DenTypeId<"member"> | null
   orgWide: boolean
@@ -195,7 +200,7 @@ export type MarketplaceCapabilityExecuteResult =
 
 export type MarketplaceConfigObjectExecutionMode = "codemode" | "desktop_only" | "instructional" | "mcp"
 
-export type AccessibleSavedCodemodeScript = {
+export type AccessibleWorkflow = {
   pluginId: string
   configObjectId: string
   configObjectVersionId: string
@@ -337,7 +342,7 @@ function contentNotSyncedHint(row: MarketplaceCapabilityRow): string {
 }
 
 function unsupportedScriptHint(row: MarketplaceCapabilityRow, message: string): string {
-  return `Marketplace plugin "${row.plugin.name}" saved script "${row.configObject.title}" cannot run: ${message}`
+  return `Marketplace plugin "${row.plugin.name}" Workflow "${row.configObject.title}" cannot run: ${message}`
 }
 
 function summaryFor(row: MarketplaceCapabilityRow): string {
@@ -363,7 +368,7 @@ function scoreMarketplaceRow(row: MarketplaceCapabilityRow, queryTokens: string[
 
 function basePayload(row: MarketplaceCapabilityRow): MarketplaceCapabilityExecutePayload {
   return {
-    kind: row.configObject.objectType,
+    kind: canonicalConfigObjectType(row.configObject.objectType),
     plugin: row.plugin.name,
     marketplace: row.marketplace ? row.marketplace.name : null,
     name: row.configObject.title,
@@ -685,7 +690,7 @@ export async function listAccessibleMarketplaceCapabilityReferences(input: {
     references.set(key, {
       configObjectId: row.configObject.id,
       marketplaceId,
-      objectType: row.configObject.objectType,
+      objectType: canonicalConfigObjectType(row.configObject.objectType),
       pluginId: row.plugin.id,
     })
   }
@@ -810,6 +815,7 @@ export function marketplaceConfigObjectExecutionMode(objectType: ConfigObjectTyp
     case "skill":
       return "instructional"
     case "script":
+    case "workflow":
       return "codemode"
     case "app":
     case "hook":
@@ -1406,7 +1412,6 @@ function commandArguments(body: unknown): string {
 }
 
 export async function searchMarketplaceCapabilities(input: {
-  codemodeEnabled?: boolean
   enabled?: boolean
   limit?: number
   member: McpMemberIdentity | null
@@ -1435,8 +1440,8 @@ export async function searchMarketplaceCapabilities(input: {
   const matchesByName = new Map<string, MarketplaceCapabilityMatch>()
 
   for (const row of rows) {
-    if (row.configObject.objectType === "script" && input.codemodeEnabled !== true) continue
-    if (input.objectTypes && !input.objectTypes.includes(row.configObject.objectType)) continue
+    const objectType = canonicalConfigObjectType(row.configObject.objectType)
+    if (input.objectTypes && !input.objectTypes.includes(objectType)) continue
     const score = scoreMarketplaceRow(row, queryTokens)
     if (score <= 0) continue
     const name = buildMarketplaceCapabilityName(row.plugin.id, row.configObject.id)
@@ -1449,16 +1454,16 @@ export async function searchMarketplaceCapabilities(input: {
       summary: summaryFor(row),
       pathParams: [],
       queryParams: [],
-      hasBody: row.configObject.objectType === "command" || row.configObject.objectType === "script",
-      kind: row.configObject.objectType,
+      hasBody: objectType === "command" || objectType === "workflow",
+      kind: objectType,
       plugin: row.plugin.name,
       ...(row.marketplace ? { marketplace: row.marketplace.name } : {}),
     }
-    if (row.configObject.objectType === "tool") {
+    if (objectType === "tool") {
       match.status = "needs_install"
       match.hint = objectHint(row)
     }
-    if (marketplaceConfigObjectExecutionMode(row.configObject.objectType) === "instructional") {
+    if (marketplaceConfigObjectExecutionMode(objectType) === "instructional") {
       const requirements = requirementStatusesByPluginId.get(row.plugin.id) ?? []
       const requirementStatus = aggregateRequirementStatus(requirements)
       const blockingRequirement = firstBlockingRequirement(requirements)
@@ -1479,10 +1484,10 @@ export async function searchMarketplaceCapabilities(input: {
     .slice(0, input.limit ?? 5)
 }
 
-export async function listAccessibleSavedCodemodeScripts(input: {
+export async function listAccessibleWorkflows(input: {
   member: McpMemberIdentity
   organizationId: string
-}): Promise<AccessibleSavedCodemodeScript[]> {
+}): Promise<AccessibleWorkflow[]> {
   const organizationId = normalizeDenTypeId("organization", input.organizationId)
   if (!await getActiveMember(organizationId, input.member)) return []
   const rows = await filterVisibleRows({
@@ -1490,16 +1495,16 @@ export async function listAccessibleSavedCodemodeScripts(input: {
     member: input.member,
     rows: await listActiveCapabilityRows(organizationId),
   })
-  const scripts: AccessibleSavedCodemodeScript[] = []
+  const workflows: AccessibleWorkflow[] = []
   const seen = new Set<string>()
   for (const row of rows) {
-    if (row.configObject.objectType !== "script" || seen.has(row.configObject.id)) continue
+    if (canonicalConfigObjectType(row.configObject.objectType) !== "workflow" || seen.has(row.configObject.id)) continue
     const version = await latestVersion(row.configObject.id, organizationId)
     if (!version) continue
     const parsed = parseCodemodeScriptPayload(version.normalizedPayloadJson)
     if (!parsed.ok) continue
     seen.add(row.configObject.id)
-    scripts.push({
+    workflows.push({
       pluginId: row.plugin.id,
       configObjectId: row.configObject.id,
       configObjectVersionId: version.id,
@@ -1510,13 +1515,12 @@ export async function listAccessibleSavedCodemodeScripts(input: {
       requiredCapabilities: parsed.payload.requiredCapabilities,
     })
   }
-  return scripts.sort((left, right) => left.title.localeCompare(right.title))
+  return workflows.sort((left, right) => left.title.localeCompare(right.title))
 }
 
 export async function executeMarketplaceCapability(input: {
   buildTools?: () => Promise<BuiltCodemodeTools>
   body?: unknown
-  codemodeEnabled?: boolean
   configObjectId: string
   configObjectVersionId?: string
   automationRunId?: DenTypeId<"automationRun">
@@ -1548,10 +1552,6 @@ export async function executeMarketplaceCapability(input: {
   if (rows.length === 0) {
     return { ok: false, error: "unknown_capability", message: "No such capability." }
   }
-  if (rows[0]?.configObject.objectType === "script" && input.codemodeEnabled !== true) {
-    return { ok: false, error: "unknown_capability", message: "No such capability." }
-  }
-
   const memberRow = await getActiveMember(organizationId, input.member)
   if (!memberRow) {
     return { ok: false, error: "forbidden", message: "No active org membership for this token." }
@@ -1576,8 +1576,8 @@ export async function executeMarketplaceCapability(input: {
     }
   }
 
-  if (row.configObject.objectType === "script") {
-    const execution = await executeSavedCodemodeScript({
+  if (canonicalConfigObjectType(row.configObject.objectType) === "workflow") {
+    const execution = await executeWorkflow({
       database: db,
       organizationId,
       orgMembershipId: input.member.orgMembershipId,

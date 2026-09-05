@@ -4,7 +4,6 @@ import { useState, useSyncExternalStore, type FormEvent, type ReactNode } from "
 
 import {
   buildDenAuthUrl,
-  createDenClient,
   readDenBootstrapConfig,
   setDenBootstrapConfig,
 } from "@/app/lib/den";
@@ -84,30 +83,26 @@ function EnterpriseActivationPage() {
     setServerError(null);
     setStatusMessage("Finishing OpenWork Enterprise sign-in…");
     try {
-      // Persist the confirmed server before exchanging so the session is
-      // scoped to this organization's base URL and survives the provider
-      // remount that follows activation.
-      await setDenBootstrapConfig({ baseUrl, requireSignin: true });
+      // The confirmed server, session, and activation stamp commit in one
+      // handoff transaction, so activation can never leave the bootstrap and
+      // the session pointing at different servers.
       const result = await exchangeHandoffAndSignIn(grant, {
         baseUrl,
-        client: createDenClient({ baseUrl }),
         desktopInitiated: true,
         fallbackErrorMessage: "OpenWork Enterprise did not return a session token.",
+        bootstrap: {
+          requireSignin: true,
+          enterpriseActivation: {
+            activatedAt: new Date().toISOString(),
+            denBaseUrl: baseUrl,
+          },
+        },
       });
       if (!result.ok) {
         setStatusMessage(null);
         setAuthError(result.error);
         return;
       }
-
-      await setDenBootstrapConfig({
-        baseUrl,
-        requireSignin: true,
-        enterpriseActivation: {
-          activatedAt: new Date().toISOString(),
-          denBaseUrl: baseUrl,
-        },
-      });
     } catch (error) {
       setStatusMessage(null);
       setAuthError(

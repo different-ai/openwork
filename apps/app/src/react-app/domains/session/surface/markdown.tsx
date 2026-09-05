@@ -8,6 +8,7 @@ import {
   renderMarkdownHtml,
 } from "@/components/markdown/markdown-primitive";
 import { useSelectionStableValue } from "@/components/markdown/selection-stability";
+import { useMermaidEnhancer } from "@/components/markdown/mermaid";
 
 function MarkdownBlockInner(props: {
   text: string;
@@ -40,6 +41,7 @@ function MarkdownBlockInner(props: {
   const candidateHtml = !props.streaming && highlightedHtml?.text === props.text ? highlightedHtml.html : syncHtml;
   const html = useSelectionStableValue(rootRef, candidateHtml);
   const stableInnerHtml = useMemo(() => ({ __html: html }), [html]);
+  useMermaidEnhancer(rootRef, html, !props.streaming);
 
   useEffect(() => {
     const root = rootRef.current;

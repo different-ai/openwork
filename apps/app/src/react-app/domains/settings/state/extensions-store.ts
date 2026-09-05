@@ -1,5 +1,7 @@
 import * as React from "react";
 
+import { desktopRestrictionNotice, type DesktopAppRestrictionChecker } from "../../../../app/cloud/desktop-app-restrictions";
+
 import { applyEdits, modify } from "jsonc-parser";
 
 import { t } from "../../../../i18n";
@@ -350,6 +352,7 @@ function toProjectPluginListEntries(
 }
 
 export function createExtensionsStore(options: {
+  checkDesktopAppRestriction: DesktopAppRestrictionChecker;
   client: () => Client | null;
   projectDir: () => string;
   selectedWorkspaceId: () => string;
@@ -1231,10 +1234,21 @@ export function createExtensionsStore(options: {
     }
   }
 
+  // Only manual local changes enter these handlers. Assigned Cloud inventory
+  // continues to reconcile through its separate refresh/sync paths.
+  function extensionMutationDenied() {
+    if (!options.checkDesktopAppRestriction({ restriction: "allowManageExtensions" })) return false;
+    options.setError(desktopRestrictionNotice("allowManageExtensions"));
+    return true;
+  }
+
   async function importCloudOrgPlugin(
     marketplaceId: string | null,
     plugin: DenOrgPlugin,
   ): Promise<{ ok: boolean; message: string; warnings: string[]; files: CloudImportedPluginFile[] }> {
+    if (extensionMutationDenied()) {
+      return { ok: false, message: desktopRestrictionNotice("allowManageExtensions"), warnings: [], files: [] };
+    }
     options.setBusy(true);
     options.setError(null);
     setStateField("cloudOrgMarketplacesStatus", null);
@@ -1292,6 +1306,7 @@ export function createExtensionsStore(options: {
   }
 
   async function installClaudePlugin(url: string): Promise<{ ok: boolean; message: string }> {
+    if (extensionMutationDenied()) return { ok: false, message: desktopRestrictionNotice("allowManageExtensions") };
     options.setBusy(true);
     options.setError(null);
     try {
@@ -1316,6 +1331,7 @@ export function createExtensionsStore(options: {
   }
 
   async function removeCloudOrgPlugin(pluginId: string): Promise<{ ok: boolean; message: string }> {
+    if (extensionMutationDenied()) return { ok: false, message: desktopRestrictionNotice("allowManageExtensions") };
     options.setBusy(true);
     options.setError(null);
     setStateField("cloudOrgMarketplacesStatus", null);
@@ -1740,6 +1756,7 @@ export function createExtensionsStore(options: {
   }
 
   async function addPlugin(pluginNameOverride?: string) {
+    if (extensionMutationDenied()) return;
     const pluginName = (pluginNameOverride ?? snapshot.pluginInput).trim();
     const isManualInput = pluginNameOverride == null;
     const triggerName = stripPluginVersion(pluginName);
@@ -1831,6 +1848,7 @@ export function createExtensionsStore(options: {
   }
 
   async function removePlugin(pluginName: string) {
+    if (extensionMutationDenied()) return;
     const name = pluginName.trim();
     if (!name) return;
     const triggerName = stripPluginVersion(name);
@@ -1914,6 +1932,7 @@ export function createExtensionsStore(options: {
   }
 
   async function importLocalSkill() {
+    if (extensionMutationDenied()) return;
     const isLocalWorkspace = options.workspaceType() === "local";
     if (!isDesktopRuntime()) {
       options.setError(t("skills.desktop_required"));
@@ -1954,6 +1973,7 @@ export function createExtensionsStore(options: {
   }
 
   async function installSkillCreator(): Promise<{ ok: boolean; message: string }> {
+    if (extensionMutationDenied()) return { ok: false, message: desktopRestrictionNotice("allowManageExtensions") };
     const isRemoteWorkspace = options.workspaceType() === "remote";
     const isLocalWorkspace = options.workspaceType() === "local";
     const { openworkSnapshot, openworkClient, openworkWorkspaceId, hasOpenworkTarget } =
@@ -2082,6 +2102,7 @@ export function createExtensionsStore(options: {
   }
 
   async function uninstallSkill(name: string) {
+    if (extensionMutationDenied()) return;
     const trimmed = name.trim();
     if (!trimmed) return;
 
@@ -2159,6 +2180,7 @@ export function createExtensionsStore(options: {
   }
 
   async function saveSkill(input: { name: string; content: string; description?: string }) {
+    if (extensionMutationDenied()) return;
     const trimmed = input.name.trim();
     if (!trimmed) return;
     const root = options.selectedWorkspaceRoot().trim();
@@ -2269,7 +2291,6 @@ export function createExtensionsStore(options: {
     }
     const client = createDenClient({
       baseUrl: settings.baseUrl,
-      apiBaseUrl: settings.apiBaseUrl,
       token,
     });
     const body = denLibraryPluginCreateRequest(kind, {

@@ -8,7 +8,7 @@ import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-targ
 import { usePlatform } from "@/react-app/kernel/platform";
 import type { OpenTargetOptions } from "@/lib/target-provider";
 
-const SUPPORTED_PANEL_PREVIEWS = new Set(["markdown", "sheet", "slides", "image", "pdf", "html", "text"]);
+const SUPPORTED_PANEL_PREVIEWS = new Set(["markdown", "code", "sheet", "slides", "image", "pdf", "html", "text"]);
 
 type LinkActionMenuProps = {
   target: OpenTarget;

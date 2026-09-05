@@ -479,8 +479,9 @@ async function handleChatCompletion(req, res) {
     writeSse(res, textStream("Replay succeeded after reopening the session; Office attachment history remained readable and the follow-up was answered.", "chatcmpl-office-replay"));
   } catch (error) {
     proof.ok = false;
-    proof.errors.push(error instanceof Error ? error.message : String(error));
-    writeSse(res, textStream(`Office mock failed: ${error instanceof Error ? error.message : String(error)}`));
+    proof.errors.push("Office attachment mock request failed.");
+    console.error("[office-attachments-mock-provider] chat completion failed", error);
+    sendJson(res, { error: "Office attachment mock request failed." }, 500);
   }
 }
 

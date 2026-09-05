@@ -1,9 +1,9 @@
 import {
-  createDefaultScenario,
   createEnterpriseMcpMockServer,
   providerProfileIdSchema,
   scenarioSchema,
 } from "./index.js"
+import { createCliScenario } from "./cli-scenario.js"
 
 const profileId = providerProfileIdSchema.parse(process.env.PROFILE_ID)
 const port = Number(process.env.PORT ?? "3979")
@@ -11,7 +11,14 @@ const redirectUris = (process.env.OAUTH_REDIRECT_URIS ?? "")
   .split(",")
   .map((value) => value.trim())
   .filter(Boolean)
-const baseScenario = createDefaultScenario(profileId)
+const baseScenario = (() => {
+  try {
+    return createCliScenario(profileId, process.env.ACTIVE_FAULT_ID)
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : "Failed to configure ACTIVE_FAULT_ID")
+    process.exit(1)
+  }
+})()
 const scenario = redirectUris.length > 0
   ? scenarioSchema.parse({
       ...baseScenario,

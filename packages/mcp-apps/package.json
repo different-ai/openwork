@@ -1,0 +1,42 @@
+{
+  "name": "@openwork/mcp-apps",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./skill-created": {
+      "types": "./dist/skill-created.d.ts",
+      "default": "./dist/skill-created.js"
+    },
+    "./connection-action": {
+      "types": "./dist/connection-action.d.ts",
+      "default": "./dist/connection-action.js"
+    },
+    "./plugin-flow": {
+      "types": "./dist/plugin-flow.d.ts",
+      "default": "./dist/plugin-flow.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "node scripts/build-apps.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^1.7.5",
+    "@openwork/types": "workspace:*",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "^5.0.4",
+    "typescript": "^5.9.0",
+    "vite": "^6.4.3",
+    "vite-plugin-singlefile": "^2.3.0"
+  }
+}

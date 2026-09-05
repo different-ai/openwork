@@ -2,7 +2,7 @@
 #
 # This intentionally does not run Docker inside Daytona. The sandbox runs the
 # same services as packaging/docker/docker-compose.den-dev.yml directly:
-# MySQL, Den API, Den Web, and the worker proxy.
+# MySQL, Den API, and Den Web.
 FROM daytonaio/sandbox:0.6.0
 
 USER root
@@ -16,21 +16,58 @@ RUN apt-get update \
     git \
     procps \
     sudo \
-  && /usr/local/share/nvm/current/bin/npm install -g pnpm@10.27.0 bun \
+  && /usr/local/share/nvm/current/bin/npm install -g pnpm@10.27.0 bun@1.3.14 \
   && apt-get clean \
-  && rm -rf /var/lib/apt/lists/* /root/.cache /root/.npm /tmp/*
+  && rm -rf /var/lib/apt/lists/* /root/.cache /root/.npm /tmp/* \
+  && printf 'daytona ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/daytona-openwork \
+  && chmod 0440 /etc/sudoers.d/daytona-openwork \
+  && install -d -o daytona -g daytona /workspace
 
 WORKDIR /workspace
+
+ENV PATH="/usr/local/share/nvm/current/bin:$PATH"
+
+# Everything under /workspace is created as the daytona user so no later
+# chown layer is needed: a recursive chown in its own layer copy-on-write
+# duplicates the entire baked workspace and pushed the image past the 20 GB
+# snapshot limit.
+USER daytona
 
 RUN git clone --depth 1 --branch dev https://github.com/different-ai/openwork.git . \
   && mkdir -p /workspace/.openwork-daytona \
   && sha256sum /workspace/pnpm-lock.yaml | cut -d ' ' -f 1 > /workspace/.openwork-daytona/pnpm-lock.sha256 \
-  && git gc --prune=now \
-  && rm -rf /home/daytona/.cache /home/daytona/.npm /home/daytona/.local/share/pnpm/store \
-    /workspace/node_modules
+  && git rev-parse HEAD > /workspace/.openwork-daytona/base-commit \
+  && git gc --prune=now
 
-RUN chown -R daytona:daytona /workspace \
-  && printf 'daytona ALL=(ALL) NOPASSWD:ALL\n' >/etc/sudoers.d/daytona-openwork \
-  && chmod 0440 /etc/sudoers.d/daytona-openwork
-
-USER daytona
+# Bake dependencies and the sandbox-invariant Den builds so a boot from this
+# snapshot only pays checkout + delta install + service start. The Den Web
+# production build bakes no per-sandbox values: NEXT_PUBLIC_* inputs are fixed
+# and every DEN_* value is runtime env consumed by `next start`.
+# .devcontainer/start-daytona-server.sh skips these rebuilds when the git tree
+# hashes recorded here still match the checked-out ref.
+# Only the server packages' dependency graph is installed, and Electron and
+# browser binaries are skipped: the server stack never runs them, and the
+# smaller node_modules keeps the image inside the snapshot size limits. The
+# full-lockfile sha marker stays valid because a filtered install uses the
+# same lockfile; a ref that changes the lockfile reinstalls at boot.
+RUN CI=1 ELECTRON_SKIP_BINARY_DOWNLOAD=1 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
+    PUPPETEER_SKIP_DOWNLOAD=1 CYPRESS_INSTALL_BINARY=0 \
+    pnpm install --store-dir /workspace/.openwork-daytona/pnpm-store --frozen-lockfile \
+      --filter @openwork-ee/den-api... \
+      --filter @openwork-ee/den-web... \
+      --filter @openwork-ee/den-db... \
+      --filter @openwork/ui... \
+      --filter @openwork-ee/utils... \
+      --filter @openwork/mcp-apps... \
+  && NEXT_PUBLIC_POSTHOG_KEY= NEXT_PUBLIC_POSTHOG_API_KEY= \
+    pnpm --filter @openwork/ui build \
+  && NEXT_PUBLIC_POSTHOG_KEY= NEXT_PUBLIC_POSTHOG_API_KEY= \
+    pnpm --filter @openwork-ee/utils build \
+  && NEXT_PUBLIC_POSTHOG_KEY= NEXT_PUBLIC_POSTHOG_API_KEY= \
+    pnpm --filter @openwork-ee/den-web build \
+  && pnpm --filter @openwork-ee/den-api run build:mcp-apps \
+  && { git rev-parse HEAD:packages/ui HEAD:ee/packages/utils HEAD:ee/apps/den-web; cat /workspace/.openwork-daytona/pnpm-lock.sha256; } \
+    | sha256sum | cut -d ' ' -f 1 > /workspace/.openwork-daytona/den-web-build.tree \
+  && { git rev-parse HEAD:packages/mcp-apps; cat /workspace/.openwork-daytona/pnpm-lock.sha256; } \
+    | sha256sum | cut -d ' ' -f 1 > /workspace/.openwork-daytona/den-api-assets.tree \
+  && rm -rf /home/daytona/.cache /home/daytona/.npm /home/daytona/.local/share/pnpm/store

@@ -1,12 +1,12 @@
 ---
-title: "Model Context Protocol (MCP)"
+title: "OpenWork MCP Gateway"
 sidebarTitle: "Overview"
-description: "The OpenWork MCP server is a hosted endpoint that lets your AI agent use OpenWork from Claude Code, Codex, Claude Desktop, Cursor, VS Code, or any MCP client."
+description: "The OpenWork MCP Gateway is one hosted endpoint that brings your organization's skills, plugins, and connections into Claude Code, Codex, Claude Desktop, Cursor, VS Code, or any MCP client."
 ---
 
 import { OpenWorkConnectInstaller } from "/snippets/openwork-connect-installer.jsx";
 
-The OpenWork Connect MCP server lets your AI agent use the OpenWork capabilities your organization has made available to you. The public hosted endpoint is:
+The OpenWork MCP Gateway is one MCP endpoint for everything your organization has made available to you: skills, plugins, workflows, and connections. Instead of configuring one MCP server per service, your agent connects to the gateway once and discovers capabilities on demand. The public hosted endpoint is:
 
 ```text
 https://api.openworklabs.com/mcp/agent
@@ -146,7 +146,7 @@ The organization you choose in the browser is pinned into the token. Changing th
 
 ## What you can ask the agent
 
-Once connected, your agent can use OpenWork capabilities from plain English in the composer. These flows are exercised end to end against a live OpenWork Cloud deployment (see `evals/cloud-mcp-agent-flows.md` in the repository):
+Once connected, your agent can use OpenWork capabilities from plain English in the composer. These flows are exercised end to end against a live OpenWork Cloud deployment:
 
 - **Check your cloud identity** — "Which OpenWork Cloud organization am I
   connected to?" The agent reports the organization, your account, and your
@@ -158,9 +158,8 @@ Once connected, your agent can use OpenWork capabilities from plain English in t
   members; the agent explains when someone still has a pending invitation.
 - **Share skills with your org** — "Create a skill that writes weekly status
   reports and share it with my whole organization." The agent writes the
-  `SKILL.md` locally, then creates a plugin, attaches the skill, publishes it
-  to your marketplace, and grants org-wide access — teammates see it in their
-  marketplace and install it with one click.
+  skill inside a plugin, adds the plugin to a Collection, and grants the
+  Collection org-wide — teammates find the assigned skill in `Settings > Library`.
 
 Org policy still applies: invitations respect seat limits and domain rules, and resource access follows organization membership, roles, policies, and exposure allowlists.
 
@@ -186,16 +185,28 @@ Clients normally refresh automatically. The values matter when diagnosing reconn
 - Successor grants remain normal rotating grants. If an old refresh grant is replayed after the overlap, expired, or revoked, the client may receive `invalid_grant` and the client/user refresh-token family is revoked. Reconnect by logging out of the MCP entry and authenticating again.
 - Access is rechecked against the active OpenWork session and organization membership, so removing a member or revoking the session cuts off MCP access.
 
-## What the server exposes
+## What the gateway exposes
 
-`/mcp/agent` exposes two MCP tools:
+Instead of flooding your client with hundreds of tool definitions, the gateway keeps the tool list small and constant. `/mcp/agent` exposes two discovery tools:
 
 - `search_capabilities` searches the capabilities available to the signed-in member.
 - `execute_capability` runs an exact capability name returned by `search_capabilities`.
 
-Search can include OpenWork Cloud resources such as config objects, connectors, plugins, marketplaces, skills, workers, members, roles, teams, model providers, and org-connected external MCP tools when those capabilities are enabled and shared with the member.
+Search can include OpenWork Cloud resources such as skills, plugins, connectors, Collections, workers, members, roles, teams, model providers, and org-connected external MCP tools when those capabilities are enabled and shared with the member.
 
 Availability is governed by organization membership, role, policy, and exposure allowlists. It intentionally does not expose authentication internals, admin-only system routes, webhooks, API-key creation or deletion, or credential-returning endpoints.
+
+## MCP Apps
+
+Some gateway results come back as MCP Apps: rich, interactive UI rendered from a tool result instead of plain text — great for dynamic interfaces like a created-skill confirmation card or a workflow result view. OpenWork implements the standard [MCP Apps extension](https://modelcontextprotocol.io/docs/extensions/apps) (`ui://` resources declared on tools), so first-party OpenWork apps render in any MCP client that supports the extension, and fall back to readable text everywhere else.
+
+To put an MCP App on a team dashboard, see [Dashboards](/cloud/share-with-your-team/dashboards).
+
+<Frame>
+  ![The skill-created MCP App rendering in the OpenWork desktop app after a create-skill request](/images/skill-created-mcp-app-card.png)
+</Frame>
+
+MCP Apps from third-party providers — apps shipped by an MCP server your organization added as a connector — currently render in the OpenWork desktop app, where connectors are enabled as a native MCP Apps preview per organization. Rendering third-party apps in external clients requires exposing that connector as a full MCP server, an option that is planned but not available yet.
 
 ## Troubleshooting
 

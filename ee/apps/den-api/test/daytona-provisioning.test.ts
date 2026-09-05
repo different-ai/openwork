@@ -1,4 +1,4 @@
-import { DaytonaConflictError } from "@daytonaio/sdk"
+import { DaytonaConflictError, DaytonaNotFoundError } from "@daytonaio/sdk"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { beforeAll, describe, expect, test } from "bun:test"
 import type { DaytonaProvisioningRuntime, DaytonaSandboxRuntime } from "../src/workers/daytona.js"
@@ -7,6 +7,7 @@ type DaytonaModule = typeof import("../src/workers/daytona.js")
 type ProvisionInput = Parameters<DaytonaModule["provisionWorkerOnDaytonaWithRuntime"]>[0]
 type UpsertInput = Parameters<DaytonaProvisioningRuntime["upsertSandbox"]>[0]
 type CreateInput = Parameters<DaytonaProvisioningRuntime["createSandbox"]>[0]
+type SandboxLookupResult = DaytonaSandboxRuntime | Error | null
 
 function seedRequiredEnv() {
   process.env.DATABASE_URL = process.env.DATABASE_URL ?? "mysql://root:password@127.0.0.1:3306/openwork_test"
@@ -15,8 +16,8 @@ function seedRequiredEnv() {
   process.env.BETTER_AUTH_URL = process.env.BETTER_AUTH_URL ?? "http://127.0.0.1:8790"
   process.env.CORS_ORIGINS = process.env.CORS_ORIGINS ?? "http://127.0.0.1:8790"
   process.env.DAYTONA_API_KEY = "daytona-test-key"
-  process.env.DAYTONA_WORKER_PROXY_BASE_URL = "https://workers.example.test"
   process.env.DAYTONA_SNAPSHOT = "openwork-0.18.8"
+  process.env.DAYTONA_SIGNED_PREVIEW_EXPIRES_SECONDS = "1"
 }
 
 let daytona: DaytonaModule
@@ -36,15 +37,22 @@ function provisionInput(): ProvisionInput {
   }
 }
 
+function daytonaNotFoundError(name: string) {
+  return new DaytonaNotFoundError(`sandbox ${name} not found`)
+}
+
 function makeSandbox(input: {
   id: string
   state: string
   startError?: Error
   startErrors?: Error[]
+  stopError?: Error
   refreshStates?: string[]
+  onSignedPreview?: () => void
 }) {
   let state = input.state
   let startCalls = 0
+  let stopCalls = 0
   let deleteCalls = 0
   let refreshCalls = 0
   const sandbox = {
@@ -70,10 +78,16 @@ function makeSandbox(input: {
       }
       state = "started"
     },
+    async stop() {
+      stopCalls += 1
+      if (input.stopError) throw input.stopError
+      state = "stopped"
+    },
     async delete() {
       deleteCalls += 1
     },
     async getSignedPreviewUrl() {
+      input.onSignedPreview?.()
       return { url: `https://${input.id}.preview.example.test` }
     },
     process: {
@@ -95,6 +109,9 @@ function makeSandbox(input: {
     get startCalls() {
       return startCalls
     },
+    get stopCalls() {
+      return stopCalls
+    },
     get deleteCalls() {
       return deleteCalls
     },
@@ -106,12 +123,14 @@ function makeSandbox(input: {
 
 function makeRuntime(input: {
   sandboxName?: string
-  nameResults?: Array<DaytonaSandboxRuntime | null>
-  nameResultsByName?: Array<{ name: string; results: Array<DaytonaSandboxRuntime | null> }>
+  nameResults?: SandboxLookupResult[]
+  nameResultsByName?: Array<{ name: string; results: SandboxLookupResult[] }>
   createdSandbox?: DaytonaSandboxRuntime
   createError?: Error
   checkpointExists?: boolean
   restoreMarkerVerified?: boolean
+  waitForHealth?: () => Promise<void>
+  now?: () => number
 }) {
   let createCalls = 0
   let healthChecks = 0
@@ -138,6 +157,9 @@ function makeRuntime(input: {
           ? entry.results[lookupCount]
           : entry.results[entry.results.length - 1]
         lookupCounts.set(sandboxIdOrName, lookupCount + 1)
+        if (result instanceof Error) {
+          throw result
+        }
         if (result) {
           return result
         }
@@ -169,7 +191,9 @@ function makeRuntime(input: {
     },
     async waitForHealth() {
       healthChecks += 1
+      await input.waitForHealth?.()
     },
+    now: input.now,
   } satisfies DaytonaProvisioningRuntime
 
   return {
@@ -192,6 +216,46 @@ function makeRuntime(input: {
   }
 }
 
+describe("Daytona Cloud health deadline", () => {
+  test("aborts a hung health request within the remaining readiness budget", async () => {
+    const originalFetch = globalThis.fetch
+    let aborted = false
+    Object.defineProperty(globalThis, "fetch", {
+      configurable: true,
+      value: ((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal
+        if (!signal) {
+          reject(new Error("health request did not receive an abort signal"))
+          return
+        }
+        const onAbort = () => {
+          aborted = true
+          reject(signal.reason)
+        }
+        if (signal.aborted) onAbort()
+        else signal.addEventListener("abort", onAbort, { once: true })
+      })) satisfies typeof fetch,
+    })
+    const sandbox = makeSandbox({ id: "sbx_hung_health", state: "started" })
+    const startedAt = Date.now()
+
+    try {
+      await expect(daytona.waitForHealth(
+        "https://hung.preview.example.test",
+        20,
+        sandbox.sandbox,
+        "session_hung_health",
+        "command_hung_health",
+      )).rejects.toThrow("Timed out waiting for Daytona worker health")
+    } finally {
+      Object.defineProperty(globalThis, "fetch", { configurable: true, value: originalFetch })
+    }
+
+    expect(aborted).toBe(true)
+    expect(Date.now() - startedAt).toBeLessThan(500)
+  })
+})
+
 describe("Daytona Cloud provisioning adoption", () => {
   test("adopts the existing sandbox when create races and Daytona returns a conflict", async () => {
     const input = provisionInput()
@@ -207,13 +271,68 @@ describe("Daytona Cloud provisioning adoption", () => {
 
     expect(result.status).toBe("healthy")
     expect(result.imageVersion).toBe("openwork-0.18.8")
-    expect(result.url).toBe(`https://workers.example.test/${encodeURIComponent(input.workerId)}`)
+    expect(result.url).toBe("https://sbx_existing.preview.example.test")
     expect(runtime.createCalls).toBe(1)
     expect(existing.startCalls).toBe(1)
     expect(existing.deleteCalls).toBe(0)
     expect(runtime.healthChecks).toBe(1)
     expect(runtime.upserts).toHaveLength(1)
     expect(runtime.upserts[0]?.sandboxId).toBe("sbx_existing")
+  })
+
+  test("rechecks a create conflict through Daytona's read-after-write window", async () => {
+    const input = provisionInput()
+    const sandboxName = daytona.currentDaytonaSandboxName(input)
+    const existing = makeSandbox({ id: "sbx_late_visible", state: "started" })
+    const notFound = daytonaNotFoundError(sandboxName)
+    const runtime = makeRuntime({
+      nameResultsByName: [{
+        name: sandboxName,
+        results: [notFound, notFound, notFound, notFound, notFound, notFound, existing.sandbox],
+      }],
+      createError: new DaytonaConflictError("Sandbox with name already exists"),
+    })
+    const sleeps: number[] = []
+
+    const result = await daytona.provisionWorkerOnDaytonaWithRuntime(input, runtime.runtime, {
+      sleep: async (ms) => {
+        sleeps.push(ms)
+      },
+    })
+
+    expect(result.status).toBe("healthy")
+    expect(runtime.createCalls).toBe(1)
+    expect(runtime.nameLookups.filter((name) => name === sandboxName)).toHaveLength(7)
+    expect(sleeps).toEqual([2_000, 2_000, 2_000, 2_000, 2_000])
+    expect(runtime.upserts[0]?.sandboxId).toBe("sbx_late_visible")
+    expect(existing.stopCalls).toBe(1)
+    expect(existing.startCalls).toBe(1)
+  })
+
+  test("bounds create-conflict rechecks when the sandbox stays missing", async () => {
+    const input = provisionInput()
+    const currentName = daytona.currentDaytonaSandboxName(input)
+    const legacyName = daytona.daytonaSandboxName(input)
+    const runtime = makeRuntime({
+      nameResultsByName: [
+        { name: currentName, results: [daytonaNotFoundError(currentName)] },
+        { name: legacyName, results: [daytonaNotFoundError(legacyName)] },
+      ],
+      createError: new DaytonaConflictError("Sandbox with name already exists"),
+    })
+    const sleeps: number[] = []
+
+    await expect(daytona.provisionWorkerOnDaytonaWithRuntime(input, runtime.runtime, {
+      sleep: async (ms) => {
+        sleeps.push(ms)
+      },
+    })).rejects.toThrow("Sandbox with name already exists")
+
+    expect(runtime.createCalls).toBe(1)
+    expect(runtime.nameLookups.filter((name) => name === currentName)).toHaveLength(7)
+    expect(runtime.nameLookups.filter((name) => name === legacyName)).toHaveLength(7)
+    expect(sleeps).toEqual([2_000, 2_000, 2_000, 2_000, 2_000])
+    expect(runtime.upserts).toHaveLength(0)
   })
 
   test("creates a new sandbox when the deterministic name is unused", async () => {
@@ -235,6 +354,34 @@ describe("Daytona Cloud provisioning adoption", () => {
     expect(created.deleteCalls).toBe(0)
     expect(runtime.upserts).toHaveLength(1)
     expect(runtime.upserts[0]?.sandboxId).toBe("sbx_created")
+  })
+
+  test("a one-second preview is already unsafe after issuance and a delayed health wait", async () => {
+    const input = provisionInput()
+    let mintedAt = 0
+    let now = 1_000
+    const created = makeSandbox({
+      id: "sbx_delayed_health",
+      state: "started",
+      onSignedPreview: () => {
+        mintedAt = now
+      },
+    })
+    const runtime = makeRuntime({
+      sandboxName: daytona.daytonaSandboxName(input),
+      nameResults: [null],
+      createdSandbox: created.sandbox,
+      waitForHealth: async () => {
+        now += 30_000
+      },
+      now: () => now,
+    })
+
+    await daytona.provisionWorkerOnDaytonaWithRuntime(input, runtime.runtime)
+
+    const refreshAt = runtime.upserts[0]?.signedPreviewUrlExpiresAt.getTime()
+    expect(mintedAt).toBeGreaterThan(0)
+    expect(refreshAt).toBeLessThanOrEqual(mintedAt)
   })
 
   test("does not delete an adopted sandbox when starting it fails", async () => {
@@ -287,7 +434,7 @@ describe("Daytona Cloud version-aware recycle", () => {
     expect(replacement.deleteCalls).toBe(0)
   })
 
-  test("does not recycle a stale running sandbox", async () => {
+  test("restarts rather than duplicates the process on a stale running sandbox", async () => {
     const input = provisionInput()
     const old = makeSandbox({ id: "sbx_running", state: "started" })
     const runtime = makeRuntime({
@@ -307,8 +454,96 @@ describe("Daytona Cloud version-aware recycle", () => {
     expect(result.imageVersion).toBe("openwork-0.18.7")
     expect(runtime.createCalls).toBe(0)
     expect(runtime.checkpointChecks).toBe(0)
+    expect(old.stopCalls).toBe(1)
+    expect(old.startCalls).toBe(1)
     expect(old.deleteCalls).toBe(0)
     expect(runtime.upserts[0]?.sandboxId).toBe("sbx_running")
+  })
+
+  test("replaces an unrecoverable running sandbox when a checkpoint can restore it", async () => {
+    const input = provisionInput()
+    const old = makeSandbox({
+      id: "sbx_unrecoverable",
+      state: "started",
+      stopError: new Error("provider refused sandbox stop"),
+    })
+    const replacement = makeSandbox({ id: "sbx_recovery_replacement", state: "started" })
+    const runtime = makeRuntime({
+      createdSandbox: replacement.sandbox,
+      checkpointExists: true,
+      restoreMarkerVerified: true,
+    })
+
+    const result = await daytona.wakeWorkerOnDaytonaWithRuntime(input, {
+      ...runtime.runtime,
+      async getSandbox() {
+        return old.sandbox
+      },
+    }, {
+      sandbox_id: old.sandbox.id,
+      workspace_volume_id: "vol_shared",
+      data_volume_id: "vol_shared",
+    }, "openwork-0.18.8")
+
+    expect(result.status).toBe("healthy")
+    expect(runtime.createCalls).toBe(1)
+    expect(runtime.createInputs[0]?.name).toContain("recovery")
+    expect(runtime.checkpointChecks).toBe(1)
+    expect(runtime.restoreMarkerChecks).toBe(1)
+    expect(old.stopCalls).toBe(1)
+    expect(old.deleteCalls).toBe(1)
+    expect(replacement.deleteCalls).toBe(0)
+    expect(runtime.upserts[0]?.sandboxId).toBe("sbx_recovery_replacement")
+  })
+
+  test("does not destroy an established workspace when failed wake has no checkpoint", async () => {
+    const input = provisionInput()
+    const wakeError = new Error("provider refused sandbox stop")
+    const old = makeSandbox({ id: "sbx_unrecoverable_no_checkpoint", state: "started", stopError: wakeError })
+    const runtime = makeRuntime({ checkpointExists: false })
+
+    await expect(daytona.wakeWorkerOnDaytonaWithRuntime(input, {
+      ...runtime.runtime,
+      async getSandbox() {
+        return old.sandbox
+      },
+    }, {
+      sandbox_id: old.sandbox.id,
+      workspace_volume_id: "vol_shared",
+      data_volume_id: "vol_shared",
+    }, "openwork-0.18.8")).rejects.toBe(wakeError)
+
+    expect(runtime.checkpointChecks).toBe(1)
+    expect(runtime.createCalls).toBe(0)
+    expect(old.deleteCalls).toBe(0)
+  })
+
+  test("replaces a never-healthy sandbox even before its first checkpoint", async () => {
+    const input = provisionInput()
+    const old = makeSandbox({
+      id: "sbx_initial_failure",
+      state: "started",
+      stopError: new Error("provider refused sandbox stop"),
+    })
+    const replacement = makeSandbox({ id: "sbx_initial_replacement", state: "started" })
+    const runtime = makeRuntime({ createdSandbox: replacement.sandbox, checkpointExists: false })
+
+    const result = await daytona.wakeWorkerOnDaytonaWithRuntime(input, {
+      ...runtime.runtime,
+      async getSandbox() {
+        return old.sandbox
+      },
+    }, {
+      sandbox_id: old.sandbox.id,
+      workspace_volume_id: "vol_shared",
+      data_volume_id: "vol_shared",
+    }, null)
+
+    expect(result.status).toBe("healthy")
+    expect(runtime.createCalls).toBe(1)
+    expect(runtime.restoreMarkerChecks).toBe(0)
+    expect(old.deleteCalls).toBe(1)
+    expect(runtime.upserts[0]?.sandboxId).toBe("sbx_initial_replacement")
   })
 
   test("does not recycle a stale stopped sandbox before a checkpoint exists", async () => {

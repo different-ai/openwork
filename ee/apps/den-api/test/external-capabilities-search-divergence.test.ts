@@ -454,14 +454,13 @@ async function expectConnectionListed(seed: SeededOrganization, connectionId: De
   expect(connections.map((connection) => connection.id)).toContain(connectionId)
 }
 
-function search(seed: SeededOrganization, query: string, mcpAppsEnabled = false) {
+function search(seed: SeededOrganization, query: string) {
   return searchExternalCapabilities({
     organizationId: seed.organizationId,
     member: { orgMembershipId: seed.memberId, teamIds: [] },
     query,
     redirectUriBase,
     limit: 10,
-    mcpAppsEnabled,
   })
 }
 
@@ -531,7 +530,7 @@ afterAll(() => {
   mock.restore()
 })
 
-test("the rollout flag controls MCP App launch metadata without removing regular search and execute", async () => {
+test("MCP App launch metadata is published by default alongside regular search and execute", async () => {
   if (!mcpAppServer) throw new Error("MCP App server missing")
   const seed = await seedOrganization("mcp-app-gateway")
   const connection = await createGrantedConnection(seed, {
@@ -541,26 +540,7 @@ test("the rollout flag controls MCP App launch metadata without removing regular
     credentialMode: "shared",
   })
 
-  const disabledMatches = await search(seed, "Project Atlas")
-  const disabledMatch = disabledMatches.find((candidate) => candidate.name.endsWith(":open_project_atlas"))
-  expect(disabledMatch).toBeTruthy()
-  expect(disabledMatch?.kind).toBeUndefined()
-  expect(disabledMatch?.mcpApp).toBeUndefined()
-
-  const disabledExecution = await executeExternalCapability({
-    organizationId: seed.organizationId,
-    member: { orgMembershipId: seed.memberId, teamIds: [] },
-    connectionId: connection.id,
-    toolName: "open_project_atlas",
-    args: { text: "migration" },
-    redirectUriBase,
-  })
-  expect(disabledExecution.ok).toBe(true)
-  if (!disabledExecution.ok) throw new Error(disabledExecution.message)
-  expect(disabledExecution.mcpApp).toBeUndefined()
-  expect(externalCapabilitySuccessToolResult(disabledExecution)._meta).toBeUndefined()
-
-  const matches = await search(seed, "Project Atlas", true)
+  const matches = await search(seed, "Project Atlas")
   const match = matches.find((candidate) => candidate.name.endsWith(":open_project_atlas"))
   expect(match).toMatchObject({
     kind: "mcp_app",
@@ -574,7 +554,6 @@ test("the rollout flag controls MCP App launch metadata without removing regular
     toolName: "open_project_atlas",
     args: { text: "migration" },
     redirectUriBase,
-    mcpAppsEnabled: true,
   })
   expect(executed).toMatchObject({
     ok: true,

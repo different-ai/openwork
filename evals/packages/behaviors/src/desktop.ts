@@ -26,7 +26,11 @@ function jsValue(value: unknown): string {
   return json.replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
 }
 
-export async function evalIn(app: Surface, expression: string, opts: EvaluateOptions = {}): Promise<unknown> {
+export async function evalIn(
+  app: Surface,
+  expression: string,
+  opts: EvaluateOptions & { reattachAttempts?: number } = {},
+): Promise<unknown> {
   // Target healing lives in @openwork/cdp; behaviours just evaluate.
   return evaluateOnSurface(app, expression, {
     ...opts,
@@ -393,12 +397,13 @@ export async function control(
   app: Surface,
   action: string,
   args?: unknown,
-  opts: EvaluateOptions = {},
+  opts: EvaluateOptions & { reattachAttempts?: number } = {},
 ): Promise<unknown> {
+  // Control actions are non-idempotent; a timeout must surface, not re-fire.
   const result = await evalIn(
     app,
     `window.__openworkControl.execute(${JSON.stringify(action)}, ${JSON.stringify(args ?? null)})`,
-    { ...opts, awaitPromise: true },
+    { timeoutMs: 60_000, reattachAttempts: 0, ...opts, awaitPromise: true },
   );
   if (!isRecord(result) || result.ok !== true) {
     throw new Error(`Desktop control action ${action} failed: ${isRecord(result) ? String(result.error ?? "unknown") : "unknown"}`);

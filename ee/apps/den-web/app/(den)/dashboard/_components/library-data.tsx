@@ -34,20 +34,6 @@ export type LibraryPluginItem = {
   role: PluginAccessRole;
 };
 
-export type LibraryRemoteMcpAppItem = {
-  type: "app";
-  id: string;
-  pluginId: string;
-  name: string;
-  description: string | null;
-  sourceUrl: string;
-  status: "active" | "retired";
-  activeVersionId: string | null;
-  state: "ready";
-  edges: LibraryAccessEdge[];
-  role: PluginAccessRole;
-};
-
 export type LibraryConnectionItem = {
   type: "connection";
   id: string;
@@ -61,8 +47,8 @@ export type LibraryConnectionItem = {
   edges: LibraryAccessEdge[];
 };
 
-export type LibraryProgramItem = {
-  type: "program";
+export type LibraryWorkflowItem = {
+  type: "workflow";
   id: string;
   plugin: LibraryNamedEntity | null;
   name: string;
@@ -78,7 +64,7 @@ export type LibraryProgramItem = {
   source: { kind: "created" | "installed_template"; templateName?: string; templateVersion?: string };
 };
 
-export type LibraryItem = LibraryPluginItem | LibraryRemoteMcpAppItem | LibraryConnectionItem | LibraryProgramItem;
+export type LibraryItem = LibraryPluginItem | LibraryConnectionItem | LibraryWorkflowItem;
 
 export const libraryQueryKeys = {
   items: ["me", "library"],
@@ -199,21 +185,6 @@ function parsePlugin(value: Record<string, unknown>): LibraryPluginItem | null {
   };
 }
 
-function parseRemoteMcpApp(value: Record<string, unknown>): LibraryRemoteMcpAppItem | null {
-  const id = readString(value.id);
-  const pluginId = readString(value.pluginId);
-  const name = readString(value.name);
-  const description = readNullableString(value.description);
-  const sourceUrl = readString(value.sourceUrl);
-  const status = value.status === "active" || value.status === "retired" ? value.status : null;
-  const activeVersionId = readNullableString(value.activeVersionId);
-  const role = readRole(value.role);
-  const edges = parseEdges(value.edges);
-  if (!id || !pluginId || !name || description === undefined || !sourceUrl || !status
-    || activeVersionId === undefined || value.state !== "ready" || !role || !edges) return null;
-  return { type: "app", id, pluginId, name, description, sourceUrl, status, activeVersionId, state: "ready", edges, role };
-}
-
 function parseConnection(value: Record<string, unknown>): LibraryConnectionItem | null {
   const id = readString(value.id);
   const name = readString(value.name);
@@ -251,7 +222,7 @@ function parseConnection(value: Record<string, unknown>): LibraryConnectionItem 
   };
 }
 
-function parseProgram(value: Record<string, unknown>): LibraryProgramItem | null {
+function parseWorkflow(value: Record<string, unknown>): LibraryWorkflowItem | null {
   const id = readString(value.id);
   const plugin = value.plugin === null ? null : parseNamedEntity(value.plugin);
   const name = readString(value.name);
@@ -264,7 +235,7 @@ function parseProgram(value: Record<string, unknown>): LibraryProgramItem | null
   const viewState = value.viewState === "default" || value.viewState === "custom_active" || value.viewState === "build_failed" || value.viewState === "retired" ? value.viewState : null;
   const activeViewTitle = readNullableString(value.activeViewTitle);
   const sourceKind = isRecord(value.source) && (value.source.kind === "created" || value.source.kind === "installed_template") ? value.source.kind : null;
-  const source: LibraryProgramItem["source"] | null = isRecord(value.source) && sourceKind
+  const source: LibraryWorkflowItem["source"] | null = isRecord(value.source) && sourceKind
     ? {
         kind: sourceKind,
         ...(readString(value.source.templateName) ? { templateName: readString(value.source.templateName) ?? undefined } : {}),
@@ -274,15 +245,15 @@ function parseProgram(value: Record<string, unknown>): LibraryProgramItem | null
   if (!id || (value.plugin !== null && !plugin) || !name || description === undefined || !role || !edges || !state || !resultState
     || latestSuccessfulAt === undefined || !viewState || activeViewTitle === undefined || !source
     || typeof value.automationCount !== "number" || !Number.isInteger(value.automationCount) || value.automationCount < 0) return null;
-  return { type: "program", id, plugin, name, description, role, edges, state, resultState, latestSuccessfulAt, viewState, activeViewTitle, automationCount: value.automationCount, source };
+  return { type: "workflow", id, plugin, name, description, role, edges, state, resultState, latestSuccessfulAt, viewState, activeViewTitle, automationCount: value.automationCount, source };
 }
 
 function parseLibraryItem(value: unknown): LibraryItem | null {
   if (!isRecord(value)) return null;
   if (value.type === "plugin") return parsePlugin(value);
-  if (value.type === "app") return parseRemoteMcpApp(value);
+  if (value.type === "app") return null;
   if (value.type === "connection") return parseConnection(value);
-  if (value.type === "program") return parseProgram(value);
+  if (value.type === "workflow") return parseWorkflow(value);
   return null;
 }
 
@@ -293,7 +264,8 @@ export function parseLibraryPayload(payload: unknown): LibraryItem[] {
   const items = payload.items
     .map(parseLibraryItem)
     .filter((item): item is LibraryItem => item !== null);
-  if (items.length !== payload.items.length) {
+  const supportedItemCount = payload.items.filter((item) => !isRecord(item) || item.type !== "app").length;
+  if (items.length !== supportedItemCount) {
     throw new Error("Library response was incomplete.");
   }
   return items;

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { FileSessionStore } from "./file-sessions.js";
 
 describe("FileSessionStore", () => {
-  test("creates, renews, and closes sessions", () => {
+  test("creates and closes sessions", () => {
     const store = new FileSessionStore({ maxSessions: 10 });
     const created = store.create({
       workspaceId: "ws_1",
@@ -16,11 +16,6 @@ describe("FileSessionStore", () => {
     const fetched = store.get(created.id);
     expect(fetched?.workspaceId).toBe("ws_1");
     expect(fetched?.canWrite).toBe(true);
-
-    const createdExpiry = created.expiresAt;
-    const renewed = store.renew(created.id, 120_000);
-    expect(renewed).not.toBeNull();
-    expect((renewed?.expiresAt ?? 0) > createdExpiry).toBe(true);
 
     const closed = store.close(created.id);
     expect(closed).toBe(true);

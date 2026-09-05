@@ -42,7 +42,7 @@ export function getFreshPrivilegedSessionRequiredResponse(): FreshPrivilegedSess
 }
 
 type PrivilegedOrgRouteContext = {
-  get: <K extends "organizationContext" | "session">(key: K) => OrgRouteVariables[K]
+  get: <K extends "apiKey" | "organizationContext" | "session">(key: K) => OrgRouteVariables[K]
 }
 
 type OrganizationAdminRouteContext = {
@@ -70,9 +70,13 @@ export function hasFreshPrivilegedSession(
 }
 
 function ensureFreshPrivilegedSession(
-  c: { get: (key: "session") => OrgRouteVariables["session"] },
+  c: { get: <K extends "apiKey" | "session">(key: K) => OrgRouteVariables[K] },
   maxAgeMs = PRIVILEGED_SESSION_MAX_AGE_MS,
 ) {
+  if (c.get("apiKey")) {
+    return { ok: true as const }
+  }
+
   if (hasFreshPrivilegedSession({ session: c.get("session") }, new Date(), maxAgeMs)) {
     return { ok: true as const }
   }

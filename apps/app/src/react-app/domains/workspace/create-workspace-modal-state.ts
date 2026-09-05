@@ -35,6 +35,14 @@ export function createInitialWorkspaceLocalState(): CreateWorkspaceLocalState {
   };
 }
 
+export function shouldTickWorkspaceElapsedClock(input: {
+  open: boolean;
+  submitting: boolean;
+  startedAt: number | null | undefined;
+}): boolean {
+  return input.open && input.submitting && typeof input.startedAt === "number";
+}
+
 export function createWorkspaceLocalReducer(
   state: CreateWorkspaceLocalState,
   action: CreateWorkspaceLocalAction,

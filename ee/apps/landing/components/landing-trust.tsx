@@ -305,6 +305,12 @@ export function LandingTrustOverview(props: SharedProps) {
                 <tbody>
                   <tr className="border-b border-slate-200/70 last:border-0">
                     <td className="px-4 py-2.5 font-medium text-[#011627]">
+                      SOC 2 Type I
+                    </td>
+                    <td className="px-4 py-2.5 text-slate-600">Complete — report available under NDA</td>
+                  </tr>
+                  <tr className="border-b border-slate-200/70 last:border-0">
+                    <td className="px-4 py-2.5 font-medium text-[#011627]">
                       SOC 2 Type II
                     </td>
                     <td className="px-4 py-2.5 text-slate-600">In progress</td>

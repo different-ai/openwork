@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ArrowLeft, ArrowRight, FileText, Github, Server } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
@@ -11,7 +11,7 @@ import { getRequestError, requestJson } from "../../_lib/den-flow";
 import { getNewPluginRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
-  loadPluginImportDraft,
+  normalizePublicGitHubPluginUrl,
   parsePluginImportPreview,
   pluginImportSourceLabel,
   savePluginImportDraft,
@@ -33,6 +33,8 @@ function serverStatus(preview: PluginImportPreview["servers"][number]): string {
   if (preview.supported) return "Ready";
   if (preview.skippedReason === "local_unsupported") return "Desktop-only servers cannot be imported";
   if (preview.skippedReason === "missing_url") return "No remote URL found";
+  if (preview.skippedReason === "headers_unsupported") return "Static headers are not supported yet";
+  if (preview.skippedReason === "invalid_config") return "Invalid Agent Plugin MCP configuration";
   return "Unsupported";
 }
 
@@ -48,20 +50,17 @@ export function PluginImportScreen() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const draft = loadPluginImportDraft();
-    if (!draft) return;
-    setGithubUrl(draft.githubUrl);
-    setPreview(draft.preview);
-    setSelectedServerKeys(draft.selectedServerKeys);
-    setSelectedSkillKeys(draft.selectedSkillKeys);
-    setAuthType(draft.authType);
-    setCredentialMode(draft.credentialMode);
-  }, []);
-
   async function previewImport() {
     if (!githubUrl.trim()) {
       setError("Paste a GitHub plugin URL.");
+      return;
+    }
+
+    let normalizedGithubUrl: string;
+    try {
+      normalizedGithubUrl = normalizePublicGitHubPluginUrl(githubUrl);
+    } catch (urlError) {
+      setError(urlError instanceof Error ? urlError.message : "Enter a valid public GitHub plugin URL.");
       return;
     }
 
@@ -72,7 +71,7 @@ export function PluginImportScreen() {
       await runReauthableAction("preview-github-plugin-components", async () => {
         const result = await requestJson(
           "/v1/plugins/import-mcps-from-github-url/preview",
-          { method: "POST", body: JSON.stringify({ githubUrl: githubUrl.trim() }) },
+          { method: "POST", body: JSON.stringify({ githubUrl: normalizedGithubUrl }) },
           20000,
         );
         if (!result.response.ok) {
@@ -81,6 +80,7 @@ export function PluginImportScreen() {
         payload = result.payload;
       });
       const nextPreview = parsePluginImportPreview(payload);
+      setGithubUrl(normalizedGithubUrl);
       setPreview(nextPreview);
       setSelectedServerKeys(nextPreview.servers.filter((server) => server.supported).map((server) => server.serverKey));
       setSelectedSkillKeys(nextPreview.skills.filter((skill) => skill.supported).map((skill) => skill.skillKey));
@@ -96,15 +96,20 @@ export function PluginImportScreen() {
       setError("Select at least one supported MCP server or skill.");
       return;
     }
-    savePluginImportDraft({
-      version: 1,
-      authType,
-      credentialMode,
-      githubUrl: githubUrl.trim(),
-      preview,
-      selectedServerKeys,
-      selectedSkillKeys,
-    });
+    try {
+      savePluginImportDraft({
+        version: 1,
+        authType,
+        credentialMode,
+        githubUrl,
+        preview,
+        selectedServerKeys,
+        selectedSkillKeys,
+      });
+    } catch (draftError) {
+      setError(draftError instanceof Error ? draftError.message : "This plugin import cannot be saved safely.");
+      return;
+    }
     router.push(getNewPluginRoute(orgSlug));
   }
 

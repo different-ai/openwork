@@ -4,15 +4,30 @@ import type { OpenworkServerInfo } from "../src/app/lib/desktop";
 import {
   isReadyLocalOpenworkServerInfo,
   LOCAL_OPENWORK_READINESS_RETRY_DELAY_MS,
+  openworkServerSettingsChanged,
   shouldAttemptDesktopLocalReconnect,
   waitForReadyLocalOpenworkServerInfo,
   type DesktopLocalReconnectInput,
 } from "../src/react-app/shell/desktop-local-openwork";
 
+describe("openworkServerSettingsChanged", () => {
+  test("does not refresh the renderer for an unchanged healthy server", () => {
+    const settings = {
+      urlOverride: "http://127.0.0.1:4187",
+      portOverride: 4187,
+      token: "owner",
+      hostToken: "host",
+      remoteAccessEnabled: false,
+    };
+
+    expect(openworkServerSettingsChanged(settings, { ...settings })).toBe(false);
+    expect(openworkServerSettingsChanged(settings, { ...settings, token: "new-owner" })).toBe(true);
+  });
+});
+
 function serverInfo(overrides: Partial<OpenworkServerInfo> = {}): OpenworkServerInfo {
   return {
     running: false,
-    engineRollover: false,
     remoteAccessEnabled: false,
     host: null,
     port: null,

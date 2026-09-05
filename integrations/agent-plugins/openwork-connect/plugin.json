@@ -1,0 +1,19 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "openwork-connect",
+  "version": "1.0.0",
+  "description": "Use the skills, MCP connections, and connected services assigned to you through OpenWork.",
+  "author": {
+    "name": "OpenWork",
+    "url": "https://openworklabs.com"
+  },
+  "homepage": "https://openworklabs.com/docs/cloud/run-in-the-cloud/cloud-mcp",
+  "repository": "https://github.com/different-ai/openwork",
+  "license": "MIT",
+  "keywords": [
+    "openwork",
+    "mcp",
+    "agent-skills",
+    "organization"
+  ]
+}

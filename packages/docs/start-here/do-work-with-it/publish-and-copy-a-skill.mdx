@@ -1,15 +1,26 @@
 ---
 title: "Publish and copy a skill"
-description: "Where shared skills show up and how to customize them safely"
+description: "Publish a skill through a Cloud Collection or copy it without changing the shared original"
 ---
 
-Publishing is an admin action in OpenWork Cloud, not a desktop marketplace editor.
+<Note>
+**Personal or managed.** Local workspace skills remain free and need no OpenWork Cloud sign-in. Cloud members can also create personal skills for themselves today. Publishing a skill for other people is a managed Cloud flow for owners and admins by default.
+</Note>
 
-## Publish without surprising the team
+## Publish a skill for your team
 
-1. In the Cloud dashboard, an admin creates an organization marketplace with `New marketplace` and `Create marketplace`.
-2. When a plugin is published to that marketplace, its skills show up for teammates who have access.
-3. Marketplace access can be everyone in the organization, specific teams, or individual members. Follow the full admin path in [Team quickstart](/cloud/team-quickstart).
-4. The desktop app shows assigned marketplace content in `Settings > Extensions`; it does not create or fork marketplaces.
-5. To change a shared skill without affecting others, make your own copy in a marketplace you control and edit that copy.
-6. For lighter changes, write a new skill that tells the agent to use the standard skill first, then add your extra instructions.
+1. In the Cloud dashboard, open `Plugin Directory` and create or open a plugin.
+2. Add a skill inside the plugin. Give it a clear name, describe when the agent should use it, and write the instructions.
+3. In the plugin's `Share` section, choose a `Collection`. If you need a new one, open `Collections`, click `New collection`, and then return to the plugin.
+4. Open that Collection and use `Who can access this` to grant it to everyone in the organization, selected teams, or individual members.
+5. Assigned members find the plugin and its skill in `Settings > Library` in the desktop app. The plugin creator keeps access automatically.
+
+Only owners and admins can create and publish skills for other people by default. Members can currently create personal skills for themselves. An admin restriction that prevents members from creating their own skills is in development.
+
+Follow [Team quickstart](/cloud/team-quickstart) for the complete first-time setup. Use [Collections](/cloud/share-with-your-team/collections) when you need to group several plugins, reuse the same audience, or manage more complex assignments.
+
+## Copy without changing the shared skill
+
+Create a new private plugin, copy the skill instructions into a new skill, and edit that copy. Do not edit the team plugin unless everyone assigned to its Collection should receive the change.
+
+For a small personal adjustment, you can instead create a new skill that tells the agent to use the shared skill first and then apply your extra instructions.

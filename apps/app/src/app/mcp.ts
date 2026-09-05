@@ -14,8 +14,16 @@ export function normalizeMcpSlug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 }
 
+export function canonicalMcpServerName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "") || "mcp";
+}
+
 export function getMcpIdentityKey(entry: McpIdentity): string {
-  return entry.id ?? entry.serverName ?? normalizeMcpSlug(entry.name);
+  return entry.id ?? entry.serverName ?? canonicalMcpServerName(entry.name);
 }
 
 export function validateMcpServerName(name: string): string {

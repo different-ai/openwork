@@ -24,6 +24,8 @@ if [ -n "$existing_snapshot_id" ]; then
 fi
 
 echo "==> Creating Daytona server snapshot: $SNAPSHOT_NAME"
+# 10 GB is the per-sandbox maximum in this org; the baked node_modules and
+# Den build outputs fit because the image skips Electron/browser binaries.
 daytona snapshot create "$SNAPSHOT_NAME" \
   --dockerfile "$ROOT_DIR/.devcontainer/Dockerfile.daytona-server" \
   --cpu 4 \

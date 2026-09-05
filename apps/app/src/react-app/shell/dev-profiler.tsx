@@ -42,6 +42,7 @@ type CommitRecord = {
 type ZoneStats = {
   id: string;
   commitCount: number;
+  renderCount: number;
   totalActualMs: number;
   totalBaseMs: number;
   lastActualMs: number;
@@ -140,6 +141,7 @@ function recordCommit(record: CommitRecord) {
     state.zonesById.set(record.id, {
       id: record.id,
       commitCount: 1,
+      renderCount: 0,
       totalActualMs: record.actualMs,
       totalBaseMs: record.baseMs,
       lastActualMs: record.actualMs,
@@ -166,6 +168,30 @@ function recordCommit(record: CommitRecord) {
   }
   // Notify overlay subscribers. We throttle via rAF so a burst of commits
   // during a stream doesn't flood setState.
+  scheduleEmit();
+}
+
+function recordRender(id: string) {
+  if (subscribers.size === 0) return;
+
+  const prev = state.zonesById.get(id);
+  if (prev) {
+    prev.renderCount += 1;
+  } else {
+    state.zonesById.set(id, {
+      id,
+      commitCount: 0,
+      renderCount: 1,
+      totalActualMs: 0,
+      totalBaseMs: 0,
+      lastActualMs: 0,
+      lastBaseMs: 0,
+      lastCommitAt: 0,
+      lastPhase: "mount",
+      mountCount: 0,
+      updateCount: 0,
+    });
+  }
   scheduleEmit();
 }
 
@@ -207,6 +233,16 @@ export function DevProfiler({
   children,
 }: PropsWithChildren<{ id: string }>): ReactNode {
   if (!PROFILER_ENABLED) return children as ReactNode;
+  return <EnabledDevProfiler id={id}>{children}</EnabledDevProfiler>;
+}
+
+function EnabledDevProfiler({
+  id,
+  children,
+}: PropsWithChildren<{ id: string }>) {
+  useEffect(() => {
+    recordRender(id);
+  });
   return (
     <Profiler id={id} onRender={onRender}>
       {children}

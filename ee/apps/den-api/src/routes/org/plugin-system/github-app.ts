@@ -1,4 +1,5 @@
 import { createHmac, createSign, randomUUID, timingSafeEqual } from "node:crypto"
+import { isAgentPluginManifestSchema } from "./agent-plugin-v1.js"
 
 export class GithubConnectorConfigError extends Error {
   constructor(message: string) {
@@ -27,7 +28,7 @@ export type GithubConnectorAppConfig = {
 
 type GithubFetch = typeof fetch
 
-export type GithubManifestKind = "marketplace" | "plugin" | null
+export type GithubManifestKind = "agent-plugin" | "marketplace" | "plugin" | null
 
 type GithubRepositorySummary = {
   defaultBranch: string | null
@@ -506,6 +507,31 @@ async function detectRepositoryManifest(input: { fetchFn?: GithubFetch; ownerAnd
 
   if (pluginResponse.ok) {
     return { manifestKind: "plugin", marketplacePluginCount: null }
+  }
+
+  const agentPluginResponse = await requestGithubJson<{ content?: string; encoding?: string }>({
+    allowStatuses: [404],
+    fetchFn: input.fetchFn,
+    headers: {
+      Authorization: `Bearer ${input.token}`,
+    },
+    path: `/repos/${encodeURIComponent(parts.owner)}/${encodeURIComponent(parts.repo)}/contents/plugin.json`,
+  })
+  if (agentPluginResponse.ok && typeof agentPluginResponse.body?.content === "string" && agentPluginResponse.body.encoding === "base64") {
+    try {
+      const decoded = Buffer.from(agentPluginResponse.body.content.replace(/\n/g, ""), "base64").toString("utf8")
+      const parsed = JSON.parse(decoded) as unknown
+      if (
+        parsed
+        && typeof parsed === "object"
+        && !Array.isArray(parsed)
+        && isAgentPluginManifestSchema((parsed as Record<string, unknown>).$schema)
+      ) {
+        return { manifestKind: "agent-plugin", marketplacePluginCount: null }
+      }
+    } catch {
+      // A malformed root plugin.json is not a supported manifest marker.
+    }
   }
 
   return { manifestKind: null, marketplacePluginCount: null }

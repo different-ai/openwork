@@ -115,13 +115,21 @@ describe("composeOpenWorkExtensionDiscoveryInstruction", () => {
 
   test("steers ready Connect users to verified openwork-cloud capabilities first", () => {
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("verified ready for this exact workspace/model");
-    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("use openwork-cloud_search_capabilities");
-    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("available_skills");
+    // Tool mechanics and the "only name what search returns" rule live once in
+    // the base agent prompt; ready steering is the availability signal only.
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("openwork-cloud_search_capabilities with");
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("available_skills");
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("A successful search proves");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("Skill creation:");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("Gmail");
     expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("image generation");
-    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("relay connectionStatus.action exactly");
-    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("results are live, not cached");
+    // The detailed Connect contract ships as the openwork-cloud server's MCP
+    // initialize instructions, present exactly when this steering is chosen.
+    // Ready steering defers to it instead of restating it on every request.
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).toContain("server instructions in this prompt are authoritative for search-first discovery, MCP Apps, connection_status results, schema guidance, and retry rules");
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("relay connectionStatus.action exactly");
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION).not.toContain("results are live, not cached");
+    expect(OPENWORK_CLOUD_CONNECTION_INSTRUCTION.length).toBeLessThan(600);
     expect(composeOpenWorkExtensionDiscoveryInstruction(state(health()))).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
     expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(health()), connectCatalogEnabled: false })).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);
     expect(composeOpenWorkExtensionDiscoveryInstruction({ ...state(health()), googleWorkspace: { legacyConfigured: true } })).toBe(OPENWORK_CLOUD_CONNECTION_INSTRUCTION);

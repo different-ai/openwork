@@ -1,3 +1,8 @@
+---
+name: release
+description: Cut an OpenWork release, release the app, publish a new version, rerun or recover a release tag, verify release assets. Tag-driven GitHub Actions release that makes zero commits to the repo.
+---
+
 # Skill: release
 
 Cut an OpenWork release. The "Release App" workflow

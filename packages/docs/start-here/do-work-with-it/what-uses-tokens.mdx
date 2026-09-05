@@ -11,7 +11,7 @@ OpenWork uses model tokens when a member actually runs work. Setup actions do no
 2. There is no result cache today: rerunning the same task sends a new model request.
 3. Usage scales with the context the agent has to read, including long transcripts, pasted text, file attachments, and tool results.
 4. Tasks that make more tool calls usually cost more because the agent reads results and decides the next step.
-5. Prompt cards do not cost anything while they sit in a policy, no matter how many an admin configures. Installing skills or publishing marketplace plugins also costs nothing until a member runs a task that uses them.
+5. Prompt cards do not cost anything while they sit in a policy, no matter how many an admin configures. Installing skills or publishing plugins through Collections also costs nothing until a member runs a task that uses them.
 6. A good skill can reduce cost by making repeat work shorter and more deterministic, with fewer exploratory tool calls.
 
 ## Control spend today

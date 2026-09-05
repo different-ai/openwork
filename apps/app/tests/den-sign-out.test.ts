@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { createDenClient, DenApiError } from "../src/app/lib/den";
 
 const originalFetch = globalThis.fetch;
+const originalWindow = globalThis.window;
 
 function setFetch(fetchImpl: typeof fetch) {
   Object.defineProperty(globalThis, "fetch", {
@@ -13,6 +14,10 @@ function setFetch(fetchImpl: typeof fetch) {
 
 afterEach(() => {
   setFetch(originalFetch);
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: originalWindow,
+  });
 });
 
 describe("Den sign-out", () => {
@@ -38,6 +43,77 @@ describe("Den sign-out", () => {
         authorization: "Bearer tok_test",
       },
     ]);
+  });
+
+  test("routes desktop sign-out to the direct API base", async () => {
+    const requests: string[] = [];
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        __OPENWORK_ELECTRON__: {
+          invokeDesktop: async (command: string, url: string) => {
+            expect(command).toBe("__fetch");
+            requests.push(url);
+            return { status: 204, statusText: "No Content", headers: {}, body: "" };
+          },
+        },
+      },
+    });
+
+    await createDenClient({
+      baseUrl: "https://app.den.test",
+      apiBaseUrl: "https://api.den.test",
+      token: "tok_test",
+    }).signOut();
+
+    expect(requests).toEqual(["https://api.den.test/api/auth/sign-out"]);
+  });
+
+  test("routes hosted desktop sign-out to the nested hosted API default", async () => {
+    const requests: string[] = [];
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        __OPENWORK_ELECTRON__: {
+          invokeDesktop: async (command: string, url: string) => {
+            expect(command).toBe("__fetch");
+            requests.push(url);
+            return { status: 204, statusText: "No Content", headers: {}, body: "" };
+          },
+        },
+      },
+    });
+
+    await createDenClient({
+      baseUrl: "https://app.openworklabs.com",
+      token: "tok_test",
+    }).signOut();
+
+    expect(requests).toEqual(["https://api.app.openworklabs.com/api/auth/sign-out"]);
+  });
+
+  test("keeps legacy desktop proxy API bases working for sign-out", async () => {
+    const requests: string[] = [];
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        __OPENWORK_ELECTRON__: {
+          invokeDesktop: async (command: string, url: string) => {
+            expect(command).toBe("__fetch");
+            requests.push(url);
+            return { status: 204, statusText: "No Content", headers: {}, body: "" };
+          },
+        },
+      },
+    });
+
+    await createDenClient({
+      baseUrl: "https://app.den.test",
+      apiBaseUrl: "https://app.den.test/api/den",
+      token: "tok_test",
+    }).signOut();
+
+    expect(requests).toEqual(["https://app.den.test/api/den/api/auth/sign-out"]);
   });
 
   test("rejects a non-success response so local credentials can be retained", async () => {

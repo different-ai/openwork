@@ -170,6 +170,7 @@ let db: typeof import("../src/db.js").db
 let schema: typeof import("@openwork-ee/den-db/schema")
 let drizzle: typeof import("@openwork-ee/den-db/drizzle")
 let setMcpSessionLivenessDependenciesForTest: typeof import("../src/mcp/session-liveness.js").setMcpSessionLivenessDependenciesForTest
+let setMcpGrantLivenessDependenciesForTest: typeof import("../src/mcp/grant-liveness.js").setMcpGrantLivenessDependenciesForTest
 
 const userId = createDenTypeId("user")
 const organizationId = createDenTypeId("organization")
@@ -193,12 +194,14 @@ beforeAll(async () => {
     import("@openwork-ee/den-db/schema"),
     import("@openwork-ee/den-db/drizzle"),
     import("../src/mcp/session-liveness.js"),
+    import("../src/mcp/grant-liveness.js"),
   ])
   app = modules[0].default
   db = modules[1].db
   schema = modules[2]
   drizzle = modules[3]
   setMcpSessionLivenessDependenciesForTest = modules[4].setMcpSessionLivenessDependenciesForTest
+  setMcpGrantLivenessDependenciesForTest = modules[5].setMcpGrantLivenessDependenciesForTest
 
   await db.insert(schema.AuthUserTable).values({
     id: userId,
@@ -385,6 +388,7 @@ async function fetchAgentToolsWithAccessToken(accessToken: string, id: string) {
   return app.fetch(new Request(AGENT_RESOURCE, {
     method: "POST",
     headers: {
+      accept: "application/json, text/event-stream",
       authorization: `Bearer ${accessToken}`,
       "content-type": "application/json",
     },
@@ -413,7 +417,7 @@ async function connectMcpClient(provider: HarnessOAuthProvider, fetchImpl: typeo
 
 async function expectAgentTools(client: Client) {
   const tools = await client.listTools()
-  expect(tools.tools.map((tool) => tool.name).sort()).toEqual(["execute_capability", "search_capabilities"])
+  expect(tools.tools.map((tool) => tool.name).sort()).toEqual(["create_skill", "execute_capability", "search_capabilities"])
 }
 
 childTest("SDK MCP client survives multiple serial access-token refresh and replay cycles", async () => {
@@ -450,7 +454,7 @@ childTest("refresh_token grant with a live backing session still rotates", async
   expect(requireRefreshToken(tokens)).toStartWith("ow_mcp_rt_")
 }, 8_000)
 
-childTest("refresh_token grant with a deleted backing session returns invalid_grant and clears the grant family", async () => {
+childTest("refresh_token grant with a deleted backing session still rotates while consent is live", async () => {
   const grant = await issueOAuthGrant()
   const clientId = grant.clientInformation.client_id
   await db.insert(schema.OAuthAccessTokenTable).values({
@@ -464,6 +468,59 @@ childTest("refresh_token grant with a deleted backing session returns invalid_gr
     scopes: JSON.stringify(MCP_SCOPE.split(" ")),
   })
   await db.delete(schema.AuthSessionTable).where(drizzle.eq(schema.AuthSessionTable.id, grant.sessionId))
+
+  const refresh = await refreshOAuthToken({
+    clientId,
+    refreshToken: requireRefreshToken(grant.tokens),
+  })
+
+  expect(refresh.status).toBe(200)
+  const tokens = OAuthTokensSchema.parse(refresh.body)
+  expect(tokens.access_token).toBeTruthy()
+  expect(requireRefreshToken(tokens)).toStartWith("ow_mcp_rt_")
+
+  const refreshGrants = await db
+    .select({ id: schema.OAuthRefreshTokenTable.id })
+    .from(schema.OAuthRefreshTokenTable)
+    .where(drizzle.eq(schema.OAuthRefreshTokenTable.sessionId, grant.sessionId))
+  const accessGrants = await db
+    .select({ id: schema.OAuthAccessTokenTable.id })
+    .from(schema.OAuthAccessTokenTable)
+    .where(drizzle.eq(schema.OAuthAccessTokenTable.sessionId, grant.sessionId))
+  expect(refreshGrants.length).toBeGreaterThan(0)
+  expect(accessGrants.length).toBeGreaterThan(0)
+}, 8_000)
+
+childTest("refresh_token grant with an expired backing session still rotates while consent is live", async () => {
+  const grant = await issueOAuthGrant()
+  await db.update(schema.AuthSessionTable)
+    .set({ expiresAt: new Date(Date.now() - 1_000), updatedAt: new Date() })
+    .where(drizzle.eq(schema.AuthSessionTable.id, grant.sessionId))
+
+  const refresh = await refreshOAuthToken({
+    clientId: grant.clientInformation.client_id,
+    refreshToken: requireRefreshToken(grant.tokens),
+  })
+
+  expect(refresh.status).toBe(200)
+  expect(OAuthTokensSchema.parse(refresh.body).access_token).toBeTruthy()
+}, 8_000)
+
+childTest("refresh_token grant with a dead session and deleted consent returns invalid_grant and clears the grant family", async () => {
+  const grant = await issueOAuthGrant()
+  const clientId = grant.clientInformation.client_id
+  await db.insert(schema.OAuthAccessTokenTable).values({
+    id: createDenTypeId("oauthAccessToken"),
+    token: hashStoredOAuthToken(`revoked-consent-access-${grant.sessionId}`),
+    clientId,
+    sessionId: grant.sessionId,
+    userId,
+    referenceId: organizationId,
+    expiresAt: new Date(Date.now() + 60_000),
+    scopes: JSON.stringify(MCP_SCOPE.split(" ")),
+  })
+  await db.delete(schema.AuthSessionTable).where(drizzle.eq(schema.AuthSessionTable.id, grant.sessionId))
+  await db.delete(schema.OAuthConsentTable).where(drizzle.eq(schema.OAuthConsentTable.clientId, clientId))
 
   const refresh = await refreshOAuthToken({
     clientId,
@@ -486,23 +543,6 @@ childTest("refresh_token grant with a deleted backing session returns invalid_gr
     .where(drizzle.eq(schema.OAuthAccessTokenTable.sessionId, grant.sessionId))
   expect(refreshGrants).toHaveLength(0)
   expect(accessGrants).toHaveLength(0)
-}, 8_000)
-
-childTest("refresh_token grant with an expired backing session returns invalid_grant", async () => {
-  const grant = await issueOAuthGrant()
-  await db.update(schema.AuthSessionTable)
-    .set({ expiresAt: new Date(Date.now() - 1_000), updatedAt: new Date() })
-    .where(drizzle.eq(schema.AuthSessionTable.id, grant.sessionId))
-
-  const refresh = await refreshOAuthToken({
-    clientId: grant.clientInformation.client_id,
-    refreshToken: requireRefreshToken(grant.tokens),
-  })
-
-  expect(refresh.status).toBe(400)
-  if (!isRecord(refresh.body)) throw new Error("Expected OAuth error response body")
-  expect(refresh.body.error).toBe("invalid_grant")
-  expect(refresh.body.error_description).toBe("The session backing this grant has been signed out or expired. Re-authorize the connection.")
 }, 8_000)
 
 childTest("refresh_token grant with no session_id remains valid", async () => {
@@ -535,10 +575,11 @@ childTest("authorization_code grant path still issues session-bound refresh toke
 childTest("session liveness check failures 503 resource requests but fail open refresh grants", async () => {
   const grant = await issueOAuthGrant()
   const clientId = grant.clientInformation.client_id
+  const failOpenAccessSecret = `fail-open-access-${grant.sessionId}`
   await db.insert(schema.OAuthAccessTokenTable).values({
     id: createDenTypeId("oauthAccessToken"),
-    token: hashStoredOAuthToken(`fail-open-access-${grant.sessionId}`),
-    clientId,
+    token: hashStoredOAuthToken(failOpenAccessSecret),
+    clientId: "openwork-desktop",
     sessionId: grant.sessionId,
     userId,
     referenceId: organizationId,
@@ -557,7 +598,7 @@ childTest("session liveness check failures 503 resource requests but fail open r
   })
 
   try {
-    const response = await fetchAgentToolsWithAccessToken(grant.tokens.access_token, "liveness-check-failed")
+    const response = await fetchAgentToolsWithAccessToken(`ow_mcp_at_${failOpenAccessSecret}`, "liveness-check-failed")
     expect(response.status).toBe(503)
     expect(response.headers.get("www-authenticate")).toBeNull()
     expect(response.headers.get("retry-after")).toBe("10")
@@ -588,17 +629,20 @@ childTest("session liveness check failures 503 resource requests but fail open r
   expect(accessGrants.length).toBeGreaterThan(0)
 }, 8_000)
 
-childTest("session touch failures do not block healthy liveness checks", async () => {
+childTest("grant liveness accepts cached consent-id checks", async () => {
   const grant = await issueOAuthGrant()
   const provider = new HarnessOAuthProvider(grant)
-  const errors: unknown[][] = []
-  const originalError = console.error
-  console.error = (...args: unknown[]) => {
-    errors.push(args)
-  }
-  const restoreLiveness = setMcpSessionLivenessDependenciesForTest({
-    touch: async () => {
-      throw new Error("simulated liveness touch outage")
+  const [consent] = await db
+    .select({ id: schema.OAuthConsentTable.id })
+    .from(schema.OAuthConsentTable)
+    .where(drizzle.eq(schema.OAuthConsentTable.clientId, grant.clientInformation.client_id))
+    .limit(1)
+  if (!consent) throw new Error("OAuth grant did not create consent")
+  let selectCount = 0
+  const restoreLiveness = setMcpGrantLivenessDependenciesForTest({
+    select: async () => {
+      selectCount += 1
+      return [{ id: consent.id }]
     },
   })
 
@@ -609,12 +653,9 @@ childTest("session touch failures do not block healthy liveness checks", async (
   } finally {
     await session?.client.close()
     restoreLiveness()
-    console.error = originalError
   }
 
-  const logs = serializedConsoleErrors(errors)
-  expect(logs).toContain("mcp_session_liveness_touch_failed")
-  expect(logs).not.toContain("mcp_session_liveness_check_failed")
+  expect(selectCount).toBeGreaterThan(0)
 }, 8_000)
 
 type RefreshRecord = {
@@ -752,23 +793,39 @@ childTest("reusing a rotated refresh token within grace succeeds, but stale repl
   }
 }, 8_000)
 
-childTest("revoked bound sessions currently make the MCP resource reject an otherwise unexpired access token", async () => {
+childTest("dead sessions leave consent-bound tokens valid while sid-only tokens are rejected", async () => {
   const grant = await issueOAuthGrant()
   await db.update(schema.AuthSessionTable)
     .set({ expiresAt: new Date(Date.now() - 1_000), updatedAt: new Date() })
     .where(drizzle.eq(schema.AuthSessionTable.id, grant.sessionId))
 
-  const response = await app.fetch(new Request(AGENT_RESOURCE, {
+  const grantResponse = await app.fetch(new Request(AGENT_RESOURCE, {
     method: "POST",
     headers: {
+      accept: "application/json, text/event-stream",
       authorization: `Bearer ${grant.tokens.access_token}`,
       "content-type": "application/json",
     },
     body: JSON.stringify({ jsonrpc: "2.0", id: "revoked-session", method: "tools/list", params: {} }),
   }))
 
-  expect(response.status).toBe(401)
-  expect(response.headers.get("www-authenticate") ?? "").toContain('error="invalid_token"')
-  const body: unknown = await response.json()
+  expect(grantResponse.status).toBe(200)
+
+  const sidOnlyAccessSecret = `sid-only-access-${grant.sessionId}`
+  await db.insert(schema.OAuthAccessTokenTable).values({
+    id: createDenTypeId("oauthAccessToken"),
+    token: hashStoredOAuthToken(sidOnlyAccessSecret),
+    clientId: "openwork-desktop",
+    sessionId: grant.sessionId,
+    userId,
+    referenceId: organizationId,
+    expiresAt: new Date(Date.now() + 60_000),
+    scopes: JSON.stringify(MCP_SCOPE.split(" ")),
+  })
+  const sidOnlyResponse = await fetchAgentToolsWithAccessToken(`ow_mcp_at_${sidOnlyAccessSecret}`, "revoked-sid-only-session")
+
+  expect(sidOnlyResponse.status).toBe(401)
+  expect(sidOnlyResponse.headers.get("www-authenticate") ?? "").toContain('error="invalid_token"')
+  const body: unknown = await sidOnlyResponse.json()
   expect(isRecord(body) && body.error).toBe("mcp_session_revoked")
 }, 8_000)

@@ -1,0 +1,43 @@
+---
+title: "OpenWork vs OpenCode models"
+description: "Understand the difference between OpenWork inference and OpenCode Go or Zen models"
+---
+
+OpenWork and OpenCode are different model providers. A subscription or API key for one does not automatically give access to the other.
+
+| Provider | Where to manage it | What it controls |
+| --- | --- | --- |
+| OpenWork inference | [OpenWork inference dashboard](https://app.openworklabs.com/dashboard/inference) | OpenWork-managed model access and organization usage limits |
+| OpenCode Go / Zen | [OpenCode Go](https://opencode.ai/go) and [OpenCode auth](https://opencode.ai/auth) | OpenCode-managed models, subscription, and API access |
+
+## How to tell whether you are subscribed to OpenWork inference
+
+Open the [OpenWork inference dashboard](https://app.openworklabs.com/dashboard/inference).
+
+- If the page shows `Subscribe`, you are not subscribed to OpenWork inference.
+- If the page shows usage limits and usage remaining, you are subscribed to OpenWork inference.
+
+<Frame>
+  ![OpenWork inference usage limits](/images/openwork-inference-usage-limits.png)
+</Frame>
+
+## How OpenWork usage buckets work
+
+OpenWork inference usage is tracked with separate usage buckets. You may see buckets such as:
+
+- `5 hour usage limit` — a short-term bucket that resets during the day.
+- `Weekly usage limit` — a weekly bucket that resets on the listed date.
+- `Monthly usage limit` — a monthly bucket that resets on the listed date.
+
+The dashboard shows how much remains in each bucket and when each bucket resets. Usage is shared across your whole OpenWork organization, not just your personal desktop app.
+
+Organization limits scale with the number of active members in the org. For example, adding active members increases the shared organization allowance, and usage by any member draws from the same shared buckets.
+
+## If you meant to use OpenCode models
+
+Connect the `OpenCode Go` provider in OpenWork Desktop instead of using OpenWork inference. Follow [Using OpenCode Zen & Go Models](/start-here/connect-your-stack/using-opencode-zen-go-models) to add the provider.
+
+Use these OpenCode links to manage that account:
+
+- [opencode.ai/go](https://opencode.ai/go)
+- [opencode.ai/auth](https://opencode.ai/auth)

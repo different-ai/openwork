@@ -34,10 +34,25 @@
       "development": "./src/automations.ts",
       "default": "./src/automations.ts"
     },
-    "./dynamic-artifacts": {
-      "types": "./src/dynamic-artifacts.ts",
-      "development": "./src/dynamic-artifacts.ts",
-      "default": "./src/dynamic-artifacts.ts"
+    "./workflows": {
+      "types": "./src/workflows.ts",
+      "development": "./src/workflows.ts",
+      "default": "./src/workflows.ts"
+    },
+    "./skill-created-app": {
+      "types": "./src/skill-created-app.ts",
+      "development": "./src/skill-created-app.ts",
+      "default": "./src/skill-created-app.ts"
+    },
+    "./connection-action-app": {
+      "types": "./src/connection-action-app.ts",
+      "development": "./src/connection-action-app.ts",
+      "default": "./src/connection-action-app.ts"
+    },
+    "./plugin-flow-app": {
+      "types": "./src/plugin-flow-app.ts",
+      "development": "./src/plugin-flow-app.ts",
+      "default": "./src/plugin-flow-app.ts"
     },
     "./den/desktop-app-restrictions": {
       "types": "./src/den/desktop-app-restrictions.ts",

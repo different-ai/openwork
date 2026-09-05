@@ -16,6 +16,8 @@ describe("member dashboard install contract", () => {
 
     expect(source).toContain('router.push("/install")');
     expect(source).toContain("Get OpenWork");
+    expect(source).not.toContain("/install-links");
+    expect(source).not.toContain("token=");
     expect(source).not.toContain("createOrganizationInstallLink");
     expect(source).not.toContain("installTokenFromPageUrl");
     expect(source).not.toContain("/v1/install-config?token=");

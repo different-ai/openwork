@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
-import { useState, type ComponentProps, type ReactNode } from "react";
-import { CircleAlert, Cpu, Database, Info, RefreshCcw, Server } from "lucide-react";
+import { useEffect, useState, type ComponentProps, type ReactNode } from "react";
+import { CircleAlert, Cpu, Info, RefreshCcw, Server } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import type { OpenworkCloudMcpHealth, OpenworkRuntimeConfigStatus, OpenworkServerStatus } from "@/app/lib/openwork-server";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import type { EngineV2PreviewStatus, OpenworkCloudMcpHealth, OpenworkRuntimeConfigStatus, OpenworkServerStatus } from "@/app/lib/openwork-server";
 import { sanitizeCloudMcpHealthDiagnostic, sanitizeDiagnosticRecord } from "@/app/lib/diagnostic-sanitizer";
 import {
   DEFAULT_DEN_API_BASE_URL,
@@ -200,7 +201,7 @@ export function AdvancedOrganizationServerSection(props: AdvancedOrganizationSer
   };
 
   return (
-    <LayoutSection>
+    <LayoutSection id="advanced-organization-server">
       <LayoutSectionHeader>
         <LayoutSectionTitle>{t("settings.organization_server_title")}</LayoutSectionTitle>
         <LayoutSectionDescription>{t("settings.organization_server_desc")}</LayoutSectionDescription>
@@ -297,7 +298,7 @@ interface AdvancedRuntimeSectionProps {
 
 export function AdvancedRuntimeSection(props: AdvancedRuntimeSectionProps) {
   return (
-    <LayoutSection>
+    <LayoutSection id="advanced-runtime">
       <LayoutSectionHeader>
         <LayoutSectionTitle>{t("settings.runtime_title")}</LayoutSectionTitle>
         <LayoutSectionDescription>{t("settings.runtime_desc")}</LayoutSectionDescription>
@@ -396,7 +397,7 @@ export function AdvancedCloudMcpDiagnosticsSection(props: AdvancedCloudMcpDiagno
   };
 
   return (
-    <LayoutSection>
+    <LayoutSection id="advanced-agent-access">
       <LayoutSectionHeader>
         <LayoutSectionTitle>Agent access diagnostics</LayoutSectionTitle>
         <LayoutSectionDescription>
@@ -483,16 +484,13 @@ export function AdvancedCloudMcpDiagnosticsSection(props: AdvancedCloudMcpDiagno
   );
 }
 
-interface AdvancedRuntimeMigrationSectionProps {
+interface AdvancedRuntimeConfigSourcesSectionProps {
   busy: boolean;
-  canMigrate: boolean;
-  migrationBusy: boolean;
-  migrationStatus: string | null;
+  canInspect: boolean;
   configStatus: OpenworkRuntimeConfigStatus | null;
   configStatusBusy: boolean;
   configStatusError: string | null;
   onRefresh: () => Promise<void>;
-  onMigrate: () => Promise<void>;
 }
 
 function formatKeys(keys: string[]) {
@@ -591,13 +589,13 @@ function RuntimeConfigSourceBlock(props: {
   );
 }
 
-export function AdvancedRuntimeMigrationSection(props: AdvancedRuntimeMigrationSectionProps) {
+export function AdvancedRuntimeConfigSourcesSection(props: AdvancedRuntimeConfigSourcesSectionProps) {
   const effectiveRuntimeConfig = props.configStatus
     ? sanitizedConfig(props.configStatus.effectiveRuntime ?? props.configStatus.runtime)
     : null;
   const runtimeConfig = props.configStatus ? sanitizedConfig(props.configStatus.runtime) : null;
   return (
-    <LayoutSection>
+    <LayoutSection id="advanced-config-sources">
       <LayoutSectionHeader>
         <LayoutSectionTitle>OpenCode config sources</LayoutSectionTitle>
         <LayoutSectionDescription>
@@ -607,9 +605,9 @@ export function AdvancedRuntimeMigrationSection(props: AdvancedRuntimeMigrationS
 
       <LayoutSectionItem>
         <LayoutSectionItemHeader>
-          <LayoutSectionItemTitle>Move OpenWork-managed config</LayoutSectionItemTitle>
+          <LayoutSectionItemTitle>Config source snapshot</LayoutSectionItemTitle>
           <LayoutSectionItemDescription>
-            Moves older OpenWork-owned runtime keys from `.opencode/openwork.json` and safe OpenWork-managed keys from `opencode.jsonc` into the runtime database.
+            Shows the OpenWork runtime database, the injected runtime config, and the workspace-owned OpenCode config files.
           </LayoutSectionItemDescription>
           <LayoutSectionItemHeaderActions>
             <Button
@@ -617,24 +615,13 @@ export function AdvancedRuntimeMigrationSection(props: AdvancedRuntimeMigrationS
               variant="outline"
               size="sm"
               onClick={() => void props.onRefresh()}
-              disabled={props.busy || props.configStatusBusy || !props.canMigrate}
+              disabled={props.busy || props.configStatusBusy || !props.canInspect}
             >
               <RefreshCcw size={14} className={props.configStatusBusy ? "animate-spin" : ""} />
               Refresh
             </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => void props.onMigrate()}
-              disabled={props.busy || props.migrationBusy || !props.canMigrate}
-            >
-              <Database size={14} />
-              {props.migrationBusy ? "Migrating..." : "Migrate"}
-            </Button>
           </LayoutSectionItemHeaderActions>
         </LayoutSectionItemHeader>
-        {props.migrationStatus ? <SettingsNotice>{props.migrationStatus}</SettingsNotice> : null}
         {props.configStatusError ? <SettingsNotice>{props.configStatusError}</SettingsNotice> : null}
         {props.configStatus ? (
           <div className="space-y-3 rounded-xl border border-gray-6 bg-gray-1/60 p-3 text-xs text-gray-10">
@@ -694,19 +681,10 @@ export function AdvancedRuntimeMigrationSection(props: AdvancedRuntimeMigrationS
               <div>Stored keys: {formatKeys(props.configStatus.runtimeKeys)}</div>
             </div>
             <div>
-              <div className="font-medium text-gray-12">Legacy OpenWork metadata</div>
-              <div className="break-all">{props.configStatus.legacyOpenwork.path}</div>
-              {props.configStatus.legacyOpenwork.error ? (
-                <div className="text-amber-11">{props.configStatus.legacyOpenwork.error}; fix this file before moving legacy config.</div>
-              ) : null}
-              <div>Migratable keys: {formatKeys(props.configStatus.legacyOpenwork.keys)}</div>
-            </div>
-            <div>
               <div className="font-medium text-gray-12">User opencode.jsonc</div>
               <div className="break-all">{props.configStatus.userOpencode.path}</div>
               <div>{props.configStatus.userOpencode.exists ? "Found" : "Not found"}</div>
               <div>User-owned keys: {formatKeys(props.configStatus.userOpencode.keys)}</div>
-              <div>Migratable keys: {formatKeys(props.configStatus.userOpencode.migratableKeys)}</div>
             </div>
             <div>
               <div className="font-medium text-gray-12">Runtime DB JSON</div>
@@ -794,6 +772,114 @@ export function AdvancedFeatureFlagsSection(props: AdvancedFeatureFlagsSectionPr
   );
 }
 
+interface AdvancedEngineV2PreviewSectionProps {
+  getStatus: () => Promise<EngineV2PreviewStatus>;
+  setEnabled: (enabled: boolean) => Promise<EngineV2PreviewStatus>;
+  setChatRouting: (enabled: boolean) => Promise<EngineV2PreviewStatus>;
+}
+
+export function AdvancedEngineV2PreviewSection(props: AdvancedEngineV2PreviewSectionProps) {
+  const [status, setStatus] = useState<EngineV2PreviewStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    void props.getStatus().then((nextStatus) => {
+      if (mounted) {
+        setStatus(nextStatus);
+        setLoadError(null);
+      }
+    }).catch((error: unknown) => {
+      if (mounted) setLoadError(error instanceof Error ? error.message : "Failed to load OpenCode v2 engine preview status.");
+    });
+    return () => {
+      mounted = false;
+    };
+  }, [props.getStatus]);
+
+  useEffect(() => {
+    if (!status?.enabled) return;
+    let mounted = true;
+    const interval = window.setInterval(() => {
+      void props.getStatus().then((nextStatus) => {
+        if (mounted) setStatus(nextStatus);
+      }).catch(() => undefined);
+    }, 5_000);
+    return () => {
+      mounted = false;
+      window.clearInterval(interval);
+    };
+  }, [props.getStatus, status?.enabled]);
+
+  const selectEngine = async (engine: "v1" | "v2") => {
+    setBusy(true);
+    setLoadError(null);
+    try {
+      if (engine === "v2") {
+        setStatus(await props.setEnabled(true));
+        setStatus(await props.setChatRouting(true));
+      } else {
+        setStatus(await props.setChatRouting(false));
+        setStatus(await props.setEnabled(false));
+      }
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Failed to update OpenCode v2 engine preview.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const skippedCount = status?.skippedProviderIds.length ?? 0;
+  const selectedEngine = status?.enabled && status.chatRouting ? "v2" : "v1";
+  const runningStatus = status?.enabled && status.running
+    ? `Running v${status.version ?? "unknown"} (pid ${status.pid ?? "unknown"}) — ${status.mirroredProviderIds.length} providers mirrored, ${status.catalogModelIds.length} models${skippedCount ? `, ${skippedCount} skipped` : ""}${status.chatRouting ? " — chat routed to v2" : ""}`
+    : null;
+  const error = (status?.enabled && !status.running ? status.lastError : null) ?? loadError;
+  const starting = status?.enabled && !status.running && !error ? "Starting the OpenCode v2 sidecar…" : null;
+
+  return (
+    <LayoutSection id="advanced-experimental-engine">
+      <LayoutSectionHeader>
+        <LayoutSectionTitle>Experimental engine</LayoutSectionTitle>
+      </LayoutSectionHeader>
+
+      <LayoutSectionItem>
+        <LayoutSectionItemHeader>
+          <LayoutSectionItemTitle>Chat engine</LayoutSectionItemTitle>
+          <LayoutSectionItemDescription>
+            OpenCode v1 is the default engine. OpenCode v2 (preview) runs as a parallel sidecar with live provider updates and no engine reloads; sessions created on one engine stay in that engine's list.
+          </LayoutSectionItemDescription>
+          <LayoutSectionItemHeaderActions>
+            <ToggleGroup
+              aria-label="Chat engine"
+              value={[selectedEngine]}
+              variant="outline"
+              disabled={busy || !status || !isDesktopRuntime()}
+              onValueChange={(value) => {
+                const engine = value[0];
+                if ((engine === "v1" || engine === "v2") && engine !== selectedEngine) {
+                  void selectEngine(engine);
+                }
+              }}
+            >
+              <ToggleGroupItem value="v1" data-engine="v1">
+                OpenCode v1 (default)
+              </ToggleGroupItem>
+              <ToggleGroupItem value="v2" data-engine="v2">
+                OpenCode v2 (preview)
+              </ToggleGroupItem>
+            </ToggleGroup>
+          </LayoutSectionItemHeaderActions>
+        </LayoutSectionItemHeader>
+        {runningStatus ? <div className="text-xs text-gray-11">{runningStatus}</div> : null}
+        {starting ? <div className="text-xs text-gray-11">{starting}</div> : null}
+        {error ? <div className="text-xs text-red-11">{error}</div> : null}
+      </LayoutSectionItem>
+    </LayoutSection>
+  );
+}
+
 interface AdvancedDeveloperSectionProps {
   busy: boolean;
   developerMode: boolean;
@@ -810,7 +896,7 @@ interface AdvancedDeveloperSectionProps {
 
 export function AdvancedDeveloperSection(props: AdvancedDeveloperSectionProps) {
   return (
-    <LayoutSection>
+    <LayoutSection id="advanced-developer">
       <LayoutSectionHeader>
         <LayoutSectionTitle>{t("settings.developer")}</LayoutSectionTitle>
       </LayoutSectionHeader>

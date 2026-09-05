@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { proxyUpstream } from "../../_lib/upstream-proxy";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 async function proxy(request: NextRequest, segments: string[] = []) {
   return proxyUpstream(request, segments, {

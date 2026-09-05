@@ -1,0 +1,1 @@
+CREATE INDEX `connector_target_type_created_id` ON `connector_target` (`connector_type`,`created_at`,`id`);

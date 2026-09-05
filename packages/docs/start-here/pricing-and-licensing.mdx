@@ -1,0 +1,87 @@
+---
+title: "Pricing and licensing"
+description: "OpenWork's public pricing — Free, Team, and Enterprise — and how the MIT + OpenWork EE License split works."
+---
+
+Our pricing is public, like the rest of our handbook. The same prices apply
+whether you use OpenWork Cloud or self-host. There are no deployment fees, and
+support is included in every paid plan.
+
+## Plans
+
+| | Free | Team | Enterprise |
+| --- | --- | --- | --- |
+| **Price** | $0 | $20 per seat / month | $50 per user / month |
+| **Users** | Up to 5 | Up to 100 | Unlimited (volume pricing above 100 — [talk to sales](mailto:sales@openworklabs.com)) |
+| **Desktop app (MIT, open source)** | ✓ | ✓ | ✓ |
+| **Self-host the full platform** | ✓ | ✓ | ✓ |
+| **Usage and adoption analytics** | — | — | ✓ |
+| **SSO / SAML, SCIM, RBAC** | — | — | ✓ |
+| **Desktop policies and version controls** | — | — | ✓ |
+| **Internal white-labeling (your name, logo, branding)** | — | — | ✓ |
+| **OpenWork Web** | — | — | ✓ |
+| **Spend observability** | — | — | ✓ |
+| **Support** | Community | Standard, included | Standard SLA, included |
+
+Analytics, SSO/SCIM, desktop policies, and white-labeling are the
+**Enterprise Features** — defined in the
+[subscription terms](https://openworklabs.com/terms/subscription) and
+reserved for the Enterprise plan (and for evaluations and pilots, so you can
+test what you would buy).
+
+Enterprise white-labeling covers your own internal deployment. External
+distribution, managed service use, or resale under your branding requires a
+separate written agreement.
+
+Add-ons (each with a 30-day free trial) are listed at
+[openworklabs.com/pricing](https://openworklabs.com/pricing).
+
+## How licensing works
+
+The [repository](https://github.com/different-ai/openwork) uses a
+directory-split license, similar to GitLab:
+
+- **Everything outside `ee/` is MIT.** The desktop app and core platform are
+  open source and free for any use.
+- **Everything under `ee/` (OpenWork Den, the org control plane) is
+  source-available under the
+  [OpenWork EE License](https://github.com/different-ai/openwork/blob/dev/ee/LICENSE).**
+  The code is public so your security team can audit exactly what you deploy.
+
+Under the EE License, no subscription is required for:
+
+1. **Production use by organizations with up to 5 users** — this matches the
+   Free plan. Enterprise Features (analytics, SSO/SCIM, desktop policies,
+   white-labeling) are excluded and require a plan.
+2. **Internal evaluation for up to 30 days**, at any user count, with all
+   features — extendable in writing.
+3. **Development and testing.**
+
+Beyond those grants, production use requires a subscription per the
+[subscription terms](https://openworklabs.com/terms/subscription). Every
+`ee/` release additionally converts to MIT two years after publication.
+Versions released before the EE License was adopted remain under their
+original license (FSL-1.1-MIT), and each release is governed by the license
+text it shipped with — license updates are never retroactive.
+
+For the promises we make about how this split is stewarded over time — what
+can and cannot move between tiers, and how the MIT conversion works — see
+[Stewardship](/start-here/stewardship).
+
+## Evaluating and pilots
+
+You can evaluate self-serve for free for 30 days. The [pull-only Docker Compose
+stack](/self-host/evaluate-with-docker-compose) is the quickest way to deploy
+the control plane in your own environment without cloning or building the
+repository. Need longer? Evaluation extensions are granted in writing —
+[ask us](mailto:sales@openworklabs.com). If you want a supported pilot
+instead (a dedicated engineering contact, deployment guidance, and response
+targets), [talk to sales](mailto:sales@openworklabs.com).
+
+## Why the enterprise code is public
+
+Our buyers are security teams. Publishing the enterprise source means you can
+read every line that runs inside your network before you run it. What a
+subscription pays for is the right to run it in production at scale, plus a
+supported, patched release stream and a vendor who is contractually
+accountable.

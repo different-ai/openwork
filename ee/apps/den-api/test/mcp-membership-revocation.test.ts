@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, expect, mock, test } from "bun:test"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { Hono } from "hono"
+import type { MiddlewareHandler } from "hono"
 import type { McpAuthResourceContext } from "../src/mcp/auth.js"
 
 function seedRequiredEnv() {
@@ -11,7 +12,7 @@ function seedRequiredEnv() {
 }
 
 type SelectedRow =
-  | { id: string }
+  | { id: string; role?: string }
   | {
     token: string
     clientId: string
@@ -35,6 +36,9 @@ let registerAdminMcpRoutes: typeof import("../src/mcp/admin.js")["registerAdminM
 
 const OPAQUE_SECRET = "mcp_test_secret"
 const OPAQUE_TOKEN = `ow_mcp_at_${OPAQUE_SECRET}`
+const allowAdminMiddleware: MiddlewareHandler = async (_context, next) => {
+  await next()
+}
 
 function nextSelectedRows() {
   return selectedRowBatches.shift() ?? selectedRows
@@ -54,6 +58,7 @@ beforeAll(async () => {
       "http://127.0.0.1:8790/mcp/agent",
       "http://127.0.0.1:8790/mcp/admin",
     ],
+    DEN_MCP_GRANT_ID_CLAIM: "https://openworklabs.com/grant_id",
     DEN_MCP_ORG_ID_CLAIM: "https://openworklabs.com/org_id",
     DEN_MCP_OAUTH_RESOURCE: "http://127.0.0.1:8790/mcp/agent",
     DEN_MCP_RESOURCE: "http://127.0.0.1:8790/mcp",
@@ -88,6 +93,7 @@ beforeAll(async () => {
 
   mock.module("../src/middleware/admin.js", () => ({
     isPlatformAdminUserId: () => Promise.resolve(platformAdmin),
+    requireAdminMiddleware: allowAdminMiddleware,
   }))
 
   mcpAuth = await import("../src/mcp/auth.js")
@@ -104,7 +110,7 @@ test("MCP principals require an active organization membership", async () => {
   const userId = createDenTypeId("user")
   const organizationId = createDenTypeId("organization")
 
-  selectedRows = [{ id: createDenTypeId("member") }]
+  selectedRows = [{ id: createDenTypeId("member"), role: "member" }]
   await expect(mcpAuth.hasActiveMcpMembership({
     userId,
     organizationId,
@@ -127,19 +133,15 @@ test("MCP membership check rejects malformed principals", async () => {
 
 test("MCP bearer tokens tied to deleted sessions are rejected", async () => {
   const sessionId = createDenTypeId("session")
-  const now = new Date("2026-07-09T12:00:00.000Z")
-
   sessionUpdates = []
   selectedRows = [{ id: sessionId }]
-  await expect(mcpAuth.hasActiveMcpSession(sessionId, now)).resolves.toBe(true)
-  expect(sessionUpdates).toEqual([{
-    updatedAt: now,
-    expiresAt: new Date("2026-07-16T12:00:00.000Z"),
-  }])
+  await expect(mcpAuth.hasActiveMcpSession(sessionId)).resolves.toBe(true)
+  expect(sessionUpdates).toHaveLength(1)
+  expect(sessionUpdates[0]?.expiresAt.getTime() - sessionUpdates[0]?.updatedAt.getTime()).toBe(7 * 24 * 60 * 60 * 1000)
 
   selectedRows = []
   selectedRowBatches = []
-  await expect(mcpAuth.hasActiveMcpSession(sessionId, now)).resolves.toBe(false)
+  await expect(mcpAuth.hasActiveMcpSession(sessionId)).resolves.toBe(false)
   await expect(mcpAuth.hasActiveMcpSession("not-a-session-id")).resolves.toBe(false)
 })
 
@@ -192,7 +194,7 @@ function validMcpJwtPayload(input: { resource: string; clientId?: string }) {
 
 function selectActiveSessionAndMembership() {
   selectedRows = []
-  selectedRowBatches = [[{ id: createDenTypeId("session") }], [{ id: createDenTypeId("member") }]]
+  selectedRowBatches = [[{ id: createDenTypeId("session") }], [{ id: createDenTypeId("member"), role: "member" }]]
 }
 
 function validFirstPartyOpaqueTokenRow() {
@@ -213,7 +215,7 @@ function selectActiveOpaqueTokenSessionAndMembership() {
   selectedRowBatches = [
     [validFirstPartyOpaqueTokenRow()],
     [{ id: createDenTypeId("session") }],
-    [{ id: createDenTypeId("member") }],
+    [{ id: createDenTypeId("member"), role: "member" }],
   ]
 }
 
@@ -480,6 +482,25 @@ test("authenticated /mcp/agent malformed JSON-RPC is rejected before transport",
     jsonrpc: "2.0",
     error: { code: -32600, message: "Invalid Request", data: { referenceId: "req_agent_preflight" } },
   })
+})
+
+test("authenticated standalone GET /mcp/agent returns 405 after token verification", async () => {
+  jwtPayload = validMcpJwtPayload({ resource: "http://127.0.0.1:8790/mcp/agent" })
+  selectActiveSessionAndMembership()
+  const app = buildMcpRouteApp("req_agent_standalone_get")
+  registerAgentMcpRoutes(app)
+
+  const response = await app.request("http://127.0.0.1:8790/mcp/agent", {
+    method: "GET",
+    headers: {
+      accept: "text/event-stream",
+      authorization: "Bearer header.payload.signature",
+    },
+  })
+
+  expect(response.status).toBe(405)
+  expect(response.headers.get("allow")).toBe("POST")
+  expect(await response.text()).toBe("")
 })
 
 test("authenticated /mcp/admin malformed JSON-RPC is rejected for admins before transport", async () => {

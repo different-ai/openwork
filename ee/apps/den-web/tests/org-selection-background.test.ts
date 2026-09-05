@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "bun:test";
 
 const orgSelectionPath = fileURLToPath(
-  new URL("../app/(den)/dashboard/_components/org-selection-screen.tsx", import.meta.url),
+  new URL("../app/(den)/dashboard/_features/org-selection/org-selection-screen.tsx", import.meta.url),
 );
 
 function readOrgSelectionSource() {

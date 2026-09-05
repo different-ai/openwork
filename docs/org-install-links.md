@@ -55,16 +55,18 @@ flag.
 
 ## Public origins
 
-Set `BETTER_AUTH_URL` to the externally reachable Den web origin, for example
-`https://openwork.example.com`. Set `DEN_API_PUBLIC_URL` to the externally
-reachable Den API base; in a single-origin setup, use the Den web proxy path,
-such as `https://openwork.example.com/api/den`, so desktops reach only the Den
-web origin. If you publish a separate Den API origin, the install-link exchange
-and external MCP clients must be able to reach it.
+Set `DEN_BASE_URL` to the externally reachable Den web origin, for example
+`https://openwork.example.com`. Den derives Better Auth, CORS/trusted origins,
+web-app hosts, API defaults, and MCP resource defaults from that one value. Set
+`DEN_API_PUBLIC_URL` only as a compatibility override when you publish a separate
+Den API origin or an externally reachable proxy path, such as
+`https://openwork.example.com/api/den`. If you publish a separate Den API origin,
+the install-link exchange and external MCP clients must be able to reach it.
 
-Invitation acceptance links use the first non-wildcard entry of
-`DEN_BETTER_AUTH_TRUSTED_ORIGINS`, falling back to `BETTER_AUTH_URL`. In a
-single-origin setup, use the Den web origin for both.
+Invitation acceptance links use the first non-wildcard trusted origin. In the
+single-origin setup this is derived from `DEN_BASE_URL`; set
+`DEN_BETTER_AUTH_TRUSTED_ORIGINS` only when you need extra web origins during a
+migration.
 
 ## Installer delivery
 
@@ -151,8 +153,14 @@ the same standard installer through the same direct or mounted route.
 
 ## MDM alternative
 
-Managed deployments can skip the deep-link handoff by deploying the public
-installer and writing `desktop-bootstrap.json` directly:
+Customer-facing guidance for this path is published at
+[`packages/docs/start-here/enterprise-desktop-deployment.mdx`](../packages/docs/start-here/enterprise-desktop-deployment.mdx).
+
+Managed deployments can skip the deep-link handoff by deploying a standard
+binary — typically the enterprise distribution
+(`openwork-enterprise-<os>-<arch>-<version>.<ext>`, published on the
+`enterprise` release channel), or the public installer — and writing
+`desktop-bootstrap.json` directly:
 
 | OS | Canonical path |
 |---|---|

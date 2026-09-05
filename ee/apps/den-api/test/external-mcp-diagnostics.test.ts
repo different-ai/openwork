@@ -5,6 +5,7 @@ import {
   EnterpriseMcpClientError,
   EnterpriseMcpLifecycleDeadlineError,
   EnterpriseMcpOAuthContractError,
+  EnterpriseMcpToolInputError,
 } from "@openwork/enterprise-mcp-client"
 import {
   ExternalMcpDiagnosticTracker,
@@ -502,6 +503,23 @@ describe("external MCP diagnostics", () => {
       providerErrorMessage: "Provider rejected private argument detail",
     })
     expect(error.diagnostic.operatorAction).toContain("do not retry the same arguments")
+    // The member-facing message must carry the provider's rejection so a
+    // dashboard launch that omits a required argument names that argument.
+    expect(error.message).toBe(
+      'The provider rejected the tool arguments. Provider-declared message (untrusted): "Provider rejected private argument detail".',
+    )
+  })
+
+  test("explains locally rejected non-JSON tool arguments", () => {
+    const tracker = new ExternalMcpDiagnosticTracker("req_invalid_json_arguments")
+    const error = tracker.error(new EnterpriseMcpToolInputError("MCP_TOOL_ARGUMENT_INVALID_JSON"))
+
+    expect(error.diagnostic).toMatchObject({
+      category: "mcp_tool_input_invalid",
+      code: "MCP_TOOL_ARGUMENT_INVALID_JSON",
+    })
+    expect(error.diagnostic.message).toContain("not valid JSON data")
+    expect(error.diagnostic.message).not.toContain("protocol lifecycle")
   })
 
   test("classifies downstream provider authorization links without treating -32001 as a timeout", () => {
@@ -1124,6 +1142,67 @@ describe("external MCP diagnostics", () => {
     })
   })
 
+  test("suppresses the unauthenticated bearer challenge on a modern server/discover probe", async () => {
+    const tracker = new ExternalMcpDiagnosticTracker("req_discover_challenge")
+    const diagnosticFetch = createExternalMcpDiagnosticFetch({
+      endpoint: "https://mcp.example.invalid/mcp",
+      tracker,
+      fetch: async () => new Response(null, {
+        status: 401,
+        headers: { "www-authenticate": "Bearer resource_metadata=\"https://mcp.example.invalid/.well-known/oauth-protected-resource\"" },
+      }),
+    })
+    await diagnosticFetch("https://mcp.example.invalid/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "server/discover", params: {} }),
+    })
+    const diagnostic = tracker.error(new Error("Unauthorized")).diagnostic
+    expect(diagnostic.code).not.toBe("MCP_HTTP_401")
+    expect(diagnostic.category).not.toBe("http_failure")
+  })
+
+  test("preserves an application-owned OAuth issuer mismatch over a captured HTTP 401", async () => {
+    const tracker = new ExternalMcpDiagnosticTracker("req_issuer_mismatch")
+    const diagnosticFetch = createExternalMcpDiagnosticFetch({
+      endpoint: "https://mcp.example.invalid/mcp",
+      tracker,
+      fetch: async () => new Response(null, { status: 401 }),
+    })
+    await diagnosticFetch("https://mcp.example.invalid/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
+    })
+    const oauthError = Object.assign(new Error("Authorization server metadata issuer mismatch."), {
+      code: "MCP_OAUTH_ISSUER_MISMATCH",
+    })
+
+    expect(tracker.error(oauthError).diagnostic).toMatchObject({
+      phase: "AUTH_ISSUER_DISCOVERY",
+      category: "oauth_issuer_mismatch",
+      code: "MCP_OAUTH_ISSUER_MISMATCH",
+      retryable: false,
+      actionOwner: "organization_admin",
+      httpStatus: 401,
+    })
+  })
+
+  test("classifies an in-flight OAuth configuration change as safely retryable", () => {
+    const tracker = new ExternalMcpDiagnosticTracker("req_oauth_configuration_changed")
+    const oauthError = Object.assign(new Error("The selected issuer changed during registration."), {
+      code: "MCP_OAUTH_CONFIGURATION_CHANGED",
+    })
+
+    expect(tracker.error(oauthError, "AUTH_CLIENT_REGISTRATION").diagnostic).toMatchObject({
+      phase: "AUTH_CLIENT_REGISTRATION",
+      category: "oauth_configuration_changed",
+      code: "MCP_OAUTH_CONFIGURATION_CHANGED",
+      retryable: true,
+      actionOwner: "openwork",
+    })
+  })
+
   test("maps bounded SDK protocol incompatibility errors to MCP_VERSION", () => {
     const tracker = new ExternalMcpDiagnosticTracker("req_version")
     tracker.passed("MCP_TRANSPORT", "reachable")
@@ -1178,10 +1257,11 @@ describe("external MCP diagnostics", () => {
 
     expect(html).toContain("You're connected")
     expect(html).toContain("Enterprise MCP &lt;test&gt; is connected to OpenWork.")
-    expect(html).toContain("window.close()")
-    expect(html).toContain("Close window")
-    expect(html).toContain("OpenWork Connect")
-    expect(html).toContain("background: #f8fbff")
+    expect(html).not.toContain("window.close")
+    expect(html).not.toContain("<button")
+    expect(html).toContain("You can close this window and return to OpenWork.")
+    expect(html).toContain('<div class="brand">')
+    expect(html).toContain("OpenWork</span>")
     expect(html).not.toContain("@keyframes")
     expect(html).not.toContain("openwork://")
     expect(html).not.toContain("Open OpenWork")

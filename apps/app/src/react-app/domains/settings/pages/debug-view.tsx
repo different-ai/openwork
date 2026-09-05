@@ -334,36 +334,6 @@ function RuntimeConfigOwnershipCard(props: {
         </pre>
       </details>
 
-      <div className={subCardClass}>
-        <div className="text-sm font-semibold tracking-[-0.1px] text-dls-text">
-          {t("settings.runtime_config_legacy_cleanup_title")}
-        </div>
-        {!props.status?.sweep ? (
-          <div className="text-[12px] text-dls-secondary">{t("settings.runtime_config_cleanup_pending")}</div>
-        ) : props.status.sweep.error ? (
-          <StatusBanner tone="error" message={props.status.sweep.error} />
-        ) : props.status.sweep.files.length === 0 ? (
-          <div className="text-[12px] text-dls-secondary">{t("settings.runtime_config_cleanup_no_files")}</div>
-        ) : (
-          <div className="divide-y divide-dls-border/60">
-            {props.status.sweep.files.map((file) => (
-              <div key={file.path} className="space-y-1 py-2 first:pt-0 last:pb-0">
-                <div className="truncate font-mono text-[11px] text-dls-text" title={file.path}>{file.path}</div>
-                <div className="text-[11px] text-dls-secondary">
-                  {file.removedKeys.length > 0
-                    ? t("settings.runtime_config_removed_keys", { keys: file.removedKeys.join(", ") })
-                    : t("settings.runtime_config_no_removed_keys")}
-                </div>
-                <div className="truncate text-[11px] text-dls-secondary" title={file.backupPath ?? undefined}>
-                  {file.backupPath
-                    ? t("settings.runtime_config_backup_path", { path: file.backupPath })
-                    : t("settings.runtime_config_no_backup")}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
     </div>
   );
 }

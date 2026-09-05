@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -147,13 +147,13 @@ function pptxFixture(text = PPTX_SENTINEL) {
   ]);
 }
 
-function xlsxFixture(text = XLSX_SENTINEL) {
+function xlsxFixture(text = XLSX_SENTINEL, rawValue = "1742.42") {
   return zip([
     { name: "xl/workbook.xml", data: Buffer.from(`<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Summary" sheetId="1" r:id="rId1"/></sheets></workbook>`, "utf8") },
     { name: "xl/_rels/workbook.xml.rels", data: Buffer.from(`<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`, "utf8") },
     { name: "xl/sharedStrings.xml", data: Buffer.from(`<sst><si><t>${text}</t></si><si><t>Northstar Revenue</t></si><si><r><t>EM</t></r><r><t>EA</t></r></si></sst>`, "utf8") },
     { name: "xl/styles.xml", data: Buffer.from(`<styleSheet><numFmts count="1"><numFmt numFmtId="164" formatCode="$#,##0.00"/></numFmts><cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="164" applyNumberFormat="1"/></cellXfs></styleSheet>`, "utf8") },
-    { name: "xl/worksheets/sheet1.xml", data: Buffer.from(`<worksheet><dimension ref="A1:D3"/><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c></row><row r="2"><c r="A2" t="s"><v>1</v></c><c r="B2" t="s"><v>2</v></c><c r="C2" s="1"><v>1742.42</v></c><c r="D2" s="1"><f>SUM(C2:C3)</f><v>3484.84</v></c></row><row r="3"><c r="C3" s="1"><v>1742.42</v></c></row></sheetData><mergeCells count="1"><mergeCell ref="A1:D1"/></mergeCells></worksheet>`, "utf8") },
+    { name: "xl/worksheets/sheet1.xml", data: Buffer.from(`<worksheet><dimension ref="A1:D3"/><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c></row><row r="2"><c r="A2" t="s"><v>1</v></c><c r="B2" t="s"><v>2</v></c><c r="C2" s="1"><v>${rawValue}</v></c><c r="D2" s="1"><f>SUM(C2:C3)</f><v>3484.84</v></c></row><row r="3"><c r="C3" s="1"><v>1742.42</v></c></row></sheetData><mergeCells count="1"><mergeCell ref="A1:D1"/></mergeCells></worksheet>`, "utf8") },
   ]);
 }
 
@@ -197,7 +197,7 @@ describe("OpenWorkOfficeAttachments", () => {
     });
   });
 
-  test("extracts XLSX structure, values, formulas, styles, merged cells, and materializes exact bytes", async () => {
+  test("previews XLSX sheets as a grid with formulas, number formats, merged cells, a tool pointer, and materializes exact bytes", async () => {
     await withWorkspace(async (root) => {
       const xlsx = xlsxFixture();
       const messages = await transform(root, [{
@@ -212,17 +212,65 @@ describe("OpenWorkOfficeAttachments", () => {
       expect(text).toContain(`sha256: ${sha256(xlsx)}`);
       expect(text).toContain("xlsx_workbook:");
       expect(text).toContain("sheet_count: 1");
-      expect(text).toContain("name: \"Summary\"");
-      expect(text).toContain("merged_ranges: \"A1:D1\"");
-      expect(text).toContain("cell: \"A1\"");
-      expect(text).toContain(`displayed_value: "${XLSX_SENTINEL}"`);
-      expect(text).toContain("cell: \"C2\"");
-      expect(text).toContain("raw_value: \"1742.42\"");
-      expect(text).toContain("number_format: \"$#,##0.00\"");
-      expect(text).toContain("formula: \"SUM(C2:C3)\"");
+      expect(text).toContain("sheet \"Summary\" (1 of 1): dimension A1:D3; 6 cells in rows 1-3, columns A-D; 1 formula; merged A1:D1");
+      expect(text).toContain("| # | A | B | C | D |");
+      expect(text).toContain(`| 1 | ${XLSX_SENTINEL} |  |  |  |`);
+      expect(text).toContain("| 2 | Northstar Revenue | EMEA | 1742.42 | 3484.84 |");
+      expect(text).toContain("| 3 |  |  | 1742.42 |  |");
+      expect(text).toContain("formulas: D2: =SUM(C2:C3) → 3484.84");
+      expect(text).toContain("number_formats: \"$#,##0.00\" (C2, D2, C3)");
+      expect(text).toContain(`next_step: the read tool cannot open .xlsx; use spreadsheet_inspect and spreadsheet_read with path "${pathFromText(text)}"`);
       expect(JSON.stringify(messages)).not.toContain(xlsx.toString("base64"));
       expect(JSON.stringify(messages)).not.toContain('"type":"file"');
       await expect(readFile(join(root, pathFromText(text)))).resolves.toEqual(xlsx);
+    });
+  });
+
+  test("parses nested Office XML and entities once while omitting script and style content", async () => {
+    await withWorkspace(async (root) => {
+      const docx = docxFixture("Alpha &amp; Beta &lt;tag&gt; &amp;lt;once&amp;gt;<w:span>nested <w:b>bold</w:span> tail<script>SCRIPT_SENTINEL</script><style>STYLE_SENTINEL</style>");
+      const xlsx = xlsxFixture("Sheet &amp; &lt;cell&gt; &amp;lt;once&amp;gt;<b>nested</b><script>SCRIPT_SENTINEL</script>", "17<fake>42</fake>");
+      const messages = await transform(root, [{
+        role: "user",
+        parts: [
+          { type: "file", filename: "Nested.docx", mediaType: DOCX_MIME, url: dataUrl(DOCX_MIME, docx) },
+          { type: "file", filename: "Nested.xlsx", mediaType: XLSX_MIME, url: dataUrl(XLSX_MIME, xlsx) },
+        ],
+      }]);
+      const [docxPart, xlsxPart] = messageParts(messages[0]);
+      const docxText = textOf(docxPart);
+      const xlsxText = textOf(xlsxPart);
+
+      expect(docxText).toContain("Alpha & Beta <tag> &lt;once&gt; nested bold tail");
+      expect(xlsxText).toContain("| 1 | Sheet & <cell> &lt;once&gt;nested |  |  |  |");
+      expect(xlsxText).toContain("| 2 | Northstar Revenue | EMEA | 1742 | 3484.84 |");
+      expect(docxText).not.toContain("SCRIPT_SENTINEL");
+      expect(docxText).not.toContain("STYLE_SENTINEL");
+      expect(xlsxText).not.toContain("SCRIPT_SENTINEL");
+    });
+  });
+
+  test("rejects Office XML DTD and XXE-shaped entity declarations", async () => {
+    await withWorkspace(async (root) => {
+      const dtd = '<!DOCTYPE document [<!ENTITY internal "DTD_SENTINEL"><!ENTITY xxe SYSTEM "https://example.invalid/xxe">]>';
+      const docx = zip([{ name: "word/document.xml", data: Buffer.from(`${dtd}<w:document><w:t>&internal; &xxe;</w:t></w:document>`, "utf8") }]);
+      const xlsx = zip([
+        { name: "xl/workbook.xml", data: Buffer.from(`${dtd}<workbook><sheets><sheet name="Summary" sheetId="1"/></sheets></workbook>`, "utf8") },
+      ]);
+      const messages = await transform(root, [{
+        role: "user",
+        parts: [
+          { type: "file", filename: "XXE.docx", mediaType: DOCX_MIME, url: dataUrl(DOCX_MIME, docx) },
+          { type: "file", filename: "XXE.xlsx", mediaType: XLSX_MIME, url: dataUrl(XLSX_MIME, xlsx) },
+        ],
+      }]);
+
+      for (const part of messageParts(messages[0])) {
+        const text = textOf(part);
+        expect(text).toContain("Office XML DTD and entity declarations are not supported");
+        expect(text).not.toContain("DTD_SENTINEL");
+        expect(text).not.toContain("example.invalid");
+      }
     });
   });
 
@@ -285,11 +333,42 @@ describe("OpenWorkOfficeAttachments", () => {
         await symlink(outside, join(root, "linked-outside"), "dir");
         const messages = await transform(root, [{ role: "user", parts: [{ type: "file", filename: "QuarterlyBrief.docx", mediaType: DOCX_MIME, url: pathToFileURL(join(root, "linked-outside", "QuarterlyBrief.docx")).toString() }] }]);
         const text = textOf(messageParts(messages[0])[0]);
-        expect(text).toContain("points outside the active workspace");
+        expect(text).toContain("passes through a symbolic link");
         expect(text).toContain("sha256: unavailable");
       } finally {
         await rm(outside, { recursive: true, force: true });
       }
+    });
+  });
+
+  test("never materializes attachment bytes through a symlinked inbox folder", async () => {
+    await withWorkspace(async (root) => {
+      const outside = await mkdtemp(join(tmpdir(), "openwork-office-inbox-outside-"));
+      try {
+        await symlink(outside, join(root, ".opencode"), "dir");
+        const docx = docxFixture();
+        const messages = await transform(root, [{ role: "user", parts: [{ type: "file", filename: "QuarterlyBrief.docx", mediaType: DOCX_MIME, url: dataUrl(DOCX_MIME, docx) }] }]);
+        const text = textOf(messageParts(messages[0])[0]);
+        expect(text).toContain("is a symbolic link, which is not allowed");
+        expect(text).toContain("worker_relative_path: unavailable");
+        expect(text).not.toContain(DOCX_SENTINEL);
+        await expect(readdir(outside)).resolves.toEqual([]);
+      } finally {
+        await rm(outside, { recursive: true, force: true });
+      }
+    });
+  });
+
+  test("materializes into the real inbox folder and reuses identical bytes", async () => {
+    await withWorkspace(async (root) => {
+      const docx = docxFixture();
+      const part = { type: "file", filename: "QuarterlyBrief.docx", mediaType: DOCX_MIME, url: dataUrl(DOCX_MIME, docx) };
+      const first = pathFromText(textOf(messageParts((await transform(root, [{ role: "user", parts: [part] }]))[0])[0]));
+      const second = pathFromText(textOf(messageParts((await transform(root, [{ role: "user", parts: [part] }]))[0])[0]));
+      expect(second).toBe(first);
+      expect(first).toBe(`.opencode/openwork/inbox/chat-attachments/${sha256(docx).slice(0, 16)}-QuarterlyBrief.docx`);
+      await expect(readdir(join(root, ".opencode", "openwork", "inbox", "chat-attachments"))).resolves.toEqual([`${sha256(docx).slice(0, 16)}-QuarterlyBrief.docx`]);
+      await expect(readFile(join(root, first))).resolves.toEqual(docx);
     });
   });
 

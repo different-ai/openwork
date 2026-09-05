@@ -14,6 +14,22 @@ type SessionTitleProps = {
   tooltip: string;
 };
 
+export type SessionTitleHiddenEdges = "none" | "start" | "both" | "end";
+
+export function resolveSessionTitleHiddenEdges({
+  moving,
+  overflowing,
+  transitioning,
+}: {
+  moving: boolean;
+  overflowing: boolean;
+  transitioning: boolean;
+}): SessionTitleHiddenEdges {
+  if (!overflowing) return "none";
+  if (transitioning) return "both";
+  return moving ? "start" : "end";
+}
+
 const INITIAL_STATE: SessionTitleMarqueeState = {
   durationMs: 180,
   moving: false,
@@ -53,7 +69,9 @@ export function SessionTitle({ intent, title, tooltip }: SessionTitleProps) {
   const reducedMotion = usePrefersReducedMotion();
   const reducedMotionRef = React.useRef(reducedMotion);
   const [state, setState] = React.useState(INITIAL_STATE);
+  const [transitioning, setTransitioning] = React.useState(false);
   const controllerRef = React.useRef<ReturnType<typeof createSessionTitleMarqueeController>>(null);
+  const targetOffsetRef = React.useRef(INITIAL_STATE.offsetPx);
   reducedMotionRef.current = reducedMotion;
 
   React.useLayoutEffect(() => {
@@ -80,6 +98,12 @@ export function SessionTitle({ intent, title, tooltip }: SessionTitleProps) {
     controllerRef.current?.measure();
   }, [title, reducedMotion]);
 
+  React.useLayoutEffect(() => {
+    if (targetOffsetRef.current === state.offsetPx) return;
+    targetOffsetRef.current = state.offsetPx;
+    setTransitioning(true);
+  }, [state.offsetPx]);
+
   React.useEffect(() => {
     controllerRef.current?.setIntent(intent);
   }, [intent]);
@@ -89,6 +113,11 @@ export function SessionTitle({ intent, title, tooltip }: SessionTitleProps) {
     reducedMotion,
     tooltip,
   });
+  const hiddenEdges = resolveSessionTitleHiddenEdges({
+    moving: state.moving,
+    overflowing: state.overflowing,
+    transitioning,
+  });
 
   return (
     <span
@@ -96,8 +125,12 @@ export function SessionTitle({ intent, title, tooltip }: SessionTitleProps) {
       className={cn(
         "min-w-0 flex-1 overflow-hidden whitespace-nowrap",
         state.moving && "ow-session-title-moving",
+        hiddenEdges === "start" && "ow-session-title-hidden-start",
+        hiddenEdges === "both" && "ow-session-title-hidden-both",
+        hiddenEdges === "end" && "ow-session-title-hidden-end",
       )}
       data-session-title-slot
+      data-session-title-hidden-edges={hiddenEdges}
       data-session-title-moving={state.moving ? "true" : undefined}
       data-session-title-overflowing={state.overflowing ? "true" : undefined}
     >
@@ -106,6 +139,9 @@ export function SessionTitle({ intent, title, tooltip }: SessionTitleProps) {
         aria-hidden="true"
         className="inline-block"
         data-session-title-text
+        onTransitionEnd={(event) => {
+          if (event.propertyName === "transform") setTransitioning(false);
+        }}
         title={nativeTooltip}
         style={{
           transform: `translateX(-${state.offsetPx}px)`,

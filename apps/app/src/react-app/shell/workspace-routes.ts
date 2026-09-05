@@ -15,8 +15,44 @@ export function workspaceSettingsRoute(
   return `/workspace/${encodeURIComponent(workspaceId.trim())}/settings/${tab}`;
 }
 
+/**
+ * Where closing Settings lands. The originating session is restored only when
+ * Settings is still on the workspace it was opened from.
+ */
+export function settingsReturnRoute(
+  selectedWorkspaceId: string,
+  navigationWorkspaceId: string | null,
+  navigationSessionId: string | null,
+) {
+  if (!selectedWorkspaceId) return "/session";
+  const returnSessionId = navigationWorkspaceId === selectedWorkspaceId
+    ? navigationSessionId
+    : null;
+  return workspaceSessionRoute(selectedWorkspaceId, returnSessionId);
+}
+
+/**
+ * Settings entry from anywhere that only knows the current URL (native menu,
+ * agent control actions). Keeps the workspace in the route and remembers the
+ * open session in navigation state so closing Settings returns to exactly
+ * where the user was, matching the in-app settings button.
+ */
+export function settingsNavigationFromPathname(pathname: string, tab: SettingsTab | string) {
+  const match = /^\/workspace\/([^/]+)(?:\/session\/([^/]+))?/.exec(pathname);
+  const workspaceId = match?.[1] ? decodeURIComponent(match[1]) : "";
+  const sessionId = match?.[2] ? decodeURIComponent(match[2]) : null;
+  return {
+    to: workspaceId ? workspaceSettingsRoute(workspaceId, tab) : `/settings/${tab}`,
+    state: { workspaceId, sessionId },
+  };
+}
+
 export function automationsRoute() {
   return "/automations";
+}
+
+export function dashboardRoute() {
+  return "/dashboard";
 }
 
 export function globalSettingsRoute(tab: SettingsTab) {

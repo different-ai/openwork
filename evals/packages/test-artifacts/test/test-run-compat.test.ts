@@ -36,6 +36,7 @@ test("scanTestRuns reads screenshots and assertions produced by the real test-ev
       cached: false,
     });
     testEvidence.recordAssertionEvidence("Witness compatibility", "The API returned HTTP 200.", true);
+    testEvidence.recordJsonArtifact("Writer state", { status: "ready" });
     await testEvidence.close();
 
     const raw = await readFile(join(testRunDir, "test-run.json"), "utf8");
@@ -48,6 +49,7 @@ test("scanTestRuns reads screenshots and assertions produced by the real test-ev
     if (!entry || entry.kind !== "test-run") throw new Error("Writer test run was not scanned.");
     assert.equal(entry.testRun.artifacts[0]?.caption, "Writer compatibility screenshot");
     assert.equal(entry.testRun.artifacts[1]?.fileName, "");
+    assert.equal(entry.testRun.artifacts.length, 2);
     assert.equal(entry.format, "current");
   } finally {
     await rm(resultsDir, { recursive: true, force: true });

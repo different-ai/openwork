@@ -18,6 +18,7 @@ extraResources:
     to: opencode-plugins
     filter:
       - "*.js"
+      - "*.wasm"
   - from: ../../packages/docs
     to: openwork-docs
     filter:

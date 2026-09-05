@@ -3,17 +3,17 @@ import {
   RESOURCE_MIME_TYPE,
   registerAppResource,
   registerAppTool,
-} from "@modelcontextprotocol/ext-apps/server"
+} from "./mcp-app-v2.js"
 import type { McpUiResourceMeta } from "@modelcontextprotocol/ext-apps"
-import type { McpServer, RegisteredResource, RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js"
+import type { McpServer, RegisteredResource, RegisteredTool } from "@modelcontextprotocol/server"
 import {
-  dynamicArtifactAppPayloadSchema,
+  workflowArtifactPayloadSchema,
   generatedArtifactViewSchema,
   type GeneratedArtifactView,
   type GeneratedArtifactViewCsp,
-} from "@openwork/types/dynamic-artifacts"
+} from "@openwork/types/workflows"
 import { z } from "zod"
-import { dynamicArtifactTextFallback, type DynamicArtifactAppLoadResult } from "./dynamic-artifact-app.js"
+import { workflowArtifactTextFallback, type WorkflowArtifactLoadResult } from "./workflow-artifact-app.js"
 
 const idSchema = z.string().trim().min(1).max(160)
 const saveOutputSchema = z.object({ view: generatedArtifactViewSchema })
@@ -49,13 +49,6 @@ function digest(value: string): string {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`
 }
 
-async function sendCatalogChanged(extra: {
-  sendNotification: (notification: { method: "notifications/tools/list_changed" | "notifications/resources/list_changed" }) => Promise<void>
-}) {
-  await extra.sendNotification({ method: "notifications/tools/list_changed" })
-  await extra.sendNotification({ method: "notifications/resources/list_changed" })
-}
-
 export function registerGeneratedArtifactResource(input: {
   server: McpServer
   view: GeneratedArtifactView
@@ -69,7 +62,7 @@ export function registerGeneratedArtifactResource(input: {
     input.revision.resourceUri,
     {
       title: `${input.view.title} view revision`,
-      description: "An immutable, server-built React MCP App for a saved Script Artifact.",
+      description: "An immutable, server-built React MCP App for a Workflow Artifact.",
       _meta: metadata,
     },
     async () => {
@@ -94,18 +87,17 @@ function registerRenderTool(input: {
   view: GeneratedArtifactView
   revision: GeneratedArtifactView["revisions"][number]
   preview: boolean
-  toolName?: string
-  loadData: (request: LoadDataRequest) => Promise<DynamicArtifactAppLoadResult>
+  loadData: (request: LoadDataRequest) => Promise<WorkflowArtifactLoadResult>
 }): RegisteredTool {
-  const toolName = input.toolName ?? `${input.preview ? "preview" : "render"}_artifact_${input.view.id}`
+  const toolName = `${input.preview ? "preview" : "render"}_artifact_${input.view.id}`
   return registerAppTool(
     input.server,
     toolName,
     {
-      title: `${input.preview ? "Preview" : "Render"} ${input.view.title}`,
+      title: `${input.preview ? "Preview" : "Open"} ${input.view.title}`,
       description: input.preview
         ? "Preview the newest saved custom view revision without changing the active revision."
-        : "Render the saved Script's latest successful Artifact data with this Artifact's active custom view revision.",
+        : "Render the Workflow's latest successful Artifact data with this Artifact's active custom view revision.",
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -116,7 +108,7 @@ function registerRenderTool(input: {
         receiptId: idSchema.optional().describe("Optional exact immutable Artifact data receipt. Defaults to the latest successful snapshot."),
         maxAgeMs: z.number().int().min(60_000).max(30 * 24 * 60 * 60_000).optional(),
       }),
-      outputSchema: dynamicArtifactAppPayloadSchema,
+      outputSchema: workflowArtifactPayloadSchema,
       // The stable MCP Apps contract requires this link on the definition;
       // returning a URI only after tools/call is too late for host preloading.
       _meta: {
@@ -140,10 +132,11 @@ function registerRenderTool(input: {
         }
       }
       return {
-        content: [{ type: "text" as const, text: dynamicArtifactTextFallback(loaded) }],
+        content: [{ type: "text" as const, text: workflowArtifactTextFallback(loaded) }],
         structuredContent: loaded.payload,
         _meta: {
           artifactViewId: input.view.id,
+          appTitle: input.view.title,
           viewRevisionId: input.revision.id,
           resourceDigest: input.revision.resourceDigest,
           resultDigest: loaded.payload.artifact.resultDigest,
@@ -153,20 +146,11 @@ function registerRenderTool(input: {
   )
 }
 
-export function registerSelectedGeneratedArtifactRenderTool(input: {
-  server: McpServer
-  view: GeneratedArtifactView
-  revision: GeneratedArtifactView["revisions"][number]
-  loadData: (request: LoadDataRequest) => Promise<DynamicArtifactAppLoadResult>
-}) {
-  return registerRenderTool({ ...input, preview: false, toolName: "render_selected_program" })
-}
-
 export function registerAgentGeneratedArtifactViews(input: {
   server: McpServer
   views: GeneratedArtifactView[]
   loadResource: (request: { artifactViewId: string; revisionId: string }) => Promise<GeneratedArtifactResource>
-  loadData: (request: LoadDataRequest) => Promise<DynamicArtifactAppLoadResult>
+  loadData: (request: LoadDataRequest) => Promise<WorkflowArtifactLoadResult>
   save: (request: {
     artifactViewId?: string
     configObjectId: string
@@ -177,7 +161,8 @@ export function registerAgentGeneratedArtifactViews(input: {
   }) => Promise<GeneratedArtifactView>
   activate: (request: { artifactViewId: string; revisionId: string }) => Promise<GeneratedArtifactView>
   retire: (request: { artifactViewId: string }) => Promise<GeneratedArtifactView>
-  exposePerViewRenderTools?: boolean
+  readSource?: (request: { artifactViewId: string }) => Promise<{ view: GeneratedArtifactView; reactSource: string; cssSource: string }>
+  notifyCatalogChanged: () => void
 }) {
   const registeredResources = new Map<string, RegisteredResource>()
   const registeredTools = new Map<string, { revisionId: string; registration: RegisteredTool }>()
@@ -213,34 +198,41 @@ export function registerAgentGeneratedArtifactViews(input: {
       }
     }
     const activeRevision = readyRevisions.find((revision) => revision.id === view.activeRevisionId)
-    const previewRevision = readyRevisions.find((revision) => revision.id !== view.activeRevisionId)
-    if (input.exposePerViewRenderTools !== false) {
-      syncTool(view, view.status === "active" ? activeRevision : undefined, false)
-      syncTool(view, previewRevision, true)
-    }
+    const newestRevision = readyRevisions[0]
+    const previewRevision = newestRevision?.id !== view.activeRevisionId ? newestRevision : undefined
+    syncTool(view, view.status === "active" ? activeRevision : undefined, false)
+    syncTool(view, previewRevision, true)
   }
 
   for (const view of input.views) {
     syncView(view)
   }
 
+  if (input.readSource) {
+    const readSource = input.readSource
+    input.server.registerTool("read_artifact_view", {
+      title: "Read an app for editing",
+      description: "Read the newest draft source of an app you manage before improving it. Use the app id from its render or preview tool name. Editing must keep the existing artifactViewId and configObjectId.",
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: z.object({ artifactViewId: idSchema }),
+    }, async (request) => ({ content: [{ type: "text", text: JSON.stringify(await readSource(request)) }] }))
+  }
+
   input.server.registerTool(
     "save_artifact_view",
     {
-      title: "Build and save Artifact view",
+      title: "Create or improve an app draft",
       description: [
-        "Compile React source into a self-contained immutable MCP App revision bound to one saved Script output schema.",
-        "Prerequisite: the saved Script's current version must declare an explicit JSON Schema outputSchema matching its successful result data. If it does not, test and create a new saved Script version with that outputSchema before calling this tool.",
+        "Compile React source into a self-contained immutable MCP App revision bound to one Workflow output schema.",
+        "Prerequisites: the Workflow's current version must declare an explicit JSON Schema outputSchema and have a successful saved-Workflow run matching that schema. After saveWorkflow, run the saved version explicitly with its example inputs; execute_capability_script alone does not create its artifact snapshot. If the outputSchema is missing, test and create a new Workflow version with that schema before calling this tool.",
         "Provide a default-exported React component that receives { data, artifact }. React is already injected: use React.useState and other React APIs without imports. Do not import modules, fetch data, access browser globals, or add URL-bearing elements; all render-time data comes from data.",
-        "A first successful revision activates automatically. Editing creates a previewable revision and never changes the active revision.",
-        input.exposePerViewRenderTools === false
-          ? "This management tool does not render a view. After a successful build, select the Program, refresh the catalog, and use render_selected_program only after the intended revision is active. A failed build returns artifact_view_build_failed with diagnostics; correct those diagnostics once and retry using the returned artifactViewId."
-          : "This management tool does not render a view. After a successful build, call the registered render_artifact_* or preview_artifact_* tool named in the result. A failed build returns artifact_view_build_failed with diagnostics; correct those diagnostics once and retry using the returned artifactViewId.",
+        "Every successful build is a draft. Show the preview so the user can try it and choose Save in OpenWork to keep the workflow and app together on their dashboard. Never activate a draft merely because it built successfully. Editing never changes the saved app.",
+        "OpenWork opens the artifact preview from a successful build automatically; no additional tool call is needed there. In other MCP clients, call the registered render_artifact_* or preview_artifact_* tool named in the result. A failed build returns artifact_view_build_failed with diagnostics; correct those diagnostics once and retry using the returned artifactViewId.",
       ].join(" "),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       inputSchema: z.object({
         artifactViewId: idSchema.optional().describe("Existing Artifact view to revise. Omit to create a new view."),
-        configObjectId: idSchema.describe("Saved Script whose current version has a non-null outputSchema and whose validated result data this view renders."),
+        configObjectId: idSchema.describe("Workflow whose current version has a non-null outputSchema and whose validated result data this view renders."),
         title: z.string().trim().min(1).max(255),
         description: z.string().trim().max(2_000).optional(),
         reactSource: z.string().trim().min(1).max(200_000),
@@ -248,7 +240,7 @@ export function registerAgentGeneratedArtifactViews(input: {
       }),
       outputSchema: saveOutputSchema,
     },
-    async (request, extra) => {
+    async (request) => {
       let view: GeneratedArtifactView
       try {
         view = await input.save(request)
@@ -256,7 +248,7 @@ export function registerAgentGeneratedArtifactViews(input: {
         const code = error instanceof Error ? error.message : "artifact_view_save_failed"
         if (code === "artifact_view_output_schema_required") {
           return errorToolResult(code,
-            "This saved Script's current version has no outputSchema. Do not retry save_artifact_view yet. Test a new saved Script version with an explicit JSON Schema outputSchema that matches the returned data, create that version using the test's receiptId and the exact unchanged draft, then retry this tool.",
+            "This Workflow's current version has no outputSchema. Do not retry save_artifact_view yet. Test a new Workflow version with an explicit JSON Schema outputSchema that matches the returned data, create that version using the test's receiptId and the exact unchanged draft, then retry this tool.",
             { configObjectId: request.configObjectId })
         }
         throw error
@@ -273,18 +265,39 @@ export function registerAgentGeneratedArtifactViews(input: {
           },
         )
       }
+      // Model tool catalogs can stay fixed for the rest of a turn. Give the
+      // host an exact preview reference without requiring the new tool first.
+      const preview = await input.loadData({
+        configObjectId: view.configObjectId,
+        expectedOutputSchemaDigest: revision.outputSchemaDigest,
+      })
+      if (!preview.ok) {
+        return errorToolResult(
+          "artifact_view_preview_unavailable",
+          "The app draft compiled, but its preview has no compatible readable Workflow result. Run the current saved Workflow version explicitly with its example inputs using execute_capability, then retry save_artifact_view with the artifactViewId below. An ad-hoc execute_capability_script run is not a saved Workflow result. Do not schedule an Automation or report the preview ready yet.",
+          {
+            artifactViewId: view.id,
+            viewRevisionId: revision.id,
+            configObjectId: view.configObjectId,
+            reason: preview.error,
+            detail: preview.message,
+          },
+        )
+      }
       syncView(view)
-      await sendCatalogChanged(extra)
-      const displayInstruction = input.exposePerViewRenderTools === false
-          ? view.status === "active" && view.activeRevisionId === revision.id
-            ? `Select Program ${view.configObjectId} with select_program, refresh the tool catalog, then call render_selected_program to display its Artifact.`
-            : `This inactive revision has no model-visible preview tool. Activate it explicitly, select Program ${view.configObjectId}, refresh the tool catalog, then call render_selected_program.`
-          : `Call ${view.status === "active" && view.activeRevisionId === revision.id
-            ? `render_artifact_${view.id}`
-            : `preview_artifact_${view.id}`} to display that revision.`
+      input.notifyCatalogChanged()
+      const displayInstruction = `Call ${view.status === "active" && view.activeRevisionId === revision.id
+        ? `render_artifact_${view.id}`
+        : `preview_artifact_${view.id}`} to display that revision.`
       return {
-        content: [{ type: "text" as const, text: `Saved immutable view revision ${revision.id} at ${revision.resourceUri}. This save action has no interactive UI. ${displayInstruction}` }],
+        content: [{ type: "text" as const, text: `Saved immutable view revision ${revision.id} at ${revision.resourceUri}. OpenWork opens the artifact preview automatically. In other MCP clients: ${displayInstruction}` }],
         structuredContent: { view },
+        _meta: { "openwork/appDraft": {
+          appId: view.id,
+          revisionId: revision.id,
+          receiptId: preview.payload.artifact.receiptId,
+          title: view.title,
+        } },
       }
     },
   )
@@ -298,16 +311,14 @@ export function registerAgentGeneratedArtifactViews(input: {
       inputSchema: z.object({ artifactViewId: idSchema, revisionId: idSchema }),
       outputSchema: saveOutputSchema,
     },
-    async (request, extra) => {
+    async (request) => {
       const view = await input.activate(request)
       syncView(view)
-      await sendCatalogChanged(extra)
+      input.notifyCatalogChanged()
       return {
         content: [{
           type: "text" as const,
-          text: input.exposePerViewRenderTools === false
-            ? `Activated view revision ${request.revisionId}. Select Program ${view.configObjectId} with select_program, refresh the tool catalog, then call render_selected_program to display its Artifact.`
-            : `Activated view revision ${request.revisionId}. Call render_artifact_${view.id} to display it.`,
+          text: `Activated view revision ${request.revisionId}. Call render_artifact_${view.id} to display it.`,
         }],
         structuredContent: { view },
       }
@@ -323,10 +334,10 @@ export function registerAgentGeneratedArtifactViews(input: {
       inputSchema: z.object({ artifactViewId: idSchema }),
       outputSchema: saveOutputSchema,
     },
-    async (request, extra) => {
+    async (request) => {
       const view = await input.retire(request)
       syncView(view)
-      await sendCatalogChanged(extra)
+      input.notifyCatalogChanged()
       return {
         content: [{ type: "text" as const, text: `Retired Artifact view ${request.artifactViewId}. Its revision resources remain immutable.` }],
         structuredContent: { view },

@@ -10,10 +10,11 @@ function readComponent(...segments: string[]) {
 
 const screen = readComponent("dashboard", "_components", "llm-providers-screen.tsx");
 const shell = readComponent("dashboard", "_components", "org-dashboard-shell.tsx");
+const navigation = readComponent("dashboard", "_lib", "dashboard-navigation.ts");
 
 describe("Bring your Own Keys page", () => {
   test("sidebar and page title use the product name", () => {
-    expect(shell).toContain('label: "Bring your Own Keys"');
+    expect(navigation).toContain('label: "Bring your Own Keys"');
     expect(shell).toContain('return "Bring your Own Keys";');
     expect(shell).not.toContain('"LLM Providers"');
     expect(screen).toContain('title="Bring your Own Keys"');
@@ -33,10 +34,19 @@ describe("Bring your Own Keys page", () => {
     }
   });
 
+  test("editor explains Azure Foundry project URLs for resource names", () => {
+    const editor = readComponent("dashboard", "_components", "llm-provider-editor-screen.tsx");
+    expect(editor).toContain("Azure Foundry may show a project URL");
+    expect(editor).toContain("yourFoundryResourceName");
+    expect(editor).toContain("Paste the resource name or Azure Foundry project URL");
+  });
+
   test("screen is built from shared primitives instead of local markup", () => {
-    for (const primitive of ["DenOptionCard", "DenSectionHeader", "DenTable", "DenBrandMark", "DenBadge", "DenNotice"]) {
+    for (const primitive of ["DenOptionCard", "DenSectionHeader", "DenListRow", "DenBrandMark", "DenChip", "DenNotice"]) {
       expect(screen).toContain(primitive);
     }
+    expect(screen).not.toContain("OpenWork Model Keys");
+    expect(screen).not.toContain("getProviderEnvNames");
     expect(screen).not.toContain("<table");
     expect(screen).not.toContain("<input");
     expect(screen).not.toContain("hover:-translate-y-0.5");

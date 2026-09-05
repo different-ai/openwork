@@ -18,6 +18,8 @@ ee/apps/*/dist/
 ee/packages/*/dist/
 ee/apps/inference/models-site/models/api.json
 tmp/
+coverage/
+evals/results/flake/
 
 # Local git worktrees
 _worktrees/

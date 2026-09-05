@@ -1,14 +1,18 @@
 import { describe, expect, test } from "bun:test";
 
 import { renderHighlightedMarkdownHtml, renderMarkdownHtml } from "../src/components/markdown/markdown";
-import { renderHighlightedMarkdownHtml as renderPrimitiveHighlightedMarkdownHtml, renderMarkdownHtml as renderPrimitiveMarkdownHtml } from "../src/components/markdown/markdown-primitive";
+import {
+  codeWrapClassStates,
+  renderHighlightedMarkdownHtml as renderPrimitiveHighlightedMarkdownHtml,
+  renderMarkdownHtml as renderPrimitiveMarkdownHtml,
+} from "../src/components/markdown/markdown-primitive";
 import { textHighlightParts } from "../src/components/markdown/text-highlights";
 
 const CODE = "const value = 1;\nconsole.log(value);";
 const MARKDOWN = `\`\`\`ts\n${CODE}\n\`\`\``;
 
 describe("markdown code blocks", () => {
-  test("renders fallback code blocks with subtle theme-aware styling and copy affordance", () => {
+  test("renders fallback code blocks with subtle theme-aware styling, copy, and word-wrap affordances", () => {
     const html = renderMarkdownHtml(MARKDOWN);
 
     expect(html).toContain("data-openwork-code-block");
@@ -16,15 +20,37 @@ describe("markdown code blocks", () => {
     expect(html).toContain("data-openwork-code-copy");
     expect(html).toContain("data-openwork-code-copy-icon");
     expect(html).toContain("data-openwork-code-copy-check-icon");
+    expect(html).toContain("data-openwork-code-wrap");
+    expect(html).toContain("data-openwork-code-scroll");
     expect(html).toContain("h-7 w-7");
     expect(html).toContain('aria-label="Copy code block"');
     expect(html).toContain('aria-live="polite"');
     expect(html).toContain('class="sr-only"');
     expect(html).toContain('title="Copy code block"');
+    expect(html).toContain('aria-label="Enable word wrap"');
+    expect(html).toContain('aria-pressed="false"');
+    expect(html).toContain('title="Enable word wrap"');
     expect(html).not.toContain(">Copy</span>");
     expect(html).toContain("pt-11");
+    expect(html).toContain("overflow-x-auto");
+    expect(html).toContain(CODE);
     expect(html).toContain(CODE.split("\n")[0]);
     expect(html).toContain(CODE.split("\n")[1]);
+  });
+
+  test("maps word-wrap state to visual styles without changing the rendered code", () => {
+    expect(codeWrapClassStates(false)).toEqual({
+      "overflow-x-auto": true,
+      "overflow-x-hidden": false,
+      "whitespace-pre-wrap": false,
+      "break-words": false,
+    });
+    expect(codeWrapClassStates(true)).toEqual({
+      "overflow-x-auto": false,
+      "overflow-x-hidden": true,
+      "whitespace-pre-wrap": true,
+      "break-words": true,
+    });
   });
 
   test("renders highlighted code blocks with the same copy affordance and dual Shiki themes", async () => {
@@ -35,6 +61,8 @@ describe("markdown code blocks", () => {
     expect(html).toContain("data-openwork-code-copy");
     expect(html).toContain("data-openwork-code-copy-icon");
     expect(html).toContain("data-openwork-code-copy-check-icon");
+    expect(html).toContain("data-openwork-code-wrap");
+    expect(html).toContain("data-openwork-code-scroll");
     expect(html).toContain("--shiki-dark");
     expect(html).toContain("github-light");
     expect(html).toContain("github-dark");
@@ -78,6 +106,22 @@ describe("markdown safety and links", () => {
     expect(surfaceHtml).not.toContain("data-openwork-link-href");
     expect(surfaceHtml).toContain('href="./docs/readme.md"');
     expect(surfaceHtml).toContain('href="https://openworklabs.com"');
+  });
+
+  test("marks chat inline file paths as keyboard-accessible artifact links", () => {
+    const chatHtml = renderMarkdownHtml("Open `apps/app/src/main.tsx` and inspect `status`.");
+    expect(chatHtml).toContain('data-openwork-inline-code-path="apps/app/src/main.tsx"');
+    expect(chatHtml).toContain('role="button"');
+    expect(chatHtml).toContain('tabindex="0"');
+    expect(chatHtml).not.toContain('data-openwork-inline-code-path="status"');
+
+    const surfaceHtml = renderPrimitiveMarkdownHtml("Open `apps/app/src/main.tsx`.", "surface");
+    expect(surfaceHtml).not.toContain("data-openwork-inline-code-path");
+  });
+
+  test("does not mark unsafe or parent-relative inline paths", () => {
+    const html = renderMarkdownHtml("Skip `../secrets/config.ts`, `https://example.com/file.ts`, and `a | b.ts`.");
+    expect(html).not.toContain("data-openwork-inline-code-path");
   });
 });
 

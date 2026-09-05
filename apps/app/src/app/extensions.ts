@@ -3,6 +3,7 @@
 export type ReloadReason = "plugins" | "skills" | "mcp" | "config" | "agents" | "commands";
 
 export type OpenWorkExtensionSourceFormat =
+  | "agent-plugin"
   | "openwork-builtin"
   | "openwork-extension-manifest"
   | "claude-plugin"

@@ -1,11 +1,12 @@
 import {
+  Client,
   discoverAuthorizationServerMetadata,
   discoverOAuthProtectedResourceMetadata,
   extractWWWAuthenticateParams,
-} from "@modelcontextprotocol/sdk/client/auth.js"
-import { Client } from "@modelcontextprotocol/sdk/client/index.js"
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
-import type { AuthorizationServerMetadata } from "@modelcontextprotocol/sdk/shared/auth.js"
+  IssuerMismatchError,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client"
+import type { AuthorizationServerMetadata } from "@modelcontextprotocol/client"
 import type {
   DiscoverEnterpriseMcpConnectionRequirementsInput,
   EnterpriseMcpAuthorizationServerRequirement,
@@ -95,20 +96,7 @@ function scopedFetch(input: {
   }
 }
 
-function metadataRequirement(
-  advertisedIssuer: string,
-  metadata: AuthorizationServerMetadata,
-  resource: string | undefined,
-): EnterpriseMcpAuthorizationServerRequirement | null {
-  // Some providers advertise the protected resource itself as a scoped
-  // metadata discovery alias. Accept that alias, including the equivalent
-  // trailing root slash form, while retaining the metadata issuer as the
-  // canonical issuer used by the OAuth flow.
-  if (
-    metadata.issuer !== advertisedIssuer
-    && !isEquivalentOAuthDiscoveryAlias(advertisedIssuer, metadata.issuer)
-    && !isEquivalentOAuthDiscoveryAlias(advertisedIssuer, resource)
-  ) return null
+function metadataRequirement(metadata: AuthorizationServerMetadata): EnterpriseMcpAuthorizationServerRequirement {
   return {
     issuer: metadata.issuer,
     authorizationEndpoint: metadata.authorization_endpoint,
@@ -120,6 +108,33 @@ function metadataRequirement(
     codeChallengeMethodsSupported: metadata.code_challenge_methods_supported,
     tokenEndpointAuthMethodsSupported: metadata.token_endpoint_auth_methods_supported,
   }
+}
+
+async function discoverBoundAuthorizationServerMetadata(input: {
+  advertisedIssuer: string
+  resource: string | undefined
+  fetch: EnterpriseMcpFetch
+}): Promise<AuthorizationServerMetadata | null> {
+  let canonicalIssuer: string
+  try {
+    return await discoverAuthorizationServerMetadata(input.advertisedIssuer, { fetchFn: input.fetch }) ?? null
+  } catch (error) {
+    if (
+      !(error instanceof IssuerMismatchError)
+      || !isEquivalentOAuthDiscoveryAlias(input.advertisedIssuer, input.resource)
+      || typeof error.received !== "string"
+      || !error.received
+    ) throw error
+    canonicalIssuer = error.received
+  }
+
+  // A few providers advertise the protected resource as a discovery alias.
+  // The strict SDK mismatch exposes only the parsed issuer identifier. Treat
+  // that value as a pointer, independently rediscover it with RFC 8414 issuer
+  // validation enabled, and never consume endpoints from the alias document.
+  return await discoverAuthorizationServerMetadata(canonicalIssuer, {
+    fetchFn: input.fetch,
+  }) ?? null
 }
 
 function uniqueScopes(value: string | undefined): string[] {
@@ -198,13 +213,20 @@ export async function discoverConnectionRequirements(
   const warnings: EnterpriseMcpConnectionRequirements["warnings"] = []
   const tools: NonNullable<EnterpriseMcpConnectionRequirements["tools"]["items"]> = []
   let initialize: EnterpriseMcpConnectionRequirements["server"]["initialize"] = "failed"
+  let protocolEra: EnterpriseMcpConnectionRequirements["server"]["protocolEra"]
+  let protocolVersion: string | undefined
   let authenticationRequired = false
   let client: Client | undefined
   try {
-    client = new Client({ name: "OpenWork requirements discovery", version: "1.0.0" }, { capabilities: {} })
+    client = new Client(
+      { name: "OpenWork requirements discovery", version: "1.0.0" },
+      { capabilities: {}, versionNegotiation: { mode: "auto" } },
+    )
     const transport = new StreamableHTTPClientTransport(serverUrl, { fetch })
     await client.connect(transport, { signal: controller.signal })
     initialize = "succeeded"
+    protocolEra = client.getProtocolEra()
+    protocolVersion = client.getNegotiatedProtocolVersion()
     let cursor: string | undefined
     const maxTools = input.maxTools ?? DEFAULT_MAX_TOOLS
     for (let page = 0; page < MAX_TOOL_PAGES && tools.length < maxTools; page += 1) {
@@ -259,20 +281,19 @@ export async function discoverConnectionRequirements(
   const authorizationServers: EnterpriseMcpAuthorizationServerRequirement[] = []
   for (const issuer of advertisedIssuers) {
     try {
-      const metadata = await discoverAuthorizationServerMetadata(issuer, { fetchFn: fetch })
+      const metadata = await discoverBoundAuthorizationServerMetadata({
+        advertisedIssuer: issuer,
+        resource: resourceMetadata?.resource,
+        fetch,
+      })
       if (!metadata) {
         warnings.push({ code: "oauth_server_metadata_unavailable", message: `No OAuth metadata was found for issuer ${issuer}.` })
         continue
       }
-      const requirement = metadataRequirement(issuer, metadata, resourceMetadata?.resource)
-      if (!requirement) {
-        warnings.push({ code: "oauth_issuer_mismatch", message: `OAuth metadata did not return the advertised issuer ${issuer}.` })
-        continue
-      }
-      authorizationServers.push(requirement)
+      authorizationServers.push(metadataRequirement(metadata))
     } catch (error) {
       warnings.push({
-        code: "oauth_server_metadata_unavailable",
+        code: error instanceof IssuerMismatchError ? "oauth_issuer_mismatch" : "oauth_server_metadata_unavailable",
         message: error instanceof Error ? error.message : `OAuth metadata could not be loaded for issuer ${issuer}.`,
       })
     }
@@ -312,7 +333,12 @@ export async function discoverConnectionRequirements(
   try {
     return {
       status,
-      server: { url: serverUrl.toString(), initialize },
+      server: {
+        url: serverUrl.toString(),
+        initialize,
+        ...(protocolEra ? { protocolEra } : {}),
+        ...(protocolVersion ? { protocolVersion } : {}),
+      },
       authentication: {
         kind: initialize === "succeeded" ? "none" : oauthDetected ? "oauth" : authenticationRequired ? "manual_bearer" : "unknown",
         resource: resourceMetadata?.resource,

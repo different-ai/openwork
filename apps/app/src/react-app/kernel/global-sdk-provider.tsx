@@ -75,6 +75,43 @@ type GlobalSDKProviderProps = {
   children: ReactNode;
 };
 
+type GlobalEventSubscriptionRunnerInput = {
+  signal: AbortSignal;
+  subscribe: (signal: AbortSignal) => AsyncIterable<unknown> | Promise<AsyncIterable<unknown>>;
+  onEvent: (event: unknown) => void | Promise<void>;
+  waitForRetry?: (signal: AbortSignal) => Promise<void>;
+};
+
+function waitForGlobalEventRetry(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const finish = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, 1_000);
+    signal.addEventListener("abort", finish, { once: true });
+  });
+}
+
+export async function runGlobalEventSubscription(input: GlobalEventSubscriptionRunnerInput): Promise<void> {
+  while (!input.signal.aborted) {
+    try {
+      const stream = await input.subscribe(input.signal);
+      for await (const event of stream) {
+        if (input.signal.aborted) return;
+        await input.onEvent(event);
+      }
+    } catch {
+      if (input.signal.aborted) return;
+    }
+    if (!input.signal.aborted) {
+      await (input.waitForRetry ?? waitForGlobalEventRetry)(input.signal);
+    }
+  }
+}
+
 export function GlobalSDKProvider({ children }: GlobalSDKProviderProps) {
   const server = useServer();
   const platform = usePlatform();
@@ -164,16 +201,17 @@ export function GlobalSDKProvider({ children }: GlobalSDKProviderProps) {
       timer = setTimeout(flush, Math.max(0, 16 - elapsed));
     };
 
-    void (async () => {
-      const subscription = await eventClient.event.subscribe(undefined, {
-        signal: abort.signal,
-      });
-      let yielded = Date.now();
-
-      for await (const event of subscription.stream as AsyncIterable<unknown>) {
+    let yielded = Date.now();
+    void runGlobalEventSubscription({
+      signal: abort.signal,
+      subscribe: async (signal) => {
+        const subscription = await eventClient.event.subscribe(undefined, { signal });
+        return subscription.stream as AsyncIterable<unknown>;
+      },
+      onEvent: async (event) => {
         const record = event as Event & { directory?: string; payload?: Event };
         const payload = record.payload ?? record;
-        if (!payload?.type) continue;
+        if (!payload?.type) return;
         const directory =
           typeof record.directory === "string" ? record.directory : "global";
         const key = keyForEvent(directory, payload);
@@ -185,11 +223,11 @@ export function GlobalSDKProvider({ children }: GlobalSDKProviderProps) {
         queue.push({ directory, payload });
         schedule();
 
-        if (Date.now() - yielded < 8) continue;
+        if (Date.now() - yielded < 8) return;
         yielded = Date.now();
         await Promise.resolve();
-      }
-    })()
+      },
+    })
       .finally(flush)
       .catch(() => undefined);
 

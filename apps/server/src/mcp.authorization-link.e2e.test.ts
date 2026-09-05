@@ -11,6 +11,27 @@ const sidecarDir = join(repoRoot, "apps/desktop/resources/sidecars");
 const connectUrl = "https://connect.example.test/salesforce/start";
 const toolName = "request_salesforce_authorization";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasExactHttpUrl(value: unknown, expectedUrl: string): boolean {
+  if (typeof value === "string") {
+    const expectedHref = new URL(expectedUrl).href;
+    for (const match of value.matchAll(/https?:\/\/[^\s()[\]<>]+/g)) {
+      try {
+        if (new URL(match[0]).href === expectedHref) return true;
+      } catch {
+        // Ignore non-URL prose tokens from the model payload.
+      }
+    }
+    return false;
+  }
+  if (Array.isArray(value)) return value.some((entry) => hasExactHttpUrl(entry, expectedUrl));
+  if (isRecord(value)) return Object.values(value).some((entry) => hasExactHttpUrl(entry, expectedUrl));
+  return false;
+}
+
 function findEngine(): string | null {
   const explicit = process.env.OPENWORK_TEST_OPENCODE_PATH;
   if (explicit && existsSync(explicit)) return explicit;
@@ -110,7 +131,7 @@ describeMaybe("authorization-required MCP tool error pass-through", () => {
 
         if (hasToolError) {
           modelSawAuthorizationError = serialized.includes("Authorization required")
-            && serialized.includes(connectUrl);
+            && hasExactHttpUrl(body, connectUrl);
           return streamResponse([
             chunk({ role: "assistant" }),
             chunk({ content: `Salesforce needs authorization. [Connect Salesforce](${connectUrl}), then tell me to retry.` }),
@@ -262,14 +283,16 @@ describeMaybe("authorization-required MCP tool error pass-through", () => {
       const linkedReply = value
         .filter((message) => message.info?.role === "assistant")
         .flatMap((message) => message.parts ?? [])
-        .find((part) => part.type === "text" && part.text?.includes(`[Connect Salesforce](${connectUrl})`));
+        .find((part) => part.type === "text"
+          && part.text?.includes("Connect Salesforce")
+          && hasExactHttpUrl(part.text, connectUrl));
       return linkedReply ? value : null;
     }, () => `agent authorization-link response; model=${JSON.stringify(modelRequests)} messages=${JSON.stringify(lastMessages)} engine=${engineLogs}`);
 
     const failedTool = messages.flatMap((message) => message.parts ?? [])
       .find((part) => part.type === "tool" && part.state?.status === "error");
     expect(failedTool?.state?.error).toContain("Authorization required");
-    expect(failedTool?.state?.error).toContain(connectUrl);
+    expect(hasExactHttpUrl(failedTool?.state?.error, connectUrl)).toBe(true);
     expect(modelSawAuthorizationError).toBe(true);
   }, 60_000);
 });

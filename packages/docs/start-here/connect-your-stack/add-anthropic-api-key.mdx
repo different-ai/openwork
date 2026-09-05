@@ -3,6 +3,10 @@ title: "Add Anthropic API key"
 description: "Create an Anthropic API key and use it in OpenWork"
 ---
 
+<Note>
+**Local provider setup.** The key you add here is for your desktop app. OpenWork remains free, and you do not need to sign in to OpenWork Cloud. To manage Anthropic access for a team, use [a managed LLM provider](/cloud/share-with-your-team/managed-llm-provider).
+</Note>
+
 Anthropic has disabled 3rd party authentication for their OAuth. In order to continue supporting Anthropic based models in OpenWork, we now default to manual API key entry for Anthropic.
 That means you create the key in Anthropic first, then paste it into OpenWork.
 
@@ -12,7 +16,7 @@ That means you create the key in Anthropic first, then paste it into OpenWork.
 - Your Claude subscription and your Anthropic API billing are not always the same thing, so make sure API access is enabled on your Anthropic account.
 - Treat the key like a password. Anthropic will only show the full value when you create it.
 
-If this key should be shared across a team, add Anthropic once in OpenWork Cloud `LLM Providers` and import it from [Settings -> Cloud](/cloud/share-with-your-team/managed-llm-provider) instead of pasting it into each workspace separately.
+If this key should be managed for a team, add Anthropic once under `Models > Bring your Own Keys` in OpenWork Cloud. Members receive it through `Settings > Cloud Providers` instead of pasting it into each workspace separately.
 
 ## Create the key in Anthropic
 

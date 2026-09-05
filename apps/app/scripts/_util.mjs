@@ -2,9 +2,17 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import net from "node:net";
-import { realpathSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
+
+function withoutInheritedOpencodeEnv(env) {
+  return Object.fromEntries(
+    Object.entries(env).filter(([key]) => !/^OPENCODE_/.test(key) && key !== "XDG_CONFIG_HOME"),
+  );
+}
 
 function resolveBasicAuthHeader() {
   const password = process.env.OPENCODE_SERVER_PASSWORD?.trim() ?? "";
@@ -48,11 +56,17 @@ export async function spawnOpencodeServe({
   port,
   corsOrigins = [],
   env = {},
+  pure = true,
 }) {
   assert.ok(directory && directory.trim(), "directory is required");
   assert.ok(Number.isInteger(port) && port > 0, "port must be a positive integer");
 
   const cwd = realpathSync(directory);
+  const isolatedRoot = mkdtempSync(join(tmpdir(), "openwork-opencode-smoke-"));
+  const configDir = join(isolatedRoot, "config");
+  const xdgConfigHome = join(isolatedRoot, "xdg");
+  mkdirSync(configDir);
+  mkdirSync(xdgConfigHome);
   const args = ["serve", "--hostname", hostname, "--port", String(port)];
   for (const origin of corsOrigins) {
     args.push("--cors", origin);
@@ -62,7 +76,29 @@ export async function spawnOpencodeServe({
     cwd,
     stdio: ["ignore", "pipe", "pipe"],
     env: {
-      ...process.env,
+      ...withoutInheritedOpencodeEnv(process.env),
+      // Core SDK smoke scripts must not inherit a developer or CI runner's
+      // OPENCODE_* setup because OPENCODE_CONFIG_CONTENT merges rather than
+      // replaces inherited config. XDG_CONFIG_HOME is redirected to an empty
+      // temp directory so neither the inherited profile nor
+      // ~/.config/opencode is loaded. A shared DB also serializes every script
+      // behind the same SQLite writer.
+      // Browser-entry opts out of the pure config because it deliberately
+      // creates a project command.
+      OPENCODE_DB: join(isolatedRoot, "opencode.db"),
+      OPENCODE_CONFIG_DIR: configDir,
+      XDG_CONFIG_HOME: xdgConfigHome,
+      ...(pure
+        ? {
+            OPENCODE_CONFIG_CONTENT: "{}",
+            OPENCODE_DISABLE_DEFAULT_PLUGINS: "1",
+            OPENCODE_DISABLE_EXTERNAL_SKILLS: "1",
+            OPENCODE_DISABLE_LSP_DOWNLOAD: "1",
+            OPENCODE_DISABLE_MODELS_FETCH: "1",
+            OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+            OPENCODE_DISABLE_PRUNE: "1",
+          }
+        : {}),
       ...env,
       // Make it explicit we're a non-TUI client.
       OPENCODE_CLIENT: "openwork-test",
@@ -97,29 +133,28 @@ export async function spawnOpencodeServe({
     baseUrl,
     child,
     async close() {
-      if (child.exitCode !== null || child.signalCode !== null) {
-        return;
-      }
-
       try {
-        child.kill("SIGTERM");
-      } catch {
-        // ignore
-      }
+        if (child.exitCode !== null || child.signalCode !== null) return;
+        try {
+          child.kill("SIGTERM");
+        } catch {
+          // ignore
+        }
 
-      const exited = await waitForExit(2500);
-      if (exited) {
-        return;
-      }
+        const exited = await waitForExit(2500);
+        if (exited) return;
 
-      // Force kill.
-      try {
-        child.kill("SIGKILL");
-      } catch {
-        // ignore
-      }
+        // Force kill.
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // ignore
+        }
 
-      await waitForExit(2500);
+        await waitForExit(2500);
+      } finally {
+        rmSync(isolatedRoot, { recursive: true, force: true });
+      }
     },
     getStderr() {
       return stderr;

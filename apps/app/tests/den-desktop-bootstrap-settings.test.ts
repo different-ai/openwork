@@ -39,6 +39,7 @@ function memoryStorage(): Storage {
 describe("desktop Den bootstrap settings", () => {
   let bootstrapConfig: {
     baseUrl: string;
+    apiBaseUrl?: string;
     requireSignin: boolean;
     fromFile?: boolean;
     writtenAt?: string;
@@ -67,11 +68,12 @@ describe("desktop Den bootstrap settings", () => {
         localStorage: memoryStorage(),
         dispatchEvent: () => true,
         __OPENWORK_ELECTRON__: {
-          invokeDesktop: async (command: string, payload?: { baseUrl: string; requireSignin: boolean }) => {
+          invokeDesktop: async (command: string, payload?: { baseUrl: string; apiBaseUrl?: string | null; requireSignin: boolean }) => {
             if (command === "getDesktopBootstrapConfig") return bootstrapConfig;
             if (command === "setDesktopBootstrapConfig" && payload) {
               bootstrapConfig = {
                 baseUrl: payload.baseUrl,
+                ...(payload.apiBaseUrl ? { apiBaseUrl: payload.apiBaseUrl } : {}),
                 requireSignin: payload.requireSignin,
                 writtenAt: "2026-07-08T00:00:00.000Z",
               };
@@ -164,6 +166,50 @@ describe("desktop Den bootstrap settings", () => {
     expect(ipcReads).toBe(0);
   });
 
+  test("uses Den Web runtime-config API URL as the desktop source of truth", async () => {
+    const fetches: string[] = [];
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        localStorage: memoryStorage(),
+        dispatchEvent: () => true,
+        __OPENWORK_ELECTRON__: {
+          invokeDesktop: async (command: string, url?: string) => {
+            if (command === "getDesktopBootstrapConfig") {
+              return {
+                baseUrl: "https://app.runtime.example.com",
+                requireSignin: false,
+              };
+            }
+            if (command === "__fetch" && typeof url === "string") {
+              fetches.push(url);
+              return {
+                status: 200,
+                statusText: "OK",
+                headers: [["content-type", "application/json"]],
+                body: JSON.stringify({ denApiUrl: "https://api.override.example.com" }),
+              };
+            }
+            throw new Error(`Unexpected desktop command: ${command}`);
+          },
+        },
+      },
+    });
+
+    await initializeDenBootstrapConfig();
+
+    expect(fetches).toEqual(["https://app.runtime.example.com/api/runtime-config"]);
+    expect(readDenBootstrapConfig().baseUrl).toBe("https://app.runtime.example.com");
+    expect(readDenBootstrapConfig().apiBaseUrl).toBe("https://api.override.example.com");
+  });
+
+  test("falls back to the same-origin API path when runtime-config is unavailable", async () => {
+    await initializeDenBootstrapConfig();
+
+    expect(readDenBootstrapConfig().baseUrl).toBe("https://bootstrap.example.com");
+    expect(readDenBootstrapConfig().apiBaseUrl).toBe("https://bootstrap.example.com/api/den");
+  });
+
   test("saves base URL changes to bootstrap and clears legacy endpoint storage", async () => {
     await initializeDenBootstrapConfig();
     window.localStorage.setItem("openwork.den.baseUrl", "https://stale.example.com");
@@ -185,6 +231,20 @@ describe("desktop Den bootstrap settings", () => {
     expect(window.localStorage.getItem("openwork.den.baseUrl")).toBeNull();
     expect(window.localStorage.getItem("openwork.den.apiBaseUrl")).toBeNull();
     expect(readDenSettings().baseUrl).toBe("https://saved.example.com");
+  });
+
+  test("sends and preserves an explicit direct API base through desktop IPC", async () => {
+    await initializeDenBootstrapConfig();
+
+    await setDenBootstrapConfig({
+      baseUrl: "https://app.saved.example.com",
+      apiBaseUrl: "https://api.saved.example.com",
+      requireSignin: true,
+    });
+
+    expect(bootstrapConfig.apiBaseUrl).toBe("https://api.saved.example.com");
+    expect(readDenBootstrapConfig().apiBaseUrl).toBe("https://api.saved.example.com");
+    expect(readDenSettings().apiBaseUrl).toBe("https://api.saved.example.com");
   });
 
   test("session or server changes invalidate configured Cloud MCP token markers", async () => {
@@ -221,7 +281,13 @@ describe("desktop Den bootstrap settings", () => {
     expect(window.localStorage.getItem(CLOUD_MCP_SYNC_MARKER_STORAGE_KEY)).toBeNull();
 
     window.localStorage.setItem(CLOUD_MCP_SYNC_MARKER_STORAGE_KEY, "stale-marker");
+    window.localStorage.setItem("openwork.react.dashboardTileCache.v1.user_alice.org_ops", "private report");
+    window.localStorage.setItem("openwork.react.dashboardTileCache.v1.user_bob.org_finance", "private forecast");
+    window.localStorage.setItem("unrelated.preference", "keep me");
     clearDenSession();
     expect(window.localStorage.getItem(CLOUD_MCP_SYNC_MARKER_STORAGE_KEY)).toBeNull();
+    expect(window.localStorage.getItem("openwork.react.dashboardTileCache.v1.user_alice.org_ops")).toBeNull();
+    expect(window.localStorage.getItem("openwork.react.dashboardTileCache.v1.user_bob.org_finance")).toBeNull();
+    expect(window.localStorage.getItem("unrelated.preference")).toBe("keep me");
   });
 });

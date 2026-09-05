@@ -43,6 +43,8 @@ export type DenLlmProvider = {
   providerConfig: Record<string, unknown>;
   hasApiKey: boolean;
   configuredEnvKeys: string[];
+  /** The env names members' machines and cloud workers actually see for this provider. */
+  runtimeEnvKeys: string[];
   createdAt: string | null;
   updatedAt: string | null;
   canManage: boolean;
@@ -203,6 +205,7 @@ function asLlmProvider(value: unknown): DenLlmProvider | null {
     providerConfig: asJsonRecord(value.providerConfig),
     hasApiKey: value.hasApiKey === true,
     configuredEnvKeys: asStringList(value.configuredEnvKeys),
+    runtimeEnvKeys: asStringList(value.runtimeEnvKeys),
     createdAt: asIsoString(value.createdAt),
     updatedAt: asIsoString(value.updatedAt),
     canManage: value.canManage === true,

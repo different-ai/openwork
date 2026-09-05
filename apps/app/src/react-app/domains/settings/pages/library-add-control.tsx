@@ -1,15 +1,12 @@
 /** @jsxImportSource react */
-import { ChevronDown, Plus } from "lucide-react";
+import { useState } from "react";
+import { Loader2, Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { t } from "../../../../i18n";
 import type { LibraryAddKind } from "../library";
+import type { LibraryConnectorCue } from "../library-connector-cues";
+import { LibraryAddKindPicker } from "./library-add-kind-picker";
 
 export function libraryAddKindLabel(kind: LibraryAddKind) {
   switch (kind) {
@@ -21,6 +18,8 @@ export function libraryAddKindLabel(kind: LibraryAddKind) {
       return t("extensions.add_agent");
     case "mcp":
       return t("extensions.add_mcp");
+    case "workspace-mcp":
+      return t("extensions.add_workspace_mcp");
     case "plugin":
       return t("extensions.add_plugin");
     case "connection":
@@ -30,43 +29,56 @@ export function libraryAddKindLabel(kind: LibraryAddKind) {
 
 export function LibraryAddControl(props: {
   kinds: LibraryAddKind[];
+  connectorCues?: LibraryConnectorCue[];
   onSelect: (kind: LibraryAddKind) => void;
+  pending?: boolean;
   size?: "xs" | "sm" | "default";
   variant?: "default" | "outline";
 }) {
   const kinds = props.kinds;
+  const [pickerOpen, setPickerOpen] = useState(false);
   if (kinds.length === 0) return null;
   const size = props.size ?? "default";
   const variant = props.variant ?? "default";
+  const pendingLabel = t("den.checking_session");
 
   const onlyKind = kinds[0];
   if (kinds.length === 1 && onlyKind) {
     return (
-      <Button variant={variant} size={size} className="shrink-0 rounded-lg" onClick={() => props.onSelect(onlyKind)}>
-        <Plus size={16} />
+      <Button
+        variant={variant}
+        size={size}
+        className="shrink-0 rounded-lg"
+        disabled={props.pending}
+        aria-busy={props.pending}
+        aria-label={props.pending ? `${libraryAddKindLabel(onlyKind)} — ${pendingLabel}` : undefined}
+        title={props.pending ? pendingLabel : undefined}
+        onClick={() => props.onSelect(onlyKind)}
+      >
+        {props.pending ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
         {libraryAddKindLabel(onlyKind)}
       </Button>
     );
   }
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={(
-          <Button variant={variant} size={size} className="shrink-0 gap-1 rounded-lg">
-            <Plus size={16} />
-            {t("common.add")}
-            <ChevronDown size={14} />
-          </Button>
-        )}
+    <>
+      <Button
+        variant={variant}
+        size={size}
+        className="shrink-0 gap-1 rounded-lg"
+        onClick={() => setPickerOpen(true)}
+      >
+        <Plus size={16} />
+        {t("common.add")}
+      </Button>
+      <LibraryAddKindPicker
+        open={pickerOpen}
+        kinds={kinds}
+        connectorCues={props.connectorCues}
+        onClose={() => setPickerOpen(false)}
+        onSelect={props.onSelect}
       />
-      <DropdownMenuContent align="end" className="w-48">
-        {kinds.map((kind) => (
-          <DropdownMenuItem key={kind} onClick={() => props.onSelect(kind)}>
-            {libraryAddKindLabel(kind)}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    </>
   );
 }

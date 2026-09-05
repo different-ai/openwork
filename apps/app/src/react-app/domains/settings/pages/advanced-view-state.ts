@@ -8,8 +8,6 @@ type AdvancedLocalState = {
   deepLinkInput: string;
   deepLinkBusy: boolean;
   deepLinkStatus: string | null;
-  migrationBusy: boolean;
-  migrationStatus: string | null;
 };
 
 type AdvancedLocalAction =
@@ -25,10 +23,7 @@ type AdvancedLocalAction =
   | { type: "deepLinkStart" }
   | { type: "deepLinkStatus"; status: string | null }
   | { type: "deepLinkDone" }
-  | { type: "deepLinkSuccess"; status: string | null }
-  | { type: "migrationStart" }
-  | { type: "migrationStatus"; status: string | null }
-  | { type: "migrationDone" };
+  | { type: "deepLinkSuccess"; status: string | null };
 
 export const initialAdvancedLocalState: AdvancedLocalState = {
   reconnectStatus: null,
@@ -40,8 +35,6 @@ export const initialAdvancedLocalState: AdvancedLocalState = {
   deepLinkInput: "",
   deepLinkBusy: false,
   deepLinkStatus: null,
-  migrationBusy: false,
-  migrationStatus: null,
 };
 
 export function advancedLocalReducer(
@@ -75,11 +68,5 @@ export function advancedLocalReducer(
       return { ...state, deepLinkBusy: false };
     case "deepLinkSuccess":
       return { ...state, deepLinkInput: "", deepLinkStatus: action.status };
-    case "migrationStart":
-      return { ...state, migrationBusy: true, migrationStatus: null };
-    case "migrationStatus":
-      return { ...state, migrationStatus: action.status };
-    case "migrationDone":
-      return { ...state, migrationBusy: false };
   }
 }

@@ -43,6 +43,7 @@ export const idTypesMapNameToPrefix = {
   llmProvider: "lpr",
   llmProviderModel: "lpm",
   llmProviderAccess: "lpa",
+  llmProviderMemberCredential: "lpc",
   desktopPolicy: "dpo",
   desktopPolicyMember: "dpm",
   organizationRole: "orl",
@@ -80,7 +81,9 @@ export const idTypesMapNameToPrefix = {
   automationRun: "atr",
   automationRunEvent: "ate",
   automationThread: "ath",
+  remoteSessionCommand: "rsc",
   codemodeRun: "cmr",
+  workflowRun: "wfr",
   artifactView: "arv",
   artifactViewRevision: "avr",
   auditEvent: "aev",
@@ -94,9 +97,11 @@ export const idTypesMapNameToPrefix = {
   externalMcpConnection: "emc",
   externalMcpConnectionAccessGrant: "emg",
   pluginMcpRequirementBinding: "pmr",
-  memory: "mem",
-  memctx: "mctx",
+
+
   tempFile: "tmpf",
+  dashboard: "dsb",
+  dashboardAccessGrant: "dsg",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix
@@ -119,21 +124,33 @@ type TypeIdSchema<T extends IdTypePrefixNames> = z.ZodType<TypeId<T>, string>
 
 const schemaCache = new Map<IdTypePrefixNames, z.ZodType<string, string>>()
 
+function acceptedTypeIdPrefixes(name: IdTypePrefixNames): readonly string[] {
+  const prefix = idTypesMapNameToPrefix[name]
+  return name === "workflowRun" ? [prefix, idTypesMapNameToPrefix.codemodeRun] : [prefix]
+}
+
+function isTypeIdPrefix(prefix: string): prefix is keyof IdTypesMapPrefixToName {
+  return Object.hasOwn(idTypesMapPrefixToName, prefix)
+}
+
 const buildTypeIdSchema = <const T extends IdTypePrefixNames>(prefix: T): TypeIdSchema<T> => {
   const expectedPrefix = idTypesMapNameToPrefix[prefix]
   const expectedLength = TYPE_ID_SUFFIX_LENGTH + expectedPrefix.length + 1
+  const acceptedPrefixes = acceptedTypeIdPrefixes(prefix)
 
   return z
     .string()
     .length(expectedLength, {
       message: `TypeID must be ${expectedLength} characters (${expectedPrefix}_<26 char suffix>)`,
     })
-    .startsWith(`${expectedPrefix}_`, {
-      message: `TypeID must start with '${expectedPrefix}_'`,
-    })
+    .refine(
+      (input) => acceptedPrefixes.some((acceptedPrefix) => input.startsWith(`${acceptedPrefix}_`)),
+      { message: `TypeID must start with '${expectedPrefix}_'` },
+    )
     .refine(
       (input) => {
-        const suffix = input.slice(expectedPrefix.length + 1)
+        const separator = input.indexOf("_")
+        const suffix = input.slice(separator + 1)
         return BASE32_REGEX.test(suffix)
       },
       { message: "TypeID suffix contains invalid base32 characters" },
@@ -170,20 +187,20 @@ const validateTypeId = <const T extends IdTypePrefixNames>(
   data: unknown,
 ): data is TypeId<T> => typeIdZodSchema(prefix).safeParse(data).success
 
-const inferTypeId = <T extends keyof IdTypesMapPrefixToName>(
+function inferTypeId<T extends keyof IdTypesMapPrefixToName>(
   input: `${T}_${string}`,
-): IdTypesMapPrefixToName[T] => {
+): IdTypesMapPrefixToName[T]
+function inferTypeId(input: string): DenTypeIdName
+function inferTypeId(input: string): DenTypeIdName {
   const parsed = TypeID.fromString(input)
-  const prefix = parsed.getType() as T
-  const typeName = idTypesMapPrefixToName[prefix]
-
-  if (typeName === undefined) {
+  const rawPrefix = parsed.getType()
+  if (!isTypeIdPrefix(rawPrefix)) {
     throw new Error(
-      `Unknown TypeID prefix '${prefix}'. Registered prefixes: ${Object.keys(idTypesMapPrefixToName).join(", ")}`,
+      `Unknown TypeID prefix '${rawPrefix}'. Registered prefixes: ${Object.keys(idTypesMapPrefixToName).join(", ")}`,
     )
   }
 
-  return typeName
+  return idTypesMapPrefixToName[rawPrefix]
 }
 
 const typeIdFromString = <const T extends IdTypePrefixNames>(
@@ -194,7 +211,7 @@ const typeIdFromString = <const T extends IdTypePrefixNames>(
   const expectedPrefix = idTypesMapNameToPrefix[typeName]
   const actualPrefix = parsed.getType()
 
-  if (actualPrefix !== expectedPrefix) {
+  if (!acceptedTypeIdPrefixes(typeName).includes(actualPrefix)) {
     throw new Error(
       `TypeID prefix mismatch: expected '${expectedPrefix}' but got '${actualPrefix}'`,
     )

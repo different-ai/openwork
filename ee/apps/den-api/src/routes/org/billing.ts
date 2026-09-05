@@ -2,21 +2,33 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { getCloudWorkerBillingStatus } from "../../billing/polar.js"
-import { createInferenceCheckoutSession, createInferencePortalSession, createSeatCheckoutSession, getOrgBillingSummary, syncSeatCheckoutSession } from "../../stripe-billing.js"
+import { createInferenceCheckoutSession, createInferencePortalSession, createOpenWorkWebCheckout, createSeatCheckoutSession, getOpenWorkWebBillingSummary, getOrgBillingSummary, syncStripeCheckoutSession } from "../../stripe-billing.js"
 import { orgRoleRoute } from "../../middleware/index.js"
 import { forbiddenSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { getRequiredUserEmail } from "../../user.js"
 import { env } from "../../env.js"
 import { ORGANIZATION_SUPER_ADMIN_ROLE, organizationRoleValueSatisfies } from "../../organization-role-hierarchy.js"
+import { isOpenWorkWebAvailableForOrganization } from "../../openwork-web-availability.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { ensureOrganizationAdmin, ensureOrganizationSuperAdmin, orgAccessFailureStatus } from "./shared.js"
 
 const stripeBillingResponseSchema = z.object({}).passthrough().meta({ ref: "OrgStripeBillingResponse" })
-const stripeCheckoutRequestSchema = z.object({ type: z.enum(["inference", "seat"]).optional() })
+const stripeCheckoutRequestSchema = z.object({ type: z.enum(["inference", "seat", "web"]).optional() })
 const stripeCheckoutResponseSchema = z.object({ url: z.string() }).meta({ ref: "OrgStripeCheckoutResponse" })
 const stripeCheckoutSyncRequestSchema = z.object({ sessionId: z.string().trim().min(1) })
 const stripeCheckoutSyncResponseSchema = z.object({ synced: z.boolean() }).meta({ ref: "OrgStripeCheckoutSyncResponse" })
 const stripePortalResponseSchema = z.object({ url: z.string() }).meta({ ref: "OrgStripePortalResponse" })
+const openWorkWebUnavailableSchema = z.object({
+  error: z.literal("openwork_web_not_available"),
+  message: z.string(),
+}).meta({ ref: "OpenWorkWebUnavailableError" })
+
+function openWorkWebUnavailableResponse(): { error: "openwork_web_not_available"; message: string } {
+  return {
+    error: "openwork_web_not_available",
+    message: "OpenWork Web is not available for this organization.",
+  }
+}
 
 function getRequestOrigin(c: { req: { raw: Request } }) {
   const url = new URL(c.req.raw.url)
@@ -38,6 +50,24 @@ function checkoutSuccessUrl(c: { req: { raw: Request } }) {
   // where the unlocked value (the model lineup) is visible. The billing page
   // remains the status/portal view.
   return env.stripe.billingSuccessUrl ?? `${getRequestOrigin(c)}/dashboard/billing/stripe/checking?session_id={CHECKOUT_SESSION_ID}&return=models`
+}
+
+function openWorkWebCheckoutSuccessUrl(c: { req: { raw: Request } }) {
+  const fallback = `${getRequestOrigin(c)}/dashboard/billing/stripe/checking?session_id={CHECKOUT_SESSION_ID}&return=web`
+  const configured = env.stripe.billingSuccessUrl
+  if (!configured) {
+    return fallback
+  }
+  try {
+    const url = new URL(configured, getRequestOrigin(c))
+    url.pathname = "/dashboard/billing/stripe/checking"
+    url.searchParams.set("session_id", "{CHECKOUT_SESSION_ID}")
+    url.searchParams.set("return", "web")
+    url.hash = ""
+    return url.toString().replace("%7BCHECKOUT_SESSION_ID%7D", "{CHECKOUT_SESSION_ID}")
+  } catch {
+    return fallback
+  }
 }
 
 function appendSeatCheckoutParams(input: string) {
@@ -73,7 +103,45 @@ function checkoutCancelUrl(c: { req: { raw: Request } }) {
   return env.stripe.billingCancelUrl ?? billingReturnUrl(c)
 }
 
+function openWorkWebCheckoutCancelUrl(c: { req: { raw: Request } }) {
+  const configured = env.stripe.billingCancelUrl
+  try {
+    const url = new URL(configured ?? getRequestOrigin(c), getRequestOrigin(c))
+    url.pathname = "/dashboard/web"
+    url.search = ""
+    url.searchParams.set("stripe_checkout", "web")
+    url.searchParams.set("canceled", "1")
+    url.hash = ""
+    return url.toString()
+  } catch {
+    return `${getRequestOrigin(c)}/dashboard/web?stripe_checkout=web&canceled=1`
+  }
+}
+
 export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
+  app.get(
+    "/v1/billing/web",
+    describeRoute({
+      tags: ["Organizations"],
+      hide: true,
+      summary: "Get OpenWork Web billing eligibility",
+      responses: {
+        200: jsonResponse("OpenWork Web billing eligibility returned successfully.", stripeBillingResponseSchema),
+        401: jsonResponse("The caller must be an organization member.", unauthorizedSchema),
+        404: jsonResponse("OpenWork Web is not available for this organization.", openWorkWebUnavailableSchema),
+      },
+    }),
+    orgRoleRoute(["member"]),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      if (!isOpenWorkWebAvailableForOrganization(payload.organization.metadata)) {
+        return c.json(openWorkWebUnavailableResponse(), 404)
+      }
+      const web = await getOpenWorkWebBillingSummary(payload.organization.id)
+      return c.json({ billing: { stripe: { web } } })
+    },
+  )
+
   app.get(
     "/v1/billing",
     describeRoute({
@@ -125,6 +193,7 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         200: jsonResponse("Stripe Checkout session created successfully.", stripeCheckoutResponseSchema),
         401: jsonResponse("The caller must be signed in to start billing.", unauthorizedSchema),
         403: jsonResponse("Only workspace owners and admins can start billing.", forbiddenSchema),
+        404: jsonResponse("OpenWork Web is not available for this organization.", openWorkWebUnavailableSchema),
       },
     }),
     orgRoleRoute(["admin"]),
@@ -145,15 +214,46 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
       }
       const payload = c.get("organizationContext")
       const subscriptionType = parsed.data.type ?? "inference"
-      const createCheckoutSession = subscriptionType === "seat" ? createSeatCheckoutSession : createInferenceCheckoutSession
+      if (subscriptionType === "web" && !isOpenWorkWebAvailableForOrganization(payload.organization.metadata)) {
+        return c.json(openWorkWebUnavailableResponse(), 404)
+      }
+      if (subscriptionType === "web") {
+        const webBilling = await getOpenWorkWebBillingSummary(payload.organization.id)
+        if (webBilling.complimentaryAccess) {
+          return c.json({
+            error: "openwork_web_complimentary_access_exists",
+            message: "OpenWork Web is already included for this organization without a Stripe subscription.",
+          }, 409)
+        }
+      }
+      const createCheckoutSession = subscriptionType === "seat"
+        ? createSeatCheckoutSession
+        : subscriptionType === "web"
+          ? createOpenWorkWebCheckout
+          : createInferenceCheckoutSession
       const session = await createCheckoutSession({
         organizationId: payload.organization.id,
         orgMemberId: payload.currentMember.id,
         email,
         name: user.name ?? email,
-        successUrl: subscriptionType === "seat" ? seatCheckoutSuccessUrl(c) : checkoutSuccessUrl(c),
-        cancelUrl: checkoutCancelUrl(c),
+        successUrl: subscriptionType === "seat"
+          ? seatCheckoutSuccessUrl(c)
+          : subscriptionType === "web"
+            ? openWorkWebCheckoutSuccessUrl(c)
+            : checkoutSuccessUrl(c),
+        cancelUrl: subscriptionType === "web" ? openWorkWebCheckoutCancelUrl(c) : checkoutCancelUrl(c),
+      }).catch((error) => {
+        if (error instanceof Error && error.message === "stripe_openwork_web_subscription_exists") {
+          return "subscription_exists" as const
+        }
+        throw error
       })
+      if (session === "subscription_exists") {
+        return c.json({
+          error: "stripe_subscription_exists",
+          message: "OpenWork Web is already subscribed for this organization. Manage it from Billing.",
+        }, 409)
+      }
       return c.json({ url: session.url })
     },
   )
@@ -209,7 +309,7 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         return c.json({ error: "invalid_request", details: parsed.error }, 400)
       }
       const payload = c.get("organizationContext")
-      const row = await syncSeatCheckoutSession({
+      const row = await syncStripeCheckoutSession({
         organizationId: payload.organization.id,
         sessionId: parsed.data.sessionId,
       }).catch((error) => {

@@ -14,6 +14,8 @@ describe("organization branding layout", () => {
     const source = readFileSync(settingsPath, "utf8");
 
     expect(source).toMatch(/<form className="grid gap-6"/);
+    expect(source).toContain('<div className="grid gap-5" data-testid="brand-identity-fields">');
+    expect(source).not.toContain("lg:grid-cols-[minmax(0,1fr)_280px]");
     expect(source).toMatch(/className="grid min-w-0 gap-5 lg:grid-cols-2"/);
     expect(source).toMatch(/className="grid min-w-0 gap-3 rounded-2xl/);
     expect(source).toMatch(/className="min-h-9 min-w-0 break-words/);

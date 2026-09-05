@@ -122,6 +122,7 @@ try {
 }
 
 const esc = (value) => String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+const escAttr = (value) => esc(value).replace(/"/g, "&quot;")
 const slug = (value) => value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60)
 const frameFiles = frames.map((frame, index) => {
   const name = `${String(index + 1).padStart(2, "0")}-${slug(frame.claim)}.html`
@@ -147,7 +148,7 @@ writeFileSync(join(outDir, "fraimz.html"), `<!doctype html><html lang="en"><head
 </head><body><main>
 <h1>OpenWork Bootstrap CLI — live E2E test evidence</h1>
 <div class="meta">Result: <code>${allOk ? "passed" : "failed"}</code> · Live Den API: <code>${esc(baseUrl)}</code> · Frames: ${frames.length}</div>
-${frameFiles.map((entry) => `<section><h2>${esc(entry.frame.claim)}</h2><iframe src="${entry.name}" title="${esc(entry.frame.claim)}"></iframe><p><a href="${entry.name}">Open frame</a></p></section>`).join("\n")}
+${frameFiles.map((entry) => `<section><h2>${esc(entry.frame.claim)}</h2><iframe src="${escAttr(entry.name)}" title="${escAttr(entry.frame.claim)}"></iframe><p><a href="${escAttr(entry.name)}">Open frame</a></p></section>`).join("\n")}
 </main></body></html>`)
 writeFileSync(join(outDir, "report.json"), JSON.stringify({
   flow: "openwork-bootstrap-cli",

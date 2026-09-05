@@ -7,6 +7,7 @@ import { z } from "zod"
 import { db } from "../../db.js"
 import { jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
+import { getOpenWorkWebRuntimeAccess, openWorkWebAccessRequiredPayload } from "../../openwork-web-runtime-access.js"
 import { getOrganizationLimitStatus } from "../../organization-limits.js"
 import { getRequiredUserEmail } from "../../user.js"
 import type { WorkerRouteVariables } from "./shared.js"
@@ -25,6 +26,7 @@ import {
   token,
   updateWorkerSchema,
   workerIdParamSchema,
+  workerSandboxBackend,
 } from "./shared.js"
 
 const workerInstanceSchema = z.object({
@@ -89,7 +91,19 @@ const workerTokensResponseSchema = z.object({
     openworkUrl: z.string().nullable(),
     workspaceId: z.string().nullable(),
   }).nullable(),
+  directPreview: z.object({
+    version: z.literal(1),
+    openworkUrl: z.string(),
+    workspaceId: z.string().nullable(),
+    expiresAt: z.string().datetime(),
+  }).nullable().optional(),
 }).meta({ ref: "WorkerTokensResponse" })
+
+const workerTokensRequestSchema = z.object({
+  // Legacy/published clients do not understand signed-preview expiry. They
+  // receive only stable tokens. New Web flows opt in and own refresh/polling.
+  includeExpiringOpenworkUrl: z.boolean().optional(),
+}).meta({ ref: "WorkerTokensRequest" })
 
 const organizationUnavailableSchema = z.object({
   error: z.literal("organization_unavailable"),
@@ -111,6 +125,11 @@ const paymentRequiredSchema = z.object({
   error: z.literal("cloud_worker_billing_unavailable"),
   message: z.string(),
 }).meta({ ref: "WorkerPaymentRequiredError" })
+
+const openWorkWebAccessRequiredSchema = z.object({
+  error: z.literal("openwork_web_access_required"),
+  message: z.string(),
+}).meta({ ref: "WorkerOpenWorkWebAccessRequiredError" })
 
 const userEmailRequiredSchema = z.object({
   error: z.literal("user_email_required"),
@@ -181,6 +200,7 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
         400: jsonResponse("The worker creation payload was invalid.", z.union([invalidRequestSchema, organizationUnavailableSchema, workspacePathRequiredSchema, userEmailRequiredSchema])),
         401: jsonResponse("The caller must be signed in to create workers.", unauthorizedSchema),
         402: jsonResponse("The caller needs an active cloud plan before launching a cloud worker.", paymentRequiredSchema),
+        403: jsonResponse("OpenWork Web access is required to launch a cloud worker.", openWorkWebAccessRequiredSchema),
         409: jsonResponse("The organization has reached its worker limit.", orgLimitReachedSchema),
       },
     }),
@@ -200,6 +220,10 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
     }
 
     if (input.destination === "cloud") {
+      const webAccess = await getOpenWorkWebRuntimeAccess(orgId)
+      if (!webAccess.hasAccess) {
+        return c.json(openWorkWebAccessRequiredPayload(), 403)
+      }
       const email = getRequiredUserEmail(user)
       if (!email) {
         return c.json({ error: "user_email_required" }, 400)
@@ -232,6 +256,7 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
 
     const workerId = createDenTypeId("worker")
     const workerStatus = input.destination === "cloud" ? "provisioning" : "healthy"
+    const sandboxBackend = workerSandboxBackend(input)
 
     await db.insert(WorkerTable).values({
       id: workerId,
@@ -243,7 +268,7 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
       status: workerStatus,
       image_version: input.imageVersion,
       workspace_path: input.workspacePath,
-      sandbox_backend: input.sandboxBackend,
+      sandbox_backend: sandboxBackend,
     })
 
     const hostToken = token()
@@ -293,7 +318,11 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
           status: workerStatus,
           image_version: input.imageVersion ?? null,
           workspace_path: input.workspacePath ?? null,
-          sandbox_backend: input.sandboxBackend ?? null,
+          sandbox_backend: sandboxBackend,
+          cloud_failure_code: null,
+          cloud_failure_stage: null,
+          cloud_failure_reference: null,
+          cloud_failure_at: null,
           last_heartbeat_at: null,
           last_active_at: null,
           created_at: new Date(),
@@ -428,6 +457,7 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
         200: jsonResponse("Worker connection tokens returned successfully.", workerTokensResponseSchema),
         400: jsonResponse("The worker token path parameters were invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to request worker tokens.", unauthorizedSchema),
+        403: jsonResponse("OpenWork Web access is required to use cloud worker tokens.", openWorkWebAccessRequiredSchema),
         404: jsonResponse("The worker could not be found.", notFoundSchema),
         409: jsonResponse("The worker is not ready to return connection tokens yet.", workerRuntimeUnavailableSchema),
       },
@@ -454,7 +484,10 @@ export function registerWorkerCoreRoutes<T extends { Variables: WorkerRouteVaria
       return c.json({ error: "worker_not_found" }, 404)
     }
 
-    const resolved = await getWorkerTokensAndConnect(worker)
+    const requestBody = workerTokensRequestSchema.safeParse(await c.req.json().catch(() => ({})))
+    const resolved = await getWorkerTokensAndConnect(worker, {
+      includeExpiringOpenworkUrl: requestBody.success && requestBody.data.includeExpiringOpenworkUrl === true,
+    })
     if ("error" in resolved && resolved.error) {
       return new Response(JSON.stringify(resolved.error.body), {
         status: resolved.error.status,

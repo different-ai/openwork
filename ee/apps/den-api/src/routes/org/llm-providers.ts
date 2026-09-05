@@ -1,8 +1,10 @@
+import { declarativeDeleteSchema, declarativeResponses, externalKeyParamsSchema, isDuplicateEntry, type ResourceActionContext, type ResourceOrganizationContext } from "./declarative.js"
 import { and, desc, eq, inArray, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import {
   AuthUserTable,
   InvitationTable,
   LlmProviderAccessTable,
+  LlmProviderMemberCredentialTable,
   LlmProviderModelTable,
   LlmProviderTable,
   MemberTable,
@@ -10,7 +12,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
-import { describeRoute } from "hono-openapi"
+import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
 import { CustomProviderConfigError, normalizeCustomProviderConfig } from "../../llm/custom-provider.js"
@@ -21,10 +23,13 @@ import {
   listConfiguredEnvKeys,
   readProviderEnvNames,
   resolveProviderCredential,
+  runtimeProviderEnvNames,
+  toRuntimeProviderEnv,
 } from "../../llm/provider-credentials.js"
 import {
   jsonValidator,
   orgMemberRoute,
+  orgRoleRoute,
   paramValidator,
   queryValidator,
   resolveMemberTeamsMiddleware,
@@ -33,15 +38,19 @@ import { getModelsDevProvider, listModelsDevProviders } from "../../llm/models-d
 import type { MemberTeamsContext } from "../../middleware/member-teams.js"
 import { denTypeIdSchema, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { repairMemberInferenceAccessIfNeeded } from "../../inference.js"
-import { listAccessibleLlmProviderAccess } from "./llm-provider-access.js"
+import { listAccessibleLlmProviderAccess, listGrantedLlmProviderMemberIds } from "./llm-provider-access.js"
 import type { OrgRouteVariables } from "./shared.js"
-import { ensureOrganizationAdmin, idParamSchema, memberHasRole, orgAccessFailureStatus } from "./shared.js"
+import { ensureOrganizationAdmin, ensureOrganizationAdminRole, idParamSchema, memberHasRole, orgAccessFailureStatus } from "./shared.js"
 
 type LlmProviderId = typeof LlmProviderTable.$inferSelect.id
 type LlmProviderAccessId = typeof LlmProviderAccessTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
 type TeamId = typeof TeamTable.$inferSelect.id
 type LlmProviderRow = typeof LlmProviderTable.$inferSelect
+type LlmProviderMemberCredentialRow = typeof LlmProviderMemberCredentialTable.$inferSelect
+
+type NonMcpDescribeRouteOptions = DescribeRouteOptions & { "x-mcp": false }
+const describeNonMcpRoute = (options: NonMcpDescribeRouteOptions) => describeRoute(options)
 
 type RouteFailure = {
   status: number
@@ -59,6 +68,9 @@ const providerCatalogParamsSchema = z.object({
 })
 
 const orgLlmProviderParamsSchema = idParamSchema("llmProviderId", "llmProvider")
+const orgLlmProviderMemberCredentialParamsSchema = orgLlmProviderParamsSchema.extend({
+  orgMembershipId: denTypeIdSchema("member"),
+})
 
 const llmProviderListQuerySchema = z.object({
   scope: z.enum(["usable", "manageable"]).optional().default("usable"),
@@ -71,6 +83,7 @@ const llmProviderWriteSchema = z.object({
   modelIds: z.array(z.string().trim().min(1).max(255)).min(1).optional(),
   customConfigText: z.string().trim().min(1).optional(),
   customConfig: z.unknown().optional(),
+  credentialMode: z.enum(["shared", "per_member"]).optional().default("shared"),
   apiKey: z.string().trim().max(65535).optional(),
   apiKeys: z.record(z.string().trim().min(1).max(255), z.string().trim().max(65535)).optional(),
   memberIds: z.array(denTypeIdSchema("member")).max(500).optional().default([]),
@@ -105,6 +118,36 @@ const llmProviderWriteSchema = z.object({
     })
   }
 })
+
+const memberCredentialInputFields = {
+  apiKey: z.string().trim().min(1).max(65535).optional(),
+  apiKeys: z.record(
+    z.string().trim().min(1).max(255),
+    z.string().trim().min(1).max(65535),
+  ).refine((value) => Object.keys(value).length > 0, "Provide at least one credential.").optional(),
+}
+
+function requireExactlyOneCredential(
+  value: { apiKey?: string; apiKeys?: Record<string, string> },
+  ctx: z.RefinementCtx,
+) {
+  if ((value.apiKey === undefined) === (value.apiKeys === undefined)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Provide exactly one of apiKey or apiKeys.",
+    })
+  }
+}
+
+const memberCredentialWriteSchema = z.object(memberCredentialInputFields)
+  .superRefine(requireExactlyOneCredential)
+
+const adminMemberCredentialWriteSchema = z.object({
+  ...memberCredentialInputFields,
+  externalPrincipalId: z.string().trim().min(1).max(255).optional(),
+  externalCredentialId: z.string().trim().min(1).max(255).optional(),
+  expectedVersion: z.number().int().positive().optional(),
+}).superRefine(requireExactlyOneCredential)
 
 const endpointProbeRequestSchema = z.object({
   api: z.string().trim().min(1).max(2048),
@@ -142,8 +185,13 @@ const llmProviderListResponseSchema = z.object({
   llmProviders: z.array(z.object({}).passthrough()),
 }).meta({ ref: "LlmProviderListResponse" })
 
+const memberCredentialConnectionSchema = z.object({
+  state: z.enum(["missing", "active", "blocked", "stale", "error"]),
+})
 const llmProviderResponseSchema = z.object({
-  llmProvider: z.object({}).passthrough(),
+  llmProvider: z.object({
+    memberCredential: memberCredentialConnectionSchema.optional(),
+  }).passthrough(),
 }).meta({ ref: "LlmProviderResponse" })
 
 const providerCatalogUnavailableSchema = z.object({
@@ -155,6 +203,40 @@ const conflictSchema = z.object({
   error: z.string(),
   message: z.string().optional(),
 }).meta({ ref: "ConflictError" })
+
+const memberCredentialStateSchema = z.enum(["active", "blocked", "stale", "error"])
+const memberCredentialSummarySchema = z.object({
+  state: memberCredentialStateSchema,
+  version: z.number().int().positive(),
+  updatedAt: z.string().datetime(),
+}).meta({ ref: "LlmProviderMemberCredentialSummary" })
+const memberCredentialListResponseSchema = z.object({
+  memberCredentials: z.array(z.object({
+    orgMembershipId: denTypeIdSchema("member"),
+    state: z.enum(["missing", "active", "blocked", "stale", "error"]),
+    externalPrincipalId: z.string().nullable(),
+    externalCredentialId: z.string().nullable(),
+    version: z.number().int().positive().nullable(),
+    updatedAt: z.string().datetime().nullable(),
+  })),
+}).meta({ ref: "LlmProviderMemberCredentialListResponse" })
+const memberCredentialDeleteResponseSchema = z.object({
+  ok: z.literal(true),
+}).meta({ ref: "LlmProviderMemberCredentialDeleteResponse" })
+const versionConflictSchema = z.object({
+  error: z.literal("version_conflict"),
+}).meta({ ref: "LlmProviderCredentialVersionConflictError" })
+const notPerMemberSchema = z.object({
+  error: z.literal("not_per_member"),
+}).meta({ ref: "LlmProviderNotPerMemberError" })
+const credentialBlockedSchema = z.object({
+  error: z.literal("credential_blocked"),
+}).meta({ ref: "LlmProviderCredentialBlockedError" })
+const memberCredentialBadRequestSchema = z.union([
+  invalidRequestSchema,
+  notPerMemberSchema,
+  z.object({ error: z.literal("invalid_api_keys"), message: z.string().optional() }),
+])
 
 function createFailure(status: number, error: string, message?: string): RouteFailure {
   return { status, error, message }
@@ -291,6 +373,135 @@ function resolveCredentialColumn(input: {
   }
 }
 
+function resolveMemberCredentialSecret(
+  provider: Pick<LlmProviderRow, "providerConfig">,
+  input: z.infer<typeof memberCredentialWriteSchema>,
+) {
+  const secret = resolveCredentialColumn({
+    providerConfig: provider.providerConfig,
+    existingProvider: null,
+    apiKey: input.apiKey,
+    apiKeys: input.apiKeys,
+  })
+  if (!secret) {
+    throw createFailure(400, "invalid_api_keys", "Provide a non-empty credential.")
+  }
+  return secret
+}
+
+function memberCredentialSummary(credential: LlmProviderMemberCredentialRow) {
+  return {
+    state: credential.state,
+    version: credential.version,
+    updatedAt: credential.updatedAt.toISOString(),
+  }
+}
+
+type MemberCredentialWriteResult = {
+  status: "ok"
+  credential: LlmProviderMemberCredentialRow
+} | {
+  status: "version_conflict"
+} | {
+  status: "blocked"
+}
+
+async function upsertMemberCredential(input: {
+  organizationId: LlmProviderMemberCredentialRow["organizationId"]
+  llmProviderId: LlmProviderId
+  orgMembershipId: MemberId
+  secret: string
+  createdBy: LlmProviderMemberCredentialRow["createdBy"]
+  /**
+   * A blocked binding is admin-owned: member self-service must not overwrite
+   * it back to active. Admin provisioning passes true, which is the explicit
+   * unblock path.
+   */
+  allowBlockedOverwrite: boolean
+  externalPrincipalId?: string
+  externalCredentialId?: string
+  expectedVersion?: number
+}): Promise<MemberCredentialWriteResult> {
+  return db.transaction(async (tx): Promise<MemberCredentialWriteResult> => {
+    const rows = await tx
+      .select()
+      .from(LlmProviderMemberCredentialTable)
+      .where(and(
+        eq(LlmProviderMemberCredentialTable.organizationId, input.organizationId),
+        eq(LlmProviderMemberCredentialTable.llmProviderId, input.llmProviderId),
+        eq(LlmProviderMemberCredentialTable.orgMembershipId, input.orgMembershipId),
+      ))
+      .limit(1)
+      .for("update")
+    const existing = rows[0]
+    if (existing?.state === "blocked" && !input.allowBlockedOverwrite) {
+      return { status: "blocked" }
+    }
+    if (input.expectedVersion !== undefined && existing?.version !== input.expectedVersion) {
+      return { status: "version_conflict" }
+    }
+
+    const updatedAt = new Date()
+    if (existing) {
+      const credential: LlmProviderMemberCredentialRow = {
+        ...existing,
+        secret: input.secret,
+        externalPrincipalId: input.externalPrincipalId ?? existing.externalPrincipalId,
+        externalCredentialId: input.externalCredentialId ?? existing.externalCredentialId,
+        state: "active",
+        version: existing.version + 1,
+        createdBy: input.createdBy,
+        updatedAt,
+      }
+      await tx
+        .update(LlmProviderMemberCredentialTable)
+        .set({
+          secret: credential.secret,
+          externalPrincipalId: credential.externalPrincipalId,
+          externalCredentialId: credential.externalCredentialId,
+          state: credential.state,
+          version: credential.version,
+          createdBy: credential.createdBy,
+          updatedAt,
+        })
+        .where(eq(LlmProviderMemberCredentialTable.id, existing.id))
+      return { status: "ok", credential }
+    }
+
+    const credential: LlmProviderMemberCredentialRow = {
+      id: createDenTypeId("llmProviderMemberCredential"),
+      organizationId: input.organizationId,
+      llmProviderId: input.llmProviderId,
+      orgMembershipId: input.orgMembershipId,
+      secret: input.secret,
+      externalPrincipalId: input.externalPrincipalId ?? null,
+      externalCredentialId: input.externalCredentialId ?? null,
+      state: "active",
+      version: 1,
+      createdBy: input.createdBy,
+      createdAt: updatedAt,
+      updatedAt,
+    }
+    await tx.insert(LlmProviderMemberCredentialTable).values(credential)
+    return { status: "ok", credential }
+  })
+}
+
+async function getLlmProvider(input: {
+  organizationId: LlmProviderRow["organizationId"]
+  llmProviderId: LlmProviderId
+}) {
+  const rows = await db
+    .select()
+    .from(LlmProviderTable)
+    .where(and(
+      eq(LlmProviderTable.organizationId, input.organizationId),
+      eq(LlmProviderTable.id, input.llmProviderId),
+    ))
+    .limit(1)
+  return rows[0] ?? null
+}
+
 async function normalizeLlmProviderInput(
   input: z.infer<typeof llmProviderWriteSchema>,
   existingProvider: Pick<LlmProviderRow, "apiKey" | "providerConfig"> | null = null,
@@ -406,10 +617,24 @@ async function loadLlmProviders(input: {
   }
 
   const providerIds = providers.map((provider) => provider.id)
-  const models = await db
-    .select()
-    .from(LlmProviderModelTable)
-    .where(inArray(LlmProviderModelTable.llmProviderId, providerIds))
+  const [models, myCredentials] = await Promise.all([
+    db
+      .select()
+      .from(LlmProviderModelTable)
+      .where(inArray(LlmProviderModelTable.llmProviderId, providerIds)),
+    input.scope === "usable"
+      ? db
+          .select({ llmProviderId: LlmProviderMemberCredentialTable.llmProviderId })
+          .from(LlmProviderMemberCredentialTable)
+          .where(and(
+            eq(LlmProviderMemberCredentialTable.organizationId, input.organizationId),
+            eq(LlmProviderMemberCredentialTable.orgMembershipId, input.currentMemberId),
+            eq(LlmProviderMemberCredentialTable.state, "active"),
+            inArray(LlmProviderMemberCredentialTable.llmProviderId, providerIds),
+          ))
+      : Promise.resolve([]),
+  ])
+  const myCredentialProviderIds = new Set(myCredentials.map((credential) => credential.llmProviderId))
 
   const memberAccessRows = await db
     .select({
@@ -504,8 +729,12 @@ async function loadLlmProviders(input: {
 
   return providers.map((provider) => ({
     ...provider,
+    ...(input.scope === "usable" ? {
+      hasMyCredential: provider.credentialMode === "per_member" && myCredentialProviderIds.has(provider.id),
+    } : {}),
     hasApiKey: Boolean(provider.apiKey && provider.apiKey.trim().length > 0),
     configuredEnvKeys: listConfiguredEnvKeys(provider.apiKey, readProviderEnvNames(provider.providerConfig ?? {})),
+    runtimeEnvKeys: runtimeProviderEnvNames({ ...provider, providerConfig: provider.providerConfig ?? {} }),
     models: (modelsByProviderId.get(provider.id) ?? [])
       .map((model) => ({
         id: model.modelId,
@@ -543,7 +772,421 @@ async function loadLlmProviders(input: {
   }))
 }
 
+async function createLlmProvider(c: ResourceActionContext, payload: ResourceOrganizationContext, input: z.infer<typeof llmProviderWriteSchema>, externalKey?: string) {
+
+  try {
+    const normalized = await normalizeLlmProviderInput(input)
+    const memberIds = await resolveMemberIds({
+      organizationId: payload.organization.id,
+      values: input.memberIds,
+    })
+    const teamIds = await resolveTeamIds({
+      organizationId: payload.organization.id,
+      values: input.teamIds,
+    })
+
+    const llmProviderId = createDenTypeId("llmProvider")
+    const protectedMemberIds = [...new Set([payload.currentMember.id, ...memberIds])]
+    const now = new Date()
+
+    await db.transaction(async (tx) => {
+      await tx.insert(LlmProviderTable).values({
+        externalKey,
+        id: llmProviderId,
+        organizationId: payload.organization.id,
+        createdByOrgMembershipId: payload.currentMember.id,
+        source: normalized.source,
+        providerId: normalized.providerId,
+        name: normalized.name,
+        providerConfig: normalized.providerConfig,
+        credentialMode: input.credentialMode,
+        apiKey: normalized.apiKey,
+        createdAt: now,
+        updatedAt: now,
+      })
+
+      if (normalized.models.length > 0) {
+        await tx.insert(LlmProviderModelTable).values(
+          normalized.models.map((model) => ({
+            id: createDenTypeId("llmProviderModel"),
+            llmProviderId,
+            modelId: model.id,
+            name: model.name,
+            modelConfig: model.config,
+            createdAt: now,
+          })),
+        )
+      }
+
+      const accessRows = input.allMembers
+        ? [
+            // One org-wide grant plus the creator's protected direct row.
+            {
+              id: createDenTypeId("llmProviderAccess"),
+              llmProviderId,
+              orgMembershipId: null,
+              teamId: null,
+              createdAt: now,
+            },
+            {
+              id: createDenTypeId("llmProviderAccess"),
+              llmProviderId,
+              orgMembershipId: payload.currentMember.id,
+              teamId: null,
+              createdAt: now,
+            },
+          ]
+        : [
+        ...protectedMemberIds.map((orgMembershipId) => ({
+          id: createDenTypeId("llmProviderAccess"),
+          llmProviderId,
+          orgMembershipId,
+          teamId: null,
+          createdAt: now,
+        })),
+        ...teamIds.map((teamId) => ({
+          id: createDenTypeId("llmProviderAccess"),
+          llmProviderId,
+          orgMembershipId: null,
+          teamId,
+          createdAt: now,
+        })),
+      ]
+
+      if (accessRows.length > 0) {
+        await tx.insert(LlmProviderAccessTable).values(accessRows)
+      }
+    })
+
+    return c.json({
+      llmProvider: {
+        id: llmProviderId,
+        externalKey: externalKey ?? null,
+        organizationId: payload.organization.id,
+        createdByOrgMembershipId: payload.currentMember.id,
+        source: normalized.source,
+        providerId: normalized.providerId,
+        name: normalized.name,
+        providerConfig: normalized.providerConfig,
+        credentialMode: input.credentialMode,
+        hasApiKey: Boolean(normalized.apiKey),
+        configuredEnvKeys: listConfiguredEnvKeys(normalized.apiKey, readProviderEnvNames(normalized.providerConfig)),
+        runtimeEnvKeys: runtimeProviderEnvNames({ id: llmProviderId, ...normalized }),
+        createdAt: now,
+        updatedAt: now,
+      },
+    }, 201)
+  } catch (error) {
+    if (isRouteFailure(error)) {
+      return c.json(
+        { error: error.error, message: error.message },
+        { status: error.status as 400 | 404 },
+      )
+    }
+
+    throw error
+  }
+}
+
+async function updateLlmProvider(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string, input: z.infer<typeof llmProviderWriteSchema>) {
+
+  let llmProviderId: LlmProviderId
+  try {
+    llmProviderId = parseLlmProviderId(rawId)
+  } catch {
+    return c.json({ error: "llm_provider_not_found" }, 404)
+  }
+
+  const providerRows = await db
+    .select()
+    .from(LlmProviderTable)
+    .where(and(eq(LlmProviderTable.id, llmProviderId), eq(LlmProviderTable.organizationId, payload.organization.id)))
+    .limit(1)
+
+  const provider = providerRows[0]
+  if (!provider) {
+    return c.json({ error: "llm_provider_not_found" }, 404)
+  }
+
+  if (!canManageLlmProvider(payload, provider)) {
+    return c.json({
+      error: "forbidden",
+      message: "Only the provider creator or a workspace admin can update providers.",
+    }, 403)
+  }
+
+  if (isOrganizationAdmin(payload)) {
+    const permission = ensureOrganizationAdmin(c, "Only the provider creator or a workspace admin can update providers.")
+    if (!permission.ok) {
+      return c.json(permission.response, orgAccessFailureStatus(permission.response))
+    }
+  }
+
+  try {
+    const normalized = await normalizeLlmProviderInput(input, provider)
+    const memberIds = await resolveMemberIds({
+      organizationId: payload.organization.id,
+      values: input.memberIds,
+    })
+    const teamIds = await resolveTeamIds({
+      organizationId: payload.organization.id,
+      values: input.teamIds,
+    })
+    const protectedMemberIds = [...new Set([provider.createdByOrgMembershipId, ...memberIds])]
+    const updatedAt = new Date()
+
+    await db.transaction(async (tx) => {
+      await tx
+        .update(LlmProviderTable)
+        .set({
+          source: normalized.source,
+          providerId: normalized.providerId,
+          name: normalized.name,
+          providerConfig: normalized.providerConfig,
+          credentialMode: input.credentialMode,
+          apiKey: normalized.apiKey,
+          updatedAt,
+        })
+        .where(eq(LlmProviderTable.id, provider.id))
+
+      if (provider.credentialMode !== input.credentialMode) {
+        await tx
+          .delete(LlmProviderMemberCredentialTable)
+          .where(eq(LlmProviderMemberCredentialTable.llmProviderId, provider.id))
+      }
+
+      await tx.delete(LlmProviderModelTable).where(eq(LlmProviderModelTable.llmProviderId, provider.id))
+      await tx.delete(LlmProviderAccessTable).where(eq(LlmProviderAccessTable.llmProviderId, provider.id))
+
+      if (normalized.models.length > 0) {
+        await tx.insert(LlmProviderModelTable).values(
+          normalized.models.map((model) => ({
+            id: createDenTypeId("llmProviderModel"),
+            llmProviderId: provider.id,
+            modelId: model.id,
+            name: model.name,
+            modelConfig: model.config,
+            createdAt: updatedAt,
+          })),
+        )
+      }
+
+      const accessRows = input.allMembers
+        ? [
+            // One org-wide grant plus the creator's protected direct row.
+            {
+              id: createDenTypeId("llmProviderAccess"),
+              llmProviderId: provider.id,
+              orgMembershipId: null,
+              teamId: null,
+              createdAt: updatedAt,
+            },
+            {
+              id: createDenTypeId("llmProviderAccess"),
+              llmProviderId: provider.id,
+              orgMembershipId: provider.createdByOrgMembershipId,
+              teamId: null,
+              createdAt: updatedAt,
+            },
+          ]
+        : [
+        ...protectedMemberIds.map((orgMembershipId) => ({
+          id: createDenTypeId("llmProviderAccess"),
+          llmProviderId: provider.id,
+          orgMembershipId,
+          teamId: null,
+          createdAt: updatedAt,
+        })),
+        ...teamIds.map((teamId) => ({
+          id: createDenTypeId("llmProviderAccess"),
+          llmProviderId: provider.id,
+          orgMembershipId: null,
+          teamId,
+          createdAt: updatedAt,
+        })),
+      ]
+
+      if (accessRows.length > 0) {
+        await tx.insert(LlmProviderAccessTable).values(accessRows)
+      }
+    })
+
+    return c.json({
+      llmProvider: {
+        ...provider,
+        source: normalized.source,
+        providerId: normalized.providerId,
+        name: normalized.name,
+        providerConfig: normalized.providerConfig,
+        credentialMode: input.credentialMode,
+        apiKey: undefined,
+        hasApiKey: Boolean(normalized.apiKey),
+        configuredEnvKeys: listConfiguredEnvKeys(normalized.apiKey, readProviderEnvNames(normalized.providerConfig)),
+        runtimeEnvKeys: runtimeProviderEnvNames({ id: provider.id, ...normalized }),
+        updatedAt,
+      },
+    })
+  } catch (error) {
+    if (isRouteFailure(error)) {
+      return c.json(
+        { error: error.error, message: error.message },
+        { status: error.status as 400 | 404 },
+      )
+    }
+
+    throw error
+  }
+}
+
+async function deleteLlmProvider(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string) {
+
+  let llmProviderId: LlmProviderId
+  try {
+    llmProviderId = parseLlmProviderId(rawId)
+  } catch {
+    return c.json({ error: "llm_provider_not_found" }, 404)
+  }
+
+  const providerRows = await db
+    .select()
+    .from(LlmProviderTable)
+    .where(and(eq(LlmProviderTable.id, llmProviderId), eq(LlmProviderTable.organizationId, payload.organization.id)))
+    .limit(1)
+
+  const provider = providerRows[0]
+  if (!provider) {
+    return c.json({ error: "llm_provider_not_found" }, 404)
+  }
+
+  if (!canManageLlmProvider(payload, provider)) {
+    return c.json({
+      error: "forbidden",
+      message: "Only the provider creator or a workspace admin can delete providers.",
+    }, 403)
+  }
+
+  if (isOrganizationAdmin(payload)) {
+    const permission = ensureOrganizationAdmin(c, "Only the provider creator or a workspace admin can delete providers.")
+    if (!permission.ok) {
+      return c.json(permission.response, orgAccessFailureStatus(permission.response))
+    }
+  }
+
+  await db.transaction(async (tx) => {
+    await tx.delete(LlmProviderMemberCredentialTable).where(eq(LlmProviderMemberCredentialTable.llmProviderId, provider.id))
+    await tx.delete(LlmProviderAccessTable).where(eq(LlmProviderAccessTable.llmProviderId, provider.id))
+    await tx.delete(LlmProviderModelTable).where(eq(LlmProviderModelTable.llmProviderId, provider.id))
+    await tx.delete(LlmProviderTable).where(eq(LlmProviderTable.id, provider.id))
+  })
+
+  return c.body(null, 204)
+}
+
 export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVariables & Partial<MemberTeamsContext> }>(app: Hono<T>) {
+
+  app.get(
+    "/v1/llm-providers/by-key/:externalKey",
+    describeRoute({ tags: ["LLM Providers"], summary: "Read llm-providers by stable key", responses: {
+      200: jsonResponse("Resource configuration.", llmProviderResponseSchema),
+      404: jsonResponse("Resource not found.", notFoundSchema),
+    } }),
+    orgRoleRoute(["admin"]),
+    paramValidator(externalKeyParamsSchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const [row] = await db.select().from(LlmProviderTable).where(and(eq(LlmProviderTable.organizationId, payload.organization.id), eq(LlmProviderTable.externalKey, c.req.valid("param").externalKey))).limit(1)
+      if (!row) return c.json({ error: "llm_provider_not_found" }, 404)
+      const providers = await loadLlmProviders({ organizationId: payload.organization.id, currentMemberId: payload.currentMember.id, memberTeams: [], isAdmin: true, scope: "manageable" })
+      const value = providers.find((provider) => provider.id === row.id)
+      if (!value) return c.json({ error: "llm_provider_not_found" }, 404)
+      return c.json({ llmProvider: { ...value, apiKey: undefined } })
+    },
+  )
+
+  app.get(
+    "/v1/llm-providers/:llmProviderId",
+    describeRoute({ tags: ["LLM Providers"], summary: "Read llm-providers by id", responses: {
+      200: jsonResponse("Resource configuration.", llmProviderResponseSchema),
+      404: jsonResponse("Resource not found.", notFoundSchema),
+    } }),
+    orgRoleRoute(["admin"]),
+    paramValidator(orgLlmProviderParamsSchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const [row] = await db.select().from(LlmProviderTable).where(and(eq(LlmProviderTable.organizationId, payload.organization.id), eq(LlmProviderTable.id, parseLlmProviderId(c.req.valid("param").llmProviderId)))).limit(1)
+      if (!row) return c.json({ error: "llm_provider_not_found" }, 404)
+      const providers = await loadLlmProviders({ organizationId: payload.organization.id, currentMemberId: payload.currentMember.id, memberTeams: [], isAdmin: true, scope: "manageable" })
+      const value = providers.find((provider) => provider.id === row.id)
+      if (!value) return c.json({ error: "llm_provider_not_found" }, 404)
+      return c.json({ llmProvider: { ...value, apiKey: undefined } })
+    },
+  )
+
+  app.put(
+    "/v1/llm-providers/by-key/:externalKey",
+    describeRoute({
+      tags: ["LLM Providers"],
+      summary: "Apply llm-providers by stable key",
+      description: "Creates or replaces an organization-scoped resource. Names do not identify resources; existing unkeyed resources are never adopted automatically. Assignments are replaced. Omitted write-only secrets are preserved. Concurrent writes are last-write-wins; conditional headers are not supported on this route.",
+      responses: declarativeResponses(llmProviderResponseSchema),
+    }),
+    orgRoleRoute(["admin"]),
+    paramValidator(externalKeyParamsSchema),
+    jsonValidator(llmProviderWriteSchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const permission = ensureOrganizationAdmin(c, "Only organization admins can manage declarative resources.")
+      if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
+      if (c.req.header("If-Match") || c.req.header("If-None-Match")) {
+        return c.json({ error: "unsupported_precondition", message: "This endpoint uses last-write-wins. Serialize configuration writers." }, 400)
+      }
+      const { externalKey } = c.req.valid("param")
+      const input = c.req.valid("json")
+      const [existing] = await db.select().from(LlmProviderTable).where(and(
+        eq(LlmProviderTable.organizationId, payload.organization.id),
+        eq(LlmProviderTable.externalKey, externalKey),
+      )).limit(1)
+      try {
+        if (existing) return await updateLlmProvider(c, payload, existing.id, input)
+        return await createLlmProvider(c, payload, input, externalKey)
+      } catch (error) {
+        if (!isDuplicateEntry(error)) throw error
+        // A concurrent creator can win between lookup and insert. Retry against
+        // its identity instead of creating a second resource.
+        const [winner] = await db.select().from(LlmProviderTable).where(and(
+        eq(LlmProviderTable.organizationId, payload.organization.id),
+        eq(LlmProviderTable.externalKey, externalKey),
+      )).limit(1)
+        if (winner) return updateLlmProvider(c, payload, winner.id, input)
+        return c.json({ error: "resource_conflict", message: "The resource name is already in use by another identity." }, 409)
+      }
+    },
+  )
+
+  app.delete(
+    "/v1/llm-providers/by-key/:externalKey",
+    describeRoute({
+      tags: ["LLM Providers"],
+      summary: "Delete llm-providers by stable key",
+      responses: { 200: jsonResponse("Idempotent deletion result.", declarativeDeleteSchema) },
+    }),
+    orgRoleRoute(["admin"]),
+    paramValidator(externalKeyParamsSchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const permission = ensureOrganizationAdmin(c, "Only organization admins can manage declarative resources.")
+      if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response))
+      const { externalKey } = c.req.valid("param")
+      const [existing] = await db.select().from(LlmProviderTable).where(and(
+        eq(LlmProviderTable.organizationId, payload.organization.id),
+        eq(LlmProviderTable.externalKey, externalKey),
+      )).limit(1)
+      if (!existing) return c.json({ ok: true, deleted: false })
+      const result = await deleteLlmProvider(c, payload, existing.id)
+      if (result.status !== 204) return result
+      return c.json({ ok: true, deleted: true })
+    },
+  )
   app.post(
     "/v1/llm-providers/test-connection",
     describeRoute({
@@ -700,8 +1343,9 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
 
   app.get(
     "/v1/llm-providers/:llmProviderId/connect",
-    describeRoute({
+    describeNonMcpRoute({
       tags: ["LLM Providers"],
+      "x-mcp": false,
       summary: "Get LLM provider connect payload",
       description: "Returns one accessible organization LLM provider with the concrete model configuration needed to connect to it.",
       responses: {
@@ -757,17 +1401,41 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
         .from(LlmProviderModelTable)
         .where(eq(LlmProviderModelTable.llmProviderId, llmProviderId))
 
+      let credential = decodeProviderCredential(provider.apiKey)
+      let memberCredential: z.infer<typeof memberCredentialConnectionSchema> | null = null
+      if (provider.credentialMode === "per_member") {
+        const bindingRows = await db
+          .select()
+          .from(LlmProviderMemberCredentialTable)
+          .where(and(
+            eq(LlmProviderMemberCredentialTable.organizationId, payload.organization.id),
+            eq(LlmProviderMemberCredentialTable.llmProviderId, llmProviderId),
+            eq(LlmProviderMemberCredentialTable.orgMembershipId, payload.currentMember.id),
+          ))
+          .limit(1)
+        const binding = bindingRows[0]
+        const credentialState = binding?.state ?? "missing"
+        memberCredential = { state: credentialState }
+        credential = credentialState === "active" && binding
+          ? decodeProviderCredential(binding.secret)
+          : { apiKey: null, apiKeys: null }
+      }
+
+      // This route must stay 200 for granted callers: published desktop builds
+      // fail the entire sync on non-OK connect responses, while null credentials
+      // already make those clients skip only this provider.
       // Decode the stored credential so the wire format stays additive: legacy
       // single-secret providers keep returning `apiKey`, multi-env providers
       // return `apiKeys` with `apiKey: null` so old clients fail with their
       // missing-credential error instead of applying a JSON blob as the key.
-      const credential = decodeProviderCredential(provider.apiKey)
-
+      // Catalog providers leave Den under provider-scoped env names (see
+      // toRuntimeProviderEnv); the stored row keeps the catalog's names.
+      const runtime = toRuntimeProviderEnv({ ...provider, apiKeys: credential.apiKeys })
       return c.json({
         llmProvider: {
-          ...provider,
+          ...runtime,
           apiKey: credential.apiKey,
-          apiKeys: credential.apiKeys,
+          ...(memberCredential ? { memberCredential } : {}),
           models: models
             .map((model) => ({
               id: model.modelId,
@@ -778,6 +1446,318 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
             .sort((left, right) => left.name.localeCompare(right.name)),
         },
       })
+    },
+  )
+
+  app.put(
+    "/v1/llm-providers/:llmProviderId/my-credential",
+    describeRoute({
+      tags: ["LLM Providers"],
+      summary: "Set the calling member's LLM provider credential",
+      description: "Stores a write-only credential for the calling member on a granted per-member provider.",
+      responses: {
+        200: jsonResponse("Member credential stored.", memberCredentialSummarySchema),
+        400: jsonResponse("The provider is not per-member or the credential is invalid.", memberCredentialBadRequestSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("The caller has not been granted this provider.", forbiddenSchema),
+        404: jsonResponse("The provider could not be found.", notFoundSchema),
+        409: jsonResponse("The credential is blocked and only an admin can replace it.", credentialBlockedSchema),
+      },
+    }),
+    orgMemberRoute(),
+    paramValidator(orgLlmProviderParamsSchema),
+    jsonValidator(memberCredentialWriteSchema),
+    resolveMemberTeamsMiddleware,
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const params = c.req.valid("param")
+      const input = c.req.valid("json")
+      const memberTeams = c.get("memberTeams") ?? []
+      const llmProviderId = parseLlmProviderId(params.llmProviderId)
+      const provider = await getLlmProvider({ organizationId: payload.organization.id, llmProviderId })
+      if (!provider) return c.json({ error: "llm_provider_not_found" }, 404)
+
+      const accessible = await canAccessLlmProvider({
+        organizationId: payload.organization.id,
+        llmProviderId,
+        currentMemberId: payload.currentMember.id,
+        memberTeams,
+      })
+      if (!accessible) {
+        return c.json({ error: "forbidden", message: "You do not have access to this provider." }, 403)
+      }
+      if (provider.credentialMode !== "per_member") {
+        return c.json({ error: "not_per_member" }, 400)
+      }
+
+      let secret: string
+      try {
+        secret = resolveMemberCredentialSecret(provider, input)
+      } catch (error) {
+        if (isRouteFailure(error)) return c.json({ error: error.error, message: error.message }, 400)
+        throw error
+      }
+      const result = await upsertMemberCredential({
+        organizationId: payload.organization.id,
+        llmProviderId,
+        orgMembershipId: payload.currentMember.id,
+        secret,
+        createdBy: "member",
+        allowBlockedOverwrite: false,
+      })
+      if (result.status === "blocked") {
+        return c.json({ error: "credential_blocked" }, 409)
+      }
+      if (result.status !== "ok") {
+        throw new Error("member_credential_write_unexpected_conflict")
+      }
+      return c.json(memberCredentialSummary(result.credential))
+    },
+  )
+
+  app.delete(
+    "/v1/llm-providers/:llmProviderId/my-credential",
+    describeRoute({
+      tags: ["LLM Providers"],
+      summary: "Delete the calling member's LLM provider credential",
+      responses: {
+        200: jsonResponse("Member credential deleted.", memberCredentialDeleteResponseSchema),
+        400: jsonResponse("The provider is not per-member.", z.union([invalidRequestSchema, notPerMemberSchema])),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("The caller has not been granted this provider.", forbiddenSchema),
+        404: jsonResponse("The provider could not be found.", notFoundSchema),
+        409: jsonResponse("The credential is blocked and only an admin can remove it.", credentialBlockedSchema),
+      },
+    }),
+    orgMemberRoute(),
+    paramValidator(orgLlmProviderParamsSchema),
+    resolveMemberTeamsMiddleware,
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const params = c.req.valid("param")
+      const memberTeams = c.get("memberTeams") ?? []
+      const llmProviderId = parseLlmProviderId(params.llmProviderId)
+      const provider = await getLlmProvider({ organizationId: payload.organization.id, llmProviderId })
+      if (!provider) return c.json({ error: "llm_provider_not_found" }, 404)
+
+      const accessible = await canAccessLlmProvider({
+        organizationId: payload.organization.id,
+        llmProviderId,
+        currentMemberId: payload.currentMember.id,
+        memberTeams,
+      })
+      if (!accessible) {
+        return c.json({ error: "forbidden", message: "You do not have access to this provider." }, 403)
+      }
+      if (provider.credentialMode !== "per_member") {
+        return c.json({ error: "not_per_member" }, 400)
+      }
+
+      // A blocked binding is admin-owned: deleting it here would let the
+      // member re-create an active one, bypassing the block.
+      const deleted = await db.transaction(async (tx) => {
+        const rows = await tx
+          .select({ id: LlmProviderMemberCredentialTable.id, state: LlmProviderMemberCredentialTable.state })
+          .from(LlmProviderMemberCredentialTable)
+          .where(and(
+            eq(LlmProviderMemberCredentialTable.organizationId, payload.organization.id),
+            eq(LlmProviderMemberCredentialTable.llmProviderId, llmProviderId),
+            eq(LlmProviderMemberCredentialTable.orgMembershipId, payload.currentMember.id),
+          ))
+          .limit(1)
+          .for("update")
+        const existing = rows[0]
+        if (!existing) return { status: "ok" as const }
+        if (existing.state === "blocked") return { status: "blocked" as const }
+        await tx.delete(LlmProviderMemberCredentialTable).where(eq(LlmProviderMemberCredentialTable.id, existing.id))
+        return { status: "ok" as const }
+      })
+      if (deleted.status === "blocked") {
+        return c.json({ error: "credential_blocked" }, 409)
+      }
+      return c.json({ ok: true })
+    },
+  )
+
+  app.get(
+    "/v1/llm-providers/:llmProviderId/member-credentials",
+    describeRoute({
+      tags: ["LLM Providers"],
+      summary: "List member credential states for an LLM provider",
+      description: "Admin-only. Lists credential state and external identifiers for every granted member without returning secret material.",
+      responses: {
+        200: jsonResponse("Granted member credential states returned.", memberCredentialListResponseSchema),
+        400: jsonResponse("The provider id is invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("Only workspace owners and admins can list member credentials.", forbiddenSchema),
+        404: jsonResponse("The provider could not be found.", notFoundSchema),
+      },
+    }),
+    orgMemberRoute(),
+    paramValidator(orgLlmProviderParamsSchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const admin = ensureOrganizationAdminRole(c, "Only workspace owners and admins can list member credentials.")
+      if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
+
+      const params = c.req.valid("param")
+      const llmProviderId = parseLlmProviderId(params.llmProviderId)
+      const provider = await getLlmProvider({ organizationId: payload.organization.id, llmProviderId })
+      if (!provider) return c.json({ error: "llm_provider_not_found" }, 404)
+
+      const memberIds = await listGrantedLlmProviderMemberIds({
+        organizationId: payload.organization.id,
+        llmProviderId,
+      })
+      const credentials = memberIds.length > 0
+        ? await db
+            .select()
+            .from(LlmProviderMemberCredentialTable)
+            .where(and(
+              eq(LlmProviderMemberCredentialTable.organizationId, payload.organization.id),
+              eq(LlmProviderMemberCredentialTable.llmProviderId, llmProviderId),
+              inArray(LlmProviderMemberCredentialTable.orgMembershipId, memberIds),
+            ))
+        : []
+      const credentialsByMemberId = new Map(credentials.map((credential) => [credential.orgMembershipId, credential]))
+
+      return c.json({
+        memberCredentials: memberIds.sort().map((orgMembershipId) => {
+          const credential = credentialsByMemberId.get(orgMembershipId)
+          return {
+            orgMembershipId,
+            state: credential?.state ?? "missing",
+            externalPrincipalId: credential?.externalPrincipalId ?? null,
+            externalCredentialId: credential?.externalCredentialId ?? null,
+            version: credential?.version ?? null,
+            updatedAt: credential?.updatedAt.toISOString() ?? null,
+          }
+        }),
+      })
+    },
+  )
+
+  app.put(
+    "/v1/llm-providers/:llmProviderId/member-credentials/:orgMembershipId",
+    describeRoute({
+      tags: ["LLM Providers"],
+      summary: "Set one member's LLM provider credential",
+      description: "Admin-only. Stores write-only credential material and optional external provisioner identifiers.",
+      responses: {
+        200: jsonResponse("Member credential stored.", memberCredentialSummarySchema),
+        400: jsonResponse("The provider is not per-member or the credential is invalid.", memberCredentialBadRequestSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("Only workspace owners and admins can provision member credentials.", forbiddenSchema),
+        404: jsonResponse("The provider or member could not be found.", notFoundSchema),
+        409: jsonResponse("The member credential version changed.", versionConflictSchema),
+      },
+    }),
+    orgMemberRoute(),
+    paramValidator(orgLlmProviderMemberCredentialParamsSchema),
+    jsonValidator(adminMemberCredentialWriteSchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const admin = ensureOrganizationAdminRole(c, "Only workspace owners and admins can provision member credentials.")
+      if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
+
+      const params = c.req.valid("param")
+      const input = c.req.valid("json")
+      const llmProviderId = parseLlmProviderId(params.llmProviderId)
+      const orgMembershipId = parseMemberId(params.orgMembershipId)
+      const provider = await getLlmProvider({ organizationId: payload.organization.id, llmProviderId })
+      if (!provider) return c.json({ error: "llm_provider_not_found" }, 404)
+      if (provider.credentialMode !== "per_member") {
+        return c.json({ error: "not_per_member" }, 400)
+      }
+
+      const memberRows = await db
+        .select({ id: MemberTable.id })
+        .from(MemberTable)
+        .where(and(
+          eq(MemberTable.organizationId, payload.organization.id),
+          eq(MemberTable.id, orgMembershipId),
+          isNull(MemberTable.removedAt),
+        ))
+        .limit(1)
+      if (!memberRows[0]) return c.json({ error: "member_not_found" }, 404)
+
+      let secret: string
+      try {
+        secret = resolveMemberCredentialSecret(provider, input)
+      } catch (error) {
+        if (isRouteFailure(error)) return c.json({ error: error.error, message: error.message }, 400)
+        throw error
+      }
+      const result = await upsertMemberCredential({
+        organizationId: payload.organization.id,
+        llmProviderId,
+        orgMembershipId,
+        secret,
+        createdBy: "admin",
+        allowBlockedOverwrite: true,
+        externalPrincipalId: input.externalPrincipalId,
+        externalCredentialId: input.externalCredentialId,
+        expectedVersion: input.expectedVersion,
+      })
+      if (result.status === "version_conflict") {
+        return c.json({ error: "version_conflict" }, 409)
+      }
+      if (result.status !== "ok") {
+        throw new Error("member_credential_admin_write_unexpected_conflict")
+      }
+      return c.json(memberCredentialSummary(result.credential))
+    },
+  )
+
+  app.post(
+    "/v1/llm-providers/:llmProviderId/member-credentials/:orgMembershipId/block",
+    describeRoute({
+      tags: ["LLM Providers"],
+      summary: "Block one member's LLM provider credential",
+      responses: {
+        200: jsonResponse("Member credential blocked.", memberCredentialSummarySchema),
+        400: jsonResponse("The provider or member id is invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("Only workspace owners and admins can block member credentials.", forbiddenSchema),
+        404: jsonResponse("The provider or member credential could not be found.", notFoundSchema),
+      },
+    }),
+    orgMemberRoute(),
+    paramValidator(orgLlmProviderMemberCredentialParamsSchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const admin = ensureOrganizationAdminRole(c, "Only workspace owners and admins can block member credentials.")
+      if (!admin.ok) return c.json(admin.response, orgAccessFailureStatus(admin.response))
+
+      const params = c.req.valid("param")
+      const llmProviderId = parseLlmProviderId(params.llmProviderId)
+      const orgMembershipId = parseMemberId(params.orgMembershipId)
+      const provider = await getLlmProvider({ organizationId: payload.organization.id, llmProviderId })
+      if (!provider) return c.json({ error: "llm_provider_not_found" }, 404)
+
+      const rows = await db
+        .select()
+        .from(LlmProviderMemberCredentialTable)
+        .where(and(
+          eq(LlmProviderMemberCredentialTable.organizationId, payload.organization.id),
+          eq(LlmProviderMemberCredentialTable.llmProviderId, llmProviderId),
+          eq(LlmProviderMemberCredentialTable.orgMembershipId, orgMembershipId),
+        ))
+        .limit(1)
+      const existing = rows[0]
+      if (!existing) return c.json({ error: "member_credential_not_found" }, 404)
+
+      const credential: LlmProviderMemberCredentialRow = {
+        ...existing,
+        state: "blocked",
+        version: existing.version + 1,
+        updatedAt: new Date(),
+      }
+      await db
+        .update(LlmProviderMemberCredentialTable)
+        .set({ state: credential.state, version: credential.version, updatedAt: credential.updatedAt })
+        .where(eq(LlmProviderMemberCredentialTable.id, existing.id))
+      return c.json(memberCredentialSummary(credential))
     },
   )
 
@@ -796,118 +1776,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
     }),
     orgMemberRoute(),
     jsonValidator(llmProviderWriteSchema),
-    async (c) => {
-      const payload = c.get("organizationContext")
-      const input = c.req.valid("json")
-
-      try {
-        const normalized = await normalizeLlmProviderInput(input)
-        const memberIds = await resolveMemberIds({
-          organizationId: payload.organization.id,
-          values: input.memberIds,
-        })
-        const teamIds = await resolveTeamIds({
-          organizationId: payload.organization.id,
-          values: input.teamIds,
-        })
-
-        const llmProviderId = createDenTypeId("llmProvider")
-        const protectedMemberIds = [...new Set([payload.currentMember.id, ...memberIds])]
-        const now = new Date()
-
-        await db.transaction(async (tx) => {
-          await tx.insert(LlmProviderTable).values({
-            id: llmProviderId,
-            organizationId: payload.organization.id,
-            createdByOrgMembershipId: payload.currentMember.id,
-            source: normalized.source,
-            providerId: normalized.providerId,
-            name: normalized.name,
-            providerConfig: normalized.providerConfig,
-            apiKey: normalized.apiKey,
-            createdAt: now,
-            updatedAt: now,
-          })
-
-          if (normalized.models.length > 0) {
-            await tx.insert(LlmProviderModelTable).values(
-              normalized.models.map((model) => ({
-                id: createDenTypeId("llmProviderModel"),
-                llmProviderId,
-                modelId: model.id,
-                name: model.name,
-                modelConfig: model.config,
-                createdAt: now,
-              })),
-            )
-          }
-
-          const accessRows = input.allMembers
-            ? [
-                // One org-wide grant plus the creator's protected direct row.
-                {
-                  id: createDenTypeId("llmProviderAccess"),
-                  llmProviderId,
-                  orgMembershipId: null,
-                  teamId: null,
-                  createdAt: now,
-                },
-                {
-                  id: createDenTypeId("llmProviderAccess"),
-                  llmProviderId,
-                  orgMembershipId: payload.currentMember.id,
-                  teamId: null,
-                  createdAt: now,
-                },
-              ]
-            : [
-            ...protectedMemberIds.map((orgMembershipId) => ({
-              id: createDenTypeId("llmProviderAccess"),
-              llmProviderId,
-              orgMembershipId,
-              teamId: null,
-              createdAt: now,
-            })),
-            ...teamIds.map((teamId) => ({
-              id: createDenTypeId("llmProviderAccess"),
-              llmProviderId,
-              orgMembershipId: null,
-              teamId,
-              createdAt: now,
-            })),
-          ]
-
-          if (accessRows.length > 0) {
-            await tx.insert(LlmProviderAccessTable).values(accessRows)
-          }
-        })
-
-        return c.json({
-          llmProvider: {
-            id: llmProviderId,
-            organizationId: payload.organization.id,
-            createdByOrgMembershipId: payload.currentMember.id,
-            source: normalized.source,
-            providerId: normalized.providerId,
-            name: normalized.name,
-            providerConfig: normalized.providerConfig,
-            hasApiKey: Boolean(normalized.apiKey),
-            configuredEnvKeys: listConfiguredEnvKeys(normalized.apiKey, readProviderEnvNames(normalized.providerConfig)),
-            createdAt: now,
-            updatedAt: now,
-          },
-        }, 201)
-      } catch (error) {
-        if (isRouteFailure(error)) {
-          return c.json(
-            { error: error.error, message: error.message },
-            { status: error.status as 400 | 404 },
-          )
-        }
-
-        throw error
-      }
-    },
+    async (c) => createLlmProvider(c, c.get("organizationContext"), c.req.valid("json")),
   )
 
   app.patch(
@@ -927,149 +1796,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
     orgMemberRoute(),
     paramValidator(orgLlmProviderParamsSchema),
     jsonValidator(llmProviderWriteSchema),
-    async (c) => {
-      const payload = c.get("organizationContext")
-      const params = c.req.valid("param")
-      const input = c.req.valid("json")
-
-      let llmProviderId: LlmProviderId
-      try {
-        llmProviderId = parseLlmProviderId(params.llmProviderId)
-      } catch {
-        return c.json({ error: "llm_provider_not_found" }, 404)
-      }
-
-      const providerRows = await db
-        .select()
-        .from(LlmProviderTable)
-        .where(and(eq(LlmProviderTable.id, llmProviderId), eq(LlmProviderTable.organizationId, payload.organization.id)))
-        .limit(1)
-
-      const provider = providerRows[0]
-      if (!provider) {
-        return c.json({ error: "llm_provider_not_found" }, 404)
-      }
-
-      if (!canManageLlmProvider(payload, provider)) {
-        return c.json({
-          error: "forbidden",
-          message: "Only the provider creator or a workspace admin can update providers.",
-        }, 403)
-      }
-
-      if (isOrganizationAdmin(payload)) {
-        const permission = ensureOrganizationAdmin(c, "Only the provider creator or a workspace admin can update providers.")
-        if (!permission.ok) {
-          return c.json(permission.response, orgAccessFailureStatus(permission.response))
-        }
-      }
-
-      try {
-        const normalized = await normalizeLlmProviderInput(input, provider)
-        const memberIds = await resolveMemberIds({
-          organizationId: payload.organization.id,
-          values: input.memberIds,
-        })
-        const teamIds = await resolveTeamIds({
-          organizationId: payload.organization.id,
-          values: input.teamIds,
-        })
-        const protectedMemberIds = [...new Set([provider.createdByOrgMembershipId, ...memberIds])]
-        const updatedAt = new Date()
-
-        await db.transaction(async (tx) => {
-          await tx
-            .update(LlmProviderTable)
-            .set({
-              source: normalized.source,
-              providerId: normalized.providerId,
-              name: normalized.name,
-              providerConfig: normalized.providerConfig,
-              apiKey: normalized.apiKey,
-              updatedAt,
-            })
-            .where(eq(LlmProviderTable.id, provider.id))
-
-          await tx.delete(LlmProviderModelTable).where(eq(LlmProviderModelTable.llmProviderId, provider.id))
-          await tx.delete(LlmProviderAccessTable).where(eq(LlmProviderAccessTable.llmProviderId, provider.id))
-
-          if (normalized.models.length > 0) {
-            await tx.insert(LlmProviderModelTable).values(
-              normalized.models.map((model) => ({
-                id: createDenTypeId("llmProviderModel"),
-                llmProviderId: provider.id,
-                modelId: model.id,
-                name: model.name,
-                modelConfig: model.config,
-                createdAt: updatedAt,
-              })),
-            )
-          }
-
-          const accessRows = input.allMembers
-            ? [
-                // One org-wide grant plus the creator's protected direct row.
-                {
-                  id: createDenTypeId("llmProviderAccess"),
-                  llmProviderId: provider.id,
-                  orgMembershipId: null,
-                  teamId: null,
-                  createdAt: updatedAt,
-                },
-                {
-                  id: createDenTypeId("llmProviderAccess"),
-                  llmProviderId: provider.id,
-                  orgMembershipId: provider.createdByOrgMembershipId,
-                  teamId: null,
-                  createdAt: updatedAt,
-                },
-              ]
-            : [
-            ...protectedMemberIds.map((orgMembershipId) => ({
-              id: createDenTypeId("llmProviderAccess"),
-              llmProviderId: provider.id,
-              orgMembershipId,
-              teamId: null,
-              createdAt: updatedAt,
-            })),
-            ...teamIds.map((teamId) => ({
-              id: createDenTypeId("llmProviderAccess"),
-              llmProviderId: provider.id,
-              orgMembershipId: null,
-              teamId,
-              createdAt: updatedAt,
-            })),
-          ]
-
-          if (accessRows.length > 0) {
-            await tx.insert(LlmProviderAccessTable).values(accessRows)
-          }
-        })
-
-        return c.json({
-          llmProvider: {
-            ...provider,
-            source: normalized.source,
-            providerId: normalized.providerId,
-            name: normalized.name,
-            providerConfig: normalized.providerConfig,
-            apiKey: undefined,
-            hasApiKey: Boolean(normalized.apiKey),
-            configuredEnvKeys: listConfiguredEnvKeys(normalized.apiKey, readProviderEnvNames(normalized.providerConfig)),
-            updatedAt,
-          },
-        })
-      } catch (error) {
-        if (isRouteFailure(error)) {
-          return c.json(
-            { error: error.error, message: error.message },
-            { status: error.status as 400 | 404 },
-          )
-        }
-
-        throw error
-      }
-    },
+    async (c) => updateLlmProvider(c, c.get("organizationContext"), c.req.valid("param").llmProviderId, c.req.valid("json")),
   )
 
   app.delete(
@@ -1088,50 +1815,7 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
     }),
     orgMemberRoute(),
     paramValidator(orgLlmProviderParamsSchema),
-    async (c) => {
-      const payload = c.get("organizationContext")
-      const params = c.req.valid("param")
-
-      let llmProviderId: LlmProviderId
-      try {
-        llmProviderId = parseLlmProviderId(params.llmProviderId)
-      } catch {
-        return c.json({ error: "llm_provider_not_found" }, 404)
-      }
-
-      const providerRows = await db
-        .select()
-        .from(LlmProviderTable)
-        .where(and(eq(LlmProviderTable.id, llmProviderId), eq(LlmProviderTable.organizationId, payload.organization.id)))
-        .limit(1)
-
-      const provider = providerRows[0]
-      if (!provider) {
-        return c.json({ error: "llm_provider_not_found" }, 404)
-      }
-
-      if (!canManageLlmProvider(payload, provider)) {
-        return c.json({
-          error: "forbidden",
-          message: "Only the provider creator or a workspace admin can delete providers.",
-        }, 403)
-      }
-
-      if (isOrganizationAdmin(payload)) {
-        const permission = ensureOrganizationAdmin(c, "Only the provider creator or a workspace admin can delete providers.")
-        if (!permission.ok) {
-          return c.json(permission.response, orgAccessFailureStatus(permission.response))
-        }
-      }
-
-      await db.transaction(async (tx) => {
-        await tx.delete(LlmProviderAccessTable).where(eq(LlmProviderAccessTable.llmProviderId, provider.id))
-        await tx.delete(LlmProviderModelTable).where(eq(LlmProviderModelTable.llmProviderId, provider.id))
-        await tx.delete(LlmProviderTable).where(eq(LlmProviderTable.id, provider.id))
-      })
-
-      return c.body(null, 204)
-    },
+    async (c) => deleteLlmProvider(c, c.get("organizationContext"), c.req.valid("param").llmProviderId),
   )
 
   app.delete(

@@ -136,6 +136,86 @@ describe("tool part mapper", () => {
     });
   });
 
+  test("forwards the task tool's sub-agent session id for chat navigation", () => {
+    const running = writeToolPart(
+      "running",
+      { description: "Explore", prompt: "look around", subagent_type: "explore" },
+      { id: "part-task", tool: "task", callID: "call-task" },
+    );
+    if (running.state.status !== "running") throw new Error("Expected running fixture");
+    running.state.metadata = { sessionId: "ses_child_1", model: { providerID: "p", modelID: "m" } };
+
+    expect(parseDynamicToolUIPart(running)?.callProviderMetadata).toEqual({
+      opencode: { partId: "part-task" },
+      openwork: { childSessionId: "ses_child_1" },
+    });
+
+    const completed = writeToolPart(
+      "completed",
+      { description: "Explore", prompt: "look around", subagent_type: "explore" },
+      { id: "part-task", tool: "task", callID: "call-task" },
+    );
+    if (completed.state.status !== "completed") throw new Error("Expected completed fixture");
+    completed.state.metadata = { sessionId: "ses_child_1" };
+
+    expect(parseDynamicToolUIPart(completed)?.callProviderMetadata).toEqual({
+      opencode: { partId: "part-task" },
+      openwork: { childSessionId: "ses_child_1" },
+    });
+  });
+
+  test("does not forward session metadata for non-task tools", () => {
+    const part = writeToolPart("completed", { filePath: "src/a.ts" });
+    if (part.state.status !== "completed") throw new Error("Expected completed fixture");
+    part.state.metadata = { sessionId: "ses_child_1" };
+
+    expect(parseDynamicToolUIPart(part)?.callProviderMetadata).toEqual({
+      opencode: { partId: "part-write" },
+    });
+  });
+
+  test("recovers a connection-action MCP App from an errored capability result", () => {
+    const error = JSON.stringify({
+      error: "needs_connection",
+      message: "Connect Acme Tracker.",
+      connectionStatus: {
+        connectionId: "emc_acme",
+        connectionName: "Acme Tracker",
+        state: "needs_connection",
+        actor: "member",
+        message: "Acme Tracker is not connected.",
+        action: {
+          type: "connect",
+          label: "Connect Acme Tracker",
+          surface: "openwork_your_connections",
+          url: "https://app.openworklabs.com/dashboard/your-connections?connectionId=emc_acme",
+        },
+      },
+    });
+
+    expect(parseDynamicToolUIPart(writeToolPart("error", {}, {}, error))).toMatchObject({
+      state: "output-error",
+      callProviderMetadata: {
+        openwork: {
+          mcpResult: {
+            structuredContent: {
+              schemaVersion: "1",
+              connectionId: "emc_acme",
+              state: "needs_connection",
+            },
+            _meta: {
+              "openwork/mcpApp": {
+                toolName: "connection_action",
+                resourceUri: "ui://openwork/connection-action/v1/view.html",
+                arguments: { connectionId: "emc_acme" },
+              },
+            },
+          },
+        },
+      },
+    });
+  });
+
   test("summarizes and clamps huge HTML tool errors at ingestion", () => {
     const htmlError = `<!DOCTYPE html><html><head><title>502 Bad Gateway</title></head><body>${"x".repeat(1_024 * 1_024)}</body></html>`;
     const parsed = parseDynamicToolUIPart(writeToolPart("error", {}, {}, htmlError));

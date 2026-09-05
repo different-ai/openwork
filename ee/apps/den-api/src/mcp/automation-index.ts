@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
+import type { McpServer } from "@modelcontextprotocol/server"
 import type { AutomationList } from "@openwork/types/automations"
 
 export const AGENT_AUTOMATION_INDEX_URI = "automation://index.json"

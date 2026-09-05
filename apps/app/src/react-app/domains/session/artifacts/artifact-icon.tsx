@@ -18,6 +18,10 @@ export function ArtifactIcon({ type, className }: ArtifactIconProps) {
     return <FileText className={cn("size-3.5 shrink-0 text-blue-9", className)} />;
   }
 
+  if (type === "code") {
+    return <FileCode className={cn("size-3.5 shrink-0 text-violet-9", className)} />;
+  }
+
   if (type === "sheet") {
     return <FileSpreadsheet className={cn("size-3.5 shrink-0 text-green-9", className)} />;
   }

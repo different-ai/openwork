@@ -79,7 +79,6 @@ async function provisionSpecEnv(options: {
 
     console.log(`Wrote ${resolve(options.out)}`);
     console.log(`set -a; source ${options.out}; set +a`);
-    console.log("pnpm --dir evals exec vitest run --config vitest.config.ts --project e2e specs/org-connector-two-members.e2e.test.ts");
     console.log(`node scripts/provision-org-connector-two-members.ts --delete ${options.out}`);
   } catch (error) {
     console.error(`Provisioning failed. Provision-created sandboxes so far: ${created.join(", ") || "(none)"}`);

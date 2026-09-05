@@ -6,12 +6,12 @@ function read(relative: string) {
   return readFileSync(fileURLToPath(new URL(relative, import.meta.url)), "utf8");
 }
 
-describe("Dynamic Artifacts Phase 2 surfaces", () => {
+describe("Workflow Artifact surfaces", () => {
   test("Den Web exposes the test-gated editable Script lifecycle", () => {
-    const detail = read("../app/(den)/dashboard/_components/saved-script-detail-panel.tsx");
+    const detail = read("../app/(den)/dashboard/_components/workflow-detail-panel.tsx");
     const plugin = read("../app/(den)/dashboard/_components/plugin-detail-screen.tsx");
 
-    expect(plugin).toContain("SavedScriptDetailPanel")
+    expect(plugin).toContain("WorkflowDetailPanel")
     expect(detail).toContain("matching successful test")
     expect(detail).toContain("setTested(null)")
     expect(detail).toContain("Save new version")
@@ -21,14 +21,14 @@ describe("Dynamic Artifacts Phase 2 surfaces", () => {
 
   test("Den Web Automation detail reuses Preview, Data, and Lineage snapshots", () => {
     const screen = read("../app/(den)/dashboard/_components/automations-screen.tsx");
-    const result = read("../app/(den)/dashboard/_components/saved-script-artifact-result.tsx");
+    const result = read("../app/(den)/dashboard/_components/workflow-artifact-result.tsx");
     const shell = read("../app/(den)/dashboard/_components/org-dashboard-shell.tsx");
 
     expect(shell).toContain("getAutomationsRoute")
     expect(screen).toContain("Latest validated result")
-    expect(screen).toContain("SavedScriptArtifactResult")
+    expect(screen).toContain("WorkflowArtifactResult")
     expect(result).toContain('["preview", "data", "lineage"]')
-    expect(result).toContain("Exact Script version")
+    expect(result).toContain("Exact Workflow version")
     expect(result).toContain("OpenWork Cloud")
   });
 });

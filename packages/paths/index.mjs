@@ -247,6 +247,30 @@ export function opencodeDataDirs(opts) {
   return Array.from(new Set(dirs));
 }
 
+function truthy(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
+
+/** Candidate OpenCode databases in the same override/channel order used by OpenWork. */
+export function opencodeDbCandidates(opts) {
+  const env = optionEnv(opts);
+  const platform = optionPlatform(opts);
+  const paths = pathApi(platform);
+  const dirs = Array.from(new Set([...(opts?.dataDirs ?? []), ...opencodeDataDirs(opts)]));
+  const override = envValue(env, "OPENCODE_DB");
+  if (override) {
+    if (paths.isAbsolute(override)) return [override];
+    return dirs.map((dir) => paths.join(dir, override));
+  }
+
+  const channel = envValue(env, "OPENCODE_CHANNEL") || opts?.defaultChannel || "local";
+  const names = channel === "latest" || channel === "beta" || truthy(envValue(env, "OPENCODE_DISABLE_CHANNEL_DB"))
+    ? ["opencode.db"]
+    : [`opencode-${channel.replace(/[^a-zA-Z0-9._-]/g, "-")}.db`, "opencode.db"];
+  return dirs.flatMap((dir) => names.map((name) => paths.join(dir, name)));
+}
+
 export function opencodeCacheDirs(opts) {
   const env = optionEnv(opts);
   const platform = optionPlatform(opts);

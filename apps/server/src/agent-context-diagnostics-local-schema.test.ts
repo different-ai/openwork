@@ -106,6 +106,12 @@ describe("agent context diagnostics server-local schema parity", () => {
     };
     expect(localReportSchema.safeParse(reportWithCanonicalMcp).success).toBe(true);
     expect(sharedReportSchema.safeParse(reportWithCanonicalMcp).success).toBe(true);
+    const reportWithSlashHeavyMcp = {
+      ...reportWithCanonicalMcp,
+      mcps: [{ ...reportWithCanonicalMcp.mcps[0], path: `/${'"/'.repeat(100)}mcp/agent` }],
+    };
+    expect(localReportSchema.safeParse(reportWithSlashHeavyMcp).success).toBe(true);
+    expect(sharedReportSchema.safeParse(reportWithSlashHeavyMcp).success).toBe(true);
   });
 
   test("rejects unsafe and unknown request fields in both contracts", () => {
@@ -201,6 +207,22 @@ describe("agent context diagnostics server-local schema parity", () => {
           disabledByTools: false,
           origin: null,
           path: "/nested/mcp/agent/",
+          hasHeaders: true,
+          oauthMode: "disabled",
+          syncStatus: "connected",
+          liveEngineStatus: "unavailable",
+        }],
+      },
+      {
+        ...report,
+        mcps: [{
+          name: "openwork-cloud",
+          source: "config.remote",
+          type: "remote",
+          enabled: true,
+          disabledByTools: false,
+          origin: null,
+          path: `/${'"/'.repeat(100)}not-mcp-agent`,
           hasHeaders: true,
           oauthMode: "disabled",
           syncStatus: "connected",

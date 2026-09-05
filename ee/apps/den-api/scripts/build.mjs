@@ -79,6 +79,68 @@ function cleanDist() {
   rmSync(distDir, { recursive: true, force: true })
 }
 
+function productionExportTarget(value) {
+  if (typeof value === "string") {
+    return value
+  }
+  if (Array.isArray(value)) {
+    return value.map(productionExportTarget).find(Boolean)
+  }
+  if (!value || typeof value !== "object") {
+    return undefined
+  }
+
+  for (const [condition, target] of Object.entries(value)) {
+    if (["node", "import", "default"].includes(condition)) {
+      const resolved = productionExportTarget(target)
+      if (resolved) return resolved
+    }
+  }
+  return undefined
+}
+
+export function missingProductionWorkspaceExports(packageDir = serviceDir) {
+  const visited = new Set()
+  const missing = []
+
+  function visit(currentDir) {
+    const packageJsonPath = path.join(currentDir, "package.json")
+    const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"))
+    if (visited.has(packageJson.name)) return
+    visited.add(packageJson.name)
+
+    for (const [dependency, version] of Object.entries(packageJson.dependencies ?? {})) {
+      if (typeof version !== "string" || !version.startsWith("workspace:")) continue
+
+      const dependencyDir = path.dirname(path.join(currentDir, "node_modules", dependency, "package.json"))
+      const dependencyPackageJson = JSON.parse(readFileSync(path.join(dependencyDir, "package.json"), "utf8"))
+      const exports = dependencyPackageJson.exports
+      const exportEntries = exports && typeof exports === "object" && !Array.isArray(exports)
+        && Object.keys(exports).some((key) => key.startsWith("."))
+        ? Object.entries(exports)
+        : [[".", exports]]
+
+      for (const [subpath, value] of exportEntries) {
+        const target = productionExportTarget(value)
+        if (target && !existsSync(path.resolve(dependencyDir, target))) {
+          missing.push(`${dependency}${subpath === "." ? "" : subpath.slice(1)}: ${target}`)
+        }
+      }
+      visit(dependencyDir)
+    }
+  }
+
+  visit(packageDir)
+  return missing.sort()
+}
+
+function verifyProductionWorkspaceExports() {
+  const missing = missingProductionWorkspaceExports()
+  if (missing.length > 0) {
+    throw new Error(`Workspace production exports are missing:\n${missing.map((entry) => `- ${entry}`).join("\n")}`)
+  }
+}
+
 function maybeUploadSentrySourcemaps() {
   if (!shouldUploadSentrySourcemaps()) {
     return
@@ -109,15 +171,8 @@ function main() {
   writeGeneratedVersionFile(process.env.DEN_API_LATEST_APP_VERSION)
   cleanDist()
 
-  run(pnpmCommand, ["run", "build:types"])
-  run(pnpmCommand, ["run", "build:automations"])
-  run(pnpmCommand, ["run", "build:connect-link"])
-  run(pnpmCommand, ["run", "build:email"])
-  run(pnpmCommand, ["run", "build:install-config"])
-  run(pnpmCommand, ["run", "build:enterprise-mcp-client"])
-  run(pnpmCommand, ["run", "build:codemode"])
-  run(pnpmCommand, ["run", "build:headless-threads"])
-  run(pnpmCommand, ["run", "build:den-db"])
+  run(pnpmCommand, ["run", "build:workspace-dependencies"])
+  verifyProductionWorkspaceExports()
   run(pnpmCommand, ["exec", "tsc", "-p", "tsconfig.json"])
   maybeUploadSentrySourcemaps()
 }

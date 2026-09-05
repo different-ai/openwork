@@ -1,8 +1,9 @@
 /**
- * Shared query executor for den-db operational scripts (bootstrap, migrate hooks,
- * index backfills). Supports both a direct mysql2 connection (DATABASE_URL) and the
- * PlanetScale HTTP driver (DATABASE_HOST/USERNAME/PASSWORD), normalizing both to a
- * common `{ query, close }` shape.
+ * Minimal SQL executor used by den-db operational scripts (bootstrap and
+ * schema repairs). Depending on the environment it wraps either a direct
+ * mysql2 connection (DATABASE_URL) or the PlanetScale HTTP driver
+ * (DATABASE_HOST / DATABASE_USERNAME / DATABASE_PASSWORD), and exposes the
+ * two operations the scripts need: run a parameterized query and close.
  */
 
 import { parseMySqlConnectionConfig } from "../src/mysql-config.ts"
@@ -12,44 +13,48 @@ export type Executor = {
   close: () => Promise<void>
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null
+function toRecordRows(rows: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(rows)) return []
+  const out: Record<string, unknown>[] = []
+  for (const row of rows) {
+    if (typeof row === "object" && row !== null) out.push(row as Record<string, unknown>)
+  }
+  return out
 }
 
-function recordsFromRows(rows: unknown): Record<string, unknown>[] {
-  return Array.isArray(rows) ? rows.filter(isRecord) : []
+async function mysqlExecutor(databaseUrl: string): Promise<Executor> {
+  const mysql = await import("mysql2/promise")
+  const connection = await mysql.createConnection(parseMySqlConnectionConfig(databaseUrl))
+  return {
+    async query(statement, args = []) {
+      const [rows] = await connection.query(statement, args)
+      return toRecordRows(rows)
+    },
+    close: () => connection.end(),
+  }
+}
+
+async function planetscaleExecutor(host: string, username: string, password: string): Promise<Executor> {
+  const { Client } = await import("@planetscale/database")
+  const client = new Client({ host, username, password })
+  return {
+    async query(statement, args = []) {
+      const result = await client.execute(statement, args)
+      return toRecordRows(result.rows)
+    },
+    async close() {},
+  }
 }
 
 export async function createExecutor(): Promise<Executor> {
   const databaseUrl = process.env.DATABASE_URL?.trim()
-
-  if (databaseUrl) {
-    const mysql = await import("mysql2/promise")
-    const connection = await mysql.createConnection(parseMySqlConnectionConfig(databaseUrl))
-    return {
-      query: async (sql, args = []) => {
-        const [rows] = await connection.query(sql, args)
-        return recordsFromRows(rows)
-      },
-      close: () => connection.end(),
-    }
-  }
+  if (databaseUrl) return mysqlExecutor(databaseUrl)
 
   const host = process.env.DATABASE_HOST?.trim()
   const username = process.env.DATABASE_USERNAME?.trim()
   const password = process.env.DATABASE_PASSWORD ?? ""
-
   if (!host || !username) {
     throw new Error("Provide DATABASE_URL, or DATABASE_HOST/DATABASE_USERNAME/DATABASE_PASSWORD.")
   }
-
-  const { Client } = await import("@planetscale/database")
-  const client = new Client({ host, username, password })
-  return {
-    query: async (sql, args = []) => {
-      const result = await client.execute(sql, args)
-      return recordsFromRows(result.rows)
-    },
-    close: async () => {},
-  }
+  return planetscaleExecutor(host, username, password)
 }

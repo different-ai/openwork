@@ -1,4 +1,4 @@
-import { index, int, mysqlEnum, mysqlTable, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
+import { boolean, index, int, mysqlEnum, mysqlTable, primaryKey, timestamp, varchar } from "drizzle-orm/mysql-core"
 import { compatJsonColumn, denTypeIdColumn, encryptedColumn, encryptedMediumTextColumn, timestamps } from "../columns"
 
 const encryptedJsonColumn = <TData>(name: string) => encryptedColumn<TData>(name, {
@@ -32,6 +32,7 @@ export const ArtifactViewTable = mysqlTable(
     description: varchar("description", { length: 2_000 }),
     status: mysqlEnum("status", ["active", "retired"]).notNull().default("active"),
     active_revision_id: denTypeIdColumn("artifactViewRevision", "active_revision_id"),
+    use_in_workflow: boolean("use_in_workflow").notNull().default(true),
     ...timestamps,
   },
   (table) => [
@@ -39,6 +40,18 @@ export const ArtifactViewTable = mysqlTable(
     index("artifact_view_org_owner").on(table.organization_id, table.owner_member_id),
     index("artifact_view_active_revision").on(table.active_revision_id),
   ],
+)
+
+/** Personal placement is separate from the Workflow's access grants. */
+export const DashboardAppTable = mysqlTable(
+  "dashboard_app",
+  {
+    organization_id: denTypeIdColumn("organization", "organization_id").notNull(),
+    member_id: denTypeIdColumn("member", "member_id").notNull(),
+    artifact_view_id: denTypeIdColumn("artifactView", "artifact_view_id").notNull(),
+    created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.organization_id, table.member_id, table.artifact_view_id] })],
 )
 
 export const ArtifactViewRevisionTable = mysqlTable(
@@ -68,20 +81,5 @@ export const ArtifactViewRevisionTable = mysqlTable(
   (table) => [
     index("artifact_view_revision_view_created").on(table.artifact_view_id, table.created_at),
     index("artifact_view_revision_org_status").on(table.organization_id, table.build_status),
-  ],
-)
-
-export const ProgramAgentSelectionTable = mysqlTable(
-  "program_agent_selection",
-  {
-    organization_id: denTypeIdColumn("organization", "organization_id").notNull(),
-    org_membership_id: denTypeIdColumn("member", "org_membership_id").notNull(),
-    program_id: denTypeIdColumn("configObject", "program_id").notNull(),
-    selected_at: timestamp("selected_at", { fsp: 3 }).notNull().defaultNow(),
-    ...timestamps,
-  },
-  (table) => [
-    uniqueIndex("program_agent_selection_org_member").on(table.organization_id, table.org_membership_id),
-    index("program_agent_selection_program").on(table.organization_id, table.program_id),
   ],
 )

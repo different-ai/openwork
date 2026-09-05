@@ -1,5 +1,6 @@
 import { renderEmailHtml } from "@openwork/email"
 import { expect, test } from "bun:test"
+import { DomUtils, parseDocument } from "htmlparser2"
 
 test("organization invitation HTML focuses on joining without desktop download prompt", async () => {
   const inviteLink = "https://on-prem.example.test/join-org?invite=invitation-token"
@@ -23,9 +24,7 @@ test("organization invitation HTML focuses on joining without desktop download p
 })
 
 function htmlText(value: string) {
-  return value
-    .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/<[^>]+>/g, " ")
+  return DomUtils.textContent(parseDocument(value))
     .replace(/\s+/g, " ")
     .trim()
 }

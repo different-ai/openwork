@@ -6,7 +6,7 @@ import { getOrganizationContextForUser } from "../orgs.js"
 import { organizationRoleValueSatisfies } from "../organization-role-hierarchy.js"
 import type { AuthContextVariables } from "../session.js"
 import { requireAdminMiddleware } from "./admin.js"
-import { requireUserMiddleware } from "./current-user.js"
+import { requireUserMiddleware, requireUserSessionMiddleware } from "./current-user.js"
 import { resolveOrganizationContextMiddleware, type OrganizationContextVariables } from "./organization-context.js"
 import { resolveUserOrganizationsMiddleware, type UserOrganizationsContext } from "./user-organizations.js"
 
@@ -47,6 +47,7 @@ const cloudTransportRouteHandler: MiddlewareHandler<{ Variables: OrganizationCon
 const explicitAuthGuardHandlers = new WeakSet<object>([
   requireAdminMiddleware,
   requireUserMiddleware,
+  requireUserSessionMiddleware,
   resolveOrganizationContextMiddleware,
   resolveUserOrganizationsMiddleware,
   cloudTransportRouteHandler,
@@ -94,6 +95,10 @@ export const delegatedRoute: MiddlewareHandler = async (_c, next) => {
 
 export function authenticatedRoute(): MiddlewareHandler<{ Variables: AuthContextVariables }> {
   return requireUserMiddleware
+}
+
+export function userSessionRoute(): MiddlewareHandler<{ Variables: AuthContextVariables }> {
+  return requireUserSessionMiddleware
 }
 
 export function adminRoute(): MiddlewareHandler<{ Variables: AuthContextVariables }> {

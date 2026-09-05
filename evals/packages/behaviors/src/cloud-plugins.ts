@@ -53,16 +53,24 @@ export async function createMarketplace(admin: DenSession, input: { name: string
  */
 export async function createPluginWithSkill(
   admin: DenSession,
-  input: { name: string; skillName: string; skillBody: string; marketplaceId?: string; orgWide?: boolean },
+  input: {
+    name: string;
+    skillName: string;
+    skillBody: string;
+    skillDescription?: string;
+    description?: string;
+    marketplaceId?: string;
+    orgWide?: boolean;
+  },
 ): Promise<PluginFacts> {
   return timed("cloud.createPluginWithSkill", async () => {
-    const skillMarkdown = `---\nname: ${input.skillName}\ndescription: Shared by an eval to prove skill sharing works.\n---\n\n${input.skillBody}\n`;
+    const skillMarkdown = `---\nname: ${input.skillName}\ndescription: ${input.skillDescription ?? "Shared by an eval to prove skill sharing works."}\n---\n\n${input.skillBody}\n`;
     const { response, body } = await denFetch(admin, "/v1/plugins", {
       method: "POST",
       headers: { authorization: `Bearer ${admin.token}` },
       body: JSON.stringify({
         name: input.name,
-        description: "Created by the first-run cloud sharing eval.",
+        description: input.description ?? "Created by the first-run cloud sharing eval.",
         orgWide: input.orgWide ?? true,
         marketplaceId: input.marketplaceId,
         components: [{ type: "skill", input: { rawSourceText: skillMarkdown } }],

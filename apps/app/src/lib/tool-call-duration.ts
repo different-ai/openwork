@@ -1,6 +1,8 @@
 import type { DynamicToolUIPart, ToolUIPart } from "ai"
 
-import { isToolPartInFlight } from "@/lib/tool-activity"
+// Relative so app-less evals specs can import this module without the app's
+// "@/" path alias.
+import { isToolPartInFlight } from "./tool-activity"
 
 type AnyToolPart = ToolUIPart | DynamicToolUIPart
 
@@ -29,6 +31,32 @@ export function trackToolCallDuration(part: AnyToolPart): string | null {
   durationByCallId.set(callId, elapsed)
   startedAtByCallId.delete(callId)
   return formatToolCallDuration(elapsed)
+}
+
+/**
+ * Epoch ms when this call was first seen in flight, registering it if this
+ * is the first sighting. Module-scoped, so live elapsed counters survive
+ * component unmounts (e.g. switching sessions and back). Null once settled.
+ */
+export function getToolCallStartedAt(part: AnyToolPart): number | null {
+  if (!isToolPartInFlight(part)) return null
+  const callId = part.toolCallId
+  const existing = startedAtByCallId.get(callId)
+  if (existing !== undefined) return existing
+  const now = Date.now()
+  startedAtByCallId.set(callId, now)
+  return now
+}
+
+/**
+ * Live elapsed counters ("Working 12s") tick in whole seconds. Once a run
+ * crosses a minute, show minutes and seconds ("Working 6m 43s") instead of
+ * an ever-growing raw second count.
+ */
+export function formatElapsedSeconds(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  return `${minutes}m ${seconds % 60}s`
 }
 
 export function formatToolCallDuration(ms: number): string {

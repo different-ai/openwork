@@ -3,6 +3,10 @@ title: "Connect your services"
 description: "Sign in to OpenWork and connect the accounts your agent can use"
 ---
 
+<Info>
+**OpenWork Cloud organization setup.** This path requires an OpenWork Cloud sign-in and an organization that has made services available to you. To stay local, keep using OpenWork for free and [add a custom MCP server](/start-here/connect-your-stack/add-an-mcp-server) to your workspace. Admins can manage team connections with [Connectors](/cloud/share-with-your-team/shared-mcp-connections).
+</Info>
+
 Use `Settings` > `OpenWork Connect` for services your organization makes available,
 including Gmail, Google Calendar, Google Drive, Slack, Notion, and Linear. This
 is the recommended setup for everyday integrations.
@@ -30,7 +34,7 @@ to enable it.
 
 Some connections are managed by your organization. If a service is not
 listed, ask an organization admin to publish it from the OpenWork Cloud
-`Connections` dashboard and grant you access.
+`Connectors` page and grant you access.
 
 ## Ask your agent to use it
 
@@ -46,15 +50,18 @@ then executes an exact match. If an account still needs attention, it should
 send you back to `Settings` > `OpenWork Connect` with the action to take instead of
 telling you to add an MCP server.
 
-## Connect, Connections, and MCP servers
+## Connect, connectors, and connections
 
 - **Connect** is the member-facing page in the desktop app for signing in to
   services and checking connection readiness.
-- **Connections** is the organization-admin dashboard in OpenWork Cloud for
-  publishing a service, choosing whose account it uses, and granting member or
-  team access.
-- **OpenWork Connect MCP** is the hosted endpoint that lets external MCP
-  clients use capabilities from an OpenWork organization.
+- A **connector** is an MCP service your organization adds on its own, without
+  wrapping it in a plugin. Organization admins publish connectors from the
+  OpenWork Cloud `Connectors` page and grant member or team access.
+- A **connection** is your own signed-in instance of a connector — one
+  connector, instantiated per user with that user's account.
+- The **MCP Gateway** is the hosted endpoint that lets external MCP clients
+  use capabilities from an OpenWork organization. See
+  [OpenWork MCP Gateway](/cloud/run-in-the-cloud/cloud-mcp).
 - **Add an MCP server** is the advanced path for a custom or local server that
   your organization does not provide through Connect.
 

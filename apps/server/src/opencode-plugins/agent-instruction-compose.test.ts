@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  appendAgentInstructions,
   combineInstructionSections,
   composeAgentInstructions,
   createInstructionSection,
@@ -31,10 +32,47 @@ describe("agent instruction compose primitives", () => {
     ]);
   });
 
-  test("composeAgentInstructions returns ordered bodies only", () => {
-    expect(composeAgentInstructions([
+  test("composeAgentInstructions combines section groups once and returns ordered bodies", () => {
+    let observedBodyReads = 0;
+    const observedSection = {
+      id: "observed",
+      get body() {
+        observedBodyReads += 1;
+        return "three";
+      },
+    };
+
+    expect(composeAgentInstructions(
       createInstructionSection("a", "one"),
-      createInstructionSection("b", "two"),
-    ])).toEqual(["one", "two"]);
+      [
+        createInstructionSection("a", "ignored duplicate"),
+        createInstructionSection("empty", "  "),
+        createInstructionSection("b", "two"),
+      ],
+      observedSection,
+    )).toEqual(["one", "two", "three"]);
+    expect(observedBodyReads).toBe(1);
+  });
+
+  test("appendAgentInstructions extends the engine system entry without adding a system message, one blank line between sections", () => {
+    const system = ["engine header"];
+    appendAgentInstructions(system, createInstructionSection("a", "one"), createInstructionSection("b", "two"));
+    appendAgentInstructions(system, createInstructionSection("c", "three"));
+    expect(system).toEqual(["engine header\n\none\n\ntwo\n\nthree"]);
+  });
+
+  test("appendAgentInstructions starts one entry when the engine supplied none", () => {
+    const system: string[] = [];
+    appendAgentInstructions(system, createInstructionSection("a", "one"));
+    appendAgentInstructions(system, createInstructionSection("b", "two"));
+    expect(system).toEqual(["one\n\ntwo"]);
+  });
+
+  test("appendAgentInstructions leaves the system prompt untouched when every section is empty", () => {
+    const system = ["engine header", ""];
+    appendAgentInstructions(system, createInstructionSection("empty", "  "), null);
+    expect(system).toEqual(["engine header", ""]);
+    appendAgentInstructions(system, createInstructionSection("a", "one"));
+    expect(system).toEqual(["engine header", "one"]);
   });
 });

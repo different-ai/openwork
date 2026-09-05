@@ -1,6 +1,6 @@
 ---
 title: "Team quickstart: from new org to a team skill"
-description: "Create an org on OpenWork Cloud, invite teammates into teams, publish a plugin with a skill to a marketplace, and trigger it from the desktop app"
+description: "Create an OpenWork Cloud organization, invite teammates, publish a skill plugin through a Collection, and use it from the desktop app"
 ---
 
 Set up a team on [app.openworklabs.com](https://app.openworklabs.com), publish your first skill, and trigger it from the desktop app — in about 15 minutes.
@@ -9,8 +9,8 @@ By the end of this walkthrough you will have:
 
 1. Created an organization on OpenWork Cloud.
 2. Invited a few teammates and organized them into teams.
-3. Created a plugin with a simple test skill (Extensions → Plugins) and assigned it to a marketplace.
-4. Given the relevant teams access to that marketplace.
+3. Created a plugin with a simple test skill in `Plugin Directory` and added it to a Collection.
+4. Granted the Collection to the relevant team.
 5. Signed in to the org from the OpenWork desktop app and triggered the skill with a plain-language prompt.
 
 <Note>
@@ -83,25 +83,11 @@ Teams show up with their members at a glance:
 
 ## 3. Create a plugin with a test skill
 
-Skills are step-by-step instructions the agent loads when a task matches — think of them as runbooks your whole team can share. Skills ship inside **plugins**, and plugins are distributed through **marketplaces**.
+Skills are step-by-step instructions the agent loads when a task matches — think of them as runbooks your whole team can share. A skill lives inside a **plugin**, and a **Collection** groups one or more plugins for assignment.
 
-Open **Extensions → Plugins**. You'll see OpenWork's built-in plugins; click **Create plugin** to add your own.
+First open **Collections**, click **New collection**, and create one for your team — for example `Sales Enablement`.
 
-<Frame>
-  ![Extensions → Plugins](/images/cloud-team-quickstart/11-plugins-overview.png)
-</Frame>
-
-First, give your plugin a home: under **Extensions → Marketplaces**, click **New marketplace** and create one for your team — for example `Sales Enablement`.
-
-<Frame>
-  ![New marketplace](/images/cloud-team-quickstart/12-new-marketplace-dialog.png)
-</Frame>
-
-Back in **Plugins → Create plugin**, fill in the name and description, then click **+ Skill**:
-
-<Frame>
-  ![Create a plugin](/images/cloud-team-quickstart/13-create-plugin-top.png)
-</Frame>
+Next open **Plugin Directory → Create plugin**. Fill in the plugin name and description, then click **+ Skill**.
 
 Write the skill like a great runbook:
 
@@ -109,35 +95,13 @@ Write the skill like a great runbook:
 - **Description** — when should the agent use this? e.g. *"Use when someone asks to prepare for a sales call or customer meeting."*
 - **Instructions** — plain markdown with the steps you want the agent to follow.
 
-In the **Share** section, keep *Share with everyone in the organization* checked and pick your **Marketplace** — this is what publishes the plugin so members find it in the OpenWork app. Click **Create plugin**.
+In the **Share** section, choose the **Sales Enablement** Collection. If only selected teams should receive it, leave **Share with everyone in the organization** off. Click **Create plugin**. The creator keeps access automatically.
 
-<Frame>
-  ![Skill and marketplace assignment](/images/cloud-team-quickstart/14-create-plugin-skill-share.png)
-</Frame>
+## 4. Give teams access to the Collection
 
-The plugin page confirms what's inside and which marketplace it's published to:
+Open **Collections → Sales Enablement**. Under **Who can access this**, add the `Sales` team. You can instead grant the Collection to everyone in the organization or to individual members.
 
-<Frame>
-  ![Plugin detail](/images/cloud-team-quickstart/15-plugin-detail.png)
-</Frame>
-
-## 4. Give teams access to the marketplace
-
-Open **Extensions → Marketplaces → Sales Enablement** and switch to the **Members** tab. This is where you control who sees the marketplace: everyone in the org, specific **teams**, or individual people.
-
-Changing workspace access is sensitive, so OpenWork asks you to confirm your password first:
-
-<Frame>
-  ![Security check](/images/cloud-team-quickstart/16-security-check.png)
-</Frame>
-
-Add the relevant teams under **Teams** — here the `Sales` team gets access. Admins always keep access.
-
-<Frame>
-  ![Marketplace access by team](/images/cloud-team-quickstart/17-marketplace-team-access.png)
-</Frame>
-
-That's the whole admin loop: **plugin → marketplace → teams**. Anyone you add later inherits the right extensions automatically.
+That's the whole admin loop: **skill inside a plugin → Collection → team or member**. Anyone added to the team later inherits access to the Collection.
 
 ## 5. Trigger the skill from the desktop app
 
@@ -153,23 +117,13 @@ Pick your organization:
   ![Choose your organization](/images/cloud-team-quickstart/19-desktop-choose-org.png)
 </Frame>
 
-OpenWork shows what your org gives you access to — including your marketplaces:
-
-<Frame>
-  ![Org resources](/images/cloud-team-quickstart/20-desktop-org-resources.png)
-</Frame>
-
 You can confirm the connection any time under **Settings → Account**:
 
 <Frame>
   ![Signed in to Acme Labs](/images/cloud-team-quickstart/21-desktop-account-connected.png)
 </Frame>
 
-Your team's marketplace syncs automatically. Under **Settings → Marketplace**, the `Sales Call Prep` plugin from your org shows up as **Active · runs in cloud** — no manual install needed:
-
-<Frame>
-  ![Marketplace synced to desktop](/images/cloud-team-quickstart/22-desktop-marketplace-plugin.png)
-</Frame>
+Open **Settings → Library** and filter to **Skills**. The skill assigned through `Sales Enablement` appears there automatically; click **Refresh** if the admin changed access moments ago.
 
 Now just ask for the thing the skill knows how to do. Type a prompt that matches the skill's description and hit **Run task**:
 
@@ -188,8 +142,9 @@ The agent picks up the skill and follows your runbook — research, a timed agen
 ## What's next
 
 - Add more skills to the plugin as your team's playbooks grow — everyone gets updates automatically.
-- Import existing plugins from GitHub (**Extensions → Plugins → Import from GitHub**), including Anthropic-compatible plugin repos.
-- Wire up **Sources** to keep marketplaces in sync with a repository.
+- Import existing plugins from GitHub (**Plugin Directory → Create plugin → Import from GitHub**), including Anthropic-compatible plugin repositories.
+- Wire up **Sources** to keep Collections in sync with a repository.
+- Read [Collections](/cloud/share-with-your-team/collections) when you need several plugins, reusable audiences, or more complex assignments.
 
 <Note>
 **Need more?** The first 5 users in your organization are free; additional users are $10 per user per month. For SSO or early analytics access, [contact us](mailto:founders@openworklabs.com).

@@ -5,7 +5,7 @@ import { useState } from "react";
 import { Cable, Check, GitBranch, Loader2, Plus, Settings, Trash2 } from "lucide-react";
 import { getGithubIntegrationAccountRoute, getGithubIntegrationRoute, getGithubIntegrationSetupRoute } from "../../_lib/den-org";
 import { DenButton } from "../../_components/ui/button";
-import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
+import { DenNotice } from "../../_components/ui/notice";
 import { IntegrationConnectDialog } from "./integration-connect-dialog";
 import { IntegrationIcon } from "./integration-icon";
 import {
@@ -19,7 +19,7 @@ import {
 } from "./integration-data";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
-export function IntegrationsScreen() {
+export function IntegrationsPanel() {
   const { orgSlug } = useOrgDashboard();
   const { data: connections = [], isLoading, error } = useIntegrations();
   const disconnect = useDisconnectIntegration();
@@ -54,25 +54,21 @@ export function IntegrationsScreen() {
   const providers = Object.values(INTEGRATION_PROVIDERS);
 
   return (
-    <DashboardPageTemplate
-      icon={Cable}
-      title="Sources"
-      description="Connect to GitHub or Bitbucket. Once an account is linked, plugins and skills from those repositories show up on the Plugins page."
-      colors={["#E0F2FE", "#0C4A6E", "#0284C7", "#7DD3FC"]}
-    >
+    <>
       {error || startGithubInstall.error ? (
-        <div className="mb-6 rounded-[24px] border border-red-200 bg-red-50 px-5 py-4 text-[14px] text-red-700">
-          {error instanceof Error
+        <DenNotice
+          className="mb-6"
+          message={error instanceof Error
             ? error.message
             : startGithubInstall.error instanceof Error
               ? startGithubInstall.error.message
               : "Failed to load integrations."}
-        </div>
+        />
       ) : null}
 
       {isLoading ? (
         <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
-          Loading integrations…
+          Loading sources…
         </div>
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
@@ -156,7 +152,7 @@ export function IntegrationsScreen() {
         provider={dialogProvider}
         onClose={() => setDialogProvider(null)}
       />
-    </DashboardPageTemplate>
+    </>
   );
 }
 

@@ -1,4 +1,5 @@
 import type { Context } from "hono"
+import { HTTPException } from "hono/http-exception"
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
@@ -149,11 +150,15 @@ export async function normalizeOperationalErrorResponse(path: string, response: 
   })
 }
 
-export function operationalErrorResponse(error: Error, c: Context, requestId: string) {
+export async function operationalErrorResponse(error: Error, c: Context, requestId: string) {
   const path = c.req.path
   if (!isOperationalErrorPath(path)) {
     console.error(error)
     return new Response("Internal Server Error", { status: 500 })
+  }
+
+  if (error instanceof HTTPException) {
+    return normalizeOperationalErrorResponse(path, error.getResponse(), requestId)
   }
 
   console.error("[operational_error]", {

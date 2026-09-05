@@ -3,6 +3,7 @@ import { SsoProviderTable } from "@openwork-ee/den-db/schema"
 import type { MiddlewareHandler } from "hono"
 import { z } from "zod"
 import { db } from "./db.js"
+import { getSsoAcsUrl } from "./sso.js"
 import { validateSamlResponsePolicy } from "./sso-saml-response-policy.js"
 
 const samlProviderConfigSchema = z.object({
@@ -44,11 +45,15 @@ export const samlResponsePolicyMiddleware: MiddlewareHandler = async (c, next) =
     return c.json({ error: "invalid_saml_configuration" }, 400)
   }
 
+  // Better Auth advertises the baseURL-derived ACS in SP metadata and in the
+  // AuthnRequest, so the IdP posts there. Providers registered while the
+  // stored callbackUrl pointed at the API origin must keep working, so accept
+  // either URL as the delivery target.
+  const expectedAcsUrls = [...new Set([config.callbackUrl, getSsoAcsUrl(providerId)])]
   const result = validateSamlResponsePolicy({
     samlResponse,
     expectedAudience: config.audience,
-    expectedRecipient: config.callbackUrl,
-    expectedDestination: config.callbackUrl,
+    expectedAcsUrls,
   })
   if (!result.ok) {
     return c.json({ error: result.code, message: result.message }, 400)

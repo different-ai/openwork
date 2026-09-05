@@ -14,7 +14,7 @@ describe("resolveDenBaseUrls", () => {
       baseUrl: "https://app.openworklabs.com",
       apiBaseUrl: "https://app.openworklabs.com",
     });
-    expect(resolved.apiBaseUrl).toBe("https://app.openworklabs.com/api/den");
+    expect(resolved.apiBaseUrl).toBe("https://app.openworklabs.com");
   });
 
   test("keeps an explicit API origin independent from the web base URL", () => {
@@ -23,7 +23,7 @@ describe("resolveDenBaseUrls", () => {
       apiBaseUrl: "https://api.example.com",
     });
     expect(resolved.baseUrl).toBe("https://app.openworklabs.com");
-    expect(resolved.apiBaseUrl).toBe("https://api.example.com/api/den");
+    expect(resolved.apiBaseUrl).toBe("https://api.example.com");
   });
 
   test("keeps an explicit loopback API URL when a base URL is present", () => {
@@ -32,13 +32,31 @@ describe("resolveDenBaseUrls", () => {
       apiBaseUrl: "http://127.0.0.1:8787",
     });
     expect(resolved.baseUrl).toBe("http://localhost:3000");
-    expect(resolved.apiBaseUrl).toBe("http://127.0.0.1:8787/api/den");
+    expect(resolved.apiBaseUrl).toBe("http://127.0.0.1:8787");
   });
 
-  test("derives the /api/den proxy from a web-app baseUrl when no apiBaseUrl is set", () => {
+  test("keeps the same-origin API path for a self-hosted baseUrl when no apiBaseUrl is set", () => {
     const resolved = resolveDenBaseUrls({ baseUrl: "https://den.self-hosted.example.com" });
     expect(resolved.baseUrl).toBe("https://den.self-hosted.example.com");
     expect(resolved.apiBaseUrl).toBe("https://den.self-hosted.example.com/api/den");
+  });
+
+  test("uses an explicit api host directly when no apiBaseUrl is set", () => {
+    const resolved = resolveDenBaseUrls({ baseUrl: "https://api.den.example" });
+    expect(resolved.baseUrl).toBe("https://api.den.example");
+    expect(resolved.apiBaseUrl).toBe("https://api.den.example");
+  });
+
+  test("derives the api subdomain for hosted openworklabs.com deployments", () => {
+    const resolved = resolveDenBaseUrls({ baseUrl: "https://staging.openworklabs.com" });
+    expect(resolved.baseUrl).toBe("https://staging.openworklabs.com");
+    expect(resolved.apiBaseUrl).toBe("https://api.staging.openworklabs.com");
+  });
+
+  test("uses the nested hosted API origin for the hosted web default", () => {
+    const resolved = resolveDenBaseUrls({ baseUrl: "https://app.openworklabs.com" });
+    expect(resolved.baseUrl).toBe("https://app.openworklabs.com");
+    expect(resolved.apiBaseUrl).toBe("https://api.app.openworklabs.com");
   });
 });
 
@@ -68,18 +86,27 @@ describe("isLegacyWebAppMcpUrl", () => {
 });
 
 describe("resolveCloudMcpResourceUrl", () => {
-  test("heals a minted legacy web-app resource through the /api/den proxy", () => {
+  test("heals hosted minted web-app resources to the direct API origin", () => {
     expect(resolveCloudMcpResourceUrl("https://app.openworklabs.com/mcp")).toBe(
-      "https://app.openworklabs.com/api/den/mcp",
+      "https://api.app.openworklabs.com/mcp",
     );
+    expect(resolveCloudMcpResourceUrl("https://app.openworklabs.com/api/den/mcp")).toBe(
+      "https://api.app.openworklabs.com/mcp",
+    );
+  });
+
+  test("heals non-hosted legacy web-app resources through the /api/den proxy", () => {
     expect(resolveCloudMcpResourceUrl("https://app.openwork.software/mcp/")).toBe(
       "https://app.openwork.software/api/den/mcp",
     );
   });
 
   test("keeps healthy resources verbatim", () => {
-    expect(resolveCloudMcpResourceUrl("https://app.openworklabs.com/api/den/mcp")).toBe(
-      "https://app.openworklabs.com/api/den/mcp",
+    expect(resolveCloudMcpResourceUrl("https://api.app.openworklabs.com/mcp")).toBe(
+      "https://api.app.openworklabs.com/mcp",
+    );
+    expect(resolveCloudMcpResourceUrl("https://app.example.com/api/den/mcp")).toBe(
+      "https://app.example.com/api/den/mcp",
     );
     expect(resolveCloudMcpResourceUrl("http://127.0.0.1:8787/mcp")).toBe(
       "http://127.0.0.1:8787/mcp",

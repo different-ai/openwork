@@ -10,7 +10,7 @@ What you create there should not stay trapped there. OpenWork Connect already br
 Last updated: August 2026
 
 <Info>
-  **Live** means available today. **Partial** means supported with limitations. **Building** means active work. **Next** is the next product horizon. **Exploring** is a direction, not a commitment.
+  **Live** means available today. **Preview** means available today for select customers — contact us for access. **Partial** means supported with limitations. **Building** means active work. **Next** is the next product horizon. **Exploring** is a direction, not a commitment.
 </Info>
 
 ## The desktop app is home
@@ -24,7 +24,8 @@ The desktop app is the main OpenWork experience. It is where people work with fi
 | Skills, plugins, MCPs, and connected services | Customize what your agent knows and which systems it can use. | Live |
 | Organization-managed capabilities | Share approved skills and connections without rebuilding every setup by hand. | Live |
 | Artifacts | Preview, edit, download, and reopen generated files without leaving the desktop workspace. | Live |
-| Live artifacts | Persistent, interactive dashboards that refresh with current data from your connected apps and files every time you open them. | Next |
+| Live artifacts | Persistent, interactive dashboards that refresh with current data from your connected apps and files every time you open them. | Preview |
+| MCP Apps | Rich, interactive app views rendered directly from agent results — a created-skill card, a workflow result view, a connection status card. | Preview |
 | Scheduled tasks | Run any prompt on a schedule or trigger — set it once and let it handle itself. | Partial |
 | Built-in browser control | Let agents navigate, click, type, and capture pages in a browser that stays visible inside the app. | Live |
 | Isolated sandbox workspaces | Run work in a separate Docker or microsandbox environment, with some platform and setup limitations today. | Partial |
@@ -40,7 +41,7 @@ What you configure in OpenWork should not stay trapped in one interface. OpenWor
 | --- | --- |
 | OpenWork Connect MCP | Live |
 | Codex, Claude Code, Cursor, and OpenCode | Live |
-| Organization marketplaces and access controls | Live |
+| Organization Collections and access controls | Live |
 | Shared and per-user authentication | Live |
 | Git-based publishing and automatic sync | Building |
 
@@ -69,8 +70,10 @@ OpenWork Cloud is the control plane for distributing capabilities, applying desk
 | Capability | What it does | Status |
 | --- | --- | --- |
 | Desktop policies | Control custom providers, OpenCode Zen, workspaces, settings, extensions, built-in tools, and onboarding by organization, team, or member. | Live |
+| Fully managed desktop | A stronger policy mode where your organization decides exactly what the app can do: only approved providers, connections, skills, and tools — nothing else. | Building |
+| Provider spending controls | Set budgets and caps on model spend for managed providers, by organization, team, or member. | Next |
 | Members, teams, and roles | Invite people, organize teams, and decide who can manage capabilities and security settings. | Live |
-| Skills and plugin marketplaces | Publish skills, commands, MCP dependencies, and extensions once, then assign them to the right people and teams. | Live |
+| Skills and plugin Collections | Publish skills, commands, MCP dependencies, and extensions once, then assign them to the right people and teams. | Live |
 | Anthropic-compatible plugins | Import Claude-compatible plugin and marketplace manifests and normalize their skills, MCPs, commands, and tools into OpenWork extensions. | Live |
 | SAML SSO | Connect an identity provider and provision organization members when they first sign in. | Live |
 | Usage and adoption telemetry | See active members, sessions, and task outcomes over time using event metadata, never prompts, code, or file contents. | Live |
@@ -101,6 +104,7 @@ The desktop app remains the richest OpenWork experience. Other surfaces provide 
 | --- | --- |
 | OpenWork desktop | Live |
 | Existing AI agents through MCP | Live |
+| OpenWork Web — the full workspace in your browser, nothing to install | Preview |
 | Slack | Next |
 | Mobile | Next |
 | Dispatch from your phone — assign tasks that run on your desktop | Next |
@@ -114,7 +118,7 @@ Persistent environments and portable authentication make it possible to turn suc
 | Capability | Status |
 | --- | --- |
 | Search and execute | Live |
-| Authenticated multi-step execution | Building |
+| Code Mode — authenticated multi-step scripts across your connected tools | Preview |
 | Schedules and event triggers | Next |
 | Human approvals and resumable runs | Next |
 | Retries, logs, and run history | Next |

@@ -8,9 +8,7 @@ import { createServer } from "node:http";
 import { rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { app } from "electron";
-
-export function createUiControlServer({ appName, appIdentifier, getWindow }) {
+export function createUiControlServer({ app, appName, appIdentifier, getWindow }) {
   let uiControlServer = null;
   let uiControlDiscoveryPath = null;
   const uiControlToken = randomBytes(32).toString("hex");
@@ -156,7 +154,8 @@ export function createUiControlServer({ appName, appIdentifier, getWindow }) {
         }
         sendJsonResponse(response, 404, { ok: false, error: "Not found" });
       } catch (error) {
-        sendJsonResponse(response, 500, { ok: false, error: error instanceof Error ? error.message : String(error) });
+        console.error("[ui-control] request failed", error);
+        sendJsonResponse(response, 500, { ok: false, error: "OpenWork UI control request failed." });
       }
     });
     await new Promise((resolve, reject) => {

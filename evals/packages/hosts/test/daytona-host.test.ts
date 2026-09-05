@@ -189,6 +189,9 @@ test("spawnElectron starts isolated Daytona Electron profiles and writes bootstr
   assert.equal(second.meta?.profileOwner, "host");
   assert.deepEqual(polled, ["https://cdp-9825.example.test/json/list", "https://cdp-9830.example.test/json/list"]);
 
+  const firstMkdirIndex = calls.findIndex((call) => argsText(call).includes("mkdir -p") && argsText(call).includes("/profiles/owner-"));
+  assert(firstMkdirIndex >= 0);
+
   const bootstrapCall = findCall(calls, "base64 -d");
   assert.equal(Buffer.from(base64AfterEcho(bootstrapCall), "base64").toString("utf8"), `${JSON.stringify(bootstrap, null, 2)}\n`);
   assert(argsText(bootstrapCall).includes("/workspace/.openwork-daytona/profiles/owner-"));
@@ -215,6 +218,30 @@ test("spawnElectron starts isolated Daytona Electron profiles and writes bootstr
   assert(secondStart.includes("OPENWORK_ELECTRON_USERDATA="));
   assert(secondStart.includes("/workspace/.openwork-daytona/profiles/member-"));
   assert(secondStart.includes("/electron-userdata"));
+});
+
+test("spawnElectron maps the v2 eval lane before Daytona caller overrides", async () => {
+  const previous = process.env.OPENWORK_EVAL_ENGINE;
+  process.env.OPENWORK_EVAL_ENGINE = "v2";
+  const { exec, calls } = createFakeExec((port) => `https://cdp-${port}.example.test`);
+  const host = createDaytonaHost({
+    sandboxId: "openwork-test-v2-lane",
+    log: () => undefined,
+    exec,
+    repoRoot: "/repo",
+    waitForCdp: successfulPolls(),
+  });
+  try {
+    await host.spawnElectron("v2-default");
+    await host.spawnElectron("v2-override", { env: { OPENWORK_ENGINE_V2_PREVIEW: "sidecar" } });
+  } finally {
+    if (previous === undefined) delete process.env.OPENWORK_EVAL_ENGINE;
+    else process.env.OPENWORK_EVAL_ENGINE = previous;
+  }
+
+  const starts = calls.filter((call) => argsText(call).includes("/workspace/.devcontainer/start-daytona-electron.sh"));
+  assert.match(argsText(starts[0] ?? { args: [] }), /OPENWORK_ENGINE_V2_PREVIEW=.*1/);
+  assert.match(argsText(starts[1] ?? { args: [] }), /OPENWORK_ENGINE_V2_PREVIEW=.*sidecar/);
 });
 
 test("spawnElectron preserves a caller-owned Daytona profile while generated profiles are removed", async () => {

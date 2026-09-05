@@ -5,7 +5,10 @@
 
 import type { Session } from "@opencode-ai/sdk/v2/client";
 
+import { createClient, unwrap } from "@/app/lib/opencode";
+import { createClientV2 } from "@/app/lib/opencode-v2-adapter";
 import type { OpenworkWorkspaceInfo } from "@/app/lib/openwork-server";
+import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
 import type { WorkspaceInfo } from "@/app/lib/desktop-types";
 import type { WorkspaceSessionGroup } from "@/app/types";
 import {
@@ -20,8 +23,7 @@ export type RouteWorkspace = OpenworkWorkspaceInfo & {
 };
 
 /**
- * Sessions as the routes handle them: SDK sessions from
- * openwork-server's listSessions, optionally enriched with run-status
+ * Sessions as the routes handle them: native SDK sessions, optionally enriched with run-status
  * fields that the sidebar probes defensively via getSessionStatus.
  */
 export type RouteSession = Session & {
@@ -30,6 +32,45 @@ export type RouteSession = Session & {
   runStatus?: unknown;
   slug?: string | null;
 };
+
+type RouteSessionListResult =
+  | { data: RouteSession[]; error?: undefined; request: Request; response: Response }
+  | { data?: undefined; error: unknown; request: Request; response: Response };
+export type RouteSessionListTransport = (input: {
+  endpoint: ResolvedWorkspaceEndpoint;
+  limit: number;
+}) => Promise<RouteSessionListResult>;
+
+const nativeRouteSessionList: RouteSessionListTransport = async ({ endpoint, limit }) => {
+  const client = createClient(endpoint.opencodeBaseUrl, undefined, {
+    mode: "openwork",
+    token: endpoint.token,
+  });
+  return client.session.list({ limit });
+};
+
+export const v2RouteSessionList: RouteSessionListTransport = async ({ endpoint, limit }) =>
+  createClientV2(`${endpoint.mountedBaseUrl}/opencode2`, undefined, {
+    token: endpoint.token,
+  }).session.list({ limit });
+
+export async function listRouteSessions(
+  endpoint: ResolvedWorkspaceEndpoint,
+  transport: RouteSessionListTransport = nativeRouteSessionList,
+): Promise<RouteSession[]> {
+  const result = await transport({ endpoint, limit: 200 });
+  try {
+    return unwrap(result);
+  } catch (error) {
+    if (error instanceof Error) {
+      Object.assign(error, { status: result.response.status });
+      if (result.error && typeof result.error === "object" && "code" in result.error && typeof result.error.code === "string") {
+        Object.assign(error, { code: result.error.code });
+      }
+    }
+    throw error;
+  }
+}
 
 export function mapDesktopWorkspace(workspace: WorkspaceInfo): RouteWorkspace {
   return {
@@ -102,10 +143,99 @@ export function classifyRouteSessionReadError(error: unknown): "not-found" | "re
     ? error.code
     : "";
   if (code === "session_not_found") return "not-found";
-  if (status === 502 || status === 503 || status === 504 || isTransientStartupError(describeRouteError(error))) {
+  if (
+    code === "opencode_unconfigured" ||
+    code === "opencode_engine_unreachable" ||
+    status === 502 ||
+    status === 503 ||
+    status === 504 ||
+    isTransientStartupError(describeRouteError(error))
+  ) {
     return "retryable";
   }
   return "error";
+}
+
+/**
+ * Engine calls can briefly fail while the desktop server is up but the
+ * workspace engine is not answering: startup, a blue/green rollover, or an
+ * overloaded event loop that misses the 10 s request timeout. Keep that gap
+ * inside a bounded retry instead of a dead-end error. Terminal authorization
+ * and workspace errors still fail immediately. `onRetry` fires before each
+ * wait with the 1-based attempt that just failed.
+ */
+export async function withTransientEngineRetry<T>(input: {
+  load: () => Promise<T>;
+  retryDelaysMs?: readonly number[];
+  wait?: (delayMs: number) => Promise<void>;
+  onRetry?: (attempt: number, error: unknown) => void;
+}): Promise<T> {
+  const retryDelaysMs = input.retryDelaysMs ?? [];
+  const wait = input.wait ?? ((delayMs: number) => new Promise<void>((resolve) => {
+    window.setTimeout(resolve, delayMs);
+  }));
+
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await input.load();
+    } catch (error) {
+      const retryDelayMs = retryDelaysMs[attempt];
+      if (retryDelayMs === undefined || classifyRouteSessionReadError(error) !== "retryable") {
+        throw error;
+      }
+      input.onRetry?.(attempt + 1, error);
+      await wait(retryDelayMs);
+    }
+  }
+}
+
+export const readRouteSessionsWithRetry = withTransientEngineRetry;
+
+/** Waits between task-creation attempts; each attempt itself may take the 10 s request timeout. */
+export const TASK_CREATE_RETRY_DELAYS_MS: readonly number[] = [1_000, 2_000, 4_000];
+
+export type TaskCreateFailure = {
+  kind: "not_responding" | "unavailable";
+  title: string;
+  description: string;
+};
+
+/**
+ * A stalled engine (timeouts, connection blips, 5xx from the proxy) is a
+ * different situation from a misconfigured or missing one: it usually comes
+ * back on its own or after a reload, and the person should not have to reload
+ * the whole app to find out.
+ */
+export function describeTaskCreateFailure(error: unknown, attempts: number): TaskCreateFailure {
+  const message = describeRouteError(error);
+  if (classifyRouteSessionReadError(error) === "retryable") {
+    return {
+      kind: "not_responding",
+      title: t("session.engine_not_responding_title"),
+      description: t("session.engine_not_responding_detail", { attempts: String(attempts) }),
+    };
+  }
+  return { kind: "unavailable", title: t("session.engine_unavailable_title"), description: message };
+}
+
+export type TaskCreateRetryNotice = { title: string; description: string };
+
+/** Retry countdown wording; engine internals stay behind developer mode. */
+export function describeTaskCreateRetry(input: {
+  developerMode: boolean;
+  attempt: number;
+  attempts: number;
+}): TaskCreateRetryNotice {
+  if (input.developerMode) {
+    return {
+      title: t("session.engine_catching_up_title"),
+      description: t("session.engine_catching_up_detail", { attempt: input.attempt, total: input.attempts }),
+    };
+  }
+  return {
+    title: t("session.still_loading_title"),
+    description: t("session.still_loading_detail"),
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -286,6 +416,39 @@ export function orderRouteWorkspaces(workspaces: RouteWorkspace[], orderIds: str
   }
 
   return ordered;
+}
+
+/**
+ * Capture the first visible workspace order and extend it without letting the
+ * server's active-workspace-first list reshuffle existing sidebar entries.
+ * IDs that are temporarily absent stay in the preference so a transient
+ * discovery gap cannot move them when they return.
+ */
+export function stabilizeRouteWorkspaceOrder(
+  workspaces: RouteWorkspace[],
+  orderIds: string[],
+): { orderIds: string[]; workspaces: RouteWorkspace[] } {
+  const stableOrderIds: string[] = [];
+  const seenIds = new Set<string>();
+
+  for (const value of orderIds) {
+    const id = value.trim();
+    if (!id || seenIds.has(id)) continue;
+    stableOrderIds.push(id);
+    seenIds.add(id);
+  }
+
+  for (const workspace of workspaces) {
+    const id = workspace.id.trim();
+    if (!id || seenIds.has(id)) continue;
+    stableOrderIds.push(id);
+    seenIds.add(id);
+  }
+
+  return {
+    orderIds: stableOrderIds,
+    workspaces: orderRouteWorkspaces(workspaces, stableOrderIds),
+  };
 }
 
 export function toSessionGroups(

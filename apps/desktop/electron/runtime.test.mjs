@@ -9,12 +9,14 @@ import {
   commandMatchesPackagedSidecar,
   createRuntimeManager,
   embeddedServerImportUrl,
+  migrateOpenworkServerTokenStore,
   prepareRuntimeWorkspaceRoot,
   prioritizeWorkspacePaths,
   resetRuntimeStatesAfterFailedServerStart,
-  resolveEngineRolloverPreference,
   resolveEvalLocalServerDelayMs,
   resolveOpenworkServerConfigPath,
+  resolveOpenworkServerLogFile,
+  resolveOpenworkServerReuse,
   seedWorkspacePathsForEmbeddedServer,
   selectStickyOpenworkPortWorkspace,
   snapshotEngineState,
@@ -90,23 +92,104 @@ describe("bundled OpenCode runtime", () => {
   });
 });
 
-describe("engine rollover preference", () => {
-  it("uses an explicit value and otherwise restores the persisted value", () => {
-    assert.equal(resolveEngineRolloverPreference(true, false), true);
-    assert.equal(resolveEngineRolloverPreference(false, true), false);
-    assert.equal(resolveEngineRolloverPreference(undefined, true), true);
-    assert.equal(resolveEngineRolloverPreference(undefined, false), false);
-  });
-
-  it("reports the active mode in the desktop server snapshot", () => {
+describe("openwork server snapshot", () => {
+  it("reports a running in-process server", () => {
     const snapshot = snapshotOpenworkServerState({
       child: null,
       childExited: true,
       inProcess: true,
-      engineRollover: true,
     });
     assert.equal(snapshot.running, true);
-    assert.equal(snapshot.engineRollover, true);
+  });
+
+  it("exposes the server log file so Settings > Debug can point at it", () => {
+    const withLog = snapshotOpenworkServerState({
+      child: null,
+      childExited: true,
+      inProcess: true,
+      logFilePath: "/tmp/userData/logs/openwork-server.log",
+    });
+    assert.equal(withLog.logFilePath, "/tmp/userData/logs/openwork-server.log");
+    const withoutLog = snapshotOpenworkServerState({ child: null, childExited: true, inProcess: false });
+    assert.equal(withoutLog.logFilePath, null);
+  });
+});
+
+describe("resolveOpenworkServerLogFile", () => {
+  it("defaults to logs/openwork-server.log under the user data dir", () => {
+    assert.equal(
+      resolveOpenworkServerLogFile("/tmp/userData", {}),
+      path.join("/tmp/userData", "logs", "openwork-server.log"),
+    );
+  });
+
+  it("prefers an explicit OPENWORK_SERVER_LOG_FILE", () => {
+    assert.equal(
+      resolveOpenworkServerLogFile("/tmp/userData", { OPENWORK_SERVER_LOG_FILE: "  /var/log/ow.log " }),
+      "/var/log/ow.log",
+    );
+    assert.equal(
+      resolveOpenworkServerLogFile("/tmp/userData", { OPENWORK_SERVER_LOG_FILE: "   " }),
+      path.join("/tmp/userData", "logs", "openwork-server.log"),
+    );
+  });
+});
+
+describe("resolveOpenworkServerReuse", () => {
+  const healthy = {
+    forceRestart: undefined,
+    inProcess: true,
+    lifecycleState: "healthy",
+    remoteAccessEnabled: false,
+    requestedRemoteAccess: false,
+    currentProjectDir: "/Users/person/workspace-a",
+    requestedProjectDir: "/Users/person/workspace-a",
+    platform: "darwin",
+  };
+
+  it("reuses the running server for the same workspace", () => {
+    assert.deepEqual(resolveOpenworkServerReuse(healthy), { reuse: true, retarget: false });
+  });
+
+  it("retargets instead of restarting when a different workspace is requested", () => {
+    // Regression: a workspace switch (e.g. opening Settings while another
+    // workspace is routed) used to tear the server down here, aborting every
+    // in-flight run in the workspace being left.
+    assert.deepEqual(
+      resolveOpenworkServerReuse({ ...healthy, requestedProjectDir: "/Users/person/workspace-b" }),
+      { reuse: true, retarget: true },
+    );
+  });
+
+  it("treats case-only path differences as the same workspace on win32", () => {
+    assert.deepEqual(
+      resolveOpenworkServerReuse({
+        ...healthy,
+        platform: "win32",
+        currentProjectDir: "C:\\Work\\Space",
+        requestedProjectDir: "c:\\work\\space",
+      }),
+      { reuse: true, retarget: false },
+    );
+  });
+
+  it("gives up the server only for an explicit restart, host rebind, or unhealthy runtime", () => {
+    assert.deepEqual(
+      resolveOpenworkServerReuse({ ...healthy, forceRestart: true }),
+      { reuse: false, retarget: false },
+    );
+    assert.deepEqual(
+      resolveOpenworkServerReuse({ ...healthy, requestedRemoteAccess: true }),
+      { reuse: false, retarget: false },
+    );
+    assert.deepEqual(
+      resolveOpenworkServerReuse({ ...healthy, lifecycleState: "starting" }),
+      { reuse: false, retarget: false },
+    );
+    assert.deepEqual(
+      resolveOpenworkServerReuse({ ...healthy, inProcess: false }),
+      { reuse: false, retarget: false },
+    );
   });
 });
 
@@ -247,6 +330,45 @@ describe("resolveOpenworkServerConfigPath", () => {
       resolveOpenworkServerConfigPath({ XDG_CONFIG_HOME: "/tmp/xdg" }),
       "/tmp/xdg/openwork/server.json",
     );
+  });
+});
+
+describe("OpenWork server credential persistence", () => {
+  it("deterministically migrates legacy workspace credentials into one server bundle", () => {
+    const migrated = migrateOpenworkServerTokenStore({
+      version: 1,
+      workspaces: {
+        "/workspace/z": {
+          clientToken: "client-z",
+          hostToken: "host-z",
+          ownerToken: "owner-z",
+          updatedAt: 20,
+        },
+        "/workspace/a": {
+          clientToken: "client-a",
+          hostToken: "host-a",
+          ownerToken: "owner-a",
+          updatedAt: 20,
+        },
+        "/workspace/old": {
+          clientToken: "client-old",
+          hostToken: "host-old",
+          ownerToken: "owner-old",
+          updatedAt: 10,
+        },
+      },
+    });
+
+    assert.deepEqual(migrated, {
+      version: 2,
+      credentials: {
+        clientToken: "client-a",
+        hostToken: "host-a",
+        ownerToken: "owner-a",
+        updatedAt: 20,
+      },
+    });
+    assert.deepEqual(migrateOpenworkServerTokenStore(migrated), migrated);
   });
 });
 

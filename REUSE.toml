@@ -1,0 +1,18 @@
+# Machine-readable licensing map (REUSE spec, https://reuse.software).
+# Mirrors the human-readable statement in /LICENSE: everything is MIT except
+# the ee/ directory, which is under the OpenWork EE License (see ee/LICENSE
+# and LICENSES/LicenseRef-OpenWork-EE.txt). Third-party components keep their
+# original licenses per their own notices.
+version = 1
+
+[[annotations]]
+path = "**"
+precedence = "closest"
+SPDX-FileCopyrightText = "2026-present Different AI, Inc."
+SPDX-License-Identifier = "MIT"
+
+[[annotations]]
+path = "ee/**"
+precedence = "closest"
+SPDX-FileCopyrightText = "2026-present Different AI, Inc."
+SPDX-License-Identifier = "LicenseRef-OpenWork-EE"

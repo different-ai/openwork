@@ -2,6 +2,11 @@ import { sql } from "drizzle-orm"
 import { boolean, index, int, json, mysqlTable, uniqueIndex, varchar, timestamp } from "drizzle-orm/mysql-core"
 import { denTypeIdColumn } from "../columns"
 
+/**
+ * Telemetry event vocabulary. Layer 1 answers "who is using AI" (activity
+ * pings); Layer 2 answers "how often" (session and task lifecycle). Event
+ * type strings are a wire contract with the desktop app and workers.
+ */
 export const TelemetryEventType = [
   // Layer 1 — who is using AI
   "user.active",
@@ -14,6 +19,12 @@ export const TelemetryEventType = [
   "task.failed",
 ] as const
 
+/**
+ * One telemetry event, org-scoped and attributed to a member. Rows carry only
+ * identifiers, timings, and outcomes — never user content. `session_id` is an
+ * opaque correlation id; `source` distinguishes desktop/web ("app") from
+ * remote runtimes ("worker").
+ */
 export const TelemetryEventTable = mysqlTable(
   "telemetry_event",
   {
@@ -22,9 +33,7 @@ export const TelemetryEventTable = mysqlTable(
     member_id: denTypeIdColumn("member", "member_id").notNull(),
     event_type: varchar("event_type", { length: 64 }).notNull(),
     event_timestamp: timestamp("event_timestamp", { fsp: 3 }).notNull(),
-    // Where the event came from: "app" (desktop/web) or "worker" (remote runtime).
     source: varchar("source", { length: 32 }),
-    // Opaque session correlation id. Never contains user content.
     session_id: varchar("session_id", { length: 128 }),
     duration_ms: int("duration_ms"),
     success: boolean("success"),
@@ -38,12 +47,17 @@ export const TelemetryEventTable = mysqlTable(
   ],
 )
 
+/**
+ * Analytics dimensions attached to a session (for example project or model),
+ * upserted per (org, source, session, dimension type). Values are bounded
+ * slugs; labels are display text; metadata is a small JSON blob. Sessions are
+ * joined back to events per (org, session, source).
+ */
 export const TelemetrySessionDimensionTable = mysqlTable(
   "telemetry_session_dimension",
   {
     id: denTypeIdColumn("telemetrySessionDimension", "id").notNull().primaryKey(),
     org_id: denTypeIdColumn("organization", "org_id").notNull(),
-    // Opaque session correlation id. Never contains user content.
     session_id: varchar("session_id", { length: 128 }).notNull(),
     source: varchar("source", { length: 32 }).notNull(),
     dimension_type: varchar("dimension_type", { length: 64 }).notNull(),

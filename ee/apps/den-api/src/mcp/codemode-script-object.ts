@@ -58,19 +58,19 @@ export function parseCodemodeScriptPayload(normalizedPayloadJson: unknown):
   | { ok: true; payload: CodemodeScriptPayload }
   | { ok: false; message: string } {
   if (!isRecord(normalizedPayloadJson) || !hasOnlyKeys(normalizedPayloadJson, ["language", "inputSchema", "outputSchema", "exampleInput", "requiredCapabilities", "limits"])) {
-    return { ok: false, message: "The saved script payload must contain only language, inputSchema, outputSchema, exampleInput, requiredCapabilities, and limits." }
+    return { ok: false, message: "The Workflow payload must contain only language, inputSchema, outputSchema, exampleInput, requiredCapabilities, and limits." }
   }
   if (normalizedPayloadJson.language !== "codemode-js") {
-    return { ok: false, message: "The saved script language must be codemode-js." }
+    return { ok: false, message: "The Workflow language must be codemode-js." }
   }
   if (normalizedPayloadJson.inputSchema !== undefined && !isJsonSchemaObject(normalizedPayloadJson.inputSchema)) {
-    return { ok: false, message: "The saved script inputSchema must be a JSON Schema object." }
+    return { ok: false, message: "The Workflow inputSchema must be a JSON Schema object." }
   }
   if (normalizedPayloadJson.outputSchema !== undefined && !isJsonSchemaObject(normalizedPayloadJson.outputSchema)) {
-    return { ok: false, message: "The saved script outputSchema must be a JSON Schema object." }
+    return { ok: false, message: "The Workflow outputSchema must be a JSON Schema object." }
   }
   if (!Array.isArray(normalizedPayloadJson.requiredCapabilities)) {
-    return { ok: false, message: "The saved script requiredCapabilities must be an array." }
+    return { ok: false, message: "The Workflow requiredCapabilities must be an array." }
   }
 
   const requiredCapabilities: CodemodeScriptPayload["requiredCapabilities"] = []
@@ -81,7 +81,7 @@ export function parseCodemodeScriptPayload(normalizedPayloadJson: unknown):
       || !isNonEmptyString(required.capabilityName)
       || !isNonEmptyString(required.scriptPath)
     ) {
-      return { ok: false, message: "Each saved script required capability must contain only non-empty capabilityName and scriptPath strings." }
+      return { ok: false, message: "Each Workflow required capability must contain only non-empty capabilityName and scriptPath strings." }
     }
     requiredCapabilities.push({ capabilityName: required.capabilityName, scriptPath: required.scriptPath })
   }
@@ -89,17 +89,17 @@ export function parseCodemodeScriptPayload(normalizedPayloadJson: unknown):
   let limits: CodemodeScriptPayload["limits"]
   if (normalizedPayloadJson.limits !== undefined) {
     if (!isRecord(normalizedPayloadJson.limits) || !hasOnlyKeys(normalizedPayloadJson.limits, ["timeoutMs", "maxToolCalls", "maxOutputBytes"])) {
-      return { ok: false, message: "The saved script limits must contain only timeoutMs, maxToolCalls, and maxOutputBytes." }
+      return { ok: false, message: "The Workflow limits must contain only timeoutMs, maxToolCalls, and maxOutputBytes." }
     }
     const { timeoutMs, maxToolCalls, maxOutputBytes } = normalizedPayloadJson.limits
     if (timeoutMs !== undefined && !isLimit(timeoutMs, 1)) {
-      return { ok: false, message: "The saved script timeoutMs limit must be a positive safe integer." }
+      return { ok: false, message: "The Workflow timeoutMs limit must be a positive safe integer." }
     }
     if (maxToolCalls !== undefined && !isLimit(maxToolCalls, 0)) {
-      return { ok: false, message: "The saved script maxToolCalls limit must be a non-negative safe integer." }
+      return { ok: false, message: "The Workflow maxToolCalls limit must be a non-negative safe integer." }
     }
     if (maxOutputBytes !== undefined && !isLimit(maxOutputBytes, 0)) {
-      return { ok: false, message: "The saved script maxOutputBytes limit must be a non-negative safe integer." }
+      return { ok: false, message: "The Workflow maxOutputBytes limit must be a non-negative safe integer." }
     }
     limits = {
       ...(timeoutMs === undefined ? {} : { timeoutMs }),
@@ -144,7 +144,7 @@ export function validateCodemodeScriptInput(schema: JsonSchemaObject, value: unk
     return {
       ok: false,
       error: "invalid_schema",
-      message: "The saved script input schema could not be compiled.",
+      message: "The Workflow input schema could not be compiled.",
     }
   }
 }

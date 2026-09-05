@@ -1,5 +1,8 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
@@ -11,6 +14,8 @@ const REPO_ROOT = fileURLToPath(new URL("../../../..", import.meta.url));
 const DESKTOP_READY_TIMEOUT_MS = 300_000;
 const INSTALL_TIMEOUT_MS = 25 * 60 * 1_000;
 const SERVER_SCRIPT_TIMEOUT_MS = 20 * 60 * 1_000;
+const VITE_PREWARM_TIMEOUT_MS = 180_000;
+const READINESS_POLL_INTERVAL_MS = 5_000;
 const HTTPS_URL = /https:\/\/[^\s"'<>)]+/;
 const DEN_WEB_PORT = 3005;
 const DEN_API_PORT = 8788;
@@ -45,6 +50,8 @@ export interface DenSandboxOptions {
   reuse?: string;
   repoRoot?: string;
   bootstrapAdminEmail?: string;
+  /** Extra Den environment for a freshly provisioned sandbox; a reused Den is already running and cannot take it. */
+  env?: Record<string, string>;
   log?: (line: string) => void;
 }
 
@@ -61,6 +68,7 @@ export interface MockOnSandboxOptions {
   log?: (line: string) => void;
   fetchImpl?: typeof fetch;
   allowUnauthenticatedMcp?: boolean;
+  appToolName?: string;
 }
 
 export interface MockOnSandbox {
@@ -93,6 +101,10 @@ export interface ConnectorE2eTestEnv {
 
 function messageText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isInfrastructureReadinessError(error: unknown): boolean {
+  return /(?:status|HTTP) 502|connection refused|ECONNREFUSED/i.test(messageText(error));
 }
 
 function outputTail(result: DaytonaExecResult): string {
@@ -403,11 +415,24 @@ log = open("/tmp/vite-prewarm.log", "ab", buffering=0)
 subprocess.Popen(["bash", "-lc", "cd /workspace && pnpm -w dev:ui"], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
 PYEOF
 echo detached`;
-    await execInSandbox(exec, sandbox, detachScript, { timeoutMs: 30_000, context: `Vite prewarm detach for ${sandbox}` });
-
-    const deadline = Date.now() + 180_000;
+    const deadline = Date.now() + VITE_PREWARM_TIMEOUT_MS;
     let last = "not attempted";
+    let detached = false;
     while (Date.now() < deadline) {
+      if (!detached) {
+        try {
+          await execInSandbox(exec, sandbox, detachScript, {
+            timeoutMs: Math.min(30_000, Math.max(1, deadline - Date.now())),
+            context: `Vite prewarm detach for ${sandbox}`,
+          });
+          detached = true;
+        } catch (error) {
+          if (!isInfrastructureReadinessError(error)) throw error;
+          last = messageText(error);
+          await delay(Math.min(READINESS_POLL_INTERVAL_MS, Math.max(0, deadline - Date.now())));
+          continue;
+        }
+      }
       try {
         const result = await execInSandbox(
           exec,
@@ -420,7 +445,7 @@ echo detached`;
       } catch (error) {
         last = messageText(error);
       }
-      await delay(5_000);
+      await delay(Math.min(READINESS_POLL_INTERVAL_MS, Math.max(0, deadline - Date.now())));
     }
     const viteLog = await execInSandbox(
       exec,
@@ -428,7 +453,8 @@ echo detached`;
       "tail -80 /tmp/vite-prewarm.log 2>&1 || true",
       { timeoutMs: 30_000, context: `Vite prewarm log for ${sandbox}` },
     );
-    throw new Error(`Vite prewarm gate failed for ${sandbox}: last probe ${last}. Log tail:\n${outputTail(viteLog)}`);
+    const phase = detached ? "Vite to answer on port 5173" : "the Daytona exec tunnel to accept the detach command";
+    throw new Error(`Vite prewarm gate timed out after ${VITE_PREWARM_TIMEOUT_MS}ms waiting for ${phase} in ${sandbox}. Last readiness error: ${last}. Log tail:\n${outputTail(viteLog)}`);
   });
 
   return { sandbox, created: !reused };
@@ -460,11 +486,28 @@ function lineWriter(log: (line: string) => void): LineWriter {
   };
 }
 
-function runDenProvisionScript(ref: string, repoRoot: string, bootstrapAdminEmail: string | undefined, log: (line: string) => void): Promise<LocalProcessResult> {
+/**
+ * Extra Den env travels to the sandbox as base64 `KEY=VALUE` lines, so values
+ * are never interpolated into the `daytona exec` command line. Keys must be
+ * plain environment names; the start script exports each line verbatim.
+ */
+export function encodeDenExtraEnv(env: Record<string, string>): string {
+  const lines = Object.entries(env).map(([key, value]) => {
+    if (!/^[A-Z_][A-Z0-9_]*$/.test(key)) throw new Error(`Unsafe Den environment name ${JSON.stringify(key)}.`);
+    if (value.includes("\n")) throw new Error(`Den environment value for ${key} may not contain a newline.`);
+    return `${key}=${value}`;
+  });
+  return Buffer.from(lines.join("\n"), "utf8").toString("base64");
+}
+
+function runDenProvisionScript(ref: string, repoRoot: string, bootstrapAdminEmail: string | undefined, extraEnv: Record<string, string> | undefined, log: (line: string) => void, urlsFile: string): Promise<LocalProcessResult> {
   return new Promise((resolve, reject) => {
+    const env: NodeJS.ProcessEnv = { ...process.env, OPENWORK_DEN_URLS_FILE: urlsFile };
+    if (bootstrapAdminEmail) env.DEN_BOOTSTRAP_ADMIN_EMAILS = bootstrapAdminEmail;
+    if (extraEnv && Object.keys(extraEnv).length > 0) env.OPENWORK_DEN_EXTRA_ENV_B64 = encodeDenExtraEnv(extraEnv);
     const child = spawn("bash", [".devcontainer/test-server-on-daytona.sh", ref, "--seed", "--name", serverSandboxName()], {
       cwd: repoRoot,
-      env: bootstrapAdminEmail ? { ...process.env, DEN_BOOTSTRAP_ADMIN_EMAILS: bootstrapAdminEmail } : process.env,
+      env,
       stdio: ["ignore", "pipe", "pipe"],
     });
     const stdoutLines = lineWriter(log);
@@ -518,6 +561,29 @@ function sandboxFromServerOutput(output: string): string | null {
   return fallback;
 }
 
+function parsedPublicUrl(value: string | undefined): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.pathname !== "/" || url.search || url.hash || !url.hostname) return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function parseDenUrlsFile(content: string): { webUrl: string; apiUrl: string } | null {
+  const entries = new Map<string, string>();
+  for (const line of content.split(/\r?\n/)) {
+    const separator = line.indexOf("=");
+    if (separator <= 0) continue;
+    entries.set(line.slice(0, separator).trim(), line.slice(separator + 1).trim());
+  }
+  const webUrl = parsedPublicUrl(entries.get("DEN_WEB_URL"));
+  const apiUrl = parsedPublicUrl(entries.get("DEN_API_URL"));
+  return webUrl && apiUrl ? { webUrl, apiUrl } : null;
+}
+
 
 async function previewUrl(exec: DaytonaExec, sandbox: string, port: number): Promise<string> {
   let lastError = "not attempted";
@@ -525,7 +591,7 @@ async function previewUrl(exec: DaytonaExec, sandbox: string, port: number): Pro
     try {
       const result = await checkedExec(
         exec,
-        ["preview-url", sandbox, "-p", String(port)],
+        ["preview-url", sandbox, "-p", String(port), "--expires", "86400"],
         `preview URL gate for ${sandbox}:${port}`,
         { timeoutMs: 60_000 },
       );
@@ -584,31 +650,52 @@ export async function provisionDenSandbox(options: DenSandboxOptions & Provision
 
   if (reused) {
     sandbox = reused;
+    // Reused sandboxes only get fresh signed aliases: their baked
+    // DEN_*_PUBLIC_URL identity is unknown here, so RFC 9728 validating MCP
+    // clients (opencode OAuth) cannot connect to a reused Den sandbox.
     [webUrl, apiUrl] = await timedStep(log, "Den preview URL gate", () => Promise.all([
       previewUrl(exec, sandbox, DEN_WEB_PORT),
       previewUrl(exec, sandbox, DEN_API_PORT),
     ]));
   } else {
-    const result = await timedStep(log, "Den provisioning script", () => runDenProvisionScript(
-      ref,
-      options.repoRoot ?? REPO_ROOT,
-      options.bootstrapAdminEmail,
-      log,
-    ));
-    if (result.code !== 0) {
-      throw new Error(`Den provisioning script gate failed with exit ${result.code}. Output tail:\n${textTail(result.output)}`);
-    }
-    const parsedSandbox = sandboxFromServerOutput(result.output);
-    if (!parsedSandbox) throw new Error(`Den provisioning script output is missing sandbox. Output tail:\n${textTail(result.output)}`);
-    sandbox = parsedSandbox;
-    // URLs come from daytona for THIS sandbox, never from the script's stdout:
+    // URLs come from the trusted runner-side URLs file the provisioning
+    // script writes from daytona CLI output, never from the script's stdout:
     // the ref being provisioned controls that stream, so a spoofed
     // "DEN_API_URL=https://attacker" line would receive the demo credentials
-    // the sign-in proof posts moments later.
-    [webUrl, apiUrl] = await timedStep(log, "Den preview URL gate", () => Promise.all([
-      previewUrl(exec, parsedSandbox, DEN_WEB_PORT),
-      previewUrl(exec, parsedSandbox, DEN_API_PORT),
-    ]));
+    // the sign-in proof posts moments later. Re-deriving fresh preview URLs
+    // here is not an option either — every `daytona preview-url` call signs a
+    // different hostname, while the sandbox's baked DEN_*_PUBLIC_URL is the
+    // Den's OAuth issuer and MCP resource identity. RFC 9728 validating MCP
+    // clients (opencode) refuse a Den reached through a mismatched host.
+    const urlsDir = await mkdtemp(path.join(os.tmpdir(), "openwork-den-urls-"));
+    const urlsFile = path.join(urlsDir, "den-urls.env");
+    try {
+      const result = await timedStep(log, "Den provisioning script", () => runDenProvisionScript(
+        ref,
+        options.repoRoot ?? REPO_ROOT,
+        options.bootstrapAdminEmail,
+        options.env,
+        log,
+        urlsFile,
+      ));
+      if (result.code !== 0) {
+        throw new Error(`Den provisioning script gate failed with exit ${result.code}. Output tail:\n${textTail(result.output)}`);
+      }
+      const parsedSandbox = sandboxFromServerOutput(result.output);
+      if (!parsedSandbox) throw new Error(`Den provisioning script output is missing sandbox. Output tail:\n${textTail(result.output)}`);
+      sandbox = parsedSandbox;
+      const urls = parseDenUrlsFile(await readFile(urlsFile, "utf8").catch(() => ""));
+      if (!urls) {
+        throw new Error(
+          `Den provisioning script did not hand back the sandbox's public URLs through ${urlsFile}. `
+          + "The baked DEN_*_PUBLIC_URL identity must be reused verbatim; check .devcontainer/test-server-on-daytona.sh.",
+        );
+      }
+      webUrl = urls.webUrl;
+      apiUrl = urls.apiUrl;
+    } finally {
+      await rm(urlsDir, { recursive: true, force: true }).catch(() => undefined);
+    }
   }
 
   await timedStep(log, "Den seeded-org proof", () => proveDenSeed(apiUrl, webUrl, sandbox, Boolean(reused)));
@@ -633,10 +720,11 @@ export async function startMockOnSandbox(options: MockOnSandboxOptions & Provisi
 
   await timedStep(log, "mock process detach", async () => {
     const unauthenticatedMcpEnv = options.allowUnauthenticatedMcp ? " MOCK_ALLOW_UNAUTHENTICATED_MCP=1" : "";
+    const appToolEnv = options.appToolName ? ` MOCK_APP_TOOL_NAME=${assertSafeRef(options.appToolName)}` : "";
     const detachScript = `cd /workspace; python3 - <<PYEOF
 import subprocess
 log = open("/tmp/mock-mcp.log", "ab", buffering=0)
-subprocess.Popen(["bash", "-lc", "cd /workspace && env HOST=0.0.0.0 PORT=${port} ISSUER=${url} AUTO_APPROVE=1${unauthenticatedMcpEnv} node scripts/mock-oauth-mcp-server.mjs"], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
+subprocess.Popen(["bash", "-lc", "cd /workspace && env HOST=0.0.0.0 PORT=${port} ISSUER=${url} AUTO_APPROVE=1${unauthenticatedMcpEnv}${appToolEnv} node scripts/mock-oauth-mcp-server.mjs"], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
 PYEOF
 echo detached`;
     await execInSandbox(exec, options.sandbox, detachScript, { timeoutMs: 30_000, context: `mock process detach for ${options.sandbox}` });

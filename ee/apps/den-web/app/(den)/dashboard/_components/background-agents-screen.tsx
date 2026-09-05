@@ -312,7 +312,7 @@ export function BackgroundAgentsScreen() {
         `/v1/workers/${encodeURIComponent(workerId)}/tokens`,
         {
           method: "POST",
-          body: JSON.stringify({}),
+          body: JSON.stringify({ includeExpiringOpenworkUrl: true }),
         },
         12000,
       );
@@ -334,7 +334,7 @@ export function BackgroundAgentsScreen() {
         clientToken: tokens.clientToken,
         openworkAppConnectUrl: buildOpenworkAppConnectUrl(
           runtimeConfig.openworkAppConnectUrl,
-          tokens.openworkUrl,
+          tokens.previewOpenworkUrl,
           tokens.clientToken,
           workerId,
           workerName,
@@ -342,7 +342,7 @@ export function BackgroundAgentsScreen() {
         ),
         openworkDeepLink: buildOpenworkDeepLink(
           tokens.openworkUrl,
-          tokens.clientToken,
+          tokens.hostToken ?? tokens.ownerToken,
           workerId,
           workerName,
         ),

@@ -10,14 +10,15 @@ import {
   type ReactNode,
 } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { isDesktopRuntime } from "@/app/utils";
 import type {
   OpenworkAffordanceDescriptor,
   OpenworkAffordanceEffects,
+  OpenworkAffordanceOrigin,
   OpenworkAffordanceRequest,
   OpenworkAffordanceResult,
 } from "@openwork/types/openwork-affordance";
 import type { OpenworkContextSnapshot } from "@openwork/types/openwork-context";
+import { useUiControlMailbox } from "./use-ui-control-mailbox";
 
 export type OpenworkControlSideEffect = "none" | "navigation" | "mutation" | "external";
 
@@ -60,6 +61,8 @@ export type OpenworkControlResult =
 
 export type OpenworkControlHelpers = {
   setNarration: (text: string) => void;
+  /** The conversation whose agent issued the request, when it came through the agent bridge. */
+  origin?: OpenworkAffordanceOrigin;
 };
 
 export type OpenworkControlTargetRef = {
@@ -107,12 +110,12 @@ type OpenworkControlContextValue = {
   busyActionId: string | null;
   actions: OpenworkControlActionMetadata[];
   registerAction: (actionId: string, actionRef: ControlActionRef) => () => void;
-  executeAction: (actionId: string, args?: unknown) => Promise<OpenworkControlResult>;
+  executeAction: (actionId: string, args?: unknown, origin?: OpenworkAffordanceOrigin) => Promise<OpenworkControlResult>;
   publishContext: (context: OpenworkContextSnapshot) => void;
   snapshot: () => OpenworkControlSnapshot;
 };
 
-type OpenworkControlAPI = {
+export type OpenworkControlAPI = {
   version: number;
   snapshot: () => OpenworkControlSnapshot;
   listActions: () => OpenworkControlActionMetadata[];
@@ -250,6 +253,7 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
   const busyActionIdRef = useRef<string | null>(null);
   const busyActorRef = useRef<string | null>(null);
   const spotlightRunRef = useRef(0);
+  const apiRef = useRef<OpenworkControlAPI | null>(null);
 
   const route = `${location.pathname}${location.search}${location.hash}`;
   const enabled = enabledState;
@@ -307,7 +311,7 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
       revision,
       capturedAt: new Date().toISOString(),
       screen: { kind: "other", route },
-      conversations: { tabs: [], layout: { kind: "empty" } },
+      conversations: { tabs: [], layout: { kind: "empty" }, pinnedSessionIds: [] },
       chrome: {
         sidebarOpen: true,
         applicationMenuVisible: false,
@@ -392,7 +396,11 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
     await wait(SPOTLIGHT_TIMING_MS.release);
   }, []);
 
-  const executeAction = useCallback(async (actionId: string, args?: unknown): Promise<OpenworkControlResult> => {
+  const executeAction = useCallback(async (
+    actionId: string,
+    args?: unknown,
+    origin?: OpenworkAffordanceOrigin,
+  ): Promise<OpenworkControlResult> => {
     const registered = actionsRef.current.get(actionId);
     const action = registered?.ref.current;
     if (!registered || !action) return { ok: false, actionId, error: `Unknown action: ${actionId}` };
@@ -419,7 +427,7 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
       await playTargetChoreography(action, runId);
       setNarration(`Running ${action.label}…`);
       const effectiveArgs = args === undefined ? action.previewArgs : args;
-      const result = await action.execute(effectiveArgs, { setNarration });
+      const result = await action.execute(effectiveArgs, { setNarration, origin });
       const resultError = returnedActionError(result);
       if (resultError) {
         setNarration(`Could not ${action.label}: ${resultError}`);
@@ -536,7 +544,7 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
       };
     }
     busyActorRef.current = request.actor ?? null;
-    const result = await executeAction(request.id, request.args);
+    const result = await executeAction(request.id, request.args, request.origin);
     if (!busyActionIdRef.current) busyActorRef.current = null;
     if (!result.ok) {
       return {
@@ -611,12 +619,18 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
     };
 
     window.__openworkControl = api;
+    apiRef.current = api;
     return () => {
       if (window.__openworkControl === api) {
         delete window.__openworkControl;
       }
+      if (apiRef.current === api) {
+        apiRef.current = null;
+      }
     };
   }, [contextSnapshot, executeAction, executeCommand, queryAffordance, setEnabled, snapshot]);
+
+  useUiControlMailbox(apiRef);
 
   useEffect(() => {
     busyActionIdRef.current = busyActionId;
@@ -703,6 +717,7 @@ export function useControlActions(actions: readonly OpenworkControlAction[]) {
 }
 
 import { SETTINGS_TAB_VALUES } from "../../../app/types";
+import { settingsNavigationFromPathname } from "../workspace-routes";
 
 const SETTINGS_TABS: ReadonlySet<string> = new Set<string>(
   SETTINGS_TAB_VALUES.filter((tab) => tab !== "extensions"),
@@ -710,6 +725,14 @@ const SETTINGS_TABS: ReadonlySet<string> = new Set<string>(
 
 export function OpenworkRouteControlActions() {
   const navigate = useNavigate();
+  const location = useLocation();
+  // Read through a ref so the action list stays stable across route changes.
+  const pathnameRef = useRef(location.pathname);
+  pathnameRef.current = location.pathname;
+  const openSettingsTab = useCallback((tab: string) => {
+    const target = settingsNavigationFromPathname(pathnameRef.current, tab);
+    navigate(target.to, { state: target.state });
+  }, [navigate]);
 
   const actions = useMemo<OpenworkControlAction[]>(() => [
     {
@@ -724,7 +747,7 @@ export function OpenworkRouteControlActions() {
       label: "Open general settings",
       description: "Navigate to general settings.",
       sideEffect: "navigation",
-      execute: () => navigate("/settings/general"),
+      execute: () => openSettingsTab("general"),
     },
     {
       id: "route.extensions.skills",
@@ -738,21 +761,21 @@ export function OpenworkRouteControlActions() {
       label: "Open provider settings",
       description: "Navigate to AI provider settings.",
       sideEffect: "navigation",
-      execute: () => navigate("/settings/ai"),
+      execute: () => openSettingsTab("ai"),
     },
     {
       id: "route.settings.authorized_folders",
       label: "Open authorized folder settings",
       description: "Navigate to authorized folders and file access settings.",
       sideEffect: "navigation",
-      execute: () => navigate("/settings/permissions"),
+      execute: () => openSettingsTab("permissions"),
     },
     {
       id: "route.settings.appearance",
       label: "Open appearance settings",
       description: "Navigate to appearance settings.",
       sideEffect: "navigation",
-      execute: () => navigate("/settings/appearance"),
+      execute: () => openSettingsTab("appearance"),
     },
     {
       id: "settings.panel.open",
@@ -779,7 +802,7 @@ export function OpenworkRouteControlActions() {
             error: `Unknown settings panel: ${panel || "(empty)"}. Expected one of ${Array.from(SETTINGS_TABS).join(", ")}.`,
           };
         }
-        navigate(`/settings/${panel}`);
+        openSettingsTab(panel);
         return { ok: true, panel };
       },
     },
@@ -814,15 +837,13 @@ export function OpenworkRouteControlActions() {
           { id: "code", label: "Write and run code", description: "Generate, edit, and execute code with full tool access." },
           { id: "computer-use", label: "Computer use", description: "Control your computer with screenshots and mouse/keyboard actions." },
           { id: "skills", label: "Skills", description: "Install specialized skill packs for specific workflows." },
-          ...(isDesktopRuntime()
-            ? [{ id: "automations", label: "Automations", description: "Schedule recurring tasks and background agents." }]
-            : []),
+          { id: "automations", label: "Automations", description: "Schedule recurring tasks and background agents." },
           { id: "sharing", label: "Share sessions", description: "Share workspace sessions with collaborators via OpenWork Cloud." },
         ],
         hint: "Use settings.panel.open for settings such as AI providers, and route.extensions.skills to browse Library.",
       }),
     },
-  ], [navigate]);
+  ], [navigate, openSettingsTab]);
 
   useControlActions(actions);
   return null;

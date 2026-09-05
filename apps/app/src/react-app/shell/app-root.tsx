@@ -1,11 +1,10 @@
 /** @jsxImportSource react */
 
-import { useEffect, useMemo, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
 
 import { captureAnalyticsEvent, initAnalytics } from "../../app/lib/analytics";
 import {
-  createDenClient,
   readDenBootstrapConfig,
   readDenSettings,
   setDenBootstrapConfig,
@@ -25,6 +24,7 @@ import {
 } from "../domains/connections/cloud-inventory-cache";
 import { ForcedSigninPage } from "../domains/cloud/forced-signin-page";
 import { EnterpriseActivationGate } from "../domains/cloud/enterprise-activation-gate";
+import { OpenWorkWebAccessGate } from "../domains/cloud/openwork-web-access-gate";
 import { OrgOnboardingPage } from "../domains/cloud/org-onboarding-page";
 import { NewProvidersListener } from "./new-providers-listener";
 import { useDesktopFontZoomBehavior } from "./font-zoom";
@@ -42,6 +42,7 @@ import {
 } from "./control/control-provider";
 import { OpenworkContextPublisher } from "./openwork-context-publisher";
 import { SessionRoute } from "./session-route";
+import { DesktopUpdaterProvider } from "../domains/settings/state/desktop-updater-provider";
 import { SettingsRoute } from "./settings-route";
 import { ShellConfigProvider } from "./shell-config";
 import { WelcomeRoute } from "./welcome-route";
@@ -78,6 +79,8 @@ function DenSigninGate({ children }: DenSigninGateProps) {
   const denAuth = useDenAuth();
   const location = useLocation();
   const navigate = useNavigate();
+  const locationRef = useRef(location);
+  locationRef.current = location;
   const bootstrap = useSyncExternalStore(
     subscribeToDenBootstrap,
     readDenBootstrapSnapshot,
@@ -147,8 +150,15 @@ function DenSigninGate({ children }: DenSigninGateProps) {
   useEffect(() => {
     const handler = (event: WindowEventMap[typeof denSessionUpdatedEvent]) => {
       if (event.detail?.status !== "success") return;
+      const signInLocation = locationRef.current;
       let attempts = 0;
       const check = () => {
+        const currentLocation = locationRef.current;
+        if (
+          currentLocation.pathname !== signInLocation.pathname
+          || currentLocation.search !== signInLocation.search
+          || currentLocation.hash !== signInLocation.hash
+        ) return;
         attempts++;
         const settings = readDenSettings();
         if (settings.authToken?.trim() && readOrgSelectionPending().pending) {
@@ -229,10 +239,8 @@ function DenAuthControlActions() {
       if (!grant?.trim()) return { ok: false, error: "grant is required" };
       const settings = readDenSettings();
       const targetBaseUrl = argBaseUrl?.trim() || settings.baseUrl;
-      const client = createDenClient({ baseUrl: targetBaseUrl });
       const result = await exchangeHandoffAndSignIn(grant.trim(), {
         baseUrl: targetBaseUrl,
-        client,
         // Automation surface: commit the exchange-reported org directly; a
         // UI chooser would strand a headless driver.
         desktopInitiated: false,
@@ -369,6 +377,7 @@ export function AppRoot() {
   return (
     <>
       <DevProfiler id="AppRoot">
+        <DesktopUpdaterProvider>
         <ShellConfigProvider>
         <AppMenuProvider>
         <OpenworkControlProvider>
@@ -376,10 +385,11 @@ export function AppRoot() {
           <OpenworkContextPublisher />
           <DenAuthControlActions />
           <BrandThemeControlActions />
-          <CloudWorkspaceStatusProvider>
           <EnterpriseActivationGate>
-          <DenSigninGate>
-            <Routes>
+            <DenSigninGate>
+              <OpenWorkWebAccessGate>
+                <CloudWorkspaceStatusProvider>
+                  <Routes>
               <Route
                 path="/signin"
                 element={
@@ -445,6 +455,17 @@ export function AppRoot() {
                   </DevProfiler>
                 }
               />
+              <Route path="/apps" element={<DevProfiler id="AppsRoute"><SessionRoute /></DevProfiler>} />
+              <Route path="/dashboard/apps/:appId" element={<DevProfiler id="DashboardAppRoute"><SessionRoute /></DevProfiler>} />
+              <Route path="/apps/:appId" element={<DevProfiler id="AppPreviewRoute"><SessionRoute /></DevProfiler>} />
+              <Route
+                path="/dashboard"
+                element={
+                  <DevProfiler id="DashboardRoute">
+                    <SessionRoute />
+                  </DevProfiler>
+                }
+              />
               <Route
                 path="/workspace/:workspaceId/extensions/*"
                 element={
@@ -481,15 +502,17 @@ export function AppRoot() {
                   settings deliberately via the sidebar or command palette. */}
               <Route path="/" element={<Navigate to="/session" replace />} />
               <Route path="*" element={<Navigate to="/session" replace />} />
-            </Routes>
-          </DenSigninGate>
-          <LoadingOverlay />
+                  </Routes>
+                  <LoadingOverlay />
+                  <CloudWorkspaceOverlay />
+                </CloudWorkspaceStatusProvider>
+              </OpenWorkWebAccessGate>
+            </DenSigninGate>
           </EnterpriseActivationGate>
-          <CloudWorkspaceOverlay />
-          </CloudWorkspaceStatusProvider>
         </OpenworkControlProvider>
         </AppMenuProvider>
         </ShellConfigProvider>
+        </DesktopUpdaterProvider>
       </DevProfiler>
       {/*
         DevProfilerOverlay sits OUTSIDE the AppRoot <Profiler> zone on

@@ -1,0 +1,42 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index 635f1c0134274c89e7efbcae2adf3d9ecba575ee..700143e48595a767266869b6be9da5dead1d7ee8 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -635,3 +635,13 @@ function determineScope(options) {
+-	let effectiveScope = requestedScope || resourceMetadata?.scopes_supported?.join(" ") || clientMetadata.scope;
+-	if (effectiveScope && authServerMetadata?.scopes_supported?.includes("offline_access") && !effectiveScope.split(" ").includes("offline_access") && clientMetadata.grant_types?.includes("refresh_token")) effectiveScope = `${effectiveScope} offline_access`;
+-	return effectiveScope;
++	const requiredScopes = requestedScope?.split(/\s+/).filter(Boolean) ?? [];
++	const selectedScopes = clientMetadata.scope?.split(/\s+/).filter(Boolean) ?? [];
++	const authorizationServerScopes = authServerMetadata?.scopes_supported;
++	const resourceScopes = resourceMetadata?.scopes_supported;
++	const advertisedScopes = [...new Set([...(authorizationServerScopes ?? []), ...(resourceScopes ?? [])])];
++	if (advertisedScopes.length > 0) {
++		const unsupportedScope = selectedScopes.find((selectedScope) => !advertisedScopes.includes(selectedScope));
++		if (unsupportedScope) throw new Error(`The selected OAuth scope is not advertised by the authorization server or protected resource: ${unsupportedScope}`);
++	}
++	const effectiveScopes = [...new Set([...requiredScopes, ...selectedScopes])];
++	if (effectiveScopes.length === 0) effectiveScopes.push(...new Set(resourceScopes ?? authorizationServerScopes ?? []));
++	if (effectiveScopes.length > 0 && authServerMetadata?.scopes_supported?.includes("offline_access") && !effectiveScopes.includes("offline_access") && clientMetadata.grant_types?.includes("refresh_token")) effectiveScopes.push("offline_access");
++	return effectiveScopes.length > 0 ? effectiveScopes.join(" ") : void 0;
+diff --git a/dist/index.mjs b/dist/index.mjs
+index f02ce3ca394e826fc27c9848dbe9a214bf6ba7a9..cc0b4f30a209297213e1897fc9ff34680066c59b 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -632,3 +632,13 @@ function determineScope(options) {
+-	let effectiveScope = requestedScope || resourceMetadata?.scopes_supported?.join(" ") || clientMetadata.scope;
+-	if (effectiveScope && authServerMetadata?.scopes_supported?.includes("offline_access") && !effectiveScope.split(" ").includes("offline_access") && clientMetadata.grant_types?.includes("refresh_token")) effectiveScope = `${effectiveScope} offline_access`;
+-	return effectiveScope;
++	const requiredScopes = requestedScope?.split(/\s+/).filter(Boolean) ?? [];
++	const selectedScopes = clientMetadata.scope?.split(/\s+/).filter(Boolean) ?? [];
++	const authorizationServerScopes = authServerMetadata?.scopes_supported;
++	const resourceScopes = resourceMetadata?.scopes_supported;
++	const advertisedScopes = [...new Set([...(authorizationServerScopes ?? []), ...(resourceScopes ?? [])])];
++	if (advertisedScopes.length > 0) {
++		const unsupportedScope = selectedScopes.find((selectedScope) => !advertisedScopes.includes(selectedScope));
++		if (unsupportedScope) throw new Error(`The selected OAuth scope is not advertised by the authorization server or protected resource: ${unsupportedScope}`);
++	}
++	const effectiveScopes = [...new Set([...requiredScopes, ...selectedScopes])];
++	if (effectiveScopes.length === 0) effectiveScopes.push(...new Set(resourceScopes ?? authorizationServerScopes ?? []));
++	if (effectiveScopes.length > 0 && authServerMetadata?.scopes_supported?.includes("offline_access") && !effectiveScopes.includes("offline_access") && clientMetadata.grant_types?.includes("refresh_token")) effectiveScopes.push("offline_access");
++	return effectiveScopes.length > 0 ? effectiveScopes.join(" ") : void 0;

@@ -53,6 +53,7 @@ export const InferenceOrgLimitPolicyTable = mysqlTable(
       table.organization_id,
       table.window_type,
     ),
+    index("inference_org_limit_policies_current_bucket_id").on(table.current_bucket_id),
   ],
 )
 

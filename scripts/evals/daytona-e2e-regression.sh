@@ -63,20 +63,6 @@ if compgen -G "/daytona-secrets/*.env" > /dev/null; then
   echo "==> Sourced provider secrets from /daytona-secrets"
 fi
 
-if [ "${OPENWORK_E2E_REGRESSION_SKIP_LEGACY:-0}" = "1" ]; then
-  echo "==> Skipping legacy baseline (OPENWORK_E2E_REGRESSION_SKIP_LEGACY=1)"
-else
-echo "==> Legacy baseline: org-connection-lifecycle-desktop through the den stack"
-# Known caveat when the legacy flow runs INSIDE the sandbox: Frame 4 requests a
-# sandbox-display capture (driven from outside via the daytona CLI), so its
-# evidence validation can fail here even though the journey itself passes.
-if pnpm evals:legacy --stack den --cdp-url http://127.0.0.1:9825 --flow org-connection-lifecycle-desktop 2>&1 | tee "$LOG_DIR/legacy-lifecycle.log"; then
-  echo "LEGACY BASELINE: PASSED"
-else
-  echo "LEGACY BASELINE: FAILED (see legacy-lifecycle.log; expected in-sandbox at Frame 4 sandbox-capture)"
-fi
-fi
-
 echo "==> E2E regression tests against the same live stack"
 export OPENWORK_EVAL_DEN_API_URL="http://127.0.0.1:8790"
 export OPENWORK_EVAL_DEN_WEB_URL="http://localhost:3005"

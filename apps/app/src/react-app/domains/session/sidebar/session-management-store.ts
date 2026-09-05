@@ -85,6 +85,22 @@ type SessionManagementStore = SessionManagementState & SessionManagementActions;
 
 const EMPTY_GROUP_STATE: WorkspaceGroupState = { groups: [], assignments: {} };
 
+function sameStrings(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function sameGroupDefinitions(left: SessionGroupDefinition[], right: SessionGroupDefinition[]): boolean {
+  return left.length === right.length && left.every((group, index) => (
+    group.id === right[index]?.id && group.label === right[index]?.label
+  ));
+}
+
+function sameAssignments(left: Record<string, string>, right: Record<string, string>): boolean {
+  const entries = Object.entries(left);
+  return entries.length === Object.keys(right).length
+    && entries.every(([sessionId, groupId]) => right[sessionId] === groupId);
+}
+
 let sessionGroupSyncHandler: SessionGroupSyncHandler | null = null;
 const sessionGroupSyncStatusByWorkspace: Record<string, SessionGroupSyncStatus> = {};
 
@@ -205,16 +221,20 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
         )),
 
       reorderSessions: (workspaceId, sessionIds) =>
-        set((state) => ({
-          orderByWorkspace: { ...state.orderByWorkspace, [workspaceId]: sessionIds },
-        })),
+        set((state) => (
+          sameStrings(state.orderByWorkspace[workspaceId] ?? [], sessionIds)
+            ? state
+            : { orderByWorkspace: { ...state.orderByWorkspace, [workspaceId]: sessionIds } }
+        )),
 
       assignGroup: (workspaceId, sessionId, groupId) => {
         set((state) => {
           const ws = state.groupsByWorkspace[workspaceId] ?? EMPTY_GROUP_STATE;
+          const nextGroupId = groupId && ws.groups.some((group) => group.id === groupId) ? groupId : null;
+          if ((ws.assignments[sessionId] ?? null) === nextGroupId) return state;
           const assignments = { ...ws.assignments };
-          if (groupId && ws.groups.some((g) => g.id === groupId)) {
-            assignments[sessionId] = groupId;
+          if (nextGroupId) {
+            assignments[sessionId] = nextGroupId;
           } else {
             delete assignments[sessionId];
           }
@@ -249,6 +269,8 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
       renameGroup: (workspaceId, groupId, label) => {
         set((state) => {
           const ws = state.groupsByWorkspace[workspaceId] ?? EMPTY_GROUP_STATE;
+          const target = ws.groups.find((group) => group.id === groupId);
+          if (!target || target.label === label) return state;
           return {
             groupsByWorkspace: {
               ...state.groupsByWorkspace,
@@ -277,6 +299,7 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
           for (const group of ws.groups) {
             if (!used.has(group.id)) groups.push(group);
           }
+          if (sameGroupDefinitions(ws.groups, groups)) return state;
           return {
             groupsByWorkspace: {
               ...state.groupsByWorkspace,
@@ -311,6 +334,11 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
           const collapsedGroupIds = (ws.collapsedGroupIds ?? []).filter(
             (id) => id === "__openwork_ungrouped" || knownGroupIds.has(id),
           );
+          if (
+            sameGroupDefinitions(ws.groups, serverState.groups)
+            && sameAssignments(ws.assignments, serverState.assignments)
+            && sameStrings(ws.collapsedGroupIds ?? [], collapsedGroupIds)
+          ) return state;
           return {
             groupsByWorkspace: {
               ...state.groupsByWorkspace,
@@ -362,6 +390,7 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
 
       forgetWorkspace: (workspaceId) =>
         set((state) => {
+          if (!(workspaceId in state.orderByWorkspace) && !(workspaceId in state.groupsByWorkspace)) return state;
           const { [workspaceId]: _o, ...orderRest } = state.orderByWorkspace;
           const { [workspaceId]: _g, ...groupsRest } = state.groupsByWorkspace;
           return { orderByWorkspace: orderRest, groupsByWorkspace: groupsRest };

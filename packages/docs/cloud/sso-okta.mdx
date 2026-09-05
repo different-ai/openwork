@@ -20,9 +20,9 @@ You need:
 - The final HTTPS OpenWork web origin, for example
   `https://openwork.example.com`.
 
-Keep **Require SSO for this organization** off until an owner has completed a
-fresh SAML sign-in. Keep password access available as a recovery path during
-setup.
+OpenWork keeps a new SSO configuration disabled until you verify the domain,
+complete a real authentication test, and explicitly enable SSO. Keep password
+access available as a recovery path during setup.
 
 <Note>
 For a Helm deployment with separate web and API hosts, use the URLs OpenWork
@@ -105,9 +105,13 @@ In OpenWork, open **Settings → SSO**, select **SAML**, and enter:
 | Audience URL | Leave blank to use the configured OpenWork auth origin |
 | IdP Certificate | **X.509 Certificate** |
 
-Save the connection. Compare the generated **ACS URL** with Okta's
-**Single sign-on URL** character for character. Also copy the generated
-OpenWork **Sign-in URL**; use this URL for the first test.
+Save the connection. OpenWork then shows setup values including **Sign-in URL**,
+**Redirect URL**, **ACS URL**, and **Metadata URL**. Compare the generated
+**ACS URL** with Okta's **Single sign-on URL** character for character. Also
+copy the generated OpenWork **Sign-in URL** into Okta if you want the Okta tile
+to launch the same organization-scoped flow.
+
+The saved configuration is still disabled at this point.
 
 ## 5. Verify the email domain
 
@@ -142,10 +146,17 @@ In the Okta application:
 
 Do not assign broad groups until the test user can complete the full flow.
 
-## 7. Test SP-initiated sign-in
+## 7. Test and enable SSO in OpenWork
 
-Open the organization-specific OpenWork **Sign-in URL** in a fresh browser
-session. Confirm that:
+After the Okta assignment and domain verification are complete:
+
+1. In OpenWork **Settings → SSO**, select **Enable Config** or **Enable SSO**.
+2. In the **Test SSO before enabling it** dialog, select **SSO Login**.
+3. Complete Okta authentication in the separate window.
+4. Return to OpenWork and confirm **Authentication test successful**.
+5. Select **Enable SSO**.
+
+During the test, confirm that:
 
 1. OpenWork redirects to the expected Okta tenant.
 2. Okta authenticates the assigned user.
@@ -154,8 +165,28 @@ session. Confirm that:
 5. The member identity in OpenWork uses the same email that Okta sent as
    NameID.
 
-Only after this succeeds should you configure SCIM or enable
-**Require SSO for this organization**.
+SSO is not offered to organization members until you explicitly enable it after
+the successful test. If you edit the SSO configuration after a successful test,
+test it again before enabling. Test links expire after five minutes.
+
+Only after this succeeds should you configure SCIM.
+
+## Just-in-time provisioning and password signup
+
+After Okta SAML SSO is enabled for a verified domain, OpenWork's standard
+sign-in flow routes users with that email domain to the organization SSO flow.
+When a user completes SAML sign-in successfully, OpenWork can create their
+organization membership just in time with the default `Member` role.
+
+JIT provisioning happens only after successful SAML authentication. Creating an
+email/password account with the same email domain does not add the user to the
+organization or create a SCIM-managed identity. If that user later completes
+SSO, OpenWork can link the matching account and provision the organization
+membership through SSO.
+
+OpenWork does not convert SAML attributes such as `role`, `groups`, or `admin`
+into elevated organization roles. Assign `Admin`, `Owner`, or custom roles in
+OpenWork after review, or through an invitation that grants the intended role.
 
 ## Troubleshooting
 
@@ -167,3 +198,6 @@ Only after this succeeds should you configure SCIM or enable
 | `invalid_destination` or `invalid_recipient` | Okta is posting to a different URL than OpenWork expects | Copy the generated OpenWork ACS URL into Okta and keep **Use this for Recipient URL and Destination URL** enabled |
 | `Invalid SAML response` | The assertion is unsigned, uses a deprecated algorithm, or the active Okta certificate differs from OpenWork | Sign the assertion with RSA-SHA256 and paste Okta's current active X.509 certificate into OpenWork |
 | Okta refuses access | The person is not assigned to the application | Assign the test user under **Assignments** |
+| OpenWork shows **Verify the SSO domain before testing this configuration** | The DNS TXT proof has not passed yet | Create the TXT record shown by OpenWork, wait for DNS propagation, then select **Verify domain** |
+| The test dialog shows **The SSO authentication window was closed before the test completed** | The popup was closed or redirected away before OpenWork received the test result | Start a new test and keep the authentication window open until it returns or closes itself |
+| OpenWork will not enable SSO after editing settings | The current configuration has not been tested successfully | Run **SSO Login** again, then select **Enable SSO** after the successful test |

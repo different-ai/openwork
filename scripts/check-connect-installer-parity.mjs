@@ -18,6 +18,10 @@ const onboardingScreen = await readFile(
   "utf8",
 );
 
+function sourceHasLiteral(sourceText, literal) {
+  return sourceText.split(literal).length > 1;
+}
+
 const serverUrlMatch = landingConfig.match(/export const MCP_SERVER_URL = "([^"]+)";/);
 assert.ok(serverUrlMatch, "Landing installer is missing MCP_SERVER_URL");
 const serverUrl = serverUrlMatch[1];
@@ -124,7 +128,7 @@ assert.ok(
   cloudDocs.includes("`app.openworklabs.com/api/den` is an internal same-origin desktop proxy"),
   "Cloud MCP docs must describe app.openworklabs.com/api/den as an internal same-origin desktop proxy",
 );
-assert.ok(cloudDocs.includes("https://app.openworklabs.com/api/auth"), "Cloud MCP docs are missing the auth server origin");
+assert.ok(sourceHasLiteral(cloudDocs, "https://app.openworklabs.com/api/auth"), "Cloud MCP docs are missing the auth server origin");
 assert.ok(cloudDocs.includes("RFC9728"), "Cloud MCP docs are missing RFC9728 discovery guidance");
 assert.ok(cloudDocs.includes("PKCE") && cloudDocs.includes("S256"), "Cloud MCP docs are missing PKCE S256 guidance");
 assert.ok(cloudDocs.includes("OAuth authorize and token requests must include exactly one"), "Cloud MCP docs are missing exact resource guidance");
@@ -141,7 +145,7 @@ assert.ok(!cloudDocs.includes("JWKS"), "Cloud MCP docs must not expose JWKS impl
 assert.ok(onboardingScreen.includes(serverUrl), "Cloud onboarding must copy the public /mcp/agent endpoint");
 assert.ok(!onboardingScreen.includes("openwork-ui-mcp"), "Cloud onboarding must not copy the local UI MCP package");
 assert.ok(
-  onboardingScreen.includes("https://openworklabs.com/docs/cloud/run-in-the-cloud/cloud-mcp"),
+  sourceHasLiteral(onboardingScreen, "https://openworklabs.com/docs/cloud/run-in-the-cloud/cloud-mcp"),
   "Cloud onboarding must link to the Cloud MCP docs",
 );
 assert.ok(onboardingScreen.includes("OpenCode is verified"), "Cloud onboarding must state verified clients");

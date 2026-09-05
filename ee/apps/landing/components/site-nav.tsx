@@ -12,6 +12,7 @@ type ActivePage =
   | "enterprise"
   | "connect"
   | "cloud"
+  | "dashboard"
   | "docs"
   | "roadmap";
 

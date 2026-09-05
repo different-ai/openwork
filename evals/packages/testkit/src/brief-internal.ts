@@ -1,4 +1,4 @@
-import { resolvePlace } from "./place.ts";
+import { resolvePlace } from "@openwork/env";
 
 export interface TestContext {
   place: ReturnType<typeof resolvePlace>;

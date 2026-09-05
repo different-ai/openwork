@@ -777,6 +777,14 @@ function safeBaseMessageFor(input: {
       ? `${message} Provider-declared message (untrusted): "${input.providerErrorMessage}".`
       : message
   }
+  if (input.code === "MCP_INVALID_PARAMS" || input.code === "MCP_PROVIDER_INVALID_PARAMS") {
+    // The provider's own rejection names the offending argument; without it a
+    // member cannot correct a launch input that omits a required field.
+    const message = "The provider rejected the tool arguments."
+    return input.providerErrorMessage
+      ? `${message} Provider-declared message (untrusted): "${input.providerErrorMessage}".`
+      : message
+  }
   if (input.code === "MCP_PROVIDER_DECLARED_ERROR") {
     const message = input.jsonRpcCode === undefined
       ? "The provider answered with a JSON-RPC error OpenWork does not recognize."
@@ -848,6 +856,21 @@ function safeBaseMessageFor(input: {
   }
   if (input.phase === "HTTP_ROUTING") {
     return "Den reached the host, but the configured path did not behave like the intended MCP endpoint."
+  }
+  if (input.category === "mcp_tool_input_invalid") {
+    if (input.code === "MCP_TOOL_ARGUMENT_INVALID_JSON") {
+      return "OpenWork rejected the tool arguments before contacting the provider because they are not valid JSON data (for example an undefined field, a non-finite number, or a non-plain object)."
+    }
+    if (input.code === "MCP_TOOL_ARGUMENT_SIZE_LIMIT") {
+      return "OpenWork rejected the tool arguments before contacting the provider because they exceed the 1 MiB argument limit."
+    }
+    if (input.code === "MCP_TOOL_ARGUMENT_DEPTH_LIMIT") {
+      return "OpenWork rejected the tool arguments before contacting the provider because they are nested too deeply."
+    }
+    if (input.code === "MCP_TOOL_ARGUMENT_CYCLE") {
+      return "OpenWork rejected the tool arguments before contacting the provider because they contain a circular reference."
+    }
+    return "OpenWork rejected the tool arguments before contacting the provider because they are invalid."
   }
   return "The MCP connection failed before OpenWork could complete the protocol lifecycle."
 }
@@ -1062,6 +1085,16 @@ function classifyByCode(code: string): Classification | null {
       retryable: true,
       actionOwner: "openwork",
       operatorAction: "Retry with the newer OAuth credential after the concurrent refresh completes.",
+    }
+  }
+  if (code === "MCP_OAUTH_CONFIGURATION_CHANGED") {
+    return {
+      phase: "AUTH_CLIENT_REGISTRATION",
+      category: "oauth_configuration_changed",
+      code,
+      retryable: true,
+      actionOwner: "openwork",
+      operatorAction: "Reload the MCP connection and retry client registration against its current OAuth issuer.",
     }
   }
   if (code === "MCP_OAUTH_CONFIGURATION_REQUIRED") {
@@ -1629,8 +1662,12 @@ export class ExternalMcpDiagnosticTracker {
         inferredClassification = classifyError(this.backgroundFailure.error, this.backgroundFailure.phase)
       }
     }
+    const sourceCode = errorCode(source.error)
+    const sourceIsApplicationOwnedOAuthFailure = sourceCode?.startsWith("MCP_OAUTH_") === true
+      || sourceCode === "MCP_LIFECYCLE_DEADLINE"
     const classified = this.forcedClassification
       && !TYPED_OAUTH_ERROR_NAMES.has(errorName(source.error))
+      && !sourceIsApplicationOwnedOAuthFailure
       && inferredClassification.phase !== "MCP_VERSION"
       ? this.forcedClassification
       : inferredClassification
@@ -1731,7 +1768,10 @@ function requestPhase(input: string | URL, init: RequestInit | undefined, endpoi
 
   if (url.origin === endpoint.origin && url.pathname === endpoint.pathname) {
     const method = jsonRpcMethod(body)
-    if (method === "initialize") return "MCP_INITIALIZE"
+    // server/discover is the modern wire's protocol negotiation; it shares
+    // the initialize phase so its unauthenticated bearer challenge is
+    // suppressed the same way.
+    if (method === "server/discover" || method === "initialize") return "MCP_INITIALIZE"
     if (method === "notifications/initialized") return "MCP_INITIALIZED"
     if (method === "tools/list") return "MCP_TOOL_DISCOVERY"
     if (method === "tools/call") return "MCP_TOOL_EXECUTION"

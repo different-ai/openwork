@@ -3,9 +3,9 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { startServer } from "./server.js";
+import { normalizeAuthorizedFolderPath, startServer } from "./server.js";
 import type { ServerConfig } from "./types.js";
-import { readRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
+import { readGlobalRuntimeOpencodeConfig, readRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 
 type Served = {
   port: number;
@@ -104,6 +104,10 @@ afterEach(async () => {
 });
 
 describe("authorized folders routes", () => {
+  test("normalizes a slash-heavy folder path", () => {
+    expect(normalizeAuthorizedFolderPath(`/shared${"/".repeat(100_000)}`)).toBe("/shared");
+  });
+
   test("lists visible folders and counts preserved hidden entries", async () => {
     const root = resolve(await createWorkspaceRoot());
     await writeFile(join(root, "opencode.jsonc"), JSON.stringify({
@@ -156,8 +160,13 @@ describe("authorized folders routes", () => {
     expect(typeof body.updatedAt).toBe("number");
 
     expect(readExternalDirectory(await readFile(configPath, "utf8"))["/shared/*"]).toBeUndefined();
-    const runtimeConfig = await readRuntimeOpencodeConfig(config, "ws_1");
+    // Authorized folders are engine-global: the write lands in the ENGINE_GLOBAL
+    // row (the injected engine config file's only runtime source) and the legacy
+    // workspace row is cleaned so removals cannot be shadowed.
+    const runtimeConfig = await readGlobalRuntimeOpencodeConfig(config);
     const externalDirectory = runtimeConfig.permission?.external_directory ?? {};
+    const workspaceRuntimeConfig = await readRuntimeOpencodeConfig(config, "ws_1");
+    expect(workspaceRuntimeConfig.permission?.external_directory).toBeUndefined();
     expect(externalDirectory["/hidden"]).toBe("allow");
     expect(externalDirectory["/denied/*"]).toBe("deny");
     expect(externalDirectory["/shared/*"]).toBe("allow");

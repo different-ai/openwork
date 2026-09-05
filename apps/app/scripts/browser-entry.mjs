@@ -78,12 +78,13 @@ function createInvalidToolStream() {
   ];
 }
 
-function hasBuiltInBrowserPrompt(haystack) {
-  return (
-    haystack.includes("built-in openwork browser") ||
-    haystack.includes("openwork browser") ||
-    haystack.includes("example.com")
-  );
+function hasFixtureText(text, marker) {
+  return text.split(marker).length > 1;
+}
+
+function hasBuiltInBrowserPrompt(promptText) {
+  return ["built-in openwork browser", "openwork browser", "example.com"]
+    .some((marker) => hasFixtureText(promptText, marker));
 }
 
 const args = parseArgs(process.argv.slice(2));
@@ -219,7 +220,7 @@ try {
   });
 
   const port = await findFreePort();
-  opencode = await spawnOpencodeServe({ directory: tmpdir, port });
+  opencode = await spawnOpencodeServe({ directory: tmpdir, port, pure: false });
   const client = makeClient({ baseUrl: opencode.baseUrl, directory: opencode.cwd });
 
   await step("health", async () => {

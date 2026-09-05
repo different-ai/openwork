@@ -14,7 +14,7 @@ const stopScimMaintenanceLoop = startScimMaintenanceLoop()
 const stopCloudIdleStopLoop = startCloudIdleStopLoop()
 const stopWorkerProvisioningReconcileLoop = startWorkerProvisioningReconcileLoop()
 const stopGithubSyncWorker = startGithubSyncWorker()
-const automationScheduler = startAutomationSchedulerLoop()
+const automationScheduler = startAutomationSchedulerLoop({ enabled: env.automations.runtimeEnabled })
 
 appLogger.info("external mcp implementation selected", { component: "server", runtime: externalMcpClientRuntimeName })
 

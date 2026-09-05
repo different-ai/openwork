@@ -6,7 +6,7 @@ export type PluginImportServer = {
   serverKey: string;
   url: string | null;
   supported: boolean;
-  skippedReason: "missing_url" | "local_unsupported" | "invalid_url" | "unsupported_auth" | null;
+  skippedReason: "headers_unsupported" | "invalid_config" | "invalid_url" | "local_unsupported" | "missing_url" | "unsupported_auth" | null;
 };
 
 export type PluginImportSkill = {
@@ -37,16 +37,85 @@ export type PluginImportDraft = {
 };
 
 const STORAGE_KEY = "openwork.plugin-import-draft.v1";
+const CREDENTIAL_QUERY_KEYS = new Set([
+  "accesstoken",
+  "apikey",
+  "credential",
+  "credentials",
+  "password",
+  "passwd",
+  "secret",
+  "token",
+]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
 function skippedServerReason(value: unknown): PluginImportServer["skippedReason"] {
-  if (value === "missing_url" || value === "local_unsupported" || value === "invalid_url" || value === "unsupported_auth") {
+  if (value === "headers_unsupported" || value === "invalid_config" || value === "invalid_url" || value === "local_unsupported" || value === "missing_url" || value === "unsupported_auth") {
     return value;
   }
   return null;
+}
+
+function storedImportOptions(value: Record<string, unknown>): Pick<PluginImportDraft, "authType" | "credentialMode"> | null {
+  const authType = value.serverMode === undefined
+    ? (value.authType === undefined ? "oauth" : value.authType)
+    : value.serverMode === "oauth"
+      ? "oauth"
+      : value.serverMode === "none"
+        ? "none"
+        : null;
+  const credentialMode = value.accountScope === undefined
+    ? (value.credentialMode === undefined ? "per_member" : value.credentialMode)
+    : value.accountScope === "shared"
+      ? "shared"
+      : value.accountScope === "member"
+        ? "per_member"
+        : null;
+  if ((authType !== "oauth" && authType !== "none") || (credentialMode !== "per_member" && credentialMode !== "shared")) {
+    return null;
+  }
+  return { authType, credentialMode };
+}
+
+function hasCredentialQuery(url: URL): boolean {
+  return Array.from(url.searchParams.keys()).some((key) =>
+    CREDENTIAL_QUERY_KEYS.has(key.toLowerCase().replaceAll("-", "").replaceAll("_", "")),
+  );
+}
+
+export function normalizePublicGitHubPluginUrl(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    throw new Error("Enter a valid public GitHub plugin URL.");
+  }
+  if (url.protocol !== "https:" || (url.hostname !== "github.com" && url.hostname !== "www.github.com")) {
+    throw new Error("Plugin imports must use an HTTPS github.com URL.");
+  }
+  if (url.username || url.password || url.search || url.hash) {
+    throw new Error("GitHub plugin URLs cannot include credentials, query parameters, or fragments.");
+  }
+  return url.toString();
+}
+
+function validateSelectedServerUrl(server: PluginImportServer): void {
+  if (!server.url) throw new Error(`The selected MCP server "${server.name}" does not have a remote URL.`);
+  let url: URL;
+  try {
+    url = new URL(server.url);
+  } catch {
+    throw new Error(`The selected MCP server "${server.name}" has an invalid URL.`);
+  }
+  if (url.protocol !== "https:") {
+    throw new Error(`The selected MCP server "${server.name}" must use HTTPS.`);
+  }
+  if (url.username || url.password || url.hash || hasCredentialQuery(url)) {
+    throw new Error(`The selected MCP server "${server.name}" URL cannot contain credentials or a fragment.`);
+  }
 }
 
 export function parsePluginImportPreview(payload: unknown): PluginImportPreview {
@@ -91,18 +160,22 @@ function parseStoredDraft(value: unknown): PluginImportDraft | null {
   if (!isRecord(value) || value.version !== 1 || typeof value.githubUrl !== "string" || !isRecord(value.preview)) {
     return null;
   }
-  if (value.authType !== "oauth" && value.authType !== "none") return null;
-  if (value.credentialMode !== "per_member" && value.credentialMode !== "shared") return null;
+  // Current drafts store only allowlisted, non-sensitive option labels. Older
+  // version-one drafts used the internal field names or omitted the options.
+  const options = storedImportOptions(value);
+  if (!options) return null;
   if (!Array.isArray(value.selectedServerKeys) || !value.selectedServerKeys.every((entry) => typeof entry === "string")) return null;
   if (!Array.isArray(value.selectedSkillKeys) || !value.selectedSkillKeys.every((entry) => typeof entry === "string")) return null;
 
   try {
     const preview = parsePluginImportPreview({ item: value.preview });
+    const githubUrl = normalizePublicGitHubPluginUrl(value.githubUrl);
+    if (preview.servers.some((server) => server.url !== null)) return null;
     return {
       version: 1,
-      authType: value.authType,
-      credentialMode: value.credentialMode,
-      githubUrl: value.githubUrl,
+      authType: options.authType,
+      credentialMode: options.credentialMode,
+      githubUrl,
       preview,
       selectedServerKeys: value.selectedServerKeys,
       selectedSkillKeys: value.selectedSkillKeys,
@@ -117,14 +190,62 @@ export function loadPluginImportDraft(): PluginImportDraft | null {
   const value = window.sessionStorage.getItem(STORAGE_KEY);
   if (!value) return null;
   try {
-    return parseStoredDraft(JSON.parse(value));
+    const draft = parseStoredDraft(JSON.parse(value));
+    if (!draft) window.sessionStorage.removeItem(STORAGE_KEY);
+    return draft;
   } catch {
+    window.sessionStorage.removeItem(STORAGE_KEY);
     return null;
   }
 }
 
+export function minimizePluginImportDraft(draft: PluginImportDraft): PluginImportDraft {
+  const githubUrl = normalizePublicGitHubPluginUrl(draft.githubUrl);
+  const selectedServerKeys = [...new Set(draft.selectedServerKeys)];
+  const selectedSkillKeys = [...new Set(draft.selectedSkillKeys)];
+  const selectedServers = draft.preview.servers.filter((server) => selectedServerKeys.includes(server.serverKey));
+  const selectedSkills = draft.preview.skills.filter((skill) => selectedSkillKeys.includes(skill.skillKey));
+
+  if (selectedServers.length !== selectedServerKeys.length || selectedServers.some((server) => !server.supported)) {
+    throw new Error("The selected MCP servers no longer match this plugin preview.");
+  }
+  if (selectedSkills.length !== selectedSkillKeys.length || selectedSkills.some((skill) => !skill.supported)) {
+    throw new Error("The selected skills no longer match this plugin preview.");
+  }
+  selectedServers.forEach(validateSelectedServerUrl);
+
+  return {
+    version: 1,
+    authType: draft.authType,
+    credentialMode: draft.credentialMode,
+    githubUrl,
+    preview: {
+      repositoryFullName: draft.preview.repositoryFullName,
+      rootPath: draft.preview.rootPath,
+      servers: selectedServers.map((server) => ({ ...server, url: null })),
+      skills: selectedSkills.map((skill) => ({
+        ...skill,
+        description: null,
+        sourcePath: "SKILL.md",
+      })),
+      warnings: [],
+    },
+    selectedServerKeys,
+    selectedSkillKeys,
+  };
+}
+
 export function savePluginImportDraft(draft: PluginImportDraft): void {
-  window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(draft));
+  const minimized = minimizePluginImportDraft(draft);
+  window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify({
+    version: minimized.version,
+    serverMode: minimized.authType === "none" ? "none" : "oauth",
+    accountScope: minimized.credentialMode === "shared" ? "shared" : "member",
+    githubUrl: minimized.githubUrl,
+    preview: minimized.preview,
+    selectedServerKeys: minimized.selectedServerKeys,
+    selectedSkillKeys: minimized.selectedSkillKeys,
+  }));
 }
 
 export function clearPluginImportDraft(): void {

@@ -57,7 +57,10 @@ export const AuthAccountTable = mysqlTable(
       .notNull()
       .default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
   },
-  (table) => [index("account_user_id").on(table.userId)],
+  (table) => [
+    index("account_user_id").on(table.userId),
+    index("account_account_id_provider_id").on(sql`${table.accountId}(191)`, sql`${table.providerId}(191)`),
+  ],
 )
 
 export const AuthVerificationTable = mysqlTable(
@@ -196,6 +199,7 @@ export const OAuthRefreshTokenTable = mysqlTable(
     confirmation: text("confirmation"),
   },
   (table) => [
+    index("oauth_refresh_token_token").on(sql`${table.token}(191)`),
     index("oauth_refresh_token_client_id").on(table.clientId),
     index("oauth_refresh_token_session_id").on(table.sessionId),
     index("oauth_refresh_token_user_id").on(table.userId),
@@ -383,10 +387,20 @@ export const SsoConnectionTable = mysqlTable(
     kind: varchar("kind", { length: 16 }).notNull(),
     issuer: varchar("issuer", { length: 2048 }).notNull(),
     domain: varchar("domain", { length: 255 }).notNull(),
-    status: varchar("status", { length: 32 }).notNull().default("enabled"),
+    status: varchar("status", { length: 32 }).notNull().default("disabled"),
     signInPath: varchar("sign_in_path", { length: 2048 }).notNull(),
+    configRevision: varchar("config_revision", { length: 64 }).notNull().default(""),
+    testStatus: varchar("test_status", { length: 32 }).notNull().default("untested"),
     lastTestedAt: timestamp("last_tested_at", { fsp: 3 }),
+    lastTestedRevision: varchar("last_tested_revision", { length: 64 }),
     lastError: text("last_error"),
+    domainVerificationToken: varchar("domain_verification_token", { length: 255 }),
+    activeTestIntentId: varchar("active_test_intent_id", { length: 64 }),
+    activeTestUserId: denTypeIdColumn("user", "active_test_user_id"),
+    activeTestProviderId: varchar("active_test_provider_id", { length: 255 }),
+    activeTestConfigRevision: varchar("active_test_config_revision", { length: 64 }),
+    activeTestExpiresAt: timestamp("active_test_expires_at", { fsp: 3 }),
+    activeTestStartedAt: timestamp("active_test_started_at", { fsp: 3 }),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { fsp: 3 })
       .notNull()

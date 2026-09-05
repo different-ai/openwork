@@ -1,4 +1,5 @@
 import { beforeAll, expect, test } from "bun:test"
+import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { Hono } from "hono"
 
 function seedRequiredEnv() {
@@ -33,7 +34,7 @@ function createSignedOrgCoreApp() {
       createdAt: new Date(),
       updatedAt: new Date(),
     })
-    c.set("session", null)
+    c.set("session", { id: createDenTypeId("session"), token: "signed-user-session" })
     c.set("apiKey", null)
     await next()
   })

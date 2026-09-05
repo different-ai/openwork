@@ -24,7 +24,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
-import { connect, evaluate, captureScreenshot, pickAppTarget, debuggerUrlFor, listTargets } from "../runner/cdp.mjs";
+import { connect, evaluate, captureScreenshot, pickAppTarget, debuggerUrlFor, listTargets } from "@openwork/cdp";
 
 const ADMIN_CDP = "http://127.0.0.1:9224";
 const MEMBER_CDP = "http://127.0.0.1:9823";

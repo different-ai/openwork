@@ -4,11 +4,15 @@ import type { PermissionRequest, PermissionV2Request, QuestionRequest } from "@o
 
 import type { OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
 import { getReactQueryClient } from "../src/react-app/infra/query-client";
+import { useSessionActivityStore } from "../src/react-app/domains/session/status/session-activity-store";
 import {
   __applySessionSyncEventForTest,
   __createWorkspaceSessionSyncForTest,
   __disposeWorkspaceSessionSyncForTest,
   __hasWorkspaceSessionSyncForTest,
+  __queueSessionSyncDeltaForTest,
+  __setSessionSyncDeltaFlushSchedulerForTest,
+  applyPendingDeltasToTranscript,
   coalescePendingDeltas,
   ensureWorkspaceSessionSync,
   permissionKey,
@@ -18,6 +22,7 @@ import {
   seedSessionState,
   trackWorkspaceSessionSync,
   transcriptKey,
+  type DeltaFlushLane,
 } from "../src/react-app/domains/session/sync/session-sync";
 
 function permission(id: string, sessionID: string): PermissionRequest {
@@ -101,6 +106,9 @@ function snapshotWithMessages(
 
 afterEach(() => {
   getReactQueryClient().clear();
+  for (const sessionId of ["session-a", "session-b", "session-child"]) {
+    useSessionActivityStore.getState().removeSession("workspace-a", sessionId);
+  }
 });
 
 describe("session permission sync", () => {
@@ -142,6 +150,7 @@ describe("session permission sync", () => {
     expect(getReactQueryClient().getQueryData(permissionKey("workspace-a", "session-a"))).toMatchObject([
       { id: "perm-live", sessionID: "session-a", permission: "bash" },
     ]);
+    expect(useSessionActivityStore.getState().getStatus("workspace-a", "session-a")).toBe("waiting");
   });
 
   test("drops stale permissions that predate a fresh snapshot", () => {
@@ -197,6 +206,31 @@ describe("session permission sync", () => {
       expect(getReactQueryClient().getQueryData(permissionKey("workspace-a", "session-a"))).toEqual([]);
     } finally {
       releaseSession();
+      cleanup();
+    }
+  });
+
+  test("keeps a child permission that arrives before the child session is tracked", () => {
+    const syncInput = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", openworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+
+    try {
+      __applySessionSyncEventForTest(syncInput, {
+        type: "permission.v2.asked",
+        properties: v2Permission("perm-child", "session-child"),
+      });
+
+      expect(getReactQueryClient().getQueryData(permissionKey("workspace-a", "session-child"))).toMatchObject([
+        { id: "perm-child", sessionID: "session-child", protocol: "v2" },
+      ]);
+
+      __applySessionSyncEventForTest(syncInput, {
+        type: "permission.v2.replied",
+        properties: { sessionID: "session-child", requestID: "perm-child", reply: "reject" },
+      });
+
+      expect(getReactQueryClient().getQueryData(permissionKey("workspace-a", "session-child"))).toEqual([]);
+    } finally {
       cleanup();
     }
   });
@@ -256,6 +290,168 @@ describe("session transcript sync", () => {
       { sessionId: "session-a", messageId: "msg-a", partId: "part-b", reasoning: true, delta: "think" },
       { sessionId: "session-b", messageId: "msg-b", partId: "part-a", reasoning: false, delta: "other" },
     ]);
+  });
+
+  test("applies a frame of deltas with stable history references", () => {
+    const history = Array.from({ length: 200 }, (_, index) =>
+      uiMessage(`history-${index}`, index % 2 === 0 ? "user" : "assistant", `history ${index}`),
+    );
+    const active: UIMessage = {
+      id: "active-assistant",
+      role: "assistant",
+      parts: [
+        {
+          type: "reasoning",
+          text: "think",
+          state: "streaming",
+          providerMetadata: { opencode: { partId: "reasoning-part" } },
+        },
+        {
+          type: "text",
+          text: "answer",
+          state: "streaming",
+          providerMetadata: { opencode: { partId: "text-part" } },
+        },
+        {
+          type: "file",
+          url: "file:///tmp/result.txt",
+          mediaType: "text/plain",
+          providerMetadata: { opencode: { partId: "file-part" } },
+        },
+      ],
+    };
+    const transcript = [...history, active];
+
+    const result = applyPendingDeltasToTranscript(transcript, [
+      { sessionId: "session-a", messageId: active.id, partId: "reasoning-part", reasoning: false, delta: " more" },
+      { sessionId: "session-a", messageId: active.id, partId: "text-part", reasoning: false, delta: " one" },
+      { sessionId: "session-a", messageId: active.id, partId: "text-part", reasoning: false, delta: " two" },
+      { sessionId: "session-a", messageId: active.id, partId: "not-declared", reasoning: false, delta: "later" },
+    ]);
+
+    expect(result.unapplied.map((item) => item.delta)).toEqual(["later"]);
+    expect(result.messages).not.toBe(transcript);
+    expect(result.messages.slice(0, history.length).every((message, index) => message === history[index])).toBe(true);
+    expect(result.messages.at(-1)).not.toBe(active);
+    expect(result.messages.at(-1)?.parts[0]).toMatchObject({ type: "reasoning", text: "think more" });
+    expect(result.messages.at(-1)?.parts[1]).toMatchObject({ type: "text", text: "answer one two" });
+    expect(result.messages.at(-1)?.parts[2]).toBe(active.parts[2]);
+  });
+
+  test("commits visible deltas before background-session deltas", () => {
+    const scheduled: Array<{
+      lane: DeltaFlushLane;
+      run: () => void;
+      cancelled: boolean;
+    }> = [];
+    __setSessionSyncDeltaFlushSchedulerForTest((lane, run) => {
+      const task = { lane, run, cancelled: false };
+      scheduled.push(task);
+      return () => {
+        task.cancelled = true;
+      };
+    });
+
+    const syncInput = {
+      workspaceId: "workspace-priority",
+      baseUrl: "http://127.0.0.1:4321",
+      openworkToken: "token",
+      visibleSessionId: "session-visible",
+    };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    const releaseVisible = trackWorkspaceSessionSync(syncInput, "session-visible");
+    const releaseBackground = trackWorkspaceSessionSync(syncInput, "session-background");
+    const streamMessage = (messageId: string, partId: string): UIMessage => ({
+      id: messageId,
+      role: "assistant",
+      parts: [{
+        type: "text",
+        text: "",
+        state: "streaming",
+        providerMetadata: { opencode: { partId } },
+      }],
+    });
+    const queryClient = getReactQueryClient();
+    queryClient.setQueryData(
+      transcriptKey(syncInput.workspaceId, "session-visible"),
+      [streamMessage("message-visible", "part-visible")],
+    );
+    queryClient.setQueryData(
+      transcriptKey(syncInput.workspaceId, "session-background"),
+      [streamMessage("message-background", "part-background")],
+    );
+    const commits = { visible: 0, background: 0 };
+    const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
+      if (event.type !== "updated") return;
+      const queryKey = event.query.queryKey;
+      if (queryKey[0] !== "react-session-transcript" || queryKey[1] !== syncInput.workspaceId) return;
+      if (queryKey[2] === "session-visible") commits.visible += 1;
+      if (queryKey[2] === "session-background") commits.background += 1;
+    });
+
+    try {
+      for (let index = 0; index < 24; index += 1) {
+        __queueSessionSyncDeltaForTest(syncInput, {
+          sessionId: "session-background",
+          messageId: "message-background",
+          partId: "part-background",
+          reasoning: false,
+          delta: "b",
+        });
+      }
+      for (let index = 0; index < 24; index += 1) {
+        __queueSessionSyncDeltaForTest(syncInput, {
+          sessionId: "session-visible",
+          messageId: "message-visible",
+          partId: "part-visible",
+          reasoning: false,
+          delta: "v",
+        });
+      }
+
+      expect(scheduled.map((task) => task.lane)).toEqual(["background", "foreground"]);
+      expect(scheduled[0]?.cancelled).toBe(true);
+      scheduled[1]?.run();
+
+      expect(commits).toEqual({ visible: 1, background: 0 });
+      expect(queryClient.getQueryData<UIMessage[]>(
+        transcriptKey(syncInput.workspaceId, "session-visible"),
+      )?.[0]?.parts[0]).toMatchObject({ text: "v".repeat(24) });
+      expect(queryClient.getQueryData<UIMessage[]>(
+        transcriptKey(syncInput.workspaceId, "session-background"),
+      )?.[0]?.parts[0]).toMatchObject({ text: "" });
+
+      expect(scheduled[2]?.lane).toBe("background");
+      scheduled[2]?.run();
+      expect(commits).toEqual({ visible: 1, background: 1 });
+      expect(queryClient.getQueryData<UIMessage[]>(
+        transcriptKey(syncInput.workspaceId, "session-background"),
+      )?.[0]?.parts[0]).toMatchObject({ text: "b".repeat(24) });
+
+      __queueSessionSyncDeltaForTest(syncInput, {
+        sessionId: "session-background",
+        messageId: "message-background",
+        partId: "part-background",
+        reasoning: false,
+        delta: " complete",
+      });
+      expect(scheduled[3]?.lane).toBe("background");
+      __applySessionSyncEventForTest(syncInput, {
+        type: "session.idle",
+        properties: { sessionID: "session-background" },
+      });
+      expect(scheduled[3]?.cancelled).toBe(true);
+      expect(commits).toEqual({ visible: 1, background: 2 });
+      expect(queryClient.getQueryData<UIMessage[]>(
+        transcriptKey(syncInput.workspaceId, "session-background"),
+      )?.[0]?.parts[0]).toMatchObject({ text: `${"b".repeat(24)} complete` });
+    } finally {
+      unsubscribe();
+      releaseBackground();
+      releaseVisible();
+      cleanup();
+      __setSessionSyncDeltaFlushSchedulerForTest(null);
+    }
   });
 
   test("keeps live-only messages when an idle snapshot is stale", () => {

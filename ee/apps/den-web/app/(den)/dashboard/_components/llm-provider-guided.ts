@@ -65,6 +65,25 @@ export function buildGuidedProviderEnvName(providerId: string): string {
     return `${normalized || "CUSTOM_PROVIDER"}_API_KEY`;
 }
 
+export function normalizeAzureResourceNameInput(value: string): string {
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+
+    try {
+        const url = new URL(trimmed);
+        const host = url.hostname.toLowerCase();
+        for (const suffix of [".services.ai.azure.com", ".openai.azure.com"]) {
+            if (host.endsWith(suffix)) {
+                return host.slice(0, -suffix.length).split(".").pop() ?? trimmed;
+            }
+        }
+    } catch {
+        // Not a URL: keep treating the value as the resource name itself.
+    }
+
+    return trimmed;
+}
+
 export function validateGuidedCustomProvider(input: {
     providerId: string;
     baseUrl: string;

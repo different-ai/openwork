@@ -1,0 +1,76 @@
+---
+title: "Enterprise desktop deployment"
+description: "Deploy the OpenWork Enterprise binary with your existing software distribution, optionally pushing one configuration file through MDM."
+---
+
+Enterprise deployment is the standard **OpenWork Enterprise binary** plus an optional MDM push of one configuration file. There is no customer-specific installer build, no wrapping, and no repackaging — the signed release artifacts are never modified, so normal macOS and Windows signature verification is preserved.
+
+## The enterprise binary
+
+OpenWork ships a dedicated enterprise distribution alongside the public one. Both are published on [GitHub Releases](https://github.com/different-ai/openwork/releases); enterprise artifacts follow the `enterprise` update channel.
+
+| Platform | Artifact |
+| --- | --- |
+| macOS (Apple Silicon / Intel) | `openwork-enterprise-mac-arm64-<version>.dmg`, `openwork-enterprise-mac-x64-<version>.dmg` |
+| Windows (x64 / ARM64) | `openwork-enterprise-win-x64-<version>.exe`, `openwork-enterprise-win-arm64-<version>.exe` |
+| Linux | `openwork-enterprise-linux-x86_64-<version>.AppImage`, `openwork-enterprise-linux-arm64-<version>.AppImage`, `.tar.gz` variants |
+
+The enterprise distribution differs from the public build in ways that are baked into the package metadata at build time — not toggled by configuration:
+
+- The product is named **OpenWork Enterprise**.
+- Sign-in is always required.
+- **Activation is always required**: before an administrator-provisioned activation completes, the app exposes only the minimal surface needed to accept a connect link and read or write its bootstrap configuration. Chat, tools, and workspace access stay locked.
+- Auto-update follows the `enterprise` release channel, so enterprise installs never pick up public-channel artifacts.
+
+A packaged public build can never be turned into an enterprise build with environment variables or configuration files; the distribution flavor is read only from immutable package metadata.
+
+## Optional MDM push: `desktop-bootstrap.json`
+
+If you manage the fleet with MDM (Jamf, Intune, or similar), distribute the enterprise binary the way you distribute any other app, and optionally write one JSON file during provisioning so the first launch already knows your Den server:
+
+| OS | Canonical path |
+| --- | --- |
+| Windows | `%LOCALAPPDATA%\openwork\desktop-bootstrap.json` (`%XDG_CONFIG_HOME%\openwork\desktop-bootstrap.json` wins if set) |
+| macOS / Linux | `$XDG_CONFIG_HOME/openwork/desktop-bootstrap.json`, falling back to `~/.config/openwork/desktop-bootstrap.json` |
+
+```json
+{
+  "baseUrl": "https://openwork.example.com",
+  "apiBaseUrl": "https://openwork.example.com/api/den",
+  "requireSignin": true,
+  "brandAppName": "Example Corp OpenWork",
+  "writtenAt": "2026-08-20T12:00:00.000Z"
+}
+```
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `baseUrl` | Yes | Your Den web origin. The desktop derives API and MCP paths through this origin's `/api/den` proxy. |
+| `apiBaseUrl` | No | Separate Den API base, only if you publish one. In a single-origin topology, omit it or use the `/api/den` proxy path. |
+| `requireSignin` | Yes | Whether the app requires organization sign-in before use. Enterprise builds enforce sign-in regardless of this value. |
+| `requireActivation` | No | Ignored by enterprise builds, which always require activation. Lets a public build opt into the activation gate. |
+| `brandAppName`, `brandLogoUrl`, `brandIconUrl` | No | Organization branding shown in the app. |
+| `writtenAt` | Yes | ISO 8601 timestamp. When more than one bootstrap file exists, the valid configuration with the newest `writtenAt` wins. |
+
+Deployment details worth knowing:
+
+- Older builds read a legacy `~/.config/openwork` path on every OS. Current builds still read it for compatibility; the newest `writtenAt` decides which file applies.
+- Clearing cloud configuration in the app removes bootstrap files entirely, so a fresh MDM-dropped config wins on the next launch.
+- `OPENWORK_DESKTOP_BOOTSTRAP_PATH` points a machine at an isolated bootstrap file for testing; legacy global configuration never crosses that boundary.
+
+## What you do not push through MDM
+
+- **Activation.** The app writes `enterpriseActivation` into `desktop-bootstrap.json` only after a signed activation claim verifies. Do not provision this record yourself; a hand-written entry is not proof of a provisioned tenant, and the app treats it as incomplete.
+- **Certificates.** The desktop builds its trust bundle from the OS trust stores — Windows machine and user Root/CA stores, and the macOS administrator-controlled System keychains. Deploy enterprise CAs the way you already do; no OpenWork-specific certificate file exists. See [Certificate trust and proxies](/start-here/certificate-trust-and-proxies).
+- **Desktop policies.** Version pinning and feature policies are delivered by your Den server after sign-in and enforced by the app automatically — no MDM scripting. Manage them in the organization dashboard.
+
+## Choosing between install links and MDM
+
+| | Organization install links | Enterprise binary + MDM |
+| --- | --- | --- |
+| Best for | Self-serve onboarding, no device management required | Managed fleets with existing software distribution |
+| Binary | Standard public installer, delivered by Den or GitHub ([Installer delivery](/start-here/installer-delivery)) | Enterprise artifacts, distributed by your MDM |
+| Server configuration | Browser deep-link handoff after install | `desktop-bootstrap.json` written at provisioning time |
+| First launch | User confirms the exact organization and server | App already targets your Den server |
+
+Both paths end at the same place: normal organization sign-in against your Den deployment. For fully isolated networks, combine this page with the [Air-gapped deployment](/start-here/air-gapped-deployment) checklist — with MDM distribution, installer bytes never need to transit Den at all.

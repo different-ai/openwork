@@ -6,7 +6,7 @@ import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
-import { authenticatedRoute, jsonValidator, publicRoute } from "../../middleware/index.js"
+import { jsonValidator, publicRoute, userSessionRoute } from "../../middleware/index.js"
 import { db } from "../../db.js"
 import { env, type DenOrgMode } from "../../env.js"
 import { resolveUserOrganizations } from "../../orgs.js"
@@ -141,7 +141,7 @@ function withDenProxyPath(origin: string) {
 }
 
 function configuredDesktopDenBaseUrl() {
-  return env.desktopDenBaseUrl ?? withDenProxyPath(process.env.BETTER_AUTH_URL?.trim() || env.betterAuthUrl)
+  return env.desktopDenBaseUrl ?? withDenProxyPath(env.webUrl)
 }
 
 export function resolveDesktopDenBaseUrl(request: Request) {
@@ -409,7 +409,7 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
         401: jsonResponse("The caller must be signed in to create a desktop handoff grant.", unauthorizedSchema),
       },
     }),
-    authenticatedRoute(),
+    userSessionRoute(),
     jsonValidator(createGrantSchema),
     async (c) => {
     const user = c.get("user")

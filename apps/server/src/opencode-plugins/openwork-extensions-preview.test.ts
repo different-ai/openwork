@@ -61,6 +61,7 @@ const automationProposalResultSchema = z.object({
     instructions: z.string(),
     schedule: z.record(z.string(), z.unknown()),
     model: z.record(z.string(), z.unknown()).optional(),
+    workspaceId: z.string().optional(),
   }),
 });
 
@@ -89,14 +90,19 @@ async function transformedSystem(plugin: Awaited<ReturnType<typeof OpenWorkExten
   return output.system.join("\n");
 }
 
-function startFakeOpenWorkServer() {
+function startFakeOpenWorkServer(options: { failPromptText?: string; failSessionListWorkspaceId?: string } = {}) {
   const requests: Array<{ pathname: string; search: string; authorization: string | null; method: string; body?: unknown }> = [];
+  const uiControlRequests: Array<{ authorization: string | null; body: unknown }> = [];
+  let createdCount = 0;
 
   const workspaceOne = { id: "ws_1", name: "Main", path: "/tmp/main" };
-  const workspaceTwo = { id: "ws_2", name: "Archive", displayName: "Archive", path: "/tmp/archive" };
+  const workspaceTwo = { id: "ws_2", name: "Archive", displayName: "Archive", path: "/tmp/archive", workspaceType: "remote" };
   const sessionAlpha = { id: "ses_alpha", title: "Alpha planning", time: { created: 100, updated: 300 } };
   const sessionBeta = { id: "ses_beta", title: "Neon backlog", time: { created: 50, updated: 200 } };
-  const sessionArchive = { id: "ses_archive", title: "Archive decisions", time: { created: 10, updated: 100 } };
+  const sessionArchive = { id: "ses_archive", title: "Archive decisions", directory: "/tmp/archive", time: { created: 10, updated: 100 } };
+  // Lives outside every workspace root: reads must refuse to expose it even
+  // though the native engine route happily returns it (cross-workspace leak).
+  const sessionForeign = { id: "ses_foreign", title: "Other tenant secrets", directory: "/tmp/elsewhere", time: { created: 20, updated: 120 } };
 
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -114,6 +120,11 @@ function startFakeOpenWorkServer() {
 
       if (request.headers.get("authorization") !== "Bearer test-token") {
         return Response.json({ message: "Unauthorized" }, { status: 401 });
+      }
+
+      if (url.pathname === "/experimental/ui-control/request" && request.method === "POST") {
+        uiControlRequests.push({ authorization: record.authorization, body: record.body });
+        return Response.json({ ok: true });
       }
 
       if (url.pathname === "/experimental/connect/state") {
@@ -146,7 +157,7 @@ function startFakeOpenWorkServer() {
             description: "Prepare a connected customer briefing.",
             capability: "skill:skl_customer_briefing",
           }],
-          instruction: "<available_skills><skill><name>customer-briefing</name></skill></available_skills>",
+          instruction: "<available_remote_skills><skill name=\"customer-briefing\" capability=\"skill:skill_customer_briefing\">Customer briefing</skill></available_remote_skills>",
         });
       }
 
@@ -154,58 +165,78 @@ function startFakeOpenWorkServer() {
         return Response.json({ items: [workspaceOne, workspaceTwo], workspaces: [workspaceOne, workspaceTwo] });
       }
 
-      if (url.pathname === "/workspace/ws_1/sessions") {
-        return Response.json({ items: [sessionAlpha, sessionBeta] });
+      if (url.pathname === "/workspace/ws_1/opencode/session") {
+        if (options.failSessionListWorkspaceId === "ws_1") {
+          return Response.json({ message: "Remote worker unavailable" }, { status: 503 });
+        }
+        return Response.json([sessionAlpha, sessionBeta]);
       }
-      if (url.pathname === "/workspace/ws_2/sessions") {
+      if (url.pathname === "/workspace/ws_2/opencode/session") {
         if (request.method === "POST") {
-          const body = z.object({ title: z.string(), prompt: z.string() }).parse(record.body);
+          const body = z.object({ title: z.string() }).strict().parse(record.body);
+          createdCount += 1;
           return Response.json({
-            item: {
-              id: `ses_created_${requests.filter((entry) => entry.pathname === url.pathname && entry.method === "POST").length}`,
-              title: body.title,
-              time: { created: 400, updated: 400 },
-            },
-            started: true,
+            id: `ses_created_${createdCount}`,
+            title: body.title,
+            time: { created: 400, updated: 400 },
           }, { status: 201 });
         }
-        return Response.json({ items: [sessionArchive] });
+        if (options.failSessionListWorkspaceId === "ws_2") {
+          return Response.json({ message: "Remote worker unavailable" }, { status: 503 });
+        }
+        return Response.json([sessionArchive]);
       }
 
-      if (url.pathname === "/workspace/ws_1/sessions/ses_alpha") return Response.json({ item: sessionAlpha });
-      if (url.pathname === "/workspace/ws_1/sessions/ses_beta") return Response.json({ item: sessionBeta });
-      if (url.pathname === "/workspace/ws_2/sessions/ses_archive") return Response.json({ item: sessionArchive });
+      if (url.pathname === "/workspace/ws_1/opencode/session/ses_alpha") return Response.json(sessionAlpha);
+      if (url.pathname === "/workspace/ws_1/opencode/session/ses_beta") return Response.json(sessionBeta);
+      if (url.pathname === "/workspace/ws_2/opencode/session/ses_archive") return Response.json(sessionArchive);
+      if (url.pathname === "/workspace/ws_1/opencode/session/ses_foreign") return Response.json(sessionForeign);
+      if (url.pathname === "/workspace/ws_2/opencode/session/ses_foreign") return Response.json(sessionForeign);
+      if (url.pathname === "/workspace/ws_1/opencode/session/ses_foreign/message" || url.pathname === "/workspace/ws_2/opencode/session/ses_foreign/message") {
+        return Response.json([
+          {
+            info: { id: "msg_foreign", role: "assistant", time: { created: 121 } },
+            parts: [{ type: "text", text: "Cross-tenant transcript that must never leak." }],
+          },
+        ]);
+      }
 
-      if (url.pathname === "/workspace/ws_1/sessions/ses_alpha/messages") {
-        return Response.json({
-          items: [
-            {
-              info: { id: "msg_assistant", role: "assistant", time: { created: 301 } },
-              parts: [{ type: "text", text: "The launch checklist can wait." }],
-            },
-            {
-              info: { id: "msg_user", role: "user", time: { created: 302 } },
-              parts: [{ type: "text", text: "Please remember the raven launch checklist." }],
-            },
-          ],
-        });
+      if (url.pathname === "/workspace/ws_1/opencode/session/ses_alpha/message") {
+        return Response.json([
+          {
+            info: { id: "msg_assistant", role: "assistant", time: { created: 301 } },
+            parts: [{ type: "text", text: "The launch checklist can wait." }],
+          },
+          {
+            info: { id: "msg_user", role: "user", time: { created: 302 } },
+            parts: [{ type: "text", text: "Please remember the raven launch checklist." }],
+          },
+        ]);
       }
-      if (url.pathname === "/workspace/ws_1/sessions/ses_beta/messages") {
-        return Response.json({ items: [] });
+      if (url.pathname === "/workspace/ws_1/opencode/session/ses_beta/message") {
+        return Response.json([]);
       }
-      if (url.pathname === "/workspace/ws_2/sessions/ses_archive/messages") {
-        return Response.json({
-          items: [
-            {
-              info: { id: "msg_old", role: "assistant", time: { created: 101 } },
-              parts: [{ type: "text", text: "Ignored implementation note", ignored: true }],
-            },
-            {
-              info: { id: "msg_latest", role: "assistant", time: { created: 102 } },
-              parts: [{ type: "text", text: "We decided to ship the archive importer first." }],
-            },
-          ],
-        });
+      if (url.pathname === "/workspace/ws_2/opencode/session/ses_archive/message") {
+        return Response.json([
+          {
+            info: { id: "msg_old", role: "assistant", time: { created: 101 } },
+            parts: [{ type: "text", text: "Ignored implementation note", ignored: true }],
+          },
+          {
+            info: { id: "msg_latest", role: "assistant", time: { created: 102 } },
+            parts: [{ type: "text", text: "We decided to ship the archive importer first." }],
+          },
+        ]);
+      }
+
+      if (/^\/workspace\/ws_2\/opencode\/session\/ses_created_\d+\/prompt_async$/.test(url.pathname)) {
+        const body = z.object({
+          parts: z.array(z.object({ type: z.literal("text"), text: z.string() }).strict()).length(1),
+        }).strict().parse(record.body);
+        if (body.parts[0]?.text === options.failPromptText) {
+          return Response.json({ message: "Prompt failed" }, { status: 503 });
+        }
+        return new Response(null, { status: 204 });
       }
 
       return Response.json({ message: "Not found" }, { status: 404 });
@@ -214,7 +245,7 @@ function startFakeOpenWorkServer() {
   stops.push(() => server.stop(true));
   process.env.OPENWORK_SERVER_URL = `http://127.0.0.1:${server.port}`;
   process.env.OPENWORK_SERVER_TOKEN = "test-token";
-  return { requests };
+  return { requests, uiControlRequests };
 }
 
 describe("OpenWorkExtensionsPreview MCP Apps result preservation", () => {
@@ -374,6 +405,20 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     expect(parsed.result.messages.at(-1)?.text).toContain("archive importer");
   });
 
+  test("refuses to expose a session that lives outside the requested workspace", async () => {
+    startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview();
+
+    const output = await plugin.tool.openwork_query.execute({
+      id: "session.read",
+      args: { sessionId: "ses_foreign", count: 2 },
+    });
+
+    expect(output).not.toContain("Other tenant secrets");
+    expect(output).not.toContain("Cross-tenant transcript");
+    expect(output).toContain("was not found");
+  });
+
   test("searches past chat transcript text and prefers the user's matching message", async () => {
     const fake = startFakeOpenWorkServer();
     const plugin = await OpenWorkExtensionsPreview();
@@ -396,7 +441,27 @@ describe("OpenWorkExtensionsPreview session tools", () => {
       role: "user",
     });
     expect(parsed.result.results[0]?.snippet.match.toLowerCase()).toBe("raven launch");
-    expect(fake.requests.some((request) => request.pathname === "/workspace/ws_1/sessions/ses_alpha/messages" && request.search === "?limit=400")).toBe(true);
+    expect(fake.requests.some((request) => request.pathname === "/workspace/ws_1/opencode/session" && request.search === "?roots=true&limit=10")).toBe(true);
+    expect(fake.requests.some((request) => request.pathname === "/workspace/ws_1/opencode/session/ses_alpha/message" && request.search === "?limit=400")).toBe(true);
+  });
+
+  test("keeps search results when one workspace native mount is unavailable", async () => {
+    const fake = startFakeOpenWorkServer({ failSessionListWorkspaceId: "ws_2" });
+    const plugin = await OpenWorkExtensionsPreview();
+
+    const output = await plugin.tool.openwork_query.execute({
+      id: "session.search",
+      args: { query: "raven launch", scanLimit: 10 },
+    });
+    const parsed = affordanceResultSchema("session.search", searchResultSchema.extend({
+      workspaceErrors: z.array(z.object({ workspaceId: z.string(), error: z.string() }).passthrough()),
+    })).parse(JSON.parse(output));
+
+    expect(parsed.result.results[0]?.sessionId).toBe("ses_alpha");
+    expect(parsed.result.workspaceErrors).toEqual([
+      expect.objectContaining({ workspaceId: "ws_2", error: "Remote worker unavailable" }),
+    ]);
+    expect(fake.requests.some((request) => request.pathname === "/workspace/ws_2/opencode/session")).toBe(true);
   });
 
   test("merges factory directory into transform steering when hook input omits it", async () => {
@@ -416,7 +481,7 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     expect(output.system.join("\n")).toContain("verified ready for this exact workspace/model");
     expect(output.system.join("\n")).toContain(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION);
     expect(output.system.join("\n")).not.toContain(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION);
-    expect(output.system.join("\n")).toContain("<name>customer-briefing</name>");
+    expect(output.system.join("\n")).toContain('<skill name="customer-briefing"');
   });
 
   test("uses the factory engine client as transform steering source of truth", async () => {
@@ -454,16 +519,37 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     await plugin["experimental.chat.system.transform"]({}, output);
 
     expect(requests).toEqual([{ query: { directory: "/tmp/archive" } }]);
-    expect(output.system[0]).toBe(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
-    expect(output.system.join("\n")).toContain(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION);
-    expect(output.system.join("\n")).not.toContain(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION);
+    expect(output.system).toHaveLength(1);
+    // App-control mechanics lead; the live steering follows them.
+    expect(output.system[0].startsWith("## OpenWork app context")).toBe(true);
+    expect(output.system[0]).toContain(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION);
+    expect(output.system[0].indexOf("## Built-in Browser")).toBeLessThan(output.system[0].indexOf(OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION));
+    expect(output.system[0]).toContain(OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION);
+    expect(output.system[0]).not.toContain(OPENWORK_CLOUD_SKILL_AUTHORING_INSTRUCTION);
     expect(output.system[0]).not.toContain("not ready");
     expect(output.system[0]).not.toContain("Repair and test");
     expect(output.system[0]).not.toContain("Do not use OpenWork documentation tools");
   });
 
-  test("reads a transcript by session id without opening the UI", async () => {
-    startFakeOpenWorkServer();
+  test("extends the engine system entry instead of adding a second system message", async () => {
+    const mcp = {
+      async status() {
+        return { data: { "openwork-cloud": { status: "connected" } } };
+      },
+    };
+    const plugin = await OpenWorkExtensionsPreview({ client: { mcp }, directory: "/tmp/archive" });
+    const output: { system: string[] } = { system: ["engine header"] };
+
+    await plugin["experimental.chat.system.transform"]({}, output);
+
+    expect(output.system).toHaveLength(1);
+    expect(output.system[0].startsWith("engine header\n\n")).toBe(true);
+    expect(output.system[0]).toContain("verified ready for this exact workspace/model");
+    expect(output.system[0]).toContain("## Built-in Browser (external websites)");
+  });
+
+  test("routes transcript reads through a remote workspace native mount", async () => {
+    const fake = startFakeOpenWorkServer();
     const plugin = await OpenWorkExtensionsPreview();
 
     const output = await plugin.tool.openwork_query.execute({
@@ -485,6 +571,9 @@ describe("OpenWorkExtensionsPreview session tools", () => {
         text: "We decided to ship the archive importer first.",
       },
     ]);
+    expect(fake.requests.some((request) => request.pathname === "/workspace/ws_2/opencode/session/ses_archive")).toBe(true);
+    expect(fake.requests.some((request) => request.pathname === "/workspace/ws_2/opencode/session/ses_archive/message" && request.search === "?limit=2")).toBe(true);
+    expect(fake.requests.some((request) => request.pathname.includes("/sessions"))).toBe(false);
   });
 
   test("creates and starts multiple sessions through the OpenWork backend", async () => {
@@ -518,14 +607,130 @@ describe("OpenWorkExtensionsPreview session tools", () => {
       "/workspace/ws_2/session/ses_created_3",
     ]);
 
-    const createRequests = fake.requests.filter((request) => request.pathname === "/workspace/ws_2/sessions" && request.method === "POST");
+    const createRequests = fake.requests.filter((request) => request.pathname === "/workspace/ws_2/opencode/session" && request.method === "POST");
+    const promptRequests = fake.requests.filter((request) => request.pathname.endsWith("/prompt_async") && request.method === "POST");
     expect(createRequests).toHaveLength(3);
-    expect(createRequests.every((request) => request.authorization === "Bearer test-token")).toBe(true);
+    expect(promptRequests).toHaveLength(3);
+    expect([...createRequests, ...promptRequests].every((request) => request.authorization === "Bearer test-token")).toBe(true);
     expect(createRequests.map((request) => request.body)).toEqual(expect.arrayContaining([
-      { title: "Look into dolphins", prompt: "Research dolphins." },
-      { title: "Look into bananas", prompt: "Research bananas." },
-      { title: "Look into apple pies", prompt: "Research apple pies." },
+      { title: "Look into dolphins" },
+      { title: "Look into bananas" },
+      { title: "Look into apple pies" },
     ]));
+    expect(promptRequests.map((request) => request.body)).toEqual(expect.arrayContaining([
+      { parts: [{ type: "text", text: "Research dolphins." }] },
+      { parts: [{ type: "text", text: "Research bananas." }] },
+      { parts: [{ type: "text", text: "Research apple pies." }] },
+    ]));
+  });
+
+  test("asks the desktop to refetch the target workspace's sessions after creating them", async () => {
+    const fake = startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
+
+    const output = await plugin.tool.openwork_execute.execute({
+      id: "session.create",
+      args: { sessions: [{ title: "Look into dolphins", prompt: "Research dolphins." }] },
+    }, { sessionID: "ses_origin" });
+    const parsed = affordanceResultSchema("session.create", createResultSchema).parse(JSON.parse(output));
+
+    expect(parsed.result.ok).toBe(true);
+    expect(parsed.result.workspaceId).toBe("ws_2");
+    // The sidebar only refetches the workspace that received the session; the
+    // reload is issued once the engine has both created and started it.
+    expect(fake.uiControlRequests).toEqual([
+      {
+        authorization: "Bearer test-token",
+        body: {
+          kind: "command",
+          input: { id: "workspace.reload_sessions", args: { workspaceId: "ws_2" } },
+        },
+      },
+    ]);
+    const createIndex = fake.requests.findIndex((request) => request.pathname === "/workspace/ws_2/opencode/session" && request.method === "POST");
+    const promptIndex = fake.requests.findIndex((request) => request.pathname.endsWith("/prompt_async"));
+    expect(createIndex).toBeGreaterThanOrEqual(0);
+    expect(promptIndex).toBeGreaterThan(createIndex);
+  });
+
+  test("still asks the desktop to refetch when a created session's prompt fails to start", async () => {
+    const fake = startFakeOpenWorkServer({ failPromptText: "Fail this prompt." });
+    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
+
+    await plugin.tool.openwork_execute.execute({
+      id: "session.create",
+      args: { sessions: [{ title: "Prompt failure", prompt: "Fail this prompt." }] },
+    }, { sessionID: "ses_origin" });
+
+    // The session exists on the engine even though its run never started.
+    expect(fake.uiControlRequests).toEqual([
+      {
+        authorization: "Bearer test-token",
+        body: {
+          kind: "command",
+          input: { id: "workspace.reload_sessions", args: { workspaceId: "ws_2" } },
+        },
+      },
+    ]);
+  });
+
+  test("does not ask the desktop to refetch when no session reached the engine", async () => {
+    const fake = startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
+
+    await expect(plugin.tool.openwork_execute.execute({
+      id: "session.create",
+      args: { workspaceId: "ws_missing", sessions: [{ title: "Nowhere", prompt: "Research nothing." }] },
+    }, { sessionID: "ses_origin" })).rejects.toThrow("No workspace matched ws_missing");
+
+    expect(fake.requests.filter((request) => request.method === "POST")).toEqual([]);
+    expect(fake.uiControlRequests).toEqual([]);
+  });
+
+  test("stamps the requesting conversation on UI commands so the app acts for that thread, not the one on screen", async () => {
+    const fake = startFakeOpenWorkServer();
+    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
+
+    await plugin.tool.openwork_execute.execute({
+      id: "browser.open_url",
+      args: { url: "https://example.com" },
+      // An agent cannot claim to be another conversation.
+      origin: { sessionId: "ses_spoofed" },
+    }, { sessionID: "ses_origin", workspaceId: "ws_2" });
+
+    expect(fake.uiControlRequests).toEqual([
+      {
+        authorization: "Bearer test-token",
+        body: {
+          kind: "command",
+          input: {
+            id: "browser.open_url",
+            args: { url: "https://example.com" },
+            origin: { sessionId: "ses_origin", workspaceId: "ws_2" },
+          },
+        },
+      },
+    ]);
+  });
+
+  test("reports a created session as failed when its native prompt does not start", async () => {
+    const fake = startFakeOpenWorkServer({ failPromptText: "Fail this prompt." });
+    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
+
+    const output = await plugin.tool.openwork_execute.execute({
+      id: "session.create",
+      args: { sessions: [{ title: "Prompt failure", prompt: "Fail this prompt." }] },
+    }, { sessionID: "ses_origin" });
+    const parsed = z.object({
+      ok: z.literal(false),
+      id: z.literal("session.create"),
+      error: z.string(),
+      code: z.literal("failed"),
+    }).parse(JSON.parse(output));
+
+    expect(parsed.error).toBe("session.create failed");
+    expect(fake.requests.filter((request) => request.pathname === "/workspace/ws_2/opencode/session" && request.method === "POST")).toHaveLength(1);
+    expect(fake.requests.filter((request) => request.pathname.endsWith("/prompt_async") && request.method === "POST")).toHaveLength(1);
   });
 
   test("creates more than twenty sessions in one tool call", async () => {
@@ -545,7 +750,8 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     expect(parsed.result.ok).toBe(true);
     expect(parsed.result.created).toHaveLength(21);
     expect(parsed.result.failures).toEqual([]);
-    expect(fake.requests.filter((request) => request.pathname === "/workspace/ws_2/sessions" && request.method === "POST")).toHaveLength(21);
+    expect(fake.requests.filter((request) => request.pathname === "/workspace/ws_2/opencode/session" && request.method === "POST")).toHaveLength(21);
+    expect(fake.requests.filter((request) => request.pathname.endsWith("/prompt_async") && request.method === "POST")).toHaveLength(21);
   });
 });
 
@@ -595,6 +801,25 @@ describe("OpenWorkExtensionsPreview semantic tool surface", () => {
     // local server, so it cannot bring an Automation into existence.
     expect(fake.requests).toHaveLength(0);
     expect(parsed.effects).toEqual({ data: "none", ui: "none", external: false });
+  });
+
+  test("discards a model-supplied workspaceId and pins the conversation's workspace", async () => {
+    const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive", workspaceId: "ws_conversation" });
+
+    const output = await plugin.tool.openwork_execute.execute({
+      id: "automation.propose",
+      args: {
+        name: "Morning Slack check",
+        instructions: "Summarize my most recent Slack message.",
+        schedule: { kind: "daily", timezone: "Europe/Berlin", hour: 9, minute: 0 },
+        // A prompt-injected agent must not be able to retarget the Automation.
+        workspaceId: "ws_attacker",
+      },
+    }, { sessionID: "ses_origin" });
+    const parsed = affordanceResultSchema("automation.propose", automationProposalResultSchema)
+      .parse(JSON.parse(output));
+
+    expect(parsed.result.proposal.workspaceId).toBe("ws_conversation");
   });
 
   test("rejects a proposal whose schedule is not a supported kind", async () => {

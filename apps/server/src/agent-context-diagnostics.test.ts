@@ -38,6 +38,7 @@ import {
   syncAllWorkspacesRuntimeMcpToEngine,
 } from "./server.js";
 import {
+  writeGlobalRuntimeOpencodeConfig,
   writeRuntimeOpencodeConfig,
   type RuntimeOpencodeConfig,
 } from "./runtime-opencode-config-store.js";
@@ -261,7 +262,18 @@ async function createFixture(options?: {
     logRequests: false,
   };
   if (options?.withRuntime !== false) {
-    await writeRuntimeOpencodeConfig(config, workspace.id, () => options?.runtime ?? diagnosticRuntimeConfig());
+    const runtime = options?.runtime ?? diagnosticRuntimeConfig();
+    await writeRuntimeOpencodeConfig(config, workspace.id, () => runtime);
+    // Plugin specs and the default agent are engine-global: the injected
+    // engine config file is rendered from the ENGINE_GLOBAL row only.
+    const { plugin, default_agent: defaultAgent } = runtime;
+    if (plugin !== undefined || defaultAgent !== undefined) {
+      await writeGlobalRuntimeOpencodeConfig(config, (current) => ({
+        ...current,
+        ...(plugin !== undefined ? { plugin } : {}),
+        ...(defaultAgent !== undefined ? { default_agent: defaultAgent } : {}),
+      }));
+    }
   }
   return { root, workspaceRoot, workspace, config };
 }
@@ -1073,7 +1085,12 @@ describe("agent context diagnostics analyzer", () => {
       "https://den.customer.example/custom/mcp/agent",
       "https://den.customer.example/custom/mcp/agent",
     ]);
-    expect(fetchCalls.some((call) => call.url.includes("openworklabs.com"))).toBe(false);
+    const openWorkHostedOrigins = new Set([
+      "https://openworklabs.com",
+      "https://api.openworklabs.com",
+      "https://app.openworklabs.com",
+    ]);
+    expect(fetchCalls.some((call) => openWorkHostedOrigins.has(new URL(call.url).origin))).toBe(false);
     expect(report.mcps).toContainEqual(expect.objectContaining({
       name: "openwork-cloud",
       source: "config.remote",
@@ -1236,7 +1253,7 @@ describe("agent context diagnostics analyzer", () => {
       dependencies: {
         fetchImpl: catalogFetch(["search_capabilities", "execute_capability"], []),
         inspectEffectiveEngine: effectiveEngineInspection(diagnosticRuntimeConfig(), {
-          prompt: "search_capabilities execute_capability Memory Bank",
+          prompt: "search_capabilities execute_capability ## OpenWork Artifacts",
         }),
       },
     });
@@ -1247,7 +1264,7 @@ describe("agent context diagnostics analyzer", () => {
       details: {
         searchCapabilities: true,
         executeCapability: true,
-        memoryBank: true,
+        artifacts: true,
         canonicalPromptDigestMatch: false,
       },
     });

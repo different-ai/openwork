@@ -37,6 +37,7 @@ describe("Open in Den", () => {
     expect(denAddUrl("https://den.example", "skill")).toBe("https://den.example/dashboard/plugins/new");
     expect(denAddUrl("https://den.example", "plugin")).toBe("https://den.example/dashboard/plugins/import");
     expect(denAddUrl("https://den.example", "mcp")).toBe("https://den.example/dashboard/library");
+    expect(denAddUrl("https://den.example", "workspace-mcp")).toBeNull();
     expect(denAddUrl("https://den.example", "connection")).toBe("https://den.example/dashboard/mcp-connections");
     expect(denAddUrl("", "skill")).toBeNull();
   });

@@ -1,13 +1,15 @@
 ---
 title: "Get started with OpenWork Cloud"
-description: "Connect the desktop app to your OpenWork Cloud org and unlock shared workspaces, marketplaces, and shared providers"
+description: "Connect the desktop app to your organization for Collections, managed connections, models, policies, and hosted workspaces"
 ---
 
-OpenWork Cloud requires an active subscription at [app.openworklabs.com](https://app.openworklabs.com/).
-It is intended for teams what want to share `SKILLs.md`, `MCPs` and `configs`. 
+<Note>
+OpenWork Cloud is optional. The local desktop app stays free, requires no Cloud sign-in, and supports your own providers, skills, plugins, and custom MCP servers. Use Cloud when an organization needs to assign and manage those resources for a team.
+</Note>
 
+OpenWork Cloud is available at [app.openworklabs.com](https://app.openworklabs.com/). It is for teams that want shared identity, Collections, managed connections and models, desktop policies, or hosted workspaces.
 
-First, you should connect your desktop app with Openwork Cloud.
+First, create or join an organization and connect the desktop app to it.
 
 <Frame>
   ![OpenWork Cloud org settings with organization identity, allowed email domains, and desktop restrictions](/images/cloud-org-settings.png)
@@ -17,26 +19,26 @@ First, you should connect your desktop app with Openwork Cloud.
 2. Click `Create organization`.
 3. Enter your org name.
 4. Finish checkout if OpenWork Cloud asks for billing.
-5. Return to the desktop app and refresh `Active org`.
+5. Continue to the desktop sign-in steps below.
 
 Once you're there, you can configure the settings for the organization.
 
 ## Configure org settings
 
-Note: You need to be logged in as an `org_owner` in order to make modifications.
+<Note>Only the organization owner can change these settings.</Note>
 
 1. Open the `dashboard/org_settings` [page](https://app.openworklabs.com/dashboard/org-settings) in the cloud app.
-2. Set the name for your organization
+2. Set the name for your organization.
 3. Optional: enable `Restrict allowed email domains` and add the approved domains.
 4. Optional: change any `Desktop restrictions` that should apply after people sign in from the desktop app.
 
-These settings apply across the org. You can also create teams, share workspaces, publish marketplace plugins, and import shared providers.
+These settings apply across the organization. You can also create teams, publish plugins through Collections, configure Connectors and shared models, and deploy hosted workspaces.
 
 Next, you want to make sure you can sign in the desktop app.
 
 ## Sign in from the desktop app
 
-1. Open `Settings -> Cloud`.
+1. Open `Settings > Account`.
 2. Click `Sign in`.
 3. Finish sign-in in your browser.
 4. If the browser does not return to OpenWork automatically, click `Paste sign-in code`, paste the `openwork://den-auth?...` link or one-time code from OpenWork Cloud, then click `Finish sign-in`.
@@ -55,18 +57,18 @@ proxy:
 The desktop app does not store or read a separate API URL. On startup it reads
 the Cloud URL from `desktop-bootstrap.json`; if that file is missing, it falls
 back to `https://app.openworklabs.com`. When you change the Cloud URL in
-`Settings -> Cloud`, OpenWork writes the new `baseUrl` back to the bootstrap
+`Settings > Account`, OpenWork writes the new `baseUrl` back to the bootstrap
 file so the next launch uses the same source of truth.
 
 ## Choose your organization
 
-After sign-in, pick your org in `Settings -> Cloud -> Active org`.
+After sign-in, pick your organization in `Settings > Account`. Organization-assigned plugins and skills appear in `Settings > Library`.
 
 ## What to do next
 
 - Send members to [Connect your services](/start-here/connect-your-stack/connect-services) to sign in to team-approved accounts from the desktop app.
-- Use [MCP Connections](/cloud/share-with-your-team/shared-mcp-connections) to publish a managed service and grant member or team access.
-- Use marketplace plugins to publish grouped skills and MCPs for teams, or save a single skill directly from the desktop app and install it from `Skills -> Cloud`.
-- Use [Shared workspaces](/cloud/run-in-the-cloud/shared-workspace) to deploy hosted OpenWork runtimes that teammates can open from the desktop app.
+- Use [Connectors](/cloud/share-with-your-team/shared-mcp-connections) to publish a managed service and grant member or team access.
+- Use [Publish and copy a skill](/start-here/do-work-with-it/publish-and-copy-a-skill) for the primary skill-sharing flow, or [Collections](/cloud/share-with-your-team/collections) to group and assign several plugins.
+- Use [OpenWork Web](/cloud/run-in-the-cloud/shared-workspace) to give members a hosted OpenWork workspace in the browser, with nothing to install.
 - Use [LLM providers](/cloud/share-with-your-team/managed-llm-provider) or [custom LLM providers](/cloud/share-with-your-team/custom-llm-provider) to manage shared model access.
 - Use [Members and RBAC](/cloud/members-and-rbac) to invite people, create teams, and control access.

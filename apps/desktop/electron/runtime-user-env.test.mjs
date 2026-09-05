@@ -69,3 +69,20 @@ test("refreshes an injected user env key when its stored value changes", () => {
 
   assert.equal(processEnv.ANTHROPIC_API_KEY, "new-value");
 });
+
+test("dev child env reconciliation preserves an inherited OPENCODE_DB override", () => {
+  const inheritedEnv = {
+    OPENWORK_DEV_MODE: "1",
+    OPENCODE_DB: "/tmp/installed-production/opencode.db",
+  };
+  const processEnv = { ...inheritedEnv };
+
+  reconcileInjectedUserEnv({
+    processEnv,
+    inheritedEnv,
+    userEnv: {},
+    previouslyInjectedKeys: new Set(),
+  });
+
+  assert.equal(processEnv.OPENCODE_DB, "/tmp/installed-production/opencode.db");
+});

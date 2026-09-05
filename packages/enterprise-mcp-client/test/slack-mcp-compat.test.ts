@@ -1,12 +1,10 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { exchangeAuthorization } from "@modelcontextprotocol/sdk/client/auth.js"
-import { InvalidGrantError } from "@modelcontextprotocol/sdk/server/auth/errors.js"
+import { exchangeAuthorization, OAuthError, OAuthErrorCode } from "@modelcontextprotocol/client"
 import { z } from "zod"
 import {
   createEnterpriseMcpClient,
   createEnterpriseMcpTokenResponseCompat,
-  ENTERPRISE_MCP_PROTOCOL_VERSION_FALLBACK,
   SLACK_STYLE_OAUTH_ERROR_MAPPING,
   type EnterpriseMcpConnection,
   type EnterpriseMcpDiagnosticEvent,
@@ -28,10 +26,10 @@ const tokenResponseSchema = z.object({
   token_type: z.string(),
 }).passthrough()
 
-const initializeRequestSchema = z.object({
+const discoverRequestSchema = z.object({
   id: z.union([z.string(), z.number()]),
-  method: z.literal("initialize"),
-  params: z.object({ protocolVersion: z.string() }).passthrough(),
+  method: z.literal("server/discover"),
+  params: z.object({ _meta: z.record(z.string(), z.unknown()) }).passthrough(),
 }).passthrough()
 
 function tokenRequestInit(): RequestInit {
@@ -94,7 +92,8 @@ describe("Slack-style MCP compatibility", () => {
         fetchFn: sdkFetch,
       }),
       (error: unknown) => {
-        assert.ok(error instanceof InvalidGrantError)
+        assert.ok(error instanceof OAuthError)
+        assert.equal(error.code, OAuthErrorCode.InvalidGrant)
         assert.match(error.message, /Slack-style provider error: invalid_code/)
         return true
       },
@@ -135,28 +134,28 @@ describe("Slack-style MCP compatibility", () => {
     )
   })
 
-  it("retries initialize exactly once with the fallback protocol version", async () => {
-    const protocolVersions: string[] = []
+  it("negotiates the stateless protocol without initialize or a session id", async () => {
+    const methods: string[] = []
+    const headers: Headers[] = []
     const events: EnterpriseMcpDiagnosticEvent[] = []
     const client = createEnterpriseMcpClient({
       diagnosticSink: (event) => events.push(event),
       fetch: async (_url, init) => {
-        if (typeof init?.body !== "string") return new Response(null, { status: 202 })
-        const parsed: unknown = JSON.parse(init.body)
-        const initialized = z.object({ method: z.literal("notifications/initialized") }).safeParse(parsed)
-        if (initialized.success) return new Response(null, { status: 202 })
-        const request = initializeRequestSchema.parse(parsed)
-        protocolVersions.push(request.params.protocolVersion)
-        if (protocolVersions.length === 1) {
-          return Response.json({ error: "unsupported_protocol_version" }, { status: 400 })
-        }
+        headers.push(new Headers(init?.headers))
+        const body = init?.body
+        assert.equal(typeof body, "string")
+        const parsed: unknown = JSON.parse(body as string)
+        const request = discoverRequestSchema.parse(parsed)
+        methods.push(request.method)
         return Response.json({
-          jsonrpc: "2.0",
+          jsonrpc: "2.0" as const,
           id: request.id,
           result: {
-            protocolVersion: ENTERPRISE_MCP_PROTOCOL_VERSION_FALLBACK,
+            supportedVersions: ["2026-07-28"],
             capabilities: {},
-            serverInfo: { name: "fallback-test", version: "1.0.0" },
+            _meta: {
+              "io.modelcontextprotocol/serverInfo": { name: "stateless-test", version: "1.0.0" },
+            },
           },
         })
       },
@@ -166,18 +165,21 @@ describe("Slack-style MCP compatibility", () => {
       connection: noAuthConnection(),
       redirectUri: "https://den.example.test/callback",
     }), { status: "connected" })
-    assert.equal(protocolVersions.length, 2)
-    assert.equal(protocolVersions[1], ENTERPRISE_MCP_PROTOCOL_VERSION_FALLBACK)
+    assert.deepEqual(methods, ["server/discover"])
+    assert.equal(headers[0]?.get("mcp-protocol-version"), "2026-07-28")
+    assert.equal(headers[0]?.get("mcp-method"), "server/discover")
+    assert.equal(headers[0]?.has("mcp-session-id"), false)
     assert.equal(events.filter((event) => event.kind !== "credential-invalidation"
-      && event.protocolVersionFallback === ENTERPRISE_MCP_PROTOCOL_VERSION_FALLBACK).length, 1)
+      && event.protocolEra === "modern"
+      && event.protocolVersion === "2026-07-28").length, 1)
   })
 
   for (const status of [401, 500]) {
-    it(`does not retry initialize after HTTP ${status}`, async () => {
-      let initializeRequests = 0
+    it(`does not downgrade the discovery probe after HTTP ${status}`, async () => {
+      let protocolRequests = 0
       const client = createEnterpriseMcpClient({
         fetch: async (_url, init) => {
-          if (typeof init?.body === "string") initializeRequests += 1
+          if (typeof init?.body === "string") protocolRequests += 1
           return Response.json({ error: "provider_rejected" }, { status })
         },
       })
@@ -186,7 +188,7 @@ describe("Slack-style MCP compatibility", () => {
         connection: noAuthConnection(),
         redirectUri: "https://den.example.test/callback",
       }))
-      assert.equal(initializeRequests, 1)
+      assert.equal(protocolRequests, 1)
     })
   }
 

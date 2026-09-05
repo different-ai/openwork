@@ -31,14 +31,13 @@ import {
   InstallLinkTable,
   InvitationTable,
   LlmProviderAccessTable,
+  LlmProviderMemberCredentialTable,
   LlmProviderModelTable,
   LlmProviderTable,
   MarketplaceAccessGrantTable,
   MarketplacePluginTable,
   MarketplaceTable,
   MemberTable,
-  MemoryContextTable,
-  MemoryTable,
   OrgOAuthClientTable,
   OrganizationBrandAssetTable,
   OrganizationDiagnosticCredentialTable,
@@ -356,6 +355,7 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
 
       await cancelOrganizationSubscriptions({ organizationId })
 
+      let affectedSessions: Array<{ id: typeof AuthSessionTable.$inferSelect.id; token: typeof AuthSessionTable.$inferSelect.token }> = []
       await db.transaction(async (tx) => {
         const memberRows = await tx
           .select({ id: MemberTable.id, userId: MemberTable.userId })
@@ -437,15 +437,6 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
           await tx.delete(InferenceUsageLedgerBucketChargeTable).where(inArray(InferenceUsageLedgerBucketChargeTable.ledger_entry_id, ledgerEntryIds))
         }
 
-        const memoryIds = (await tx
-          .select({ id: MemoryTable.id })
-          .from(MemoryTable)
-          .where(eq(MemoryTable.org_id, organizationId)))
-          .map((row) => row.id)
-        if (memoryIds.length > 0) {
-          await tx.delete(MemoryContextTable).where(inArray(MemoryContextTable.memory_id, memoryIds))
-        }
-
         const llmProviderIds = (await tx
           .select({ id: LlmProviderTable.id })
           .from(LlmProviderTable)
@@ -456,12 +447,11 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
           await tx.delete(LlmProviderAccessTable).where(inArray(LlmProviderAccessTable.llmProviderId, llmProviderIds))
         }
 
-        const affectedSessions = await tx
-          .select({ token: AuthSessionTable.token })
+        affectedSessions = await tx
+          .select({ id: AuthSessionTable.id, token: AuthSessionTable.token })
           .from(AuthSessionTable)
           .where(eq(AuthSessionTable.activeOrganizationId, organizationId))
         await tx.update(AuthSessionTable).set({ activeOrganizationId: null }).where(eq(AuthSessionTable.activeOrganizationId, organizationId))
-        await Promise.all(affectedSessions.map((session) => cache.auth.deleteSession(session.token)))
 
         await tx.delete(OrganizationBrandAssetTable).where(eq(OrganizationBrandAssetTable.organizationId, organizationId))
         await tx.delete(WorkspaceClaimTable).where(eq(WorkspaceClaimTable.organizationId, organizationId))
@@ -495,10 +485,10 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(DesktopPolicyTable).where(eq(DesktopPolicyTable.organizationId, organizationId))
 
         await tx.delete(OrganizationDiagnosticCredentialTable).where(eq(OrganizationDiagnosticCredentialTable.organizationId, organizationId))
-        await tx.delete(MemoryTable).where(eq(MemoryTable.org_id, organizationId))
 
         await tx.delete(OrgOAuthClientTable).where(eq(OrgOAuthClientTable.organizationId, organizationId))
         await tx.delete(ConnectedAccountTable).where(eq(ConnectedAccountTable.organizationId, organizationId))
+        await tx.delete(LlmProviderMemberCredentialTable).where(eq(LlmProviderMemberCredentialTable.organizationId, organizationId))
         await tx.delete(ExternalMcpConnectionAccessGrantTable).where(eq(ExternalMcpConnectionAccessGrantTable.organizationId, organizationId))
         await tx.delete(PluginMcpRequirementBindingTable).where(eq(PluginMcpRequirementBindingTable.organizationId, organizationId))
         await tx.delete(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.organizationId, organizationId))
@@ -527,6 +517,13 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(MemberTable).where(eq(MemberTable.organizationId, organizationId))
         await tx.delete(OrganizationTable).where(eq(OrganizationTable.id, organizationId))
       })
+
+      // Org deletion removes every member row; clear aggregate and per-user membership cache keys.
+      await cache.org.deleteMembers(organizationId)
+      await Promise.all(affectedSessions.flatMap((session) => [
+        cache.auth.revokeSession(session.token),
+        cache.auth.revokeSessionId(session.id),
+      ]))
 
       logger.info("organization deleted", {
         organization_id: organizationId,

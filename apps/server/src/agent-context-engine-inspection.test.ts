@@ -32,7 +32,7 @@ describe("agent diagnostics effective engine inspection", () => {
       agents: [{
         name: "openwork",
         mode: "primary",
-        prompt: "search_capabilities execute_capability Memory Bank",
+        prompt: "search_capabilities execute_capability ## OpenWork Artifacts",
         hidden: false,
         permission: [{ permission: "openwork-cloud_*", pattern: "*", action: "allow" }],
         options: { secret: "not-copied" },

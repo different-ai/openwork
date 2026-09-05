@@ -18,8 +18,8 @@ import { getToolActivityLabel, isToolPartInFlight } from "@/lib/tool-activity"
 import { cn } from "@/lib/utils"
 import {
   Bot,
+  BookOpenCheck,
   Check,
-  ChevronDown,
   CircleAlert,
   Copy,
   ExternalLink,
@@ -30,7 +30,6 @@ import {
   MessageCircleQuestion,
   RefreshCcw,
   Search,
-  Sparkles,
   SquareCode,
   Wrench,
 } from "lucide-react"
@@ -50,7 +49,7 @@ function toolIcon(part: ToolPart) {
     case "lsp":
       return SquareCode
     case "skill":
-      return Sparkles
+      return BookOpenCheck
     case "todowrite":
       return ListTodo
     case "question":
@@ -175,6 +174,7 @@ const Tool = ({
       : null
   const inputDiff = getInputDiff(input)
   const Icon = toolIcon(toolPart)
+  const isSkill = toolPart.type === "dynamic-tool" && toolPart.toolName === "skill"
   const [copied, setCopied] = useState(false)
   const ReconnectIcon = reconnectState === "opening"
     ? LoaderCircle
@@ -199,17 +199,14 @@ const Tool = ({
         <CollapsibleTrigger
           className="group text-muted-foreground hover:text-foreground flex min-w-0 flex-1 cursor-pointer items-center justify-start gap-2 overflow-hidden text-start text-sm transition-colors"
         >
-          <span className="relative inline-flex size-4 shrink-0 items-center justify-center">
-            <span className="transition-opacity group-hover:opacity-0">
-              {inFlight ? (
-                <LoaderCircle className="size-4 animate-spin" />
-              ) : isError ? (
-                <CircleAlert className="text-destructive size-4" />
-              ) : (
-                <Icon className="size-3.5" />
-              )}
-            </span>
-            <ChevronDown className="absolute size-4 opacity-0 transition-opacity group-hover:opacity-100 group-data-panel-open:rotate-180" />
+          <span className="inline-flex size-4 shrink-0 items-center justify-center">
+            {inFlight ? (
+              <LoaderCircle className="size-4 animate-spin" />
+            ) : isError ? (
+              <CircleAlert className="text-destructive size-4" />
+            ) : (
+              <Icon className={cn("size-3.5", isSkill && "text-violet-11")} />
+            )}
           </span>
           <span className="min-w-0 truncate">{label}</span>
           {isError && !errorAttribution ? (

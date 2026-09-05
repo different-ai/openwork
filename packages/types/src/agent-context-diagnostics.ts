@@ -1,6 +1,6 @@
 import { z } from "zod"
 
-export const AGENT_CONTEXT_DIAGNOSTICS_SCHEMA_VERSION = 1 as const
+export const AGENT_CONTEXT_DIAGNOSTICS_SCHEMA_VERSION = 2 as const
 
 export const AGENT_CONTEXT_DIAGNOSTIC_CHECK_IDS = [
   "request-safety",
@@ -65,7 +65,7 @@ const diagnosticHomePathPattern = /(^|[\s("'=,:])~[\\/][^,;)}\]>"'`\r\n]+/mu
 const diagnosticPosixPathPattern = /(^|[\s("'=,:])\/(?!mcp\/agent(?:$|[\s.,;:!)}\]"']))[^/\s<>:"'`][^,;)}\]>"'`\r\n]*/mu
 const diagnosticEncodedStructuralPattern = /%(?:2f|3a|5c)/iu
 const diagnosticPercentOctetPattern = /%[0-9a-f]{2}/iu
-const diagnosticCloudMcpPathPattern = /^\/(?:[^?#\u0000-\u001f\u007f-\u009f]+\/)*mcp\/agent$/u
+const DIAGNOSTIC_CLOUD_MCP_PATH_SUFFIX = "/mcp/agent"
 const MAX_DIAGNOSTIC_PERCENT_DECODE_ROUNDS = 12
 
 const sensitiveDiagnosticTextPatterns = [
@@ -191,9 +191,12 @@ function isDiagnosticOriginSafe(value: string): boolean {
 }
 
 function isCloudMcpPathSafe(value: string): boolean {
+  if (!value.endsWith(DIAGNOSTIC_CLOUD_MCP_PATH_SUFFIX)) return false
+  const prefix = value.slice(0, -DIAGNOSTIC_CLOUD_MCP_PATH_SUFFIX.length)
   return !forbiddenDiagnosticTextPattern.test(value)
-    && diagnosticCloudMcpPathPattern.test(value)
-    && !value.endsWith("/mcp/agent/")
+    && (prefix.length === 0 || (prefix.length > 1 && prefix.startsWith("/")))
+    && !prefix.includes("?")
+    && !prefix.includes("#")
 }
 
 /**
@@ -405,7 +408,7 @@ export const agentContextPromptEvidenceSchema = z.object({
     markers: z.object({
       searchCapabilities: z.boolean(),
       executeCapability: z.boolean(),
-      memoryBank: z.boolean(),
+      artifacts: z.boolean(),
   }).strict(),
 }).strict()
 export type AgentContextPromptEvidence = z.infer<typeof agentContextPromptEvidenceSchema>

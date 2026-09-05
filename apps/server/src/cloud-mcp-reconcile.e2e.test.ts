@@ -8,9 +8,9 @@ import {
   CONNECT_MCP_SERVER_INDEX_SCHEMA_VERSION,
   CONNECT_MCP_SERVER_INDEX_URI,
   readOpenWorkConnectMcpAppHostCatalog,
-  type OpenWorkConnectMcpServerIndex,
+  type OpenWorkConnectMcpServerIndexInput,
 } from "./connect-mcp-server-catalog.js";
-import { readRuntimeOpencodeConfig, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
+import { readGlobalRuntimeOpencodeConfig, readRuntimeOpencodeConfig, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import { inspectEngineMcpRegistration, registerTrustedOpencodeProcess, startServer } from "./server.js";
 import type { ServerConfig, WorkspaceInfo } from "./types.js";
 
@@ -35,7 +35,7 @@ type MockOpencodeOptions = {
   delayMcpStatusMs?: number;
   postFailure?: { status: number; body: unknown };
   cloudFailedError?: string;
-  connectServers?: OpenWorkConnectMcpServerIndex["servers"];
+  connectServers?: OpenWorkConnectMcpServerIndexInput["servers"];
   appHostAuthorization?: string;
 };
 
@@ -109,6 +109,7 @@ function startMockOpencode(options: MockOpencodeOptions = {}) {
         return Response.json({ healthy: true, version: "1.17.11" });
       }
       if (url.pathname === "/instance/dispose") return Response.json({ disposed: true });
+      if (url.pathname === "/session/status") return Response.json({});
       if (url.pathname === "/mcp" && request.method === "POST") {
         if (options.postFailure) return Response.json(options.postFailure.body, { status: options.postFailure.status });
         registerCount += 1;
@@ -351,7 +352,8 @@ describe("openwork-cloud MCP strict reconcile", () => {
     expect(requireRecord(requireRecord(body.compatibility, "compatibility").opencode, "opencode").expectedVersion).toBeTruthy();
     expect(requireRecord(requireRecord(body.compatibility, "compatibility").experimentalToolIds, "experimentalToolIds")).toMatchObject({ includesMcpTools: true });
     expect(requireRecord(requireRecord(body.compatibility, "compatibility").experimentalProviderTools, "experimentalProviderTools")).toMatchObject({ includesMcpTools: true });
-    expect((await readRuntimeOpencodeConfig(openwork.config, "ws_1")).mcp?.["openwork-cloud"]?.url).toBe(cloudConfigForOpenwork(openwork.base).url);
+    expect((await readGlobalRuntimeOpencodeConfig(openwork.config)).mcp?.["openwork-cloud"]?.url).toBe(cloudConfigForOpenwork(openwork.base).url);
+    expect((await readRuntimeOpencodeConfig(openwork.config, "ws_1")).mcp?.["openwork-cloud"]).toBeUndefined();
 
     const mcpPosts = mock.requests.filter((request) => request.method === "POST" && request.pathname === "/mcp");
     expect(mcpPosts.length).toBe(1);
@@ -392,7 +394,8 @@ describe("openwork-cloud MCP strict reconcile", () => {
 
     const runtime = await readRuntimeOpencodeConfig(openwork.config, "ws_1");
     expect(runtime.mcp?.["user-server"]).toEqual({ type: "remote", url: "https://user.example/mcp" });
-    expect(runtime.mcp?.["openwork-cloud"]).toBeTruthy();
+    expect(runtime.mcp?.["openwork-cloud"]).toBeUndefined();
+    expect((await readGlobalRuntimeOpencodeConfig(openwork.config)).mcp?.["openwork-cloud"]).toBeTruthy();
     expect(Object.keys(runtime.mcp ?? {}).filter((name) => name.startsWith("openwork-connect-"))).toEqual([]);
     expect((await readOpenWorkConnectMcpAppHostCatalog(openwork.config, "ws_1")).servers).toEqual([
       expect.objectContaining({ connectionId, name: "Private fixture provider" }),
@@ -405,7 +408,9 @@ describe("openwork-cloud MCP strict reconcile", () => {
 
   test("live status read heals a failed registration record after reconcile returns early", async () => {
     const root = await createRoot();
-    const mock = startMockOpencode({ connectAfterStatusReads: 2 });
+    // Registration now probes liveness before POSTing; keep the first
+    // post-registration health read failed, then heal on the next read.
+    const mock = startMockOpencode({ connectAfterStatusReads: 3 });
     const baseUrl = `http://127.0.0.1:${mock.server.port}`;
     const openwork = await startOpenwork([workspace("ws_1", root, baseUrl)]);
     registerTrustedOpencodeProcess(openwork.config, {
@@ -460,6 +465,25 @@ describe("openwork-cloud MCP strict reconcile", () => {
     expect(mock.requests.some((request) => request.method === "POST" && request.pathname === "/mcp")).toBe(false);
   });
 
+  test("a collaborator token cannot globally persist an untrusted Cloud MCP endpoint", async () => {
+    const root = await createRoot();
+    const mock = startMockOpencode();
+    const openwork = await startOpenwork([workspace("ws_1", root, `http://127.0.0.1:${mock.server.port}`)]);
+
+    // The primary client token is collaborator-scoped. The desired config is
+    // account-global, so persisting a non-built-in, non-enterprise, non-loopback
+    // endpoint must require the owner: a collaborator on one shared workspace
+    // must not be able to redirect Connect for every workspace on this server.
+    const response = await reconcile(openwork.base, "ws_1", {
+      config: { ...CLOUD_CONFIG, url: "https://evil.example/mcp/agent" },
+    });
+    expect(response.status).toBe(403);
+
+    expect((await readGlobalRuntimeOpencodeConfig(openwork.config)).mcp?.["openwork-cloud"]).toBeUndefined();
+    expect((await readRuntimeOpencodeConfig(openwork.config, "ws_1")).mcp?.["openwork-cloud"]).toBeUndefined();
+    expect(mock.requests.some((request) => request.method === "POST" && request.pathname === "/mcp")).toBe(false);
+  });
+
   test("normalizes a harmless trailing slash on the Cloud MCP endpoint", async () => {
     const root = await createRoot();
     const mock = startMockOpencode();
@@ -470,7 +494,7 @@ describe("openwork-cloud MCP strict reconcile", () => {
       config: { ...CLOUD_CONFIG, url },
     }));
     expect(body.phase).toBe("ready");
-    expect((await readRuntimeOpencodeConfig(openwork.config, "ws_1")).mcp?.["openwork-cloud"]?.url).toBe(url.slice(0, -1));
+    expect((await readGlobalRuntimeOpencodeConfig(openwork.config)).mcp?.["openwork-cloud"]?.url).toBe(url.slice(0, -1));
   });
 
   test("GET health reports persisted malformed desired config even when the engine looks live", async () => {
@@ -551,7 +575,7 @@ describe("openwork-cloud MCP strict reconcile", () => {
     expect(response.status).toBe(200);
     expect(firstFailure(body).code).toBe("opencode_mcp_sync_failed");
     expect(delivery(body).appliedRevision).toBeNull();
-    expect((await readRuntimeOpencodeConfig(openwork.config, "ws_1")).mcp?.["openwork-cloud"]?.url).toBe(cloudConfigForOpenwork(openwork.base).url);
+    expect((await readGlobalRuntimeOpencodeConfig(openwork.config)).mcp?.["openwork-cloud"]?.url).toBe(cloudConfigForOpenwork(openwork.base).url);
   });
 
   test("uses the exact secondary workspace directory", async () => {
@@ -567,8 +591,40 @@ describe("openwork-cloud MCP strict reconcile", () => {
     const response = await reconcile(openwork.base, "ws_2");
     const body = await responseRecord(response);
     expect(body.phase).toBe("ready");
-    const post = mock.requests.find((request) => request.method === "POST" && request.pathname === "/mcp");
+    const post = mock.requests.find((request) => request.method === "POST"
+      && request.pathname === "/mcp"
+      && new URLSearchParams(request.search).get("directory") === rootB);
     expectDirectoryQuery(post?.search, rootB);
+    expect(mock.requests.some((request) => request.method === "POST"
+      && request.pathname === "/mcp"
+      && new URLSearchParams(request.search).get("directory") === rootA)).toBe(true);
+  });
+
+  test("removes global desired state and disconnects every workspace directory", async () => {
+    const rootA = await createRoot("openwork-cloud-remove-a-");
+    const rootB = await createRoot("openwork-cloud-remove-b-");
+    const mock = startMockOpencode();
+    const baseUrl = `http://127.0.0.1:${mock.server.port}`;
+    const openwork = await startOpenwork([
+      workspace("ws_1", rootA, baseUrl),
+      workspace("ws_2", rootB, baseUrl),
+    ]);
+    expect((await responseRecord(await reconcile(openwork.base))).phase).toBe("ready");
+    const disconnectsBeforeRemoval = mock.requests
+      .filter((request) => request.pathname === "/mcp/openwork-cloud/disconnect").length;
+
+    const removed = await fetch(`${openwork.base}/workspace/ws_1/mcp/openwork-cloud`, {
+      method: "DELETE",
+      headers: headers(),
+    });
+    expect(removed.status).toBe(200);
+    expect((await readGlobalRuntimeOpencodeConfig(openwork.config)).mcp?.["openwork-cloud"]).toBeUndefined();
+    const disconnectDirectories = mock.requests
+      .filter((request) => request.pathname === "/mcp/openwork-cloud/disconnect")
+      .slice(disconnectsBeforeRemoval)
+      .map((request) => new URLSearchParams(request.search).get("directory"))
+      .sort();
+    expect(disconnectDirectories).toEqual([rootA, rootB].sort());
   });
 
   test("uses an explicit remote workspace directory and refuses ambiguous remotes", async () => {
@@ -583,7 +639,9 @@ describe("openwork-cloud MCP strict reconcile", () => {
 
     const ready = await reconcile(openwork.base, "ws_remote");
     expect((await responseRecord(ready)).phase).toBe("ready");
-    expectDirectoryQuery(mock.requests.find((request) => request.method === "POST" && request.pathname === "/mcp")?.search, explicitDirectory);
+    expectDirectoryQuery(mock.requests.find((request) => request.method === "POST"
+      && request.pathname === "/mcp"
+      && new URLSearchParams(request.search).get("directory") === explicitDirectory)?.search, explicitDirectory);
 
     const catalogReadsBeforeAmbiguous = mock.requests.filter((request) => (
       isRecord(request.body) && request.body.method === "resources/read"

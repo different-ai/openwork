@@ -65,7 +65,7 @@ bash .devcontainer/test-server-on-daytona.sh [branch-or-commit]
 ```
 
 The server helper creates a separate public Daytona sandbox for the Den stack:
-MySQL, Den API, Den Web, and the worker proxy. It prints public preview URLs and
+MySQL, Den API, and Den Web. It prints public preview URLs and
 the exact Electron command to point a desktop sandbox at that server:
 
 ```bash
@@ -115,12 +115,9 @@ fast checkpoints to decide whether behavior is correct before reporting success.
 
 The Daytona toolbox is exposed to opencode through focused skills:
 
-- `daytona-dev`: overview of the Daytona setup and when to use each piece.
-- `daytona-cloud-server`: Den Web/API, worker proxy, marketplace, cloud auth, and org policy flows.
-- `daytona-secrets-volume`: add and verify provider keys or eval-only secrets in `/daytona-secrets`.
-- `daytona-electron-test`: run and drive the real Electron app through CDP/noVNC.
-- `daytona-recording-artifacts`: screenshots, recordings, before/after videos, and PR evidence.
-- `run-evals`: orchestrates evals and pulls in the relevant Daytona skill based on the flow.
+- `daytona`: CLI setup, long-lived sandboxes, logs, snapshots, and the secrets volume.
+- `record-a-demo`: supplementary screenshots, recordings, and presentation artifacts.
+- `run-tests`: runs `evals/specs` coverage; the CLI chooses and reports placement.
 
 ## Testing the customization system
 

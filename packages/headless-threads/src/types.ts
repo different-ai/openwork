@@ -173,13 +173,16 @@ export interface HeadlessThreadTranscript {
   terminalError: HeadlessThreadMessageError | null;
 }
 
-export interface HeadlessThreadClient {
+export interface AgentSessionClient {
   createThread(input: CreateThreadInput): Promise<HeadlessThread>;
   sendTurn(threadId: string, input: HeadlessThreadTurnInput): Promise<HeadlessTurnAcceptance>;
+  getThreadSnapshot(threadId: string, input?: { signal?: AbortSignal; limit?: number }): Promise<HeadlessThreadSnapshot>;
+  abortThread(threadId: string, input?: { signal?: AbortSignal }): Promise<HeadlessAbortResult>;
+}
+
+export interface HeadlessThreadClient extends AgentSessionClient {
   waitForThread(threadId: string, input: HeadlessThreadWaitInput): Promise<HeadlessThreadWaitResult>;
   waitUntilIdle(threadId: string, input: HeadlessThreadWaitInput): Promise<HeadlessThreadWaitResult>;
-  getThreadSnapshot(threadId: string, input?: { signal?: AbortSignal }): Promise<HeadlessThreadSnapshot>;
-  abortThread(threadId: string, input?: { signal?: AbortSignal }): Promise<HeadlessAbortResult>;
   exportTranscript(threadId: string, input?: { signal?: AbortSignal }): Promise<HeadlessThreadTranscript>;
 }
 
@@ -190,7 +193,7 @@ export interface HeadlessThreadClient {
  */
 export type HeadlessFetch = (
   input: string,
-  init?: { method?: string; headers?: Record<string, string>; body?: string; signal?: AbortSignal },
+  init?: { method?: string; headers?: Record<string, string>; body?: string; redirect?: RequestRedirect; signal?: AbortSignal },
 ) => Promise<Response>;
 
 export interface HeadlessThreadClientOptions {
@@ -199,13 +202,13 @@ export interface HeadlessThreadClientOptions {
   workspaceId: string;
   /** A collaborator-scoped OpenWork client token. */
   token: string;
-  /** Host credential for server-to-server execution through the Cloud worker proxy. */
+  /** Host credential for server-to-server execution against the resolved Cloud runtime. */
   hostToken?: string;
   /** Model used when a call does not name one. */
   defaultModel?: HeadlessThreadModel;
   /** Default `waitForThread` poll interval. Defaults to 500ms. */
   pollIntervalMs?: number;
-  /** Bounds every individual HTTP request. Defaults to 15 seconds. */
+  /** Bounds every individual HTTP request. Defaults to 15 seconds; use 0 to disable. */
   requestTimeoutMs?: number;
   /** Cancels every operation issued by this client. */
   signal?: AbortSignal;

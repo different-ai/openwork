@@ -30,6 +30,19 @@ Every provider guide uses the same OpenWork boundaries:
 
 Use private database networking in production. Require TLS for public application traffic, encrypt storage and backups, and keep database and authentication secrets in the provider secret store or a Kubernetes Secret—not in a Helm values file.
 
+## Reverse-proxy client addresses
+
+Set `DEN_TRUSTED_PROXIES` on Den API to a comma-separated list of your reverse
+proxies' IP addresses or CIDRs (for example, `192.0.2.10,192.0.2.11`). Better Auth
+uses this list to resolve forwarded client addresses for authentication rate
+limits. Without it, clients can share a fallback rate-limit bucket.
+
+Only include the proxies you operate, not broad ranges containing clients. Your
+origin must accept traffic only from those proxies, and the proxies must overwrite
+or safely append forwarded headers. This setting interprets the forwarded chain;
+it cannot verify the direct sender. Leave it unset when there is no trusted proxy.
+Keep rate limiting enabled in production.
+
 ## Deployment sequence
 
 1. Create the Kubernetes cluster and private MySQL database in compatible networks.

@@ -33,23 +33,31 @@ describe("cloud provisioning image version", () => {
       async insertWorkerInstance(input) {
         inserts.push(input)
       },
+      async touchProvisioningWorker() {},
     }
     const workerId = createDenTypeId("worker")
+    const materializedUrls: string[] = []
 
     await shared.continueCloudProvisioning({
       workerId,
+      orgId: createDenTypeId("organization"),
       name: "Cloud",
       hostToken: "host-token",
       clientToken: "client-token",
       activityToken: "activity-token",
     }, {
+      getOpenWorkWebAccess: async () => ({ hasAccess: true }),
       store,
       provisionWorker: async () => ({
         provider: "daytona",
-        url: "https://workers.example.test/cloud",
+        url: "https://initial.preview.example.test",
         status: "healthy",
         imageVersion: "openwork-0.18.8",
       }),
+      materializeProviders: async (input) => {
+        materializedUrls.push(input.instanceUrl)
+        return { ok: true, status: "noop", fingerprint: "owp:v1:test", providers: 0 }
+      },
     })
 
     expect(updates).toHaveLength(1)
@@ -57,5 +65,47 @@ describe("cloud provisioning image version", () => {
     expect(updates[0]?.status).toBe("healthy")
     expect(updates[0]?.imageVersion).toBe("openwork-0.18.8")
     expect(inserts).toHaveLength(1)
+    expect(materializedUrls).toEqual(["https://initial.preview.example.test"])
+  })
+
+  test("does not provision a cloud worker after Web access is revoked", async () => {
+    const updates: StatusUpdate[] = []
+    let provisions = 0
+    const workerId = createDenTypeId("worker")
+    const store: Store = {
+      async updateWorkerStatus(input) {
+        updates.push(input)
+      },
+      async insertWorkerInstance() {
+        throw new Error("an unlicensed worker must not create an instance")
+      },
+      async touchProvisioningWorker() {
+        throw new Error("an unlicensed worker must not start provisioning")
+      },
+    }
+
+    await shared.continueCloudProvisioning({
+      workerId,
+      orgId: createDenTypeId("organization"),
+      name: "Cloud",
+      hostToken: "host-token",
+      clientToken: "client-token",
+      activityToken: "activity-token",
+    }, {
+      getOpenWorkWebAccess: async () => ({ hasAccess: false }),
+      store,
+      provisionWorker: async () => {
+        provisions += 1
+        return { provider: "daytona", url: "https://should-not-run.example.test", status: "healthy" }
+      },
+    })
+
+    expect(provisions).toBe(0)
+    expect(updates).toHaveLength(1)
+    expect(updates[0]?.workerId).toBe(workerId)
+    expect(updates[0]?.status).toBe("failed")
+    expect(updates[0]?.onlyWhenStatus).toBe("provisioning")
+    expect(updates[0]?.failure?.code).toBe("web_access_required")
+    expect(updates[0]?.failure?.stage).toBe("provisioning")
   })
 })

@@ -5,7 +5,7 @@ import { isCollectibleArtifactTarget, type OpenTarget, type OpenTargetPreview } 
 
 export const PERSISTED_PANEL_TAB_STORE_KEY = "openwork:panel-tabs:v1";
 
-export type PanelTabType = "artifact" | "browser";
+export type PanelTabType = "artifact" | "browser" | "app";
 
 export type { BrowserPanelTab } from "../../../../app/lib/desktop-types";
 import type { BrowserPanelTab } from "../../../../app/lib/desktop-types";
@@ -15,9 +15,12 @@ export type ArtifactPanelTab = {
   type: "artifact";
   label: string;
   preview: OpenTargetPreview;
+  target?: OpenTarget;
 }
 
-export type PanelTab = BrowserPanelTab | ArtifactPanelTab;
+export type AppPanelTab = { id: string; type: "app"; label: string; appId: string; revisionId?: string; receiptId?: string };
+
+export type PanelTab = BrowserPanelTab | ArtifactPanelTab | AppPanelTab;
 
 export type SessionPanelState = {
   tabs: PanelTab[];
@@ -91,7 +94,7 @@ function reconcileOpenArtifactTabs(
       const target = targetMap.get(tab.id);
 
       if (!target) {
-        return null;
+        return tab.target ? tab : null;
       }
 
       return {
@@ -138,7 +141,13 @@ function isSameTab(left: PanelTab, right: PanelTab) {
     return (
       left.label === right.label &&
       left.preview === right.preview
+      && left.target?.id === right.target?.id
+      && left.target?.updatedAt === right.target?.updatedAt
     );
+  }
+
+  if (left.type === "app" && right.type === "app") {
+    return left.label === right.label && left.appId === right.appId && left.revisionId === right.revisionId && left.receiptId === right.receiptId;
   }
 
   if (left.type === "browser" && right.type === "browser") {
@@ -148,7 +157,8 @@ function isSameTab(left: PanelTab, right: PanelTab) {
       left.favicon === right.favicon &&
       left.status === right.status &&
       left.canGoBack === right.canGoBack &&
-      left.canGoForward === right.canGoForward
+      left.canGoForward === right.canGoForward &&
+      left.ownerSessionId === right.ownerSessionId
     );
   }
 
@@ -191,6 +201,7 @@ function mergePersistedSessions(
         status: "ready",
         canGoBack: false,
         canGoForward: false,
+        ownerSessionId: sessionId,
       }));
 
     sessions[sessionId] = {
@@ -281,7 +292,7 @@ export const usePanelTabStore = create<PanelTabStore>()(
         const mergedTabs: PanelTab[] = [];
 
         for (const tab of session.tabs) {
-          if (tab.type === "artifact") {
+          if (tab.type !== "browser") {
             mergedTabs.push(tab);
             continue;
           }

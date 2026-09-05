@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 
 import type { ComposerDraft } from "../src/app/types";
 import {
+  composerDraftNeedsHydration,
   getComposerQueuedDrafts,
   getComposerRevertMessageId,
   useComposerStateStore,
@@ -101,5 +102,29 @@ describe("composer state store", () => {
     clearRevertTarget("session-a");
     expect(getComposerRevertMessageId(useComposerStateStore.getState(), "session-a")).toBeNull();
     expect(useComposerStateStore.getState().sessions["session-a"]?.draft).toBe("original prompt");
+  });
+
+  test("retains live attachment state only inside the same claimed draft scope", () => {
+    const currentText = "Review this[attachment att-private]";
+    const storedText = "Review this";
+
+    expect(composerDraftNeedsHydration({
+      claimedScopeKey: "alice-org-a|workspace|session",
+      nextScopeKey: "alice-org-a|workspace|session",
+      currentText,
+      storedText,
+    })).toBe(false);
+    expect(composerDraftNeedsHydration({
+      claimedScopeKey: "alice-org-a|workspace|session",
+      nextScopeKey: "bob-org-a|workspace|session",
+      currentText,
+      storedText,
+    })).toBe(true);
+    expect(composerDraftNeedsHydration({
+      claimedScopeKey: "alice-org-a|workspace|session",
+      nextScopeKey: "alice-org-b|workspace|session",
+      currentText: storedText,
+      storedText,
+    })).toBe(true);
   });
 });

@@ -1,16 +1,11 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js"
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
-import { ResourceListChangedNotificationSchema, ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js"
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client"
+import { McpServer } from "@modelcontextprotocol/server"
 import { expect, test } from "bun:test"
 import { createHash } from "node:crypto"
-import type { DynamicArtifactAppPayload, GeneratedArtifactView } from "@openwork/types/dynamic-artifacts"
+import type { GeneratedArtifactView, WorkflowArtifactPayload } from "@openwork/types/workflows"
 import { artifactViewResourceUri } from "../src/artifact-view-resource.js"
-import { dynamicArtifactAppServerCapabilities } from "../src/mcp/dynamic-artifact-app.js"
-import {
-  registerAgentGeneratedArtifactViews,
-  registerSelectedGeneratedArtifactRenderTool,
-} from "../src/mcp/generated-artifact-views.js"
+import { workflowArtifactAppServerCapabilities } from "../src/mcp/workflow-artifact-app.js"
+import { registerAgentGeneratedArtifactViews } from "../src/mcp/generated-artifact-views.js"
 
 const viewId = "arv_01k28e8vz5e5svgkde54dgqy0c"
 const activeRevisionId = "avr_01k28e91dcf6ftyz9e90pcrv7p"
@@ -57,7 +52,7 @@ const view: GeneratedArtifactView = {
   updatedAt: "2026-08-12T12:00:00.000Z",
 }
 
-const payload: DynamicArtifactAppPayload = {
+const payload: WorkflowArtifactPayload = {
   schemaVersion: "1",
   artifact: {
     title: "Custom pipeline",
@@ -82,12 +77,11 @@ async function withClient<T>(
     save: () => Promise<GeneratedArtifactView>
     activate: (request: { artifactViewId: string; revisionId: string }) => Promise<GeneratedArtifactView>
     retire: () => Promise<GeneratedArtifactView>
-    exposePerViewRenderTools: boolean
   }> = {},
 ): Promise<T> {
   const server = new McpServer(
     { name: "generated-artifact-test", version: "1.0.0" },
-    { capabilities: dynamicArtifactAppServerCapabilities },
+    { capabilities: workflowArtifactAppServerCapabilities },
   )
   registerAgentGeneratedArtifactViews({
     server,
@@ -97,16 +91,11 @@ async function withClient<T>(
     save: overrides.save ?? (async () => view),
     activate: overrides.activate ?? (async ({ revisionId }) => ({ ...view, activeRevisionId: revisionId })),
     retire: overrides.retire ?? (async () => ({ ...view, status: "retired", activeRevisionId: null })),
-    exposePerViewRenderTools: overrides.exposePerViewRenderTools,
+    notifyCatalogChanged: () => {
+      server.sendToolListChanged()
+      server.sendResourceListChanged()
+    },
   })
-  if (overrides.exposePerViewRenderTools === false) {
-    registerSelectedGeneratedArtifactRenderTool({
-      server,
-      view,
-      revision: view.revisions[1]!,
-      loadData: async () => ({ ok: true, payload, markdown: "# Custom pipeline" }),
-    })
-  }
   const client = new Client({ name: "host", version: "1.0.0" }, { capabilities: {} })
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
   await server.connect(serverTransport)
@@ -151,13 +140,13 @@ test("serves the stored HTML bytes and keeps Artifact data in structuredContent"
   })
 })
 
-test("keeps the model-visible catalog constant-sized and binds the selected exact revision", async () => {
+test("keeps per-view render tools exposed without selection-bound aliases", async () => {
   await withClient(async (client) => {
     const tools = await client.listTools()
-    expect(tools.tools.some((tool) => tool.name === `render_artifact_${viewId}`)).toBe(false)
-    expect(tools.tools.some((tool) => tool.name === `preview_artifact_${viewId}`)).toBe(false)
-    expect(tools.tools.find((tool) => tool.name === "render_selected_program")?._meta)
-      .toMatchObject({ ui: { resourceUri: artifactViewResourceUri(viewId, activeRevisionId) } })
+    expect(tools.tools.some((tool) => tool.name === `render_artifact_${viewId}`)).toBe(true)
+    expect(tools.tools.some((tool) => tool.name === `preview_artifact_${viewId}`)).toBe(true)
+    expect(tools.tools.filter((tool) => /selected_program$/.test(tool.name))).toEqual([])
+    expect(tools.tools.filter((tool) => tool.name.includes("_program"))).toEqual([])
     expect(tools.tools.some((tool) => tool.name === "save_artifact_view")).toBe(true)
     const saved = await client.callTool({
       name: "save_artifact_view",
@@ -168,18 +157,16 @@ test("keeps the model-visible catalog constant-sized and binds the selected exac
         reactSource: "export default function View() { return <div /> }",
       },
     })
-    expect(JSON.stringify(saved.content)).toContain("render_selected_program")
-    expect(JSON.stringify(saved.content)).not.toContain(`render_artifact_${viewId}`)
-    expect(JSON.stringify(saved.content)).not.toContain(`preview_artifact_${viewId}`)
-  }, { exposePerViewRenderTools: false })
+    expect(JSON.stringify(saved.content)).toContain(`preview_artifact_${viewId}`)
+  })
 })
 
 test("activation and rollback refresh the render tool to each exact immutable URI", async () => {
   await withClient(async (client) => {
     let changed = 0
     let resourcesChanged = 0
-    client.setNotificationHandler(ToolListChangedNotificationSchema, () => { changed += 1 })
-    client.setNotificationHandler(ResourceListChangedNotificationSchema, () => { resourcesChanged += 1 })
+    client.setNotificationHandler("notifications/tools/list_changed", () => { changed += 1 })
+    client.setNotificationHandler("notifications/resources/list_changed", () => { resourcesChanged += 1 })
     await client.callTool({
       name: "activate_artifact_view_revision",
       arguments: { artifactViewId: viewId, revisionId: draftRevisionId },
@@ -210,8 +197,8 @@ test("save and retirement refresh the same session's resources and tools", async
   await withClient(async (client) => {
     let changed = 0
     let resourcesChanged = 0
-    client.setNotificationHandler(ToolListChangedNotificationSchema, () => { changed += 1 })
-    client.setNotificationHandler(ResourceListChangedNotificationSchema, () => { resourcesChanged += 1 })
+    client.setNotificationHandler("notifications/tools/list_changed", () => { changed += 1 })
+    client.setNotificationHandler("notifications/resources/list_changed", () => { resourcesChanged += 1 })
     const saved = await client.callTool({
       name: "save_artifact_view",
       arguments: {

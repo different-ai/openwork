@@ -394,7 +394,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       merged.set(id, {
         id,
         name: provider.name.trim() || id,
-        env: getCloudProviderEnv(provider.providerConfig),
+        env: provider.runtimeEnvKeys ?? getCloudProviderEnv(provider.providerConfig),
       });
     }
 
@@ -499,14 +499,23 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     return "";
   };
 
-  const mirrorOpenWorkModelsVoiceEnv = async (provider: DenOrgLlmProviderConnection, apiKey: string) => {
+  const mirrorOpenWorkModelsVoiceEnv = async (
+    provider: DenOrgLlmProviderConnection,
+    apiKey: string,
+    resolvedEnvEntries: Array<{ key: string; value: string }>,
+  ) => {
     const trimmedKey = apiKey.trim();
     if (!trimmedKey) return;
     const openworkClient = options.openworkServer.getSnapshot().openworkServerClient;
     if (!openworkClient) return;
-    const entries = getCloudProviderEnv(provider.providerConfig)
-      .slice(0, 1)
-      .map((key) => ({ key, value: trimmedKey }));
+    const entries = [...resolvedEnvEntries];
+    if (entries.length === 0) {
+      entries.push(
+        ...getCloudProviderEnv(provider.providerConfig)
+          .slice(0, 1)
+          .map((key) => ({ key, value: trimmedKey })),
+      );
+    }
     if (provider.source === "openwork") {
       if (!entries.some((entry) => entry.key === "OPENWORK_API_KEY")) {
         entries.unshift({ key: "OPENWORK_API_KEY", value: trimmedKey });
@@ -1695,7 +1704,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           providerID: localProviderId,
           auth: { type: "api", key: primaryApiKey },
         });
-        await mirrorOpenWorkModelsVoiceEnv(provider, primaryApiKey);
+        await mirrorOpenWorkModelsVoiceEnv(provider, primaryApiKey, envEntries);
       }
       if (existingImported?.providerId && existingImported.providerId !== localProviderId) {
         try {
@@ -2173,8 +2182,21 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       await removeProviderAuthCredentials(resolved);
       const updated = await refreshProviders({ dispose: true });
       if (Array.isArray(updated?.connected) && updated.connected.includes(resolved)) {
-        // Provider is still connected (e.g. via env var). Just remove
-        // stored credentials; do NOT add to disabled_providers.
+        const stillConnected = updated.all.find((provider) => provider.id === resolved);
+        if (stillConnected && stillConnected.source !== "env") {
+          // The provider definition lives in an opencode config file (for
+          // example ~/.config/opencode/opencode.json), so credential removal
+          // alone can never disconnect it. Disable it via disabled_providers,
+          // exactly like the built-in OpenCode Zen branch above, instead of
+          // leaving the Disconnect button a silent no-op.
+          await ensureProjectProviderDisabledState(resolved, true);
+          await refreshProviders({ dispose: true });
+          removeProviderFromState(resolved);
+          return `${t("providers.disconnected_prefix")} ${resolved}`;
+        }
+        // Provider is still connected via env var. Just remove stored
+        // credentials; the environment stays operator-owned, so do NOT add
+        // it to disabled_providers.
         return `Removed stored credentials for ${resolved}${t("providers.still_connected_suffix")}`;
       }
       removeProviderFromState(resolved);

@@ -1,0 +1,49 @@
+---
+title: "Work with Excel workbooks"
+description: "Attach, read, and produce .xlsx workbooks with the agent without leaving OpenWork."
+---
+
+OpenWork treats Excel workbooks as first-class files. The agent reads any sheet of a workbook in your workspace, and it writes new workbooks that open in Excel, Numbers, Google Sheets, and the OpenWork artifact preview.
+
+## Attach a workbook
+
+1. Drop a `.xlsx` file into the composer or reference one already in the workspace.
+2. OpenWork keeps the original bytes out of the model request. The file is copied under `.opencode/openwork/inbox/chat-attachments/` and the agent receives a compact preview instead: every sheet name, its used range and formula count, and the first rows of each sheet as a grid with real row numbers and column letters.
+3. The preview names the workspace path of the attached file, so the agent can read the rest of it on demand.
+
+Workbooks exported from Excel and Google Sheets both work, including files with merged cells, dates, number formats, and formulas. Password-protected workbooks, legacy `.xls`, `.numbers`, and `.ods` files are not read; save them as `.xlsx` first.
+
+## Ask about any sheet or range
+
+The agent has three workbook tools and uses them on its own when a request involves a spreadsheet:
+
+- `spreadsheet_inspect` lists every sheet with its used range, row and column counts, formulas, merged ranges, number formats, and header row.
+- `spreadsheet_read` returns rows from one sheet as a grid. The agent can page through large sheets, restrict itself to an A1 range such as `B2:F40`, and show formulas instead of values.
+- `spreadsheet_write` creates a `.xlsx` with one or more sheets from rows of values.
+
+Useful requests:
+
+- "Which rows on the Pipeline sheet close this quarter?"
+- "Compare the totals on Q2 and Q3 and tell me what changed."
+- "Show me the formulas behind column F."
+
+Dates stored as Excel serial numbers are shown as calendar dates when the cell carries a date format, and formula cells show their last calculated value.
+
+## Get a workbook back
+
+Ask for an Excel deliverable and the agent writes it with `spreadsheet_write`:
+
+- Numbers stay numeric and booleans stay booleans, so sums and filters work in Excel.
+- Formulas are written only when the agent asks for one explicitly; text it copies from anywhere else is always stored as text, even when it begins with `=`. Formulas recalculate when the file opens, and formulas that reach outside the workbook (web requests, other programs, other files) are refused.
+- The first row of each sheet is bold and frozen as a header unless the agent is asked otherwise, and columns are sized to their content.
+- The result appears in the artifact panel, where you can preview and download it.
+
+Writing replaces the whole file. The agent will not overwrite an existing workbook unless you ask for that file to change, and it includes every sheet you want to keep when it does. The destination folder has to exist already; the agent creates it first when needed. Charts, cell styling beyond the header row, pivot tables, and macros are out of scope for the built-in tools; the agent will say so and can fall back to a script if you want those.
+
+## Limits
+
+- Paths that pass through a symbolic link are refused, for reading and for writing; keep workbooks in real folders under the workspace.
+
+- Workbooks up to 12 MB compressed, with a 2 MB limit per worksheet part (roughly 30,000 text cells per sheet).
+- Up to 64 sheets read, 32 sheets and 50,000 cells written per workbook.
+- Flat, single-table data is usually better as `.csv`, which the agent can read and write directly.

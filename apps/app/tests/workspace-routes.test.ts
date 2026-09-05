@@ -3,13 +3,20 @@ import { describe, expect, test } from "bun:test";
 import {
   classifyRouteSessionReadError,
   mergeRouteWorkspaces,
+  readRouteSessionsWithRetry,
   refreshRouteWorkspaceListState,
+  stabilizeRouteWorkspaceOrder,
 } from "../src/react-app/shell/route-workspaces";
+import {
+  createRouteWorkspaceLoadCoalescer,
+  mapRouteWorkspaceLoads,
+} from "../src/react-app/shell/route-refresh-control";
 import {
   mergeWorkspaceRouteSession,
   preserveWorkspaceRouteSession,
   removeWorkspaceRouteSession,
   sessionIdForLegacyWorkspaceInference,
+  settingsNavigationFromPathname,
   globalExtensionsRoute,
   workspaceExtensionsRoute,
   workspaceSettingsRoute,
@@ -27,6 +34,33 @@ describe("workspace surface routes", () => {
       "/workspace/workspace%2Fa/extensions/skills",
     );
     expect(globalExtensionsRoute("mcps")).toBe("/extensions/mcps");
+  });
+
+  test("menu/agent settings entry keeps the workspace and remembers the open session", () => {
+    // Native menu "Settings…" and agent settings.panel.open only know the URL.
+    // They must enter Settings the same way the in-app button does, so
+    // settingsReturnRoute can bring the user back to the same session.
+    const fromSession = settingsNavigationFromPathname(
+      "/workspace/workspace%2Fa/session/session_1",
+      "general",
+    );
+    expect(fromSession).toEqual({
+      to: "/workspace/workspace%2Fa/settings/general",
+      state: { workspaceId: "workspace/a", sessionId: "session_1" },
+    });
+
+    expect(settingsNavigationFromPathname("/workspace/workspace_1/session", "updates")).toEqual({
+      to: "/workspace/workspace_1/settings/updates",
+      state: { workspaceId: "workspace_1", sessionId: null },
+    });
+    expect(settingsNavigationFromPathname("/workspace/workspace_1/extensions/skills", "ai")).toEqual({
+      to: "/workspace/workspace_1/settings/ai",
+      state: { workspaceId: "workspace_1", sessionId: null },
+    });
+    expect(settingsNavigationFromPathname("/automations", "general")).toEqual({
+      to: "/settings/general",
+      state: { workspaceId: "", sessionId: null },
+    });
   });
 });
 
@@ -85,8 +119,108 @@ describe("workspace route session read errors", () => {
     expect(classifyRouteSessionReadError(Object.assign(new Error("missing"), { status: 404, code: "session_not_found" }))).toBe("not-found");
     expect(classifyRouteSessionReadError(Object.assign(new Error("workspace missing"), { status: 404, code: "workspace_not_found" }))).toBe("error");
     expect(classifyRouteSessionReadError(Object.assign(new Error("upstream"), { status: 502 }))).toBe("retryable");
+    expect(classifyRouteSessionReadError(Object.assign(new Error("engine starting"), { status: 400, code: "opencode_unconfigured" }))).toBe("retryable");
     expect(classifyRouteSessionReadError(new Error("request timed out"))).toBe("retryable");
     expect(classifyRouteSessionReadError(Object.assign(new Error("forbidden"), { status: 403 }))).toBe("error");
+  });
+
+  test("retries a bounded runtime startup gap and returns the recovered sessions", async () => {
+    let attempts = 0;
+    const waits: number[] = [];
+    const sessions = await readRouteSessionsWithRetry({
+      load: async () => {
+        attempts += 1;
+        if (attempts < 3) {
+          throw Object.assign(new Error("engine starting"), {
+            status: 400,
+            code: "opencode_unconfigured",
+          });
+        }
+        return ["session-1"];
+      },
+      retryDelaysMs: [250, 750, 1_500],
+      wait: async (delayMs) => { waits.push(delayMs); },
+    });
+
+    expect(sessions).toEqual(["session-1"]);
+    expect(attempts).toBe(3);
+    expect(waits).toEqual([250, 750]);
+  });
+
+  test("does not retry a terminal authorization failure", async () => {
+    let attempts = 0;
+    await expect(readRouteSessionsWithRetry({
+      load: async () => {
+        attempts += 1;
+        throw Object.assign(new Error("forbidden"), { status: 403 });
+      },
+      retryDelaysMs: [250, 750],
+      wait: async () => undefined,
+    })).rejects.toMatchObject({ status: 403 });
+    expect(attempts).toBe(1);
+  });
+});
+
+describe("workspace route session load budget", () => {
+  test("loads workspaces in bounded batches while preserving order", async () => {
+    let active = 0;
+    let peak = 0;
+    const release: Array<() => void> = [];
+    const workspaces = Array.from({ length: 10 }, (_, index) => index);
+
+    const resultPromise = mapRouteWorkspaceLoads(workspaces, async (workspace) => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise<void>((resolve) => release.push(resolve));
+      active -= 1;
+      return `workspace-${workspace}`;
+    });
+
+    await Bun.sleep(0);
+    expect(active).toBe(4);
+    release.splice(0).forEach((resolve) => resolve());
+    await Bun.sleep(0);
+    expect(active).toBe(4);
+    release.splice(0).forEach((resolve) => resolve());
+    await Bun.sleep(0);
+    expect(active).toBe(2);
+    release.splice(0).forEach((resolve) => resolve());
+
+    expect(await resultPromise).toEqual(workspaces.map((workspace) => `workspace-${workspace}`));
+    expect(peak).toBe(4);
+  });
+
+  test("coalesces one workspace load until its complete retry chain settles", async () => {
+    const coalescer = createRouteWorkspaceLoadCoalescer();
+    const starts: string[] = [];
+    let releaseWorkspaceA: (() => void) | undefined;
+
+    const firstWorkspaceA = coalescer.run("workspace-a", async () => {
+      starts.push("workspace-a");
+      await new Promise<void>((resolve) => {
+        releaseWorkspaceA = resolve;
+      });
+    });
+    const duplicateWorkspaceA = coalescer.run("workspace-a", async () => {
+      starts.push("workspace-a-duplicate");
+    });
+    const workspaceB = coalescer.run("workspace-b", async () => {
+      starts.push("workspace-b");
+    });
+
+    await Bun.sleep(0);
+    expect(duplicateWorkspaceA).toBe(firstWorkspaceA);
+    expect(starts).toEqual(["workspace-a", "workspace-b"]);
+    expect(coalescer.isInFlight("workspace-a")).toBe(true);
+
+    releaseWorkspaceA?.();
+    await Promise.all([firstWorkspaceA, duplicateWorkspaceA, workspaceB]);
+    expect(coalescer.isInFlight("workspace-a")).toBe(false);
+
+    await coalescer.run("workspace-a", async () => {
+      starts.push("workspace-a-after-settle");
+    });
+    expect(starts).toEqual(["workspace-a", "workspace-b", "workspace-a-after-settle"]);
   });
 });
 
@@ -176,6 +310,50 @@ describe("workspace route list merging", () => {
     expect(result.workspaces.map((workspace) => workspace.id)).toEqual([
       "workspace-known",
       "workspace-desktop",
+    ]);
+  });
+
+  test("captures the first visible order so active-workspace refreshes cannot reshuffle the sidebar", () => {
+    const alpha = { ...previouslyKnownWorkspaces[0], id: "workspace-alpha" };
+    const beta = { ...desktopWorkspaces[0], id: "workspace-beta" };
+    const initial = stabilizeRouteWorkspaceOrder([alpha, beta], []);
+    const afterBetaActivation = stabilizeRouteWorkspaceOrder([beta, alpha], initial.orderIds);
+
+    expect(initial.orderIds).toEqual(["workspace-alpha", "workspace-beta"]);
+    expect(afterBetaActivation.workspaces.map((workspace) => workspace.id)).toEqual([
+      "workspace-alpha",
+      "workspace-beta",
+    ]);
+  });
+
+  test("appends newly discovered workspaces without displacing the saved order", () => {
+    const alpha = { ...previouslyKnownWorkspaces[0], id: "workspace-alpha" };
+    const beta = { ...desktopWorkspaces[0], id: "workspace-beta" };
+    const gamma = { ...desktopWorkspaces[0], id: "workspace-gamma" };
+    const stable = stabilizeRouteWorkspaceOrder(
+      [beta, gamma, alpha],
+      ["workspace-alpha", "workspace-beta"],
+    );
+
+    expect(stable.orderIds).toEqual([
+      "workspace-alpha",
+      "workspace-beta",
+      "workspace-gamma",
+    ]);
+    expect(stable.workspaces.map((workspace) => workspace.id)).toEqual(stable.orderIds);
+  });
+
+  test("keeps temporarily absent workspace positions for the next successful refresh", () => {
+    const alpha = { ...previouslyKnownWorkspaces[0], id: "workspace-alpha" };
+    const beta = { ...desktopWorkspaces[0], id: "workspace-beta" };
+    const duringGap = stabilizeRouteWorkspaceOrder([beta], ["workspace-alpha", "workspace-beta"]);
+    const recovered = stabilizeRouteWorkspaceOrder([beta, alpha], duringGap.orderIds);
+
+    expect(duringGap.orderIds).toEqual(["workspace-alpha", "workspace-beta"]);
+    expect(duringGap.workspaces.map((workspace) => workspace.id)).toEqual(["workspace-beta"]);
+    expect(recovered.workspaces.map((workspace) => workspace.id)).toEqual([
+      "workspace-alpha",
+      "workspace-beta",
     ]);
   });
 });

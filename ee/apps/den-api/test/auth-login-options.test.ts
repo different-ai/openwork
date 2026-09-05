@@ -1,5 +1,14 @@
 import { expect, test } from "bun:test"
-import { normalizeLoginEmail, resolveLoginOptionKind } from "../src/auth-login-options.js"
+import { buildLoginOptionsSessionCookieClearHeaders, normalizeLoginEmail, resolveLoginOptionKind } from "../src/auth-login-options.js"
+
+test("login option response clears stale secure Better Auth session cookies", () => {
+  expect(buildLoginOptionsSessionCookieClearHeaders("app.example.com")).toEqual([
+    "__Secure-openwork-den.session_token=; Max-Age=0; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; HttpOnly; SameSite=Lax; Domain=app.example.com",
+    "__Secure-openwork-den.session_token=; Max-Age=0; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; HttpOnly; SameSite=Lax",
+    "__Secure-better-auth.session_token=; Max-Age=0; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; HttpOnly; SameSite=Lax; Domain=app.example.com",
+    "__Secure-better-auth.session_token=; Max-Age=0; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; HttpOnly; SameSite=Lax",
+  ])
+})
 
 test("login option resolution normalizes email input", () => {
   expect(normalizeLoginEmail(" User@Example.COM ")).toBe("user@example.com")

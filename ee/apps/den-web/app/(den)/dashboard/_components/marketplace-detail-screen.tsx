@@ -59,7 +59,7 @@ const COMPONENT_TYPE_LABELS: Record<string, { singular: string; plural: string }
   mcp_server: { singular: "MCP server", plural: "MCP servers" },
   lsp_server: { singular: "LSP server", plural: "LSP servers" },
   monitor: { singular: "monitor", plural: "monitors" },
-  script: { singular: "Program", plural: "Programs" },
+  workflow: { singular: "Workflow", plural: "Workflows" },
   settings: { singular: "setting", plural: "settings" },
 };
 

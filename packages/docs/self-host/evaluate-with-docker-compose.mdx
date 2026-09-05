@@ -1,0 +1,112 @@
+---
+title: "Evaluate with Docker Compose"
+description: "Run the OpenWork control plane from published images without cloning or building the repository."
+---
+
+Use the pull-only Docker Compose stack to evaluate Den web, Den API, and organization management on one machine. The stack downloads published OpenWork images and MySQL, runs database migrations, and starts the browser experience at `http://localhost:3005`.
+
+<Warning>
+  This stack is for evaluation only. Its HTTP ports bind to loopback, but it enables public signup by default, uses development credentials, keeps MySQL on one local Docker volume, and uses a stub worker provisioner. Do not change the port bindings to expose it on a network or use it for production data.
+</Warning>
+
+## Before you start
+
+Install Docker Engine or Docker Desktop with Docker Compose v2. The machine must be able to pull images from GitHub Container Registry and Docker Hub.
+
+## Start the stack
+
+1. Download the Compose file into an empty directory:
+
+   ```bash
+   curl -fsSLo docker-compose.eval.yml \
+     https://raw.githubusercontent.com/different-ai/openwork/9f8645ebc482c15ab99c0cf155aabaa411e1ca6a/packaging/docker/docker-compose.eval.yml
+   printf '%s  %s\n' \
+     '69cc7f2666157b7697ebf69b31b0c83887dd99e796c7d956f9ccaab8fa8bf2fc' \
+     'docker-compose.eval.yml' | shasum -a 256 --check
+   ```
+
+   Continue only when the checksum command prints `docker-compose.eval.yml: OK`. The commit-specific URL and checksum ensure you run the reviewed Compose definition rather than the latest content of a mutable branch.
+
+2. Start the services and wait for their health checks:
+
+   ```bash
+   umask 077
+   printf 'OPENWORK_AUTH_SECRET=%s\nOPENWORK_DB_ENCRYPTION_KEY=%s\n' \
+     "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" > .env
+   docker compose -f docker-compose.eval.yml up -d --wait
+   ```
+
+3. Open [http://localhost:3005](http://localhost:3005) and create an account.
+
+The stack exposes Den web on `127.0.0.1:3005` and Den API on `127.0.0.1:8788`. MySQL is reachable only inside the Compose network.
+
+## Configure the evaluation
+
+Set variables in your shell before running `docker compose`, or save them in a `.env` file beside `docker-compose.eval.yml`.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `OPENWORK_WEB_PORT` | `3005` | Host port for Den web. |
+| `OPENWORK_API_PORT` | `8788` | Host port for Den API. |
+| `OPENWORK_AUTH_SECRET` | Required | Better Auth signing secret of at least 32 random characters. |
+| `OPENWORK_DB_ENCRYPTION_KEY` | Required | Key of at least 32 random characters used to encrypt selected database values. |
+| `OPENWORK_ORG_NAME` | `OpenWork Evaluation` | Name of the single organization. |
+| `OPENWORK_ALLOW_SIGNUP` | `true` | Whether anyone who can reach the site can create an account. |
+
+The setup command writes unique secrets to `.env` so subsequent Compose commands reuse them. Keep this file private and do not commit it. To rotate the secrets, replace their values before recreating the services.
+
+The Compose file pins the MySQL, Den API, and Den web images to immutable digests. Download a newer Compose file to evaluate a newer release rather than changing only an image tag.
+
+If you create `.env` separately, generate unique secrets with:
+
+```bash
+umask 077
+printf 'OPENWORK_AUTH_SECRET=%s\nOPENWORK_DB_ENCRYPTION_KEY=%s\n' \
+  "$(openssl rand -hex 32)" "$(openssl rand -hex 32)" > .env
+```
+
+## Connect from another machine
+
+Keep the Compose ports bound to loopback. To evaluate a stack running on a remote host, create an encrypted SSH tunnel from your local machine:
+
+```bash
+ssh -N \
+  -L 3005:127.0.0.1:3005 \
+  -L 8788:127.0.0.1:8788 \
+  user@docker-host
+```
+
+Then open [http://localhost:3005](http://localhost:3005). Authentication and API traffic travel through the SSH tunnel rather than across the network as plaintext HTTP.
+
+## Inspect or stop the stack
+
+View service state and logs:
+
+```bash
+docker compose -f docker-compose.eval.yml ps
+docker compose -f docker-compose.eval.yml logs -f
+```
+
+Stop the services while retaining the evaluation database:
+
+```bash
+docker compose -f docker-compose.eval.yml down
+```
+
+Stop the services and permanently delete the evaluation database:
+
+```bash
+docker compose -f docker-compose.eval.yml down -v
+```
+
+## Evaluation limitations
+
+The stack does not provide:
+
+- production worker provisioning or cloud sandboxes;
+- transactional email or email verification;
+- TLS termination, private ingress, or secret management;
+- database high availability, backups, or a restore plan; or
+- production-safe authentication and database defaults.
+
+For production, use the [supported private-cloud architecture](/self-host/deploy-to-your-cloud/overview) with Kubernetes, Helm, managed MySQL, HTTPS, private networking, managed secrets, and the secure [first-administrator flow](/self-host/deploy-to-your-cloud/first-administrator).

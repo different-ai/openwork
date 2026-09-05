@@ -1,8 +1,9 @@
 import { createHmac, timingSafeEqual } from "node:crypto"
 import {
-  AUTOMATION_MODEL_ATTENTION_CAPABILITY,
+  automationDesktopRunnerCapabilitySchema,
   type AutomationDesktopRunnerCapability,
 } from "@openwork/types/automations"
+import { z } from "zod"
 import { env } from "../env.js"
 import { firstForwardedValue, publicRequestUrl, trustedForwardedOrigin } from "../request-url.js"
 
@@ -108,13 +109,8 @@ export class AutomationRunnerAuth {
       const audience = decoded.v === 2 && typeof decoded.a === "string"
         ? normalizeRunnerAudience(decoded.a)
         : null
-      const capabilities = decoded.c === undefined
-        ? []
-        : Array.isArray(decoded.c)
-            && decoded.c.length <= 1
-            && decoded.c.every((capability) => capability === AUTOMATION_MODEL_ATTENTION_CAPABILITY)
-          ? decoded.c as AutomationDesktopRunnerCapability[]
-          : null
+      const parsedCapabilities = z.array(automationDesktopRunnerCapabilitySchema).max(2).safeParse(decoded.c ?? [])
+      const capabilities = parsedCapabilities.success ? parsedCapabilities.data : null
       if (
         (decoded.v !== 1 && decoded.v !== 2)
         || typeof decoded.o !== "string"

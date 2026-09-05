@@ -1,20 +1,23 @@
 /** @jsxImportSource react */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, ArrowUpRight } from "lucide-react";
 import { AnimatePresence, LazyMotion, domMax, m, useReducedMotion } from "motion/react";
 
-import { clearDenSession, createDenClient, readDenSettings } from "@/app/lib/den";
+import { clearDenSession, createDenClient, DenApiError, readDenSettings } from "@/app/lib/den";
 import { isOpenworkGatewayRuntime } from "@/app/lib/gateway-runtime";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
+import { denWebBillingUrl } from "@/react-app/domains/cloud/openwork-web-access-gate";
 import { useSessionActivityStore } from "@/react-app/domains/session/status/session-activity-store";
+import { usePlatform } from "@/react-app/kernel/platform";
 import { softCardClass } from "@/react-app/domains/workspace/modal-styles";
 import {
   cloudWorkspaceBootIsSlow,
   cloudWorkspaceBootStages,
+  cloudWorkspaceFailureLogFields,
   cloudWorkspaceTakeoverCopy,
   formatCloudWorkspaceElapsed,
   mapCloudWorkspaceState,
@@ -32,10 +35,13 @@ type CloudWorkspaceStatusContextValue = {
   gatewayMode: boolean;
   visible: boolean;
   instance: DenCloudInstance | null;
+  accessRequired: boolean;
   requestFailed: boolean;
   updating: boolean;
+  retrying: boolean;
   viewModel: CloudWorkspaceViewModel;
   refresh: () => Promise<void>;
+  retry: () => Promise<void>;
   signOut: () => void;
   updateNow: () => void;
   /**
@@ -46,7 +52,7 @@ type CloudWorkspaceStatusContextValue = {
   setTakeoverActive: (active: boolean) => void;
 };
 
-const fallbackViewModel = mapCloudWorkspaceState({ instance: null, updating: false });
+const fallbackViewModel = mapCloudWorkspaceState({ instance: null, updating: false, accessRequired: false });
 
 async function noopRefresh() {}
 
@@ -56,10 +62,13 @@ const fallbackCloudWorkspaceStatus: CloudWorkspaceStatusContextValue = {
   gatewayMode: false,
   visible: false,
   instance: null,
+  accessRequired: false,
   requestFailed: false,
   updating: false,
+  retrying: false,
   viewModel: fallbackViewModel,
   refresh: noopRefresh,
+  retry: noopRefresh,
   signOut: noopAction,
   updateNow: noopAction,
   takeoverActive: false,
@@ -88,13 +97,24 @@ export function useCloudWorkspaceStatus() {
   return useContext(CloudWorkspaceStatusContext) ?? fallbackCloudWorkspaceStatus;
 }
 
+export function cloudWorkspaceRequestFailureLogFields(error: unknown) {
+  return error instanceof DenApiError
+    ? { failure_code: error.code, http_status: error.status }
+    : { failure_code: "cloud_instance_request_failed" };
+}
+
 export function CloudWorkspaceStatusProvider(props: { children: ReactNode }) {
   const denAuth = useDenAuth();
   const [instance, setInstance] = useState<DenCloudInstance | null>(null);
+  const [accessRequired, setAccessRequired] = useState(false);
   const [requestFailed, setRequestFailed] = useState(false);
   const [updating, setUpdating] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [takeoverActive, setTakeoverActive] = useState(false);
   const lastAttemptedVersion = useRef<string | null>(null);
+  const lastLoggedFailureReference = useRef<string | null>(null);
+  const lastLoggedRequestFailure = useRef<string | null>(null);
+  const retryInFlight = useRef<Promise<void> | null>(null);
   const gatewayMode = isOpenworkGatewayRuntime();
   const settingsSnapshot = useSyncExternalStore(
     subscribeToDenSettings,
@@ -120,15 +140,62 @@ export function CloudWorkspaceStatusProvider(props: { children: ReactNode }) {
     try {
       const next = await denClient.getCloudInstance(orgId);
       setInstance(next);
+      setAccessRequired(false);
       setRequestFailed(false);
-    } catch {
+      lastLoggedRequestFailure.current = null;
+      if (next.failure && next.failure.reference !== lastLoggedFailureReference.current) {
+        lastLoggedFailureReference.current = next.failure.reference;
+        console.error("[cloud-workspace] sandbox startup failed", cloudWorkspaceFailureLogFields(next.failure));
+      }
+    } catch (error) {
+      if (error instanceof DenApiError && error.code === "openwork_web_access_required") {
+        setAccessRequired(true);
+        setRequestFailed(false);
+        return;
+      }
       setRequestFailed(true);
+      const fields = cloudWorkspaceRequestFailureLogFields(error);
+      const key = `${fields.failure_code}:${"http_status" in fields ? fields.http_status : "unknown"}`;
+      if (key !== lastLoggedRequestFailure.current) {
+        lastLoggedRequestFailure.current = key;
+        console.error("[cloud-workspace] instance status request failed", fields);
+      }
     }
   }, [authToken, denClient, gatewayMode, orgId]);
 
+  const retry = useCallback(() => {
+    if (retryInFlight.current) return retryInFlight.current;
+    if (!gatewayMode || !authToken || !orgId) {
+      setRequestFailed(true);
+      return Promise.resolve();
+    }
+
+    setRetrying(true);
+    const operation = (async () => {
+      try {
+        const next = await denClient.retryCloudInstance(orgId);
+        setInstance(next);
+        setRequestFailed(false);
+        lastLoggedRequestFailure.current = null;
+        if (next.failure && next.failure.reference !== lastLoggedFailureReference.current) {
+          lastLoggedFailureReference.current = next.failure.reference;
+          console.error("[cloud-workspace] sandbox recovery requested", cloudWorkspaceFailureLogFields(next.failure));
+        }
+      } catch (error) {
+        setRequestFailed(true);
+        console.error("[cloud-workspace] sandbox recovery request failed", cloudWorkspaceRequestFailureLogFields(error));
+      }
+    })().finally(() => {
+      if (retryInFlight.current === operation) retryInFlight.current = null;
+      setRetrying(false);
+    });
+    retryInFlight.current = operation;
+    return operation;
+  }, [authToken, denClient, gatewayMode, orgId]);
+
   const viewModel = useMemo(
-    () => mapCloudWorkspaceState({ instance, updating, requestFailed }),
-    [instance, requestFailed, updating],
+    () => mapCloudWorkspaceState({ instance, updating, accessRequired, requestFailed }),
+    [accessRequired, instance, requestFailed, updating],
   );
 
   useEffect(() => {
@@ -138,6 +205,7 @@ export function CloudWorkspaceStatusProvider(props: { children: ReactNode }) {
 
   useEffect(() => {
     if (!gatewayMode || !authToken || !orgId || !visible) return;
+    if (viewModel.pollMs === null) return;
     const timeoutId = window.setTimeout(() => {
       void refresh();
     }, viewModel.pollMs);
@@ -146,11 +214,11 @@ export function CloudWorkspaceStatusProvider(props: { children: ReactNode }) {
 
   useEffect(() => {
     if (!gatewayMode || !updating) return;
-    const nextModel = mapCloudWorkspaceState({ instance, updating: false, requestFailed });
+    const nextModel = mapCloudWorkspaceState({ instance, updating: false, accessRequired, requestFailed });
     if (instance?.status === "ready" && !nextModel.updateAvailable) {
       setUpdating(false);
     }
-  }, [gatewayMode, instance, requestFailed, updating]);
+  }, [accessRequired, gatewayMode, instance, requestFailed, updating]);
 
   const signOut = useCallback(() => {
     if (authToken) {
@@ -202,15 +270,18 @@ export function CloudWorkspaceStatusProvider(props: { children: ReactNode }) {
     gatewayMode,
     visible,
     instance,
+    accessRequired,
     requestFailed,
     updating,
+    retrying,
     viewModel,
     refresh,
+    retry,
     signOut,
     updateNow,
     takeoverActive,
     setTakeoverActive,
-  }), [gatewayMode, instance, refresh, requestFailed, signOut, takeoverActive, updateNow, updating, viewModel, visible]);
+  }), [accessRequired, gatewayMode, instance, refresh, requestFailed, retry, retrying, signOut, takeoverActive, updateNow, updating, viewModel, visible]);
 
   return (
     <CloudWorkspaceStatusContext.Provider value={value}>
@@ -274,6 +345,7 @@ function BootStageRow(props: { stage: CloudWorkspaceBootStage; reduceMotion: boo
 
 export function CloudWorkspaceBootTakeover(props: { decision: CloudWorkspaceMainContentDecision }) {
   const cloudWorkspace = useCloudWorkspaceStatus();
+  const platform = usePlatform();
   const { setTakeoverActive } = cloudWorkspace;
   const reduceMotion = useReducedMotion() ?? false;
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -296,7 +368,10 @@ export function CloudWorkspaceBootTakeover(props: { decision: CloudWorkspaceMain
 
   const { viewModel } = cloudWorkspace;
   const failed = viewModel.variant === "failed";
-  const slow = !failed && cloudWorkspaceBootIsSlow(elapsedMs);
+  const accessRequired = viewModel.variant === "access-required";
+  const unavailable = viewModel.variant === "unavailable";
+  const attention = failed || accessRequired || unavailable;
+  const slow = !attention && cloudWorkspaceBootIsSlow(elapsedMs);
   const copy = cloudWorkspaceTakeoverCopy({ variant: viewModel.variant, slow });
   const stages = cloudWorkspaceBootStages(viewModel.variant);
 
@@ -304,7 +379,7 @@ export function CloudWorkspaceBootTakeover(props: { decision: CloudWorkspaceMain
     <LazyMotion features={domMax}>
       <div
         className="flex h-full min-h-[420px] items-center justify-center px-6 py-16"
-        role={failed ? "alert" : "status"}
+        role={attention ? "alert" : "status"}
         aria-live="polite"
         data-testid="cloud-workspace-takeover"
         data-cloud-workspace-state={viewModel.variant}
@@ -317,7 +392,7 @@ export function CloudWorkspaceBootTakeover(props: { decision: CloudWorkspaceMain
           transition={{ duration: 0.32, ease: "easeOut" }}
           className={cn(
             "w-full max-w-md rounded-[20px] border p-6 shadow-[var(--dls-card-shadow)]",
-            failed
+            attention
               ? "border-amber-7/35 bg-amber-3/30"
               : "border-dls-border bg-dls-surface",
           )}
@@ -326,12 +401,12 @@ export function CloudWorkspaceBootTakeover(props: { decision: CloudWorkspaceMain
             <div
               className={cn(
                 "flex size-12 shrink-0 items-center justify-center rounded-2xl border",
-                failed
+                attention
                   ? "border-amber-7/35 bg-amber-3/60 text-amber-11"
                   : "border-dls-border bg-dls-hover text-dls-accent",
               )}
             >
-              {failed ? (
+              {attention ? (
                 <AlertTriangle className="size-5" aria-hidden="true" />
               ) : (
                 <m.span layoutId={gatewayIndicatorLayoutId} className="flex items-center justify-center">
@@ -368,11 +443,33 @@ export function CloudWorkspaceBootTakeover(props: { decision: CloudWorkspaceMain
             </m.ul>
           ) : null}
 
-          {failed || slow ? (
+          {attention || slow ? (
             <m.div layout className="mt-5 flex items-center gap-2">
-              <Button type="button" size="sm" variant="outline" onClick={() => void cloudWorkspace.refresh()}>
-                Retry
-              </Button>
+              {accessRequired ? (
+                <>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => platform.openLink(denWebBillingUrl(readDenSettings().baseUrl))}
+                  >
+                    Get OpenWork Web
+                    <ArrowUpRight className="size-4" aria-hidden="true" />
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" onClick={() => void cloudWorkspace.refresh()}>
+                    Check again
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void (failed ? cloudWorkspace.retry() : cloudWorkspace.refresh())}
+                  disabled={failed && cloudWorkspace.retrying}
+                >
+                  {failed ? cloudWorkspace.retrying ? "Retrying…" : "Retry" : slow ? "Check again" : "Try again"}
+                </Button>
+              )}
               <Button type="button" size="sm" variant="ghost" onClick={cloudWorkspace.signOut}>
                 Sign out
               </Button>
@@ -396,7 +493,9 @@ export function CloudWorkspaceBootTakeover(props: { decision: CloudWorkspaceMain
 export function CloudWorkspaceStatusPanel(props: {
   viewModel: CloudWorkspaceViewModel;
   updating: boolean;
+  retrying: boolean;
   onRefresh: () => void;
+  onRetry: () => void;
   onSignOut: () => void;
   onUpdateNow: () => void;
 }) {
@@ -432,8 +531,14 @@ export function CloudWorkspaceStatusPanel(props: {
       ) : null}
       <div className="flex items-center justify-end gap-2">
         {viewModel.showRetry ? (
-          <Button type="button" size="sm" variant="outline" onClick={props.onRefresh}>
-            Retry
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={viewModel.variant === "failed" ? props.onRetry : props.onRefresh}
+            disabled={viewModel.variant === "failed" && props.retrying}
+          >
+            {viewModel.variant === "failed" && props.retrying ? "Retrying…" : "Retry"}
           </Button>
         ) : null}
         <Button type="button" size="sm" variant="ghost" onClick={props.onSignOut}>
@@ -505,7 +610,9 @@ function CloudWorkspaceOverlayInner() {
             <CloudWorkspaceStatusPanel
               viewModel={viewModel}
               updating={cloudWorkspace.updating}
+              retrying={cloudWorkspace.retrying}
               onRefresh={() => void cloudWorkspace.refresh()}
+              onRetry={() => void cloudWorkspace.retry()}
               onUpdateNow={cloudWorkspace.updateNow}
               onSignOut={() => {
                 cloudWorkspace.signOut();

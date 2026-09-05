@@ -49,4 +49,19 @@ describe("agent MCP OAuth protected-resource discovery", () => {
     const body = await res.json()
     expect(body).toMatchObject({ error: "missing_mcp_token", referenceId: "req_agent_route" })
   })
+
+  test("unauthenticated GET /mcp/agent returns an RFC 9728 discovery challenge", async () => {
+    const app = buildApp()
+    const res = await app.request(`${ORIGIN}/mcp/agent`, {
+      method: "GET",
+      headers: { accept: "text/event-stream" },
+    })
+
+    expect(res.status).toBe(401)
+    const challenge = res.headers.get("www-authenticate") ?? ""
+    expect(challenge).toContain(`resource_metadata="${ORIGIN}/.well-known/oauth-protected-resource/mcp/agent"`)
+    expect(challenge).toContain(`scope="mcp:read mcp:write offline_access"`)
+    const body = await res.json()
+    expect(body).toMatchObject({ error: "missing_mcp_token", referenceId: "req_agent_route" })
+  })
 })

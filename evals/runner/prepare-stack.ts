@@ -64,6 +64,7 @@ async function prepareLocal(): Promise<StackPreparation> {
     if (nextEnv) await writeFile(nextEnvPath, nextEnv);
     else if (!hadNextEnv) await rm(nextEnvPath, { force: true });
   }
+  await rm(join(REPO_ROOT, "ee/apps/den-web/.next/dev"), { recursive: true, force: true });
   return { kind: "local", runtimePrepared: true, electronPrepared: true };
 }
 

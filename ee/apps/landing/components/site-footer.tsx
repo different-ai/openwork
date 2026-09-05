@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ShieldCheck } from "lucide-react";
 import { OpenCodeLogo } from "./opencode-logo";
 
 export function SiteFooter() {
@@ -15,6 +16,14 @@ export function SiteFooter() {
           >
             <OpenCodeLogo className="h-3 w-auto" />
           </a>
+          <Link
+            href="/trust"
+            aria-label="SOC 2 Type I — view Trust Center"
+            className="inline-flex items-center gap-1.5 rounded-full border border-[var(--lp-border)] px-2.5 py-1 text-[11px] font-medium text-gray-600 transition-colors hover:border-gray-400 hover:text-gray-800"
+          >
+            <ShieldCheck className="h-3.5 w-3.5" />
+            SOC 2 Type I
+          </Link>
         </div>
 
         <div className="flex flex-wrap items-center gap-x-5 gap-y-3 md:gap-x-8">
@@ -38,6 +47,9 @@ export function SiteFooter() {
           >
             Cloud
           </a>
+          <Link href="/dashboard" className="whitespace-nowrap transition-colors hover:text-gray-800">
+            Dashboard
+          </Link>
           <Link href="/enterprise" className="whitespace-nowrap transition-colors hover:text-gray-800">
             Enterprise
           </Link>

@@ -165,6 +165,7 @@ try {
 }
 
 const esc = (value) => String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+const escAttr = (value) => esc(value).replace(/"/g, "&quot;")
 const slug = (value) => value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60)
 const frameFiles = frames.map((frame, index) => {
   const name = `${String(index + 1).padStart(2, "0")}-${slug(frame.claim)}.html`
@@ -184,7 +185,7 @@ writeFileSync(join(outDir, "fraimz.html"), `<!doctype html><html lang="en"><head
 <title>OpenWork Linux Bootstrap — test evidence</title>
 <style>body{margin:0;background:#f3f4f6;color:#111827;font-family:system-ui,sans-serif}main{max-width:1180px;margin:0 auto;padding:32px}.meta{color:#4b5563;margin-bottom:24px}section{margin:20px 0;padding:16px;border:1px solid #d1d5db;border-radius:16px;background:white}iframe{width:100%;min-height:360px;border:1px solid #e5e7eb;border-radius:12px;background:white}code{background:#e5e7eb;padding:2px 5px;border-radius:5px}</style>
 </head><body><main><h1>OpenWork Linux Bootstrap — test evidence</h1><div class="meta">Result: <code>${allOk ? "passed" : "failed"}</code> · Live Den API: <code>${esc(denBaseUrl)}</code> · Screenshots: ${frames.length}</div>
-${frameFiles.map((entry) => `<section><h2>${esc(entry.frame.claim)}</h2><iframe src="${entry.name}" title="${esc(entry.frame.claim)}"></iframe><p><a href="${entry.name}">Open frame</a></p></section>`).join("\n")}
+${frameFiles.map((entry) => `<section><h2>${esc(entry.frame.claim)}</h2><iframe src="${escAttr(entry.name)}" title="${escAttr(entry.frame.claim)}"></iframe><p><a href="${escAttr(entry.name)}">Open frame</a></p></section>`).join("\n")}
 </main></body></html>`)
 writeFileSync(join(outDir, "report.json"), JSON.stringify({
   flow: "openwork-linux-container",

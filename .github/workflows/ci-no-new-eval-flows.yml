@@ -1,4 +1,4 @@
-name: No New Legacy Eval Flows
+name: Legacy Eval Flows Removed
 
 on:
   pull_request:
@@ -21,11 +21,16 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null || git fetch --no-tags --depth=1 origin "$BASE_SHA"
 
-      - name: Reject non-deletion legacy flow changes
+      - name: Enforce removed legacy flows
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
+          if [[ -e evals/flows ]]; then
+            printf '%s\n' "Legacy flows were removed; evals/flows/ must not exist."
+            exit 1
+          fi
+
           violations=()
           while IFS= read -r -d '' status && IFS= read -r -d '' first_path; do
             second_path=""
@@ -33,7 +38,14 @@ jobs:
               IFS= read -r -d '' second_path
             fi
 
-            if [[ "$status" != D && ( "$first_path" == evals/flows/* || "$second_path" == evals/flows/* ) ]]; then
+            added_path=""
+            if [[ "$status" == A* ]]; then
+              added_path="$first_path"
+            elif [[ "$status" == R* || "$status" == C* ]]; then
+              added_path="$second_path"
+            fi
+
+            if [[ "$added_path" == *.flow.mjs || "$added_path" == *.flow.ts ]]; then
               violation="$status"$'\t'"$first_path"
               if [[ -n "$second_path" ]]; then
                 violation+=$'\t'"$second_path"
@@ -43,9 +55,9 @@ jobs:
           done < <(git diff --name-status -z --find-renames --find-copies-harder "$BASE_SHA...$HEAD_SHA")
 
           if (( ${#violations[@]} > 0 )); then
-            printf '%s\n' "The legacy eval flow corpus is frozen; only deletions under evals/flows/** are allowed."
+            printf '%s\n' "Legacy flows were removed; adding *.flow.mjs or *.flow.ts files is not allowed."
             printf '  %s\n' "${violations[@]}"
             printf '%s\n' "Put new executable end-to-end coverage in evals/specs/**/*.test.ts and import test from @openwork/testkit."
             exit 1
           fi
-          printf '%s\n' "Legacy eval flow guard passed: evals/flows/** has no non-deletion changes."
+          printf '%s\n' "Legacy flows remain removed and no flow files were added."

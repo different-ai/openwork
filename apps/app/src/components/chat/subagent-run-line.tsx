@@ -1,21 +1,38 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
+import { ArrowUpRight, ShieldAlert } from "lucide-react"
 
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
-import { DotMatrixLoader } from "@/components/ui/dot-matrix-loader"
-import type { TaskToolPart } from "@/lib/build-in-tools"
+import { useMessageList } from "@/components/chat/message-list-provider"
+import { taskChildSessionId, type TaskToolPart } from "@/lib/build-in-tools"
 import { isToolPartInFlight } from "@/lib/tool-activity"
-import { trackToolCallDuration } from "@/lib/tool-call-duration"
+import { formatElapsedSeconds, getToolCallStartedAt, trackToolCallDuration } from "@/lib/tool-call-duration"
 import { cn } from "@/lib/utils"
+import { t } from "@/i18n"
+import { useSessionActivityStore } from "@/react-app/domains/session/status/session-activity-store"
 
 type SubagentRunLineProps = {
   part: TaskToolPart
   className?: string
+}
+
+export function subagentRunActivity(input: {
+  permissionPending: boolean
+  syncDegraded?: boolean
+  inFlight: boolean
+  failed: boolean
+}): "waiting-permission" | "reconnecting" | "shimmer" | "failed" | "completed" {
+  // A pending ask is the actionable state and does not depend on the stream
+  // ticking; a lost connection only downgrades the live "Working" treatment.
+  if (input.permissionPending) return "waiting-permission"
+  if (input.inFlight) return input.syncDegraded ? "reconnecting" : "shimmer"
+  if (input.failed) return "failed"
+  return "completed"
 }
 
 function agentName(slug: string): string {
@@ -27,44 +44,116 @@ function agentName(slug: string): string {
 }
 
 /**
- * Paper "Sub-agents" rule: dot-matrix while running, gray dot when done.
+ * Running sub-agent task cards use a quiet text shimmer for activity.
  * Line 1 = task title + agent name; line 2 = live status verb or
- * "Completed". Prompt and result live under the collapsed panel.
+ * "Completed". The card is the doorway into the sub-agent's own session:
+ * when the engine reports the child session id, clicking it opens that
+ * session in the main chat surface. Otherwise the prompt and result live
+ * under the collapsed panel.
  */
 export function SubagentRunLine({ part, className }: SubagentRunLineProps) {
   const [open, setOpen] = useState(false)
+  const { onOpenSubagentSession, syncDegraded, workspaceId } = useMessageList()
+  const childSessionId = taskChildSessionId(part)
+  const permissionPending = useSessionActivityStore((state) => (
+    childSessionId
+      ? (state.recordsByWorkspaceId[workspaceId]?.[childSessionId]?.waitingPermissionIds.length ?? 0) > 0
+      : false
+  ))
   const inFlight = isToolPartInFlight(part)
   const isFailed = part.state === "output-error"
+  const activity = subagentRunActivity({ permissionPending, syncDegraded, inFlight, failed: isFailed })
   const duration = trackToolCallDuration(part)
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  // First-seen-in-flight time lives in a module map, so remounting (like
+  // switching sessions and back) resumes the counter instead of restarting.
+  const startedAt = getToolCallStartedAt(part)
+  useEffect(() => {
+    // While run liveness is unconfirmed the counter must not tick; the
+    // module-scoped anchor resumes the true elapsed time on recovery.
+    if (!inFlight || startedAt === null || syncDegraded) return
+    const update = () => {
+      setElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)))
+    }
+    update()
+    const interval = window.setInterval(update, 1000)
+    return () => window.clearInterval(interval)
+  }, [inFlight, startedAt, part.toolCallId, syncDegraded])
   const title = part.input?.description?.trim() || "Sub-agent task"
   const agent = agentName(part.input?.subagent_type ?? "")
-  const status = inFlight
-    ? "Working…"
+  const status = permissionPending
+    ? t("session.subagent_permission_needed")
+    : inFlight
+    ? syncDegraded
+      ? "Connection lost — reconnecting…"
+      : `Working ${formatElapsedSeconds(elapsedSeconds)}`
     : isFailed
       ? part.errorText?.split("\n")[0]?.trim() || "Failed"
       : "Completed"
 
+  const lines = (
+    <>
+      <span className="flex min-w-0 items-center gap-2">
+        <span className={cn("min-w-0 truncate", activity === "shimmer" && "ow-text-shimmer")}>
+          {title}
+          <span className="text-muted-foreground/70"> · {agent} agent</span>
+        </span>
+        {permissionPending ? (
+          <ShieldAlert
+            data-subagent-permission-icon
+            aria-label={t("session.subagent_permission_needed")}
+            className="size-3.5 shrink-0 text-amber-10"
+          />
+        ) : null}
+        {childSessionId && onOpenSubagentSession ? (
+          <ArrowUpRight
+            aria-hidden="true"
+            className="size-3.5 shrink-0 text-muted-foreground/70 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+          />
+        ) : null}
+      </span>
+      <span className={cn("min-w-0 truncate text-xs", permissionPending ? "font-medium text-amber-11" : "text-muted-foreground/70")}>
+        {isFailed ? `Failed — ${status}` : status}
+        {!inFlight && !isFailed && duration ? ` · ${duration}` : ""}
+      </span>
+    </>
+  )
+
+  if (childSessionId && onOpenSubagentSession) {
+    return (
+      <div
+        data-subagent-run={part.toolCallId}
+        data-subagent-session-id={childSessionId}
+        data-subagent-activity={activity}
+        data-subagent-permission={permissionPending ? "pending" : undefined}
+        className={className}
+      >
+        <button
+          type="button"
+          className="group flex min-w-0 max-w-full cursor-pointer flex-col gap-0.5 text-start text-sm text-muted-foreground transition-colors hover:text-foreground"
+          aria-label={`${title}. Open sub-agent chat`}
+          onClick={() => onOpenSubagentSession(childSessionId)}
+        >
+          {lines}
+        </button>
+      </div>
+    )
+  }
+
   return (
-    <Collapsible data-subagent-run={part.toolCallId} open={open} onOpenChange={setOpen} className={className}>
+    <Collapsible
+      data-subagent-run={part.toolCallId}
+      data-subagent-activity={activity}
+      data-subagent-permission={permissionPending ? "pending" : undefined}
+      open={open}
+      onOpenChange={setOpen}
+      className={className}
+    >
       <CollapsibleTrigger
         className="group flex min-w-0 max-w-full cursor-pointer flex-col gap-0.5 text-start text-sm text-muted-foreground transition-colors hover:text-foreground"
         aria-label={open ? `${title}. Hide details` : `${title}. Show details`}
       >
-        <span className="flex min-w-0 items-center gap-2">
-          {inFlight ? (
-            <span className="flex size-3.5 shrink-0 items-center justify-center">
-              <DotMatrixLoader label={`${title} — ${agent}`} className="text-muted-foreground" />
-            </span>
-          ) : null}
-          <span className="min-w-0 truncate">
-            {title}
-            <span className="text-muted-foreground/70"> · {agent} agent</span>
-          </span>
-        </span>
-        <span className={cn("min-w-0 truncate text-xs text-muted-foreground/70", inFlight && "ps-5.5")}>
-          {isFailed ? `Failed — ${status}` : status}
-          {!inFlight && !isFailed && duration ? ` · ${duration}` : ""}
-        </span>
+        {lines}
       </CollapsibleTrigger>
       <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
         <div className="mt-2 flex flex-col gap-2 rounded-lg bg-muted p-2 text-xs">

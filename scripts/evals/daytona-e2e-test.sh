@@ -33,7 +33,7 @@ fi
 if [ "${OPENWORK_E2E_TEST_NEEDS_DEN:-0}" = "1" ]; then
   echo "==> Ensuring the Den stack is running"
   export PATH="$HOME/mariadb/bin:$HOME/mariadb/scripts:$PATH"
-  node --input-type=module -e 'const m = await import("/workspace/evals/runner/den-stack.ts"); await m.ensureDenStack({ log: (line) => console.log("   " + line), cdpCandidates: [], skipApp: true });'
+  node --input-type=module -e 'const m = await import("/workspace/evals/packages/hosts/src/den-stack.ts"); await m.ensureDenStack({ log: (line) => console.log("   " + line), cdpCandidates: [], skipApp: true });'
 fi
 
 # Den env is only exported when a Den actually answers. Exporting it blindly

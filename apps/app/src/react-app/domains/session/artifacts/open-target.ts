@@ -1,7 +1,7 @@
 import type { UIMessage } from "ai";
 
 type OpenTargetKind = "url" | "file";
-export type OpenTargetPreview = "browser" | "markdown" | "sheet" | "slides" | "document" | "image" | "pdf" | "html" | "text" | "external";
+export type OpenTargetPreview = "browser" | "markdown" | "code" | "sheet" | "slides" | "document" | "image" | "pdf" | "html" | "text" | "external";
 
 export interface TextData {
   kind: "text";
@@ -28,13 +28,36 @@ export type OpenTarget = {
   updatedAt?: number;
 };
 
+export function sameOpenTargets(left: OpenTarget[], right: OpenTarget[]): boolean {
+  return left.length === right.length && left.every((target, index) => {
+    const other = right[index];
+    return other !== undefined
+      && target.id === other.id
+      && target.kind === other.kind
+      && target.value === other.value
+      && target.name === other.name
+      && target.preview === other.preview
+      && target.confidence === other.confidence
+      && target.reason === other.reason
+      && target.exists === other.exists
+      && target.size === other.size
+      && target.updatedAt === other.updatedAt;
+  });
+}
+
 const WORKSPACES_PREFIX_PATTERN = /^workspaces\/[^/]+\//i;
 const WORKSPACE_ID_PREFIX_PATTERN = /^workspace\/(?:ws_[^/]+|\d+|[0-9a-f-]{6,})\//i;
 
 const FILE_PATTERN = /(?:^|[\s"'`([{])((?:\.{1,2}[/\\]|~[/\\]|[/\\])?[\w.\-]+(?:[/\\][\w.\-]+)+\.[a-z][a-z0-9]{0,9}|[\w.\-]+\.[a-z][a-z0-9]{0,9})/gi;
 const URL_PATTERN = /https?:\/\/[^\s)\]}>"'`]+/gi;
 const SOCKET_PATTERN = /(?:ws|wss):\/\/[^\s)\]}>"'`]+/gi;
-const SIDEBAR_ARTIFACT_FILE_PREVIEWS = new Set<OpenTargetPreview>(["markdown", "sheet", "slides", "document", "image", "pdf", "html"]);
+const SIDEBAR_ARTIFACT_FILE_PREVIEWS = new Set<OpenTargetPreview>(["markdown", "code", "sheet", "slides", "document", "image", "pdf", "html"]);
+const CODE_EXTENSIONS = new Set([
+  ".astro", ".bash", ".c", ".cc", ".cpp", ".cs", ".css", ".dart", ".ex", ".exs", ".go", ".graphql",
+  ".h", ".hpp", ".java", ".js", ".jsx", ".kt", ".kts", ".lua", ".mjs", ".cjs", ".php", ".prisma",
+  ".py", ".rb", ".rs", ".scss", ".sh", ".sql", ".svelte", ".swift", ".ts", ".tsx", ".vue", ".zig",
+  ".json", ".jsonc", ".toml", ".xml", ".yaml", ".yml",
+]);
 const MARKDOWN_LINK_PATTERN = /\[([^\]\n]+)\]\(([^)\s]+)\)/g;
 const ASSISTANT_ARTIFACT_MENTION_PATTERN = /\b(?:artifact|created|deck|deliverable|exported|file|generated|opened|presentation|saved|slides?|updated|wrote)\b/i;
 const DISCOVERY_TOOL_NAMES = new Set(["glob", "grep", "search", "find"]);
@@ -82,15 +105,24 @@ function extname(value: string) {
 function classifyOpenTarget(value: string, kind: OpenTargetKind): OpenTargetPreview {
   if (kind === "url") return "browser";
   const ext = extname(value);
-  if ([".md", ".markdown", ".mdx"].includes(ext)) return "markdown";
-  if ([".csv", ".tsv", ".xlsx", ".xls", ".ods"].includes(ext)) return "sheet";
+  if ([".md", ".markdown", ".mdx", ".mmd"].includes(ext)) return "markdown";
+  if ([".csv", ".tsv", ".xlsx"].includes(ext)) return "sheet";
   if ([".ppt", ".pptx", ".pptm", ".pot", ".potx", ".odp", ".key", ".sxi"].includes(ext)) return "slides";
   if (ext === ".docx") return "document";
   if ([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"].includes(ext)) return "image";
   if (ext === ".pdf") return "pdf";
   if ([".html", ".htm"].includes(ext)) return "html";
-  if ([".txt", ".log", ".json", ".jsonc", ".yaml", ".yml", ".toml", ".xml", ".ts", ".tsx", ".js", ".jsx", ".css", ".scss"].includes(ext)) return "text";
+  if (CODE_EXTENSIONS.has(ext)) return "code";
+  if ([".txt", ".log"].includes(ext)) return "text";
   return "external";
+}
+
+export function openTargetFromWorkspaceFile(
+  path: string,
+  metadata: { size?: number; updatedAt?: number } = {},
+): OpenTarget | null {
+  const target = targetFromFile(path, 100, "workspace tree");
+  return target ? { ...target, exists: true, ...metadata } : null;
 }
 
 function shouldScanAssistantFileMentions(text: string) {

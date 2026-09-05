@@ -69,6 +69,7 @@ function orgMcpConnection(input: Partial<DenExternalMcpConnection> = {}): DenExt
     url: input.url ?? "https://mcp.notion.com/mcp",
     authType: input.authType ?? "oauth",
     credentialMode: input.credentialMode ?? "per_member",
+    exposeDirectly: input.exposeDirectly ?? false,
     connected: input.connected ?? true,
     connectedAt: input.connectedAt ?? null,
     connectedForMe: input.connectedForMe ?? false,

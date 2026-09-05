@@ -30,16 +30,11 @@ For Helm installations using that single-origin shape, keep public values aligne
 config:
   public:
     webOrigin: "https://openwork.example.internal"
-    apiOrigin: "https://openwork.example.internal/api/den"
-    desktopDenBaseUrl: "https://openwork.example.internal"
-    corsOrigins: "https://openwork.example.internal"
-    betterAuthTrustedOrigins: "https://openwork.example.internal"
-    webAppHosts: "openwork.example.internal"
 ```
 
-This maps `config.public.apiOrigin` to `DEN_API_PUBLIC_URL`. Do not set it to `localhost`, a Kubernetes service name, or an internet hostname that member desktops cannot reach.
+This maps `config.public.webOrigin` to `DEN_BASE_URL`; Den derives the Better Auth URL, CORS/trusted origins, API defaults, MCP resource defaults, and web-app hosts from it. Do not set it to `localhost`, a Kubernetes service name, or an internet hostname that member desktops cannot reach.
 
-If you publish a separate Den API origin, member devices must also resolve and trust that API origin for the one-time install-link exchange, external MCP clients, and signed branding asset URLs. See [Private network deployment](/start-here/private-network-deployment) for the single-origin nuance.
+If you publish a separate Den API origin, set `config.public.apiOrigin` as the `DEN_API_PUBLIC_URL` compatibility override. Member devices must also resolve and trust that API origin for the one-time install-link exchange, external MCP clients, and signed branding asset URLs. See [Private network deployment](/start-here/private-network-deployment) for the single-origin nuance.
 
 If your organization uses a private certificate authority or TLS-inspecting proxy, configure the relevant desktop, sidecar, Den, and database trust surfaces in [Certificate trust and proxies](/start-here/certificate-trust-and-proxies). On Linux, do not assume installing a root into `/etc/ssl` alone is sufficient for Electron; Chromium/Electron may require the distribution's NSS or user trust database.
 

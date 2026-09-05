@@ -29,6 +29,8 @@ export type NativeProviderConnectionEntry = {
   url: string
   authType: "oauth"
   credentialMode: "per_member"
+  /** Native providers are implemented by Den itself and never have a standard MCP catalog to expose. */
+  exposeDirectly: false
   connected: boolean
   connectedAt: null
   connectedForMe: boolean
@@ -90,6 +92,7 @@ export function buildNativeProviderEntry(
     url: provider.websiteUrl,
     authType: "oauth",
     credentialMode: "per_member",
+    exposeDirectly: false,
     nativeProviderKey: provider.providerId,
     connected: true,
     connectedAt: null,

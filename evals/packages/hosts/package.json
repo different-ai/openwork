@@ -14,6 +14,11 @@
       "development": "./src/daytona.ts",
       "default": "./src/daytona.ts"
     },
+    "./eval-engine": {
+      "types": "./src/eval-engine.ts",
+      "development": "./src/eval-engine.ts",
+      "default": "./src/eval-engine.ts"
+    },
     "./local": {
       "types": "./src/local.ts",
       "development": "./src/local.ts",
@@ -32,6 +37,7 @@
   },
   "dependencies": {
     "@openwork/cdp": "workspace:*",
+    "@openwork/paths": "link:../../../packages/paths",
     "@openwork/timeline": "workspace:*"
   }
 }

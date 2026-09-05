@@ -42,11 +42,12 @@ let flushTimer: ReturnType<typeof setTimeout> | null = null;
 const FLUSH_INTERVAL_MS = 10_000;
 const MAX_BATCH_SIZE = 50;
 
-function getResolvedIngestUrl(settings: DenSettings): string | null {
+export function resolveDenTelemetryIngestUrl(settings: DenSettings): string | null {
   if (!settings.authToken) return null;
 
   const baseUrls = resolveDenBaseUrls({
     baseUrl: settings.baseUrl,
+    apiBaseUrl: settings.apiBaseUrl,
   });
 
   return `${baseUrls.apiBaseUrl}${INGEST_PATH}`;
@@ -61,7 +62,7 @@ async function flushEvents(): Promise<void> {
     return;
   }
 
-  const url = getResolvedIngestUrl(settings);
+  const url = resolveDenTelemetryIngestUrl(settings);
   if (!url) {
     pendingEvents = [];
     return;

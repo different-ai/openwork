@@ -101,10 +101,11 @@ export function SettingsListItemDescription({ children, className }: SettingsLis
 
 export function SettingsListSearchInput({
   placeholder = "Search...",
+  containerClassName,
   ...props
-}: React.ComponentProps<"input">) {
+}: React.ComponentProps<"input"> & { containerClassName?: string }) {
   return (
-    <InputGroup>
+    <InputGroup className={containerClassName}>
       <InputGroupInput placeholder={placeholder} {...props} />
       <InputGroupAddon align="inline-start">
         <SearchIcon className="text-muted-foreground" />

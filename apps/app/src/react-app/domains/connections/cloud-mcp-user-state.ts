@@ -3,6 +3,16 @@ import { CLOUD_MCP_SYNC_MARKER_STORAGE_KEY } from "../../../app/lib/den";
 /** Durable, scoped records for the auto-managed OpenWork Cloud MCP. */
 
 export const CLOUD_MCP_SERVER_NAME = "openwork-cloud";
+/**
+ * OpenCode MCP entries the local server projects for org connections an admin
+ * exposed directly. They are owned by the `openwork-cloud` reconcile and are
+ * represented in the UI by their org connection card, never as local MCPs.
+ */
+export const CONNECT_DIRECT_MCP_SERVER_NAME_PREFIX = "openwork-direct-";
+
+export function isConnectDirectMcpServerName(name: string): boolean {
+  return name.startsWith(CONNECT_DIRECT_MCP_SERVER_NAME_PREFIX);
+}
 
 const CLOUD_MCP_USER_STATE_KEY = "openwork.den.mcp.cloudControlUserState";
 const CLOUD_MCP_UNHEALTHY_REMINT_ATTEMPT_KEY = "openwork.den.mcp.unhealthyRemintAttempt";

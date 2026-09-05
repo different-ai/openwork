@@ -226,6 +226,7 @@ function describeOpenworkServer(info: OpenworkServerInfo | null) {
     lines: [
       t("settings.debug_base_url", { url: info?.baseUrl ?? "—" }),
       t("settings.diag_opencode_binary", { binary: formatManagedOpencodeBinary(info) }),
+      t("settings.debug_log_file", { path: info?.logFilePath ?? "—" }),
       t("settings.debug_connect_url", { url: info?.connectUrl ?? "—" }),
       t("settings.debug_lan_url", { url: info?.lanUrl ?? "—" }),
       t("settings.debug_mdns_url", { url: info?.mdnsUrl ?? "—" }),

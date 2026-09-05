@@ -7,7 +7,7 @@ import type { Context } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { auth, DEN_MCP_OAUTH_RESOURCE, normalizeMcpOAuthResource } from "../../auth.js"
-import { normalizeLoginEmail, resolveLoginOptionKind } from "../../auth-login-options.js"
+import { buildLoginOptionsSessionCookieClearHeaders, normalizeLoginEmail, resolveLoginOptionKind } from "../../auth-login-options.js"
 import { verifyBotProtection } from "../../bot-protection.js"
 import {
   EMAIL_PASSWORD_SIGN_UP_PATH,
@@ -32,16 +32,22 @@ import {
 import { getInvalidMcpOAuthRedirectUris, isAllowedMcpOAuthRedirectUri, MCP_OAUTH_REDIRECT_URI_ERROR_DESCRIPTION } from "../../mcp/oauth-client-policy.js"
 import { normalizeMcpOAuthClientScope } from "../../mcp/scopes.js"
 import { publicRoute, queryValidator, tokenRoute } from "../../middleware/index.js"
+import { checkOAuthTokenRateLimit, recordOAuthTokenFailure } from "../../oauth-token-rate-limit.js"
+import { getOAuthTokenRateLimitLogFields, readBasicAuthClientId } from "../../oauth-token-rate-limit-observability.js"
 import { emptyResponse, jsonResponse } from "../../openapi.js"
 import { getSingletonSsoStatus } from "../../orgs.js"
 import { cache } from "../../cache.js"
+import { appLogger } from "../../observability/logger.js"
 import { getAuthRequestEmail, getSingleOrgEmailSignupPolicyViolation, type SingleOrgEmailSignupPolicyViolation } from "../../single-org-signup-policy.js"
 import { samlResponsePolicyMiddleware } from "../../sso-saml-response-middleware.js"
+import { authorizeOrganizationSsoCallback, failOrganizationSsoTestIntent } from "../../sso-test-lifecycle.js"
 import { getRequestSession, readSignedSessionCookieToken, revokeBearerSession, type AuthContextVariables } from "../../session.js"
 import { checkRateLimit } from "../../utils/rate-limit.js"
 import { registerDesktopAuthRoutes } from "./desktop-handoff.js"
 import { normalizeOAuthAuthorizeRedirect } from "./oauth-redirect.js"
 import { registerScimAuthRoutes } from "./scim.js"
+
+const logger = appLogger.child({ component: "auth" })
 
 function rewriteAuthRequest(request: Request, path: string) {
   const url = new URL(request.url)
@@ -93,20 +99,6 @@ function readStoredOAuthClientScopes(scopes: string | null) {
     // Better Auth has used both JSON arrays and space-delimited strings for scopes.
   }
   return readOAuthScopeList(scopes)
-}
-
-function readBasicAuthClientId(headers: Headers) {
-  const authorization = headers.get("authorization")?.trim() ?? ""
-  const match = authorization.match(/^Basic\s+(.+)$/i)
-  if (!match?.[1]) return null
-
-  try {
-    const decoded = atob(match[1])
-    const separator = decoded.indexOf(":")
-    return separator > 0 ? decoded.slice(0, separator) : null
-  } catch {
-    return null
-  }
 }
 
 async function registeredClientHasMcpScope(clientId: string) {
@@ -569,7 +561,7 @@ async function getLoginOptionAccounts(email: string) {
     })
     .from(AuthUserTable)
     .innerJoin(AuthAccountTable, eq(AuthUserTable.id, AuthAccountTable.userId))
-    .where(sql`lower(${AuthUserTable.email}) = ${email}`)
+    .where(eq(AuthUserTable.email, email))
 
   return rows.map((row) => ({
     providerId: row.providerId,
@@ -610,11 +602,70 @@ async function isInvitationSignupAllowed(request: Request) {
   return email ? hasPendingInvitationForEmail(invite, normalizeLoginEmail(email)) : false
 }
 
+async function getOrganizationSsoCallbackRequest(request: Request) {
+  const url = new URL(request.url)
+  const proxyPath = getBetterAuthProxyPath(url.pathname)
+  const oidcPrefix = "/sso/callback/"
+  const samlPrefix = "/sso/saml2/sp/acs/"
+  if (proxyPath.startsWith(oidcPrefix)) {
+    return {
+      providerId: decodeURIComponent(proxyPath.slice(oidcPrefix.length)),
+      stateIdentifier: url.searchParams.get("state"),
+    }
+  }
+  if (!proxyPath.startsWith(samlPrefix)) return null
+
+  let stateIdentifier = url.searchParams.get("RelayState")
+  if (!stateIdentifier && request.method.toUpperCase() === "POST") {
+    const contentType = request.headers.get("content-type")?.toLowerCase() ?? ""
+    if (contentType.includes("application/x-www-form-urlencoded")) {
+      stateIdentifier = new URLSearchParams(await request.clone().text()).get("RelayState")
+    } else if (contentType.includes("application/json")) {
+      const body: unknown = await request.clone().json().catch(() => null)
+      stateIdentifier = isRecord(body) && typeof body.RelayState === "string" ? body.RelayState : null
+    }
+  }
+  return {
+    providerId: decodeURIComponent(proxyPath.slice(samlPrefix.length)),
+    stateIdentifier,
+  }
+}
+
 async function handleAuthRequest(c: Context) {
   const request = c.req.raw
+  const observabilityRequest = request.method === "POST"
+    && getBetterAuthProxyPath(new URL(request.url).pathname) === "/oauth2/token"
+    ? request.clone()
+    : null
+  const oauthTokenRateLimit = observabilityRequest
+    ? await checkOAuthTokenRateLimit(request, checkRateLimit)
+    : null
+  if (observabilityRequest && oauthTokenRateLimit?.response) {
+    const rateLimitFields = await getOAuthTokenRateLimitLogFields(observabilityRequest, oauthTokenRateLimit.response)
+    if (rateLimitFields) {
+      logger.warn("oauth token request rate limited", rateLimitFields)
+    }
+    return oauthTokenRateLimit.response
+  }
   const authRequest = await normalizeMcpOAuthRequest(request)
   if (authRequest instanceof Response) {
+    if (oauthTokenRateLimit) {
+      // Malformed token requests rejected before auth.handler must still
+      // consume the failure budget, or repeated invalid-resource submissions
+      // would only ever pay the looser attempt buckets.
+      await recordOAuthTokenFailure(oauthTokenRateLimit.failureKey, authRequest, checkRateLimit)
+    }
     return authRequest
+  }
+  const ssoCallbackRequest = await getOrganizationSsoCallbackRequest(authRequest)
+  const ssoCallbackAuthorization = ssoCallbackRequest
+    ? await authorizeOrganizationSsoCallback(ssoCallbackRequest)
+    : null
+  if (ssoCallbackAuthorization && !ssoCallbackAuthorization.ok) {
+    return Response.json({
+      error: "sso_not_enabled",
+      message: ssoCallbackAuthorization.message,
+    }, { status: 403 })
   }
   const invitationSignupAllowed = await isInvitationSignupAllowed(authRequest)
   const initialAdminBootstrapGrant = await getInitialAdminBootstrapGrantFromRequest(authRequest)
@@ -667,7 +718,7 @@ async function handleAuthRequest(c: Context) {
   if (isBetterAuthSignOutRequest(authRequest)) {
     const cookieToken = await readSignedSessionCookieToken(c)
     if (cookieToken) {
-      await cache.auth.deleteSession(cookieToken)
+      await cache.auth.revokeSession(cookieToken)
     }
     await revokeBearerSession(authRequest.headers)
   }
@@ -676,7 +727,25 @@ async function handleAuthRequest(c: Context) {
   try {
     response = await auth.handler(authRequest)
   } catch (error) {
+    if (ssoCallbackAuthorization?.ok && ssoCallbackAuthorization.mode === "test") {
+      await failOrganizationSsoTestIntent(ssoCallbackAuthorization.intentId, "authentication")
+    }
+    const requestId = c.get("requestId")
+    logger.error("better auth handler failed", {
+      auth_session_source: "better_auth_handler",
+      http_method: authRequest.method,
+      http_path: new URL(authRequest.url).pathname,
+      request_id: typeof requestId === "string" ? requestId : undefined,
+      error,
+    })
     throw error
+  }
+  if (ssoCallbackAuthorization?.ok && ssoCallbackAuthorization.mode === "test") {
+    const location = response.headers.get("location")
+    const failed = response.status >= 400 || (location ? new URL(location, env.betterAuthUrl).searchParams.has("error") : false)
+    if (failed) {
+      await failOrganizationSsoTestIntent(ssoCallbackAuthorization.intentId, "authentication")
+    }
   }
   if (initialAdminBootstrapAuthorization) {
     response = await completeInitialAdminBootstrapSignup({
@@ -686,6 +755,15 @@ async function handleAuthRequest(c: Context) {
   }
   if (emailSignInAttempt) {
     await recordEmailSignInResult(emailSignInAttempt, response)
+  }
+  if (oauthTokenRateLimit) {
+    await recordOAuthTokenFailure(oauthTokenRateLimit.failureKey, response, checkRateLimit)
+  }
+  if (observabilityRequest) {
+    const rateLimitFields = await getOAuthTokenRateLimitLogFields(observabilityRequest, response)
+    if (rateLimitFields) {
+      logger.warn("oauth token request rate limited", rateLimitFields)
+    }
   }
   return response
 }
@@ -787,6 +865,9 @@ export function registerAuthRoutes<T extends { Variables: AuthContextVariables }
     queryValidator(loginOptionsQuerySchema),
     async (c) => {
       const { email, invite } = c.req.valid("query")
+      for (const cookie of buildLoginOptionsSessionCookieClearHeaders(env.betterAuthCookieDomain)) {
+        c.header("Set-Cookie", cookie, { append: true })
+      }
       const botProtection = await verifyBotProtection()
       if (!botProtection.ok) {
         return c.json({

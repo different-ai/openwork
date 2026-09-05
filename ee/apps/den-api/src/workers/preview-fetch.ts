@@ -50,6 +50,14 @@ export async function fetchWithConnectRetry(input: {
   }
 }
 
+export function fetchPreviewNoRedirect(
+  fetchImpl: FetchLike,
+  url: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  return fetchImpl(url, { ...init, redirect: "error" })
+}
+
 export function createPreviewFetch(options: { connectTimeoutMs: number }): FetchLike {
   const agent = new Agent({
     connect: {
@@ -73,7 +81,7 @@ export function createPreviewFetch(options: { connectTimeoutMs: number }): Fetch
       method: request.method,
       headers,
       body: request.body ? await request.arrayBuffer() : undefined,
-      redirect: request.redirect,
+      redirect: "error",
       signal: request.signal,
       dispatcher: agent,
     })

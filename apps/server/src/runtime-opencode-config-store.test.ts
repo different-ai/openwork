@@ -7,8 +7,12 @@ import { buildOpenworkRuntimeConfig } from "./openwork-runtime-config.js";
 import { readOpenworkWorkspaceConfig } from "./openwork-workspace-config-store.js";
 import { addPlugin, listPlugins, removePlugin } from "./plugins.js";
 import {
+  ENGINE_GLOBAL_RUNTIME_CONFIG_ID,
+  migrateWorkspaceRuntimeConfigToEngineGlobal,
   onRuntimeOpencodeConfigWrite,
+  readGlobalRuntimeOpencodeConfig,
   readRuntimeOpencodeConfig,
+  writeGlobalRuntimeOpencodeConfig,
   writeRuntimeOpencodeConfig,
 } from "./runtime-opencode-config-store.js";
 import { startServer } from "./server.js";
@@ -130,24 +134,26 @@ describe("runtime OpenCode config store", () => {
       const opencode = '{\n  "plugin": ["project-plugin"]\n}\n';
       await writeFile(opencodePath, opencode, "utf8");
 
-      expect(await addPlugin(config, WORKSPACE_ID, "runtime-plugin")).toBe(true);
-      expect(await removePlugin(config, WORKSPACE_ID, "runtime-plugin")).toBe(true);
-      expect(await addPlugin(config, WORKSPACE_ID, "runtime-plugin")).toBe(true);
+      expect(await addPlugin(config, "runtime-plugin")).toBe(true);
+      expect(await removePlugin(config, "runtime-plugin")).toBe(true);
+      expect(await addPlugin(config, "runtime-plugin")).toBe(true);
 
       expect(await readFile(opencodePath, "utf8")).toBe(opencode);
       await expectMissing(join(root, ".opencode", "openwork.json"));
-      expect((await readRuntimeOpencodeConfig(config, WORKSPACE_ID)).plugin).toEqual(["runtime-plugin"]);
+      // Runtime plugins are engine-global so the injected file carries them.
+      expect((await readGlobalRuntimeOpencodeConfig(config)).plugin).toEqual(["runtime-plugin"]);
 
       const result = await listPlugins(config, WORKSPACE_ID, root, false);
       expect(result.items.map((item) => item.spec)).toEqual(["project-plugin", "runtime-plugin"]);
 
       await addMcp(config, WORKSPACE_ID, "runtime", { type: "remote", url: "https://runtime.example/mcp", enabled: true });
-      const runtimeConfig = JSON.parse(await buildOpenworkRuntimeConfig(config, WORKSPACE_ID)) as {
+      const runtimeConfig = JSON.parse(await buildOpenworkRuntimeConfig(config)) as {
         plugin?: string[];
         mcp?: Record<string, Record<string, unknown>>;
       };
       expect(runtimeConfig.plugin).toContain("runtime-plugin");
-      expect(runtimeConfig.mcp?.runtime?.url).toBe("https://runtime.example/mcp");
+      // Per-workspace MCPs reach the engine via the dynamic push, not the file.
+      expect(runtimeConfig.mcp?.runtime).toBeUndefined();
     });
   });
 
@@ -155,7 +161,7 @@ describe("runtime OpenCode config store", () => {
     await withWorkspace(async ({ root, config }) => {
       await writeFile(join(root, "opencode.jsonc"), '{ "mcp": {\n}\n}\n}\n', "utf8");
       await addMcp(config, WORKSPACE_ID, "runtime", { type: "remote", url: "https://runtime.example/mcp", enabled: true });
-      await addPlugin(config, WORKSPACE_ID, "runtime-plugin");
+      await addPlugin(config, "runtime-plugin");
 
       const mcpItems = await listMcp(config, WORKSPACE_ID, root);
       const pluginItems = await listPlugins(config, WORKSPACE_ID, root, false);
@@ -213,74 +219,73 @@ describe("runtime OpenCode config store", () => {
     });
   });
 
-  test("explicitly migrates legacy OpenWork runtime config into the runtime DB", async () => {
-    await withWorkspace(async ({ root, config }) => {
-      await mkdir(join(root, ".opencode"), { recursive: true });
-      const openworkPath = join(root, ".opencode", "openwork.json");
-      await writeFile(openworkPath, JSON.stringify({
-        version: 1,
-        workspace: { name: "Test" },
-        plugin: ["legacy-plugin"],
-        mcp: { legacy: { type: "remote", url: "https://legacy.example/mcp" } },
-        permission: { external_directory: { "/legacy/*": "allow" } },
-        provider: { legacy: { npm: "legacy-provider" } },
-      }, null, 2) + "\n", "utf8");
+  test("folds workspace-scoped runtime config into the ENGINE_GLOBAL row once", async () => {
+    await withWorkspace(async ({ config }) => {
+      await writeRuntimeOpencodeConfig(config, "ws_a", () => ({
+        plugin: ["plugin-a", "plugin-shared"],
+        disabled_providers: ["anthropic"],
+        permission: { external_directory: { "/folders/a": "allow" } },
+        mcp: { notion: { type: "remote", url: "https://notion.example/mcp" } },
+        provider: { "user-lmstudio": { npm: "@ai-sdk/openai-compatible", options: { baseURL: "https://a.example/v1" } }, local: { npm: "stale-copy" } },
+        default_agent: "openwork",
+      }));
+      await Bun.sleep(2);
+      await writeRuntimeOpencodeConfig(config, "ws_b", () => ({
+        plugin: ["plugin-b", "plugin-shared"],
+        disabled_providers: ["anthropic", "openai"],
+        permission: { external_directory: { "/folders/b": "allow" } },
+        provider: { "user-lmstudio": { npm: "@ai-sdk/openai-compatible", options: { baseURL: "https://b.example/v1" } } },
+      }));
+      await writeGlobalRuntimeOpencodeConfig(config, () => ({
+        plugin: ["plugin-global"],
+        provider: { local: { npm: "@ai-sdk/openai-compatible" } },
+      }));
 
-      const server = await startServer(config) as Served;
-      try {
-        const response = await fetch(`http://127.0.0.1:${server.port}/workspace/${WORKSPACE_ID}/runtime-config/migrate`, {
-          method: "POST",
-          headers: { authorization: `Bearer ${config.token}`, "content-type": "application/json" },
-        });
-        expect(response.status).toBe(200);
-        expect(await response.json()).toMatchObject({
-          migrated: true,
-          keys: ["plugin", "mcp", "permission", "provider"],
-        });
+      const first = await migrateWorkspaceRuntimeConfigToEngineGlobal(config);
+      expect(first.changed).toBe(true);
 
-        const runtime = await readRuntimeOpencodeConfig(config, WORKSPACE_ID);
-        expect(runtime.plugin).toEqual(["legacy-plugin"]);
-        expect(runtime.mcp?.legacy?.url).toBe("https://legacy.example/mcp");
-        expect(runtime.permission?.external_directory?.["/legacy/*"]).toBe("allow");
-        expect(runtime.provider?.legacy).toEqual({ npm: "legacy-provider" });
+      const globalRuntime = await readGlobalRuntimeOpencodeConfig(config);
+      expect(globalRuntime.plugin).toEqual(["plugin-global", "plugin-a", "plugin-shared", "plugin-b"]);
+      expect(globalRuntime.disabled_providers).toEqual(["anthropic", "openai"]);
+      expect(globalRuntime.permission?.external_directory).toEqual({
+        "/folders/a": "allow",
+        "/folders/b": "allow",
+      });
+      // Providers fold globally: the global row wins per key (cloud-managed
+      // authority beats the stale ws_a copy of `local`), and the newest
+      // workspace write wins between workspace rows.
+      expect(globalRuntime.provider?.local).toEqual({ npm: "@ai-sdk/openai-compatible" });
+      expect(globalRuntime.provider?.["user-lmstudio"]).toEqual({
+        npm: "@ai-sdk/openai-compatible",
+        options: { baseURL: "https://b.example/v1" },
+      });
 
-        // The legacy file is migrated into the runtime DB and never rewritten.
-        // The cleaned config (legacy runtime keys stripped, metadata kept)
-        // now lives in the DB-backed openwork config.
-        const openwork = await readOpenworkWorkspaceConfig(config, WORKSPACE_ID);
-        expect(openwork.version).toBe(1);
-        expect(openwork.workspace).toEqual({ name: "Test" });
-        expect(openwork.plugin).toBeUndefined();
-        expect(openwork.mcp).toBeUndefined();
-        expect(openwork.permission).toBeUndefined();
-        expect(openwork.provider).toBeUndefined();
+      // Workspace rows are cleaned; mcp stays per-workspace (dynamic push owns delivery).
+      const workspaceA = await readRuntimeOpencodeConfig(config, "ws_a");
+      expect(workspaceA.plugin).toBeUndefined();
+      expect(workspaceA.disabled_providers).toBeUndefined();
+      expect(workspaceA.permission).toBeUndefined();
+      expect(workspaceA.provider).toBeUndefined();
+      expect(workspaceA.mcp?.notion?.url).toBe("https://notion.example/mcp");
+      expect(workspaceA.default_agent).toBe("openwork");
+      expect(await readRuntimeOpencodeConfig(config, "ws_b")).toEqual({});
 
-        const statusResponse = await fetch(`http://127.0.0.1:${server.port}/workspace/${WORKSPACE_ID}/runtime-config`, {
-          headers: { authorization: `Bearer ${config.token}` },
-        });
-        expect(statusResponse.status).toBe(200);
-        const status = await statusResponse.json() as {
-          effectiveRuntime: Record<string, unknown>;
-          sources: Record<string, { exists?: boolean; keys: string[]; config?: Record<string, unknown> }>;
-        };
-        expect(status).toMatchObject({
-          runtimeKeys: ["plugin", "mcp", "permission", "provider"],
-          sources: {
-            projectOpencode: { exists: false, keys: [] },
-            runtimeDatabase: { keys: ["plugin", "mcp", "permission", "provider"] },
-          },
-          legacyOpenwork: { keys: [] },
-          userOpencode: { exists: false, keys: [] },
-        });
-        expect(status.effectiveRuntime.default_agent).toBe("openwork");
-        expect(status.effectiveRuntime.agent).toMatchObject({ openwork: { mode: "primary" } });
-        expect(status.effectiveRuntime.provider).toMatchObject({ legacy: { npm: "legacy-provider" } });
-        expect(status.sources.injected.config?.agent).toMatchObject({ openwork: { mode: "primary" } });
-        expect(status.sources.injected.keys).toContain("provider");
-        expect(status.sources.globalOpencode).toHaveProperty("path");
-      } finally {
-        await server.stop(true);
-      }
+      const second = await migrateWorkspaceRuntimeConfigToEngineGlobal(config);
+      expect(second.changed).toBe(false);
+      expect(await readGlobalRuntimeOpencodeConfig(config)).toEqual(globalRuntime);
+    });
+  });
+
+  test("workspace-to-global migration does not touch a read-only runtime DB", async () => {
+    await withWorkspace(async ({ config }) => {
+      await writeRuntimeOpencodeConfig(config, "ws_a", () => ({ plugin: ["plugin-a"] }));
+      const readOnlyConfig: ServerConfig = { ...config, readOnly: true };
+
+      const result = await migrateWorkspaceRuntimeConfigToEngineGlobal(readOnlyConfig);
+
+      expect(result.changed).toBe(false);
+      expect((await readRuntimeOpencodeConfig(config, "ws_a")).plugin).toEqual(["plugin-a"]);
+      expect(await readRuntimeOpencodeConfig(config, ENGINE_GLOBAL_RUNTIME_CONFIG_ID)).toEqual({});
     });
   });
 
@@ -298,51 +303,7 @@ describe("runtime OpenCode config store", () => {
         expect(response.status).toBe(200);
         expect(await response.json()).toMatchObject({
           runtimeKeys: ["mcp"],
-          legacyOpenwork: { keys: [], error: "Failed to parse openwork.json" },
         });
-      } finally {
-        await server.stop(true);
-      }
-    });
-  });
-
-  test("explicitly migrates safe OpenWork-managed keys from user opencode config", async () => {
-    await withWorkspace(async ({ root, config }) => {
-      const opencodePath = join(root, "opencode.jsonc");
-      await writeFile(opencodePath, JSON.stringify({
-        $schema: "https://opencode.ai/config.json",
-        default_agent: "openwork",
-        plugin: ["opencode-chrome-devtools", "user-plugin"],
-        provider: { local: { npm: "@ai-sdk/openai-compatible" } },
-        disabled_providers: ["old-provider"],
-        custom_user_key: true,
-      }, null, 2) + "\n", "utf8");
-
-      const server = await startServer(config) as Served;
-      try {
-        const response = await fetch(`http://127.0.0.1:${server.port}/workspace/${WORKSPACE_ID}/runtime-config/migrate`, {
-          method: "POST",
-          headers: { authorization: `Bearer ${config.token}`, "content-type": "application/json" },
-        });
-        expect(response.status).toBe(200);
-        expect(await response.json()).toMatchObject({
-          migrated: true,
-          userOpencodeKeys: ["default_agent", "plugin", "disabled_providers", "provider"],
-        });
-
-        const runtime = await readRuntimeOpencodeConfig(config, WORKSPACE_ID);
-        expect(runtime.default_agent).toBe("openwork");
-        expect(runtime.plugin).toEqual(["opencode-chrome-devtools", "user-plugin"]);
-        expect(runtime.provider?.local).toEqual({ npm: "@ai-sdk/openai-compatible" });
-        expect(runtime.disabled_providers).toEqual(["old-provider"]);
-
-        const opencode = JSON.parse(await readFile(opencodePath, "utf8")) as Record<string, unknown>;
-        expect(opencode.$schema).toBe("https://opencode.ai/config.json");
-        expect(opencode.custom_user_key).toBe(true);
-        expect(opencode.default_agent).toBeUndefined();
-        expect(opencode.plugin).toBeUndefined();
-        expect(opencode.provider).toBeUndefined();
-        expect(opencode.disabled_providers).toBeUndefined();
       } finally {
         await server.stop(true);
       }

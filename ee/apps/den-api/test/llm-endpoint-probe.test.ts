@@ -69,7 +69,7 @@ describe("probeEndpoint", () => {
       allowLoopback: false,
       fetchImpl: async (url) => {
         calls.push(url)
-        if (url.startsWith("https://r.services.ai.azure.com")) {
+        if (new URL(url).origin === "https://r.services.ai.azure.com") {
           return jsonResponse(200, modelsPayload(["gpt-5-mini"]))
         }
         return jsonResponse(404, { error: { code: "404" } })
@@ -223,6 +223,42 @@ const azureMaxTokensError = () =>
   })
 
 describe("verifyModels", () => {
+  test("test-connection sends the gateway master key while the gateway rewrites its upstream credential", async () => {
+    const masterKey = "sk-litellm-master"
+    const upstreamKey = "sk-upstream-only"
+    const upstreamCredentials: string[] = []
+    const gatewayFetch = async (url: string, init: RequestInit) => {
+      const headers = new Headers(init.headers)
+      expect(headers.get("authorization")).toBe(`Bearer ${masterKey}`)
+      expect(headers.get("api-key")).toBe(masterKey)
+      upstreamCredentials.push(upstreamKey)
+      return url.endsWith("/models")
+        ? jsonResponse(200, modelsPayload(["gateway-model"]))
+        : jsonResponse(200, { choices: [{ message: { content: "ok" } }] })
+    }
+
+    const discovery = await probeEndpoint({
+      api: "https://gateway.example.com/v1",
+      apiKey: masterKey,
+      allowLoopback: false,
+      fetchImpl: gatewayFetch,
+    })
+    const verifications = await verifyModels({
+      api: discovery.normalizedApi ?? "",
+      apiKey: masterKey,
+      modelIds: discovery.models.map((model) => model.id),
+      allowLoopback: false,
+      fetchImpl: gatewayFetch,
+    })
+
+    expect(discovery.ok).toBe(true)
+    expect(verifications).toEqual([
+      { id: "gateway-model", status: "ok", npm: "@ai-sdk/openai-compatible", message: null },
+    ])
+    expect(upstreamCredentials).toEqual([upstreamKey, upstreamKey])
+    expect(upstreamCredentials).not.toContain(masterKey)
+  })
+
   test("a classic model passes with the compatible request shape", async () => {
     const results = await verifyModels({
       api: "https://llm.example.com/v1",

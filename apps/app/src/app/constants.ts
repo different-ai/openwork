@@ -1,6 +1,7 @@
 import type { ModelRef, SuggestedPlugin } from "./types";
 import { t } from "../i18n";
 import { getDenMcpUrl } from "./lib/den";
+import { canonicalMcpServerName } from "./mcp";
 import {
   BUILT_IN_OPENWORK_EXTENSION_MANIFESTS,
   extensionContribution,
@@ -92,11 +93,7 @@ export function isBuiltInOpenWorkExtension(entry: Pick<McpDirectoryInfo, "kind" 
 /** Derive a safe MCP server name from a display name or explicit serverName. */
 export function getMcpServerName(entry: McpDirectoryInfo): string {
   if (entry.serverName) return entry.serverName;
-  return entry.name
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "") || "mcp";
+  return canonicalMcpServerName(entry.name);
 }
 
 export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
@@ -168,7 +165,7 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
       try {
         return `${getDenMcpUrl()}/agent`;
       } catch {
-        return "https://app.openworklabs.com/api/den/mcp/agent";
+        return "https://api.app.openworklabs.com/mcp/agent";
       }
     },
     type: "remote",

@@ -101,6 +101,7 @@ export type ComposerPart =
   | { type: "file"; path: string; label?: string }
   /** A macOS app targeted via Computer Use (composer "@App" mention). */
   | { type: "app"; name: string }
+  | { type: "computer"; target: "cloud" | "desktop" }
   | { type: "paste"; id: string; label: string; text: string; lines: number };
 
 export type ComposerAttachment = {
@@ -189,7 +190,6 @@ export const SETTINGS_TAB_VALUES = [
   "cloud-marketplaces",
   "cloud-providers",
   "skills",
-  "memory",
   "extensions",
   "environment",
   "advanced",
@@ -391,6 +391,8 @@ export type PendingPermission = Omit<ApiPermissionRequest, "always"> & {
   receivedAt: number;
   protocol: "legacy" | "v2";
   v2?: Pick<PermissionV2Request, "action" | "resources" | "save">;
+  /** Development-only deterministic UI proof request; never comes from OpenCode. */
+  evaluation?: true;
 };
 
 export type PendingQuestion = QuestionRequest & {

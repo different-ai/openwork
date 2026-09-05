@@ -9,7 +9,7 @@ import {
   openworkRuntimeConfigFilePath,
   writeOpenworkRuntimeConfigFile,
 } from "./openwork-runtime-config.js";
-import { writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
+import { writeGlobalRuntimeOpencodeConfig, writeRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import type { ServerConfig } from "./types.js";
 
 const roots: string[] = [];
@@ -55,9 +55,9 @@ async function readConfigFile(config: ServerConfig): Promise<Record<string, unkn
 }
 
 describe("openwork runtime config file", () => {
-  test("writes runtime-DB MCPs and openwork defaults into the file", async () => {
+  test("writes global-row MCPs and openwork defaults into the file", async () => {
     const { config } = await setup();
-    await writeRuntimeOpencodeConfig(config, "ws_1", (current) => ({
+    await writeGlobalRuntimeOpencodeConfig(config, (current) => ({
       ...current,
       mcp: {
         posthog: { type: "remote", url: "https://mcp.posthog.com/mcp", enabled: true },
@@ -65,7 +65,7 @@ describe("openwork runtime config file", () => {
       },
     }));
 
-    const { path } = await writeOpenworkRuntimeConfigFile(config, "ws_1");
+    const { path } = await writeOpenworkRuntimeConfigFile(config);
     expect(path).toBe(openworkRuntimeConfigFilePath(config));
 
     const parsed = await readConfigFile(config);
@@ -74,6 +74,11 @@ describe("openwork runtime config file", () => {
     expect(mcp["openwork-connect-stale"]).toBeUndefined();
     expect(parsed.default_agent).toBe("openwork");
     expect(Array.isArray(parsed.plugin)).toBe(true);
+    if (!Array.isArray(parsed.plugin)) throw new Error("Expected runtime plugins");
+    expect(parsed.plugin).not.toContain("opencode-chrome-devtools");
+    expect(parsed.plugin.some(
+      (plugin) => typeof plugin === "string" && /openwork-chrome-devtools\.(?:ts|js)$/.test(plugin),
+    )).toBe(true);
     expect(parsed.agent).toMatchObject({
       openwork: {
         permission: {
@@ -89,32 +94,54 @@ describe("openwork runtime config file", () => {
     });
   });
 
-  test("openwork prompt has a static search-first Memory Bank section, distinct from ## Memory", async () => {
+  test("workspace runtime rows never reach the injected file", async () => {
     const { config } = await setup();
-    await writeOpenworkRuntimeConfigFile(config, "ws_1");
+    await writeRuntimeOpencodeConfig(config, "ws_1", (current) => ({
+      ...current,
+      mcp: { posthog: { type: "remote", url: "https://mcp.posthog.com/mcp", enabled: true } },
+    }));
+
+    await writeOpenworkRuntimeConfigFile(config);
+
+    const parsed = await readConfigFile(config);
+    const mcp = (parsed.mcp ?? {}) as Record<string, Record<string, unknown>>;
+    expect(mcp.posthog).toBeUndefined();
+  });
+
+  test("openwork prompt states identity, repo memory, artifacts, and Connect routing once, without the removed Memory Bank", async () => {
+    const { config } = await setup();
+    await writeOpenworkRuntimeConfigFile(config);
 
     const parsed = await readConfigFile(config);
     const agent = parsed.agent as Record<string, { prompt?: string }>;
     const prompt = agent.openwork?.prompt ?? "";
 
-    // The new Memory Bank section is present and distinct from the existing ## Memory section.
-    expect(prompt).toContain("## Memory Bank");
+    expect(prompt.startsWith("You are OpenWork.")).toBe(true);
     expect(prompt).toContain("## Memory\n");
-    // Search-first (B1): never name tools that do not exist.
-    expect(prompt).toContain("search_capabilities");
-    expect(prompt).toContain("execute_capability");
-    expect(prompt).not.toContain("memory_save");
-    expect(prompt).not.toContain("memory_search");
-    // No-secrets guidance is the only v0 plaintext-at-rest mitigation.
-    expect(prompt).toMatch(/secret|credential|API key|token|PII/i);
+    expect(prompt).toContain("## OpenWork Artifacts");
+    expect(prompt).toContain("## Connected work");
+    // Den removed the Memory Bank; the prompt must not teach capabilities that
+    // the live catalog can no longer return.
+    expect(prompt).not.toContain("Memory Bank");
+    expect(prompt).not.toContain("postMemory");
+    expect(prompt).not.toContain("getMemorySearch");
+    // Connect tool names appear exactly once each, in the base prompt's own
+    // routing paragraph; the diagnostics prompt markers key on them.
+    expect(prompt.match(/openwork-cloud_search_capabilities/g)).toHaveLength(1);
+    expect(prompt.match(/openwork-cloud_execute_capability/g)).toHaveLength(1);
+    expect(prompt).not.toContain("2-4 keyword variants");
+    // Skill capture defers to the runtime skill-authoring mode instead of
+    // contradicting it with a workspace-only default.
+    expect(prompt).toContain("`Skill creation:` instruction");
+    expect(prompt).not.toContain("factor them into a skill");
   });
 
-  test("keepOpenworkRuntimeConfigFileFresh rewrites the file on runtime-DB writes", async () => {
+  test("keepOpenworkRuntimeConfigFileFresh rewrites the file on ENGINE_GLOBAL writes", async () => {
     const { config } = await setup();
-    await writeOpenworkRuntimeConfigFile(config, "ws_1");
-    cleanups.push(keepOpenworkRuntimeConfigFileFresh(config, "ws_1"));
+    await writeOpenworkRuntimeConfigFile(config);
+    cleanups.push(keepOpenworkRuntimeConfigFileFresh(config));
 
-    await writeRuntimeOpencodeConfig(config, "ws_1", (current) => ({
+    await writeGlobalRuntimeOpencodeConfig(config, (current) => ({
       ...current,
       mcp: { stripe: { type: "remote", url: "https://mcp.stripe.com", enabled: false } },
     }));
@@ -130,12 +157,12 @@ describe("openwork runtime config file", () => {
     expect(mcp.stripe?.enabled).toBe(false);
   });
 
-  test("writes for other workspaces do not rewrite the primary file", async () => {
+  test("workspace runtime writes do not rewrite the file", async () => {
     const { config } = await setup();
-    await writeOpenworkRuntimeConfigFile(config, "ws_1");
-    cleanups.push(keepOpenworkRuntimeConfigFileFresh(config, "ws_1"));
+    await writeOpenworkRuntimeConfigFile(config);
+    cleanups.push(keepOpenworkRuntimeConfigFileFresh(config));
 
-    await writeRuntimeOpencodeConfig(config, "ws_other", (current) => ({
+    await writeRuntimeOpencodeConfig(config, "ws_1", (current) => ({
       ...current,
       mcp: { other: { type: "remote", url: "https://example.com/mcp", enabled: true } },
     }));
@@ -148,20 +175,20 @@ describe("openwork runtime config file", () => {
 
   test("builds byte-stable config for repeated snapshots", async () => {
     const { config } = await setup();
-    await writeRuntimeOpencodeConfig(config, "ws_1", (current) => ({
+    await writeGlobalRuntimeOpencodeConfig(config, (current) => ({
       ...current,
       mcp: { posthog: { type: "remote", url: "https://mcp.posthog.com/mcp" } },
     }));
 
-    const first = await buildOpenworkRuntimeConfig(config, "ws_1");
-    const second = await buildOpenworkRuntimeConfig(config, "ws_1");
+    const first = await buildOpenworkRuntimeConfig(config);
+    const second = await buildOpenworkRuntimeConfig(config);
 
     expect(second).toBe(first);
   });
 
   test("builds byte-stable config for equivalent snapshots with different key order", async () => {
     const { config } = await setup();
-    await writeRuntimeOpencodeConfig(config, "ws_1", () => ({
+    await writeGlobalRuntimeOpencodeConfig(config, () => ({
       mcp: {
         zeta: { url: "https://z.example/mcp", type: "remote" },
         alpha: { type: "remote", url: "https://a.example/mcp" },
@@ -171,9 +198,9 @@ describe("openwork runtime config file", () => {
         alpha: { name: "Alpha", npm: "@ai-sdk/openai-compatible" },
       },
     }));
-    const first = await buildOpenworkRuntimeConfig(config, "ws_1");
+    const first = await buildOpenworkRuntimeConfig(config);
 
-    await writeRuntimeOpencodeConfig(config, "ws_1", () => ({
+    await writeGlobalRuntimeOpencodeConfig(config, () => ({
       provider: {
         alpha: { npm: "@ai-sdk/openai-compatible", name: "Alpha" },
         zeta: { name: "Zeta", npm: "@ai-sdk/openai-compatible" },
@@ -183,7 +210,7 @@ describe("openwork runtime config file", () => {
         zeta: { type: "remote", url: "https://z.example/mcp" },
       },
     }));
-    const second = await buildOpenworkRuntimeConfig(config, "ws_1");
+    const second = await buildOpenworkRuntimeConfig(config);
 
     expect(second).toBe(first);
   });

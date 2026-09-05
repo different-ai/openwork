@@ -15,6 +15,7 @@
 // live HIBP endpoint without a network fault, so it is proven by the unit test
 // in test/auth-protection.test.ts rather than here.
 
+import { randomUUID } from "node:crypto"
 import { mkdirSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -30,7 +31,7 @@ const outDir = join(repoRoot, "evals", "results", "password-policy-agent-signup"
 mkdirSync(outDir, { recursive: true })
 
 const frames = []
-const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+const runId = `${Date.now()}-${randomUUID()}`
 
 function prove(claim, { voiceover, action, assert, evidence }, ok) {
   frames.push({ claim, voiceover, action, assert, evidence, ok })
@@ -120,6 +121,7 @@ async function signup(email, password) {
 
 // ---- emit test evidence ----
 const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+const escAttr = (s) => esc(s).replace(/"/g, "&quot;")
 const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60)
 
 const frameFiles = frames.map((f, i) => {
@@ -146,7 +148,7 @@ const index = `<!doctype html><html lang="en"><head><meta charset="utf-8" />
 </head><body><main>
 <h1>Account Creation Password Policy — live E2E test evidence</h1>
 <div class="meta">Result: <code>${allOk ? "passed" : "failed"}</code> · Live Den API: <code>${esc(baseUrl)}</code> · Agent-driven REST proof (no screenshots) · Frames: ${frames.length}</div>
-${frameFiles.map((ff) => `<section><h2>${esc(ff.frame.claim)}</h2><p class="vo">${esc(ff.frame.voiceover)}</p><iframe src="${ff.name}" title="${esc(ff.frame.claim)}"></iframe><p><a href="${ff.name}">Open frame</a></p></section>`).join("\n")}
+${frameFiles.map((ff) => `<section><h2>${esc(ff.frame.claim)}</h2><p class="vo">${esc(ff.frame.voiceover)}</p><iframe src="${escAttr(ff.name)}" title="${escAttr(ff.frame.claim)}"></iframe><p><a href="${escAttr(ff.name)}">Open frame</a></p></section>`).join("\n")}
 </main></body></html>`
 // Keep fraimz.html only because the standalone legacy report contract consumes this filename.
 writeFileSync(join(outDir, "fraimz.html"), index)

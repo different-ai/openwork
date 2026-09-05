@@ -43,9 +43,9 @@ Use the Cloud member model as the source of truth for organization access:
 - Use `Admin` for day-to-day operators.
 - Keep most people as `Member`.
 - Use custom roles only when the built-in roles are too broad.
-- Use teams for resource access to marketplaces and providers.
+- Use teams for resource access to Collections and providers.
 
-SSO just-in-time provisioning uses `Member` as the safe default for first-login users. OpenWork does not convert IdP attributes such as `role`, `groups`, or `admin` into organization roles during SSO sign-in. Elevation to `Admin`, `Owner`, or a custom role should be an explicit, reviewed, and audited change in OpenWork.
+SSO just-in-time provisioning uses `Member` as the safe default for first-login users after successful SAML authentication. The standard sign-in flow routes email addresses from verified, enabled SSO domains to SSO. A standalone email/password signup with the same domain does not grant organization membership by itself. OpenWork does not convert IdP attributes such as `role`, `groups`, or `admin` into organization roles during SSO sign-in. Elevation to `Admin`, `Owner`, or a custom role should be an explicit, reviewed, and audited change in OpenWork.
 
 For access reviews, export the current member list, roles, teams, pending invitations, API keys, SSO configuration, and SCIM configuration on a regular cadence. Reconfirm that each member still needs their current role and team access.
 

@@ -1,0 +1,6 @@
+diff --git a/dist/index.mjs b/dist/index.mjs
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -1436 +1436 @@
+-const ADMIN_ROLES = ["owner", "admin"];
++const ADMIN_ROLES = ["owner", "super-admin", "admin"];

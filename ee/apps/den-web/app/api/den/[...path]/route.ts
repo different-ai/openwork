@@ -1,38 +1,38 @@
 import { NextRequest } from "next/server";
-import { proxyUpstream } from "../../_lib/upstream-proxy";
+import { redirectToDenApi } from "../../_lib/den-api-redirect";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
-async function proxy(request: NextRequest, segments: string[] = []) {
-  return proxyUpstream(request, segments, {
-    routePrefix: "/api/den",
-  });
+async function redirect(request: NextRequest, segments: string[] = []) {
+  void segments;
+  return redirectToDenApi(request, "/api/den");
 }
 
 export async function GET(request: NextRequest) {
-  return proxy(request);
+  return redirect(request);
 }
 
 export async function HEAD(request: NextRequest) {
-  return proxy(request);
+  return redirect(request);
 }
 
 export async function POST(request: NextRequest) {
-  return proxy(request);
+  return redirect(request);
 }
 
 export async function PUT(request: NextRequest) {
-  return proxy(request);
+  return redirect(request);
 }
 
 export async function PATCH(request: NextRequest) {
-  return proxy(request);
+  return redirect(request);
 }
 
 export async function DELETE(request: NextRequest) {
-  return proxy(request);
+  return redirect(request);
 }
 
 export async function OPTIONS(request: NextRequest) {
-  return proxy(request);
+  return redirect(request);
 }

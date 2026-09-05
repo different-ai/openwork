@@ -8,6 +8,7 @@ export default defineConfig({
     "schema/desktop-policies": "src/schema/desktop-policies.ts",
     "schema/inference": "src/schema/inference.ts",
     "schema/org": "src/schema/org.ts",
+    "schema/remote-session-commands": "src/schema/remote-session-commands.ts",
     "schema/subscriptions": "src/schema/subscriptions.ts",
     "schema/teams": "src/schema/teams.ts",
     "schema/workers": "src/schema/workers.ts",

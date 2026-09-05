@@ -13,7 +13,6 @@ import { drizzle } from "drizzle-orm/mysql2"
 import { migrate } from "drizzle-orm/mysql2/migrator"
 import { readMigrationFiles } from "drizzle-orm/migrator"
 import mysql from "mysql2/promise"
-import { ensureFulltextIndexes } from "../src/fulltext.ts"
 import { parseMySqlConnectionConfig } from "../src/mysql-config.ts"
 import { ensureSchemaRepairs } from "../src/schema-repairs.ts"
 import { createExecutor, type Executor } from "./db-executor.ts"
@@ -152,14 +151,12 @@ export async function bootstrapDenDb() {
   console.log("[den-db] running committed migrations")
   await runCommittedMigrations()
 
-  console.log("[den-db] ensuring FULLTEXT indexes")
-  const indexExecutor = await createExecutor()
+  console.log("[den-db] ensuring schema repairs")
+  const repairExecutor = await createExecutor()
   try {
-    await ensureFulltextIndexes(indexExecutor)
-    console.log("[den-db] ensuring schema repairs")
-    await ensureSchemaRepairs(indexExecutor)
+    await ensureSchemaRepairs(repairExecutor)
   } finally {
-    await indexExecutor.close()
+    await repairExecutor.close()
   }
 }
 

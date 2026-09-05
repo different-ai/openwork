@@ -5,7 +5,11 @@ description: "Run OpenWork on your own server or infrastructure."
 
 Most users just use the [desktop app](https://openworklabs.com/download). Self-hosting is for teams that want OpenWork to run on their own server, VPC, or private cloud and then connect the desktop app to it remotely.
 
-Want hosted workspaces, team marketplaces, or shared providers without running infra? Use [OpenWork Cloud](/cloud/get-started) instead. Rolling this out across a company? [Book a call](https://calendar.app.google/86QpCENvhfEzDFLu5) about [Enterprise](/cloud/enterprise).
+Want hosted workspaces, team Collections, or shared providers without running infra? Use [OpenWork Cloud](/cloud/get-started) instead. Rolling this out across a company? [Book a call](https://calendar.app.google/86QpCENvhfEzDFLu5) about [Enterprise](/cloud/enterprise).
+
+<Note>
+  Want to try the self-hosted control plane before planning production infrastructure? Start the [pull-only Docker Compose evaluation stack](/self-host/evaluate-with-docker-compose). It uses published images and does not require cloning or building the repository.
+</Note>
 
 ## What you deploy
 
@@ -38,7 +42,8 @@ Use the dedicated Self-host planning pages instead of copying hostname, certific
 - [Air-gapped deployment](/start-here/air-gapped-deployment): definitions and the checklist for full isolation.
 - [Outbound network access](/start-here/outbound-network-access): the canonical customer IT destination inventory and "what breaks when blocked" guidance.
 - [Certificate trust and proxies](/start-here/certificate-trust-and-proxies): desktop, sidecar, Den, and MySQL trust surfaces.
-- [Installer delivery](/start-here/installer-delivery): GitHub redirect, mounted artifacts, and MDM bootstrap choices.
+- [Enterprise desktop deployment](/start-here/enterprise-desktop-deployment): the enterprise binary, MDM distribution, and the `desktop-bootstrap.json` reference.
+- [Installer delivery](/start-here/installer-delivery): GitHub redirect and mounted artifacts for organization install links.
 - [Network diagnostics](/start-here/network-diagnostics): Windows doctor, Cloud catalog diagnostic trust, and Den outbound checks.
 
 If you want self-hosted repository imports and sync from GitHub, configure the [GitHub connector for Helm](/start-here/github-connector-helm) after the core Den web and Den controller hosts are reachable.
@@ -56,7 +61,7 @@ The production shape is straightforward:
 - Put HTTPS in front of every public service.
 - Expose the OpenWork server/worker URL, not raw opencode.
 - Keep workspace and data paths on durable storage.
-- Configure public URLs, auth origins, CORS origins, tokens, and provider credentials with env vars.
+- Configure `DEN_BASE_URL`, tokens, and provider credentials with env vars. Den derives the Better Auth URL, CORS/trusted origins, API defaults, MCP resource defaults, and web-app host allowlist from `DEN_BASE_URL` unless you set compatibility overrides for a split-origin deployment.
 - Run Den database migrations before the Den controller receives traffic.
 
 For containerized services, start from the [Docker packaging](https://github.com/different-ai/openwork/tree/dev/packaging/docker) in the repo.
@@ -79,7 +84,7 @@ For a self-hosted production deployment, use a managed MySQL-compatible database
 
 ## Auth and SSO
 
-Den uses Better Auth. It runs in your deployment, uses your database, and is configured with your `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, trusted origins, and optional GitHub/Google OAuth credentials.
+Den uses Better Auth. It runs in your deployment, uses your database, and is configured with your `BETTER_AUTH_SECRET`, `DEN_BASE_URL`, and optional GitHub/Google OAuth credentials. `BETTER_AUTH_URL`, trusted origins, CORS origins, and web-app hosts are derived from `DEN_BASE_URL`; set the older variables only when you are intentionally migrating or running a split-origin topology.
 
 Private deployments should keep public signup disabled and use the one-time [first-administrator setup flow](/self-host/deploy-to-your-cloud/first-administrator). Configuring an owner or platform-admin email does not create an account or password, and OpenWork does not ship a default administrator password.
 
@@ -99,12 +104,12 @@ OpenWork cloud-style self-hosting is composed of three main pieces:
 - Node.js backend (Hono) with MySQL DB
 - Electron/React desktop app
 
-The desktop app should be pointed at the Den web URL when you use the single-origin topology. It derives API and MCP traffic through the Den web proxy:
+The desktop app should be pointed at the Den web URL. On startup it reads `${DEN_BASE_URL}/api/runtime-config` from Den Web and uses the returned `denApiUrl` as the source of truth for Den API and MCP traffic. Den Web returns `DEN_API_BASE` when you set it; otherwise it deterministically derives the API origin as `api.${DEN_BASE_URL}`.
 
-- API: `<baseUrl>/api/den/v1/...`
-- MCP: `<baseUrl>/api/den/mcp/...`
+- API default: `https://api.<den-web-host>/v1/...`
+- MCP default: `https://api.<den-web-host>/mcp/...`
 
-For self-hosted deployments, configure `baseUrl` to the public Den web origin and make sure that web app's `/api/den` route can reach your Den API backend. After sign-in, normal desktop API and MCP traffic does not use a separate API origin in that topology.
+For self-hosted deployments, configure the desktop `baseUrl` to the public Den web origin and make sure `${DEN_BASE_URL}/api/runtime-config` is reachable from member desktops. If the API is not available at `api.${DEN_BASE_URL}`, set `DEN_API_BASE` on Den Web to the externally reachable API origin or proxy path you want desktops to use.
 
 These three pieces cover most features, but do not include:
 
@@ -130,7 +135,7 @@ OpenWork does not require many third-party services for the core runtime. These 
 
 Skip the server. [**OpenWork Cloud**](/cloud/get-started) runs hosted workers for your team.
 
-Cloud also gives you org-wide primitives you'd otherwise have to build: [team templates](/cloud/share-with-your-team/team-templates), [shared LLM providers](/cloud/share-with-your-team/managed-llm-provider), [RBAC](/cloud/members-and-rbac), and [shared workspaces](/cloud/run-in-the-cloud/shared-workspace).
+Cloud also gives you org-wide primitives you'd otherwise have to build: [Collections](/cloud/share-with-your-team/collections), [shared LLM providers](/cloud/share-with-your-team/managed-llm-provider), [RBAC](/cloud/members-and-rbac), and [OpenWork Web](/cloud/run-in-the-cloud/shared-workspace).
 
 ## Looking for support for a larger rollout?
 
