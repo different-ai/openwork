@@ -393,7 +393,7 @@ export function BillingDashboardScreen() {
       >
       <DenNotice
         className="mb-6"
-        message={`Organization subscriptions belong to ${orgContext?.organization.name ?? activeOrg?.name ?? "the selected organization"}. Switching organizations does not move paid access. Legacy account billing is shown separately below.`}
+        message={`Organization subscriptions belong to ${orgContext?.organization.name ?? activeOrg?.name ?? "the selected organization"}. Switching organizations does not move paid access.`}
       />
       {orgDirectory.filter((org) => org.id !== activeOrgId && org.hasSubscriptions).map((org) => (
         <button key={org.id} type="button" disabled={mutationBusy === "switch-organization"} onClick={() => switchOrganization(org.slug, "billing")} className="mb-4 block text-sm underline disabled:opacity-50">

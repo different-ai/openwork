@@ -20,7 +20,7 @@ test("organization billing survives selection and blocks destructive deletion", 
   await using empty = await createOrg(den, "Empty Workspace");
   const request = (path: string, orgId: string, method = "GET", body?: unknown) => denFetch(den.admin, path, {
     method,
-    headers: { authorization: `Bearer ${den.admin.token}`, "x-openwork-org-id": orgId },
+    headers: { authorization: `Bearer ${den.admin.token}`, ...(path === "/v1/me/orgs" ? {} : { "x-openwork-org-id": orgId }) },
     ...(body ? { body: JSON.stringify(body) } : {}),
     signal: AbortSignal.timeout(15_000),
   });
@@ -61,7 +61,7 @@ test("organization billing survives selection and blocks destructive deletion", 
       method: "DELETE", headers: { authorization: `Bearer ${den.members.observer.token}`, "x-openwork-org-id": subscribed.id },
       signal: AbortSignal.timeout(15_000),
     });
-    expect(unauthorizedDelete.response.status).toBe(403);
+    expect(unauthorizedDelete.response.status).toBe(404);
     evidence.recordAssertionEvidence("Billing discovery stays within the caller's organizations", "The unrelated member cannot discover either workspace or delete the subscribed workspace.", true);
 
     expect((await request("/v1/me/active-organization", empty.id, "POST", { organizationId: empty.id })).response.ok).toBe(true);
