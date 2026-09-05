@@ -1432,20 +1432,14 @@ function ThreadView({
       });
 
       // A stop or a budget that ran out after the reply had already landed changes nothing: the turn replied.
-      const landed = result.outcome !== "settled" && replyStateFor(result.snapshot.messages.map((message) => ({
-        id: message.id,
-        role: message.role,
-        parentId: message.parentId,
-        text: "",
-        createdAt: message.createdAt,
-        completedAt: message.completedAt,
-        error: message.error,
-        reasoning: "",
-        model: null,
-        usage: null,
-        toolCalls: [],
-      })), messageId).state === "complete" && !isRunning(result.snapshot.status);
       const settledReplies = result.snapshot.messages.filter((message) => message.role === "assistant" && message.parentId === messageId);
+      const lastReply = settledReplies.at(-1);
+      // The observation deadline can pass just before its final snapshot records
+      // a completed reply or provider error. Honor that snapshot instead of
+      // treating a recoverable error (or an answer) as a silent timeout.
+      const quiet = !isRunning(result.snapshot.status);
+      const landed = result.outcome !== "settled" && quiet && lastReply?.error === null && lastReply.completedAt !== null;
+      const terminalError = result.terminalError ?? (quiet ? lastReply?.error : null);
       const emptyReply = (result.outcome === "settled" || landed)
         && settledReplies.length > 0
         && settledReplies.every((message) => message.parts.every((part) => part.type !== "tool" && !(part.type === "text" && part.text?.trim())));
@@ -1455,10 +1449,10 @@ function ThreadView({
       } else if (result.outcome === "settled" || landed) {
         if (send.mode === "retry" && send.switchedTo) setResolution({ messageId, note: `Retried with ${send.switchedTo}` });
         commitTurnState(clearPending);
-      } else if (result.outcome === "failed") {
+      } else if (result.outcome === "failed" || (result.outcome === "timeout" && terminalError)) {
         // The same raw text the transcript's failure reads, so the retry decision sees the provider's own error type too.
-        const terminal = result.terminalError ? failureText(result.terminalError) : "The model stopped before producing a response.";
-        await settleFailure(terminal, result.terminalError?.retryable ?? null, result.terminalError !== null);
+        const terminal = terminalError ? failureText(terminalError) : "The model stopped before producing a response.";
+        await settleFailure(terminal, terminalError?.retryable ?? null, Boolean(terminalError));
       } else if (result.outcome === "timeout") {
         // The engine went idle without a reply or an error: the turn ended in silence.
         await settleFailure("The model stopped before producing a response.", false, false);
