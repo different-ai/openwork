@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { ArrowRight, ArrowUpRight, Check, ChevronRight, FileText, Folder, LayoutDashboard, MessageSquare, Monitor, Network, Play, Plug, Search, Users, Workflow } from "lucide-react";
+import { ArrowRight, ArrowUpRight, ChevronRight, FileText, Folder, LayoutDashboard, MessageSquare, Network, Play, Plug, Search, Users, Workflow } from "lucide-react";
 import styles from "./setup-frame.module.css";
 
 const steps = [
@@ -34,7 +34,7 @@ function WorkPreview({ step }: { step: SetupStep }) {
             <div className={styles.gatewayStem} />
             <div className={styles.gatewayHub}><span className={styles.gatewayMark}><img src="/openwork-mark.svg" alt="" width={19} height={19} /></span><div><strong>OpenWork gateway</strong><small>One MCP connection</small></div><Network size={18} /></div>
             <div className={styles.gatewayBranches}><i /><i /><i /></div>
-            <div className={styles.gatewayClients}><span><Monitor size={16} />Desktop</span><span><span className={styles.clientGlyph}>⌘</span>Codex</span><span><span className={styles.clientGlyph}>✳</span>Claude Code</span></div>
+            <div className={styles.gatewayClients}><span><img src="/openwork-mark.svg" alt="" width={18} height={18} />Desktop</span><span>Codex</span><span>Claude Code</span></div>
             <p className={styles.gatewayNote}>Your team’s tools, available in your agent.</p>
           </div>
         ) : (
@@ -99,11 +99,23 @@ export function SetupFrame({ step, title, description, children, aside, panelVis
     <section className={`${styles.frame} ${embedded ? styles.embedded : ""}`} data-testid="setup-frame" data-step={step}>
       <header className={styles.top}>
         <div className={styles.brand}><img src="/openwork-mark.svg" alt="" width={25} height={25} /><span>OpenWork<span className={styles.cloud}> / Cloud</span></span></div>
-        <nav aria-label="Setup progress"><ol className={styles.steps}>{steps.map((item, index) => (
-          <li key={item.id} aria-current={item.id === step ? "step" : undefined} className={index < current ? styles.done : ""}>
-            <span className={styles.stepNumber}>{index < current ? <Check size={12} /> : `0${index + 1}`}</span><span>{item.label}</span>
-          </li>
-        ))}</ol></nav>
+        <nav className={styles.progress} aria-label="Setup progress">
+          <div className={styles.progressSummary}>
+            <span>{steps[current]?.label}</span>
+            <span>Step {current + 1} of {steps.length}</span>
+          </div>
+          <ol className={styles.steps}>{steps.map((item, index) => (
+            <li
+              key={item.id}
+              aria-current={item.id === step ? "step" : undefined}
+              aria-label={`${item.label}: ${index < current ? "completed" : index === current ? "current step" : "upcoming"}`}
+              className={index < current ? styles.done : ""}
+            >
+              <span className={styles.stepLabel}>{item.label}</span>
+              <span className={styles.progressSegment} aria-hidden="true" />
+            </li>
+          ))}</ol>
+        </nav>
       </header>
       <div className={styles.grid}>
         <aside className={styles.story}>

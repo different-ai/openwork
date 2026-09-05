@@ -316,11 +316,13 @@ export function DownloadOpenWorkCard({
   installers,
   releaseTag,
   compact = false,
+  appIcon,
 }: {
   installers?: DownloadCardInstallers | null
   releaseTag?: string
   /** A single recommended download with the full platform list available on demand. */
   compact?: boolean
+  appIcon?: ReactNode
 }) {
   const detected = useDetectedPlatform()
   const resolvedInstallers = installers ?? FALLBACK_INSTALLERS
@@ -346,7 +348,7 @@ export function DownloadOpenWorkCard({
         <div className="grid gap-4 p-5">
           <div className="flex items-start gap-3">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-neutral-100 text-neutral-800">
-              {detectedGroup ? <PlatformIcon os={detectedGroup.os} className="h-5 w-5" /> : <MonitorIcon className="h-5 w-5" />}
+              {appIcon ?? (detectedGroup ? <PlatformIcon os={detectedGroup.os} className="h-5 w-5" /> : <MonitorIcon className="h-5 w-5" />)}
             </span>
             <div className="min-w-0 flex-1">
               <h3 className="text-sm font-semibold text-neutral-950">OpenWork for your desktop</h3>

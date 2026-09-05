@@ -6,6 +6,7 @@ export async function signupWorkspace(seed: Seed) {
   const den = await seed.den({ provision: false, env: {
     OPENWORK_DEV_MODE: "1", RESEND_API_KEY: "", SMTP_HOST: "",
     DEN_REQUIRE_EMAIL_VERIFICATION: "false",
+    DEN_OPENWORK_WEB_ENABLED: "true",
   } });
   const owner = {
     name: "Workspace Owner",

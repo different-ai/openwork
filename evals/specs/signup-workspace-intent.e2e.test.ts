@@ -277,6 +277,52 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     expect(await invitationsFor(flexibleId)).toHaveLength(2);
     evidence.recordAssertionEvidence("Restricted setup saves the real desktop policy before opening People, survives reload, and leaves other organizations unchanged", JSON.stringify({ saved, retainedAfterReload: true, legacySetupContinuesToPeople: true, personalPolicy, orgCount: 3, restrictedInvitations: 0, flexibleInvitations: 2 }), true);
   });
+  await step("mobile setup offers a download email or web access after reviewing team tools", async () => {
+    const selected = await seed.api(world.den.admin, "/v1/me/active-organization", {
+      method: "POST", body: JSON.stringify({ organizationId: flexibleId }),
+    });
+    expect(selected.response.ok).toBe(true);
+    const mobile = await seed.web({
+      den: world.den, signedInAs: world.den.admin, startPath: "/dashboard/onboarding/tools",
+      headless: true, viewport: { width: 390, height: 844 },
+    });
+    const mobileUser = user.on(mobile);
+    const downloadEmails = async () => {
+      const result = await probe.api(world.den.admin, "/v1/dev/emails?template=downloadLink");
+      expect(result.response.ok).toBe(true);
+      if (!isRecord(result.body) || !Array.isArray(result.body.emails)) throw new Error("Expected download email outbox");
+      return result.body.emails.filter(isRecord).map(({ template, to, subject, at }) => ({ template, to, subject, at }));
+    };
+    const toolsBefore = await connectionsFor(flexibleId);
+    await mobileUser.see({ text: "Give your team a head start." }, { timeoutMs: 90_000 });
+    await mobileUser.see({ text: "Already added" });
+    expect(await probe.eval(mobile, "document.documentElement.scrollWidth <= window.innerWidth")).toBe(true);
+    await mobileUser.looks(["The narrow Tools screen has readable tool choices and progress, with no horizontal clipping and a clear way to continue"]);
+    await mobileUser.click({ role: "button", label: "Continue" });
+    await mobileUser.see({ testId: "onboarding-mobile-options" }, { timeoutMs: 90_000 });
+    await mobileUser.notSee({ testId: "download-openwork-card" });
+    await mobileUser.see({ role: "button", label: "Email me the download link" });
+    await mobileUser.see({ role: "link", label: "Try OpenWork Web" });
+    expect(await probe.eval(mobile, "document.documentElement.scrollWidth <= window.innerWidth")).toBe(true);
+    expect(await connectionsFor(flexibleId)).toEqual(toolsBefore);
+    await mobileUser.looks(["Mobile setup ends with a clear choice to email the desktop download link or try OpenWork Web, using the OpenWork mark and restrained neutral cards instead of desktop platform downloads"]);
+    const before = await downloadEmails();
+    await mobileUser.click({ role: "button", label: "Email me the download link" });
+    await mobileUser.see({ role: "button", label: "Download link sent" }, { timeoutMs: 30_000 });
+    const sent = await probe.eventually(downloadEmails, {
+      within: 30_000, label: "the real download email is captured for the signed-in owner", until: (emails) => emails.length === before.length + 1,
+    });
+    expect(sent.filter((email) => email.to === world.owner.email)).toHaveLength(before.filter((email) => email.to === world.owner.email).length + 1);
+    expect(await probe.eval(mobile, `Array.from(document.querySelectorAll('[data-testid="onboarding-mobile-options"] button')).find((button) => button.textContent.trim() === "Download link sent")?.disabled`)).toBe(true);
+    await mobileUser.click({ role: "button", label: "Download link sent" });
+    expect(await downloadEmails()).toEqual(sent);
+    expect(await probe.eval(mobile, `Array.from(document.querySelectorAll('[data-testid="onboarding-mobile-options"] a')).find((link) => link.textContent.trim() === "Try OpenWork Web")?.getAttribute("href")`)).toBe("/dashboard/web");
+    await mobileUser.click({ role: "link", label: "Try OpenWork Web" });
+    await probe.eventually(() => probe.eval(mobile, "window.location.pathname"), {
+      within: 30_000, label: "mobile web option opens the existing access and plans page", until: (path) => path === "/dashboard/web",
+    });
+    evidence.recordAssertionEvidence("Mobile setup preserves configured tools, sends one real download email to the signed-in owner, disables repeat sends, and links to web access without starting checkout", JSON.stringify({ recipient: world.owner.email, newDownloadEmails: 1, repeatSendDisabled: true, webRoute: "/dashboard/web", configuredToolsUnchanged: true }), true);
+  });
   await step("the public signup also fits a narrow screen", async () => {
     const mobile = await seed.web({ den: world.den, startPath: "/", headless: true, viewport: { width: 390, height: 844 } });
     const mobileUser = user.on(mobile);
