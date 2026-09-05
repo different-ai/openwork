@@ -164,7 +164,7 @@ export function useWorkspaceRouteState(input: UseWorkspaceRouteStateInput) {
       return;
     }
     if (workspaceRoute === "apps") {
-      if (/^\/apps(?:\/|$)/.test(location.pathname)) return;
+      if (/^(?:\/apps|\/dashboard\/apps)(?:\/|$)/.test(location.pathname)) return;
       navigate("/apps", options);
       return;
     }
