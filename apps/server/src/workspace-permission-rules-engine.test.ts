@@ -3,18 +3,16 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect } from "vitest";
-import { needs, test, unmetNeeds } from "@openwork/testkit";
-import type { TestNeeds } from "@openwork/testkit";
-import constants from "../../constants.json" with { type: "json" };
-import { validateEffectiveEngineSnapshot } from "../../apps/server/src/agent-context-engine-inspection.js";
-import { attributeRule, selectGoverningAgent, winningRule } from "../../apps/server/src/effective-permissions.js";
-import { readJsoncFile } from "../../apps/server/src/jsonc.js";
+import { expect, test } from "bun:test";
+import constants from "../../../constants.json" with { type: "json" };
+import { validateEffectiveEngineSnapshot } from "./agent-context-engine-inspection.js";
+import { attributeRule, selectGoverningAgent, winningRule } from "./effective-permissions.js";
+import { readJsoncFile } from "./jsonc.js";
 import {
   addWorkspacePermissionRule,
   listWorkspacePermissionRules,
   removeWorkspacePermissionRule,
-} from "../../apps/server/src/workspace-permission-rules.js";
+} from "./workspace-permission-rules.js";
 
 /**
  * "Always allow in this workspace" writes the engine's suggested pattern into
@@ -25,9 +23,8 @@ import {
  * decision. The file's own comments survive the round trip.
  */
 
-const requirements: TestNeeds = { commands: ["opencode"] };
-const missingRequirements = unmetNeeds(requirements, process.env);
-const skipSuffix = missingRequirements.length > 0 ? ` skipped — needs: ${missingRequirements.join(", ")}` : "";
+const engineAvailable = Bun.which("opencode") !== null;
+const skipSuffix = engineAvailable ? "" : " skipped — needs: opencode";
 const AUTH = "Basic " + Buffer.from("probe:probe").toString("base64");
 const emptyConfig: Record<string, unknown> = {};
 
@@ -140,10 +137,9 @@ async function bootEngine(workspaceFile: string): Promise<Engine> {
   return { version, workspace, home, reloadRules, [Symbol.asyncDispose]: dispose };
 }
 
-test.skipIf(missingRequirements.length > 0)(
+test.skipIf(!engineAvailable)(
   `a rule saved into the workspace's opencode.json is read by the engine as the last word and can be removed again${skipSuffix}`,
-  async ({ evidence }) => {
-    needs(requirements);
+  async () => {
     await using engine = await bootEngine(`{
   // project policy: shell commands ask
   "$schema": "https://opencode.ai/config.json",
@@ -166,21 +162,11 @@ test.skipIf(missingRequirements.length > 0)(
     expect(winningRule(after, "bash", "git push origin main")?.action).toBe("ask");
     expect(winningRule(after, "bash", "rm -rf build")?.action).toBe("ask");
     expect(await readFile(join(engine.workspace, "opencode.json"), "utf8")).toContain("// project policy: shell commands ask");
-    evidence.recordAssertionEvidence(
-      "An allow rule saved from a prompt is enforced by the engine for exactly that pattern and attributed to the workspace file",
-      `bash "git status --porcelain" ask → allow (source workspace); "git push" and "rm -rf" still ask; the file's comment survived.`,
-      true,
-    );
 
     // Revoking from Settings removes the entry; the engine asks again.
     expect(await removeWorkspacePermissionRule(engine.workspace, { permission: "bash", pattern: "git status *" })).toBe(true);
     expect(await listWorkspacePermissionRules(engine.workspace)).toEqual([{ permission: "bash", pattern: "*", action: "ask" }]);
     const restored = await engine.reloadRules();
     expect(winningRule(restored, "bash", "git status --porcelain")?.action).toBe("ask");
-    evidence.recordAssertionEvidence(
-      "Removing the saved rule restores the previous decision",
-      `bash "git status --porcelain" is back to ask after the entry was removed from opencode.json.`,
-      true,
-    );
   },
 );
