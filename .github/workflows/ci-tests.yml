@@ -68,6 +68,34 @@ jobs:
       - name: Run core product regressions
         run: pnpm test:core
 
+  native-google-refresh:
+    needs: classify-changes
+    if: needs.classify-changes.outputs.lane == 'full'
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: ./.github/actions/setup-tests
+      - name: Prepare native Google refresh boundary
+        run: |
+          pnpm --filter @openwork/types build
+          pnpm --filter @openwork-ee/den-db build
+          pnpm --filter @openwork/email build
+          pnpm dev:den:mysql
+      - name: Verify native Google refresh recovery
+        env:
+          OPENWORK_EVAL_NATIVE_GOOGLE_REFRESH: '1'
+        run: pnpm evals:pr specs/native-google-refresh-recovery.test.ts
+      - name: Upload native Google refresh evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-google-refresh-${{ github.run_attempt }}
+          path: evals/results/test-runs/**
+          retention-days: 7
+
   openwork-tests-build:
     needs: classify-changes
     if: needs.classify-changes.outputs.lane == 'full'
