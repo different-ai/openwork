@@ -68,7 +68,7 @@ test("v2 refreshes OpenWork skill instructions just in time in an existing conve
     const setup = await fetch(`${den.mocks.witness.url}/admin/agent-workloads`, {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ workloads: [{ promptMarker: marker, finalReply: reply,
-        steps: readSkill ? Array.from({ length: reads }, () => ({ tool: "read", argumentsFrom: "skill-catalog", arguments: { skill: skillName } })) : [] }] }),
+        steps: readSkill ? Array.from({ length: reads }, () => ({ tool: "skill", argumentsFrom: "skill-catalog", arguments: { skill: skillName } })) : [] }] }),
     });
     expect(setup.ok).toBe(true);
     const prompt = `Use the report skill if available. Request ${marker}.`;
@@ -97,7 +97,7 @@ test("v2 refreshes OpenWork skill instructions just in time in an existing conve
   const first = `SKILL-CONTENT-A-${Date.now()}`;
   expect((await request(desktop, `${root}/skills`, "POST", { name: skillName, description: "Use for report requests", content: `The current report code is ${first}.` })).status).toBe(200);
   expect(await turn("added", true)).toContain(first);
-  evidence.recordAssertionEvidence("a skill installed through OpenWork is discovered and read on the next v2 call", "The baseline native instruction entry lacked the skill. After the real skill-install route, the same conversation read its independent content nonce using a path derived exclusively from the current system catalog. The user prompt contained no file path or answer.", true);
+  evidence.recordAssertionEvidence("a skill installed through OpenWork is discovered and read on the next v2 call", "The baseline native instruction entry lacked the skill. After the real skill-install route, the same conversation read its independent content nonce using the native skill tool with an ID derived exclusively from the current skill catalog. The user prompt contained no file path or answer.", true);
   const second = `SKILL-CONTENT-B-${Date.now()}`;
   expect((await request(desktop, `${root}/skills`, "POST", { name: skillName, description: "Updated report skill", content: `The current report code is ${second}.` })).status).toBe(200);
   expect(await turn("updated", true)).toContain(second);

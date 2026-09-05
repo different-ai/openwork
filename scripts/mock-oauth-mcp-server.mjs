@@ -224,16 +224,13 @@ function offeredAgentTool(body, wanted) {
     ?? null;
 }
 
-function skillCatalogArguments(messages, body, toolName, skillName) {
+function skillCatalogArguments(messages, _body, _toolName, skillName) {
   const system = messages.filter((message) => message.role === "system").map(messageContentText).join("\n");
-  const paths = [...system.matchAll(/"path"\s*:\s*("(?:[^"\\]|\\.)*")/g)].map((match) => JSON.parse(match[1]));
-  const path = paths.find((value) => typeof value === "string" && value.endsWith(`/${skillName}/SKILL.md`));
-  if (!path) throw new Error("The current system instructions did not advertise the requested skill path");
-  const tool = body.tools.find((candidate) => candidate.function?.name === toolName);
-  const properties = tool?.function?.parameters?.properties ?? {};
-  const key = ["path", "filePath", "file_path"].find((name) => Object.hasOwn(properties, name));
-  if (!key) throw new Error("The offered read tool has no supported file path parameter");
-  return { [key]: path };
+  const entries = [...system.matchAll(/<skill>([\s\S]*?)<\/skill>/g)];
+  const entry = entries.reverse().find((match) => match[1].includes(`<name>${skillName}</name>`));
+  const id = entry?.[1].match(/<id>([^<]+)<\/id>/)?.[1];
+  if (!id) throw new Error("The current native skill catalog did not advertise the requested skill ID");
+  return { id };
 }
 
 function agentStream(res, model, chunks) {
