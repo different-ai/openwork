@@ -748,9 +748,12 @@ export class CloudProviderSync {
     return this.startRun(request);
   }
 
-  allowsStoredCredential(providerId: string, name: string, providerConfig: Record<string, unknown>): boolean {
-    const binding = this.credentialBindings.get(providerId);
-    return binding !== undefined && binding.names.has(name) && binding.config === stableJson(providerConfig);
+  credentialAccessSnapshot(): (providerId: string, name: string, providerConfig: Record<string, unknown>) => boolean {
+    const bindings = this.credentialBindings;
+    return (providerId, name, providerConfig) => {
+      const binding = bindings.get(providerId);
+      return binding !== undefined && binding.names.has(name) && binding.config === stableJson(providerConfig);
+    };
   }
 
   onCredentialBindingsChange(listener: () => void): () => void {

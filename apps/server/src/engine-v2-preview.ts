@@ -272,7 +272,7 @@ export function createEngineV2Preview(options: {
   config: ServerConfig;
   env?: Pick<EnvService, "list" | "onChange">;
   cloudCredentials?: {
-    allowsStoredCredential(providerId: string, name: string, providerConfig: Record<string, unknown>): boolean;
+    credentialAccessSnapshot(): (providerId: string, name: string, providerConfig: Record<string, unknown>) => boolean;
     onCredentialBindingsChange(listener: () => void): () => void;
   };
 }): EngineV2Preview {
@@ -320,8 +320,11 @@ export function createEngineV2Preview(options: {
     const active = sidecar;
     if (!active) return;
     const providerMap = runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config));
+    // Capture trust before reading values: a later grant must not authorize a
+    // credential snapshot that predates that provider's persisted cloud key.
+    const allowsCloudCredential = options.cloudCredentials?.credentialAccessSnapshot();
     const credentials = new Map((await options.env?.list() ?? []).map((entry) => [entry.key, entry.value]));
-    const mapped = mapRuntimeProvidersToV2Specs(providerMap, credentials, (id, name, provider) => options.cloudCredentials?.allowsStoredCredential(id, name, provider) ?? false);
+    const mapped = mapRuntimeProvidersToV2Specs(providerMap, credentials, allowsCloudCredential);
     const nextMirroredProviderIds = mapped.specs.map((spec) => spec.id);
     await active.setProviders(mapped.specs);
     mirroredSpecs = mapped.specs;
