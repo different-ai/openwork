@@ -684,6 +684,7 @@ export async function server(options: ServerOptions): Promise<Den> {
       ref: base.ref,
       reuse: preparedSandbox,
       bootstrapAdminEmail: bootstrapAdmin.email,
+      seed: options.provision !== false,
       env: denEnv,
       log: (line) => console.error(`[openwork/testkit] ${line}`),
     });
