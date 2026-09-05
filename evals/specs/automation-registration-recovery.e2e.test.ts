@@ -15,12 +15,17 @@ test("desktop registration recovers from a transient Den outage without another 
     sandbox: den.placement?.kind === "daytona" ? den.placement.sandboxId : undefined,
   })
   await using desktop = await app({ den: { ...den, ref: proxy.ref }, as: "admin", place })
-  const registrationPath = "/api/den/v1/automation-runners/token"
-  await eventually(async () => (await proxy.requestLog()).some((request) =>
-    request.path === registrationPath && request.status === 200), {
-    within: 60_000,
-    label: "initial desktop registration",
-  })
+  const isRegistration = (path: string) => path.split("?")[0].endsWith("/v1/automation-runners/token")
+  const initial = await eventually(async () => {
+    const requests = await proxy.requestLog()
+    return {
+      registration: requests.find((request) => isRegistration(request.path) && request.status === 200),
+      diagnostics: requests.filter((request) => isRegistration(request.path) || request.path.endsWith("/v1/me/desktop-config"))
+        .map(({ method, path, status }) => ({ method, path: path.split("?")[0], status })),
+    }
+  }, { within: 60_000, label: "initial desktop registration", until: (value) => Boolean(value.registration) })
+  if (!initial.registration) throw new Error("Initial registration missing")
+  const registrationPath = initial.registration.path.split("?")[0]
 
   const start = (await proxy.requestLog()).length
   await proxy.faults.status(registrationPath, 503, { times: 2 })
