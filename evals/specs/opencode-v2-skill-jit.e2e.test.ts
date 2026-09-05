@@ -78,7 +78,7 @@ test("v2 refreshes OpenWork skill instructions just in time in an existing conve
       const permissions = (await request(desktop, `${v2}/api/session/${sessionId}/permission`)).json;
       if (record(permissions) && Array.isArray(permissions.data)) for (const permission of permissions.data) {
         if (record(permission) && typeof permission.id === "string") {
-          expect((await request(desktop, `${v2}/api/session/${sessionId}/permission/${permission.id}/reply`, "POST", { reply: "once" })).status).toBe(200);
+          expect((await request(desktop, `${v2}/api/session/${sessionId}/permission/${permission.id}/reply`, "POST", { reply: "once" })).status).toBe(204);
         }
       }
       return JSON.stringify((await request(desktop, `${v2}/api/session/${sessionId}/message`)).json);
