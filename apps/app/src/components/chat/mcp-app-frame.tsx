@@ -570,6 +570,13 @@ export function McpAppFrame({ part }: { part: DynamicToolUIPart }) {
     resultCache.current = { signature: nextResultSignature, value: nextResult }
   }
   const result = resultCache.current.value
+  const draft = useMemo(() => {
+    if (part.toolName !== "save_artifact_view" && !part.toolName.endsWith("_save_artifact_view")) return null
+    const reference = result?._meta?.["openwork/appDraft"]
+    if (!isRecord(reference) || typeof reference.appId !== "string" || typeof reference.revisionId !== "string"
+      || typeof reference.title !== "string" || (reference.receiptId !== undefined && typeof reference.receiptId !== "string")) return null
+    return { appId: reference.appId, revisionId: reference.revisionId, title: reference.title, receiptId: reference.receiptId }
+  }, [part.toolName, result])
   const launch = useMemo(() => gatewayMcpAppLaunch(result?._meta), [result])
   const [app, setApp] = useState<OpenworkMcpAppResource | null>(null)
   const [error, setError] = useState<McpAppDiagnostic | null>(null)
@@ -585,7 +592,7 @@ export function McpAppFrame({ part }: { part: DynamicToolUIPart }) {
     let cancelled = false
     setApp(null)
     setError(null)
-    if (!result || !openworkServerClient || !workspaceId) return () => { cancelled = true }
+    if (draft || !result || !openworkServerClient || !workspaceId) return () => { cancelled = true }
     const startedAt = performance.now()
     void openworkServerClient.resolveMcpApp(workspaceId, part.toolName, launch ?? undefined)
       .then(({ app: resolved }) => {
@@ -612,8 +619,11 @@ export function McpAppFrame({ part }: { part: DynamicToolUIPart }) {
         }
       })
     return () => { cancelled = true }
-  }, [launch, openworkServerClient, part.toolName, result, workspaceId])
+  }, [draft, launch, openworkServerClient, part.toolName, result, workspaceId])
 
+  // A completed build opens a native artifact tab. Rendering still goes
+  // through the authorized Apps API and the shared sandbox inside that tab.
+  if (draft) return <AppChatArtifact key={`${draft.appId}:${draft.revisionId}:${draft.receiptId}`} {...draft} />
   const viewId = result?._meta?.artifactViewId
   const revisionId = result?._meta?.viewRevisionId
   if (app && typeof viewId === "string" && typeof revisionId === "string" && app.resourceUri === `ui://openwork/artifacts/${viewId}/views/${revisionId}/index.html`) {

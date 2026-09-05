@@ -15,8 +15,12 @@ test("create, preview, save and reopen an app without changing already-open resu
     expect(creationPrompt).not.toContain(world.configObjectId);
     await user.type("composer", creationPrompt, { replace: true });
     await user.click("Run task");
-    await user.see({ text: creationReply }, { timeoutMs: 90_000 });
-    await user.see("Save", { timeoutMs: 60_000 });
+    try {
+      await user.see({ text: creationReply }, { timeoutMs: 90_000 });
+      await user.see("Save", { timeoutMs: 60_000 });
+    } finally {
+      await user.screenshot();
+    }
     await probe.eventually(() => world.previewText(), { within: 30_000, label: "conversation generated the app preview", until: (text) => text.includes("Weekly overview") && text.includes("Launch briefing") });
     await user.screenshot();
   });
@@ -28,8 +32,8 @@ test("create, preview, save and reopen an app without changing already-open resu
   const revisionId = field(view.revisions[0], "id");
   const requests = await world.den.mocks.tracker.agentRequests({ promptMarker: creationPrompt });
   expect(requests.some((request) => request.toolName?.endsWith("save_artifact_view"))).toBe(true);
-  expect(requests.some((request) => request.toolName?.includes("preview_artifact_"))).toBe(true);
-  evidence.recordAssertionEvidence("A submitted Dashboard creation request builds a new app draft and opens its preview", "There were no app drafts before submission. The real conversation called the MCP builder and newly registered preview tool, persisted one revision, and rendered its workflow data in the artifact panel.", true);
+  expect(requests.filter((request) => request.kind === "tool")).toHaveLength(1);
+  evidence.recordAssertionEvidence("A submitted Dashboard creation request builds a new app draft and opens its preview", "There were no app drafts before submission. The real conversation called the MCP builder once, persisted one revision, and rendered the receipt-pinned workflow data in the artifact panel without needing a newly registered tool.", true);
   const appPath = `/apps/${appId}`;
   const dashboardAppPath = `/dashboard/apps/${appId}`;
   const originalPath = `${appPath}?revisionId=${revisionId}&receiptId=${world.receiptId}`;

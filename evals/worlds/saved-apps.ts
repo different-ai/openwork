@@ -84,7 +84,7 @@ export async function savedAppCreation(seed: Seed) {
   const firstRun = await run(firstInput.topic);
   const source = (heading: string) => `export default function Briefing({ data }) { const [expanded, setExpanded] = React.useState(false); return <article><h1>${heading}</h1><p>{data.topic}</p><button onClick={() => setExpanded(!expanded)}>{expanded ? "Hide details" : "Show details"}</button>{expanded && <p>Workers: {data.total}</p>}</article> }`;
   // Only the existing workflow is arranged. The desktop conversation must
-  // execute these model tool calls to create and display the first app draft.
+  // execute the model tool call to create and display the first app draft.
   const configured = await fetch(`${den.mocks.tracker.url}/admin/agent-workloads`, {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ workloads: [{ promptMarker: creationPrompt, finalReply: creationReply, steps: [
@@ -92,7 +92,6 @@ export async function savedAppCreation(seed: Seed) {
         configObjectId, title: "Briefing app", reactSource: source("Weekly overview"),
         cssSource: "body{font-family:system-ui,sans-serif;padding:24px;margin:0}button{padding:8px 12px}",
       } },
-      { tool: "preview_artifact_*", arguments: {} },
     ] }] }),
     signal: AbortSignal.timeout(15_000),
   });
