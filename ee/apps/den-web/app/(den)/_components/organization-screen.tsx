@@ -139,15 +139,13 @@ export function OrganizationScreen() {
 
         const organization =
           typeof payload === "object" && payload && "organization" in payload && payload.organization && typeof payload.organization === "object"
-            ? (payload.organization as { id?: unknown; slug?: unknown })
+            ? payload.organization
             : null;
-        const nextSlug = typeof organization?.slug === "string" ? organization.slug : null;
-
-        if (!nextSlug || typeof organization?.id !== "string") {
+        if (!organization || !("slug" in organization) || typeof organization.slug !== "string" || !organization.slug || !("id" in organization) || typeof organization.id !== "string") {
           throw new Error("Organization was created, but no slug was returned.");
         }
 
-        nextOrg = { id: organization.id, slug: nextSlug };
+        nextOrg = { id: organization.id, slug: organization.slug };
         setCreatedOrg(nextOrg);
       }
       if (intent === "team" && desktopSetup === "restricted") {
