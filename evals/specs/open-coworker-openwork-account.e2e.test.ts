@@ -798,7 +798,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
     const row = document.querySelector('[data-testid="apps-tools-row-connected"]');
     if (!(row instanceof HTMLElement)) return false;
     const text = row.innerText;
-    if (!text.includes("Connected as") && !text.includes("Needs") && !text.includes("Unavailable")) return false;
+    if (!text.includes("Connected as")) return false;
     return text;
   })()`, { timeoutMs: 240_000, label: "OpenWork Connect settled for Scout" });
   expect(String(rootRow)).toContain(`Connected as ${ORG_NAME}`);

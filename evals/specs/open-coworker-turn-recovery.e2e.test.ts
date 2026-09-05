@@ -419,7 +419,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   await type(app, TRANSIENT_PROMPT);
   await waitFor(app, `[...document.querySelectorAll('[data-message-role="assistant"]')].some((message) => (message.textContent ?? "").includes(${json(TRANSIENT_REPLY)})) || Boolean(document.querySelector('[data-testid="coworker-turn-failed"]'))`, { timeoutMs: 180_000, label: "the transient rate limit's outcome" });
   if (await evalIn(app, `Boolean(document.querySelector('[data-testid="coworker-turn-failed"]'))`)) {
-    throw new Error(`A transient rate limit became a failure after ${scripted.countFor("TRANSIENT")} provider requests. ${await describeThread(app, serverUrl, ownerToken, workspaceId, await threadIdOf(), scripted)}`);
+    throw new Error(`A transient rate limit became a failure after ${scripted.countFor("TRANSIENT")} provider requests. UI: ${await evalIn(app, `document.body.innerText`)} Trace: ${JSON.stringify(await endOutcomeTrace(app))}. ${await describeThread(app, serverUrl, ownerToken, workspaceId, await threadIdOf(), scripted)}`);
   }
   await waitForReply(app, TRANSIENT_REPLY, 180_000);
   const transientTrace = await endOutcomeTrace(app);
@@ -876,7 +876,7 @@ test.skipIf(!enabled)("Open Coworker background work survives cancellation and r
     expect(workerRequest?.tools).not.toContain(forbidden);
   }
   expect(scripted.requests.find((request) => request.prompt === "Pause the background check for now.")?.tools).toContain("coworker_worker_pause");
-  expect(await evalIn(app, `(document.body?.innerText ?? "").includes("Paused Background check")`)).toBe(true);
+  await waitFor(app, `(document.body?.innerText ?? "").includes("Paused Background check")`, { timeoutMs: 10_000, label: "the completed pause names its Worker in the receipt" });
   await invokeCoworker(app, "workers.steer", { slug: "nova", id: workerId, text: "KEEP THIS STEERING: include source C.", });
   const interrupted = resultRecord(await invokeCoworker(app, "workers.spawn", {
     slug: "nova", name: "Interrupted check", goal: "BACKGROUND_INTERRUPTED: inspect the sources once.", lifespan: { kind: "turns", max: 2 },
