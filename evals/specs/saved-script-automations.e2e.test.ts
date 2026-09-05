@@ -192,6 +192,8 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
     true,
   )
 
+  const appRequest = (session: typeof den.admin, path: string, init: RequestInit = {}) =>
+    denFetch(session, path, { ...init, headers: { authorization: `Bearer ${session.token}` } })
   const draft = await agentRpc(den.ref.apiUrl, mcpToken, "tools/call", {
     name: "save_artifact_view",
     arguments: {
@@ -205,36 +207,36 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
   expect(revision?.buildStatus).toBe("ready")
   const appPath = `/v1/apps/${view.id}`
   const pinnedPath = `${appPath}?revisionId=${revision?.id}&receiptId=${manualResult.receiptId}`
-  const draftApp = await denFetch(den.admin, pinnedPath)
+  const draftApp = await appRequest(den.admin, pinnedPath)
   expect(draftApp.response.status, draftApp.text).toBe(200)
   expect(draftApp.body).toMatchObject({ onDashboard: false, view: { activeRevisionId: null }, payload: { data: { briefing: { topic: firstMarker } } } })
-  expect((await denFetch(den.admin, "/v1/apps")).body).toMatchObject({ enabled: true, items: [] })
-  expect((await denFetch(den.admin, `${appPath}/dashboard`, { method: "POST", body: JSON.stringify({ added: true }) })).response.status).toBe(404)
+  expect((await appRequest(den.admin, "/v1/apps")).body).toMatchObject({ enabled: true, items: [] })
+  expect((await appRequest(den.admin, `${appPath}/dashboard`, { method: "POST", body: JSON.stringify({ added: true }) })).response.status).toBe(404)
   const beforeSave = await readWorkflowDetail(den.admin, configObjectId)
-  const beforeSnapshots = (await denFetch(den.admin, `/v1/workflows/${configObjectId}/snapshots`)).body
+  const beforeSnapshots = (await appRequest(den.admin, `/v1/workflows/${configObjectId}/snapshots`)).body
   const save = { revisionId: revision?.id, title: "Saved briefing", useInWorkflow: false, expectedActiveRevisionId: null }
-  const savedApp = await denFetch(den.admin, `${appPath}/save`, { method: "POST", body: JSON.stringify(save) })
+  const savedApp = await appRequest(den.admin, `${appPath}/save`, { method: "POST", body: JSON.stringify(save) })
   expect(savedApp.response.status, savedApp.text).toBe(200)
   expect(savedApp.body).toMatchObject({ activeRevisionId: revision?.id, title: "Saved briefing", useInWorkflow: false })
-  const reopened = await denFetch(den.admin, appPath)
+  const reopened = await appRequest(den.admin, appPath)
   expect(reopened.response.status, reopened.text).toBe(200)
   expect(reopened.body).toMatchObject({ onDashboard: true, revision: { id: revision?.id }, view: { configObjectId } })
   expect(requireRecord(reopened.body, "reopened app").html).toEqual(requireRecord(draftApp.body, "draft app").html)
   expect((await readWorkflowDetail(den.admin, configObjectId)).script.currentVersion).toEqual(beforeSave.script.currentVersion)
-  expect((await denFetch(den.admin, `/v1/workflows/${configObjectId}/snapshots`)).body).toEqual(beforeSnapshots)
-  expect((await denFetch(den.admin, `${appPath}/save`, { method: "POST", body: JSON.stringify({ ...save, title: "Stale overwrite" }) })).response.status).toBe(409)
+  expect((await appRequest(den.admin, `/v1/workflows/${configObjectId}/snapshots`)).body).toEqual(beforeSnapshots)
+  expect((await appRequest(den.admin, `${appPath}/save`, { method: "POST", body: JSON.stringify({ ...save, title: "Stale overwrite" }) })).response.status).toBe(409)
   for (const added of [false, true]) {
-    const placement = await denFetch(den.admin, `${appPath}/dashboard`, { method: "POST", body: JSON.stringify({ added }) })
+    const placement = await appRequest(den.admin, `${appPath}/dashboard`, { method: "POST", body: JSON.stringify({ added }) })
     expect(placement.response.status, placement.text).toBe(200)
-    expect((await denFetch(den.admin, appPath)).body).toMatchObject({ onDashboard: added, view: { activeRevisionId: revision?.id, title: "Saved briefing" } })
+    expect((await appRequest(den.admin, appPath)).body).toMatchObject({ onDashboard: added, view: { activeRevisionId: revision?.id, title: "Saved briefing" } })
   }
   const colleague = den.members.colleague
   if (!colleague) throw new Error("Colleague was not provisioned")
-  expect((await denFetch(colleague, appPath)).response.status).toBe(403)
-  expect((await denFetch(colleague, `${appPath}/dashboard`, { method: "POST", body: JSON.stringify({ added: true }) })).response.status).toBe(403)
-  expect((await denFetch(colleague, "/v1/apps")).body).toMatchObject({ items: [] })
-  await denFetch(colleague, `${appPath}/dashboard`, { method: "POST", body: JSON.stringify({ added: false }) })
-  expect((await denFetch(den.admin, appPath)).body).toMatchObject({ onDashboard: true })
+  expect((await appRequest(colleague, appPath)).response.status).toBe(403)
+  expect((await appRequest(colleague, `${appPath}/dashboard`, { method: "POST", body: JSON.stringify({ added: true }) })).response.status).toBe(403)
+  expect((await appRequest(colleague, "/v1/apps")).body).toMatchObject({ items: [] })
+  await appRequest(colleague, `${appPath}/dashboard`, { method: "POST", body: JSON.stringify({ added: false }) })
+  expect((await appRequest(den.admin, appPath)).body).toMatchObject({ onDashboard: true })
   evidence.recordAssertionEvidence(
     "A draft app can be saved and reopened with personal placement without running, scheduling, or granting workflow access",
     "The real MCP builder produced a draft; the Apps routes retained its exact revision and HTML, saved personal placement without changing workflow version or snapshots, rejected stale saves and an ungranted member, and removed/re-added only the author's card.",
