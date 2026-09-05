@@ -205,6 +205,9 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
   const view = requireRecord(requireRecord(draft.structuredContent, "draft result").view, "draft view")
   const revision = records(view.revisions)[0]
   expect(revision?.buildStatus).toBe("ready")
+  expect(requireRecord(draft._meta, "draft host metadata")["openwork/appDraft"]).toEqual({
+    appId: view.id, revisionId: revision?.id, receiptId: manualResult.receiptId, title: "Briefing app",
+  })
   const appPath = `/v1/apps/${view.id}`
   const pinnedPath = `${appPath}?revisionId=${revision?.id}&receiptId=${manualResult.receiptId}`
   const draftApp = await appRequest(den.admin, pinnedPath)

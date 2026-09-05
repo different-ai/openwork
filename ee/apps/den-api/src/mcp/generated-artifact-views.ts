@@ -227,7 +227,7 @@ export function registerAgentGeneratedArtifactViews(input: {
         "Prerequisite: the Workflow's current version must declare an explicit JSON Schema outputSchema matching its successful result data. If it does not, test and create a new Workflow version with that outputSchema before calling this tool.",
         "Provide a default-exported React component that receives { data, artifact }. React is already injected: use React.useState and other React APIs without imports. Do not import modules, fetch data, access browser globals, or add URL-bearing elements; all render-time data comes from data.",
         "Every successful build is a draft. Show the preview so the user can try it and choose Save in OpenWork to keep the workflow and app together on their dashboard. Never activate a draft merely because it built successfully. Editing never changes the saved app.",
-        "This management tool does not render a view. After a successful build, call the registered render_artifact_* or preview_artifact_* tool named in the result. A failed build returns artifact_view_build_failed with diagnostics; correct those diagnostics once and retry using the returned artifactViewId.",
+        "OpenWork opens the artifact preview from a successful build automatically; no additional tool call is needed there. In other MCP clients, call the registered render_artifact_* or preview_artifact_* tool named in the result. A failed build returns artifact_view_build_failed with diagnostics; correct those diagnostics once and retry using the returned artifactViewId.",
       ].join(" "),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       inputSchema: z.object({
@@ -267,12 +267,24 @@ export function registerAgentGeneratedArtifactViews(input: {
       }
       syncView(view)
       input.notifyCatalogChanged()
+      // Model tool catalogs can stay fixed for the rest of a turn. Give the
+      // host an exact preview reference without requiring the new tool first.
+      const preview = await input.loadData({
+        configObjectId: view.configObjectId,
+        expectedOutputSchemaDigest: revision.outputSchemaDigest,
+      })
       const displayInstruction = `Call ${view.status === "active" && view.activeRevisionId === revision.id
         ? `render_artifact_${view.id}`
         : `preview_artifact_${view.id}`} to display that revision.`
       return {
-        content: [{ type: "text" as const, text: `Saved immutable view revision ${revision.id} at ${revision.resourceUri}. This save action has no interactive UI. ${displayInstruction}` }],
+        content: [{ type: "text" as const, text: `Saved immutable view revision ${revision.id} at ${revision.resourceUri}. OpenWork opens the artifact preview automatically. In other MCP clients: ${displayInstruction}` }],
         structuredContent: { view },
+        _meta: { "openwork/appDraft": {
+          appId: view.id,
+          revisionId: revision.id,
+          ...(preview.ok ? { receiptId: preview.payload.artifact.receiptId } : {}),
+          title: view.title,
+        } },
       }
     },
   )
