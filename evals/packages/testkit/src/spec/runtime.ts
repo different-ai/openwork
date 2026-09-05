@@ -6,6 +6,7 @@ import {
   evalIn,
   listSessions,
   readComposerState,
+  readConnectorCatalog,
   renameSessionAndWait,
   signInDesktopAs,
   waitUntilInteractive,
@@ -813,6 +814,11 @@ export class ProbeChannel implements Probe {
   composer() {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("probe", "composer", "composer", surface, () => readComposerState(surface));
+  }
+
+  connectorCatalog() {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("probe", "connectorCatalog", "connectorCatalog", surface, () => readConnectorCatalog(surface));
   }
 
   storage(key: string): Promise<unknown>;

@@ -16,6 +16,7 @@ import { getRequestError, requestJson } from "../../_lib/den-flow";
 import { ConnectorCatalog, connectorChatHref } from "./connector-catalog-list";
 import type { PopularConnector } from "./connector-catalog";
 import {
+  connectorAccountStatus,
   connectorDetailEffort,
   connectorDetailFacts,
   connectorDetailIdentity,
@@ -272,7 +273,7 @@ export function McpConnectionsScreen({ view = "catalog", connectorId }: { view?:
   const { orgContext, orgSlug } = useOrgDashboard();
   const { data: connections = [], isLoading, error, refetch } = useMcpConnections();
   const { data: usableConnections = [], isLoading: usableConnectionsLoading } = useMcpConnections("usable");
-  const { data: presets = [] } = useMcpConnectionPresets();
+  const { data: presets = [], isLoading: presetsLoading, error: presetsError } = useMcpConnectionPresets();
   const createConnection = useCreateMcpConnection();
   const createNativeConnection = useCreateNativeProviderConnection();
   const updateConnection = useUpdateMcpConnection();
@@ -721,10 +722,13 @@ export function McpConnectionsScreen({ view = "catalog", connectorId }: { view?:
     })
     : [];
   const detailConnectionSetup = detailConnection ? connectionSetupState(detailConnection) : null;
+  const detailAccountStatus = detailConnection ? connectorAccountStatus(detailConnection, detailConnectionSetup?.setupRequired) : null;
   const detailCanInspectTools = detailConnection && detailConnectionSetup
     ? !isNativeProviderConnectionId(detailConnection.id, detailConnection.nativeProviderKey)
       && !detailConnectionSetup.setupRequired
       && !detailConnection.issuerReviewRequired
+      && !detailConnection.needsReconnect
+      && detailConnection.credentialHealth !== "reconnect_required"
       && (detailConnection.credentialMode === "shared" ? detailConnection.connected : detailConnection.connectedForMe)
     : false;
   const detailIsBusy = detailSubject?.kind === "popular"
@@ -998,6 +1002,8 @@ export function McpConnectionsScreen({ view = "catalog", connectorId }: { view?:
             onManage={manageConnection}
             onRemove={handleRemove}
             addingPresetId={instantAddingPresetId}
+            loading={presetsLoading || isLoading || usableConnectionsLoading}
+            unavailable={Boolean(presetsError)}
           />
         </div>
       </div>
@@ -1057,8 +1063,8 @@ export function McpConnectionsScreen({ view = "catalog", connectorId }: { view?:
                 <h1 className="flex flex-wrap items-center gap-2.5 text-[28px] font-medium leading-[34px] tracking-[-0.5px] text-gray-950">
                   {detailIdentity.name}
                   {detailConnection ? (
-                    <DenChip tone={detailConnection.connectedForMe || detailConnection.connected ? "success" : "neutral"} size="sm" data-testid="connector-detail-state">
-                      {detailConnection.connectedForMe ? "Connected as you" : detailConnection.connected ? "Connected" : "Not connected"}
+                    <DenChip tone="neutral" size="sm" data-testid="connector-detail-state">
+                      {detailAccountStatus}
                     </DenChip>
                   ) : detailEffort ? (
                     <DenChip tone="neutral" size="sm" data-testid="connector-detail-state">{EFFORT_LABELS[detailEffort]}</DenChip>

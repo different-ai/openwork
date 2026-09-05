@@ -102,7 +102,6 @@ describe("connector pages", () => {
     expect(screen).not.toContain("<ConnectorQuickAddGrid");
     expect(catalog.indexOf("ConfiguredConnectorStrip connections")).toBeLessThan(catalog.indexOf('data-testid="popular-connectors"'));
     expect(catalog.indexOf('data-testid="popular-connectors"')).toBeLessThan(catalog.indexOf('data-testid="more-connectors"'));
-    expect(catalog).toContain("{MORE_CONNECTORS_TEASER}");
     expect(catalog).toContain("Chat\n          </a>");
     expect(catalog).toContain("Manage\n          </button>");
     expect(catalog).toContain("Uninstall\n              </button>");

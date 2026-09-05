@@ -59,17 +59,17 @@ describe("ConnectorCatalog", () => {
     for (const id of ["gmail", "github", "google-drive", "google-calendar", "notion", "slack"]) {
       expect(markup).toContain(`data-testid="connector-row-${id}"`);
     }
-    expect(markup).toContain("See Outlook Email, Granola, and more");
+    expect(markup).toContain("Browse all 9 integrations");
     expect(markup).not.toContain('data-testid="more-connectors"');
   });
 
-  test("configured rows get the options menu while unconfigured rows keep the plus", () => {
+  test("configured rows get the options menu while unconfigured rows explain the next step", () => {
     const markup = render();
 
     expect(markup).toContain('data-testid="connector-options-conn-notion"');
     expect(markup).not.toContain('data-testid="connector-add-notion"');
     expect(markup).toContain('data-testid="connector-add-github"');
-    expect(markup).toContain('aria-label="Add GitHub"');
+    expect(markup).toContain('aria-label="Set up GitHub"');
   });
 
   test("filtering opens the More section and hides the configured strip", () => {
@@ -86,15 +86,15 @@ describe("ConnectorCatalog", () => {
     expect(render({ filter: "zzzz" })).toContain("No connectors match");
   });
 
-  test("every row opens its detail page: connection id when configured, catalog id otherwise", () => {
+  test("every row opens its detail page: stable catalog identity even when configured", () => {
     const markup = render({ filter: "o" });
 
-    expect(markup).toContain('href="/dashboard/mcp-connections/conn-notion"');
+    expect(markup).toContain('href="/dashboard/mcp-connections/notion"');
     expect(markup).toContain('data-testid="connector-open-notion"');
     expect(markup).toContain('href="/dashboard/mcp-connections/github"');
     expect(markup).toContain('href="/dashboard/mcp-connections/google-drive"');
     expect(markup).toContain('href="/dashboard/mcp-connections/microsoft-365"');
     expect(markup).toContain('href="/dashboard/mcp-connections/granola"');
-    expect(markup).not.toContain('href="/dashboard/mcp-connections/notion"');
+    expect(markup).not.toContain('href="/dashboard/mcp-connections/conn-notion"');
   });
 });

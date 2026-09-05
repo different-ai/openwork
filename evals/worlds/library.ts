@@ -303,8 +303,21 @@ export async function connectorBranding(seed: Seed) {
 
 export async function connectorsQuickAdd(seed: Seed) {
   const den = await seed.den({
-    org: { name: `Connectors Quick Add ${Date.now()}`, admin: { name: "Sarah" } },
+    org: { name: `Connectors Quick Add ${Date.now()}`, admin: { name: "Catalog Admin" }, members: { member: { name: "Catalog Member" } } },
     mocks: { connector: seed.mock() },
+  });
+  const connection = await seed.orgConnection(den.admin, {
+    name: "Catalog Notes",
+    url: den.mocks.connector.mcpUrl,
+    authType: "oauth",
+    credentialMode: "per_member",
+    access: { orgWide: true },
+  });
+  const google = await seed.nativeConnector(den.admin, {
+    providerKey: "google-workspace",
+    name: "Google Workspace",
+    clientId: "catalog-test-client",
+    clientSecret: "catalog-test-secret",
   });
   const web = await seed.web({
     den,
@@ -313,7 +326,10 @@ export async function connectorsQuickAdd(seed: Seed) {
     headless: true,
     viewport: { width: 1440, height: 1200 },
   });
-  return { web, connector: den.mocks.connector };
+  const memberWeb = await seed.web({
+    den, signedInAs: den.members.member, startPath: `/dashboard/your-connections?connectionId=${connection.id}`, headless: true,
+  });
+  return { den, web, memberWeb, connection, google, connector: den.mocks.connector };
 }
 
 export async function libraryConnectorDiscovery(seed: Seed) {

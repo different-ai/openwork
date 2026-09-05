@@ -9,6 +9,16 @@ import {
 } from "./connector-catalog";
 import { EFFORT_LABELS, presetEffort, type ConnectorEffort } from "./connector-effort";
 import { isNativeProviderConnectionId, type ExternalMcpConnection, type ExternalMcpPreset } from "./mcp-connections-data";
+import { connectionNeedsOAuthClientConfiguration } from "./mcp-connection-setup";
+
+/** Account readiness is personal, even on an organization management page. */
+export function connectorAccountStatus(connection: ExternalMcpConnection, setupRequired = false): string {
+  if (setupRequired || connection.setupRequired || connectionNeedsOAuthClientConfiguration(connection)) return "Setup required";
+  if (connection.issuerReviewRequired) return "OAuth settings need review";
+  if (connection.needsReconnect || connection.credentialHealth === "reconnect_required") return "Reconnect required";
+  if (connection.credentialMode === "per_member") return connection.connectedForMe ? "Connected as you" : "Needs your account";
+  return connection.connected ? "Connected" : "Not connected";
+}
 
 export const CONNECTOR_DOCS_URL = "https://openworklabs.com/docs/cloud/share-with-your-team/shared-mcp-connections";
 

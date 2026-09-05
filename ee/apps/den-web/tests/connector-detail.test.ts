@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import {
+  connectorAccountStatus,
   connectorDetailEffort,
   connectorDetailFacts,
   connectorDetailIdentity,
@@ -168,5 +169,21 @@ describe("connectors screen surface", () => {
   test("the detail route renders the screen in detail view", () => {
     const route = readFileSync(join(root, "(admin)", "mcp-connections", "[connectorId]", "page.tsx"), "utf8");
     expect(route).toContain('<McpConnectionsScreen view="detail" connectorId={connectorId} />');
+  });
+});
+
+
+describe("connectorAccountStatus", () => {
+  test("another member's authorization never makes this account connected", () => {
+    expect(connectorAccountStatus({ ...NOTION, connected: true, connectedForMe: false })).toBe("Needs your account");
+    expect(connectorAccountStatus(NOTION)).toBe("Connected as you");
+    expect(connectorAccountStatus({ ...NOTION, credentialMode: "shared", connectedForMe: false })).toBe("Connected");
+  });
+
+  test("setup and credential recovery take precedence over old connected flags", () => {
+    expect(connectorAccountStatus({ ...NOTION, setupRequired: true })).toBe("Setup required");
+    expect(connectorAccountStatus({ ...NOTION, issuerReviewRequired: true })).toBe("OAuth settings need review");
+    expect(connectorAccountStatus({ ...NOTION, credentialHealth: "reconnect_required" })).toBe("Reconnect required");
+    expect(connectorAccountStatus({ ...NOTION, oauthClientRequired: true, oauthClientConfigured: false })).toBe("Setup required");
   });
 });

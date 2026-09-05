@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronRight, Loader2, MessageCircle, MinusCircle, MoreHorizontal, Plus, Settings } from "lucide-react";
+import { ChevronRight, Loader2, MessageCircle, MinusCircle, MoreHorizontal, Settings } from "lucide-react";
 import {
   configuredConnectionForPopular,
   connectionForPresetUrl,
@@ -11,12 +11,13 @@ import {
   connectorMatchesFilter,
   GOOGLE_WORKSPACE_QUICK_ADD_ID,
   MICROSOFT_365_QUICK_ADD_ID,
-  MORE_CONNECTORS_TEASER,
   POPULAR_CONNECTORS,
   remainingPresets,
   type PopularConnector,
 } from "./connector-catalog";
 import { IntegrationIcon } from "./integration-icon";
+import { connectorAccountStatus, connectorDetailPrimaryAction } from "./connector-detail";
+import { EFFORT_LABELS, presetEffort, type ConnectorEffort } from "./connector-effort";
 import type { ExternalMcpConnection, ExternalMcpPreset } from "./mcp-connections-data";
 
 const CONFIGURED_STRIP_LIMIT = 12;
@@ -41,6 +42,8 @@ export type ConnectorCatalogProps = {
   onManage: (connection: ExternalMcpConnection) => void;
   onRemove: (connection: ExternalMcpConnection) => void;
   addingPresetId: string | null;
+  loading?: boolean;
+  unavailable?: boolean;
 };
 
 /**
@@ -167,6 +170,7 @@ function CatalogRow({
   onAdd,
   onManage,
   onRemove,
+  effort,
 }: {
   id: string;
   name: string;
@@ -178,9 +182,12 @@ function CatalogRow({
   onAdd: () => void;
   onManage: (connection: ExternalMcpConnection) => void;
   onRemove: (connection: ExternalMcpConnection) => void;
+  effort: ConnectorEffort;
 }) {
+  const status = connection ? connectorAccountStatus(connection) : EFFORT_LABELS[effort];
+  const primaryAction = connectorDetailPrimaryAction(effort);
   return (
-    <div className="group flex items-center gap-1 py-1" data-testid={`connector-row-${id}`}>
+    <div className="group flex items-center gap-1 py-1" data-testid={`connector-row-${id}`} data-connector-id={id}>
       <Link
         href={href}
         className="flex min-w-0 flex-1 items-center gap-3.5 rounded-2xl px-2 py-1.5 transition hover:bg-gray-50"
@@ -196,7 +203,8 @@ function CatalogRow({
         />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[15px] font-medium leading-5 text-gray-900">{name}</span>
-          <span className="block truncate text-[13px] leading-5 text-gray-500" title={description}>{description}</span>
+          <span className="block text-[13px] leading-5 text-gray-500">{description}</span>
+          <span className="mt-0.5 block text-[12px] leading-5 text-gray-500" data-testid={`connector-status-${id}`}>{status}</span>
         </span>
       </Link>
       {connection ? (
@@ -211,11 +219,12 @@ function CatalogRow({
           type="button"
           onClick={onAdd}
           disabled={adding}
-          className="flex h-9 w-9 items-center justify-center rounded-full text-gray-700 transition hover:bg-gray-100 hover:text-gray-900 disabled:cursor-wait"
-          aria-label={`Add ${name}`}
+          className="flex min-h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2 text-[12px] font-medium text-gray-700 transition hover:bg-gray-100 hover:text-gray-900 disabled:cursor-wait"
+          aria-label={`${primaryAction.label} ${name}`}
           data-testid={`connector-add-${id}`}
         >
-          {adding ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" /> : <Plus className="h-5 w-5" aria-hidden="true" />}
+          {adding ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
+          {primaryAction.label}
         </button>
       )}
     </div>
@@ -245,7 +254,7 @@ export function ConfiguredConnectorStrip({
         className="inline-flex items-center gap-1 text-[15px] font-semibold text-gray-900 transition hover:text-gray-600"
         data-testid="configured-connectors-link"
       >
-        Configured
+        Configured ({connections.length})
         <ChevronRight className="h-4 w-4" aria-hidden="true" />
       </Link>
       {shown.length === 0 ? (
@@ -295,10 +304,16 @@ export function ConnectorCatalog({
   onManage,
   onRemove,
   addingPresetId,
+  loading = false,
+  unavailable = false,
 }: ConnectorCatalogProps) {
   const [moreOpen, setMoreOpen] = useState(false);
   const filtering = filter.trim().length > 0;
-  const popular = POPULAR_CONNECTORS.filter((connector) =>
+  const availablePopular = POPULAR_CONNECTORS.filter((connector) => {
+    const target = connector.target;
+    return target.kind !== "preset" || presets.some((preset) => preset.presetId === target.presetId);
+  });
+  const popular = availablePopular.filter((connector) =>
     connectorMatchesFilter(filter, connector.displayName, connector.description, connector.id));
   const more = remainingPresets(presets).filter((preset) =>
     connectorMatchesFilter(filter, preset.displayName, preset.description, preset.presetId));
@@ -306,12 +321,22 @@ export function ConnectorCatalog({
   const microsoftConnection = connections.find((connection) => connection.id === MICROSOFT_365_QUICK_ADD_ID || connection.nativeProviderKey === "microsoft-365");
   const showMore = filtering || moreOpen;
   const nothingMatches = filtering && popular.length === 0 && more.length === 0 && !microsoftVisible;
+  const total = availablePopular.length + remainingPresets(presets).length + 1;
+  const matching = popular.length + more.length + Number(microsoftVisible);
+  const shown = popular.length + (showMore ? more.length + Number(microsoftVisible) : 0);
+
+  if (unavailable) return <p role="alert" className="text-[13px] text-gray-500">The integration catalog could not be loaded. Refresh to try again.</p>;
+  if (loading) return <p role="status" className="text-[13px] text-gray-500">Loading integrations…</p>;
 
   return (
     <div data-testid="connector-catalog">
       {!filtering ? (
         <ConfiguredConnectorStrip connections={connections} href={configuredHref} connectionHref={configuredConnectionHref} />
       ) : null}
+
+      <p role="status" className="mb-4 text-[13px] text-gray-500" data-testid="connector-catalog-count">
+        {filtering ? `${matching} of ${total} integrations match` : `Showing ${shown} of ${total} integrations`}
+      </p>
 
       {nothingMatches ? (
         <p className="text-[13px] text-gray-400">No connectors match &quot;{filter}&quot;. Paste an MCP server URL to add it directly.</p>
@@ -323,6 +348,8 @@ export function ConnectorCatalog({
           <div className="grid gap-x-8 sm:grid-cols-2">
             {popular.map((connector) => {
               const connection = configuredConnectionForPopular(connector, connections, presets);
+              const presetId = connector.target.kind === "preset" ? connector.target.presetId : null;
+              const preset = presets.find((entry) => entry.presetId === presetId);
               const adding = connector.target.kind === "preset" && addingPresetId === connector.target.presetId;
               return (
                 <CatalogRow
@@ -332,7 +359,8 @@ export function ConnectorCatalog({
                   description={connector.description}
                   icon={connector.icon}
                   connection={connection}
-                  href={connectorHref(connection?.id ?? connector.id)}
+                  href={connectorHref(connector.id)}
+                  effort={preset ? presetEffort(preset) : "guided"}
                   adding={adding}
                   onAdd={() => onAddPopular(connector)}
                   onManage={onManage}
@@ -353,7 +381,7 @@ export function ConnectorCatalog({
                 <IntegrationIcon name="Granola" serviceUrl="https://mcp.granola.ai/mcp" className="h-7 w-7 rounded-[8px]" imageClassName="h-3.5 w-3.5" />
                 <IntegrationIcon name="Linear" serviceUrl="https://mcp.linear.app/mcp" className="h-7 w-7 rounded-[8px]" imageClassName="h-3.5 w-3.5" />
               </span>
-              {MORE_CONNECTORS_TEASER}
+              Browse all {total} integrations
             </button>
           ) : null}
         </section>
@@ -371,6 +399,7 @@ export function ConnectorCatalog({
                 icon={{ simpleIconSlug: "microsoft" }}
                 connection={microsoftConnection}
                 href={connectorHref(microsoftConnection?.id ?? MICROSOFT_365_QUICK_ADD_ID)}
+                effort="guided"
                 adding={false}
                 onAdd={onAddMicrosoft365}
                 onManage={onManage}
@@ -385,7 +414,8 @@ export function ConnectorCatalog({
                 description={preset.description}
                 icon={{ serviceUrl: preset.url }}
                 connection={connectionForPresetUrl(connections, preset.url)}
-                href={connectorHref(connectionForPresetUrl(connections, preset.url)?.id ?? preset.presetId)}
+                href={connectorHref(preset.presetId)}
+                effort={presetEffort(preset)}
                 adding={addingPresetId === preset.presetId}
                 onAdd={() => onAddPreset(preset)}
                 onManage={onManage}
