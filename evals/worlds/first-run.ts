@@ -1021,8 +1021,15 @@ export async function backgroundUpdateWorld(seed: Seed) {
       const { checks, downloads, installs } = window.__backgroundUpdateWitness;
       return {
         checks, downloads, installs, route: location.hash,
-        updateInSidebar: Boolean(document.querySelector('[data-sidebar="footer"] [aria-label="Restart to update"]')),
+        updateInTitlebar: Boolean(document.querySelector('header [data-update-capsule]')),
+        updateInSidebar: Boolean(document.querySelector('[data-sidebar="footer"] [data-update-capsule]')),
+        sidebarName: document.querySelector('[data-sidebar-brand]')?.textContent?.trim() ?? null,
+        customLogoLoaded: Boolean(document.querySelector('[data-testid="brand-logo"] img')?.naturalWidth),
       };
+    })()`),
+    setCustomBranding: () => evalIn(app, `(() => {
+      const logo = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="120" height="32"><rect width="120" height="32" rx="5" fill="#25262b"/><text x="12" y="22" font-family="sans-serif" font-size="18" fill="white">Studio</text></svg>');
+      window.__openworkApplyDesktopConfig({ brandAppName: "Studio", brandLogoUrl: logo });
     })()`),
     finishDownload: () => evalIn(app, `window.__backgroundUpdateWitness.finishDownload()`),
     returnToApp: () => evalIn(app, `(() => {

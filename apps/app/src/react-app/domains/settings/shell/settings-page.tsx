@@ -1,5 +1,4 @@
 /** @jsxImportSource react */
-import { DesktopUpdateAction } from "../state/desktop-updater-provider";
 import type * as React from "react";
 import {
   ArrowLeft,
@@ -29,7 +28,6 @@ import {
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarHeader,
-  SidebarFooter,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -388,9 +386,6 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
           onSelectTab={props.onSelectTab}
         />
       </SidebarContent>
-      <SidebarFooter className="empty:hidden">
-        <DesktopUpdateAction />
-      </SidebarFooter>
       <SidebarRail />
     </Sidebar>
   );

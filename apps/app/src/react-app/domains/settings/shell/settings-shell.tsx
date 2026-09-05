@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
 import type * as React from "react";
+import { DesktopUpdateCapsule } from "../state/desktop-updater-provider";
 import { ChevronDown, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -130,7 +131,8 @@ export function SettingsShell(props: SettingsShellProps) {
                   </span>
                 ) : null}
               </div>
-              <div className="flex items-center gap-1.5 text-gray-10 mac:titlebar-no-drag">
+              <div className="flex shrink-0 items-center gap-1.5 text-gray-10 mac:titlebar-no-drag">
+                <DesktopUpdateCapsule />
                 <NotificationBell />
                 <Button
                   variant="ghost"

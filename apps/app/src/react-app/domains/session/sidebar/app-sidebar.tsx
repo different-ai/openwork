@@ -35,7 +35,6 @@ import { LazyMotion, Reorder, domMax, m, useDragControls } from "motion/react";
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
 import type { WorkspaceInfo } from "../../../../app/lib/desktop";
 import { OpenWorkDenHelpLink } from "../../workspace/openwork-den-help-link";
-import { DesktopUpdateAction } from "../../settings/state/desktop-updater-provider";
 import { NotificationBell } from "../../../shell/notification-center";
 import { useUiStateStore } from "../../../shell/ui-state-store";
 import type {
@@ -50,7 +49,8 @@ import {
   isWindowsPlatform,
 } from "../../../../app/utils";
 import { t } from "../../../../i18n";
-import { useBrandLogoUrl } from "../../cloud/brand-theme";
+import { resolveExtensionIconSrc } from "../../../design-system/extension-icon-src";
+import { useBrandAppName, useBrandLogoUrl } from "../../cloud/brand-theme";
 import { canCreateWorkspaces } from "../../../../app/lib/workspace-creation-policy";
 
 import {
@@ -1070,6 +1070,7 @@ export function AppSidebar(props: AppSidebarProps) {
   };
 
   const brandLogoUrl = useBrandLogoUrl();
+  const brandAppName = useBrandAppName();
   const pinnedIds = useSessionManagementStore((state) => state.pinnedIds);
   const pinnedSessions = React.useMemo(() => {
     const sessionsById = new Map<string, GlobalPinnedSessionEntry>();
@@ -1112,7 +1113,12 @@ export function AppSidebar(props: AppSidebarProps) {
               className="max-h-9 w-auto max-w-[140px] object-contain object-left"
             />
           </div>
-        ) : null}
+        ) : (
+          <div data-sidebar-brand className="flex h-11 shrink-0 items-center gap-2 px-4 mac:titlebar-drag">
+            <img src={resolveExtensionIconSrc("/openwork-mark.svg")} alt="" className="size-5 shrink-0 object-contain dark:invert" />
+            <span className="truncate text-[15px] font-medium tracking-[-0.4px]" title={brandAppName}>{brandAppName}</span>
+          </div>
+        )}
         {props.conversationHistory ? (
           <div
             className="flex shrink-0 items-center justify-end gap-0.5 px-2 pb-1 max-lg:hidden mac:absolute mac:right-1.5 mac:top-[7px] mac:z-50 mac:p-0 mac:titlebar-no-drag"
@@ -1271,7 +1277,6 @@ export function AppSidebar(props: AppSidebarProps) {
         </LazyMotion>
 
         <SidebarFooter className="border-t border-sidebar-border/60 p-1.5 pe-0">
-          <DesktopUpdateAction />
           <AccountStatusMenu {...props.status} onOpenAccountSettings={props.onOpenAccountSettings} />
         </SidebarFooter>
 
