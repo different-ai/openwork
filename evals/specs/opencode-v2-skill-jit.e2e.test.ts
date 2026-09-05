@@ -72,9 +72,9 @@ test("v2 refreshes OpenWork skill instructions just in time in an existing conve
     let messages: string;
     if (live) {
       const result = await liveV2Turn(api, v2, sessionId,
-        "Name the app you represent. Then use the currently available report skill to get the current report code. "
+        `Name the app you represent. Then use the "${skillName}" skill to get the current report code. `
         + "Discover and load its current instructions with the native skill tool; never reuse an earlier code. "
-        + "If no report skill is available, say UNAVAILABLE. Do not use files, shell, environment variables, or the internet.");
+        + `If the "${skillName}" skill is unavailable, say UNAVAILABLE. Do not use files, shell, environment variables, or the internet.`);
       expect(result.text).toMatch(/OpenWork/i);
       if (expectedCode) expect(result.text).toContain(expectedCode);
       else expect(result.text).toMatch(/unavailable/i);
