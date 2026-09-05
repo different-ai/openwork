@@ -1,6 +1,6 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { mkdir, rm } from "node:fs/promises";
-import { engineSessionProbe } from "@openwork/behaviors";
+import { engineSessionProbe, readAvailableModels, waitFor } from "@openwork/behaviors";
 import { resolveEvalEngine } from "@openwork/env";
 import type { Seed } from "@openwork/env";
 import { daytonaSandbox, desktop as launchDesktop } from "@openwork/hosts";
@@ -390,6 +390,19 @@ export async function externalSessionVisibility(seed: Seed) {
     height: 900,
     deviceScaleFactor: 1,
     mobile: false,
+  });
+  // These empty workspaces do not send prompts. Let the model catalog settle
+  // and explicitly close its picker before testing sidebar clicks: the missing
+  // default-model prompt can otherwise appear between hit-testing and clicking.
+  await readAvailableModels(app);
+  await seed.evalIn(app, `(() => {
+    const close = document.querySelector('[data-slot="dialog-content"] [data-slot="dialog-close"]');
+    if (!(close instanceof HTMLElement)) throw new Error("Model picker close control unavailable");
+    close.click();
+  })()`);
+  await waitFor(app, `!document.querySelector('[data-slot="dialog-overlay"]')`, {
+    timeoutMs: 30_000,
+    label: "model picker backdrop dismissed before sidebar interaction",
   });
   const rawServerInfo = await seed.evalIn(app, `window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo")`, {
     awaitPromise: true,
