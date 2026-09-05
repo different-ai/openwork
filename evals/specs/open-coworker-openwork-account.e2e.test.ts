@@ -486,7 +486,8 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
             && typeof message.content === "string"
             && message.content.includes("## Working with connected apps")
             && message.content.includes("search_capabilities")
-            && message.content.includes("An app being connected is not consent to every action."));
+            && message.content.includes("Discovery alone authorizes no execution")
+            && message.content.includes("person's authorization and app approvals; a connection grants neither."));
         }
         const prompt = lastUserText(body);
         const reply = prompt.includes("SECOND") ? `SECOND ${REPLY}` : REPLY;
