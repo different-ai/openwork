@@ -18,7 +18,10 @@ test("a user previews and revises a lightweight design in conversation", async (
   });
   await user.click("Run task");
   try {
-    await user.see({ text: "Your first sketch is ready." }, { timeoutMs: 90_000 });
+    await user.see(
+      { text: "Your first sketch is ready." },
+      { timeoutMs: 90_000 },
+    );
   } finally {
     await user.screenshot();
   }
@@ -37,9 +40,9 @@ test("a user previews and revises a lightweight design in conversation", async (
         scripts: 0,
         executed: false,
       });
-      await user.notSee(
-        "This visualization couldn’t be displayed. Ask for a new version.",
-      );
+      await user.notSee({
+        text: "This visualization couldn’t be displayed. Ask for a new version.",
+      });
       await user.screenshot();
     },
   );
@@ -71,7 +74,10 @@ test("a user previews and revises a lightweight design in conversation", async (
       expect((await probe.composer()).userMessageCount).toBe(before);
       await user.type("composer", "Make it calmer", { replace: false });
       await user.click("Run task");
-      await user.see({ text: "Your revised sketch is ready." }, { timeoutMs: 90_000 });
+      await user.see(
+        { text: "Your revised sketch is ready." },
+        { timeoutMs: 90_000 },
+      );
       await user.see({ text: "Visualization · v2 · Mockup" });
       await user.see({ text: "Visualization · v1 · Mockup" });
       await user.see({ text: "A calmer overview" });
