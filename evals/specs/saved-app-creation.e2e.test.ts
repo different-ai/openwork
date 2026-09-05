@@ -8,6 +8,22 @@ const test = spec.world(savedAppCreation, { timeout: 900_000 });
 test("create, preview, save and reopen an app without changing already-open results", async ({ world, user, probe, seed, step, evidence }) => {
   const viewsPath = `/v1/workflows/${world.configObjectId}/views`;
   expect(record((await probe.api(world.den.admin, viewsPath)).body).items).toEqual([]);
+  await step("only offer sharing when the server supports it", async () => {
+    for (const body of [{ enabled: true, items: [] }, { enabled: true, sharingEnabled: false, items: [] }]) {
+      await world.proxy.faults.status("/v1/apps", 200, { times: 100, body });
+      await world.proxy.faults.status("/api/den/v1/apps", 200, { times: 100, body });
+      await world.open("/dashboard");
+      await user.reload();
+      await user.see({ role: "button", label: "Add" });
+      await user.notSee({ role: "button", label: "Share" });
+      expect((await world.proxy.requestLog()).some((request) => request.path.endsWith("/v1/apps") && request.faulted)).toBe(true);
+      await world.proxy.faults.clear();
+    }
+    await user.reload();
+    await user.see({ role: "button", label: "Share" });
+    expect(record((await probe.api(world.den.admin, "/v1/apps")).body).sharingEnabled).toBe(true);
+  });
+  evidence.recordAssertionEvidence("Sharing requires explicit server support", "Older and disabled capability responses keep Add available but hide Share; the real supporting server exposes Share after reload.", true);
   await step("create an app through the Dashboard conversation", async () => {
     await world.open("/dashboard");
     await user.click({ role: "button", label: "Add" });
@@ -264,6 +280,31 @@ test("create, preview, save and reopen an app without changing already-open resu
   });
   evidence.recordAssertionEvidence("Members can delete their own apps but cannot delete another member's private app", "The member created and retired their own saved app, removing its placement and workflow selection while preserving historical results; deleting the admin's app was rejected and that app stayed saved.", true);
 
+  // Use a separate workflow so sharing the selected app cannot grant indirect access to this one.
+  const privateInput = { topic: "Private planning" };
+  const privateCode = 'return { topic: input.topic };';
+  await world.rpc("execute_capability_script", { code: privateCode, input: privateInput });
+  const privateWorkflow = await saveWorkflow(world.den.admin, {
+    name: "Private planning", code: privateCode, currentInput: privateInput,
+    inputSchema: { type: "object", properties: { topic: { type: "string" } }, required: ["topic"] },
+    outputSchema: { type: "object", properties: { topic: { type: "string" } }, required: ["topic"] },
+  });
+  expect(privateWorkflow.status, privateWorkflow.text).toBe(201);
+  const privateWorkflowId = field(privateWorkflow.body, "configObjectId");
+  await runWorkflow(world.den.admin, privateWorkflowId, {
+    pluginId: field(privateWorkflow.body, "pluginId"), configObjectVersionId: field(privateWorkflow.body, "configObjectVersionId"), input: privateInput,
+  });
+  const privateBuilt = await world.rpc("save_artifact_view", {
+    configObjectId: privateWorkflowId, title: "Private planning", reactSource: 'export default function Planning({data}) { return <p>{data.topic}</p> }',
+  });
+  const privateView = record(record(privateBuilt.structuredContent).view);
+  const privateAppId = field(privateView, "id");
+  if (!Array.isArray(privateView.revisions)) throw new Error("Private app has no revisions");
+  const privateSave = await seed.api(world.den.admin, `/v1/apps/${privateAppId}/save`, {
+    method: "POST", body: JSON.stringify({ revisionId: field(privateView.revisions[0], "id"), title: "Private planning", useInWorkflow: true, expectedActiveRevisionId: null }),
+  });
+  expect(privateSave.response.status, privateSave.text).toBe(200);
+
   await step("share dashboard apps with a teammate", async () => {
     await world.open("/dashboard");
     await user.click({ role: "button", label: "Share" });
@@ -275,6 +316,8 @@ test("create, preview, save and reopen an app without changing already-open resu
     });
     expect(deniedShare.response.status).toBe(403);
     await user.click({ role: "button", label: "Share" });
+    await user.click({ role: "checkbox", label: "Private planning" });
+    await user.screenshot();
     await user.type({ label: "Teammate’s email" }, "unknown@openwork.test");
     await user.click("Share apps");
     await user.see({ text: /No teammate with that email belongs to this organization/ });
@@ -291,6 +334,11 @@ test("create, preview, save and reopen an app without changing already-open resu
     expect(repeat.response.status, repeat.text).toBe(200);
     const listed = record((await probe.api(colleague, "/v1/apps")).body).items;
     expect(listed).toHaveLength(1);
+    if (!Array.isArray(listed)) throw new Error("Expected the recipient app list");
+    expect(record(record(listed[0]).view).id).toBe(appId);
+    expect((await probe.api(colleague, `/v1/apps/${privateAppId}`)).response.status).toBe(403);
+    expect((await probe.api(colleague, `/v1/workflows/${privateWorkflowId}`)).response.status).toBe(403);
+    expect((await probe.api(world.den.admin, `/v1/apps/${privateAppId}`)).body).toMatchObject({ onDashboard: true, canManage: true });
     const reshare = await seed.api(colleague, `/v1/apps/${appId}/share`, {
       method: "POST", body: JSON.stringify({ email: world.den.admin.email }),
     });
@@ -300,7 +348,10 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.screenshot();
     await user.click("Done");
   });
-  evidence.recordAssertionEvidence("Dashboard Share grants a teammate view access and adds the selected app to their dashboard", "Cancel and an unknown email left the app private. Sharing made one saved app visible on the recipient dashboard without manager access; repeat sharing did not duplicate it, viewers could not reshare, and company dashboards stayed unchanged.", true);
+  evidence.recordAssertionEvidence("Dashboard Share grants a teammate view access and adds the selected app to their dashboard", "Cancel and an unknown email left the app private. Sharing made one saved app visible on the recipient dashboard without manager access; repeat sharing did not duplicate it, the unchecked app and its separate workflow remained private, viewers could not reshare, and company dashboards stayed unchanged.", true);
+
+  const cleanupPrivate = await seed.api(world.den.admin, `/v1/artifact-views/${privateAppId}/retire`, { method: "POST" });
+  expect(cleanupPrivate.response.status, cleanupPrivate.text).toBe(200);
 
   const beforeDelete = await readWorkflow();
   const beforeDeleteSnapshots = (await probe.api(world.den.admin, `/v1/workflows/${world.configObjectId}/snapshots`)).body;

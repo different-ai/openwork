@@ -3058,7 +3058,7 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       if (!isRecord(payload) || !Array.isArray(payload.items) || typeof payload.enabled !== "boolean") {
         throw new Error("Your apps could not be loaded.");
       }
-      return { enabled: payload.enabled, items: payload.items.map((item) => savedAppSummarySchema.parse(item)) };
+      return { enabled: payload.enabled, sharingEnabled: payload.sharingEnabled === true, items: payload.items.map((item) => savedAppSummarySchema.parse(item)) };
     },
     async getSavedApp(orgId: string, appId: string, options: { revisionId?: string; receiptId?: string } = {}) {
       const params = new URLSearchParams();

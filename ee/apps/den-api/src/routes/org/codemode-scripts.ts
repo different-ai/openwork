@@ -304,14 +304,14 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
   app.get(
     "/v1/apps",
     describeRoute({ tags: ["Apps"], summary: "List saved reusable apps", responses: {
-      200: jsonResponse("Saved apps returned.", z.object({ enabled: z.boolean(), items: z.array(savedAppSummarySchema) })),
+      200: jsonResponse("Saved apps returned.", z.object({ enabled: z.boolean(), sharingEnabled: z.boolean(), items: z.array(savedAppSummarySchema) })),
     } }),
     orgMemberRoute(),
     async (c) => {
-      if (!env.generatedArtifactViewsEnabled) return c.json({ enabled: false, items: [] })
+      if (!env.generatedArtifactViewsEnabled) return c.json({ enabled: false, sharingEnabled: false, items: [] })
       try {
         const { actorContext } = await contextFor(c)
-        return c.json({ enabled: true, items: await listSavedApps(actorContext) })
+        return c.json({ enabled: true, sharingEnabled: true, items: await listSavedApps(actorContext) })
       } catch (error) {
         const failure = appRouteFailure(error)
         return c.json(failure.body, failure.status)

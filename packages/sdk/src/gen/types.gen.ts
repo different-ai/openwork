@@ -8398,6 +8398,7 @@ export type GetV1AppsResponses = {
    */
   200: {
     enabled: boolean;
+    sharingEnabled: boolean;
     items: Array<{
       view: {
         id: string;

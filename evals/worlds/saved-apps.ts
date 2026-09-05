@@ -101,7 +101,8 @@ export async function savedAppCreation(seed: Seed) {
   if (!configured.ok) throw new Error(`Model fixture setup failed: ${configured.status}`);
   const providerId = "saved-app-model";
   const modelId = "saved-app-model";
-  const app = await seed.desktop({ den, name: "saved-app-creation", model: `${providerId}/${modelId}` });
+  const proxy = await seed.faultProxy(den);
+  const app = await seed.desktop({ den: { ...den, ref: proxy.ref }, name: "saved-app-creation", model: `${providerId}/${modelId}` });
   const workspace = await seed.workspace(app, seed.tmpPath("saved-app-creation"));
   await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
     provider: { [providerId]: {
@@ -121,7 +122,7 @@ export async function savedAppCreation(seed: Seed) {
     finally { client.close(); }
   };
   return {
-    app, den, workspace, configObjectId, dashboardId, rpc, run,
+    app, den, proxy, workspace, configObjectId, dashboardId, rpc, run,
     open: (path: string) => go(app, path),
     previewText: async () => String(await inPreview("return appDocument.body.innerText")),
     showDetails: () => inPreview('appDocument.querySelector("button")?.click()'),
