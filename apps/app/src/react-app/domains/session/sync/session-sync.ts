@@ -259,6 +259,23 @@ export type WorkspaceSyncReconcileHealth = {
  */
 export const reconcileFailureDegradedThreshold = 3;
 
+/**
+ * Whether a run's busy claim can be presented as confirmed progress. Failed
+ * revalidation is one reason it cannot; the machine being offline is another:
+ * a local engine keeps answering the status poll while its own model request
+ * has no network to progress on.
+ */
+export function deriveRunSyncHealth(input: {
+  networkOnline: boolean;
+  health: WorkspaceSyncReconcileHealth | undefined;
+}) {
+  return {
+    degraded: !input.networkOnline
+      || (input.health?.consecutiveFailures ?? 0) >= reconcileFailureDegradedThreshold,
+    lastConfirmedAt: input.health?.lastSuccessAt ?? null,
+  };
+}
+
 // Cap the stored counter so an extended outage stops producing store updates
 // (and re-renders) once the degraded threshold is long past.
 const reconcileFailureCountCap = 99;
@@ -491,6 +508,14 @@ function retainSession(input: SyncOptions, entry: SyncEntry, sessionId: string, 
   const existing = entry.retainedSessionTimers.get(sessionId);
   if (existing) clearTimeout(existing);
   entry.retainedSessionTimers.set(sessionId, setTimeout(() => {
+    // A run that is still live when its retention lapses keeps its workspace
+    // stream: that stream is what heals a background thread (status
+    // revalidation on reconnect, terminal convergence) while the user works
+    // elsewhere. Release only once the run has settled, through the idle path.
+    if (entry.liveSessionIds.has(sessionId)) {
+      retainSession(input, entry, sessionId, ttlMs);
+      return;
+    }
     clearTrackedSession(input, entry, sessionId);
   }, ttlMs));
 }
