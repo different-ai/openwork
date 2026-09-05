@@ -583,11 +583,8 @@ async function readRequestBody(request: NextRequest, maxBytes: number): Promise<
       if (chunk.done) break;
       observedBytes += chunk.value.byteLength;
       if (observedBytes > maxBytes) {
-        try {
-          await reader.cancel();
-        } catch {
-          // The 413 response does not depend on the request producer accepting cancellation.
-        }
+        // Refusal must not wait for an uncooperative producer to finish cancelling.
+        void reader.cancel().catch(() => {});
         return { ok: false, observedBytes };
       }
       chunks.push(chunk.value);

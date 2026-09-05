@@ -188,6 +188,8 @@ describe("Den upstream proxy", () => {
       },
       cancel() {
         cancelled = true;
+        // A producer can acknowledge cancellation without ever settling it.
+        return new Promise(() => {});
       },
     });
     const request = new NextRequest("https://app.example.com/api/den/v1/me", {
