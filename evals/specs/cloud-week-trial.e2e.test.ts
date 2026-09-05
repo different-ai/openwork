@@ -72,7 +72,7 @@ test("an optional seven-day cloud trial explains model access, starts without a 
       return entries.map(record).some((entry) => entry.subject === "Your OpenWork cloud trial ends soon" && entry.to === world.den.admin.email);
     }, { within: 30_000, label: "owner receives the final-day reminder", until: Boolean });
     await user.navigate(new URL("/v1/dev/emails/last?template=cloudTrial", world.den.ref.apiUrl).toString());
-    await user.see({ role: "heading", label: "Your OpenWork cloud trial ends soon" });
+    await user.see({ text: "Your OpenWork cloud trial ends soon" });
     await user.see({ text: /No payment will be taken/ });
     await user.looks(["The actual trial reminder email has a readable monochrome OpenWork design, explains when cloud access pauses, reassures that saved work remains, and makes any paid upgrade optional"]);
     await user.navigate(new URL("/dashboard/web", world.den.ref.webUrl).toString());
@@ -100,7 +100,7 @@ test("an optional seven-day cloud trial explains model access, starts without a 
     await user.hover({ testId: "cloud-trial-card" });
     await user.looks(["The expired trial explains that cloud access has ended and that upgrading is an explicit choice, with no automatic charge and retained work explained"]);
     await user.navigate(new URL("/v1/dev/emails/last?template=cloudTrial", world.den.ref.apiUrl).toString());
-    await user.see({ role: "heading", label: "Your OpenWork cloud trial has ended" });
+    await user.see({ text: "Your OpenWork cloud trial has ended" });
     await user.see({ text: /No payment will be taken/ });
     await user.looks(["The actual expired-trial email clearly says cloud access has paused, saved work is retained, no payment is taken automatically, and offers a calm way to review cloud access"]);
     await user.click({ role: "link", label: "Review cloud access" });
