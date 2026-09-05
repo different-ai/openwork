@@ -21,7 +21,7 @@ test("native Google refresh rejects revoked grants safely and preserves a concur
   } });
   const headers = { authorization: `Bearer ${den.admin.token}` };
   const configured = await denFetch(den.admin, "/v1/oauth-providers/google-workspace/client", {
-    method: "POST", headers, body: JSON.stringify({ clientId: "refresh-fixture", clientSecret: "synthetic-secret" }),
+    method: "POST", headers, body: JSON.stringify({ clientId: "refresh-fixture", clientSecret: "synthetic-secret", features: ["gmailRead"] }),
   });
   expect(configured.response.status, configured.text).toBe(200);
   async function control(body?: Record<string, unknown>) {
