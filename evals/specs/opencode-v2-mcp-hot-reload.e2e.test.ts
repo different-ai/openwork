@@ -44,7 +44,7 @@ test("v2 uses an MCP added through OpenWork on the next call and removes it in t
       result: { content: [{ type: "text", text: nonce }] },
     }] }) },
   });
-  await using managed = await provisionLiveOpenAi(den.admin);
+  await using managed = await provisionLiveOpenAi(den.admin, "V2 MCP Lifecycle");
   await using desktop = await app({ den, as: "member", place });
   const api = (path: string, method?: string, body?: unknown) => request(desktop, path, method, body);
   const providerId = live ? await liveProviderId(api, managed.id) : "reload-witness";
