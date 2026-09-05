@@ -33,7 +33,7 @@ test("preview worlds expose Den and real Electron, preserve progress on frontend
   const previous = process.env.OPENWORK_WORLD_SNAPSHOT_DIR;
   process.env.OPENWORK_WORLD_SNAPSHOT_DIR = snapshots;
   const stage = `proof-${Date.now()}`;
-  const options = { cwd: root, print: (line: string) => console.error(line) };
+  const options = { cwd: root, worldsDirectory: join(root, "worlds"), print: (line: string) => console.error(line) };
   const up = (name: string, scenario: string) => main(["up", name, "--stage", stage, "--place", "daytona", "--detach", "--timeout", "600000", "--", "--scenario", scenario, "--lifetime", "30"], options);
   const down = (name: string) => main(["down", name, "--stage", stage], options);
   const snapshot = async (name: string) => {
