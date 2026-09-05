@@ -46,6 +46,8 @@ function stripe() {
   if (!stripeClient) {
     stripeClient = new Stripe(env.stripe.secretKey, {
       apiVersion: STRIPE_API_VERSION as any,
+      ...(process.env.OPENWORK_DEV_MODE === "1" && process.env.OPENWORK_TEST_STRIPE_PORT
+        ? { host: "127.0.0.1", port: Number(process.env.OPENWORK_TEST_STRIPE_PORT), protocol: "http" as const } : {}),
     })
   }
   return stripeClient
@@ -503,8 +505,8 @@ export async function upsertOrgSubscriptionFromStripe(subscription: Stripe.Subsc
     stripe_price_id: priceId,
     stripe_subscription_item_id: item?.id ?? null,
     quantity,
-    current_period_start: fromUnixSeconds((subscription as Stripe.Subscription & { current_period_start?: number }).current_period_start),
-    current_period_end: fromUnixSeconds((subscription as Stripe.Subscription & { current_period_end?: number }).current_period_end),
+    current_period_start: fromUnixSeconds(item?.current_period_start),
+    current_period_end: fromUnixSeconds(item?.current_period_end),
     cancel_at_period_end: subscription.cancel_at_period_end,
     payment_failed: paymentFailed,
     canceled_at: fromUnixSeconds(subscription.canceled_at),
@@ -570,8 +572,8 @@ export async function refreshOrgSubscriptionFromStripe(stripeSubscriptionId: str
       stripe_price_id: priceId,
       stripe_subscription_item_id: item?.id ?? null,
       quantity,
-      current_period_start: fromUnixSeconds((subscription as Stripe.Subscription & { current_period_start?: number }).current_period_start),
-      current_period_end: fromUnixSeconds((subscription as Stripe.Subscription & { current_period_end?: number }).current_period_end),
+      current_period_start: fromUnixSeconds(item?.current_period_start),
+      current_period_end: fromUnixSeconds(item?.current_period_end),
       cancel_at_period_end: subscription.cancel_at_period_end,
       ...(existing?.type !== WEB_SUBSCRIPTION_TYPE ? { payment_failed: paymentFailed } : {}),
       canceled_at: fromUnixSeconds(subscription.canceled_at),
@@ -1241,6 +1243,8 @@ async function expireNonWebSubscriptionAfterPaymentFailure(
   row: NonNullable<Awaited<ReturnType<typeof findOrgSubscriptionByStripeId>>>,
   eventId: string,
 ) {
+  // A late failed invoice must not overwrite a completed cancellation.
+  if (row.status === "canceled") return
   await db
     .update(OrgSubscriptionTable)
     .set({ status: "expired", last_event_id: eventId, updated_at: new Date() })

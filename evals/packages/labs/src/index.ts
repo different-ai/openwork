@@ -7,3 +7,5 @@ export * from "./mock-cloud-runtime.ts";
 export * from "./mock-mcp.ts";
 export * from "./not-implemented.ts";
 export * from "./release-feed.ts";
+
+export { mockStripe } from "./mock-stripe.ts";
