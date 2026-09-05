@@ -89,6 +89,13 @@ test("organization billing survives selection and blocks destructive deletion", 
     expect(await evaluateOnSurface(browser, "location.pathname")).toBe("/dashboard/billing");
     evidence.recordAssertionEvidence("The Billing recovery button switches to the subscribed organization", "The browser starts on Empty Workspace Billing, shows Subscribed Workspace recovery, and clicking it renders Subscribed Workspace Billing without transferring access.", true);
 
+    await evaluateOnSurface(browser, `document.querySelector('[data-testid="workspace-switcher-trigger"]').click()`);
+    const picker = await eventually(() => evaluateOnSurface(browser, `document.querySelector('[data-testid="workspace-switcher-menu"]')?.innerText ?? ""`), {
+      within: 10_000, until: (text) => typeof text === "string" && text.includes("Subscribed Workspace · Subscriptions"),
+    });
+    expect(picker).not.toContain("Empty Workspace · Subscriptions");
+    evidence.recordAssertionEvidence("Organization selection identifies subscriptions without marking the empty organization", "The browser's workspace switcher labels Subscribed Workspace with Subscriptions, and does not label Empty Workspace.", true);
+
     for (const type of ["seat", "inference", "web"]) {
       await queryDenDatabase(databaseUrl, "UPDATE org_subscriptions SET type = ? WHERE organization_id = ?", [type, subscribed.id]);
       expect((await request("/v1/org", subscribed.id, "DELETE")).response.status).toBe(409);
