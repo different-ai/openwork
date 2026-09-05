@@ -48,6 +48,7 @@ import { ReactSessionComposer } from "./composer/composer";
 import { useSessionModelSelection } from "./session-model-store";
 import type { ProviderCatalog } from "./use-model-behavior";
 import type { ModelAvailability } from "./model-availability";
+import { isComputerTarget } from "./composer/computer-mentions";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./composer/mention-encoding";
 import { desktopBridge, openDesktopUrl } from "@/app/lib/desktop";
 import { parseSlashCommandInvocation } from "./composer/slash-command";
@@ -766,7 +767,12 @@ function TodoPanel(props: { todos: TodoItem[] }) {
   if (todos.length === 0) return null;
 
   return (
-    <div className="overflow-hidden border-b border-dls-border bg-transparent">
+    <div
+      className="overflow-hidden border-b border-dls-border bg-transparent"
+      data-todo-progress-panel
+      data-todo-progress-completed={completedTodos}
+      data-todo-progress-total={todos.length}
+    >
         <button
           type="button"
           className="flex w-full items-center justify-between px-4 py-3 text-xs text-gray-9 transition-colors hover:bg-gray-2/50"
@@ -1730,7 +1736,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   useControlAction(props.isControlTarget ? failSessionSnapshotControlAction : null);
 
   const buildDraft = useCallback((text: string, nextAttachments: ComposerAttachment[]): ComposerDraft => {
-    const parts: ComposerPart[] = text.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|@[^\s@]+)/).flatMap((segment) => {
+    const parts: ComposerPart[] = text.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|@[^\s@]+)/).flatMap((segment, index, segments) => {
       if (!segment) return [] as ComposerDraft["parts"];
       const attachmentMatch = segment.match(/^\[attachment (.+)\]$/);
       if (attachmentMatch) {
@@ -1755,6 +1761,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
       if (segment.startsWith("@")) {
         const value = decodeComposerMentionValue(segment.slice(1));
         const kind = mentions[value];
+        if (isComputerTarget(value) && (!kind || kind === "computer") && (index <= 1 && !segments[0] || /\s$/.test(segments[index - 1] ?? ""))) {
+          return [{ type: "computer", target: value } satisfies ComposerDraft["parts"][number]];
+        }
         if (kind === "agent") return [{ type: "agent", name: value } satisfies ComposerDraft["parts"][number]];
         if (kind === "file") return [{ type: "file", path: value, label: value } satisfies ComposerDraft["parts"][number]];
         if (kind === "app") return [{ type: "app", name: value } satisfies ComposerDraft["parts"][number]];

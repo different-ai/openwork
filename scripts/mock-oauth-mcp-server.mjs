@@ -51,6 +51,8 @@ const refreshTokens = new Set();
 const requests = [];
 const drafts = [];
 let agentWorkloads = [];
+let agentRequiredHeader = null;
+let configuredTools = [];
 
 const gmailThreadId = "thread-q3-launch";
 
@@ -193,26 +195,17 @@ function validateAgentWorkloads(value) {
       if (!step.arguments || typeof step.arguments !== "object" || Array.isArray(step.arguments)) {
         throw new Error(`agent workload ${promptMarker} tool ${step.tool} needs object arguments`);
       }
-      return { tool: step.tool.trim(), arguments: structuredClone(step.arguments) };
+      if (step.argumentsFrom !== undefined && step.argumentsFrom !== "computer-mention") {
+        throw new Error(`agent workload ${promptMarker} has an unknown argument source`);
+      }
+      return { tool: step.tool.trim(), arguments: structuredClone(step.arguments), argumentsFrom: step.argumentsFrom };
     });
-    // Declared fault: the first N main completions stream their opening chunk
-    // and then go quiet without ending, the way a half-open socket behaves
-    // after the client machine slept. Later completions proceed normally.
     const quietCompletions = workload.quietCompletions ?? 0;
     if (!Number.isInteger(quietCompletions) || quietCompletions < 0) {
       throw new Error(`agent workload ${promptMarker} quietCompletions must be a non-negative integer`);
     }
     return { promptMarker, finalReply, finalReplyChunkSize, steps, quietCompletions, mainCompletions: 0 };
   });
-}
-
-function finalReplyChunks(workload) {
-  if (workload.finalReplyChunkSize === null) return [workload.finalReply];
-  const chunks = [];
-  for (let offset = 0; offset < workload.finalReply.length; offset += workload.finalReplyChunkSize) {
-    chunks.push(workload.finalReply.slice(offset, offset + workload.finalReplyChunkSize));
-  }
-  return chunks;
 }
 
 function agentQuietStream(res, model) {
@@ -222,8 +215,16 @@ function agentQuietStream(res, model) {
     "cache-control": "no-cache",
     connection: "keep-alive",
   });
-  // Opening chunk only; the response is never ended or closed by the mock.
   res.write(`data: ${JSON.stringify(agentChunk(model, { role: "assistant" }))}\n\n`);
+}
+
+function finalReplyChunks(workload) {
+  if (workload.finalReplyChunkSize === null) return [workload.finalReply];
+  const chunks = [];
+  for (let offset = 0; offset < workload.finalReply.length; offset += workload.finalReplyChunkSize) {
+    chunks.push(workload.finalReply.slice(offset, offset + workload.finalReplyChunkSize));
+  }
+  return chunks;
 }
 
 function offeredAgentTool(body, wanted) {
@@ -267,6 +268,23 @@ function agentChunk(model, delta, finishReason = null) {
   };
 }
 
+// A deterministic model that reads the submitted message, rather than replaying
+// an expected destination or task from the fixture.
+function computerMentionArguments(messages) {
+  const message = [...messages].reverse().find((candidate) => candidate?.role === "user"
+    && agentContentText(candidate).includes("[The user selected @"));
+  const text = agentContentText(message);
+  const instruction = text.match(/\[The user selected @(?:cloud|desktop):[\s\S]*?\]/)?.[0];
+  const target = instruction?.match(/execute it with target "(cloud|desktop)"/)?.[1];
+  if (!instruction || !target) throw new Error("computer task has no routing instruction");
+  const prompt = text.replace(instruction, "")
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "")
+    .replace(/(^|\s)@(cloud|desktop)(?=\s|$)/g, "$1")
+    .replace(/\s+/g, " ").trim();
+  if (!prompt) throw new Error("computer task has no prompt");
+  return { name: "remote-session:create", body: { target, prompt } };
+}
+
 async function handleAgentCompletion(req, res, entry) {
   const body = await readJson(req);
   if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -281,6 +299,11 @@ async function handleAgentCompletion(req, res, entry) {
     .map((workload) => workload.promptMarker);
   const completedTools = messages.filter((message) => message && typeof message === "object" && message.role === "tool").length;
   const baseRequest = { model, matchedMarkers, completedTools };
+  if (agentRequiredHeader && req.headers[agentRequiredHeader.name.toLowerCase()] !== agentRequiredHeader.value) {
+    entry.agentCompletion = { ...baseRequest, kind: "error", promptMarker: matchedMarkers[0] ?? null, toolName: null, arguments: {} };
+    json(res, 401, { error: { message: "provider authentication handler was bypassed" } });
+    return;
+  }
 
   if (!Array.isArray(body.tools) || body.tools.length === 0) {
     entry.agentCompletion = { ...baseRequest, kind: "utility", promptMarker: matchedMarkers[0] ?? null, toolName: null, arguments: {} };
@@ -320,13 +343,14 @@ async function handleAgentCompletion(req, res, entry) {
     json(res, 400, { error: { message: `tool ${step.tool} was not offered to the mock agent` } });
     return;
   }
+  const toolArguments = step.argumentsFrom === "computer-mention" ? computerMentionArguments(messages) : step.arguments;
   const callId = `call_${workload.promptMarker.replace(/[^a-zA-Z0-9_-]/g, "_")}_${completedTools + 1}`;
   entry.agentCompletion = {
     ...baseRequest,
     kind: "tool",
     promptMarker: workload.promptMarker,
     toolName,
-    arguments: step.arguments,
+    arguments: toolArguments,
   };
   agentStream(res, model, [
     agentChunk(model, { role: "assistant" }),
@@ -335,7 +359,7 @@ async function handleAgentCompletion(req, res, entry) {
         index: 0,
         id: callId,
         type: "function",
-        function: { name: toolName, arguments: JSON.stringify(step.arguments) },
+        function: { name: toolName, arguments: JSON.stringify(toolArguments) },
       }],
     }),
     agentChunk(model, {}, "tool_calls"),
@@ -629,6 +653,13 @@ function tokenFingerprint(req) {
 }
 
 function mcpResult(message) {
+  if (configuredTools.length && message.method === "tools/list") {
+    return { tools: configuredTools.map(({ result, ...tool }) => tool) };
+  }
+  if (message.method === "tools/call") {
+    const tool = configuredTools.find((candidate) => candidate.name === message.params?.name);
+    if (tool) return tool.result;
+  }
   switch (message.method) {
     case "initialize":
       return {
@@ -863,9 +894,25 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (url.pathname === "/admin/tools" && req.method === "POST") {
+      const body = await readJson(req);
+      if (!Array.isArray(body?.tools) || body.tools.some((tool) => !tool || typeof tool.name !== "string" || !tool.inputSchema || !tool.result)) {
+        json(res, 400, { error: "tools must have a name, inputSchema, and result" });
+        return;
+      }
+      configuredTools = body.tools;
+      json(res, 200, { configured: configuredTools.length });
+      return;
+    }
+
     if (url.pathname === "/admin/agent-workloads" && req.method === "POST") {
       const body = await readJson(req);
       agentWorkloads = validateAgentWorkloads(body?.workloads);
+      const header = body?.requiredHeader;
+      if (header !== undefined && (!header || typeof header.name !== "string" || !header.name.trim() || typeof header.value !== "string")) {
+        throw new Error("requiredHeader must contain a name and value");
+      }
+      agentRequiredHeader = header ?? null;
       json(res, 200, { configured: agentWorkloads.length });
       return;
     }

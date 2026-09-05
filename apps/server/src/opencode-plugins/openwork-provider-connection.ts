@@ -16,14 +16,14 @@
  *   receives nothing within a short grace window fails with a retryable
  *   "connection lost" error, so the engine retries right away.
  *
- * Applied to every provider present in the effective config (OpenWork-managed
- * and user-configured providers). Providers that exist only through
- * environment variables or engine auth without a config entry are untouched:
- * adding a config entry for them would enable them without credentials.
+ * Applied only to OpenWork-managed provider IDs (openwork and lpr_*). The
+ * engine loads provider auth handlers, then reapplies config options: setting
+ * fetch on a user's provider here would overwrite its OAuth/signing transport.
+ * Existing custom fetch functions are also left intact. Other providers keep
+ * the engine's native timeout and retry behavior.
  */
 import {
   guardProviderFetch,
-  isGuardedFetch,
   sharedConnectionMonitor,
   type FetchLike,
 } from "./provider-connection-guard.js";
@@ -42,11 +42,12 @@ export const OpenWorkProviderConnection = async () => {
   const monitor = sharedConnectionMonitor();
   return {
     config: async (config: { provider?: Record<string, unknown> }) => {
-      for (const provider of Object.values(config.provider ?? {})) {
+      for (const [id, provider] of Object.entries(config.provider ?? {})) {
+        if (id !== "openwork" && !/^lpr_/i.test(id)) continue;
         if (!isRecord(provider)) continue;
         const options = isRecord(provider.options) ? provider.options : {};
-        if (isGuardedFetch(options.fetch)) continue;
-        options.fetch = guardProviderFetch(isFetchLike(options.fetch) ? options.fetch : fetch, monitor);
+        if (isFetchLike(options.fetch)) continue;
+        options.fetch = guardProviderFetch(fetch, monitor);
         provider.options = options;
       }
     },

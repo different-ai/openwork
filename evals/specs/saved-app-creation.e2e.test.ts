@@ -97,6 +97,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     await world.open("/dashboard");
     await user.reload();
     await user.see("Open Team briefing", { timeoutMs: 30_000 });
+    await probe.eventually(() => world.previewText(), { within: 30_000, label: "saved app rendered on dashboard", until: (text) => text.includes("Weekly overview") && text.includes("Launch briefing") });
     await user.see({ text: "Project updates" });
     expect((await probe.api(world.den.admin, `/v1/dashboards/${world.dashboardId}`)).body).toEqual(companyBefore);
     await user.screenshot();

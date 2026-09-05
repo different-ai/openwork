@@ -3,6 +3,12 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Plus } from "lucide-react";
+import {
+  desktopPolicyKeys,
+  isRestrictedDesktopPolicyValue,
+  type DesktopPolicyDocument,
+  type DesktopPolicyValue,
+} from "@openwork/types/den/desktop-policies";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenCatalogList, DenCatalogRow } from "../../_components/ui/catalog-row";
 import { DenNotice } from "../../_components/ui/notice";
@@ -25,6 +31,15 @@ function formatPolicyTimestamp(value: string | null) {
     day: "numeric",
     year: "numeric",
   }).format(date);
+}
+
+function isRestrictedPolicy(policy: DesktopPolicyDocument) {
+  if (policy.access) return policy.access.mode === "locked";
+  return isRestrictedDesktopPolicyValue(
+    Object.fromEntries(
+      desktopPolicyKeys.map((key) => [key, policy[key] === true]),
+    ) as Required<DesktopPolicyValue>,
+  );
 }
 
 export function DesktopPoliciesScreen() {
@@ -114,8 +129,22 @@ export function DesktopPoliciesScreen() {
             <DenCatalogRow
               key={policy.id}
               title={policy.policyName}
-              badge={policy.isDefault ? (
-                <span className="inline-flex items-center rounded-full border border-sky-100 bg-sky-50 px-1.5 py-px text-[9px] font-semibold uppercase tracking-[0.1em] leading-none text-sky-700">Default</span>
+              badge={policy.policy.access ? (
+                <span className="text-xs text-gray-500">Team access · {policy.policy.access.mode === "locked" ? "Locked" : "Custom"}</span>
+              ) : policy.isDefault || isRestrictedPolicy(policy.policy) ? (
+                <span className="inline-flex items-center gap-1">
+                  {policy.isDefault ? (
+                    <span className="inline-flex items-center rounded-full border border-sky-100 bg-sky-50 px-1.5 py-px text-[9px] font-semibold uppercase tracking-[0.1em] leading-none text-sky-700">Default</span>
+                  ) : null}
+                  {isRestrictedPolicy(policy.policy) ? (
+                    <span
+                      data-testid="desktop-policy-restricted-badge"
+                      className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-1.5 py-px text-[9px] font-semibold uppercase tracking-[0.1em] leading-none text-amber-700"
+                    >
+                      Restricted
+                    </span>
+                  ) : null}
+                </span>
               ) : undefined}
               description={policy.isEnabled ? "Enabled" : "Disabled"}
               value={policy.isDefault ? "Fallback" : String(policy.priority)}
@@ -124,7 +153,7 @@ export function DesktopPoliciesScreen() {
               action={
                 <div className="flex shrink-0 items-center gap-2">
                   <Link href={getDesktopPolicyRoute(orgSlug, policy.id)} className={buttonVariants({ variant: "secondary", size: "sm" })}>
-                    {canManage ? "Edit" : "View"}
+                    {policy.policy.access ? "View team access" : canManage ? "Edit" : "View"}
                   </Link>
                   {!policy.isDefault ? (
                     <DenButton type="button" variant="destructive" size="sm" onClick={() => void softDeletePolicy(policy)} disabled={!canManage || deleting}>Delete</DenButton>

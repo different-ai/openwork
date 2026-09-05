@@ -21,6 +21,7 @@
     "test:core": "vitest run --config vitest.config.ts --project pr specs/thread-approvals-replay.test.ts specs/effective-permissions-attribution.test.ts specs/pdf-attachments-model-routing.test.ts"
   },
   "dependencies": {
+    "@openwork/sdk": "link:../packages/sdk",
     "@openwork/behaviors": "workspace:*",
     "@openwork/cdp": "workspace:*",
     "@openwork/env": "workspace:*",

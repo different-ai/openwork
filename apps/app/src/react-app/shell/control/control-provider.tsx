@@ -18,6 +18,7 @@ import type {
   OpenworkAffordanceResult,
 } from "@openwork/types/openwork-affordance";
 import type { OpenworkContextSnapshot } from "@openwork/types/openwork-context";
+import { useUiControlMailbox } from "./use-ui-control-mailbox";
 
 export type OpenworkControlSideEffect = "none" | "navigation" | "mutation" | "external";
 
@@ -114,7 +115,7 @@ type OpenworkControlContextValue = {
   snapshot: () => OpenworkControlSnapshot;
 };
 
-type OpenworkControlAPI = {
+export type OpenworkControlAPI = {
   version: number;
   snapshot: () => OpenworkControlSnapshot;
   listActions: () => OpenworkControlActionMetadata[];
@@ -252,6 +253,7 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
   const busyActionIdRef = useRef<string | null>(null);
   const busyActorRef = useRef<string | null>(null);
   const spotlightRunRef = useRef(0);
+  const apiRef = useRef<OpenworkControlAPI | null>(null);
 
   const route = `${location.pathname}${location.search}${location.hash}`;
   const enabled = enabledState;
@@ -617,12 +619,18 @@ export function OpenworkControlProvider({ children }: { children: ReactNode }) {
     };
 
     window.__openworkControl = api;
+    apiRef.current = api;
     return () => {
       if (window.__openworkControl === api) {
         delete window.__openworkControl;
       }
+      if (apiRef.current === api) {
+        apiRef.current = null;
+      }
     };
   }, [contextSnapshot, executeAction, executeCommand, queryAffordance, setEnabled, snapshot]);
+
+  useUiControlMailbox(apiRef);
 
   useEffect(() => {
     busyActionIdRef.current = busyActionId;

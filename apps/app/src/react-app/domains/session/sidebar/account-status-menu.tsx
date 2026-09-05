@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils";
 import { t } from "@/i18n";
 import { usePlatform } from "../../../kernel/platform";
 import { isDenSessionRestoring, useDenAuth } from "../../cloud/den-auth-provider";
+import { useDesktopRestriction } from "../../cloud/desktop-config-provider";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
 import { useShellConfig } from "../../../shell/shell-config";
 import type { OpenworkServerStatus } from "../../../../app/lib/openwork-server";
@@ -234,6 +235,12 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
 
   const openSettings = props.onOpenAccountSettings;
   const openDocs = useCallback(() => platform.openLink(DOCS_URL), [platform]);
+  // When the organization blocks settings control, the settings surface is the
+  // Cloud account page only, so the entry is labelled for where it lands and
+  // the Debug shortcut is hidden.
+  // Reuses Den’s existing allowControlSettings boolean contract (PR #1838);
+  // no new response field is required. Missing values retain the hook’s default.
+  const controlSettingsBlocked = useDesktopRestriction("allowControlSettings");
 
   const docsControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "status.docs.open",
@@ -456,7 +463,7 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
           </div>
         ) : null}
 
-        {connectNeedsAttention ? (
+        {connectNeedsAttention && !controlSettingsBlocked ? (
           <DropdownMenuItem onClick={() => navigate("/settings/debug")}>
             <Stethoscope className="size-3.5" />
             Run diagnostics
@@ -480,12 +487,12 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
             </span>
           </DropdownMenuItem>
         ) : null}
-        {connectNeedsAttention || promoVisible ? <DropdownMenuSeparator /> : null}
+        {(connectNeedsAttention && !controlSettingsBlocked) || promoVisible ? <DropdownMenuSeparator /> : null}
 
         {props.showSettingsButton !== false ? (
           <DropdownMenuItem onClick={openSettings}>
             <Settings className="size-3.5" />
-            {t("status.settings")}
+            {controlSettingsBlocked ? t("settings.tab_cloud_account") : t("status.settings")}
           </DropdownMenuItem>
         ) : null}
         {shellConfig.docsButton ? (

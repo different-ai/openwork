@@ -1,7 +1,4 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { z } from "zod";
 
 import { OpenWorkExtensionsPreview } from "./openwork-extensions-preview.js";
@@ -95,6 +92,7 @@ async function transformedSystem(plugin: Awaited<ReturnType<typeof OpenWorkExten
 
 function startFakeOpenWorkServer(options: { failPromptText?: string; failSessionListWorkspaceId?: string } = {}) {
   const requests: Array<{ pathname: string; search: string; authorization: string | null; method: string; body?: unknown }> = [];
+  const uiControlRequests: Array<{ authorization: string | null; body: unknown }> = [];
   let createdCount = 0;
 
   const workspaceOne = { id: "ws_1", name: "Main", path: "/tmp/main" };
@@ -122,6 +120,11 @@ function startFakeOpenWorkServer(options: { failPromptText?: string; failSession
 
       if (request.headers.get("authorization") !== "Bearer test-token") {
         return Response.json({ message: "Unauthorized" }, { status: 401 });
+      }
+
+      if (url.pathname === "/experimental/ui-control/request" && request.method === "POST") {
+        uiControlRequests.push({ authorization: record.authorization, body: record.body });
+        return Response.json({ ok: true });
       }
 
       if (url.pathname === "/experimental/connect/state") {
@@ -242,34 +245,7 @@ function startFakeOpenWorkServer(options: { failPromptText?: string; failSession
   stops.push(() => server.stop(true));
   process.env.OPENWORK_SERVER_URL = `http://127.0.0.1:${server.port}`;
   process.env.OPENWORK_SERVER_TOKEN = "test-token";
-  return { requests };
-}
-
-async function startFakeUiBridge() {
-  const commands: Array<{ authorization: string | null; body: unknown }> = [];
-  const server = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    async fetch(request) {
-      const url = new URL(request.url);
-      if (url.pathname === "/command" && request.method === "POST") {
-        commands.push({ authorization: request.headers.get("authorization"), body: await request.json() });
-        return Response.json({ ok: true });
-      }
-      return Response.json({ ok: false, error: "Not found" }, { status: 404 });
-    },
-  });
-  const discoveryPath = join(tmpdir(), `openwork-ui-control-${process.pid}-${Date.now()}.json`);
-  await writeFile(discoveryPath, JSON.stringify({ baseUrl: `http://127.0.0.1:${server.port}`, token: "bridge-token" }));
-  const originalDiscovery = process.env.OPENWORK_UI_CONTROL_DISCOVERY;
-  process.env.OPENWORK_UI_CONTROL_DISCOVERY = discoveryPath;
-  stops.push(() => {
-    server.stop(true);
-    if (originalDiscovery === undefined) delete process.env.OPENWORK_UI_CONTROL_DISCOVERY;
-    else process.env.OPENWORK_UI_CONTROL_DISCOVERY = originalDiscovery;
-    void rm(discoveryPath, { force: true });
-  });
-  return { commands };
+  return { requests, uiControlRequests };
 }
 
 describe("OpenWorkExtensionsPreview MCP Apps result preservation", () => {
@@ -650,7 +626,6 @@ describe("OpenWorkExtensionsPreview session tools", () => {
 
   test("asks the desktop to refetch the target workspace's sessions after creating them", async () => {
     const fake = startFakeOpenWorkServer();
-    const bridge = await startFakeUiBridge();
     const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
 
     const output = await plugin.tool.openwork_execute.execute({
@@ -663,8 +638,14 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     expect(parsed.result.workspaceId).toBe("ws_2");
     // The sidebar only refetches the workspace that received the session; the
     // reload is issued once the engine has both created and started it.
-    expect(bridge.commands).toEqual([
-      { authorization: "Bearer bridge-token", body: { id: "workspace.reload_sessions", args: { workspaceId: "ws_2" } } },
+    expect(fake.uiControlRequests).toEqual([
+      {
+        authorization: "Bearer test-token",
+        body: {
+          kind: "command",
+          input: { id: "workspace.reload_sessions", args: { workspaceId: "ws_2" } },
+        },
+      },
     ]);
     const createIndex = fake.requests.findIndex((request) => request.pathname === "/workspace/ws_2/opencode/session" && request.method === "POST");
     const promptIndex = fake.requests.findIndex((request) => request.pathname.endsWith("/prompt_async"));
@@ -673,8 +654,7 @@ describe("OpenWorkExtensionsPreview session tools", () => {
   });
 
   test("still asks the desktop to refetch when a created session's prompt fails to start", async () => {
-    startFakeOpenWorkServer({ failPromptText: "Fail this prompt." });
-    const bridge = await startFakeUiBridge();
+    const fake = startFakeOpenWorkServer({ failPromptText: "Fail this prompt." });
     const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
 
     await plugin.tool.openwork_execute.execute({
@@ -683,14 +663,19 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     }, { sessionID: "ses_origin" });
 
     // The session exists on the engine even though its run never started.
-    expect(bridge.commands.map((command) => command.body)).toEqual([
-      { id: "workspace.reload_sessions", args: { workspaceId: "ws_2" } },
+    expect(fake.uiControlRequests).toEqual([
+      {
+        authorization: "Bearer test-token",
+        body: {
+          kind: "command",
+          input: { id: "workspace.reload_sessions", args: { workspaceId: "ws_2" } },
+        },
+      },
     ]);
   });
 
   test("does not ask the desktop to refetch when no session reached the engine", async () => {
     const fake = startFakeOpenWorkServer();
-    const bridge = await startFakeUiBridge();
     const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
 
     await expect(plugin.tool.openwork_execute.execute({
@@ -699,11 +684,11 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     }, { sessionID: "ses_origin" })).rejects.toThrow("No workspace matched ws_missing");
 
     expect(fake.requests.filter((request) => request.method === "POST")).toEqual([]);
-    expect(bridge.commands).toEqual([]);
+    expect(fake.uiControlRequests).toEqual([]);
   });
 
   test("stamps the requesting conversation on UI commands so the app acts for that thread, not the one on screen", async () => {
-    const bridge = await startFakeUiBridge();
+    const fake = startFakeOpenWorkServer();
     const plugin = await OpenWorkExtensionsPreview({ directory: "/tmp/archive" });
 
     await plugin.tool.openwork_execute.execute({
@@ -713,11 +698,17 @@ describe("OpenWorkExtensionsPreview session tools", () => {
       origin: { sessionId: "ses_spoofed" },
     }, { sessionID: "ses_origin", workspaceId: "ws_2" });
 
-    expect(bridge.commands.map((command) => command.body)).toEqual([
+    expect(fake.uiControlRequests).toEqual([
       {
-        id: "browser.open_url",
-        args: { url: "https://example.com" },
-        origin: { sessionId: "ses_origin", workspaceId: "ws_2" },
+        authorization: "Bearer test-token",
+        body: {
+          kind: "command",
+          input: {
+            id: "browser.open_url",
+            args: { url: "https://example.com" },
+            origin: { sessionId: "ses_origin", workspaceId: "ws_2" },
+          },
+        },
       },
     ]);
   });

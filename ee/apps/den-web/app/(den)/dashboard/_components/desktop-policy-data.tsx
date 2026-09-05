@@ -109,6 +109,7 @@ function asDefinition(value: unknown): DesktopPolicyDefinition | null {
     description,
     userNotice,
     defaultValue: value.defaultValue === true,
+    restrictedValue: typeof value.restrictedValue === "boolean" ? value.restrictedValue : null,
   };
 }
 

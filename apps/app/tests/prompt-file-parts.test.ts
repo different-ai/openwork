@@ -218,3 +218,26 @@ describe("Connect skill slash commands", () => {
     expect(withoutProvenance?.description).toBe("");
   });
 });
+
+
+describe("computer task mentions", () => {
+  for (const target of ["cloud", "desktop"] satisfies Array<"cloud" | "desktop">) {
+    test(`${target} routing is hidden from the visible prompt and survives inline attachment parsing`, async () => {
+      for (const attachmentToken of ["", "[attachment removed]"]) {
+        const text = `@${target} Summarize notes for person@${target} ${attachmentToken}`;
+        const parts = await draftToParts({
+          mode: "prompt",
+          text,
+          parts: [{ type: "computer", target }, { type: "text", text: ` Summarize notes for person@${target} ` }],
+          attachments: [],
+        }, "/workspace", "ses_computer", null);
+        const instructions = parts.filter((part) => part.type === "text" && part.synthetic);
+        expect(instructions).toHaveLength(1);
+        expect(instructions[0]).toMatchObject({ text: expect.stringContaining(`target "${target}"`) });
+        expect(parts.filter((part) => part.type === "text" && !part.synthetic)
+          .map((part) => part.type === "text" ? part.text : "").join(""))
+          .toBe(`@${target} Summarize notes for person@${target} `);
+      }
+    });
+  }
+});

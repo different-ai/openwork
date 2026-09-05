@@ -87,7 +87,7 @@ function runLabel(run: AutomationRun) {
   if (run.status === "skipped" && (run.error?.code === "model_access_lost" || run.error?.code === "provider_unavailable")) {
     return "Skipped — model unavailable"
   }
-  return run.status
+  return run.status === "succeeded" ? "Completed" : run.status.replaceAll("_", " ")
 }
 
 function ExecutionIcon({ run }: { run: AutomationRun }) {
@@ -287,7 +287,7 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
           <Cloud aria-hidden="true" />
           <AlertTitle>Sign in to Den to use Automations</AlertTitle>
           <AlertDescription>
-            Den keeps Automation schedules and history. Cloud Automations run headlessly while your desktop is offline; Desktop Automations run when that signed-in app is connected.
+            Cloud tasks run even when your desktop is offline. Desktop tasks need OpenWork open and connected.
           </AlertDescription>
         </Alert>
       </div>
@@ -335,7 +335,7 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
           <div>
             <h2 className="text-xl font-semibold">Create Automation</h2>
             <p className="text-sm text-muted-foreground">
-              {placement === "cloud" ? "It runs in OpenWork Cloud and becomes active as soon as you create it." : "It runs on this desktop and becomes active as soon as you create it."}
+              {placement === "cloud" ? "Runs on your cloud computer. The schedule starts as soon as you create it." : "Runs on your desktop computer. Keep OpenWork open and connected at the scheduled time."}
             </p>
           </div>
         </div>
@@ -568,8 +568,8 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
 
             <Card variant="outline">
               <CardHeader>
-                <CardTitle>{detail.revision.executionTarget === "cloud" ? "OpenWork Cloud execution" : "Desktop execution"}</CardTitle>
-                <CardDescription>{detail.revision.executionTarget === "cloud" ? "Den wakes the Cloud runtime and runs this task headlessly without a desktop." : "Den keeps the schedule and durable history; your connected desktop runs the task locally."}</CardDescription>
+                <CardTitle>{detail.revision.executionTarget === "cloud" ? "Cloud computer" : "Desktop computer"}</CardTitle>
+                <CardDescription>{detail.revision.executionTarget === "cloud" ? "Runs on your cloud computer, even when your desktop is offline." : "Runs on your desktop computer. Keep OpenWork open and connected at the scheduled time."}</CardDescription>
               </CardHeader>
               <CardContent className="grid gap-3 text-sm sm:grid-cols-2">
                 <div className="min-w-0"><span className="text-muted-foreground">Model</span><p className="break-words">{describeAutomationModel(detail.revision.model, models)}</p></div>
@@ -654,9 +654,9 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
                     {selectedReceipt.run.executionThread ? (
                       <Badge variant="outline"><ExecutionIcon run={selectedReceipt.run} />{automationExecutionIdentity(selectedReceipt.run.executionThread).label}</Badge>
                     ) : selectedReceipt.run.status === "queued" ? (
-                      <Badge variant="outline">{selectedReceipt.run.executionTarget === "cloud" ? "Waiting for OpenWork Cloud" : "Waiting for desktop runner"}</Badge>
+                      <Badge variant="outline">{selectedReceipt.run.executionTarget === "cloud" ? "Waiting for cloud computer" : "Waiting for desktop computer"}</Badge>
                     ) : (
-                      <Badge variant="outline">{selectedReceipt.run.executionTarget === "cloud" ? <Cloud className="mr-1 h-3 w-3" /> : <Monitor className="mr-1 h-3 w-3" />}{selectedReceipt.run.executionTarget === "cloud" ? "OpenWork Cloud" : "Desktop"}</Badge>
+                      <Badge variant="outline">{selectedReceipt.run.executionTarget === "cloud" ? <Cloud className="mr-1 h-3 w-3" /> : <Monitor className="mr-1 h-3 w-3" />}{selectedReceipt.run.executionTarget === "cloud" ? "Cloud computer" : "Desktop computer"}</Badge>
                     )}
                     {localSessionRoute ? (
                       <Button
@@ -722,8 +722,8 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
           <h2 className="text-xl font-semibold">Automations</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             {placement === "cloud"
-              ? "Scheduled durably in Den. Automations created here run headlessly in OpenWork Cloud; Desktop-created Automations stay on Desktop."
-              : "Scheduled durably in Den, with each Automation executed in its fixed Desktop or OpenWork Cloud location."}
+              ? "Schedule tasks on your cloud computer. They keep running when your desktop is offline."
+              : "Schedule tasks on your desktop or cloud computer. See where each task runs and how it went."}
           </p>
         </div>
         <Button onClick={() => setSearchParams(new URLSearchParams({ create: "1" }))}><Plus />New Automation</Button>
@@ -741,8 +741,8 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
               {query
                 ? "Try a different search."
                 : placement === "cloud"
-                  ? "Create a Cloud Automation here; it runs headlessly in OpenWork Cloud even while your desktop is offline."
-                  : "Create a Desktop Automation here; it runs while this signed-in desktop is connected. Create headless Cloud Automations from OpenWork Web."}
+                  ? "Create a task that runs on your cloud computer, even when your desktop is offline."
+                  : "Create a task for this desktop computer. For tasks that run while it’s offline, create a cloud automation in OpenWork Web."}
             </EmptyDescription>
           </EmptyHeader>
           {!query ? <EmptyContent><Button onClick={() => setSearchParams(new URLSearchParams({ create: "1" }))}><Plus />New Automation</Button></EmptyContent> : null}
@@ -770,9 +770,13 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
                 </div>
                 <Badge variant={stateVariant(item.automation.state)}>{stateLabel(item.automation.state)}</Badge>
               </div>
+              <div className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground" data-automation-computer={item.revision.executionTarget ?? "desktop"}>
+                {item.revision.executionTarget === "cloud" ? <Cloud className="size-3.5" aria-hidden="true" /> : <Monitor className="size-3.5" aria-hidden="true" />}
+                <span>{item.revision.executionTarget === "cloud" ? "Cloud computer" : "Desktop computer"}</span>
+              </div>
               <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
                 <span>{formatAutomationSchedule(item.revision.schedule)}</span>
-                <span>{item.latestRun ? `Last run: ${item.latestRun.status}` : `Next: ${formatAutomationTime(item.automation.nextDueAt)}`}</span>
+                <span>{item.latestRun ? `Last run: ${runLabel(item.latestRun)}` : `Next: ${formatAutomationTime(item.automation.nextDueAt)}`}</span>
               </div>
             </button>
           ))}

@@ -23,6 +23,8 @@ export interface MockToolCall {
 }
 
 export interface MockAgentToolStep {
+  /** Derive the handoff from the actual model input instead of fixture arguments. */
+  argumentsFrom?: "computer-mention";
   tool: string;
   arguments: Record<string, unknown>;
 }
@@ -32,14 +34,10 @@ export interface MockAgentWorkload {
   finalReply: string;
   /** Stream the final reply as consecutive content deltas of this many characters instead of one. */
   finalReplyChunkSize?: number;
+  /** Opening chunk followed by silence for the first N completions. */
+  quietCompletions?: number;
   /** Tool calls the agent makes before its final reply; empty answers directly. */
   steps: MockAgentToolStep[];
-  /**
-   * Declared fault: the first N main completions stream their opening chunk
-   * and then go quiet without ending (a half-open socket after the client
-   * slept). Recorded as kind "quiet"; later completions proceed normally.
-   */
-  quietCompletions?: number;
 }
 
 export interface MockAgentRequest {
@@ -76,7 +74,16 @@ export interface MockMcpHandle {
   [Symbol.asyncDispose](): Promise<void>;
 }
 
+export interface MockMcpTool {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  result: { content: { type: "text"; text: string }[] };
+}
+
 export interface StartMockMcpOptions {
+  /** Replace the catalog with deterministic tools; served calls remain observable through toolCalls(). */
+  tools?: MockMcpTool[];
   port?: number;
   scriptPath?: string;
   publicUrl?: string;
@@ -92,6 +99,8 @@ export interface StartMockMcpOptions {
   appToolName?: string;
   /** Script deterministic OpenAI-compatible agent turns through this mock. */
   agentWorkloads?: MockAgentWorkload[];
+  /** Require an authentication handler to add this header to model requests. */
+  agentRequiredHeader?: { name: string; value: string };
 }
 
 export type EnterpriseMcpProfileId =
@@ -327,11 +336,21 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
 
   await waitForHealth(url, () => output, child);
 
+  if (options.tools) {
+    const response = await fetch(`${url}/admin/tools`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ tools: options.tools }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new Error(`Mock tool configuration failed: HTTP ${response.status}`);
+  }
+
   if (options.agentWorkloads) {
     const response = await fetch(`${url}/admin/agent-workloads`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workloads: options.agentWorkloads }),
+      body: JSON.stringify({ workloads: options.agentWorkloads, requiredHeader: options.agentRequiredHeader }),
       signal: AbortSignal.timeout(15_000),
     });
     if (!response.ok) {

@@ -498,6 +498,7 @@ function clearTrackedSession(input: SyncOptions, entry: SyncEntry, sessionId: st
   // Status entries are exempt from TanStack GC (see query-client.ts), so the
   // tracked-session lifecycle owns their cleanup.
   queryClient.removeQueries({ queryKey: statusKey(input.workspaceId, sessionId), exact: true });
+  queryClient.removeQueries({ queryKey: todoKey(input.workspaceId, sessionId), exact: true });
   if (entry.refs <= 0 && entry.retainedSessionTimers.size === 0) {
     disposeWorkspaceSync(syncKey(input), entry);
   }

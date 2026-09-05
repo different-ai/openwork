@@ -131,7 +131,12 @@ import {
   type WorkspaceList,
   revealDesktopItemInDir,
 } from "@/app/lib/desktop";
-import { isDesktopProviderBlocked } from "@/app/cloud/desktop-app-restrictions";
+import {
+  SETTINGS_TAB_WITHOUT_CONTROL,
+  desktopRestrictionNotice,
+  isDesktopProviderBlocked,
+  isSettingsTabAllowed,
+} from "@/app/cloud/desktop-app-restrictions";
 import { useCheckDesktopRestriction, useDesktopConfig } from "@/react-app/domains/cloud/desktop-config-provider";
 import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-notice-provider";
 import { useCloudProviderAutoSync } from "@/react-app/domains/cloud/use-cloud-provider-auto-sync";
@@ -472,11 +477,19 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [workspaceConnectionOverrides, setWorkspaceConnectionOverrides] = useState<Record<string, WorkspaceConnectionState>>({});
   const [legacySelectedWorkspaceId, setLegacySelectedWorkspaceId] = useState(() => navigationWorkspaceId ?? readActiveWorkspaceId() ?? "");
   const selectedWorkspaceId = routeWorkspaceId || legacySelectedWorkspaceId;
+  // The standalone Library takeover is not a settings surface; the
+  // `allowControlSettings` policy only governs the settings shell.
+  const settingsTabBlocked = !props.standaloneExtensions
+    && !isSettingsTabAllowed({ tab: route.tab, checkRestriction: checkDesktopRestriction });
 
   useEffect(() => {
-    if (!props.embedded || !route.redirectPath) return;
-    setEmbeddedPath(route.redirectPath);
-  }, [props.embedded, route.redirectPath]);
+    if (!props.embedded) return;
+    if (route.redirectPath) {
+      setEmbeddedPath(route.redirectPath);
+      return;
+    }
+    if (settingsTabBlocked) setEmbeddedPath(SETTINGS_TAB_WITHOUT_CONTROL);
+  }, [props.embedded, route.redirectPath, settingsTabBlocked]);
 
   const navigateSettingsPath = useCallback((path: string) => {
     if (props.embedded) {
@@ -579,6 +592,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   );
 
   const routeStateRef = useRef({
+    checkDesktopRestriction,
     activeClient: null as Client | null,
     providerBaseUrl: "",
     selectedWorkspaceId: "",
@@ -656,6 +670,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const opencodeBaseUrl = selectedWorkspaceEndpoint?.opencodeBaseUrl ?? "";
 
   routeStateRef.current = {
+    checkDesktopRestriction,
     activeClient,
     providerBaseUrl: opencodeBaseUrl,
     selectedWorkspaceId,
@@ -728,6 +743,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const connectionsStore = useMemo(
     () =>
       createConnectionsStore({
+        checkDesktopAppRestriction: (input) => routeStateRef.current.checkDesktopRestriction(input),
         client: () => routeStateRef.current.activeClient,
         setClient: setActiveClient,
         projectDir: () => routeStateRef.current.selectedWorkspaceRoot,
@@ -791,6 +807,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const extensionsStore = useMemo(
     () =>
       createExtensionsStore({
+        checkDesktopAppRestriction: (input) => routeStateRef.current.checkDesktopRestriction(input),
         client: () => routeStateRef.current.activeClient,
         projectDir: () => routeStateRef.current.selectedWorkspaceRoot,
         selectedWorkspaceId: () => routeStateRef.current.selectedWorkspaceId,
@@ -2339,6 +2356,20 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     return <Navigate to={target} replace state={location.state} />;
   }
 
+  if (!props.embedded && settingsTabBlocked) {
+    // Organization policy hides desktop settings. Library deep links keep
+    // working through the standalone Library surface; everything else lands on
+    // the Cloud account tab, which explains the active policy.
+    const target = route.tab === "extensions"
+      ? selectedWorkspaceId
+        ? workspaceExtensionsRoute(selectedWorkspaceId, extensionsPathForRoute(route))
+        : globalExtensionsRoute(extensionsPathForRoute(route))
+      : selectedWorkspaceId
+        ? workspaceSettingsRoute(selectedWorkspaceId, SETTINGS_TAB_WITHOUT_CONTROL)
+        : `/settings/${SETTINGS_TAB_WITHOUT_CONTROL}`;
+    return <Navigate to={target} replace state={location.state} />;
+  }
+
   const openCloudAccountSettings = () => {
     navigateSettingsPath("cloud-account");
   };
@@ -2457,9 +2488,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             hideDescription={props.standaloneExtensions !== true}
             selectedWorkspaceRoot={selectedWorkspaceRoot}
             isRemoteWorkspace={isRemoteWorkspace}
-            canEditPlugins={canWriteWorkspacePlugins}
+            canEditPlugins={canWriteWorkspacePlugins && allowManageExtensions}
             canUseGlobalScope={!isRemoteWorkspace}
-            accessHint={pluginsAccessHint}
+            accessHint={allowManageExtensions ? pluginsAccessHint : desktopRestrictionNotice("allowManageExtensions")}
             suggestedPlugins={SUGGESTED_PLUGINS}
             extensions={extensionsStore}
             initialSection={route.extensionsSection}
@@ -2768,7 +2799,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         }}
         selectedModelLabel={defaultModelLabel}
         sessions={paletteSessionOptions}
-        extraItems={[developerModePaletteItem]}
+        extraItems={checkDesktopRestriction({ restriction: "allowControlSettings" }) ? [] : [developerModePaletteItem]}
       />
 
       <ProviderAuthModal

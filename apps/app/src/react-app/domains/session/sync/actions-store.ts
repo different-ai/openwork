@@ -33,6 +33,7 @@ import { addOpencodeCacheHint, safeStringify } from "../../../../app/utils";
 import { clearSessionDraft, LOCAL_SESSION_DRAFT_SCOPE, saveSessionDraft } from "./draft-store";
 import { firstLineLocalFileParts, isReadInlineablePath } from "./prompt-file-parts";
 import { composerAttachmentToFilePart } from "./attachment-file-part";
+import { computerMentionInstruction } from "../surface/composer/computer-mentions";
 import { appMentionInstruction } from "../surface/composer/app-mentions";
 
 type SessionModelConfig = {
@@ -160,6 +161,10 @@ export function createSessionActionsStore(options: {
     for (const part of draft.parts) {
       if (part.type === "agent") {
         parts.push({ type: "agent", name: part.name } as AgentPartInput);
+        continue;
+      }
+      if (part.type === "computer") {
+        parts.push({ type: "text", text: computerMentionInstruction(part.target), synthetic: true });
         continue;
       }
       if (part.type === "app") {

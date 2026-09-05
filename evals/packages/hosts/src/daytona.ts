@@ -834,17 +834,10 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
     for (const handle of [...spawnedSurfaces]) await disposeSurface(handle);
   }
 
-  async function signal(_surface: SurfaceHandle, pid: number, signal: "SIGSTOP" | "SIGCONT"): Promise<void> {
-    if (!Number.isInteger(pid) || pid <= 0) throw new Error(`Refusing to signal an invalid pid ${pid}.`);
-    const flag = signal === "SIGSTOP" ? "-STOP" : "-CONT";
-    await checkedExec(exec, ["exec", requireSandbox(), "--", "kill", flag, String(pid)], `${signal} pid ${pid} in Daytona sandbox`, { timeoutMs: 30_000 });
-  }
-
   return {
     kind: "daytona",
     workspaceRoot: "/workspace",
     previewUrl,
-    signal,
     spawnElectron,
     spawnChrome,
     startDen,

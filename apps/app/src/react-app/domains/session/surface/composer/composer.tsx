@@ -2,12 +2,13 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
-import { AppWindowMac, ArrowUp, Check, ChevronDown, ChevronRight, FileText, LoaderCircle, Paperclip, Plus, RefreshCw, Settings, Square, Terminal, X, Zap } from "lucide-react";
+import { AppWindowMac, Cloud, Monitor, ArrowUp, Check, ChevronDown, ChevronRight, FileText, LoaderCircle, Paperclip, Plus, RefreshCw, Settings, Square, Terminal, X, Zap } from "lucide-react";
 import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
 import type { CloudImportedPlugin, CloudImportedPluginFile } from "@/app/cloud/import-state";
 import type { ComposerAttachment, McpServerEntry, McpStatus, McpStatusMap, ModelOption, ModelRef, SkillCard, SlashCommandOption } from "@/app/types";
 import { t } from "@/i18n";
+import { useComposerStateStore } from "../composer-state-store";
 import {
   composerConfigureSectionForMenu,
   isLibraryCommand,
@@ -17,6 +18,7 @@ import {
 import { ModelSelect } from "@/components/model-select";
 import { LexicalPromptEditor, syncAttachmentChipStatus, type LexicalPromptEditorHandle } from "./editor";
 import { listRunningAppsForMention } from "./app-mentions";
+import { COMPUTER_MENTIONS } from "./computer-mentions";
 import type { ComposerMentionKind } from "./mention-encoding";
 import {
   connectSkillSlashCommandOptions,
@@ -40,6 +42,7 @@ type MentionItem = {
   kind: ComposerMentionKind;
   value: string;
   label: string;
+  description?: string;
 };
 
 type ToolMenuSection = "agents" | "commands" | "skills" | "connections" | "plugins" | `plugin:${string}`;
@@ -523,10 +526,12 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   useEffect(() => {
     if (!mentionOpen) return;
     let cancelled = false;
+    setMentionItems(COMPUTER_MENTIONS);
     void Promise.all([props.listAgents(), props.searchFiles(mentionQuery), listRunningAppsForMention()]).then(([agentList, files, apps]) => {
       if (cancelled) return;
       const recent = props.recentFiles.slice(0, 8);
       const next: MentionItem[] = [
+        ...COMPUTER_MENTIONS,
         ...agentList.map((agent) => ({ id: `agent:${agent.name}`, kind: "agent" as const, value: agent.name, label: agent.name })),
         ...recent.map((file) => ({ id: `file:${file}`, kind: "file" as const, value: file, label: file })),
         // Running macOS apps (Computer Use targets). Listed after recent files
@@ -537,7 +542,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       ];
       setMentionItems(next);
     }).catch(() => {
-      if (!cancelled) setMentionItems([]);
+      if (!cancelled) setMentionItems(COMPUTER_MENTIONS);
     });
     return () => {
       cancelled = true;
@@ -955,6 +960,23 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     return false;
   };
 
+  const focusRequested = useComposerStateStore((state) => (
+    Boolean(props.sessionId) && state.pendingFocusSessionId === props.sessionId
+  ));
+  useEffect(() => {
+    if (!focusRequested || props.disabled) return;
+    // Wait for the editor to mount and the creating menu to close. Keep the
+    // request until this session is ready, even when its snapshot loads slowly.
+    const frame = requestAnimationFrame(() => {
+      if (useComposerStateStore.getState().pendingFocusSessionId !== props.sessionId) return;
+      const editable = rootRef.current?.querySelector<HTMLElement>("[contenteditable='true']");
+      if (!editable) return;
+      editable.focus();
+      useComposerStateStore.setState({ pendingFocusSessionId: null });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focusRequested, props.disabled, props.sessionId]);
+
   // Listen for cross-app focus + draft flush events. The Solid shell uses
   // these from deep-link handlers, the command palette, and the browser
   // pagehide/beforeunload cycle so no in-flight draft is lost.
@@ -1215,7 +1237,9 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                     setMentionOpen(false);
                   }}
                 >
-                  {item.kind === "agent" ? (
+                  {item.kind === "computer" ? (
+                    item.value === "cloud" ? <Cloud size={14} className="mt-0.5 shrink-0 text-gray-9" /> : <Monitor size={14} className="mt-0.5 shrink-0 text-gray-9" />
+                  ) : item.kind === "agent" ? (
                     <Zap size={14} className="mt-0.5 shrink-0 text-gray-9" />
                   ) : item.kind === "app" ? (
                     <AppWindowMac size={14} className="mt-0.5 shrink-0 text-gray-9" />
@@ -1225,7 +1249,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                   <div className="min-w-0">
                     <div className="truncate text-xs font-semibold">@{item.label}</div>
                     <div className="truncate text-xs text-gray-10">
-                      {item.kind === "agent"
+                      {item.description ? item.description : item.kind === "agent"
                         ? t("composer.agent_label")
                         : item.kind === "app"
                           ? t("composer.app_kind")
@@ -1258,7 +1282,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       <div className={props.flush ? "" : "max-w-[800px] mx-auto"}>
         {/* Main composer panel */}
         <div
-          className={`relative overflow-visible rounded-[18px] border border-dls-border bg-dls-surface transition-all ${panelRoundedClass}`}
+          className={`@container/composer relative overflow-visible rounded-[18px] border border-dls-border bg-dls-surface transition-all ${panelRoundedClass}`}
         >
           {props.topAccessory ? <div className="relative z-10">{props.topAccessory}</div> : null}
 
@@ -1376,9 +1400,10 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
               }}
             />
 
-            {/* Action row — tools, attachments, model, and send stay on one line */}
-            <div className="mt-2 flex items-center gap-1.5">
-              <div className="flex min-w-0 flex-1 items-center gap-1.5">
+            {/* Respond to the pane width, including desktop split views. */}
+            <div data-composer-toolbar className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-1.5 gap-y-2 @min-[560px]/composer:flex">
+              <div className="contents">
+                <div className="col-start-1 row-start-2 flex shrink-0 items-center gap-1.5">
                 <input
                   ref={(element) => {
                     fileInput = element ?? undefined;
@@ -1640,13 +1665,16 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                   <Paperclip size={16} />
                 </button>
 
+                </div>
+
+                <div data-composer-settings className="col-span-2 row-start-1 flex min-w-0 flex-wrap items-center gap-1 border-b border-dls-border pb-2 @min-[560px]/composer:flex-1 @min-[560px]/composer:border-0 @min-[560px]/composer:pb-0">
                 {/* Agent picker (#2101/#1971). Only shown once a non-default
                     agent is selected. Switching back to Default agent lives in
                     this menu and in the + tools menu. */}
-                <div ref={agentMenuRef} className={showAgentPicker ? "relative" : "hidden"}>
+                <div ref={agentMenuRef} className={showAgentPicker ? "relative min-w-0 max-w-full shrink-0" : "hidden"}>
                   <button
                     type="button"
-                    className="flex h-9 max-h-9 items-center gap-1 rounded-md px-1.5 text-[12px] font-medium text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12"
+                    className="flex h-9 max-h-9 max-w-full items-center gap-1 rounded-md px-1.5 text-[12px] font-medium text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12"
                     onClick={() => setAgentMenuOpen((value) => !value)}
                     disabled={props.busy}
                     aria-expanded={agentMenuOpen}
@@ -1743,10 +1771,11 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                     </span>
                   </button>
                 ) : (
-                  <span className="max-w-[20rem] truncate text-xs font-medium text-red-10">
+                  <span className="min-w-0 max-w-full truncate text-xs font-medium text-red-10">
                     {props.modelUnavailableMessage ?? t("models.model_unavailable_short")}
                   </span>
                 ) : null}
+                </div>
 
               </div>
 
@@ -1756,9 +1785,9 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                 - Busy: stop icon in that same slot (Enter still queues;
                   Cmd/Ctrl+Enter still steers).
               */}
-              <div className="ml-auto flex shrink-0 items-center gap-1.5">
+              <div data-composer-actions className="col-start-2 row-start-2 ml-auto flex shrink-0 items-center gap-1.5">
                 {props.busy && escapeArmed ? (
-                  <span className="self-center pr-1 text-[12px] font-medium text-gray-10 max-lg:hidden">
+                  <span className="self-center pr-1 text-[12px] font-medium text-gray-10 hidden @min-[720px]/composer:inline">
                     {t("composer.escape_to_stop")}
                   </span>
                 ) : null}

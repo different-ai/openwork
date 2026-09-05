@@ -284,25 +284,32 @@ describe("guarded provider fetch", () => {
 });
 
 describe("OpenWorkProviderConnection config hook", () => {
-  test("guards every configured provider's fetch once and leaves other options intact", async () => {
+  test("guards managed API-key providers once without changing other provider transports", async () => {
     const hooks = await OpenWorkProviderConnection();
+    const customFetch = async () => new Response("custom transport");
     const config = {
       provider: {
-        anthropic: { options: { apiKey: "k", baseURL: "https://anthropic.test" } },
+        lpr_example: { options: { apiKey: "k", baseURL: "https://anthropic.test" } },
         openwork: { npm: "@ai-sdk/openai-compatible" },
+        anthropic: { options: { apiKey: "user-key" } },
+        openai: { options: {} },
+        lpr_custom: { options: { fetch: customFetch } },
         broken: "not-a-record",
       },
     };
     await hooks.config(config);
-    const anthropic = config.provider.anthropic.options;
-    expect(anthropic.apiKey).toBe("k");
-    expect(anthropic.baseURL).toBe("https://anthropic.test");
-    expect(isGuardedFetch(Reflect.get(anthropic, "fetch"))).toBe(true);
+    const managed = config.provider.lpr_example.options;
+    expect(managed.apiKey).toBe("k");
+    expect(managed.baseURL).toBe("https://anthropic.test");
+    expect(isGuardedFetch(Reflect.get(managed, "fetch"))).toBe(true);
     const openwork = Reflect.get(config.provider.openwork, "options");
     expect(isGuardedFetch(Reflect.get(openwork, "fetch"))).toBe(true);
-    const first = Reflect.get(anthropic, "fetch");
+    const first = Reflect.get(managed, "fetch");
     await hooks.config(config);
-    expect(Reflect.get(anthropic, "fetch")).toBe(first);
+    expect(Reflect.get(managed, "fetch")).toBe(first);
+    expect(Reflect.get(config.provider.anthropic.options, "fetch")).toBeUndefined();
+    expect(Reflect.get(config.provider.openai.options, "fetch")).toBeUndefined();
+    expect(config.provider.lpr_custom.options.fetch).toBe(customFetch);
     expect(config.provider.broken).toBe("not-a-record");
   });
 
