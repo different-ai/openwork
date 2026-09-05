@@ -1,3 +1,16 @@
+export type AllHandsSettings = {
+  enabled: boolean;
+  frequency: "morning" | "twice" | "manual";
+  morning: string;
+  afternoon: string;
+  focus: string;
+  groupId: string;
+  enabledAt: number;
+  lastOccurrence: string;
+  lastRequestedAt: number;
+};
+export type AllHandsPatch = Partial<Pick<AllHandsSettings, "enabled" | "frequency" | "morning" | "afternoon" | "focus">>;
+
 /** Typed access to the Open Coworker main-process bridge. */
 import type { CoworkerDocument, CoworkerDocumentSummary, DocumentRevision, DocumentStatus } from "./documents";
 import type { LocalSchedule } from "./local-schedule.ts";
@@ -491,6 +504,12 @@ export const coworkerBridge = {
     pause: (slug: string, id: string) => invoke<WorkerSummary>("workers.pause", { slug, id }),
     resume: (slug: string, id: string) => invoke<WorkerSummary>("workers.resume", { slug, id }),
     findings: (slug: string, id: string, limit?: number) => invoke<WorkerEvent[]>("workers.findings", { slug, id, limit }),
+  },
+  allHands: {
+    get: () => invoke<AllHandsSettings>("allHands.get"),
+    update: (patch: AllHandsPatch) => invoke<AllHandsSettings>("allHands.update", patch),
+    prepare: () => invoke<CoworkerGroupSummary | null>("allHands.prepare"),
+    claim: () => invoke<{ id: string; at: number } | null>("allHands.claim"),
   },
   settings: {
     get: () => invoke<CoworkerSettings>("settings.get"),

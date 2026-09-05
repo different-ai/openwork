@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
-import type { CoworkerSummary, RuntimeInfo } from "@/lib/bridge";
+import { coworkerBridge, type CoworkerSummary, type RuntimeInfo } from "@/lib/bridge";
 import {
   APPS_TOOLS_CRUMBS,
   appPath,
@@ -41,7 +41,7 @@ import {
   type EngineToolStatus,
   type PlainStatus,
 } from "@/lib/connection-words";
-import type { DenSession } from "@/lib/den";
+import { buildDenAccountUrl, type DenSession } from "@/lib/den";
 import {
   createCoworkerMcpClient,
   type CoworkerMcpAppCatalogServer,
@@ -70,9 +70,9 @@ export function readConnectPitchPreference(storage: Pick<Storage, "getItem"> | n
 
 /** What OpenWork Connect adds, said once, in the person's terms. */
 const CONNECT_VALUE = [
-  { title: "One sign-in for the team", text: "Gmail, Slack, Notion and more connected once for your organization, with the same controls as OpenWork Desktop." },
-  { title: "Every tool in one place", text: "Your coworker searches everything your organization connected and picks the right one itself." },
-  { title: "Shared skills and plugins", text: "Skills your team publishes — including creating new ones — are ready to use and kept up to date." },
+  { title: "Bring your work with you", text: "Use the apps available through your OpenWork account. Some apps may need a separate sign-in." },
+  { title: "Just describe the result", text: "Your coworker finds the right available app and handles the steps. No tool configuration to learn." },
+  { title: "Keep your team's ways of working", text: "Use the skills and tools your team shares, with your existing access and approval controls." },
 ];
 
 function appFailureMessage(result: PreservedMcpAppResult): string {
@@ -174,7 +174,8 @@ async function searchGateway(client: CoworkerMcpClient, query: string) {
     resourceUri: "",
     arguments: { query, limit: 20 },
   });
-  return result.isError ? [] : parseSearchMatches(result);
+  if (result.isError) throw new Error("Connected app search is temporarily unavailable.");
+  return parseSearchMatches(result);
 }
 
 function useAppsToolsData(input: {
@@ -190,6 +191,8 @@ function useAppsToolsData(input: {
   const [localLoaded, setLocalLoaded] = useState(false);
   const [connect, setConnect] = useState<ConnectCatalog>(emptyConnectCatalog);
   const [connectLoaded, setConnectLoaded] = useState(false);
+  const [connectError, setConnectError] = useState("");
+  const connectRequestRef = useRef(0);
   /** What each remote server on this Mac offers, once asked; null when it could not be read. */
   const [serverTools, setServerTools] = useState<Record<string, CoworkerMcpServerTool[] | null>>({});
   const askedServersRef = useRef(new Set<string>());
@@ -226,6 +229,8 @@ function useAppsToolsData(input: {
   }, [client]);
 
   const refreshConnect = useCallback(async (force: boolean) => {
+    const requestId = ++connectRequestRef.current;
+    setConnectError("");
     if (!client || !session || !connected) {
       setConnect(emptyConnectCatalog);
       setConnectLoaded(false);
@@ -240,15 +245,20 @@ function useAppsToolsData(input: {
     }
     setLoading((count) => count + 1);
     try {
+      let failures = 0;
       const [skills, ...searches] = await Promise.all([
-        readSkillIndex(runtime).catch((): ConnectSkill[] => []),
-        ...CONNECT_SEARCH_VARIANTS.map((query) => searchGateway(client, query).catch(() => [])),
+        readSkillIndex(runtime).catch((): ConnectSkill[] => { failures += 1; return []; }),
+        ...CONNECT_SEARCH_VARIANTS.map((query) => searchGateway(client, query).catch(() => { failures += 1; return []; })),
       ]);
+      if (connectRequestRef.current !== requestId) return;
+      if (failures > 0) setConnectError("Some connected apps and skills couldn't be loaded. Try again in a moment.");
+      if (failures === CONNECT_SEARCH_VARIANTS.length + 1) return;
       const catalog = buildConnectCatalog({ skills, matches: mergeSearchMatches(searches), servers: serversRef.current });
-      connectCatalogCache.set(key, catalog);
+      // Never remember a partial outage as the member's complete catalog.
+      if (failures === 0) connectCatalogCache.set(key, catalog);
       setConnect(catalog);
     } finally {
-      setConnectLoaded(true);
+      if (connectRequestRef.current === requestId) setConnectLoaded(true);
       setLoading((count) => count - 1);
     }
   }, [client, connected, runtime, session, workspaceId]);
@@ -259,12 +269,29 @@ function useAppsToolsData(input: {
   useEffect(() => {
     if (!localLoaded) return;
     void refreshConnect(false);
+    return () => { connectRequestRef.current += 1; };
   }, [localLoaded, refreshConnect]);
 
   const refresh = useCallback(async () => {
     await refreshLocal();
     await refreshConnect(true);
   }, [refreshConnect, refreshLocal]);
+
+  useEffect(() => {
+    if (!connected) return;
+    let lastRefresh = Date.now();
+    const refreshOnReturn = () => {
+      if (Date.now() - lastRefresh < 15_000) return;
+      lastRefresh = Date.now();
+      void refresh();
+    };
+    window.addEventListener("focus", refreshOnReturn);
+    window.addEventListener("online", refreshOnReturn);
+    return () => {
+      window.removeEventListener("focus", refreshOnReturn);
+      window.removeEventListener("online", refreshOnReturn);
+    };
+  }, [connected, refresh]);
 
   /** Read what the named servers offer, once each; a server that cannot be read stays quiet. */
   const ensureServerTools = useCallback((names: readonly string[]) => {
@@ -278,7 +305,7 @@ function useAppsToolsData(input: {
     }
   }, [client]);
 
-  return { local, localLoaded, connect, connectLoaded, serverTools, ensureServerTools, loading: loading > 0, error, refresh };
+  return { local, localLoaded, connect, connectLoaded, connectError, serverTools, ensureServerTools, loading: loading > 0, error, refresh };
 }
 
 export type BesideControl = {
@@ -294,7 +321,6 @@ export function CapabilitiesPanel({
   connect,
   onRepairConnect,
   onConnectAccount,
-  onAssign,
   onDiscuss,
   path,
   width,
@@ -312,8 +338,6 @@ export function CapabilitiesPanel({
   connect: ConnectState | null;
   onRepairConnect: () => void;
   onConnectAccount: () => void;
-  /** Seed the assignment composer with an outcome. */
-  onAssign: (prompt: string) => void;
   /** Seed the discussion composer with a message the person still sends. */
   onDiscuss: (message: string) => void;
   /** The levels below Apps & tools this panel is showing. */
@@ -460,8 +484,7 @@ export function CapabilitiesPanel({
   const scope: SearchGroup[] = searchEverywhere ? searchScope([]) : searchScope(path);
   const scopedEverywhere = scope.length === searchScope([]).length;
   const results = searchItems(searchIndex, query, scope);
-  const askPrompt = (need: string) =>
-    `Search my connected OpenWork capabilities for "${need}". Use search_capabilities first, then execute_capability only after choosing the best match. Tell me what you selected and the result.`;
+  const askPrompt = (need: string) => `Help me with this using my connected apps: ${need}\n\nFind what's available and suggest the next step before taking action.`;
 
   const openRow = (target: PanelCrumb[], rowId: string) => onSetPath(target, rowId);
 
@@ -517,6 +540,9 @@ export function CapabilitiesPanel({
               <Button variant="ghost" className="text-xs" onClick={() => setSearchEverywhere(true)} data-testid="apps-tools-search-everywhere">Search everywhere</Button>
             </div>
           ) : null}
+          {results.length === 0 && connected ? (
+            <Button variant="ghost" className="mt-2 w-full text-xs" data-testid="apps-tools-ask-search" onClick={() => onDiscuss(askPrompt(query.trim()))}>Ask {coworker.name} to find a way</Button>
+          ) : null}
         </div>
       );
     }
@@ -541,7 +567,7 @@ export function CapabilitiesPanel({
                 id="apps"
                 icon={<AppsIcon />}
                 title={APPS_TOOLS_CRUMBS.apps.title}
-                status={apps.length === 0 ? (data.localLoaded ? "Nothing renders inline yet" : "Reading") : appsSummary(apps)}
+                status={apps.length === 0 ? (data.localLoaded ? "No interactive apps available yet" : "Loading…") : appsSummary(apps)}
                 count={apps.length}
                 onOpen={() => onPush(APPS_TOOLS_CRUMBS.apps, "apps")}
                 testId="apps-tools-row-apps"
@@ -576,7 +602,6 @@ export function CapabilitiesPanel({
               search={search}
               onConnectAccount={onConnectAccount}
               onRepairConnect={onRepairConnect}
-              onAssign={() => onAssign(askPrompt("what I need next"))}
               onDiscuss={onDiscuss}
               onOpen={(crumb, rowId) => onPush(crumb, rowId)}
             />
@@ -589,7 +614,7 @@ export function CapabilitiesPanel({
           <div data-testid="coworker-capabilities" data-screen="connected-apps">
             {search}
             {connectApps.length === 0 ? (
-              data.localLoaded ? <QuietLine>Apps your organization connects appear here once they are set up.</QuietLine> : <SkeletonRows />
+              data.localLoaded ? <QuietLine>Interactive apps available to you appear here. You can also ask your coworker to work with your connected services.</QuietLine> : <SkeletonRows />
             ) : (
               <RowList label="Apps from OpenWork Connect">
                 {connectApps.map((app) => <AppRow key={app.key} app={app} onOpen={() => onPush({ id: `app:${app.key}`, title: app.title }, `app:${app.key}`)} />)}
@@ -604,7 +629,7 @@ export function CapabilitiesPanel({
           <div data-testid="coworker-capabilities" data-screen="skills">
             {search}
             {!data.connectLoaded ? <SkeletonRows /> : data.connect.skills.length === 0 ? (
-              <QuietLine>No skills are shared with you yet.</QuietLine>
+              <QuietLine>{data.connectError ? "Your skills couldn't be loaded yet." : "No skills are shared with you yet."}</QuietLine>
             ) : (
               <RowList label="Skills">
                 {data.connect.skills.map((skill) => (
@@ -628,7 +653,7 @@ export function CapabilitiesPanel({
           <div data-testid="coworker-capabilities" data-screen="plugins">
             {search}
             {!data.connectLoaded ? <SkeletonRows /> : data.connect.plugins.length === 0 ? (
-              <QuietLine>Your organization has not added plugins yet.</QuietLine>
+              <QuietLine>{data.connectError ? "Your plugins couldn't be loaded yet." : "No plugins were found for your account."}</QuietLine>
             ) : (
               <RowList label="Plugins and marketplaces">
                 {data.connect.plugins.map((plugin) => (
@@ -654,7 +679,7 @@ export function CapabilitiesPanel({
           <div data-testid="coworker-capabilities" data-screen="connections">
             {search}
             {!data.connectLoaded ? <SkeletonRows /> : data.connect.connections.length === 0 ? (
-              <QuietLine>Your organization has not connected any services yet.</QuietLine>
+              <QuietLine>{data.connectError ? "Your connected services couldn't be loaded yet." : "No connected services were found for your account."}</QuietLine>
             ) : (
               <RowList label="Connections">
                 {data.connect.connections.map((connection) => (
@@ -734,7 +759,7 @@ export function CapabilitiesPanel({
                 client={client}
                 coworker={coworker}
                 app={app}
-                onAssign={onAssign}
+                onDiscuss={onDiscuss}
                 beside={mode === "panel" && beside?.available ? () => beside.open(path) : null}
               />
             ) : null}
@@ -793,7 +818,7 @@ export function CapabilitiesPanel({
         if (!connection) return <QuietLine testId="apps-tools-missing">{data.connectLoaded ? "This connection is no longer listed." : "Reading…"}</QuietLine>;
         return (
           <div data-testid="coworker-capabilities" data-screen="connection">
-            <ConnectionDetail connection={connection} coworkerName={coworker.name} onAssign={() => onAssign(askPrompt(connection.name))} />
+            <ConnectionDetail connection={connection} coworkerName={coworker.name} onAssign={() => onDiscuss(`Help me use ${connection.name} to: `)} />
           </div>
         );
       }
@@ -803,6 +828,10 @@ export function CapabilitiesPanel({
   return (
     <PanelLevel key={screenKey} direction={direction}>
       {screenBody}
+      {data.connectError && signedIn ? <div className="mt-3 px-1" role="status" data-testid="apps-tools-connect-problem">
+        <p className="text-xs leading-relaxed text-mist">{data.connectError}</p>
+        <Button variant="ghost" className="mt-1 text-xs" disabled={data.loading} onClick={() => void data.refresh()}>Try again</Button>
+      </div> : null}
     </PanelLevel>
   );
 }
@@ -873,7 +902,6 @@ function ConnectedScreen({
   search,
   onConnectAccount,
   onRepairConnect,
-  onAssign,
   onDiscuss,
   onOpen,
 }: {
@@ -886,7 +914,6 @@ function ConnectedScreen({
   search: ReactNode;
   onConnectAccount: () => void;
   onRepairConnect: () => void;
-  onAssign: () => void;
   onDiscuss: (message: string) => void;
   onOpen: (crumb: PanelCrumb, rowId: string) => void;
 }) {
@@ -896,6 +923,28 @@ function ConnectedScreen({
   // compact form the remembered default on this machine.
   const [pitch, setPitch] = useState<"full" | "compact">(() => readConnectPitchPreference(typeof window === "undefined" ? null : window.localStorage));
   const [hidePitchNextTime, setHidePitchNextTime] = useState(false);
+  const [openError, setOpenError] = useState("");
+  const refreshAfterManageRef = useRef(false);
+  useEffect(() => {
+    const onReturn = () => {
+      if (!refreshAfterManageRef.current) return;
+      refreshAfterManageRef.current = false;
+      void data.refresh();
+    };
+    window.addEventListener("focus", onReturn);
+    return () => window.removeEventListener("focus", onReturn);
+  }, [data.refresh]);
+  async function manageApps() {
+    if (!session) return;
+    setOpenError("");
+    try {
+      refreshAfterManageRef.current = true;
+      await coworkerBridge.openExternal(buildDenAccountUrl(session.baseUrl, "connections"));
+    } catch {
+      refreshAfterManageRef.current = false;
+      setOpenError("Couldn't open your connected apps. Please try again.");
+    }
+  }
   function skipPitch(): void {
     setPitch("compact");
     if (hidePitchNextTime) {
@@ -969,22 +1018,22 @@ function ConnectedScreen({
   return (
     <>
       <section className="px-1 pb-3" data-testid="coworker-connect-card" data-status={connect?.status ?? "connecting"}>
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
+        <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">OpenWork Connect</p>
-            <h3 className="mt-1.5 text-sm font-semibold leading-snug text-snow">
-              {coworker.name} can use everything {session.orgName ? session.orgName : "your organization"} connected in OpenWork.
-            </h3>
-          </div>
-          <span className={`flex shrink-0 items-center gap-1.5 text-[11px] font-medium ${toneClass}`} data-testid="coworker-connect-status">
+          <span className={`flex min-w-0 items-center gap-1.5 text-[11px] font-medium ${toneClass}`} data-testid="coworker-connect-status">
             <StatusDot tone={status.tone} />
             {status.label}
           </span>
         </div>
+        <h3 className="mt-2 text-sm font-semibold leading-snug text-snow">
+          {connected ? `Tell ${coworker.name} what you want to get done.` : !connect || connect.status === "connecting" ? "Getting your connected apps ready." : "Let's reconnect your apps."}
+        </h3>
+        {connected ? <p className="mt-2 text-xs leading-relaxed text-mist">Your coworker finds the right app from those available to you in {session.orgName || "your workspace"}. Just describe the result.</p> : null}
         {status.detail ? <p className="mt-2 text-xs leading-relaxed text-mist" data-testid="coworker-connect-detail">{status.detail}</p> : null}
+        {connect?.status === "attention" || connect?.status === "unavailable" ? <TechnicalDetails entries={[{ label: "Connection details", value: connect.message }]} /> : null}
         <div className="mt-3 flex flex-wrap gap-2">
-          <Button variant="primary" className="text-xs" disabled={!connected} onClick={onAssign} data-testid="coworker-connect-ask">
-            Ask {coworker.name}
+          <Button variant="primary" className="text-xs" disabled={!connected} onClick={() => onDiscuss("Help me use my connected apps to: ")} data-testid="coworker-connect-ask">
+            Start with a task
           </Button>
           <Button
             variant="ghost"
@@ -992,14 +1041,16 @@ function ConnectedScreen({
             disabled={!connected}
             data-testid="coworker-connect-create-skill"
             onClick={() => onDiscuss(
-              "Create a new skill for our team through OpenWork Connect. Search capabilities for \"create skill\" and follow the create-skill instructions you get back. The skill should: ",
+              "Help me turn a repeatable task into a skill for my team. The task is: ",
             )}
           >
             Create a skill
           </Button>
-          {status.action === "repair" ? <Button variant="ghost" className="text-xs" onClick={onRepairConnect}>Repair</Button> : null}
+          {status.action === "repair" ? <Button variant="ghost" className="text-xs" onClick={onRepairConnect}>Try reconnecting</Button> : null}
           {status.action === "sign-in" ? <Button variant="ghost" className="text-xs" onClick={onConnectAccount}>Sign in again</Button> : null}
+          <Button variant="ghost" className="text-xs" onClick={() => void manageApps()} data-testid="coworker-connect-manage">Manage apps</Button>
         </div>
+        {openError ? <p role="alert" className="mt-2 text-xs text-rose">{openError}</p> : null}
       </section>
       {search}
       <RowList label="Connected with OpenWork" testId="apps-tools-connected">
@@ -1007,7 +1058,7 @@ function ConnectedScreen({
           id="connected-apps"
           icon={<AppsIcon />}
           title={APPS_TOOLS_CRUMBS.connectedApps.title}
-          status={connectApps.length === 0 ? (data.localLoaded ? "Nothing renders inline yet" : "Reading") : "Render right here in the panel"}
+          status={connectApps.length === 0 ? (data.localLoaded ? "No interactive apps available yet" : "Loading…") : "Open and use here"}
           count={connectApps.length}
           onOpen={() => onOpen(APPS_TOOLS_CRUMBS.connectedApps, "connected-apps")}
           testId="apps-tools-row-connected-apps"
@@ -1056,7 +1107,7 @@ function connectionsSummary(connections: ConnectConnection[]): string {
   const ready = connections.filter((connection) => connection.words.tone === "mint").length;
   const attention = connections.length - ready;
   if (attention === 0) return connections.length === 1 ? "Connected" : "All connected";
-  return `${ready} connected · ${attention} ${attention === 1 ? "needs" : "need"} you`;
+  return `${ready} connected · ${attention} ${attention === 1 ? "needs" : "need"} attention`;
 }
 
 function DetailHeader({ icon, title, line, status }: { icon: ReactNode; title: string; line: string; status?: PlainStatus }) {
@@ -1086,18 +1137,19 @@ function AppDetail({
   client,
   coworker,
   app,
-  onAssign,
+  onDiscuss,
   beside,
 }: {
   client: CoworkerMcpClient;
   coworker: CoworkerSummary;
   app: CatalogApp;
-  onAssign: (prompt: string) => void;
+  onDiscuss: (prompt: string) => void;
   /** Open this App in a column beside the conversation; null when the window is not wide enough. */
   beside: (() => void) | null;
 }) {
   const { catalog, server } = app;
   const [inputText, setInputText] = useState(catalog.requiresInput ? "{\n  \n}" : "{}");
+  const [advancedInput, setAdvancedInput] = useState(false);
   const [approvalArmed, setApprovalArmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -1162,9 +1214,14 @@ function AppDetail({
 
       {!resource ? (
         <section className="space-y-3 px-1">
-          {catalog.requiresInput ? (
+          {catalog.requiresInput ? <div className="space-y-2">
+            <p className="text-xs leading-relaxed text-mist">Describe what you need. {coworker.name} can work out the details this app needs.</p>
+            <Button variant="primary" className="w-full text-xs" disabled={!server.reachable} data-testid="apps-tools-ask" onClick={() => onDiscuss(`Help me use ${app.title} to: `)}>Ask {coworker.name} to use it</Button>
+            <button type="button" className="text-[11px] text-mist underline underline-offset-4 hover:text-snow" aria-expanded={advancedInput} data-testid="apps-tools-advanced-input" onClick={() => { setAdvancedInput((value) => !value); setApprovalArmed(false); }}>Advanced input</button>
+          </div> : null}
+          {catalog.requiresInput && advancedInput ? (
             <label className="block">
-              <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Input</span>
+              <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Input (JSON)</span>
               <textarea
                 className={`${inputClass} min-h-24 resize-y bg-panel font-mono text-[11px]`}
                 value={inputText}
@@ -1173,7 +1230,7 @@ function AppDetail({
               />
             </label>
           ) : null}
-          {catalog.requiresApproval && approvalArmed ? (
+          {!catalog.requiresInput || advancedInput ? catalog.requiresApproval && approvalArmed ? (
             <div className="rounded-xl border border-amber/30 bg-amber/5 p-3">
               <p className="text-xs font-medium text-snow">Let {app.title} run once?</p>
               <p className="mt-1 text-[11px] leading-relaxed text-mist">OpenWork will run it one time with the input above.</p>
@@ -1202,7 +1259,7 @@ function AppDetail({
                 </Button>
               ) : null}
             </ActionRow>
-          )}
+          ) : null}
         </section>
       ) : null}
 
@@ -1227,18 +1284,16 @@ function AppDetail({
         </div>
       ) : null}
       {error ? <Problem message={error} /> : null}
-      <div className="px-1">
+      {!catalog.requiresInput || resource ? <div className="px-1">
         <Button
           variant="ghost"
           className="w-full text-xs"
           data-testid="apps-tools-ask"
-          onClick={() => onAssign(
-            `Use the ${app.title} capability from ${app.serverLabel} for this task. Search connected capabilities first when needed, then execute the selected capability and summarize the result.`,
-          )}
+          onClick={() => onDiscuss(`Help me use ${app.title} to: `)}
         >
           Ask {coworker.name}
         </Button>
-      </div>
+      </div> : null}
       <div className="px-1">
         <TechnicalDetails entries={[
           { label: "Source", value: server.serverName },
@@ -1349,7 +1404,7 @@ function SkillDetail({ skill, coworkerName, onDiscuss, beside }: { skill: Connec
           variant="primary"
           className="text-xs"
           data-testid="apps-tools-ask"
-          onClick={() => onDiscuss(`Use the "${skill.title}" skill through OpenWork Connect: search capabilities for "${skill.title}" and follow the instructions you get back. I want to: `)}
+          onClick={() => onDiscuss(`Use the "${skill.title}" skill to help me with: `)}
         >
           Ask {coworkerName} to use it
         </Button>

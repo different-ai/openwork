@@ -261,6 +261,7 @@ describe("sendTurn", () => {
     const acceptance = await createClient(double).sendTurn(SESSION_ID, {
       prompt: "They also lost the receipt.",
       model: { providerId: "anthropic", modelId: "claude-sonnet-5" },
+      tools: { coworker_worker_spawn: false },
     });
 
     expect(acceptance).toEqual({
@@ -277,6 +278,7 @@ describe("sendTurn", () => {
     expect(double.requests[1]?.body).toEqual({
       parts: [{ type: "text", text: "They also lost the receipt." }],
       model: { providerID: "anthropic", modelID: "claude-sonnet-5" },
+      tools: { coworker_worker_spawn: false },
     });
   });
 

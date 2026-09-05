@@ -1,5 +1,6 @@
+import { useComposerDraft } from "@/ui/use-composer-draft";
 import { createHeadlessThreadClient, isRunning, type HeadlessThreadClient, type HeadlessTurnAcceptance } from "@openwork/headless-threads";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { coworkerBridge, type CoworkerGroupSummary, type CoworkerGroupTurn, type CoworkerSummary, type GroupTimelineEvent, type RuntimeInfo } from "@/lib/bridge";
 import { assignmentPrompt, assignmentTitle, timeLabelBetween, type DiscussionMessage } from "@/lib/conversation";
 import { combineSummaryLines, describeCoworkerSummary, type CoworkerSummaryLine } from "@/lib/coworker-summary";
@@ -193,7 +194,15 @@ export function GroupChat({
   onChooseModel,
   onOpenDetails,
   onOpenAssignment,
+  active = true,
+  introduction,
+  briefing,
+  onRememberFocus,
 }: {
+  active?: boolean;
+  introduction?: ReactNode;
+  briefing?: { enabled: boolean; context: string; request: { id: string; text: string } | null };
+  onRememberFocus?: (focus: string) => Promise<void>;
   group: CoworkerGroupSummary;
   coworkers: CoworkerSummary[];
   runtime: RuntimeInfo;
@@ -210,7 +219,7 @@ export function GroupChat({
 }) {
   const [events, setEvents] = useState<GroupTimelineEvent[]>([]);
   const [loaded, setLoaded] = useState(false);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useComposerDraft(`group:${group.id}`);
   const [live, setLive] = useState(() => Boolean(liveGroupRun(group.id)));
   const [liveTurn, setLiveTurn] = useState<CoworkerGroupTurn | null>(() => liveGroupRun(group.id)?.turn ?? null);
   const [queue, setQueue] = useState<QueuedGroupMessage[]>(() => queuedGroupMessages(group.id));
@@ -290,8 +299,8 @@ export function GroupChat({
   }, [events.length, liveTurn?.status, liveTurn?.speakers, queue.length]);
 
   useEffect(() => {
-    if (loaded) composerRef.current?.focus();
-  }, [loaded, group.id]);
+    if (loaded && active) composerRef.current?.focus();
+  }, [loaded, group.id, active]);
 
   /** The connected models, read through any workspace and kept for a minute. */
   async function connectedCatalog(threads: ReturnType<typeof createCoworkerThreads>): Promise<EngineModelCatalog> {
@@ -327,7 +336,7 @@ export function GroupChat({
     }
     run.abortCurrent = () => threads.client.abortThread(threadId);
     try {
-      const acceptance = await threads.client.sendTurn(threadId, { prompt, messageId: newId("msg"), signal });
+      const acceptance = await threads.client.sendTurn(threadId, { prompt: briefing ? `${briefing.context}\n\n${prompt}` : prompt, messageId: newId("msg"), signal });
       return { text: await settledReplyText(threads.client, threadId, acceptance, REPLY_TIMEOUT_MS, signal, coworker.name), threadId };
     } finally {
       if (run.abortCurrent) run.abortCurrent = null;
@@ -356,7 +365,7 @@ export function GroupChat({
       members: input.participants.map((participant) => ({ ...participant, busy: busy.has(participant.slug) })),
       recent: input.recent,
       earlierOrders: earlierSpeakerOrders(current.turns),
-      message: input.message,
+      message: briefing ? `${briefing.context}\n\nUser message: ${input.message}` : input.message,
       mentions: input.mentions,
       nameFor,
     });
@@ -454,12 +463,48 @@ export function GroupChat({
     await settleRun();
   }
 
-  function send(): void {
+  const briefingRef = useRef(briefing);
+  briefingRef.current = briefing;
+  const startTurnRef = useRef(startTurn);
+  startTurnRef.current = startTurn;
+  const handledRequest = useRef("");
+  useEffect(() => {
+    const request = briefing?.request;
+    if (!loaded || live || members.length < 2 || !request || handledRequest.current === request.id) return;
+    handledRequest.current = request.id;
+    void startTurnRef.current(request.text, request.id);
+  }, [briefing?.request, loaded, live, members.length]);
+  useEffect(() => {
+    if (!loaded || !briefing?.enabled || members.length < 2) return;
+    let checking = false;
+    let cancelled = false;
+    async function tick() {
+      if (checking || liveGroupRun(group.id)) return;
+      checking = true;
+      try {
+        const due = await coworkerBridge.allHands.claim();
+        if (due && !cancelled && briefingRef.current?.enabled) {
+          await startTurnRef.current("Give us our All Hands briefing: what changed, what needs my decision, and the most useful next step. Use current evidence, name the source and time, and say when information is missing. Only relevant coworkers should contribute. This briefing is read-only: propose actions without executing them.", due.id);
+        }
+      } catch (cause) { if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause)); }
+      finally { checking = false; }
+    }
+    void tick();
+    const timer = window.setInterval(() => void tick(), 30_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [loaded, briefing?.enabled, group.id, members.length]);
+
+  async function send(): Promise<void> {
     const text = message.trim();
     if (!text) return;
     if (members.length < 2) {
       setError("A group chat needs at least two coworkers who are still here.");
       return;
+    }
+    const focus = /^(?:\/focus\s+|focus on\s+)([\s\S]+)$/i.exec(text);
+    if (focus?.[1] && onRememberFocus) {
+      try { await onRememberFocus(focus[1]); }
+      catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); return; }
     }
     setError("");
     setFailedSend(null);
@@ -611,9 +656,9 @@ export function GroupChat({
           <ActionMenu
             label="Group chat options"
             items={[
-              { label: "Rename", onSelect: () => { setNameDraft(group.name); setRenaming(true); } },
+              ...(!briefing ? [{ label: "Rename", onSelect: () => { setNameDraft(group.name); setRenaming(true); } }] : []),
               ...(onOpenDetails ? [{ label: "Group details", onSelect: onOpenDetails }] : []),
-              { label: "Archive", tone: "danger", disabled: live, onSelect: () => void coworkerBridge.groups.archive(group.id).then(onGroupArchived) },
+              ...(!briefing ? [{ label: "Archive", tone: "danger" as const, disabled: live, onSelect: () => void coworkerBridge.groups.archive(group.id).then(onGroupArchived) }] : []),
             ]}
           />
         </div>
@@ -624,7 +669,8 @@ export function GroupChat({
       </header>
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
         <div className="mx-auto max-w-3xl space-y-3">
-          {loaded && events.length === 0 ? (
+          {introduction}
+          {loaded && events.length === 0 && !introduction ? (
             <div className="mx-auto flex h-full max-w-md flex-col items-center justify-center py-10 text-center" data-testid="group-chat-empty">
               <GroupAvatars members={members} size={40} />
               <p className="mt-3 text-sm font-semibold text-snow">{group.name}</p>

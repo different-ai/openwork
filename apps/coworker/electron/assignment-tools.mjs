@@ -340,7 +340,7 @@ export function createAssignmentToolHandlers(deps) {
         lines.push(`Renamed assignment "${before.name}" to "${updated.name}"`);
       } else lines.push(`Changed assignment "${updated.name}"`);
       if (updated.state === "active") lines.push(updated.nextDueAt ? `Next run: ${describeMoment(updated.nextDueAt)}` : "No next run is due yet.");
-      else lines.push("It is paused: nothing runs until it is resumed.");
+      else lines.push("Future scheduled runs are paused. A queued or running run can still finish, and Run now remains available.");
       lines.push(`Id: ${updated.id}`);
       return { text: lines.join("\n"), structured: { assignment: assignmentCard(updated, { action, previousName: before.name }) } };
     },

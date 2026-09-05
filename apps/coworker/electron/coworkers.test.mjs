@@ -216,7 +216,7 @@ test("the coworker contract decides the shape of an answer once: reply, document
   assert.match(agents, /\*\*A goal that outlives one reply\.\*\*[\s\S]*`worker_spawn` "Ticket themes"/);
   assert.match(agents, /\*\*Quick factual question\.\*\*[\s\S]*Before: a document titled "Vendor call"/);
   // The contract is versioned so every existing coworker picks the rule up on its next launch.
-  assert.equal(AGENTS_CONTRACT_VERSION, 8);
+  assert.equal(AGENTS_CONTRACT_VERSION, 9);
 });
 
 test("the coworker contract says how it decides: act when clear and reversible, ask once with options, state assumptions and confidence, confirm the irreversible", () => {

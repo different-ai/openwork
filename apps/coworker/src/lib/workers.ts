@@ -256,7 +256,7 @@ export function describeReview(review: WorkerReview): string {
 // ---------------------------------------------------------------------------
 // The coworker's Worker tools as the transcript shows them (`coworker_worker_spawn` …).
 
-const WORKER_TOOLS = new Set(["workers_list", "worker_spawn", "worker_steer", "worker_cancel", "worker_findings"]);
+const WORKER_TOOLS = new Set(["workers_list", "worker_spawn", "worker_steer", "worker_pause", "worker_resume", "worker_cancel", "worker_findings"]);
 
 /** `coworker_worker_spawn` → `worker_spawn`; empty for any other tool. */
 export function workerToolName(tool: string): string {
@@ -305,6 +305,10 @@ export function describeWorkerToolStep(
       return { label: workerName ? `Steered ${workerName}` : "Steered a Worker", doing: workerName ? `steering ${workerName}` : "steering a Worker" };
     case "worker_cancel":
       return { label: workerName ? `Stopped ${workerName}` : "Stopped a Worker", doing: workerName ? `stopping ${workerName}` : "stopping a Worker" };
+    case "worker_pause":
+      return { label: workerName ? `Paused ${workerName}` : "Paused a Worker", doing: workerName ? `pausing ${workerName}` : "pausing a Worker" };
+    case "worker_resume":
+      return { label: workerName ? `Resumed ${workerName}` : "Resumed a Worker", doing: workerName ? `resuming ${workerName}` : "resuming a Worker" };
     default:
       return { label: workerName ? `Read ${workerName}'s findings` : "Read a Worker's findings", doing: "reading a Worker's findings" };
   }

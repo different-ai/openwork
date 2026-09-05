@@ -14,6 +14,10 @@
   --color-rose: #f5759d;
 }
 
+:root {
+  color-scheme: dark;
+}
+
 html,
 body,
 #root {
@@ -45,7 +49,7 @@ body.is-resizing-panel * {
 .window-shell {
   position: relative;
   isolation: isolate;
-  background: rgb(8 11 17 / 0.92);
+  background: var(--window-surface, #090c12);
 }
 
 .window-shell::before {
@@ -58,27 +62,73 @@ body.is-resizing-panel * {
 }
 
 .glass-rail {
-  background: rgb(7 10 15 / 0.7);
-  -webkit-backdrop-filter: blur(38px) saturate(145%);
-  backdrop-filter: blur(38px) saturate(145%);
+  background: var(--rail-surface, #090c12);
 }
 
 .glass-main {
-  background: rgb(9 12 18 / 0.69);
-  -webkit-backdrop-filter: blur(28px) saturate(130%);
-  backdrop-filter: blur(28px) saturate(130%);
+  background: var(--color-ink);
 }
 
 .glass-context {
-  background: rgb(12 16 24 / 0.76);
-  -webkit-backdrop-filter: blur(34px) saturate(140%);
-  backdrop-filter: blur(34px) saturate(140%);
+  background: #0c1018;
 }
 
 .glass-header {
   background: rgb(255 255 255 / 0.018);
-  -webkit-backdrop-filter: blur(26px) saturate(135%);
-  backdrop-filter: blur(26px) saturate(135%);
+  box-shadow: inset 0 1px rgb(255 255 255 / 0.025);
+}
+
+/* The OS blurs the desktop once. Keep scrolling conversation layers off the
+   backdrop compositor and expose the material only through the surrounding chrome. */
+:root:is([data-window-material="vibrancy"], [data-window-material="mica"]) {
+  --window-surface: rgb(8 11 17 / 0.64);
+  --rail-surface: rgb(7 10 15 / 0.28);
+}
+
+:root[data-window-focused="false"] {
+  --window-surface: rgb(8 11 17 / 0.88);
+  --rail-surface: rgb(7 10 15 / 0.5);
+}
+
+.window-shell,
+.glass-rail,
+.glass-header {
+  transition: background-color 160ms ease-out, box-shadow 160ms ease-out;
+}
+
+/* Missing native support and accessibility preferences use the same solid palette. */
+:root[data-window-material="none"] {
+  --window-surface: #090c12;
+  --rail-surface: #090c12;
+}
+
+:root[data-window-material="none"] :is(.creation-card, .onboarding-launcher) {
+  background: var(--color-panel);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more), (forced-colors: active) {
+  :root {
+    --window-surface: #090c12 !important;
+    --rail-surface: #090c12 !important;
+  }
+
+  :root :is(.creation-card, .onboarding-launcher) {
+    background: var(--color-panel);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .window-shell,
+  .window-shell *,
+  .window-shell *::before,
+  .window-shell *::after {
+    transition-duration: 0s !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 .creation-card {

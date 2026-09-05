@@ -176,11 +176,15 @@ test("the Workers view speaks plain words: no sub-agents, sessions, threads, slo
 test("the coworker's Worker tool calls read as receipts that name the Worker", () => {
   assert.equal(workerToolName("coworker_worker_spawn"), "worker_spawn");
   assert.equal(workerToolName("WORKERS_LIST"), "workers_list");
+  assert.equal(workerToolName("coworker_worker_pause"), "worker_pause");
+  assert.equal(workerToolName("coworker_worker_resume"), "worker_resume");
   assert.equal(workerToolName("coworker_document_create"), "");
   const kept = { output: { content: [], structuredContent: { worker: { id: "wrk_a", name: "Market scan", action: "started" } } }, metadata: {} };
   assert.deepEqual(describeWorkerToolStep("worker_spawn", { input: { name: "typed name" }, ...kept }), { label: "Started a Worker · Market scan", doing: "starting a Worker" });
   assert.deepEqual(describeWorkerToolStep("worker_spawn", { input: { name: "Inbox watch" }, output: undefined, metadata: {} }), { label: "Started a Worker · Inbox watch", doing: "starting a Worker" });
   assert.deepEqual(describeWorkerToolStep("worker_steer", { input: { id: "wrk_a" }, ...kept }), { label: "Steered Market scan", doing: "steering Market scan" });
+  assert.deepEqual(describeWorkerToolStep("worker_pause", kept), { label: "Paused Market scan", doing: "pausing Market scan" });
+  assert.deepEqual(describeWorkerToolStep("worker_resume", kept), { label: "Resumed Market scan", doing: "resuming Market scan" });
   assert.deepEqual(describeWorkerToolStep("worker_cancel", { input: { id: "wrk_a" }, output: undefined, metadata: {} }), { label: "Stopped a Worker", doing: "stopping a Worker" });
   assert.deepEqual(describeWorkerToolStep("worker_findings", { input: { id: "wrk_a" }, ...kept }), { label: "Read Market scan's findings", doing: "reading a Worker's findings" });
   assert.deepEqual(describeWorkerToolStep("workers_list", { input: {}, output: undefined, metadata: {} }), { label: "Looked over its Workers", doing: "looking over its Workers" });

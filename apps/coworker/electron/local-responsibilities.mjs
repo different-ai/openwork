@@ -138,11 +138,12 @@ async function mutateStore(coworkersDir, slug, change) {
     if (changed) await writeStore(coworkersDir, slug, next);
     return result;
   });
-  storeLocks.set(key, run.then(() => undefined, () => undefined));
+  const tail = run.then(() => undefined, () => undefined);
+  storeLocks.set(key, tail);
   try {
     return await run;
   } finally {
-    if (storeLocks.get(key) === run) storeLocks.delete(key);
+    if (storeLocks.get(key) === tail) storeLocks.delete(key);
   }
 }
 
@@ -321,6 +322,7 @@ export async function beginLocalResponsibilityRun(
     const current = items[index];
     const startedAt = Math.max(0, Math.floor(now));
     const queued = runId ? current.runs.find((candidate) => candidate.id === runId && candidate.status === "queued") : null;
+    if (runId && !queued) throw new Error("This queued run was cancelled or has already started.");
     const run = {
       id: queued?.id ?? randomUUID(),
       status: "running",

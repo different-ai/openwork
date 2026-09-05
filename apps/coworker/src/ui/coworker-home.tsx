@@ -520,10 +520,6 @@ export function CoworkerHome({
               connect={connect}
               onRepairConnect={onRepairConnect}
               onConnectAccount={onConnectAccount}
-              onAssign={(text) => {
-                setAssignmentDraft({ id: Date.now(), text });
-                setBesidePath(null);
-              }}
               onDiscuss={(text) => {
                 setDiscussionDraft({ id: Date.now(), text });
                 setBesidePath(null);
@@ -683,10 +679,6 @@ export function CoworkerHome({
               connect={connect}
               onRepairConnect={onRepairConnect}
               onConnectAccount={onConnectAccount}
-              onAssign={(text) => {
-                setAssignmentDraft({ id: Date.now(), text });
-                nav.toRoot("overview");
-              }}
               onDiscuss={(text) => {
                 setDiscussionDraft({ id: Date.now(), text });
                 nav.toRoot("overview");
