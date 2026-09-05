@@ -104,7 +104,10 @@ test("v2 refreshes OpenWork skill instructions just in time in an existing conve
   expect((await request(desktop, `${entryPath}/openwork.context`, "PUT", { value: "replace the server instructions" })).status).toBe(403);
   expect((await request(desktop, `${root}/skills/${skillName}`, "DELETE")).status).toBe(200);
   await turn("removed", false);
+  const nativeAfterRemoval = await request(desktop, `${v2}/api/skill`);
+  expect(nativeAfterRemoval.status).toBe(200);
+  expect(JSON.stringify(nativeAfterRemoval.json)).not.toContain(skillName);
   expect((await request(desktop, `${root}/skills/${skillName}`)).status).toBe(404);
   expect((await request(desktop, `${root}/opencode/global/health`)).status).toBe(200);
-  evidence.recordAssertionEvidence("updates replace the native entry and removals disappear without engine restart", "The next read returned the second content nonce. Deletion removed the skill from the single managed instruction entry and the real skill endpoint returned 404. All four turns used the original session and v2 pid; direct instruction replacement was denied and v1 remained healthy.", true);
+  evidence.recordAssertionEvidence("updates replace the native entry and removals disappear without engine restart", "The next read returned the second content nonce. Deletion removed the skill from the native v2 catalog and the single managed instruction entry; the real skill endpoint returned 404. All four turns used the original session and v2 pid; direct instruction replacement was denied and v1 remained healthy.", true);
 });

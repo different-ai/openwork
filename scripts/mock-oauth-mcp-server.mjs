@@ -224,8 +224,9 @@ function offeredAgentTool(body, wanted) {
     ?? null;
 }
 
-function skillCatalogArguments(messages, _body, _toolName, skillName) {
+function skillCatalogArguments(messages, skillName) {
   const system = messages.filter((message) => message.role === "system").map(messageContentText).join("\n");
+  if (!system.includes("You are OpenWork.")) throw new Error("The model did not receive OpenWork operating instructions");
   const entries = [...system.matchAll(/<skill>([\s\S]*?)<\/skill>/g)];
   const entry = entries.reverse().find((match) => match[1].includes(`<name>${skillName}</name>`));
   const id = entry?.[1].match(/<id>([^<]+)<\/id>/)?.[1];
@@ -369,7 +370,7 @@ async function handleAgentCompletion(req, res, entry) {
     return;
   }
   const toolArguments = step.argumentsFrom === "computer-mention" ? computerMentionArguments(messages)
-    : step.argumentsFrom === "skill-catalog" ? skillCatalogArguments(messages, body, toolName, step.arguments.skill) : step.arguments;
+    : step.argumentsFrom === "skill-catalog" ? skillCatalogArguments(messages, step.arguments.skill) : step.arguments;
   const callId = `call_${workload.promptMarker.replace(/[^a-zA-Z0-9_-]/g, "_")}_${completedTools + 1}`;
   entry.agentCompletion = {
     ...baseRequest,
