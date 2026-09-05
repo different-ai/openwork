@@ -305,6 +305,20 @@ test("create, preview, save and reopen an app without changing already-open resu
   });
   expect(privateSave.response.status, privateSave.text).toBe(200);
 
+  const companionBuilt = await world.rpc("save_artifact_view", {
+    configObjectId: world.configObjectId, title: "Briefing companion", reactSource: 'export default function Companion({data}) { return <p>{data.topic}</p> }',
+  });
+  const companionView = record(record(companionBuilt.structuredContent).view);
+  const companionAppId = field(companionView, "id");
+  if (!Array.isArray(companionView.revisions)) throw new Error("Companion app has no revisions");
+  const companionSave = await seed.api(world.den.admin, `/v1/apps/${companionAppId}/save`, {
+    method: "POST", body: JSON.stringify({ revisionId: field(companionView.revisions[0], "id"), title: "Briefing companion", useInWorkflow: false, expectedActiveRevisionId: null }),
+  });
+  expect(companionSave.response.status, companionSave.text).toBe(200);
+  const unpinCompanion = await seed.api(world.den.admin, `/v1/apps/${companionAppId}/dashboard`, { method: "POST", body: JSON.stringify({ added: false }) });
+  expect(unpinCompanion.response.status, unpinCompanion.text).toBe(200);
+  expect((await probe.api(colleague, `/v1/apps/${companionAppId}`)).response.status).toBe(403);
+
   await step("share dashboard apps with a teammate", async () => {
     await world.open("/dashboard");
     await user.click({ role: "button", label: "Share" });
@@ -327,15 +341,21 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.see({ text: `Shared 1 app with ${colleague.email}. They’ll appear when your teammate opens or reloads their dashboard.` }, { timeoutMs: 30_000 });
     const sharedApp = await probe.api(colleague, `/v1/apps/${appId}`);
     expect(sharedApp.response.status, sharedApp.text).toBe(200);
-    expect(sharedApp.body).toMatchObject({ onDashboard: true, canManage: false, view: { id: appId } });
+    expect(sharedApp.body).toMatchObject({ onDashboard: true, canManage: false, view: { id: appId }, payload: { data: { topic: "Next week’s briefing" } } });
+    const sharedWorkflow = await probe.api(colleague, `/v1/workflows/${world.configObjectId}`);
+    expect(sharedWorkflow.response.status, sharedWorkflow.text).toBe(200);
+    const companion = await probe.api(colleague, `/v1/apps/${companionAppId}`);
+    expect(companion.response.status, companion.text).toBe(200);
+    expect(companion.body).toMatchObject({ onDashboard: false, canManage: false, view: { id: companionAppId }, payload: { data: { topic: "Next week’s briefing" } } });
     const repeat = await seed.api(world.den.admin, `/v1/apps/${appId}/share`, {
       method: "POST", body: JSON.stringify({ email: colleague.email }),
     });
     expect(repeat.response.status, repeat.text).toBe(200);
     const listed = record((await probe.api(colleague, "/v1/apps")).body).items;
-    expect(listed).toHaveLength(1);
+    expect(listed).toHaveLength(2);
     if (!Array.isArray(listed)) throw new Error("Expected the recipient app list");
-    expect(record(record(listed[0]).view).id).toBe(appId);
+    expect(listed.map((item) => field(record(item).view, "id")).sort()).toEqual([appId, companionAppId].sort());
+    expect(listed.filter((item) => record(item).onDashboard)).toHaveLength(1);
     expect((await probe.api(colleague, `/v1/apps/${privateAppId}`)).response.status).toBe(403);
     expect((await probe.api(colleague, `/v1/workflows/${privateWorkflowId}`)).response.status).toBe(403);
     expect((await probe.api(world.den.admin, `/v1/apps/${privateAppId}`)).body).toMatchObject({ onDashboard: true, canManage: true });
@@ -349,7 +369,10 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.click("Done");
   });
   evidence.recordAssertionEvidence("Dashboard Share grants a teammate view access and adds the selected app to their dashboard", "Cancel and an unknown email left the app private. Sharing made one saved app visible on the recipient dashboard without manager access; repeat sharing did not duplicate it, the unchecked app and its separate workflow remained private, viewers could not reshare, and company dashboards stayed unchanged.", true);
+  evidence.recordAssertionEvidence("Sharing includes the workflow, saved results, and sibling apps without adding every sibling to the dashboard", "The recipient could read the workflow and the latest saved result in both the selected app and its previously inaccessible companion. Both appeared in the accessible app list, but only the selected app was on their dashboard; the separate private workflow stayed inaccessible.", true);
 
+  const cleanupCompanion = await seed.api(world.den.admin, `/v1/artifact-views/${companionAppId}/retire`, { method: "POST" });
+  expect(cleanupCompanion.response.status, cleanupCompanion.text).toBe(200);
   const cleanupPrivate = await seed.api(world.den.admin, `/v1/artifact-views/${privateAppId}/retire`, { method: "POST" });
   expect(cleanupPrivate.response.status, cleanupPrivate.text).toBe(200);
 
