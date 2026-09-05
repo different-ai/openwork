@@ -60,7 +60,8 @@ test("runtime MCP synchronization preserves captured and in-flight tools, then a
   }
   const changedSession = await world.engine("POST", "/session", {});
   if (!isRecord(changedSession) || typeof changedSession.id !== "string") throw new Error("Session id missing");
-  await world.engine("POST", `/session/${changedSession.id}/prompt_async`, {
+  const changedId = changedSession.id;
+  await world.engine("POST", `/session/${changedId}/prompt_async`, {
     model: { providerID: "mock", modelID: "mock" },
     parts: [{ type: "text", text: "Check the connection." }],
   });
@@ -71,7 +72,7 @@ test("runtime MCP synchronization preserves captured and in-flight tools, then a
   expect(world.requests().filter((request) => request.method === "tools/call").at(-1)?.revision).toBe("changed");
   await eventually(() => world.engine("GET", "/session/status"), {
     within: 10_000, label: "changed connection task finishes before recovery",
-    until: (statuses) => isRecord(statuses) && (!isRecord(statuses[String(changedSession.id)]) || statuses[String(changedSession.id)].type === "idle"),
+    until: (statuses) => isRecord(statuses) && (!isRecord(statuses[changedId]) || statuses[changedId].type === "idle"),
   });
   evidence.recordAssertionEvidence(
     "The replacement receives and uses the changed configuration",
