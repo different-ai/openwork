@@ -830,11 +830,28 @@ async function clickSessionRow(app: Surface, chat: Chat): Promise<void> {
 }
 
 async function waitForSessionRow(app: Surface, chat: Chat): Promise<void> {
-  await pollExpression(app, `(() => {
+  // Expansion is untimed setup: the metric starts at the target task click.
+  await evalIn(app, `(() => {
+    const group = document.querySelector(${JSON.stringify(`[data-sidebar-workspace-id="${chat.workspaceId}"]`)});
+    const expand = group?.querySelector('button[aria-label="Expand"][aria-expanded="false"]');
+    if (expand instanceof HTMLElement) expand.click();
+  })()`);
+  try {
+    await pollExpression(app, `(() => {
     const row = document.querySelector(${JSON.stringify(`[data-sidebar-session-id="${chat.sessionId}"][data-sidebar-session-workspace-id="${chat.workspaceId}"]`)});
     return row instanceof HTMLElement
       && row.querySelector(${JSON.stringify(`[data-session-tab-id="${chat.sessionId}"]`)}) instanceof HTMLElement;
-  })()`, `sidebar row for ${chat.title}`, 10_000);
+    })()`, `sidebar row for ${chat.title}`, 10_000);
+  } catch (error) {
+    const facts = await evalIn(app, `({
+      route: window.location.hash,
+      targetWorkspace: document.querySelector(${JSON.stringify(`[data-sidebar-workspace-id="${chat.workspaceId}"]`)})?.innerText,
+      rows: [...document.querySelectorAll('[data-sidebar-session-id]')].map((row) => ({
+        session: row.getAttribute('data-sidebar-session-id'), workspace: row.getAttribute('data-sidebar-session-workspace-id'),
+      })),
+    })`);
+    throw new Error(`${error instanceof Error ? error.message : String(error)}; sidebar facts: ${JSON.stringify(facts)}`);
+  }
 }
 
 async function waitForChatSurface(app: Surface, chat: Chat): Promise<void> {
