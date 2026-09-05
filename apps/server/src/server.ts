@@ -660,7 +660,7 @@ function isUnavailableLogOutputError(error: unknown): boolean {
   // Redirected stdout can run out of space just like the optional file sink.
   // Logging must not turn an otherwise successful request into a server crash.
   return error.code === "EPIPE" || error.code === "ERR_STREAM_DESTROYED"
-    || error.code === "ENOSPC" || error.code === "EDQUOT";
+    || error.code === "ENOSPC" || error.code === "EDQUOT" || error.code === "EIO";
 }
 
 let stdoutLogWritesDisabled = false;
