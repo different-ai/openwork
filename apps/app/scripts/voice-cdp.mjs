@@ -1,44 +1,16 @@
-import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { promisify } from "node:util";
-
-const execFileAsync = promisify(execFile);
-
 const args = parseArgs(process.argv.slice(2));
 const cdpUrl = args.cdpUrl ?? process.env.CDP_URL ?? "http://127.0.0.1:9825";
 const mode = args.mode ?? "preflight";
-const text = args.text ?? "Open extension settings.";
-const expectRoute = args.expectRoute ?? "";
 const requireAudioPermission = args.requireAudioPermission === true;
 
 async function main() {
+  if (mode !== "preflight") throw new Error("Legacy transcript/audio injection was retired. Run pnpm evals:e2e voice-conversation for deterministic integration evidence, or use Start voice for a live microphone check.");
   const target = await pickTarget(cdpUrl);
   const client = await connectCdp(target.webSocketDebuggerUrl);
 
   try {
     await waitFor(client, "Boolean(window.__openworkControl)", 15000);
-    const preflight = await runPreflight(client);
-    if (mode === "preflight") {
-      console.log(JSON.stringify(preflight, null, 2));
-      return;
-    }
-
-    await ensureVoicePanel(client);
-
-    if (mode === "transcript" || mode === "full") {
-      const transcript = await executeControl(client, "voice.inject_transcript", { text });
-      console.log(JSON.stringify({ step: "transcript", result: transcript }, null, 2));
-    }
-
-    if (mode === "audio" || mode === "full") {
-      const pcm16Base64 = await synthesizePcm16Base64(text);
-      const audio = await executeControl(client, "voice.inject_audio", { pcm16Base64 });
-      console.log(JSON.stringify({ step: "audio", result: audio }, null, 2));
-      const proof = await collectProof(client, expectRoute);
-      console.log(JSON.stringify({ step: "proof", result: proof }, null, 2));
-    }
+    console.log(JSON.stringify(await runPreflight(client), null, 2));
   } finally {
     client.close();
   }
@@ -49,9 +21,7 @@ function parseArgs(values) {
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
     if (value === "--mode") parsed.mode = values[++index];
-    else if (value === "--text") parsed.text = values[++index];
     else if (value === "--cdp-url") parsed.cdpUrl = values[++index];
-    else if (value === "--expect-route") parsed.expectRoute = values[++index];
     else if (value === "--require-audio-permission") parsed.requireAudioPermission = true;
   }
   return parsed;
@@ -63,7 +33,9 @@ async function runPreflight(client) {
   const actions = controlReady
     ? await evaluate(client, "window.__openworkControl.listActions().map((action) => action.id)")
     : [];
-  const media = await evaluate(client, `(${mediaPreflight.toString()})()`, true);
+  const media = requireAudioPermission
+    ? await evaluate(client, `(${mediaPreflight.toString()})()`, true)
+    : { audio: { checked: false }, video: { checked: false } };
 
   const result = {
     ok: true,
@@ -97,96 +69,6 @@ async function mediaPreflight() {
     audio: await request({ audio: true }),
     video: await request({ video: true }),
   };
-}
-
-async function ensureVoicePanel(client) {
-  await evaluate(client, "window.__openworkControl.setEnabled(true)");
-  await evaluate(client, "window.localStorage.setItem('openwork.extension.enabled.openwork-voice', '1'); window.dispatchEvent(new CustomEvent('openwork:extension-state-changed', { detail: { id: 'openwork-voice', enabled: true } }))");
-  let actions = await evaluate(client, "window.__openworkControl.listActions().map((action) => action.id)");
-  if (actions.includes("voice.inject_audio")) return;
-  if (actions.includes("voice.panel.open")) {
-    await executeControl(client, "voice.panel.open");
-    await waitFor(client, "window.__openworkControl.listActions().some((action) => action.id === 'voice.inject_audio')", 8000);
-    return;
-  }
-  throw new Error(`Voice panel actions are not registered. Open a session and enable Voice Mode first. Voice actions: ${actions.filter((id) => id.startsWith("voice.")).join(", ")}`);
-}
-
-async function collectProof(client, expectedRoute) {
-  const started = Date.now();
-  let proof = null;
-  while (true) {
-    proof = await readProof(client);
-    const routeMatched = expectedRoute && proof.href.includes(expectedRoute);
-    const acted = proof.narration.includes("Done:") || proof.narration.includes("Running");
-    if (routeMatched || (!expectedRoute && acted)) return { ...proof, elapsedMs: Date.now() - started };
-    if (Date.now() - started >= 60000) break;
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-  }
-  return { ...proof, elapsedMs: Date.now() - started, timedOut: true };
-}
-
-async function readProof(client) {
-  return evaluate(client, `({
-    href: location.href,
-    narration: window.__openworkControl?.snapshot?.().narration ?? "",
-    route: window.__openworkControl?.snapshot?.().route ?? "",
-    bodyText: document.body.innerText.slice(-2400),
-  })`);
-}
-
-async function executeControl(client, actionId, actionArgs = undefined) {
-  const expression = `window.__openworkControl.execute(${JSON.stringify(actionId)}, ${JSON.stringify(actionArgs)})`;
-  const result = await evaluate(client, expression, true);
-  if (!result?.ok) throw new Error(`Control action failed: ${actionId}: ${result?.error ?? "unknown error"}`);
-  return result;
-}
-
-async function synthesizePcm16Base64(input) {
-  const ffmpeg = await requireCommand("ffmpeg", "ffmpeg is required for generated voice audio. On Daytona/Linux install it with: apt-get update && apt-get install -y ffmpeg espeak-ng");
-  const tts = await findTtsCommand();
-  const dir = await mkdtemp(join(tmpdir(), "openwork-voice-cdp-"));
-  const source = join(dir, "speech.wav");
-  const pcm = join(dir, "speech.pcm");
-
-  try {
-    if (tts.kind === "say") {
-      const aiff = join(dir, "speech.aiff");
-      await execFileAsync(tts.command, ["-v", "Samantha", "-o", aiff, input]);
-      await execFileAsync(ffmpeg, ["-y", "-i", aiff, "-ac", "1", "-ar", "24000", "-f", "s16le", pcm]);
-    } else {
-      await execFileAsync(tts.command, ["-w", source, input]);
-      await execFileAsync(ffmpeg, ["-y", "-i", source, "-ac", "1", "-ar", "24000", "-f", "s16le", pcm]);
-    }
-    return (await readFile(pcm)).toString("base64");
-  } finally {
-    await rm(dir, { force: true, recursive: true });
-  }
-}
-
-async function findTtsCommand() {
-  const say = await commandPath("say");
-  if (say) return { kind: "say", command: say };
-  const espeakNg = await commandPath("espeak-ng");
-  if (espeakNg) return { kind: "espeak", command: espeakNg };
-  const espeak = await commandPath("espeak");
-  if (espeak) return { kind: "espeak", command: espeak };
-  throw new Error("No TTS command found. On Daytona/Linux install one with: apt-get update && apt-get install -y espeak-ng ffmpeg");
-}
-
-async function requireCommand(command, message) {
-  const found = await commandPath(command);
-  if (!found) throw new Error(message);
-  return found;
-}
-
-async function commandPath(command) {
-  try {
-    const { stdout } = await execFileAsync("which", [command]);
-    return stdout.trim() || null;
-  } catch {
-    return null;
-  }
 }
 
 async function pickTarget(baseUrl) {

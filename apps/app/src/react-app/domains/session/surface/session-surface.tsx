@@ -24,7 +24,6 @@ import type {
 import type {
   ComposerAttachment,
   ComposerDraft,
-  ComposerPart,
   McpServerEntry,
   McpStatusMap,
   ModelRef,
@@ -48,12 +47,10 @@ import { ReactSessionComposer } from "./composer/composer";
 import { useSessionModelSelection } from "./session-model-store";
 import type { ProviderCatalog } from "./use-model-behavior";
 import type { ModelAvailability } from "./model-availability";
-import { isComputerTarget } from "./composer/computer-mentions";
-import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./composer/mention-encoding";
+import { buildComposerDraft } from "./composer/build-draft";
+import { encodeComposerMentionValue, type ComposerMentionKind } from "./composer/mention-encoding";
 import { desktopBridge, openDesktopUrl } from "@/app/lib/desktop";
-import { parseSlashCommandInvocation } from "./composer/slash-command";
-import { connectSkillPrompt, parseConnectSkillToken } from "./composer/connect-skill-token";
-import { createPastedTextChip, resolvePastedTextPlaceholders } from "./composer/pasted-text";
+import { createPastedTextChip } from "./composer/pasted-text";
 import {
   canAdmitNextQueuedItem,
   claimQueuedSend,
@@ -1720,64 +1717,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
   }, [props.sessionId, snapshotQuery.refetch]);
   useControlAction(props.isControlTarget ? failSessionSnapshotControlAction : null);
 
-  const buildDraft = useCallback((text: string, nextAttachments: ComposerAttachment[]): ComposerDraft => {
-    const parts: ComposerPart[] = text.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|@[^\s@]+)/).flatMap((segment, index, segments) => {
-      if (!segment) return [] as ComposerDraft["parts"];
-      const attachmentMatch = segment.match(/^\[attachment (.+)\]$/);
-      if (attachmentMatch) {
-        // Attachment chips are visual tokens only; bytes travel via draft.attachments.
-        return [] as ComposerDraft["parts"];
-      }
-      const pasteMatch = segment.match(/^\[pasted text (.+)\]$/);
-      if (pasteMatch) {
-        const target = pasteParts.find((item) => item.label === pasteMatch[1]);
-        if (target) {
-          return [{ type: "paste", id: target.id, label: target.label, text: target.text, lines: target.lines } satisfies ComposerDraft["parts"][number]];
-        }
-      }
-      const connectSkill = parseConnectSkillToken(segment);
-      if (connectSkill) {
-        return [{ type: "text", text: connectSkillPrompt(connectSkill) } satisfies ComposerDraft["parts"][number]];
-      }
-      const skillMatch = segment.match(/^\[skill (.+)\]$/);
-      if (skillMatch?.[1]) {
-        return [{ type: "skill", name: skillMatch[1] } satisfies ComposerDraft["parts"][number]];
-      }
-      if (segment.startsWith("@")) {
-        const value = decodeComposerMentionValue(segment.slice(1));
-        const kind = mentions[value];
-        if (isComputerTarget(value) && (!kind || kind === "computer") && (index <= 1 && !segments[0] || /\s$/.test(segments[index - 1] ?? ""))) {
-          return [{ type: "computer", target: value } satisfies ComposerDraft["parts"][number]];
-        }
-        if (kind === "agent") return [{ type: "agent", name: value } satisfies ComposerDraft["parts"][number]];
-        if (kind === "file") return [{ type: "file", path: value, label: value } satisfies ComposerDraft["parts"][number]];
-        if (kind === "app") return [{ type: "app", name: value } satisfies ComposerDraft["parts"][number]];
-      }
-      return [{ type: "text", text: segment } satisfies ComposerDraft["parts"][number]];
-    });
-    // Expand paste placeholders in resolvedText so the model receives
-    // the actual pasted content instead of "[pasted text <label>]".
-    let resolved = resolvePastedTextPlaceholders(text, pasteParts);
-    resolved = resolved.replace(/\[attachment [^\]]+\]/g, "");
-    resolved = resolved.replace(/\[connect-skill [^\]]+\]/g, (match) => {
-      const token = parseConnectSkillToken(match);
-      return token ? connectSkillPrompt(token) : match;
-    });
-    resolved = resolved.replace(/\[skill ([^\]]+)\]/g, (_match, name: string) => `the \"${name}\" skill`);
-    for (const value of Object.keys(mentions)) {
-      resolved = resolved.replaceAll(`@${encodeComposerMentionValue(value)}`, `@${value}`);
-    }
-    const slashCommand = parseSlashCommandInvocation(resolved);
-    return {
-      mode: "prompt",
-      parts,
-      attachments: nextAttachments,
-      text,
-      resolvedText: resolved,
-      command: slashCommand ?? undefined,
-      revertMessageId: getComposerRevertMessageId(useComposerStateStore.getState(), props.sessionId) ?? undefined,
-    };
-  }, [mentions, pasteParts, props.sessionId]);
+  const buildDraft = useCallback((text: string, attachments: ComposerAttachment[]): ComposerDraft => buildComposerDraft(text, {
+    attachments, mentions, pasteParts,
+    revertMessageId: getComposerRevertMessageId(useComposerStateStore.getState(), props.sessionId) ?? undefined,
+  }), [mentions, pasteParts, props.sessionId]);
 
   const handleComposerDraftChange = useCallback((value: string) => {
     setComposerDraft(props.sessionId, value);
