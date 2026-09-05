@@ -70,7 +70,19 @@ test("organization billing survives selection and blocks destructive deletion", 
     await eventually(() => evaluateOnSurface(browser, `location.origin === ${JSON.stringify(new URL(den.ref.webUrl).origin)} && document.readyState !== "loading"`), {
       within: 60_000, until: (ready) => ready === true,
     });
-    await callFunctionOnSurface(browser, `(token) => { localStorage.setItem("openwork:web:auth-token", token); return true; }`, [den.admin.token]);
+    const signedIn = await callFunctionOnSurface(browser, `async (credentials, organizationId) => {
+      const response = await fetch("/api/auth/sign-in/email", {
+        method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify(credentials),
+      });
+      if (!response.ok) return false;
+      const session = await response.json();
+      if (typeof session.token !== "string") return false;
+      localStorage.setItem("openwork:web:auth-token", session.token);
+      return (await fetch("/api/auth/organization/set-active", {
+        method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ organizationId }),
+      })).ok;
+    }`, [{ email: den.admin.email, password: den.admin.password }, empty.id]);
+    expect(signedIn).toBe(true);
     await navigate(browser.client, new URL("/dashboard/billing", den.ref.webUrl).toString());
     const emptyBilling = await eventually(() => evaluateOnSurface(browser, "document.body.innerText"), {
       within: 90_000, until: (text) => typeof text === "string" && text.includes("Organization subscriptions belong to Empty Workspace") && text.includes("Open Billing for Subscribed Workspace"),
