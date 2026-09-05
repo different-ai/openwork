@@ -51,6 +51,7 @@ const refreshTokens = new Set();
 const requests = [];
 const drafts = [];
 let agentWorkloads = [];
+let agentRequiredHeader = null;
 let configuredTools = [];
 
 const gmailThreadId = "thread-q3-launch";
@@ -934,7 +935,14 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === "/admin/agent-workloads" && req.method === "POST") {
       const body = await readJson(req);
+      const requiredHeader = body?.requiredHeader;
+      if (requiredHeader !== undefined && (!requiredHeader || typeof requiredHeader.name !== "string"
+        || !requiredHeader.name.trim() || typeof requiredHeader.value !== "string" || !requiredHeader.value)) {
+        json(res, 400, { error: "requiredHeader needs a name and value" });
+        return;
+      }
       agentWorkloads = validateAgentWorkloads(body?.workloads);
+      agentRequiredHeader = requiredHeader ?? null;
       json(res, 200, { configured: agentWorkloads.length });
       return;
     }
