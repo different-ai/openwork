@@ -800,6 +800,8 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
   if (event.type === "session.updated") {
     const update = getSessionUpdatedInfo(event);
     if (!update) return;
+    // Sidebar metadata updates must not depend on transcript tracking.
+    for (const listener of entry.sessionUpdatedListeners.keys()) listener(update);
     const title = typeof update.info.title === "string" ? update.info.title : "";
     if (title && !isGeneratedSessionTitle(title)) entry.titleRecovery?.resolve(update.sessionId);
     if (!isTrackedSession(entry, update.sessionId)) return;
@@ -815,7 +817,6 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
         return { ...current, session: { ...current.session, revert } };
       },
     );
-    for (const listener of entry.sessionUpdatedListeners.keys()) listener(update);
     return;
   }
 

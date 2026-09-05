@@ -2,10 +2,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { Part, Session } from "@opencode-ai/sdk/v2/client";
 import type { UIMessage } from "ai";
 
+import type { OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
 import { getReactQueryClient } from "../src/react-app/infra/query-client";
 import {
   __applySessionSyncEventForTest,
   __createWorkspaceSessionSyncForTest,
+  snapshotKey,
   trackWorkspaceSessionSync,
   transcriptKey,
 } from "../src/react-app/domains/session/sync/session-sync";
@@ -326,12 +328,14 @@ describe("tool part mapper", () => {
       time: { created: 1, updated: 1 },
     };
     const createdIds: string[] = [];
+    const updates: { sessionId: string; info: Record<string, unknown> }[] = [];
     const deletedIds: string[] = [];
     const syncInput = {
       workspaceId: "workspace-a",
       baseUrl: "http://127.0.0.1:1234",
       openworkToken: "token",
       onSessionCreated: (session: Session) => createdIds.push(session.id),
+      onSessionUpdated: (update: { sessionId: string; info: Record<string, unknown> }) => updates.push(update),
       onSessionDeleted: (sessionId: string) => deletedIds.push(sessionId),
     };
     const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
@@ -341,6 +345,34 @@ describe("tool part mapper", () => {
         type: "session.created",
         properties: { sessionID: created.id, info: created },
       });
+
+      const queryClient = getReactQueryClient();
+      const snapshot: OpenworkSessionSnapshot = {
+        session: created,
+        messages: [],
+        todos: [],
+        status: { type: "idle" },
+      };
+      const otherSnapshot = { ...snapshot, session: { ...created, id: "session-other", title: "Other session" } };
+      queryClient.setQueryData(snapshotKey(syncInput.workspaceId, created.id), snapshot);
+      queryClient.setQueryData(snapshotKey(syncInput.workspaceId, "session-other"), otherSnapshot);
+      const cachedQueries = queryClient.getQueriesData({});
+      const renamed = { ...created, title: "Renamed in the background" };
+      __applySessionSyncEventForTest(syncInput, {
+        type: "session.updated",
+        properties: { sessionID: created.id, info: renamed },
+      });
+      __applySessionSyncEventForTest(syncInput, {
+        type: "message.updated",
+        properties: { info: { id: "msg-background", role: "assistant", sessionID: created.id } },
+      });
+
+      expect(updates).toEqual([{ sessionId: created.id, info: renamed }]);
+      expect(queryClient.getQueriesData({})).toEqual(cachedQueries);
+      expect(queryClient.getQueryData(snapshotKey(syncInput.workspaceId, created.id))).toBe(snapshot);
+      expect(queryClient.getQueryData(snapshotKey(syncInput.workspaceId, "session-other"))).toBe(otherSnapshot);
+      expect(queryClient.getQueryData(transcriptKey(syncInput.workspaceId, created.id))).toBeUndefined();
+
       __applySessionSyncEventForTest(syncInput, {
         type: "session.deleted",
         properties: { sessionID: created.id, info: created },
