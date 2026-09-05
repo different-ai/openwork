@@ -306,6 +306,20 @@ export async function connectionsMenu(seed: Seed) {
       access: { orgWide: true },
     }));
   }
+  const skillName = "prepare-briefing";
+  const otherSkillName = "review-spreadsheet";
+  for (const [name, description] of [
+    [skillName, "Prepare a meeting briefing from project notes and open questions."],
+    [otherSkillName, "Review spreadsheet formulas and flag inconsistent totals."],
+  ]) {
+    const created = await seed.api(den.admin, "/v1/plugins", {
+      method: "POST",
+      body: JSON.stringify({ name, orgWide: true, components: [{ type: "skill", input: {
+        rawSourceText: `---\nname: ${name}\ndescription: ${description}\n---\n\nHelp with the requested work.`,
+      } }] }),
+    });
+    if (created.response.status !== 201) throw new Error(`Composer skill setup failed: HTTP ${created.response.status}`);
+  }
   const app = await seed.desktop({ den, as: "admin" });
   const session = await seedSessionRetry(seed, app);
   // TODO(primitive): click a button by its title when it has no accessible name.
@@ -316,7 +330,7 @@ export async function connectionsMenu(seed: Seed) {
     return true;
   })()`);
   if (opened !== true) throw new Error("Composer capability menu did not open.");
-  return { app, den, session, connections };
+  return { app, den, session, connections, skillName, otherSkillName };
 }
 
 async function startManualApprovalServer(approvalTimeoutMs: number) {
