@@ -129,10 +129,36 @@ test("new split creates fresh same-workspace secondary sessions without moving t
   });
 
   await step("both split composers send to their own conversation", async () => {
-    await user.type({ role: "textbox", nth: 0 }, world.primaryPrompt);
-    await user.press("Enter");
-    await user.type({ role: "textbox", nth: 1 }, world.secondaryPrompt);
-    await user.press("Enter");
+    // Hold the primary's HTTP acknowledgement so the secondary must send
+    // while the primary request is pending. Both requests still hit the engine.
+    await probe.eval(`(() => {
+      const originalFetch = window.fetch;
+      let release;
+      const held = new Promise((resolve) => { release = resolve; });
+      const timeout = setTimeout(release, 60000);
+      window.__releaseSplitSend = () => {
+        clearTimeout(timeout);
+        release();
+        window.fetch = originalFetch;
+        delete window.__releaseSplitSend;
+      };
+      window.fetch = async (...args) => {
+        const url = args[0] instanceof Request ? args[0].url : String(args[0]);
+        const response = await originalFetch.apply(window, args);
+        if (url.includes("/session/" + ${JSON.stringify(primarySessionId)} + "/prompt_async")) await held;
+        return response;
+      };
+      return true;
+    })()`);
+    try {
+      await user.type({ role: "textbox", nth: 0 }, world.primaryPrompt);
+      await user.press("Enter");
+      await user.type({ role: "textbox", nth: 1 }, world.secondaryPrompt);
+      await user.press("Enter");
+      await user.see({ text: "Secondary split received" }, { timeoutMs: 30_000 });
+    } finally {
+      await probe.eval("window.__releaseSplitSend?.(); true");
+    }
     const readPaneReplies = () => probe.eval(`(() => {
       const primary = document.querySelector('[data-workbench-pane="primary"]')?.textContent ?? "";
       const secondary = document.querySelector('[data-workbench-pane="secondary"]')?.textContent ?? "";
