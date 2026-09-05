@@ -50,8 +50,9 @@ export function completeChatResponse(value: unknown): boolean {
   if (!record(value) || value.error || !Array.isArray(value.choices) || value.choices.length !== 1) return false
   return value.choices.every((choice) => {
     if (!record(choice) || !record(choice.message) || !["stop", "length", "tool_calls", "content_filter"].includes(String(choice.finish_reason))) return false
-    if (choice.message.tool_calls === undefined) return choice.finish_reason !== "tool_calls"
-    if (!Array.isArray(choice.message.tool_calls) || !choice.message.tool_calls.length) return false
+    if (choice.message.tool_calls == null) return choice.finish_reason !== "tool_calls"
+    if (!Array.isArray(choice.message.tool_calls)) return false
+    if (!choice.message.tool_calls.length) return choice.finish_reason !== "tool_calls"
     const ids = new Set<string>()
     return choice.message.tool_calls.every((call) => {
       if (!record(call) || typeof call.id !== "string" || !call.id || ids.has(call.id) || call.type !== "function" || !record(call.function) || typeof call.function.name !== "string" || !call.function.name || typeof call.function.arguments !== "string") return false
@@ -116,33 +117,41 @@ class ChatStream {
       return `data: ${JSON.stringify(upstreamError(record(value.error) ? Number(value.error.code) : 502))}\n\n`
     }
     if (!Array.isArray(value.choices)) throw new InvalidStream("upstream_malformed_stream", "The model returned a response without completion choices.")
+    if (value.choices.length > 1) throw new InvalidStream("upstream_malformed_stream", "The model returned multiple completion choices.")
     for (const choice of value.choices) {
-      if (!record(choice) || !Number.isInteger(choice.index) || typeof choice.index !== "number" || choice.index < 0) throw new InvalidStream("upstream_malformed_stream", "The model returned an invalid completion choice.")
+      if (!record(choice) || choice.index !== 0) throw new InvalidStream("upstream_malformed_stream", "The model returned an unrequested completion choice.")
       this.choices.add(choice.index)
       if (choice.finish_reason === "error") throw new InvalidStream("upstream_error", "The provider interrupted its response. Partial output is preserved.")
       const delta = record(choice.delta) ? choice.delta : {}
-      const hasOutput = Boolean(delta.content || delta.reasoning || delta.reasoning_content || delta.reasoning_details || delta.tool_calls)
+      const hasOutput = Boolean(delta.content || delta.reasoning || delta.reasoning_content ||
+        (Array.isArray(delta.reasoning_details) && delta.reasoning_details.length) ||
+        (Array.isArray(delta.tool_calls) && delta.tool_calls.length))
       if (hasOutput && this.finished.has(choice.index)) throw new InvalidStream("upstream_malformed_stream", "The model sent output after completing the response.")
       if (hasOutput) this.output = true
+      if (delta.tool_calls != null && !Array.isArray(delta.tool_calls)) throw new InvalidStream("upstream_malformed_stream", "The model returned invalid tool calls.")
       if (Array.isArray(delta.tool_calls)) {
         for (const call of delta.tool_calls) {
           if (!record(call) || typeof call.index !== "number" || !Number.isInteger(call.index) || call.index < 0) throw new InvalidStream("upstream_malformed_stream", "The model returned an invalid tool-call index.")
           const key = `${choice.index}:${call.index}`
+          if (!this.tools.has(key) && this.tools.size >= 128) throw new InvalidStream("upstream_malformed_stream", "The model returned too many tool calls.")
+          if (call.type !== undefined && call.type !== "function") throw new InvalidStream("upstream_malformed_stream", "The model returned an unsupported tool-call type.")
           const tool = this.tools.get(key) ?? { id: "", name: "", arguments: "" }
           if (typeof call.id === "string") {
             if (tool.id && tool.id !== call.id) throw new InvalidStream("upstream_malformed_stream", "The model changed a tool-call identity while streaming.")
+            if (call.id && [...this.tools.entries()].some(([otherKey, other]) => otherKey !== key && other.id === call.id)) throw new InvalidStream("upstream_malformed_stream", "The model reused a tool-call identity.")
             tool.id = call.id
           }
           if (record(call.function)) {
             if (typeof call.function.name === "string") tool.name += call.function.name
             if (typeof call.function.arguments === "string") tool.arguments += call.function.arguments
           }
-          if (tool.arguments.length > 2_000_000 || this.tools.size > 128) throw new InvalidStream("upstream_malformed_stream", "The model returned oversized tool calls.")
+          if (tool.arguments.length > 2_000_000 || tool.name.length > 1024 || tool.id.length > 1024) throw new InvalidStream("upstream_malformed_stream", "The model returned oversized tool calls.")
           this.tools.set(key, tool)
         }
       }
       if (typeof choice.finish_reason === "string") {
         if (!["stop", "length", "tool_calls", "content_filter"].includes(choice.finish_reason)) throw new InvalidStream("upstream_malformed_stream", "The model returned an unknown completion status.")
+        if (choice.finish_reason === "tool_calls" && !this.tools.size) throw new InvalidStream("upstream_incomplete", "The model ended with a missing tool call. Review the partial response before retrying.")
         for (const [key, tool] of this.tools) {
           if (!key.startsWith(`${choice.index}:`)) continue
           if (!tool.id || !tool.name) throw new InvalidStream("upstream_incomplete", "The model did not finish its tool call. Review the partial response before retrying.")

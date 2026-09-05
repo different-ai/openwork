@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { managedInference } from "@openwork/env";
@@ -25,6 +25,7 @@ export async function bootManagedInference(place: Place) {
       await writeFile(join(workspace, "opencode.json"), JSON.stringify({
         enabled_providers: ["openwork"],
         model: "openwork/z-ai/glm-5.2", small_model: "openwork/z-ai/glm-5.2",
+        agent: { "saved-reasoning": { mode: "primary", model: "openwork/z-ai/glm-5.2", variant: "medium" } },
         provider: { openwork: {
           npm: "@openrouter/ai-sdk-provider", name: "OpenWork Models",
           options: { baseURL: `${service.url}/api/v1`, apiKey: identity.key },
@@ -34,7 +35,7 @@ export async function bootManagedInference(place: Place) {
       let output = "";
       const engine = await bootManagedOpenworkServer({ scratch, workspace, token: "managed-inference-fixture-client", sink: (chunk) => { output += chunk; } });
       resources.defer(() => engine.stop());
-      return { ...engine, output: () => output };
+      return { ...engine, output: () => output, savedConfig: () => readFile(join(workspace, "opencode.json"), "utf8") };
     },
     async [Symbol.asyncDispose]() { await resources.disposeAsync(); },
   };

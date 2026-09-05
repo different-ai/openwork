@@ -31,6 +31,27 @@ test("managed inference preserves completion, access, cancellation, and usage id
   const catalog = await catalogResponse.json();
   expect(catalogResponse.status).toBe(200);
   expect(catalog.data).toHaveLength(9);
+  const expectedModels = [
+    { id: "z-ai/glm-5.2", context: 1048576, output: 131072, inputs: ["text"], mandatory: false, efforts: ["high", "xhigh"] },
+    { id: "moonshotai/kimi-k2.7-code", context: 262144, output: 235929, inputs: ["text", "image"], mandatory: true, efforts: [] },
+    { id: "tencent/hy3-preview", context: 262144, output: 235929, inputs: ["text"], mandatory: false, efforts: ["high", "low", "none"] },
+    { id: "moonshotai/kimi-k2.6", context: 262144, output: 235929, inputs: ["text", "image"], mandatory: false, efforts: [] },
+    { id: "deepseek/deepseek-v4-flash", context: 1024000, output: 384000, inputs: ["text"], mandatory: false, efforts: ["high", "xhigh"] },
+    { id: "minimax/minimax-m2.7", context: 204800, output: 131072, inputs: ["text"], mandatory: true, efforts: [] },
+    { id: "minimax/minimax-m3", context: 524288, output: 512000, inputs: ["text", "image"], mandatory: false, efforts: [] },
+    { id: "z-ai/glm-5.1", context: 200000, output: 128000, inputs: ["text"], mandatory: false, efforts: [] },
+    { id: "moonshotai/kimi-k3", context: 1048576, output: 943718, inputs: ["text", "image"], mandatory: false, efforts: ["low", "high", "max"] },
+  ];
+  expect(catalog.data.map((entry: { id: string }) => entry.id).sort()).toEqual(expectedModels.map((entry) => entry.id).sort());
+  for (const expected of expectedModels) {
+    expect(catalog.data.find((entry: { id: string }) => entry.id === expected.id)).toMatchObject({
+      context_length: expected.context, top_provider: { max_completion_tokens: expected.output },
+      architecture: { input_modalities: expected.inputs, output_modalities: ["text"] },
+      reasoning: { mandatory: expected.mandatory, supported_efforts: expect.arrayContaining(expected.efforts) },
+      supported_parameters: expect.arrayContaining(["tools", "reasoning"]),
+    });
+    expect(catalog.data.find((entry: { id: string }) => entry.id === expected.id).reasoning.supported_efforts).toHaveLength(expected.efforts.length);
+  }
   expect(catalog.data.find((item: { id: string }) => item.id === model)).toMatchObject({ context_length: 1048576, top_provider: { max_completion_tokens: 131072 }, architecture: { input_modalities: ["text"] } });
   const response = await chat();
   const text = await response.text();
@@ -41,6 +62,14 @@ test("managed inference preserves completion, access, cancellation, and usage id
   const original = world.witness.requests[0];
   expect(original?.credential).toBe(`Bearer ${first.providerKey}`);
   expect(original?.body).toMatchObject({ model, user: first.memberId, provider: { allow_fallbacks: false, require_parameters: true }, transforms: [] });
+  const delayedResponse = await chat();
+  expect(delayedResponse.status).toBe(200);
+  expect(await delayedResponse.text()).toContain("[DONE]");
+  const delayedRequest = world.witness.requests.at(-1);
+  const delayedTrace = delayedRequest?.body.trace;
+  if (!delayedRequest || !record(delayedTrace)) throw new Error("Missing admitted delayed-usage request");
+  const delayedRequestId = String(delayedRequest.body.session_id);
+  expect(delayedRequestId).toBe(delayedResponse.headers.get("x-openwork-request-id"));
   claim("Catalog and successful streaming agree", "The authenticated catalog has nine models; streamed UTF-8 text is preserved once, with a completion marker and provider usage details.");
 
   world.witness.mode("tools");
@@ -55,6 +84,11 @@ test("managed inference preserves completion, access, cancellation, and usage id
   const history = [message, { role: "assistant", content: null, reasoning_details: [{ type: "reasoning.text", text: "Fixture reasoning" }], tool_calls: [{ id: "call_1", type: "function", function: { name: "lookup", arguments: '{"key":"value"}' } }] }, { role: "tool", tool_call_id: "call_1", content: "Fixture result" }];
   expect(await (await chat({ messages: history, tools })).text()).toContain("[DONE]");
   expect(world.witness.requests.at(-1)?.body.messages).toEqual(history);
+  const noParameterTools = [{ type: "function", function: { name: "clock" } }];
+  const optionalTools = await chat({ tools: noParameterTools, messages: [message, { role: "assistant", content: "Earlier text", tool_calls: null }, message] });
+  expect(optionalTools.status).toBe(200);
+  expect(await optionalTools.text()).toContain("[DONE]");
+  expect(world.witness.requests.at(-1)?.body.tools).toEqual(noParameterTools);
   claim("Tool-call fragments and reasoning remain distinct", "Fragmented arguments assemble into the expected JSON; assistant reasoning and matching tool results return upstream unchanged.");
 
   world.witness.mode("engine-tool");
@@ -62,19 +96,33 @@ test("managed inference preserves completion, access, cancellation, and usage id
   const providers = await engine.engine("GET", "/provider");
   if (!record(providers) || !Array.isArray(providers.all)) throw new Error("Missing engine model catalog");
   const managed = providers.all.find((provider) => record(provider) && provider.id === "openwork");
+  expect(managed).toMatchObject({ models: { [model]: { cost: { input: 0.966, output: 3.036, cache: { read: 0.1932 } } } } });
   expect(managed).toMatchObject({ models: { [model]: { limit: { context: 1048576, output: 131072 }, variants: { high: { reasoning: { effort: "high" } }, xhigh: { reasoning: { effort: "xhigh" } } } } } });
   const session = await engine.engine("POST", "/session", { title: "Managed inference tool task" });
   if (!record(session) || typeof session.id !== "string") throw new Error("Missing engine session");
+  const savedConfig = await engine.engine("GET", "/config");
+  if (!record(savedConfig) || !record(savedConfig.agent) || !record(savedConfig.agent["saved-reasoning"])) throw new Error("Missing saved reasoning configuration");
+  const savedVariant = savedConfig.agent["saved-reasoning"].variant;
+  expect(savedVariant).toBe("medium");
+  const persistedBefore = await engine.savedConfig();
   const beforeStale = world.witness.requests.length;
-  await expect(engine.engine("POST", `/session/${session.id}/message`, { model: { providerID: "openwork", modelID: model }, variant: "medium", parts: [{ type: "text", text: "A saved unsupported setting" }] })).rejects.toThrow("saved reasoning setting");
+  await expect(engine.engine("POST", `/session/${session.id}/message`, { model: { providerID: "openwork", modelID: model }, agent: "saved-reasoning", variant: savedVariant, parts: [{ type: "text", text: "A saved unsupported setting" }] })).rejects.toThrow("saved reasoning setting");
   expect(world.witness.requests.length).toBe(beforeStale);
+  expect(await engine.engine("GET", `/session/${session.id}/message`)).toEqual([]);
+  expect(await engine.engine("GET", "/config")).toMatchObject({ agent: { "saved-reasoning": { variant: "medium" } } });
+  expect(await engine.savedConfig()).toBe(persistedBefore);
   const engineResult = await engine.engine("POST", `/session/${session.id}/message`, { model: { providerID: "openwork", modelID: model }, variant: "high", parts: [{ type: "text", text: "Read the managed inference fixture and finish." }] });
   expect(engineResult, engine.output().slice(-2000)).toMatchObject({ parts: expect.arrayContaining([expect.objectContaining({ type: "text", text: "Complete café" })]) });
+  expect(record(engineResult) && record(engineResult.info) ? engineResult.info.cost : null).toBeGreaterThan(0);
+  const toolRequests = world.witness.requests.slice(beforeStale).filter((request) => Array.isArray(request.body.tools) && request.body.tools.length);
+  expect(toolRequests.length).toBeGreaterThanOrEqual(2);
+  expect(toolRequests.every((request) => record(request.body.reasoning) && request.body.reasoning.effort === "high")).toBe(true);
   const transcript = await engine.engine("GET", `/session/${session.id}/message`);
   const toolParts = Array.isArray(transcript) ? transcript.filter(record).flatMap((message) => Array.isArray(message.parts) ? message.parts.filter(record) : []).filter((part) => part.type === "tool") : [];
   expect(toolParts.filter((part) => part.tool === "read")).toHaveLength(1);
   expect(toolParts[0]).toMatchObject({ state: { status: "completed", output: expect.stringContaining("Managed inference tool result") } });
   claim("A real managed engine task completes its tool exactly once", "The running OpenCode engine sees the shared context/output limits and supported reasoning variants; its fragmented Read call executes once, returns the file result through managed inference, and finishes with persisted assistant text.");
+  claim("Engine cost estimates remain separate from settled usage", "The engine receives the verified input/output/cache prices and records a positive estimate for a paid-model run; allowance charging is independently checked against provider-reported monetary usage.");
   claim("Saved unsupported reasoning requires an explicit new choice", "The real server rejects a saved medium effort for GLM-5.2 before the engine or provider can substitute a default; a supported high effort completes.");
 
   world.witness.mode("interrupted");
@@ -90,18 +138,29 @@ test("managed inference preserves completion, access, cancellation, and usage id
   const jsonResponse = await chat({ stream: false });
   expect(jsonResponse.status).toBe(200);
   expect(await jsonResponse.json()).toMatchObject({ choices: [{ message: { content: "Complete" }, finish_reason: "stop" }], usage: { total_tokens: 24 } });
+  for (const mode of ["json-empty-tools", "json-null-tools"] as const) {
+    world.witness.mode(mode);
+    const ordinaryText = await chat({ stream: false });
+    expect(ordinaryText.status).toBe(200);
+    expect(await ordinaryText.json()).toMatchObject({ choices: [{ message: { content: "Complete" }, finish_reason: "stop" }] });
+  }
   world.witness.mode("incomplete-json");
   const incompleteJson = await chat({ stream: false });
   expect(incompleteJson.status).toBe(502);
   expect(await incompleteJson.json()).toMatchObject({ error: { code: "upstream_incomplete" } });
   claim("Non-streaming responses require complete content too", "A complete JSON response retains text and usage, while an HTTP 200 with unfinished tool arguments returns an explicit incomplete-response error.");
 
-  for (const mode of ["interrupted", "malformed", "incomplete-tools", "stall"] as const) {
+  for (const mode of ["interrupted", "malformed", "incomplete-tools", "missing-tools", "duplicate-tools", "extra-choice", "stall"] as const) {
     world.witness.mode(mode);
     const failure = await (await chat()).text();
     expect(failure).toContain('"error"');
     expect(failure).not.toContain("[DONE]");
-    if (mode !== "incomplete-tools") expect(failure).toContain("Partial");
+    if (mode !== "incomplete-tools" && mode !== "duplicate-tools") expect(failure).toContain("Partial");
+    if (mode === "incomplete-tools") {
+      expect(failure).toContain("Fixture reasoning");
+      expect(events(failure)).toEqual(expect.arrayContaining([expect.objectContaining({ choices: expect.arrayContaining([expect.objectContaining({ delta: { tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "lookup", arguments: '{"key":' } }] } })]) })]));
+    }
+    expect(failure).not.toContain("Unrequested second choice");
   }
   claim("Interrupted streams cannot appear successful", "EOF, invalid JSON, unfinished tool arguments, and a stalled provider preserve valid partial output and return an error without a success marker.");
 
@@ -147,9 +206,9 @@ test("managed inference preserves completion, access, cancellation, and usage id
   const trace = original?.body.trace;
   if (!record(trace)) throw new Error("Missing request correlation trace");
   const attribute = (key: string, value: string | number) => ({ key, value: typeof value === "number" ? { doubleValue: value } : { stringValue: value } });
-  const usage = (event: string, identity = first, reportedModel = model, requestId = String(original?.body.session_id)) => ({ resourceSpans: [{ scopeSpans: [{ spans: [{ startTimeUnixNano: `${BigInt(Date.now()) * 1000000n}`, attributes: [
+  const usage = (event: string, identity = first, reportedModel = model, requestId = String(original?.body.session_id), admission = trace) => ({ resourceSpans: [{ scopeSpans: [{ spans: [{ startTimeUnixNano: `${BigInt(Date.now()) * 1000000n}`, attributes: [
     attribute("trace.inference_key_id", identity.keyId), attribute("trace.org_membership_id", identity.memberId),
-    attribute("trace.openwork_request_id", requestId), attribute("trace.usage_started_at", identity === first ? String(trace.usage_started_at) : new Date().toISOString()),
+    attribute("trace.openwork_request_id", requestId), attribute("trace.usage_started_at", identity === first ? String(admission.usage_started_at) : new Date().toISOString()),
     attribute("event_id", event), attribute("gen_ai.request.model", model), attribute("gen_ai.response.model", reportedModel),
     attribute("gen_ai.usage.input_cost", 0.01), attribute("gen_ai.usage.output_cost", 0.02), attribute("gen_ai.usage.currency", "USD"),
     attribute("gen_ai.usage.input_tokens", 11), attribute("gen_ai.usage.output_tokens", 13), attribute("gen_ai.usage.total_tokens", 24),
@@ -186,13 +245,15 @@ test("managed inference preserves completion, access, cancellation, and usage id
   const missingCost = usage("missing-cost", first, model, "missing-cost-request");
   const missingSpan = missingCost.resourceSpans[0]!.scopeSpans[0]!.spans[0]!;
   missingSpan.attributes = missingSpan.attributes.filter((item) => item.key !== "gen_ai.usage.output_cost");
+  missingSpan.attributes.push(attribute("gen_ai.usage.input_cost", " "));
   expect((await settle(missingCost)).status).toBe(200);
-  const unpriced = await world.rows("SELECT cost_amount,provider_usage FROM inference_usage_ledger_entries WHERE organization_id=? AND event_type='openrouter_usage_unpriced'", [first.organizationId]);
+  const unpriced = await world.rows("SELECT external_job_id,cost_amount,provider_usage FROM inference_usage_ledger_entries WHERE organization_id=? AND event_type='openrouter_usage_unpriced'", [first.organizationId]);
   expect(unpriced).toHaveLength(2);
   expect(unpriced.every((row) => Number(row.cost_amount) === 0 && record(row.provider_usage) && row.provider_usage.status === "unpriced")).toBe(true);
-  expect(unpriced.some((row) => record(row.provider_usage) && row.provider_usage.outputCost === null)).toBe(true);
+  expect(unpriced.find((row) => row.external_job_id === "unknown-model-request")).toMatchObject({ provider_usage: { responseModel: "provider/new-version", inputCost: 0.01, outputCost: 0.02 } });
+  expect(unpriced.find((row) => row.external_job_id === "missing-cost-request")).toMatchObject({ provider_usage: { inputCost: null, outputCost: null } });
   expect(await world.rows("SELECT id,used_amount FROM inference_org_usage_buckets WHERE organization_id=? ORDER BY id", [first.organizationId])).toEqual(after);
-  claim("Unknown usage is retained without fabricated charges", "Unknown model versions and missing provider costs become explicit unpriced records, retain unknown costs as null, and do not change allowance totals.");
+  claim("Unknown usage is retained without fabricated charges", "An unknown model retains its reported monetary costs but gets no allowance charge; absent or blank monetary costs remain null. Both records are identified individually, remain unpriced, and leave allowance totals unchanged.");
 
   const count = world.witness.requests.length;
   const exhausted = await chat();
@@ -207,13 +268,26 @@ test("managed inference preserves completion, access, cancellation, and usage id
   expect((await chat({}, other.key)).status).toBe(403);
   claim("Model discovery and execution agree on unavailable access", "Exhausted allowance returns no usable models and rejects execution with a reset time; disabled access fails even with a previously valid tier and key.");
 
-  const historicalEnd = new Date(new Date(String(trace.usage_started_at)).getTime() + 1000);
+  const historicalEnd = new Date(new Date(String(delayedTrace.usage_started_at)).getTime() + 1000);
+  const historicalBefore = await world.rows("SELECT id,used_amount FROM inference_org_usage_buckets WHERE organization_id=? ORDER BY id", [first.organizationId]);
   await world.change("UPDATE inference_org_usage_buckets SET window_end_at=? WHERE organization_id=?", [historicalEnd, first.organizationId]);
   world.witness.mode("success");
   expect(await (await chat()).text()).toContain("[DONE]");
+  // A redelivery cannot move an existing charge into a new billing window,
+  // even if provider timing metadata has changed since the first delivery.
+  const changedTimestamp = usage("event-1");
+  const changedSpan = changedTimestamp.resourceSpans[0]!.scopeSpans[0]!.spans[0]!;
+  changedSpan.attributes = changedSpan.attributes.map((item) => item.key === "trace.usage_started_at" ? attribute(item.key, new Date().toISOString()) : item);
+  expect((await settle(changedTimestamp)).status).toBe(200);
+  expect(await world.rows("SELECT c.id FROM inference_usage_ledger_bucket_charges c JOIN inference_usage_ledger_entries e ON e.id=c.ledger_entry_id WHERE e.external_job_id=?", [String(original?.body.session_id)])).toHaveLength(3);
   await world.change("UPDATE inference_keys SET status='revoked',revoked_at=NOW(3) WHERE id=?", [first.keyId]);
-  expect((await settle(usage("late-usage", first, model, "late-request"))).status).toBe(200);
-  expect(await world.rows("SELECT id FROM inference_usage_ledger_entries WHERE external_job_id='late-request'")).toHaveLength(1);
+  expect((await settle(usage("late-usage", first, model, delayedRequestId, delayedTrace))).status).toBe(200);
+  expect(await world.rows("SELECT id FROM inference_usage_ledger_entries WHERE external_job_id=?", [delayedRequestId])).toHaveLength(1);
+  const lateCharges = await world.rows("SELECT c.bucket_id,c.amount,b.used_amount FROM inference_usage_ledger_bucket_charges c JOIN inference_usage_ledger_entries e ON e.id=c.ledger_entry_id JOIN inference_org_usage_buckets b ON b.id=c.bucket_id WHERE e.external_job_id=? ORDER BY c.bucket_id", [delayedRequestId]);
+  expect(lateCharges).toHaveLength(3);
+  expect(lateCharges.map((charge) => charge.bucket_id)).toEqual(historicalBefore.map((bucket) => bucket.id));
+  expect(lateCharges.map((charge) => Number(charge.amount))).toEqual([3000000, 3000000, 3000000]);
+  expect(lateCharges.map((charge, index) => Number(charge.used_amount) - Number(historicalBefore[index]?.used_amount))).toEqual([3000000, 3000000, 3000000]);
   const currentWindows = await world.rows("SELECT b.used_amount FROM inference_org_usage_buckets b JOIN inference_org_limit_policies p ON p.current_bucket_id=b.id WHERE b.organization_id=?", [first.organizationId]);
   expect(currentWindows).toHaveLength(3);
   expect(currentWindows.every((bucket) => Number(bucket.used_amount) === 0)).toBe(true);

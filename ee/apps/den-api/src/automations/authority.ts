@@ -8,7 +8,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { AUTOMATION_FREE_MODEL } from "@openwork/types/automations"
-import { INFERENCE_MODEL_ALIASES, inferenceModelSelectionIssue } from "@openwork/types/den/inference"
+import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference"
 import { db } from "../db.js"
 import { calculateDesktopPolicyForOrgMember } from "../desktop-policies.js"
 
@@ -185,8 +185,9 @@ export async function resolveAutomationModelAccessWithStore(
   }
 
   if (input.providerId === "openwork") {
-    const issue = inferenceModelSelectionIssue(input.modelId, input.variant)
-    if (issue) return { ok: false, code: "model_access_lost", message: issue }
+    // Older clients persist reasoning variants. Model access must not change
+    // merely because the catalog no longer offers one of those settings.
+    // Validate execution parameters at the runtime boundary instead.
     const model = enabledOpenWorkModel(input.modelId)
     if (!model) {
       return { ok: false, code: "model_access_lost", message: "The selected OpenWork-managed model is not available." }

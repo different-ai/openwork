@@ -123,6 +123,8 @@ export type InferenceModelCapabilities = {
   outputTokens: number;
   inputModalities: ("text" | "image")[];
   outputModalities: "text"[];
+  /** Provider catalog estimates in USD per million tokens, never allowance charges. */
+  cost: { input: number; output: number; cache_read?: number; cache_write?: number };
   supportedParameters: string[];
   interleaved: boolean | { field: string };
   reasoning: {
@@ -169,6 +171,7 @@ export function openWorkModelConfigurations() {
       temperature: capabilities.supportedParameters.includes("temperature"),
       structured_output: capabilities.supportedParameters.includes("structured_outputs"),
       interleaved: capabilities.interleaved,
+      cost: capabilities.cost,
       variants: Object.fromEntries(["none", "minimal", "low", "medium", "high", "xhigh", "max"].map((effort) => [effort,
         (capabilities.reasoning.supportedEfforts === null || capabilities.reasoning.supportedEfforts.includes(effort)) && !(effort === "none" && capabilities.reasoning.mandatory)
           ? { reasoning: { effort } }

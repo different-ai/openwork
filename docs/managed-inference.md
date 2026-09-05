@@ -136,6 +136,8 @@ The existing unique ledger and bucket-charge identities are retained. Duplicate
 deliveries verify ownership and lock the ledger row before charging. A retry can
 finish missing charges after an earlier partial settlement without charging the
 others again. Settlement increments usage without overwriting current limits.
+The first durable ledger entry fixes the request timestamp: duplicate broadcasts
+with changed timestamps cannot charge a second set of windows.
 
 The nullable `provider_usage` field retains reported input/output monetary cost,
 currency, model identities, cache-read tokens and reasoning tokens when supplied.
@@ -147,6 +149,11 @@ action. Malformed usage attribution/timing and persistence failures are not
 acknowledged as successful ingestion. See
 [usage accounting](https://openrouter.ai/docs/cookbook/administration/usage-accounting)
 and [Broadcast](https://openrouter.ai/docs/guides/features/broadcast/overview).
+
+Engine per-run cost displays retain the catalog's input/output/cache price
+estimates in USD per million tokens, rather than defaulting paid models to zero.
+Those estimates can differ from the provider's settled cost and are never used to
+charge the allowance ledger; the ledger continues to use reported monetary usage.
 
 Usage remains asynchronous: in-flight requests can exceed the last settled
 allowance, and a provider broadcast that never arrives cannot be reconstructed by
@@ -164,10 +171,22 @@ site and refresh managed runtime configuration together when publishing a new
 snapshot. Old running instances can retain their prior catalog until refreshed.
 
 Unsupported saved reasoning choices remain visible as unavailable. The OpenWork
-server rejects them before the engine can silently substitute a default. Automation
-authority checks use the same selection contract and existing needs-attention path.
+server rejects them before the engine can silently substitute a default. Den keeps
+model authorization independent of saved reasoning, so listing or editing an older
+client's Automation does not revoke access or change its stored selection. Cloud
+execution checks the selection before starting work and reports an execution error
+for an unsupported setting, rather than reporting lost model access.
 The user explicitly selects a supported setting; unrelated preferences and history
 are not reset. Custom-provider configuration is unchanged.
+
+This stricter execution contract needs a staged rollout. First distribute clients
+and workers that expose unavailable saved reasoning settings and allow owners to
+replace them explicitly. Check existing scheduled Automations for unsupported
+variants before enabling the new gateway/catalog and Den runtime validation. A
+backend-only rollout can otherwise make those older saved runs fail. Preserving
+their stored value does not make an unsupported provider parameter executable.
+This PR does not establish that compatibility rollout or certify existing published
+binaries; those release checks remain incomplete.
 
 `pnpm evals:pr specs/managed-inference.test.ts` exercises a real inference process,
 isolated MySQL database, the checked-in migration with a legacy row, a real OpenWork
@@ -175,7 +194,11 @@ server and OpenCode engine, and a loopback provider fixture. It covers successfu
 streaming/JSON, fragmented tool execution, incomplete engine tasks, cancellation,
 safe errors, capability/access rejection, separate organization credentials,
 concurrent usage deliveries, partial-settlement recovery, unpriced usage and late
-usage after revocation. `OPENWORK_EVAL_MYSQL_URL` selects an already-running local
+usage after revocation. It asserts all three historical charges and unchanged new
+windows, including redelivery with changed timing metadata. Parameterless function
+schemas and empty tool-call lists remain valid; missing or duplicate streamed tool
+identities and unexpected completion choices fail explicitly.
+`OPENWORK_EVAL_MYSQL_URL` selects an already-running local
 test database. No live generation credential is required.
 
 This deterministic journey does not establish real-provider model quality, image

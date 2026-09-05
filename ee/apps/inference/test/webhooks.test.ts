@@ -108,7 +108,7 @@ function createWebhookTestServer() {
         outputTokens: input.span.usageMetadata.outputTokens,
         totalTokens: input.span.usageMetadata.totalTokens,
       })
-      return { id: ledgerEntryId, organizationId, memberId: orgMembershipId, inferenceKeyId, requestId: input.span.openworkRequestId, costAmount: input.costAmount }
+      return { id: ledgerEntryId, organizationId, memberId: orgMembershipId, inferenceKeyId, requestId: input.span.openworkRequestId, costAmount: input.costAmount, occurredAt: input.span.occurredAt }
     },
     async chargeBuckets(input) {
       calls.chargeBuckets += 1

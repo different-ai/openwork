@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 
-export type InferenceFixtureMode = "success" | "tools" | "engine-tool" | "incomplete-tools" | "interrupted" | "malformed" | "rate-limit" | "access-denied" | "stall" | "json" | "incomplete-json";
+export type InferenceFixtureMode = "success" | "tools" | "engine-tool" | "incomplete-tools" | "missing-tools" | "duplicate-tools" | "extra-choice" | "interrupted" | "malformed" | "rate-limit" | "access-denied" | "stall" | "json" | "json-empty-tools" | "json-null-tools" | "incomplete-json";
 export type InferenceWitness = { credential: string; body: Record<string, unknown>; cancelled: boolean };
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -31,14 +31,26 @@ export async function startInferenceWitness() {
         response.end(JSON.stringify({ choices: [{ index: 0, message: { role: "assistant", tool_calls: [{ id: "call_1", type: "function", function: { name: "read", arguments: "{" } }] }, finish_reason: "tool_calls" }] }));
         return;
       }
-      if (mode === "json") {
+      if (mode === "json" || mode === "json-empty-tools" || mode === "json-null-tools") {
         response.writeHead(200, { "content-type": "application/json" });
-        response.end(JSON.stringify({ choices: [{ index: 0, message: { role: "assistant", content: "Complete" }, finish_reason: "stop" }], usage: { prompt_tokens: 11, completion_tokens: 13, total_tokens: 24 } }));
+        response.end(JSON.stringify({ choices: [{ index: 0, message: { role: "assistant", content: "Complete", ...(mode === "json-empty-tools" ? { tool_calls: [] } : mode === "json-null-tools" ? { tool_calls: null } : {}) }, finish_reason: "stop" }], usage: { prompt_tokens: 11, completion_tokens: 13, total_tokens: 24 } }));
         return;
       }
       response.writeHead(200, { "content-type": "text/event-stream" });
       const frame = (delta: unknown, finish_reason: string | null = null) => `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason }] })}\r\n\r\n`;
       response.write(": processing\r\n\r\n");
+      if (mode === "missing-tools") {
+        response.end(frame({ content: "Partial" }) + frame({}, "tool_calls") + "data: [DONE]\n\n");
+        return;
+      }
+      if (mode === "duplicate-tools") {
+        response.end(frame({ content: "Partial", tool_calls: [0, 1].map((index) => ({ index, id: "same-call", type: "function", function: { name: "lookup", arguments: "{}" } })) }) + frame({}, "tool_calls") + "data: [DONE]\n\n");
+        return;
+      }
+      if (mode === "extra-choice") {
+        response.end(frame({ content: "Partial" }) + `data: ${JSON.stringify({ choices: [{ index: 1, delta: { content: "Unrequested second choice" }, finish_reason: "stop" }] })}\n\n` + frame({}, "stop") + "data: [DONE]\n\n");
+        return;
+      }
       if (mode === "engine-tool" && JSON.stringify(body.messages).includes("Read the managed inference fixture") && Array.isArray(body.messages) && !body.messages.some((message) => record(message) && message.role === "tool")) {
         response.write(frame({ tool_calls: [{ index: 0, id: "call_read_fixture", type: "function", function: { name: "read", arguments: JSON.stringify({ filePath: toolFile }).slice(0, 12) } }] }));
         response.end(frame({ tool_calls: [{ index: 0, function: { arguments: JSON.stringify({ filePath: toolFile }).slice(12) } }] }) + frame({}, "tool_calls") + "data: [DONE]\n\n");
@@ -64,7 +76,7 @@ export async function startInferenceWitness() {
         return;
       }
       // Fragment even a UTF-8 code point and the SSE delimiter across writes.
-      const content = Buffer.from(frame({ content: "Complete café" }) + frame({}, "stop") + `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: "", role: "assistant" }, finish_reason: "stop" }], usage: { prompt_tokens: 11, completion_tokens: 13, total_tokens: 24, prompt_tokens_details: { cached_tokens: 5 }, completion_tokens_details: { reasoning_tokens: 3 } } })}\n\ndata: [DONE]\n\n`);
+      const content = Buffer.from(frame({ content: "Complete café" }) + frame({}, "stop") + `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: "", role: "assistant", tool_calls: [], reasoning_details: [] }, finish_reason: "stop" }], usage: { prompt_tokens: 11, completion_tokens: 13, total_tokens: 24, prompt_tokens_details: { cached_tokens: 5 }, completion_tokens_details: { reasoning_tokens: 3 } } })}\n\ndata: [DONE]\n\n`);
       const split = content.indexOf(Buffer.from("é")) + 1;
       response.write(content.subarray(0, split));
       const timer = setTimeout(() => { timers.delete(timer); response.end(content.subarray(split)); }, 5);

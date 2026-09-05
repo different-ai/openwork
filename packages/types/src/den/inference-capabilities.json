@@ -1,6 +1,6 @@
 {
   "source": "https://openrouter.ai/api/v1/models",
-  "verifiedAt": "2026-09-05T00:06:01.446Z",
+  "verifiedAt": "2026-09-05T01:18:02.066Z",
   "models": {
     "z-ai/glm-5.2": {
       "contextTokens": 1048576,
@@ -11,6 +11,11 @@
       "outputModalities": [
         "text"
       ],
+      "cost": {
+        "input": 0.966,
+        "output": 3.036,
+        "cache_read": 0.1932
+      },
       "supportedParameters": [
         "frequency_penalty",
         "include_reasoning",
@@ -58,6 +63,11 @@
       "outputModalities": [
         "text"
       ],
+      "cost": {
+        "input": 0.66,
+        "output": 3.4,
+        "cache_read": 0.18
+      },
       "supportedParameters": [
         "frequency_penalty",
         "include_reasoning",
@@ -98,6 +108,11 @@
       "outputModalities": [
         "text"
       ],
+      "cost": {
+        "input": 0.18,
+        "output": 0.6,
+        "cache_read": 0.06
+      },
       "supportedParameters": [
         "include_reasoning",
         "max_tokens",
@@ -132,6 +147,11 @@
       "outputModalities": [
         "text"
       ],
+      "cost": {
+        "input": 0.95,
+        "output": 4,
+        "cache_read": 0.16
+      },
       "supportedParameters": [
         "frequency_penalty",
         "include_reasoning",
@@ -174,6 +194,11 @@
       "outputModalities": [
         "text"
       ],
+      "cost": {
+        "input": 0.08722,
+        "output": 0.17444,
+        "cache_read": 0.017444
+      },
       "supportedParameters": [
         "frequency_penalty",
         "include_reasoning",
@@ -221,6 +246,11 @@
       "outputModalities": [
         "text"
       ],
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.06
+      },
       "supportedParameters": [
         "frequency_penalty",
         "include_reasoning",
@@ -261,6 +291,11 @@
       "outputModalities": [
         "text"
       ],
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.06
+      },
       "supportedParameters": [
         "frequency_penalty",
         "include_reasoning",
@@ -300,6 +335,11 @@
       "outputModalities": [
         "text"
       ],
+      "cost": {
+        "input": 0.966,
+        "output": 3.036,
+        "cache_read": 0.1794
+      },
       "supportedParameters": [
         "frequency_penalty",
         "include_reasoning",
@@ -342,6 +382,11 @@
       "outputModalities": [
         "text"
       ],
+      "cost": {
+        "input": 3,
+        "output": 15,
+        "cache_read": 0.3
+      },
       "supportedParameters": [
         "frequency_penalty",
         "include_reasoning",

@@ -84,6 +84,7 @@ type UsageLedgerEntryRef = {
   inferenceKeyId: string | null
   requestId: string
   costAmount: number
+  occurredAt: Date
 }
 
 type InsertUsageLedgerEntryInput = {
@@ -150,7 +151,7 @@ function stringAttr(attrs: JsonRecord, keys: string[]) {
 function numberAttr(attrs: JsonRecord, keys: string[]) {
   for (const key of keys) {
     const value = attrs[key]
-    const numberValue = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN
+    const numberValue = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : NaN
     if (Number.isFinite(numberValue) && numberValue >= 0) return numberValue
   }
   return null
@@ -307,6 +308,7 @@ const ledgerSelection = {
   inferenceKeyId: InferenceUsageLedgerEntryTable.inference_key_id,
   requestId: InferenceUsageLedgerEntryTable.external_job_id,
   costAmount: InferenceUsageLedgerEntryTable.cost_amount,
+  occurredAt: InferenceUsageLedgerEntryTable.occurred_at,
 }
 
 const defaultWebhookDependencies: WebhookDependencies = {
@@ -449,9 +451,6 @@ async function ingestSpan(span: ParsedSpan, dependencies: WebhookDependencies) {
     return true
   }
 
-  const limits = await dependencies.ensureUsableBuckets(inferenceKey.organization_id, span.occurredAt)
-  if (!limits.ok) throw new Error("Historical usage windows are unavailable")
-
   if (span.externalEventId) {
     const event = await dependencies.findLedgerEntryByExternalEventId(span.externalEventId)
     if (event && (event.requestId !== span.openworkRequestId || event.inferenceKeyId !== inferenceKey.id)) throw new Error("Usage event identity conflict")
@@ -460,6 +459,10 @@ async function ingestSpan(span: ParsedSpan, dependencies: WebhookDependencies) {
   const existing = await dependencies.findOpenRouterUsageLedgerEntry(span.openworkRequestId)
   const entry = existing ?? await dependencies.insertOpenRouterUsageLedgerEntry({ inferenceKey, span, costAmount })
   if (entry.organizationId !== inferenceKey.organization_id || entry.memberId !== inferenceKey.org_membership_id || entry.inferenceKeyId !== inferenceKey.id || entry.requestId !== span.openworkRequestId) throw new Error("Usage entry identity conflict")
+  // The first durable delivery owns request timing. Replays must not charge a
+  // second set of windows if provider timestamps change after rollover.
+  const limits = await dependencies.ensureUsableBuckets(inferenceKey.organization_id, entry.occurredAt)
+  if (!limits.ok) throw new Error("Historical usage windows are unavailable")
   await dependencies.chargeBuckets({ limits, ledgerEntryId: entry.id, costAmount: entry.costAmount })
   return true
 }

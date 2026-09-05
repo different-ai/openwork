@@ -11,6 +11,12 @@ if (!response.ok) throw new Error(`Model discovery failed: HTTP ${response.statu
 const { data } = await response.json()
 if (!Array.isArray(data)) throw new Error("Invalid provider model catalog")
 const models = {}
+function costPerMillion(pricing, field) {
+  const raw = pricing?.[field]
+  const value = typeof raw === "number" || (typeof raw === "string" && raw.trim()) ? Number(raw) : NaN
+  if (!Number.isFinite(value) || value < 0) throw new Error(`Model pricing lacks a valid ${field} estimate`)
+  return Number((value * 1_000_000).toPrecision(12))
+}
 for (const [alias, policy] of Object.entries(INFERENCE_MODEL_ALIASES)) {
   const model = data.find((candidate) => candidate.id === policy.upstreamModel)
   if (!model) throw new Error(`Model ${alias} is absent upstream; review its availability explicitly`)
@@ -22,6 +28,12 @@ for (const [alias, policy] of Object.entries(INFERENCE_MODEL_ALIASES)) {
     outputTokens: output,
     inputModalities: model.architecture.input_modalities.filter((modality) => ["text", "image"].includes(modality)),
     outputModalities: ["text"],
+    cost: {
+      input: costPerMillion(model.pricing, "prompt"),
+      output: costPerMillion(model.pricing, "completion"),
+      ...(model.pricing?.input_cache_read == null ? {} : { cache_read: costPerMillion(model.pricing, "input_cache_read") }),
+      ...(model.pricing?.input_cache_write == null ? {} : { cache_write: costPerMillion(model.pricing, "input_cache_write") }),
+    },
     supportedParameters: model.supported_parameters,
     reasoning: {
       mandatory: model.reasoning?.mandatory === true,

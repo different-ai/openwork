@@ -43,7 +43,7 @@ export function validateChatRequest(body: Record<string, unknown>, model: ModelC
   if (tools.length && !capabilities.supportedParameters.includes("tools")) return "This model cannot call tools. Choose a model with tool support."
   const names = new Set<string>()
   for (const tool of tools) {
-    if (!record(tool) || tool.type !== "function" || !record(tool.function) || typeof tool.function.name !== "string" || !tool.function.name.trim() || !record(tool.function.parameters)) return "Each tool needs a function name and a JSON Schema parameters object."
+    if (!record(tool) || tool.type !== "function" || !record(tool.function) || typeof tool.function.name !== "string" || !tool.function.name.trim() || (tool.function.parameters !== undefined && !record(tool.function.parameters))) return "Each tool needs a function name and, when provided, a JSON Schema parameters object."
     if (names.has(tool.function.name)) return "Tool function names must be unique."
     names.add(tool.function.name)
   }
@@ -57,7 +57,7 @@ export function validateChatRequest(body: Record<string, unknown>, model: ModelC
     if (message.role === "tool") {
       if (typeof message.tool_call_id !== "string" || !pendingTools.delete(message.tool_call_id)) return "A tool result must match an outstanding assistant tool call."
     } else if (pendingTools.size) return "Include the result of every assistant tool call before the next message."
-    if (message.tool_calls !== undefined && !Array.isArray(message.tool_calls)) return "Assistant tool_calls must be an array."
+    if (message.tool_calls != null && !Array.isArray(message.tool_calls)) return "Assistant tool_calls must be an array."
     if (Array.isArray(message.tool_calls)) {
       if (message.role !== "assistant") return "Only assistant messages can contain tool calls."
       for (const call of message.tool_calls) {
