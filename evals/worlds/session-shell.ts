@@ -332,7 +332,20 @@ export async function archiveSessions(seed: Seed) {
     return { active: value.active, archivedSection: value.archivedSection };
   }
 
-  return { app, workspace, workspacePath, candidate, neighbor, archivedAt, sidebar };
+  /** True once the undo pill is on screen and its slide-in has finished, i.e. when a person would reach for it. */
+  // TODO(primitive): user.click should wait for a target's entrance animation to settle.
+  async function undoToastSettled(): Promise<boolean> {
+    const value = await seed.evalIn(app, `(() => {
+      const pill = document.querySelector("[data-undo-toast]");
+      const toast = pill?.closest("[data-sonner-toast]");
+      if (!(toast instanceof HTMLElement)) return false;
+      return toast.dataset.mounted === "true"
+        && toast.getAnimations({ subtree: true }).every((animation) => animation.playState !== "running");
+    })()`);
+    return value === true;
+  }
+
+  return { app, workspace, workspacePath, candidate, neighbor, archivedAt, sidebar, undoToastSettled };
 }
 
 export async function responsiveSessions(seed: Seed) {

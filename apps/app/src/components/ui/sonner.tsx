@@ -221,6 +221,17 @@ interface UndoToastCardProps extends Omit<UndoToastOptions, "id" | "duration"> {
  * centered under the title bar.
  */
 function UndoToastCard({ id, title, icon: Icon, undo, view, closeLabel }: UndoToastCardProps) {
+  // Sonner keeps a dismissed toast mounted through its exit animation. Once an
+  // action is chosen the pill has done its job, so hide it at once instead of
+  // letting "Undo" linger for another few hundred milliseconds.
+  const [chosen, setChosen] = React.useState(false)
+  const choose = (action?: ToastAction) => {
+    setChosen(true)
+    action?.onClick()
+    sonnerToast.dismiss(id)
+  }
+  if (chosen) return null
+
   return (
     <div className="flex w-[var(--width)] max-w-full justify-center">
       <div
@@ -231,27 +242,14 @@ function UndoToastCard({ id, title, icon: Icon, undo, view, closeLabel }: UndoTo
         <p className="min-w-0 truncate text-sm font-medium">{title}</p>
         <div className="flex shrink-0 items-center gap-1">
           {view ? (
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => {
-                view.onClick()
-                sonnerToast.dismiss(id)
-              }}
-            >
+            <Button size="sm" variant="secondary" onClick={() => choose(view)}>
               {view.label}
             </Button>
           ) : null}
-          <Button
-            size="sm"
-            onClick={() => {
-              undo.onClick()
-              sonnerToast.dismiss(id)
-            }}
-          >
+          <Button size="sm" onClick={() => choose(undo)}>
             {undo.label}
           </Button>
-          <Button size="icon-sm" variant="ghost" aria-label={closeLabel} onClick={() => sonnerToast.dismiss(id)}>
+          <Button size="icon-sm" variant="ghost" aria-label={closeLabel} onClick={() => choose()}>
             <XIcon className="size-4" />
           </Button>
         </div>

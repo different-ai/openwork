@@ -13,6 +13,17 @@ const archiveMenuItem: Target = { role: "menuitem", label: "Archive session" };
 test("archiving a session from the sidebar confirms quietly and can be undone", async ({ world, user, agent, probe, step }) => {
   const candidateId = world.candidate.sessionId;
   const neighborId = world.neighbor.sessionId;
+  const archiveCandidate = async () => {
+    await user.rightClick({ text: world.candidate.title });
+    await user.see(archiveMenuItem);
+    await user.click(archiveMenuItem);
+    await user.see(archivedToast, { timeoutMs: 30_000 });
+    await probe.eventually(() => world.undoToastSettled(), {
+      within: 10_000,
+      label: "undo pill finishes sliding in",
+      until: (settled) => settled,
+    });
+  };
 
   await step("both sessions are active and nothing is archived", async () => {
     await agent.run("session.open", { sessionId: neighborId });
@@ -36,10 +47,7 @@ test("archiving a session from the sidebar confirms quietly and can be undone", 
   });
 
   await step("archiving the candidate moves only it and offers a way back", async () => {
-    await user.rightClick({ text: world.candidate.title });
-    await user.see(archiveMenuItem);
-    await user.click(archiveMenuItem);
-    await user.see(archivedToast, { timeoutMs: 30_000 });
+    await archiveCandidate();
     await user.see(undoButton);
     await user.see(viewButton);
     await user.screenshot();
@@ -62,7 +70,7 @@ test("archiving a session from the sidebar confirms quietly and can be undone", 
 
   await step("Undo restores the candidate without announcing itself", async () => {
     await user.click(undoButton);
-    await user.notSee(archivedToast, { timeoutMs: 15_000 });
+    await user.notSee(archivedToast);
     const stamps = await probe.eventually(() => world.archivedAt(), {
       within: 30_000,
       label: "candidate active again on the server",
@@ -83,16 +91,14 @@ test("archiving a session from the sidebar confirms quietly and can be undone", 
   });
 
   await step("View opens the archived session and leaves it archived", async () => {
-    await user.rightClick({ text: world.candidate.title });
-    await user.click(archiveMenuItem);
-    await user.see(archivedToast, { timeoutMs: 30_000 });
+    await archiveCandidate();
     await user.click(viewButton);
     await probe.eventually(() => probe.hash(), {
       within: 30_000,
       label: "candidate session route opens from View",
       until: (hash) => hash.includes(`/session/${candidateId}`),
     });
-    await user.notSee(archivedToast, { timeoutMs: 15_000 });
+    await user.notSee(archivedToast);
     const stamps = await world.archivedAt();
     expect(stamps[candidateId]).toBeGreaterThan(0);
     expect(stamps[neighborId]).toBe(0);
