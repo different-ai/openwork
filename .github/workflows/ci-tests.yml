@@ -70,7 +70,8 @@ jobs:
 
   native-google-refresh:
     needs: classify-changes
-    if: needs.classify-changes.outputs.lane == 'full'
+    # PR-only: comparison witnesses must never execute in a default-branch cache context.
+    if: needs.classify-changes.outputs.lane == 'full' && github.event_name == 'pull_request'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     timeout-minutes: 15
     strategy:
@@ -83,11 +84,6 @@ jobs:
         uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-      - name: Checkout event revision
-        if: matrix.variant == 'head' && github.event_name != 'pull_request'
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ github.sha }}
       - name: Checkout clean dev control
         if: matrix.variant == 'dev-control'
         uses: actions/checkout@v6
@@ -346,7 +342,9 @@ jobs:
 
           case "$LANE" in
             full)
-              [ "$CORE_RESULT" = "success" ] && [ "$BUILD_RESULT" = "success" ] && [ "$GOOGLE_REFRESH_RESULT" = "success" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] && [ "$DOCS_RESULT" = "skipped" ] || exit 1
+              GOOGLE_REFRESH_EXPECTED=skipped
+              if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then GOOGLE_REFRESH_EXPECTED=success; fi
+              [ "$CORE_RESULT" = "success" ] && [ "$BUILD_RESULT" = "success" ] && [ "$GOOGLE_REFRESH_RESULT" = "$GOOGLE_REFRESH_EXPECTED" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] && [ "$DOCS_RESULT" = "skipped" ] || exit 1
               ;;
             snapshot)
               [ "$SNAPSHOT_RESULT" = "success" ] && [ "$CORE_RESULT" = "skipped" ] && [ "$BUILD_RESULT" = "skipped" ] && [ "$GOOGLE_REFRESH_RESULT" = "skipped" ] && [ "$DOCS_RESULT" = "skipped" ] || exit 1
