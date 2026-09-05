@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
-import { DeleteAppButton } from "./delete-app-button";
+import { AppActionsMenu } from "./app-actions-menu";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -61,15 +61,23 @@ export function AppArtifact({ appId, revisionId, receiptId, onClose, onAsk }: Ap
   if (query.isPending) return <p className="flex items-center gap-2 p-6 text-sm" role="status"><Loader2 className="size-4 animate-spin" />Preparing app preview…</p>;
   if (!app) return <div className="space-y-3 p-6"><p role="alert" className="text-sm">{query.error instanceof Error ? query.error.message : "This app could not be opened."}</p><Button variant="outline" onClick={() => void query.refetch()}>Try again</Button></div>;
   return <section className="flex h-full min-h-0 flex-col bg-background" aria-label={`${app.view.title} app`}>
-    <header className="flex flex-wrap items-center gap-3 border-b p-3">
-      <div className="min-w-0 flex-1"><h2 className="truncate text-sm font-medium">{app.view.title}</h2><p className="text-xs text-muted-foreground">{saved ? "Saved app" : app.view.activeRevisionId ? "Unsaved changes" : "App draft"}</p></div>
-      {app.canManage ? <Button size="sm" disabled={!revision || revision.buildStatus !== "ready" || saved} onClick={() => {
-        setName(app.view.title); setUseInWorkflow(app.view.activeRevisionId ? app.view.useInWorkflow !== false : true); setSaveOpen(true); save.reset();
-      }}>{saved ? <><Check className="size-4" />Saved</> : app.view.activeRevisionId ? "Save changes" : "Save"}</Button> : null}
-      {onAsk && saved ? <Button size="sm" variant="outline" disabled={asking} onClick={() => void ask(`Run my saved app “${app.view.title}” using its existing workflow “${app.workflowTitle}”. Ask for any inputs you need, then show the new results in the saved app.`)}>Run again</Button> : null}
-      {onAsk && app.canManage ? <Button size="sm" variant="ghost" disabled={asking} onClick={() => void ask(`Help me improve my saved app “${app.view.title}”. Read its existing app source and workflow “${app.workflowTitle}”, ask what I want to change, and show a draft preview for me to save.`)}>Ask for changes</Button> : null}
-      {app.canManage && app.view.status !== "retired" ? <DeleteAppButton appId={appId} title={app.view.title} onDeleted={onClose ?? (() => navigate("/dashboard"))} /> : null}
-      {onClose ? <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label="Close app"><X /></Button> : null}
+    <header className="flex items-center gap-2 border-b px-4 py-3" data-app-header>
+      <div className="min-w-0 flex-1">
+        <h2 className="truncate text-sm font-medium" title={app.view.title}>{app.view.title}</h2>
+        <p className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground whitespace-nowrap">
+          {saved ? <><Check className="size-3 shrink-0" />Saved app</> : app.view.activeRevisionId ? "Unsaved changes" : "App draft"}
+        </p>
+      </div>
+      <div className="flex shrink-0 items-center gap-1">
+        {app.canManage && !saved ? <Button size="sm" disabled={!revision || revision.buildStatus !== "ready"} onClick={() => {
+          setName(app.view.title); setUseInWorkflow(app.view.activeRevisionId ? app.view.useInWorkflow !== false : true); setSaveOpen(true); save.reset();
+        }}>{app.view.activeRevisionId ? "Save changes" : "Save"}</Button> : null}
+        <AppActionsMenu appId={appId} title={app.view.title} canDelete={app.canManage && app.view.status !== "retired"}
+          busy={asking} onDeleted={onClose ?? (() => navigate("/dashboard"))}
+          onRun={onAsk && saved ? () => void ask(`Run my saved app “${app.view.title}” using its existing workflow “${app.workflowTitle}”. Ask for any inputs you need, then show the new results in the saved app.`) : undefined}
+          onEdit={onAsk && app.canManage ? () => void ask(`Help me improve my saved app “${app.view.title}”. Read its existing app source and workflow “${app.workflowTitle}”, ask what I want to change, and show a draft preview for me to save.`) : undefined} />
+        {onClose ? <Button variant="ghost" size="icon-sm" className="text-muted-foreground" onClick={onClose} aria-label="Close app"><X className="size-4" /></Button> : null}
+      </div>
     </header>
     <div className="min-h-0 flex-1 space-y-4 overflow-auto p-4">
       {askError ? <p role="alert" className="text-sm text-destructive">{askError}</p> : null}

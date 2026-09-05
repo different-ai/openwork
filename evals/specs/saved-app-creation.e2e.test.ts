@@ -101,6 +101,32 @@ test("create, preview, save and reopen an app without changing already-open resu
   });
   evidence.recordAssertionEvidence("Drafts stay off the dashboard until saved, and Cancel does not save them", "Draft list was empty; Cancel retained a null active revision; Save persisted the exact revision, workflow link, and personal dashboard placement without executing or scheduling a run.", true);
 
+  await step("saved app header stays readable in a narrow preview", async () => {
+    await seed.eval(world.app, `document.querySelector('[data-app-header]').parentElement.style.width = '320px'`);
+    const header = await probe.eval(world.app, `(() => {
+      const header = document.querySelector('[data-app-header]');
+      const title = header.querySelector('h2');
+      return { width: header.getBoundingClientRect().width, height: header.getBoundingClientRect().height,
+        titleWidth: title.getBoundingClientRect().width, titleFits: title.scrollWidth <= title.clientWidth,
+        buttonLabels: [...header.querySelectorAll('button')].map(button => button.textContent.trim()) };
+    })()`);
+    expect(record(header).width).toBe(320);
+    expect(record(header).height).toBeLessThan(72);
+    expect(record(header).titleWidth).toBeGreaterThan(180);
+    expect(record(header).titleFits).toBe(true);
+    expect(record(header).buttonLabels).not.toContain("Saved");
+    expect(record(header).buttonLabels).not.toContain("Delete");
+    await user.screenshot();
+    await user.click("App options for Team briefing");
+    await user.see("Run again");
+    await user.see("Ask for changes");
+    await user.see("Delete Team briefing");
+    await user.screenshot();
+    await user.click("App options for Team briefing");
+    await seed.eval(world.app, `document.querySelector('[data-app-header]').parentElement.style.removeProperty('width')`);
+  });
+  evidence.recordAssertionEvidence("The saved app header preserves the title at a 320px panel width", "The real preview header remains under 72px tall with over 180px for the fully visible title. Saved is status text; Run, Ask for changes, and Delete are reachable in the options menu.", true);
+
   await step("reopen the saved app after a reload", async () => {
     await world.open("/dashboard");
     await user.reload();
@@ -114,6 +140,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     await world.open("/dashboard");
     await user.see({ text: "Project updates" });
     await user.see({ text: "From your company" });
+    await user.click("App options for Team briefing");
     await user.click("Remove Team briefing from dashboard");
     await user.see({ text: "Make this dashboard yours" }, { timeoutMs: 30_000 });
     expect(await readApp()).toMatchObject({ onDashboard: false, view: { activeRevisionId: revisionId } });
@@ -276,6 +303,7 @@ test("create, preview, save and reopen an app without changing already-open resu
   const beforeDeleteSnapshots = (await probe.api(world.den.admin, `/v1/workflows/${world.configObjectId}/snapshots`)).body;
   await step("an admin cancels deletion in the app and confirms it on the dashboard", async () => {
     await world.open(dashboardAppPath);
+    await user.click("App options for Team briefing");
     await user.click("Delete Team briefing");
     await user.see({ text: "Delete “Team briefing”?" });
     await user.see({ text: "This removes the saved app from everyone’s dashboards and the app list. Its workflow and past results stay available." });
@@ -283,6 +311,7 @@ test("create, preview, save and reopen an app without changing already-open resu
     await user.click("Cancel");
     expect((await readApp()).onDashboard).toBe(true);
     await world.open("/dashboard");
+    await user.click("App options for Team briefing");
     await user.click("Delete Team briefing");
     await user.click("Delete app");
     await user.see({ text: "Make this dashboard yours" }, { timeoutMs: 30_000 });

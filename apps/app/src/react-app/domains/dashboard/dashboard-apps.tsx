@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Blocks, Check, Loader2, Plus, Sparkles, X } from "lucide-react";
+import { ArrowLeft, Blocks, Check, Loader2, Plus, Sparkles } from "lucide-react";
 import type { SavedAppSummary } from "@openwork/types/workflows";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useSavedApps, useAppsClient } from "../apps/use-apps";
-import { DeleteAppButton } from "../apps/delete-app-button";
+import { AppActionsMenu } from "../apps/app-actions-menu";
 import { GeneratedAppPreview } from "../apps/generated-app-preview";
 import { ShareDashboardButton } from "./share-dashboard-button";
 
@@ -95,8 +95,7 @@ function SavedDashboardApp({ app, onRemove, removing }: { app: SavedAppSummary; 
   return <article className="min-w-0 overflow-hidden rounded-xl border bg-background" data-personal-dashboard-app={app.view.id}>
     <header className="flex items-center gap-2 border-b p-3">
       <button className="min-w-0 flex-1 text-left" aria-label={`Open ${app.view.title}`} onClick={() => navigate(`/dashboard/apps/${app.view.id}`)}><span className="block truncate text-sm font-medium">{app.view.title}</span><span className="text-xs text-muted-foreground">Open app</span></button>
-      {app.canManage ? <DeleteAppButton appId={app.view.id} title={app.view.title} /> : null}
-      <Button variant="ghost" size="icon-sm" aria-label={`Remove ${app.view.title} from dashboard`} disabled={removing} onClick={onRemove}><X className="size-4" /></Button>
+      <AppActionsMenu appId={app.view.id} title={app.view.title} canDelete={app.canManage} onRemove={onRemove} busy={removing} />
     </header>
     <div className="max-h-[32rem] overflow-auto px-4 pb-4">
       {detail.isPending ? <p role="status" className="py-4 text-sm text-muted-foreground">Loading app…</p>

@@ -8446,6 +8446,41 @@ export type GetV1AppsResponses = {
 
 export type GetV1AppsResponse = GetV1AppsResponses[keyof GetV1AppsResponses];
 
+export type PostV1AppsByAppIdShareData = {
+  body: {
+    email: string;
+  };
+  path: {
+    appId: string;
+  };
+  query?: never;
+  url: "/v1/apps/{appId}/share";
+};
+
+export type PostV1AppsByAppIdShareErrors = {
+  /**
+   * Only app managers can share.
+   */
+  403: ForbiddenError;
+  /**
+   * App or teammate not found.
+   */
+  404: NotFoundError;
+};
+
+export type PostV1AppsByAppIdShareError = PostV1AppsByAppIdShareErrors[keyof PostV1AppsByAppIdShareErrors];
+
+export type PostV1AppsByAppIdShareResponses = {
+  /**
+   * App shared to the teammate's dashboard.
+   */
+  200: {
+    ok: true;
+  };
+};
+
+export type PostV1AppsByAppIdShareResponse = PostV1AppsByAppIdShareResponses[keyof PostV1AppsByAppIdShareResponses];
+
 export type GetV1AppsByAppIdData = {
   body?: never;
   path: {
