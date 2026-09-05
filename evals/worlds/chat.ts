@@ -1304,7 +1304,7 @@ export async function visualization(seed: Seed) {
     { promptMarker: "Create version 2", finalReply: "Your revised sketch is ready.", steps: [{ tool: "openwork_visualization", arguments: { ...design, revision: 2, description: "A calmer overview" } }] },
   ] });
   const den = await seed.den({ mocks: { agent: mock } });
-  const app = await seed.desktop({ name: "visualization", den, as: "admin", model: `${providerId}/${modelId}` });
+  const app = await seed.desktop({ name: "visualization", model: `${providerId}/${modelId}` });
   const workspace = await seed.workspace(app, seed.tmpPath("visualization"));
   await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
     permission: { openwork_visualization: "allow" },
