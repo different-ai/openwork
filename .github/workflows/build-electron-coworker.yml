@@ -73,7 +73,9 @@ jobs:
           pnpm --filter @openwork/coworker test
 
       - name: Package Open Coworker (unpacked)
-        run: pnpm --filter @openwork/coworker package:electron:dir
+        run: |
+          pnpm --filter @openwork/coworker build:electron
+          pnpm --dir apps/coworker exec electron-builder --config electron-builder.yml --config.electronVersion=43.2.0 --dir --publish never
 
       - name: Upload Open Coworker artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -186,7 +188,7 @@ jobs:
         run: |
           set -euo pipefail
           pnpm --filter @openwork/coworker run build:electron
-          pnpm --dir apps/coworker exec electron-builder --config electron-builder.yml --mac dmg zip --publish never
+          pnpm --dir apps/coworker exec electron-builder --config electron-builder.yml --config.electronVersion=43.2.0 --mac dmg zip --publish never
 
       - name: Verify signature and notarization ticket
         shell: bash
