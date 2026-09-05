@@ -88,7 +88,7 @@ export async function captureExternalBrowserUrls(handle: SurfaceHandle): Promise
     });
     return result.stdout.trim();
   }
-  const state: unknown = JSON.parse(await python(String.raw`import json, os, pathlib, shutil, tempfile
+  const state: unknown = JSON.parse(await python(String.raw`import json, os, pathlib, shutil, subprocess, tempfile
 opener = shutil.which("xdg-open")
 if not opener:
     raise RuntimeError("xdg-open is missing")
@@ -99,8 +99,10 @@ backup = str(root / "xdg-open.original")
 shutil.copy2(opener, backup)
 import shlex
 script = "#!/bin/sh\nprintf '%s\\n' \"$1\" >> " + shlex.quote(str(log)) + "\nexec " + shlex.quote(backup) + " \"$@\"\n"
-pathlib.Path(opener).write_text(script)
-os.chmod(opener, 0o755)
+capture = root / "xdg-open.capture"
+capture.write_text(script)
+os.chmod(capture, 0o755)
+subprocess.run(["sudo", "-n", "cp", "--", str(capture), opener], check=True)
 print(json.dumps({"opener": opener, "root": str(root), "log": str(log), "backup": backup}))`));
   if (typeof state !== "object" || state === null || !("root" in state) || typeof state.root !== "string"
     || !("opener" in state) || typeof state.opener !== "string" || !("log" in state) || typeof state.log !== "string"
@@ -113,7 +115,7 @@ print(json.dumps({"opener": opener, "root": str(root), "log": str(log), "backup"
       return value;
     },
     async [Symbol.asyncDispose]() {
-      await python(`import shutil\nshutil.copy2(${JSON.stringify(backup)}, ${JSON.stringify(opener)})\nshutil.rmtree(${JSON.stringify(root)})`);
+      await python(`import shutil, subprocess\nsubprocess.run(["sudo", "-n", "cp", "--", ${JSON.stringify(backup)}, ${JSON.stringify(opener)}], check=True)\nshutil.rmtree(${JSON.stringify(root)})`);
     },
   };
 }
