@@ -169,6 +169,22 @@ export function mapRuntimeProvidersToV2Specs(
       "@ai-sdk/openai-compatible": "@opencode-ai/ai/providers/openai-compatible",
     };
     const options = isRecord(value.options) ? value.options : {};
+    // Catalog `api` metadata may use only the native adapter's trusted origin.
+    // Custom destinations must use the existing explicit options.baseURL path.
+    if (options.baseURL === undefined && value.api !== undefined) {
+      const nativeOrigins: Record<string, string> = {
+        "@ai-sdk/openai": "https://api.openai.com",
+        "@ai-sdk/anthropic": "https://api.anthropic.com",
+        "@openrouter/ai-sdk-provider": "https://openrouter.ai",
+      };
+      let trusted = false;
+      try {
+        const url = new URL(typeof value.api === "string" ? value.api : "");
+        trusted = typeof value.npm === "string" && Object.hasOwn(nativeOrigins, value.npm)
+          && url.origin === nativeOrigins[value.npm] && !url.username && !url.password;
+      } catch { /* Invalid endpoint metadata is never mirrored. */ }
+      if (!trusted) { skippedProviderIds.push(id); continue; }
+    }
     const endpoint = options.baseURL ?? value.api;
     const baseUrl = typeof endpoint === "string" && endpoint.trim() ? endpoint : undefined;
     const packageName = typeof value.npm === "string" && Object.hasOwn(packages, value.npm) ? packages[value.npm] : undefined;

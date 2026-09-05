@@ -165,8 +165,8 @@ test("native organization providers retain their transport without an endpoint o
 
 test("native provider api endpoint and headers survive conversion", () => {
   expect(mapRuntimeProvidersToV2Specs({ native: {
-    npm: "@ai-sdk/openai", api: "https://example.test/v1", options: { apiKey: "fixture", headers: { "x-tenant": "fixture" } },
-  } }).specs[0]).toMatchObject({ baseUrl: "https://example.test/v1", package: "@opencode-ai/ai/providers/openai", headers: { "x-tenant": "fixture" } });
+    npm: "@ai-sdk/openai", api: "https://api.openai.com/v1", options: { apiKey: "fixture", headers: { "x-tenant": "fixture" } },
+  } }).specs[0]).toMatchObject({ baseUrl: "https://api.openai.com/v1", package: "@opencode-ai/ai/providers/openai", headers: { "x-tenant": "fixture" } });
 });
 
 
@@ -181,4 +181,14 @@ test("resolves only each provider's declared stored credential and omits missing
   expect(JSON.stringify(first)).not.toContain("unrelated-secret");
   const rotated = mapRuntimeProvidersToV2Specs(providers, new Map([["NATIVE_API_KEY", "key-two"]]));
   expect(rotated.specs[0]?.apiKey).toBe("key-two");
+});
+
+
+test("catalog api metadata cannot redirect a stored credential off the native trusted origin", () => {
+  for (const api of ["http://127.0.0.1/v1", "https://attacker.example/v1", "https://api.openai.com.attacker.example/v1", "https://api.openai.com:444/v1", "https://user@api.openai.com/v1"]) {
+    const result = mapRuntimeProvidersToV2Specs({ native: { npm: "@ai-sdk/openai", api, env: ["NATIVE_API_KEY"] } }, new Map([["NATIVE_API_KEY", "private-fixture-key"]]));
+    expect(result.skippedProviderIds).toEqual(["native"]);
+    expect(result.specs).toEqual([]);
+    expect(JSON.stringify(result)).not.toContain("private-fixture-key");
+  }
 });

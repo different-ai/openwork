@@ -282,7 +282,7 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
     place,
     mocks: { agent: mcpMock({
       agentWorkloads: [{ promptMarker, finalReply, steps: [] }],
-      agentRequiredHeader: { name: "authorization", value: "Bearer sk-openwork-sync-contract-eval-only" },
+      agentRequiredHeader: { name: "x-private-model-setting", value: "sk-openwork-sync-contract-eval-only" },
     }) },
     org: {
       name: ORGANIZATION_NAME,
@@ -303,7 +303,7 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
       id: CUSTOM_PROVIDER_KEY,
       name: CUSTOM_PROVIDER_NAME,
       npm: "@ai-sdk/openai",
-      api: `${den.mocks.agent.url}/v1`,
+      options: { baseURL: `${den.mocks.agent.url}/v1` },
       env: ["SYNC_CONTRACT_PROVIDER_API_KEY"],
       models: [{ id: CUSTOM_MODEL_ID, name: "Sync Contract Custom Model", tool_call: true,
         headers: { "x-private-model-setting": "sk-openwork-sync-contract-eval-only" },
@@ -556,16 +556,22 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
     const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
     const paths = ${JSON.stringify([`/workspace/${desktopApp.workspaceId}/opencode2/api/model`, `/workspace/${desktopApp.workspaceId}/opencode2/api/model/default`, `/workspace/${desktopApp.workspaceId}/opencode2/api/provider`, `/workspace/${desktopApp.workspaceId}/opencode2/api/provider/${customRuntime.providerId}`])};
     const results = [];
+    let model;
     for (const path of paths) {
       const response = await fetch(base + path, {
         headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") }
       });
       const text = await response.text();
+      if (path === paths[0] && response.ok) model = JSON.parse(text).data.find((entry) => entry.providerID === ${JSON.stringify(customRuntime.providerId)});
       results.push({ status: response.status, leaksKey: text.includes("sk-openwork-sync-contract-eval-only"), ...(response.ok ? {} : { error: text.replaceAll("sk-openwork-sync-contract-eval-only", "[redacted]") }) });
     }
-    return results;
+    return { results, model };
   })()`, { awaitPromise: true });
-  expect(catalogPrivacy).toEqual(Array.from({ length: 4 }, () => ({ status: 200, leaksKey: false })));
+  expect(catalogPrivacy).toMatchObject({
+    results: Array.from({ length: 4 }, () => ({ status: 200, leaksKey: false })),
+    model: { limit: { context: 1050000, output: 128000 }, capabilities: { tools: true, input: ["text", "image", "pdf"], output: ["text"] } },
+  });
+  evidence.recordAssertionEvidence("native model limits, tools and modalities survive mirroring", "The live v2 catalog retained the fixture's 1,050,000 context and 128,000 output limits, tool support, text/image/PDF inputs and text output.", true);
   await go(desktopApp, `/workspace/${desktopApp.workspaceId}/session`);
   await sleep(16_000); // includes the renderer's engine-routing refresh interval
   expect(await evalIn(desktopApp, `localStorage.getItem("openwork.defaultModel")`)).toBe(chosenDefault);
@@ -602,7 +608,7 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
   expect((await den.mocks.agent.requests()).some((request) => request.path.endsWith("/responses"))).toBe(true);
   evidence.recordAssertionEvidence(
     "native OpenAI inference completes through the selected v2 model",
-    "The signed-in desktop rendered the independent reply nonce; the authenticated witness saw the selected model on the native Responses endpoint, with no wrong-model or authentication-error requests.", true,
+    "The signed-in desktop rendered the independent reply nonce; the witness required the private model header and saw the selected model on the native Responses endpoint, with no wrong-model or authentication-error requests.", true,
   );
   const nativeSessionRoute = await evalIn(desktopApp, `location.hash.slice(1)`);
   if (typeof nativeSessionRoute !== "string") throw new Error("Native session route was unavailable");

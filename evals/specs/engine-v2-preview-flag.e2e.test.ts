@@ -229,6 +229,11 @@ test.skipIf(!enabled)(title, async ({ evidence, place }) => {
               models: { "witness-model-e2e": { name: "Witness Model E2E" } },
             },
             "openwork-skip-e2e": { name: "Skip E2E", options: {} },
+            "openwork-untrusted-api-e2e": {
+              npm: "@ai-sdk/openai", api: "http://127.0.0.1:65532/v1",
+              options: { apiKey: "rejected-endpoint-key" },
+              models: { "rejected-model-e2e": { name: "Rejected Model" } },
+            },
           },
         },
       },
@@ -252,6 +257,10 @@ test.skipIf(!enabled)(title, async ({ evidence, place }) => {
     console.info(`[engine-v2-preview-flag] mirror latency after PATCH 200: ${mirrorLatencyMs}ms; catalog latency: ${catalogLatencyMs}ms`);
     expect(mirroredStatus.skippedProviderIds).toContain("openwork-skip-e2e");
     expect(mirroredStatus.mirroredProviderIds).not.toContain("openwork-skip-e2e");
+    expect(mirroredStatus.skippedProviderIds).toContain("openwork-untrusted-api-e2e");
+    expect(mirroredStatus.mirroredProviderIds).not.toContain("openwork-untrusted-api-e2e");
+    expect(catalogStatus.catalogModelIds).not.toContain("rejected-model-e2e");
+    evidence.recordAssertionEvidence("untrusted catalog API endpoints are rejected before credential delivery", "The native provider with an internal catalog API URL and a synthetic credential was reported skipped, never mirrored, and absent from the live model catalog.", true);
     expect(catalogStatus.pid).toBe(pid0);
     expect(mirroredStatus.running).toBe(true);
     for (const configPath of ["/api/config", "/api/config/", "/api/%63onfig"]) {
