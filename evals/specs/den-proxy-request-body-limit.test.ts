@@ -5,7 +5,7 @@ import { eventually, localMysqlIsRunning, localRedisIsRunning, needs, server, Sk
 
 const maxBytes = 32 * 1024 * 1024;
 
-function postBody(url: URL, requestId: string, declared: boolean): Promise<Response> {
+function postBody(url: URL, requestId: string, declared: boolean): Promise<{ response: Response; senderEnded: boolean }> {
   return new Promise((resolve, reject) => {
     const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(url, {
       method: "POST",
@@ -16,11 +16,12 @@ function postBody(url: URL, requestId: string, declared: boolean): Promise<Respo
       },
       signal: AbortSignal.timeout(60_000),
     }, (response) => {
+      const senderEnded = request.writableEnded;
       const chunks: Buffer[] = [];
       response.on("data", (chunk: Buffer) => chunks.push(chunk));
       response.on("error", reject);
       response.on("end", () => {
-        resolve(new Response(Buffer.concat(chunks), { status: response.statusCode }));
+        resolve({ response: new Response(Buffer.concat(chunks), { status: response.statusCode }), senderEnded });
         request.destroy();
       });
     });
@@ -29,7 +30,18 @@ function postBody(url: URL, requestId: string, declared: boolean): Promise<Respo
       // Reject the declaration without waiting for its advertised payload.
       request.flushHeaders();
     } else {
-      request.end(Buffer.alloc(maxBytes + 1, "x"));
+      const chunk = Buffer.alloc(64 * 1024, "x");
+      let written = 0;
+      const writeNext = () => {
+        if (request.destroyed || written > maxBytes) return;
+        const size = Math.min(chunk.length, maxBytes + 1 - written);
+        written += size;
+        if (request.write(chunk.subarray(0, size))) setImmediate(writeNext);
+        else request.once("drain", writeNext);
+      };
+      writeNext();
+      // Deliberately never end the sender: buffering until EOF must time out,
+      // while a streaming limit returns 413 as soon as the limit is crossed.
     }
   });
 }
@@ -49,13 +61,15 @@ test("the auth proxy rejects oversized bodies before Den while ordinary sign-in 
   const acceptedId = `proxy-accepted-${nonce}`;
   const url = new URL("/api/auth/sign-in/email", den.ref.webUrl);
 
-  const declared = await postBody(url, declaredId, true);
+  const { response: declared, senderEnded: declaredEnded } = await postBody(url, declaredId, true);
+  expect(declaredEnded).toBe(false);
   expect(declared.status).toBe(413);
   expect(await declared.json()).toMatchObject({
     error: "request_too_large", requestId: declaredId, maxBytes, declaredBytes: maxBytes + 1,
   });
 
-  const chunked = await postBody(url, chunkedId, false);
+  const { response: chunked, senderEnded: chunkedEnded } = await postBody(url, chunkedId, false);
+  expect(chunkedEnded).toBe(false);
   expect(chunked.status).toBe(413);
   expect(await chunked.json()).toMatchObject({
     error: "request_too_large", requestId: chunkedId, maxBytes, observedBytes: maxBytes + 1,
