@@ -135,7 +135,7 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
       404: jsonResponse("Cloud is unavailable.", openWorkWebUnavailableSchema) },
   }), orgRoleRoute(["member"]), async (c) => {
     const payload = c.get("organizationContext")
-    if (!isOpenWorkWebAvailable()) return c.json(openWorkWebUnavailableResponse(), 404)
+    if (!isOpenWorkWebAvailableForOrganization(payload.organization.metadata)) return c.json(openWorkWebUnavailableResponse(), 404)
     const userId = normalizeDenTypeId("user", c.get("user").id)
     const [trial, used, billing] = await Promise.all([
       getCloudTrial(payload.organization.id), hasUsedCloudTrial(userId),
