@@ -133,7 +133,7 @@ function createPanel(checkPolicy = async () => {}) {
   };
   createBrowserPanel({
     getWindow: () => mainWindow, remoteDebugPort: 0, onDeepLink: () => {},
-    checkPolicy: async (request) => { policies.push(request); await checkPolicy(request); },
+    checkPolicy: async (request) => { policies.push(request); await checkPolicy(); },
   }).registerIpc(ipcMain);
   const mainContents = mainWindow.webContents;
   const emit = (channel, event, ...args) => handlers.get(channel)(event, ...args);
@@ -399,6 +399,7 @@ test("link menus reject untrusted senders, subframes, and non-HTTP payloads", as
 });
 
 test("the built-in choice retains the captured owner when focus changes before policy completes", async () => {
+  /** @type {(() => void) | undefined} */
   let allow;
   const { openLinkMenu, invoke, policies } = createPanel(() => new Promise((resolve) => { allow = resolve; }));
   invoke("openwork:browser:setVisibleSession", "B");
@@ -408,6 +409,7 @@ test("the built-in choice retains the captured owner when focus changes before p
   assert.deepEqual(policies, [{ url: LINK.url, external: false }]);
   assert.deepEqual(invoke("openwork:browser:state").tabs, [], "navigation waits for policy");
   invoke("openwork:browser:setVisibleSession", "C");
+  assert.ok(allow, "the pending policy check exposes its completion");
   allow();
   await flush();
 
