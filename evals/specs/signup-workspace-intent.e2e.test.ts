@@ -115,7 +115,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await user.notSee({ text: "How should your team’s desktop app work?" });
     await user.type({ role: "textbox", label: "Organization name" }, "Personal work");
     await user.click({ role: "button", label: "Continue" });
-    await user.see({ text: "Give your team a head start." }, { timeoutMs: 90_000 });
+    await user.see({ text: "Set up team tools." }, { timeoutMs: 90_000 });
     await expectFocusedSetup();
     const memberships = await orgs();
     expect(memberships).toHaveLength(1);
@@ -131,12 +131,12 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     const defaultPolicy = policies.body.desktopPolicies.filter(isRecord).find((entry) => entry.isDefault === true);
     if (typeof defaultPolicy?.id !== "string") throw new Error("Expected default desktop policy id");
     await user.navigate(new URL(`/dashboard/desktop-policies/${encodeURIComponent(defaultPolicy.id)}?setup=restricted`, world.den.ref.webUrl).toString());
-    await user.see({ text: "Give your team a head start." }, { timeoutMs: 90_000 });
+    await user.see({ text: "Set up team tools." }, { timeoutMs: 90_000 });
     await expectFocusedSetup();
     expect(await world.pathname()).toMatch(/\/onboarding\/tools$/);
     expect(await policyFor(personalId)).toEqual(personalPolicy);
     await user.reload();
-    await user.see({ text: "Give your team a head start." }, { timeoutMs: 90_000 });
+    await user.see({ text: "Set up team tools." }, { timeoutMs: 90_000 });
     await expectFocusedSetup();
     expect(await policyFor(personalId)).toEqual(personalPolicy);
     evidence.recordAssertionEvidence("Opening a legacy Restricted setup link never changes an existing flexible policy", "The personal workspace kept its complete original desktop policy after opening the legacy URL and reloading; navigation only resumed optional Tools onboarding.", true);
@@ -146,9 +146,9 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     expect(connectionsBeforeSkip).toEqual([]);
     await user.click({ role: "checkbox", label: "Add Notion" });
     await user.click({ role: "button", label: "Do this later" });
-    await user.see({ text: "Bring your people." }, { timeoutMs: 90_000 });
+    await user.see({ text: "Invite your team." }, { timeoutMs: 90_000 });
     await expectFocusedSetup();
-    await user.see({ text: "No tools shared with everyone yet. You can add tools now or from your workspace later." });
+    await user.see({ text: "No shared tools yet." });
     await user.type({ role: "textbox", label: "Teammate email 1" }, "unsent@openwork.test");
     await user.click({ role: "button", label: "Do this later" });
     await user.see({ testId: "marketplace-onboarding" }, { timeoutMs: 90_000 });
@@ -156,13 +156,14 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     expect(await connectionsFor(personalId)).toEqual(connectionsBeforeSkip);
     await user.see({ text: "1 member · 0 pending invitations" });
     evidence.recordAssertionEvidence("Skipping optional tools does not save even a selected connection", "Notion was selected, then Do this later continued to People; the personal organization's connection inventory stayed empty through completion.", true);
+    await user.click({ text: "Get the desktop app" });
     await user.click({ text: "Other platforms and versions" });
     await user.see({ text: "macOS" });
     await user.see({ text: "Windows" });
     await user.see({ text: "Linux" });
     expect(await probe.eval("document.querySelectorAll('[data-testid=download-openwork-card] details a[href]').length")).toBe(8);
     await user.click({ text: "Other platforms and versions" });
-    await user.looks(["The final setup screen shows a clear desktop download and model setup path in the same restrained black-and-white design"]);
+    await user.looks(["The final setup screen shows a concise workspace review and model status with an optional desktop download in the same restrained black-and-white design"]);
     expect(await invitationsFor(personalId)).toEqual([]);
     expect(await inviteEmails()).toEqual(outboxBeforeSkip);
     evidence.recordAssertionEvidence("Personal setup preserves desktop defaults and explicit skip never submits a typed invitation", JSON.stringify({ memberships: memberships.length, personalPolicy, invitations: [], emailsUnchanged: true }), true);
@@ -204,7 +205,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await user.type({ role: "textbox", label: "Team name" }, "Flexible team");
     await user.click({ text: "Flexible" });
     await user.click({ role: "button", label: "Continue" });
-    await user.see({ text: "Give your team a head start." }, { timeoutMs: 90_000 });
+    await user.see({ text: "Set up team tools." }, { timeoutMs: 90_000 });
     await expectFocusedSetup();
     await user.notSee({ text: "Review your team’s desktop access" });
     const memberships = await orgs();
@@ -220,7 +221,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
   await step("optional tools add shared availability without authorizing anyone's account", async () => {
     expect(await world.pathname()).toMatch(/\/onboarding\/tools$/);
     expect(await connectionsFor(flexibleId)).toEqual([]);
-    await user.see({ text: "Adding a tool makes it available to your team. Each teammate connects their own account before accessing private information." });
+    await user.see({ text: "Teammates connect personal accounts after joining." });
     await user.click({ role: "checkbox", label: "Add Notion" });
     await user.click({ role: "checkbox", label: "Add Linear" });
     await user.click({ role: "button", label: "Add to team" });
@@ -235,16 +236,16 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     }
     expect(await connectionsFor(personalId)).toEqual([]);
     await user.see({ text: "Added to team" });
-    await user.looks(["The optional Tools screen shows Notion and Linear added for the team while explaining that each person still signs in to their own account, with a clear Continue action. Its teammate preview lists actual shared tools"]);
+    await user.looks(["The optional Tools screen shows Notion and Linear added for the team while explaining that each person still signs in to their own account, with a clear Continue action. Its compact teammate inventory lists actual shared tools"]);
     await user.reload();
-    await user.see({ text: "Give your team a head start." }, { timeoutMs: 90_000 });
+    await user.see({ text: "Set up team tools." }, { timeoutMs: 90_000 });
     await expectFocusedSetup();
     expect(await connectionsFor(flexibleId)).toEqual(added);
     await user.see({ text: "Already added" });
     await user.click({ role: "button", label: "Continue" });
-    await user.see({ text: "Bring your people." }, { timeoutMs: 90_000 });
+    await user.see({ text: "Invite your team." }, { timeoutMs: 90_000 });
     await user.see({ testId: "onboarding-team-preview" });
-    await user.see({ text: "Each teammate connects their own account." });
+    await user.see({ text: "Teammates connect personal accounts after joining." });
     expect(await probe.eval(`document.querySelector('[data-testid="onboarding-team-preview"]')?.textContent`)).toContain("Notion");
     expect(await probe.eval(`document.querySelector('[data-testid="onboarding-team-preview"]')?.textContent`)).toContain("Linear");
     await expectFocusedSetup();
@@ -306,7 +307,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await user.see({ text: "1 member · 2 pending invitations" });
     await user.reload();
     await user.see({ text: "1 member · 2 pending invitations" }, { timeoutMs: 90_000 });
-    await user.see({ text: "Each teammate connects their own account." });
+    await user.see({ text: "Teammates connect personal accounts after joining." });
     await expectFocusedSetup();
     evidence.recordAssertionEvidence("Partial invitation failure preserves the unsuccessful address and retries it without resending successful invitations or granting admin access", JSON.stringify({ invitations, recipientCounts: [1, 1], personalInvitations: 0 }), true);
   });
@@ -324,7 +325,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await user.see({ text: "Restricted requires Enterprise. We’ll apply the team’s desktop restrictions when you continue. You can change them later in Settings." });
     await user.looks(["Team setup uses subdued neutral cards with Restricted selected, without heavy black card outlines, and explains that restrictions apply on Continue"]);
     await user.click({ role: "button", label: "Continue" });
-    await user.see({ text: "Give your team a head start." }, { timeoutMs: 90_000 });
+    await user.see({ text: "Set up team tools." }, { timeoutMs: 90_000 });
     await expectFocusedSetup();
     expect(await world.pathname()).toMatch(/\/onboarding\/tools$/);
     await user.notSee({ text: "Review your team’s desktop access" });
@@ -337,7 +338,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     for (const key of ["allowCustomProviders", "allowZenModel", "allowMultipleWorkspaces", "allowControlSettings", "allowManageExtensions", "allowBuiltInExtensions", "allowAlphaUpdates"]) expect(saved[key]).toBe(false);
     expect(saved.showWelcomePage).toBe(true);
     await user.reload();
-    await user.see({ text: "Give your team a head start." }, { timeoutMs: 90_000 });
+    await user.see({ text: "Set up team tools." }, { timeoutMs: 90_000 });
     await expectFocusedSetup();
     expect(await world.pathname()).toMatch(/\/onboarding\/tools$/);
     expect(await policyFor(team.id)).toEqual(saved);
@@ -347,7 +348,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     const defaultPolicy = policies.body.desktopPolicies.filter(isRecord).find((entry) => entry.isDefault === true);
     if (typeof defaultPolicy?.id !== "string") throw new Error("Expected default desktop policy id");
     await user.navigate(new URL(`/dashboard/desktop-policies/${encodeURIComponent(defaultPolicy.id)}?setup=restricted`, world.den.ref.webUrl).toString());
-    await user.see({ text: "Give your team a head start." }, { timeoutMs: 90_000 });
+    await user.see({ text: "Set up team tools." }, { timeoutMs: 90_000 });
     await expectFocusedSetup();
     expect(await world.pathname()).toMatch(/\/onboarding\/tools$/);
     await user.notSee({ text: "Review your team’s desktop access" });
@@ -358,7 +359,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     expect(await orgs()).toHaveLength(3);
     expect(await invitationsFor(team.id)).toEqual([]);
     await user.click({ role: "button", label: "Do this later" });
-    await user.see({ text: "Bring your people." }, { timeoutMs: 90_000 });
+    await user.see({ text: "Invite your team." }, { timeoutMs: 90_000 });
     await expectFocusedSetup();
     expect(await connectionsFor(team.id)).toEqual([]);
     await user.click({ role: "button", label: "Do this later" });
@@ -372,10 +373,10 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
   });
   await step("model intent survives tools and resolves after invitations", async () => {
     await user.navigate(new URL("/dashboard/onboarding/tools", world.den.ref.webUrl).toString());
-    await user.see({ text: "Give your team a head start." }, { timeoutMs: 90_000 });
+    await user.see({ text: "Set up team tools." }, { timeoutMs: 90_000 });
     await probe.eval("window.sessionStorage.setItem('openwork:web:pending-auth-intent', 'models')");
     await user.click({ role: "button", label: "Do this later" });
-    await user.see({ text: "Bring your people." }, { timeoutMs: 90_000 });
+    await user.see({ text: "Invite your team." }, { timeoutMs: 90_000 });
     expect(await probe.eval("window.sessionStorage.getItem('openwork:web:pending-auth-intent')")).toBe("models");
     await user.click({ role: "button", label: "Do this later" });
     await probe.eventually(() => world.pathname(), { within: 30_000, label: "model setup resumes after the team steps", until: (path) => path === "/dashboard/inference" });
@@ -399,7 +400,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
       return result.body.emails.filter(isRecord).map(({ template, to, subject, at }) => ({ template, to, subject, at }));
     };
     const toolsBefore = await connectionsFor(flexibleId);
-    await mobileUser.see({ text: "Give your team a head start." }, { timeoutMs: 90_000 });
+    await mobileUser.see({ text: "Set up team tools." }, { timeoutMs: 90_000 });
     await mobileUser.see({ text: "Already added" });
     await mobileUser.notSee({ role: "button", label: "Open menu" });
     await mobileUser.notSee({ testId: "den-org-sidebar" });
@@ -409,8 +410,9 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await mobileUser.hover({ role: "button", label: "Continue" });
     await mobileUser.looks(["The lower part of the narrow Tools screen shows readable tool cards and a clear Continue button without horizontal clipping"]);
     await mobileUser.click({ role: "button", label: "Continue" });
-    await mobileUser.see({ text: "Bring your people." }, { timeoutMs: 90_000 });
+    await mobileUser.see({ text: "Invite your team." }, { timeoutMs: 90_000 });
     await mobileUser.click({ role: "button", label: "Do this later" });
+    await mobileUser.click({ text: "Get the desktop app" });
     await mobileUser.see({ testId: "onboarding-mobile-options" }, { timeoutMs: 90_000 });
     await mobileUser.notSee({ testId: "download-openwork-card" });
     await mobileUser.see({ role: "button", label: "Email me the download link" });
@@ -429,6 +431,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await mobileUser.see({ testId: "den-org-sidebar", nth: 1 });
     evidence.recordAssertionEvidence("Mobile onboarding finishes without downloading and reveals working dashboard navigation", "Tools and Ready omit the menu; Finish setup restores it and opening the menu reveals the sidebar.", true);
     await mobileUser.navigate(new URL("/dashboard/onboarding", world.den.ref.webUrl).toString());
+    await mobileUser.click({ text: "Get the desktop app" });
     await mobileUser.see({ role: "button", label: "Email me the download link" }, { timeoutMs: 90_000 });
     const before = await downloadEmails();
     await mobileUser.click({ role: "button", label: "Email me the download link" });

@@ -5,16 +5,14 @@ import { OnboardingTeamPreview } from "./onboarding-team-preview";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Check, KeyRound, ArrowUpRight, Mail, ArrowRight } from "lucide-react";
+import { Check, Mail, ArrowRight } from "lucide-react";
 import { DownloadOpenWorkCard, type DownloadCardInstallers } from "@openwork/ui/react";
-import { DenBadge } from "../../_components/ui/badge";
 import { SetupFrame } from "../../_components/setup-frame";
 import {
   getCustomLlmProvidersRoute,
   getInferenceRoute,
   getOrgDashboardRoute,
   getOnboardingToolsRoute,
-  getYourConnectionsRoute,
   getWebRoute,
 } from "../../_lib/den-org";
 import { getErrorMessage, requestJson } from "../../_lib/den-flow";
@@ -148,28 +146,34 @@ export function MarketplaceOnboardingScreen({
   return (
     <SetupFrame
       step="ready"
-      title="Review your team’s starting point."
-      description={`See what you’ve prepared for ${orgName}, then open your workspace. Downloads and personal account connections can happen later.`}
+      title="Your team is set up."
+      description={`Review ${orgName}’s starting point, then open your workspace.`}
       aside={<OnboardingTeamPreview />}
     >
-      <div className="grid gap-8" data-testid="marketplace-onboarding">
-        <section aria-label="Team setup review" className="rounded-2xl bg-neutral-50 p-5 text-sm leading-6 text-neutral-600">
-          <h2 className="font-semibold text-neutral-950">Your team setup</h2>
+      <div className="grid gap-6" data-testid="marketplace-onboarding">
+        <section aria-label="Team setup review" className="text-sm leading-6 text-neutral-600">
+          <h2 className="font-semibold text-neutral-950">Your workspace is ready</h2>
           <p className="mt-2">{orgContext ? `${joinedMembers?.length} ${joinedMembers?.length === 1 ? "member" : "members"} · ${orgContext.invitations.filter((invitation) => invitation.status === "pending").length} pending invitations` : "Checking your team…"}</p>
-          <p className="mt-2">Invitations are separate from account connections. Teammates connect personal accounts after joining.</p>
+          <Link href={getOnboardingToolsRoute(orgSlug)} className="mt-3 inline-block text-xs underline underline-offset-4">Edit shared tools</Link>
         </section>
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-neutral-50 px-4 py-3 text-xs text-neutral-500">
-          <span>More useful with your team’s tools.</span>
-          <Link href={getOnboardingToolsRoute(orgSlug)} className="font-medium text-neutral-900 underline-offset-4 hover:underline">Choose team tools →</Link>
-        </div>
-        <section aria-labelledby="setup-download-heading" className="grid gap-4">
-          <div className="flex items-start gap-3">
-            <span className="flex size-7 shrink-0 items-center justify-center rounded-full border border-[var(--dls-border)] text-xs font-medium text-[var(--dls-text-secondary)]">1</span>
-            <div>
-              <h2 id="setup-download-heading" className="text-base font-semibold tracking-tight text-[var(--dls-text-primary)]">Choose where to start</h2>
-              <p className="mt-1 text-sm leading-6 text-[var(--dls-text-secondary)]">Chat with your files and team tools, in one place.</p>
-            </div>
+        <section aria-labelledby="setup-models-heading" className="border-t border-neutral-200 pt-5">
+          <h2 id="setup-models-heading" className="text-sm font-medium text-neutral-900">Model access</h2>
+          <p className="mt-2 text-sm leading-6 text-neutral-500" role="status">
+            {modelsLoading ? "Checking OpenWork Models…" : modelsError ? "Couldn’t check OpenWork Models." : modelsEnabled ? "OpenWork Models are on for this workspace." : "OpenWork Models are off. You can set up models later."}
+          </p>
+          <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-xs">
+            <Link href={getInferenceRoute(orgSlug)} className="underline underline-offset-4">{modelsEnabled ? "Manage models" : "Set up models"}</Link>
+            <Link href={getCustomLlmProvidersRoute(orgSlug)} className="underline underline-offset-4">Use your own provider</Link>
           </div>
+        </section>
+        <section data-testid="onboarding-finish">
+          <Link href={getOrgDashboardRoute(orgSlug)} className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-neutral-950 px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-neutral-800">
+            Finish setup<ArrowRight className="size-4" aria-hidden />
+          </Link>
+        </section>
+        <details className="border-t border-neutral-200 pt-5">
+          <summary className="cursor-pointer text-sm font-medium text-neutral-700">Get the desktop app <span className="font-normal text-neutral-400">· Optional</span></summary>
+          <div className="mt-4 grid gap-4">
           <div className={mobileDevice ? "block" : "sm:hidden"}>
             <MobileOpenWorkOptions orgSlug={orgSlug} webAvailable={orgContext?.capabilities.openworkWeb === true} />
           </div>
@@ -193,63 +197,9 @@ export function MarketplaceOnboardingScreen({
               <span>Sign in with the same account.</span>
             </div>
           </div>
-        </section>
+          </div>
+        </details>
 
-        <section aria-labelledby="setup-models-heading" className="grid gap-4 border-t border-[var(--dls-border)] pt-7">
-          <div className="flex items-start gap-3">
-            <span className="flex size-7 shrink-0 items-center justify-center rounded-full border border-[var(--dls-border)] text-xs font-medium text-[var(--dls-text-secondary)]">2</span>
-            <div className="min-w-0 flex-1">
-              <h2 id="setup-models-heading" className="text-base font-semibold tracking-tight text-[var(--dls-text-primary)]">Choose what powers your work</h2>
-              <p className="mt-1 text-sm leading-6 text-[var(--dls-text-secondary)]" role="status">
-                {modelsLoading
-                  ? "Checking OpenWork Models…"
-                  : modelsError
-                    ? "We couldn’t check OpenWork Models. Review model access from your workspace."
-                  : modelsEnabled
-                    ? "OpenWork Models are on for this workspace."
-                    : "Choose your model and provider. Use OpenWork Models or bring your own account—you can set this up later."}
-              </p>
-            </div>
-            {modelsEnabled ? <DenBadge icon={Check}>Models on</DenBadge> : null}
-          </div>
-          <div className="divide-y divide-[var(--dls-border)] overflow-hidden rounded-2xl border border-[var(--dls-border)]">
-            <div className="flex items-start gap-3 p-4 sm:p-5" data-testid="onboarding-choice-openwork-models">
-              <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[var(--dls-hover)]"><OpenWorkMark /></div>
-              <div className="min-w-0 flex-1">
-                <h3 className="text-sm font-semibold text-[var(--dls-text-primary)]">OpenWork Models</h3>
-                <p className="mt-1 text-[13px] leading-5 text-[var(--dls-text-secondary)]">Managed models, billed per member. No API keys to look after.</p>
-                <Link href={getInferenceRoute(orgSlug)} className="mt-3 inline-flex items-center gap-1.5 rounded-sm text-sm font-medium text-[var(--dls-text-primary)] underline-offset-4 hover:underline focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--dls-text-primary)]">
-                  {modelsEnabled ? "Manage models" : "Turn on models"}<ArrowUpRight className="size-3.5" aria-hidden />
-                </Link>
-              </div>
-            </div>
-            <div className="flex items-start gap-3 p-4 sm:p-5" data-testid="onboarding-choice-byok">
-              <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[var(--dls-hover)]"><KeyRound className="size-[18px] text-[var(--dls-text-secondary)]" aria-hidden /></div>
-              <div className="min-w-0 flex-1">
-                <h3 className="text-sm font-semibold text-[var(--dls-text-primary)]">Bring your Own Keys</h3>
-                <p className="mt-1 text-[13px] leading-5 text-[var(--dls-text-secondary)]">Connect your provider or gateway. Keep your own billing and model choices.</p>
-                <Link href={getCustomLlmProvidersRoute(orgSlug)} className="mt-3 inline-flex items-center gap-1.5 rounded-sm text-sm font-medium text-[var(--dls-text-primary)] underline-offset-4 hover:underline focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--dls-text-primary)]">
-                  Add a provider<ArrowUpRight className="size-3.5" aria-hidden />
-                </Link>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <div className="rounded-2xl bg-neutral-50 p-5 text-sm leading-6 text-neutral-600">
-          <h3 className="font-medium text-neutral-950">One connection. Your team’s tools.</h3>
-          <p className="mt-1 text-[13px]">OpenWork’s MCP gateway brings shared tools into compatible AI apps. Each person uses their own connected accounts and team permissions.</p>
-          <Link href={getYourConnectionsRoute(orgSlug)} className="mt-3 inline-block font-medium text-neutral-900 underline-offset-4 hover:underline">Connect your accounts →</Link>
-        </div>
-        <section aria-labelledby="setup-finish-heading" className="grid gap-4 border-t border-[var(--dls-border)] pt-7" data-testid="onboarding-finish">
-          <div>
-            <h2 id="setup-finish-heading" className="text-base font-semibold tracking-tight text-[var(--dls-text-primary)]">Your workspace is ready</h2>
-            <p className="mt-2 text-sm leading-6 text-[var(--dls-text-secondary)]">Finish setup to open your dashboard. You can download the app, connect accounts, and choose models whenever you’re ready.</p>
-          </div>
-          <Link href={getOrgDashboardRoute(orgSlug)} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-neutral-950 px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-neutral-800">
-            Finish setup<ArrowRight className="size-4" aria-hidden />
-          </Link>
-        </section>
       </div>
     </SetupFrame>
   );

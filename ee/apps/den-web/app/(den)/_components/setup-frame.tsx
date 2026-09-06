@@ -108,6 +108,7 @@ export function SetupFrame({ step, title, description, children, aside, panelVis
   panelVisual?: ReactNode;
   embedded?: boolean;
 }) {
+  const teamSetup = step === "tools" || step === "people" || step === "ready";
   const current = steps.findIndex((item) => item.id === step);
   return (
     <section className={`${styles.frame} ${embedded ? styles.embedded : ""}`} data-testid="setup-frame" data-step={step}>
@@ -134,16 +135,16 @@ export function SetupFrame({ step, title, description, children, aside, panelVis
       <div className={styles.grid}>
         <aside className={styles.story}>
           <div className={styles.intro}>
-            <p className={styles.eyebrow}>A LITTLE LESS BUSYWORK</p>
+            {!teamSetup ? <p className={styles.eyebrow}>A LITTLE LESS BUSYWORK</p> : null}
             <h1>{title}</h1>
             <p className={styles.description}>{description}</p>
-            <div className={styles.modelSupport}>
+            {!teamSetup ? <div className={styles.modelSupport}>
               <p>Your choice of model. One place to work.</p>
               <span>OpenAI</span><i aria-hidden="true">·</i><span>Anthropic</span><i aria-hidden="true">·</i><span>Google</span><i aria-hidden="true">·</i><span>and more</span>
-            </div>
+            </div> : null}
           </div>
           {aside ? <div className={styles.customPreview}>{aside}</div> : <WorkPreview step={step} />}
-          <p className={styles.storyNote}>Switch models while keeping your tools and the work in one place.</p>
+          {!teamSetup ? <p className={styles.storyNote}>Switch models while keeping your tools and the work in one place.</p> : null}
         </aside>
         <div className={styles.panel} key={step}>
           {panelVisual ? <div className={styles.panelVisual}>{panelVisual}</div> : null}
@@ -151,7 +152,7 @@ export function SetupFrame({ step, title, description, children, aside, panelVis
           {children}
         </div>
       </div>
-      <footer className={styles.footer}><span>Built for work. With room for you.</span><span>Your desktop + your tools + your team</span></footer>
+      <footer className={styles.footer}><span>OpenWork</span><span>Workspace setup</span></footer>
     </section>
   );
 }

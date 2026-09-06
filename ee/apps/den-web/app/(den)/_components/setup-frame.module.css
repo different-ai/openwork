@@ -21,13 +21,13 @@
 .grid { margin: clamp(48px, 8vh, 90px) auto 60px; align-items: start; }
 .story { min-width: 0; padding-top: 15px; }
 .eyebrow { margin: 0 0 22px; font-size: 9px; font-weight: 600; letter-spacing: .19em; color: #787878; }
-.intro h1 { margin: 0; font-size: clamp(42px, 4.5vw, 62px); line-height: 1.04; letter-spacing: -.064em; font-weight: 500; max-width: 440px; text-wrap: balance; }
-.description { font-size: 15px; line-height: 1.75; color: #777; max-width: 350px; margin: 22px 0 0; }
+.intro h1 { margin: 0; font-size: clamp(36px, 3.5vw, 40px); line-height: 1.12; letter-spacing: -.04em; font-weight: 500; max-width: 440px; text-wrap: balance; }
+.description { font-size: 14px; line-height: 1.65; color: #777; max-width: 350px; margin: 16px 0 0; }
 .modelSupport { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 8px; margin-top: 20px; color: #777; font-size: 12px; line-height: 1.6; }
 .modelSupport p { flex-basis: 100%; margin: 0 0 2px; color: #4a4a4a; }
 .modelSupport i { font-style: normal; color: #aaa; }
 
-.panel { --panel-padding: clamp(24px, 3vw, 40px); --panel-radius: 24px; min-width: 0; border: 1px solid #e4e4e4; border-radius: var(--panel-radius); padding: var(--panel-padding); background: white; box-shadow: 0 4px 6px -5px #00000012, 0 28px 70px -50px #00000024; animation: enter .32s ease-out both; }
+.panel { --panel-padding: clamp(24px, 3vw, 32px); --panel-radius: 16px; min-width: 0; border: 1px solid #e4e4e4; border-radius: var(--panel-radius); padding: var(--panel-padding); background: white; box-shadow: none; animation: enter .32s ease-out both; }
 .panelVisual { height: 100px; margin: calc(-1 * var(--panel-padding)) calc(-1 * var(--panel-padding)) 28px; overflow: hidden; border-radius: calc(var(--panel-radius) - 1px) calc(var(--panel-radius) - 1px) 0 0; }
 .panelEyebrow { display: flex; gap: 10px; align-items: center; font-size: 10px; font-weight: 500; color: #727272; margin-bottom: 28px; }
 .panelEyebrow > span:first-child { color: #222; font-variant-numeric: tabular-nums; }
@@ -42,7 +42,7 @@
 .panel button { transition: background-color .16s, border-color .16s, transform .16s; }
 .panel button:active:not(:disabled) { transform: translateY(1px); }
 .panel button:focus-visible, .panel input:focus-visible, .panel a:focus-visible { outline: 2px solid #444; outline-offset: 3px; }
-.customPreview { margin-top: 30px; }
+.customPreview { margin-top: 28px; max-width: 380px; }
 .panel :global([data-testid="download-openwork-card"]) > :global(.grid) { grid-template-columns: 1fr; }
 .panel :global([data-testid="download-openwork-card"]) > div:first-child > div { flex-wrap: wrap; }
 .preview { margin: 32px 0 0; max-width: 440px; min-width: 0; }
