@@ -30,6 +30,8 @@ import { openDesktopUrl, revealDesktopItemInDir } from "@/app/lib/desktop"
 import { isElectronRuntime } from "@/app/lib/runtime-env"
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "@/app/types"
 import { t } from "@/i18n"
+import { useOpenTargets } from "@/lib/target-provider"
+import { openTargetFromUrl } from "@/react-app/domains/session/artifacts/open-target"
 import { sessionErrorPresentationFromUIMessage } from "@/react-app/domains/session/sync/session-error"
 import { ApplyPatchTool } from "@/components/tools/apply-patch"
 import { BashTool } from "@/components/tools/bash"
@@ -680,6 +682,15 @@ function renderUserTextWithSkillChips(text: string, highlightQuery: string | und
 const UserMessage = React.memo(
   ({ message, isStreaming }: UserMessageProps) => {
     const { onRevertToUserMessage, onForkAtMessage, onEditUserMessage, highlightQuery } = useMessageList()
+    const { onOpenTarget } = useOpenTargets()
+    const openLink = (event: React.MouseEvent) => {
+      if (!onOpenTarget || !(event.target instanceof Element)) return
+      const link = event.target.closest("a[href]")
+      const target = openTargetFromUrl(link?.getAttribute("href") ?? "")
+      if (!target) return
+      event.preventDefault()
+      onOpenTarget(target)
+    }
     const messageText = React.useMemo(() => getMessagesText([message]), [message])
     const inlineParts = React.useMemo(
       () => message.parts.filter((part) => (part.type === "text" && Boolean(part.text)) || isFileUIPart(part)),
@@ -706,6 +717,7 @@ const UserMessage = React.memo(
                   <MessageContent
                     className="bg-muted text-foreground max-w-[85%] rounded-3xl px-4 py-2.5 leading-6 sm:max-w-[75%] !select-text not-prose"
                     style={{ userSelect: "text" }}
+                    onClick={openLink}
                   >
                     {inlineParts.map((part, index) => {
                       if (part.type === "text") {

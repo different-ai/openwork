@@ -36,6 +36,7 @@ test("a background conversation's agent browses silently and its page is waiting
     expect(opened).toMatchObject({ ownerSessionId: researching.sessionId, visible: false });
 
     const state = await world.readBrowserState();
+    expect(state).toMatchObject({ visibleWindowCount: 1, backgroundWindowVisible: false });
     expect(state.visibleSessionId).toBe(reading.sessionId);
     expect(state.activeTabId).toBe(readingTab.tabId);
     expect(state.tabs.find((tab) => tab.id === opened.tabId)?.ownerSessionId).toBe(researching.sessionId);
@@ -74,6 +75,7 @@ test("a background conversation's agent browses silently and its page is waiting
       label: "no native browser view covers OpenWork after the panel closes",
     });
     expect(hidden.nativeViews.find((view) => view.tabId === readingTab.tabId)?.attached).toBe(false);
+    expect(hidden).toMatchObject({ visibleWindowCount: 1, backgroundWindowVisible: false });
     expect(hidden.nativeViews.find((view) => view.tabId === researchTab.tabId)).toMatchObject({ attached: false, aboveApp: false });
     expect(await world.clickAndType(researchTab, "ok")).toEqual({ clicks: 2, value: "okok" });
     const screenshot = await world.screenshotSize(researchTab);
@@ -244,31 +246,128 @@ test("a transcript link's menu copies its exact address and opens only its own c
     await user.see({ placeholder: "Enter URL..." }, { value: world.linkUrl });
   });
 
-  await step("Normal click keeps the existing loopback-popup behavior without launching a system browser", async () => {
-    // Main-window target=_blank links to loopback are allowed as Electron popups.
-    // Do not substitute a public URL here: those launch the user's system browser.
-    expect(["127.0.0.1", "localhost"]).toContain(new URL(world.linkUrl).hostname);
+  await step("Normal click opens an owned sidebar tab instead of a separate native window", async () => {
     const before = await world.pageTargets();
     const browserBefore = await world.readBrowserState();
     await user.click(link);
-    const after = await eventually(() => world.pageTargets(), {
-      within: 15_000,
-      until: value => value.some(page => page.url === world.linkUrl && !before.some(previous => previous.id === page.id)),
-      label: "a normal link click opens its existing Electron popup",
+    const state = await eventually(() => world.readBrowserState(), {
+      within: 30_000,
+      until: value => value.tabs.some(tab => tab.url === world.linkUrl && tab.id === value.activeTabId
+        && !browserBefore.tabs.some(previous => previous.id === tab.id))
+        && value.nativeViews.some(view => view.tabId === value.activeTabId && view.attached),
+      label: "a normal link click selects its owned sidebar page",
     });
-    const popups = after.filter(page => !before.some(previous => previous.id === page.id));
-    try {
-      expect(popups).toHaveLength(1);
-      expect(popups[0]?.url).toBe(world.linkUrl);
-      expect((await world.readBrowserState()).tabs).toEqual(browserBefore.tabs);
-      expect(await world.readMainUrl()).toBe(mainUrl);
-      expect(await world.menuShown(overlay)).toBe(false);
-    } finally {
-      for (const popup of popups) await world.closePopup(popup.id);
-    }
-    expect(await eventually(() => world.pageTargets(), {
-      within: 10_000, until: value => value.length === before.length,
-      label: "the normal-click popup is closed without changing existing pages",
-    })).toEqual(before);
+    expect(state.tabs).toHaveLength(browserBefore.tabs.length + 1);
+    expect(state.tabs.find(tab => tab.id === state.activeTabId)?.ownerSessionId).toBe(world.reading.sessionId);
+    expect(state.tabs.filter(tab => tab.id !== state.activeTabId)).toEqual(browserBefore.tabs);
+    expect(state).toMatchObject({ visibleWindowCount: 1, backgroundWindowVisible: false });
+    const newPages = (await world.pageTargets()).filter(page => !before.some(previous => previous.id === page.id));
+    expect(newPages).toHaveLength(1);
+    expect(newPages[0].url).toBe(world.linkUrl);
+    expect(await world.readMainUrl()).toBe(mainUrl);
+    expect(await world.menuShown(overlay)).toBe(false);
+  });
+});
+
+test("a transcript link replaces the selected artifact with its own live sidebar tab, not a native window", async ({ world, user, step }) => {
+  const reading = { ...world.session, title: "Linked research" };
+  await world.renameSession(reading.sessionId, reading.title);
+  const link = await world.seedTranscriptLink(reading.sessionId);
+  const other = await world.openSession("Other conversation");
+  const otherTab = await world.openTabAs("other-conversation", other.sessionId);
+  await user.see(tabButton(otherTab.name), { timeoutMs: 30_000 });
+  await user.click(conversation(reading.title));
+  await user.see({ role: "link", text: link.url }, { timeoutMs: 30_000 });
+  await user.click({ role: "button", label: /^browser-handoff\.md\b/ });
+  await user.see({ role: "button", label: `Select tab: ${link.artifactName}` }, { timeoutMs: 30_000 });
+  await user.see({ text: link.artifactText }, { timeoutMs: 30_000 });
+  const before = await world.readBrowserState();
+  expect(before.tabs).toHaveLength(1);
+  expect(before.tabs.filter((tab) => tab.ownerSessionId === reading.sessionId)).toEqual([]);
+  expect(before).toMatchObject({ visibleSessionId: reading.sessionId, visibleWindowCount: 1, backgroundWindowVisible: false });
+
+  const linkedTab = await step("Clicking the real transcript link selects exactly one owned sidebar page with the complete URL", async () => {
+    await user.click({ role: "link", text: link.url });
+    const state = await eventually(() => world.readBrowserState(), {
+      within: 30_000,
+      until: (value) => value.tabs.some((tab) => tab.url === link.url && tab.id === value.activeTabId
+        && value.nativeViews.some((view) => view.tabId === tab.id && view.attached && view.aboveApp)),
+      label: "the transcript URL is selected and attached in the sidebar",
+    });
+    const owned = state.tabs.filter((tab) => tab.ownerSessionId === reading.sessionId);
+    expect(owned).toHaveLength(1);
+    expect(owned[0]).toMatchObject({ id: state.activeTabId, url: link.url });
+    expect(state).toMatchObject({ visibleSessionId: reading.sessionId, visibleWindowCount: 1, backgroundWindowVisible: false });
+    expect(state.tabs.filter((tab) => tab.ownerSessionId !== reading.sessionId)).toEqual(before.tabs);
+    expect(state.nativeViews.filter((view) => view.attached || view.aboveApp).map((view) => view.tabId)).toEqual([owned[0].id]);
+    await user.see({ role: "button", label: `Select tab: ${owned[0].label}` });
+    await user.notSee({ text: link.artifactText });
+    await user.notSee(tabButton(otherTab.name));
+    return eventually(() => world.tabHandle(owned[0]), { within: 15_000, label: "the exact transcript URL has one CDP target" });
+  });
+
+  await step("Hiding and showing the sidebar keeps the same CDP page and its live input", async () => {
+    await world.loadInputProbe(linkedTab);
+    expect(await world.clickAndType(linkedTab, "before")).toEqual({ clicks: 1, value: "before" });
+    const viewport = await world.readViewport(linkedTab);
+    await user.click({ role: "button", label: "Close side panel" });
+    const hidden = await eventually(() => world.readBrowserState(), {
+      within: 15_000,
+      until: (state) => state.nativeViews.every((view) => !view.attached && !view.aboveApp),
+      label: "closing the sidebar hides every native browser view",
+    });
+    expect(hidden).toMatchObject({ visibleWindowCount: 1, backgroundWindowVisible: false });
+    expect(await world.readInputProbe(linkedTab)).toEqual({ clicks: 1, value: "before" });
+    await user.click({ role: "button", label: "Open side panel" });
+    const shown = await eventually(() => world.readBrowserState(), {
+      within: 15_000,
+      until: (state) => state.activeTabId === linkedTab.tabId
+        && state.nativeViews.some((view) => view.tabId === linkedTab.tabId && view.attached && view.aboveApp),
+      label: "the same browser tab returns to the sidebar",
+    });
+    expect(shown).toMatchObject({ visibleWindowCount: 1, backgroundWindowVisible: false });
+    expect(await world.clickAndType(linkedTab, "-shown")).toEqual({ clicks: 2, value: "before-shown" });
+    expect(await eventually(() => world.readViewport(linkedTab), {
+      within: 15_000,
+      until: (value) => value.width === viewport.width && value.height === viewport.height,
+      label: "the preserved page returns to its sidebar viewport",
+    })).toEqual(viewport);
+  });
+
+  await step("A page refresh preserves the selected artifact, but a new browser request selects its working page", async () => {
+    await world.navigateTab(linkedTab, link.url);
+    await user.click({ role: "button", label: `Select tab: ${link.artifactName}` });
+    await user.see({ text: link.artifactText });
+    await world.reloadTab(linkedTab);
+    await user.see({ text: link.artifactText });
+    expect((await world.readBrowserState()).nativeViews.every((view) => !view.attached)).toBe(true);
+
+    const requested = await world.openTabAs("requested-preview", reading.sessionId);
+    const state = await eventually(() => world.readBrowserState(), {
+      within: 15_000,
+      until: (value) => value.activeTabId === requested.tabId
+        && value.nativeViews.some((view) => view.tabId === requested.tabId && view.attached),
+      label: "the explicit browser request replaces the artifact with its working page",
+    });
+    expect(state).toMatchObject({ visibleWindowCount: 1, backgroundWindowVisible: false });
+    await user.see(tabButton(requested.name));
+    await user.notSee({ text: link.artifactText });
+  });
+
+  await step("The other conversation keeps its original tab and page", async () => {
+    await user.click(conversation(other.title));
+    const state = await eventually(() => world.readBrowserState(), {
+      within: 30_000,
+      until: (value) => value.visibleSessionId === other.sessionId && value.activeTabId === otherTab.tabId
+        && value.nativeViews.some((view) => view.tabId === otherTab.tabId && view.attached && view.aboveApp),
+      label: "the other conversation restores only its original browser tab",
+    });
+    expect(state.tabs.filter((tab) => tab.ownerSessionId === other.sessionId)).toEqual(before.tabs);
+    expect(state.tabs).toHaveLength(3);
+    expect(state).toMatchObject({ visibleWindowCount: 1, backgroundWindowVisible: false });
+    expect(state.nativeViews.find((view) => view.tabId === linkedTab.tabId)).toMatchObject({ attached: false, aboveApp: false });
+    expect((await world.tabHandle(before.tabs[0])).targetId).toBe(otherTab.targetId);
+    await user.see(tabButton(otherTab.name));
+    await user.notSee({ role: "link", text: link.url });
   });
 });

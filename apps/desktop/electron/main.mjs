@@ -2570,14 +2570,15 @@ async function createMainWindow() {
       return { action: "deny" };
     }
 
-    const local =
-      url.startsWith("http://127.0.0.1") ||
-      url.startsWith("http://localhost");
-    if (!local) {
+    if (/^https?:\/\//i.test(url)) {
+      // Transcript links and local previews belong in the thread's browser,
+      // never an unmanaged BrowserWindow. Explicit external/auth actions use
+      // the shell bridge and do not pass through this popup handler.
+      browserPanel.routeBlockedMainWindowNavigation(url);
+    } else {
       runDetachedTask("open external URL", () => openExternalUrl(url));
-      return { action: "deny" };
     }
-    return { action: "allow" };
+    return { action: "deny" };
   });
 
   mainWindow.webContents.on("will-navigate", (event, url) => {
