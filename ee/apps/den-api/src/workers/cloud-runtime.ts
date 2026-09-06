@@ -16,6 +16,9 @@ export type CloudRuntimeProviderId = typeof env.provisionerMode
  * Providers that run OpenWork Cloud instances through the runtime contract.
  * `render` and `stub` predate the contract and keep their legacy paths in
  * `provisioner.ts`.
+ * The member Cloud API already required hasDaytonaProvisioner before this
+ * registry: leaving those legacy modes unregistered preserves its 404 boundary.
+ * Generic Render/stub worker provisioning is separate and remains supported.
  */
 const providers: Record<string, {
   credentialConfigured: () => boolean

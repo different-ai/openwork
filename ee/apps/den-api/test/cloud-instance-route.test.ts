@@ -395,19 +395,39 @@ describe("Cloud instance route gate", () => {
     await expect(response.json()).resolves.toEqual({ error: "cloud_not_found" })
   })
 
-  test("returns 404 when Daytona provisioning is not configured", async () => {
-    const app = new Hono<{ Variables: OrgRouteVariables }>()
-    routes.registerCloudRoutes(app, {
-      memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }))),
-      orgMode: "multi_org",
-      provisionerMode: "stub",
+  const legacyModes: Array<"stub" | "render"> = ["stub", "render"]
+  for (const provisionerMode of legacyModes) {
+    test(`preserves 404 for Cloud routes with the legacy ${provisionerMode} provider`, async () => {
+      const app = new Hono<{ Variables: OrgRouteVariables }>()
+      const unexpectedRuntimeCall = async () => { throw new Error("Unavailable Cloud must not invoke its runtime") }
+      routes.registerCloudRoutes(app, {
+        memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }))),
+        orgMode: "multi_org",
+        provisionerMode,
+        daytonaApiKey: "configured-but-not-selected",
+        gatewayKey: "gateway-secret",
+        getOpenWorkWebAccess: async () => ({ hasAccess: true }),
+        ensureCloudWorker: unexpectedRuntimeCall,
+        recoverCloudWorker: unexpectedRuntimeCall,
+        wakeCloudWorker: unexpectedRuntimeCall,
+        flushWorkerCheckpoint: unexpectedRuntimeCall,
+        stopCloudWorker: unexpectedRuntimeCall,
+      })
+      for (const [path, method] of [
+        ["/v1/cloud/instance", "GET"],
+        ["/v1/cloud/instance/retry", "POST"],
+        ["/v1/cloud/instance/update", "POST"],
+        ["/v1/cloud/gateway/resolve", "GET"],
+      ]) {
+        const response = await app.request(`http://den.local${path}`, {
+          method,
+          headers: { "X-OpenWork-Gateway-Key": "gateway-secret" },
+        })
+        expect(response.status).toBe(404)
+        await expect(response.json()).resolves.toEqual({ error: "cloud_not_found" })
+      }
     })
-
-    const response = await app.request("http://den.local/v1/cloud/instance")
-
-    expect(response.status).toBe(404)
-    await expect(response.json()).resolves.toEqual({ error: "cloud_not_found" })
-  })
+  }
 
   test("denies member resolution before provisioning when Web access is not active", async () => {
     const app = new Hono<{ Variables: OrgRouteVariables }>()

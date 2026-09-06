@@ -80,7 +80,9 @@ describe("Cloud runtime configuration", () => {
     const runtime = cloudRuntime.getCloudRuntime()
     expect(runtime.providerId).toBe("daytona")
     expect(runtime.currentImageVersion()).toBe("openwork-0.18.8")
-    expect(runtime.instanceName({ workerId: "worker_01hzz0000000000000000test0", name: "Cloud" }))
-      .toBe("den-daytona-worker-cloud-worker-01hzz-openwork-0-18-8")
+    const workerId = "worker_01hzz0000000000000000test0"
+    const instanceName = runtime.instanceName({ workerId, name: "Cloud" })
+    expect(instanceName).toMatch(/^den-daytona-worker-[a-f0-9]{32}-v[a-f0-9]{8}$/)
+    expect(runtime.instanceName({ workerId, name: "Another label" })).toBe(instanceName)
   })
 })
