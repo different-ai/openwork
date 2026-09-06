@@ -358,6 +358,10 @@ test("Cloud instance and gateway APIs persist neutral labels and reuse only the 
   });
   const original = witness.sandboxes[0];
   if (!original) throw new Error("Instance API sandbox missing");
+  expect(original.labels).toEqual({
+    "openwork.den.provider": "daytona",
+    "openwork.den.worker-id": original.workerId,
+  });
   const ownerRows = await workers();
   expect(ownerRows).toHaveLength(1);
   expect(record(ownerRows[0])).toMatchObject({ id: original.workerId, name: "Cloud" });
@@ -375,6 +379,10 @@ test("Cloud instance and gateway APIs persist neutral labels and reuse only the 
   expect(witness.sandboxes).toHaveLength(2);
   const other = witness.sandboxes.find((entry) => entry.workerId !== original.workerId);
   if (!other) throw new Error("Gateway sandbox missing");
+  expect(other.labels).toEqual({
+    "openwork.den.provider": "daytona",
+    "openwork.den.worker-id": other.workerId,
+  });
   const rows = await workers();
   expect(rows.map((entry) => record(entry).name)).toEqual(["Cloud", "Cloud"]);
   expect(new Set(rows.map((entry) => record(entry).created_by_user_id)).size).toBe(2);
@@ -401,7 +409,7 @@ test("Cloud instance and gateway APIs persist neutral labels and reuse only the 
   expect(witness.events).toEqual(events);
   expect(witness.sessions).toEqual([]);
   expect(witness.unexpected).toEqual([]);
-  evidence.recordAssertionEvidence("Cloud instance and gateway API labels are neutral and member-scoped", "Authenticated HTTP requests to /v1/cloud/instance and /v1/cloud/gateway/resolve each first-created a persisted worker named Cloud. The second member did not change the first worker, runtime record, sandbox, or operations; both API endpoints then reused only their caller's workspace without additional provider operations. Browser client wiring and rendering were not exercised.", true);
+  evidence.recordAssertionEvidence("Cloud instance and gateway API labels are neutral and member-scoped", "Authenticated HTTP requests to /v1/cloud/instance and /v1/cloud/gateway/resolve each first-created a persisted worker named Cloud. Both provider label maps contained exactly the provider name and full worker ID, with no extra personal labels. The second member did not change the first worker, runtime record, sandbox, or operations; both API endpoints then reused only their caller's workspace without additional provider operations. Browser client wiring and rendering were not exercised.", true);
 });
 
 test("concurrent retries isolate workers with identical names and colliding TypeID prefixes", { timeout: 180_000 }, async ({ place, evidence, skip }) => {
@@ -483,7 +491,10 @@ test("concurrent retries isolate workers with identical names and colliding Type
     if (!sandbox) throw new Error("Owned sandbox missing");
     expect(sandbox.name).toMatch(/^[a-z0-9][a-z0-9-]{0,62}$/);
     expect(sandbox.name).not.toMatch(/cloud|workspace|owner|colleague/);
-    expect(sandbox.labels["openwork.den.worker-id"]).toBe(workerId);
+    expect(sandbox.labels).toEqual({
+      "openwork.den.provider": "daytona",
+      "openwork.den.worker-id": workerId,
+    });
     expect(sandbox.bootstrapWorkerIds).toEqual([workerId]);
     expect(sandbox.state).toBe("started");
     expect(sandbox.volumes.map((mount) => mount.subpath).sort()).toEqual([`workers/${workerId}/data`, `workers/${workerId}/workspace`]);
