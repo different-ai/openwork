@@ -176,7 +176,7 @@ test("first cloud task provisions once over MCP, recovers its workspace, and pre
   expect((await instance()).status).toBe("ready");
   expect(await workers()).toHaveLength(1);
   expect(witness.sandboxes).toHaveLength(1);
-  evidence.recordAssertionEvidence("Retry runs the first task without browser setup, and the browser reuses its workspace", "The real provisioner observed healthy HTTP, persisted ready state, and the MCP retry created one native session with the original prompt. A subsequent browser request reused that ready workspace without another sandbox.", true);
+  evidence.recordAssertionEvidence("MCP retry runs the first task and the Cloud instance API reuses its workspace", "The real provisioner observed healthy HTTP, persisted ready state, and the MCP retry created one native session with the original prompt. A subsequent authenticated GET /v1/cloud/instance reused that ready workspace without another sandbox. No browser UI was exercised.", true);
 
   const colleague = den.members.colleague;
   if (!colleague) throw new Error("Colleague session missing");
@@ -326,7 +326,7 @@ test("first cloud task provisions once over MCP, recovers its workspace, and pre
   evidence.recordAssertionEvidence("Lapsed paid access blocks new work even with an existing workspace", "After the seeded subscription was canceled, the same token was denied and session, worker, and sandbox counts remained unchanged.", true);
 });
 
-test("browser and gateway first use persist neutral Cloud labels and reuse only the caller's worker", { timeout: 180_000 }, async ({ place, evidence, skip }) => {
+test("Cloud instance and gateway APIs persist neutral labels and reuse only the caller's worker", { timeout: 180_000 }, async ({ place, evidence, skip }) => {
   needs({ placement: "local" });
   if (!available) skip("needs: local MySQL and Redis");
   await using witness = await startCloudRuntimeWitness();
@@ -351,13 +351,13 @@ test("browser and gateway first use persist neutral Cloud labels and reuse only 
 
   expect(await workers()).toEqual([]);
   expect((await cloudRequest(den.admin)).status).toBe("provisioning");
-  await eventually(() => witness.sandboxes.length, { within: 20_000, label: "browser creates its first sandbox", until: (count) => count === 1 });
+  await eventually(() => witness.sandboxes.length, { within: 20_000, label: "Cloud instance API creates its first sandbox", until: (count) => count === 1 });
   witness.ready();
   await eventually(async () => (await workers()).map((entry) => record(entry).status), {
-    within: 60_000, label: "browser workspace healthy", until: (states) => states.length === 1 && states[0] === "healthy",
+    within: 60_000, label: "instance API worker healthy", until: (states) => states.length === 1 && states[0] === "healthy",
   });
   const original = witness.sandboxes[0];
-  if (!original) throw new Error("Browser sandbox missing");
+  if (!original) throw new Error("Instance API sandbox missing");
   const ownerRows = await workers();
   expect(ownerRows).toHaveLength(1);
   expect(record(ownerRows[0])).toMatchObject({ id: original.workerId, name: "Cloud" });
@@ -401,7 +401,7 @@ test("browser and gateway first use persist neutral Cloud labels and reuse only 
   expect(witness.events).toEqual(events);
   expect(witness.sessions).toEqual([]);
   expect(witness.unexpected).toEqual([]);
-  evidence.recordAssertionEvidence("Browser and gateway labels are neutral and member-scoped", "Each entry point first-created a persisted worker named Cloud. The second member did not change the first worker, runtime record, sandbox, or operations; both entry points then reused only their caller's workspace without additional provider operations.", true);
+  evidence.recordAssertionEvidence("Cloud instance and gateway API labels are neutral and member-scoped", "Authenticated HTTP requests to /v1/cloud/instance and /v1/cloud/gateway/resolve each first-created a persisted worker named Cloud. The second member did not change the first worker, runtime record, sandbox, or operations; both API endpoints then reused only their caller's workspace without additional provider operations. Browser client wiring and rendering were not exercised.", true);
 });
 
 test("concurrent retries isolate workers with identical names and colliding TypeID prefixes", { timeout: 180_000 }, async ({ place, evidence, skip }) => {
