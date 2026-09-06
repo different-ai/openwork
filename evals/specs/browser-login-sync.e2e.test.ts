@@ -2,11 +2,10 @@ import { expect } from "vitest";
 import { eventually, spec } from "@openwork/testkit";
 import { builtinBrowserWorld } from "../worlds/browser-panel.ts";
 
-process.env.OPENWORK_EVAL_BROWSER_LOGIN_SYNC = "1";
-
 const test = spec.world(builtinBrowserWorld);
 
-test("selected browser logins stay synced until the user pauses them", async ({ world, user, step }) => {
+test("selected browser logins stay synced until the user pauses them", async ({ world, user, step, needs }) => {
+  needs({ optIn: ["OPENWORK_EVAL_BROWSER_LOGIN_SYNC"] });
   const nowSeconds = Math.trunc(Date.now() / 1000);
   const sourceCookies = (value: string | null) => [
     ...(value === null ? [] : [{
