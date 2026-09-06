@@ -449,7 +449,15 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
     await admin.user.click("Preview member experience");
     await admin.user.see({ text: "What these choices mean for members" });
     await admin.user.see({ text: "This team’s choices are shown below. Other team and organization restrictions may further limit access." });
+    for (const [key] of capabilityFields) await admin.user.see({ testId: `team-permission-preview-${key}` }, { text: /Blocked/ });
+    await choose("Change app settings", true);
+    await admin.user.see({ testId: "team-permission-preview-allowControlSettings" }, { text: /Allowed/ });
+    for (const [key] of capabilityFields) if (key !== "allowControlSettings") await admin.user.see({ testId: `team-permission-preview-${key}` }, { text: /Blocked/ });
+    const selectivePreview = await admin.probe.text();
+    await choose("Change app settings", false);
+    await admin.user.see({ testId: "team-permission-preview-allowControlSettings" }, { text: /Blocked/ });
     const previewText = await admin.probe.text();
+    evidence.recordAssertionEvidence("The member preview follows the draft: Settings can change to Allowed while every other capability stays Blocked, then back to Blocked", JSON.stringify({ selectivePreview, previewText }), /Change app settings\s+Allowed/.test(selectivePreview) && /Change app settings\s+Blocked/.test(previewText) && capabilityFields.every(([, label]) => previewText.replace(/\s+/g, " ").includes(`${label} Blocked`)));
     const before = await policies();
     const reviewText = await reviewChanges(initialRestrictions);
     await admin.user.notSee({ text: "Members of Everyday work" });
@@ -577,9 +585,9 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
     const stored = await teamPolicy();
     if (!isRecord(stored.policy)) throw new Error("Expected stored policy");
     const legacy = await seed.api(world.den.admin, `/v1/desktop-policies/${stored.id}`, {
-      method: "PATCH", body: JSON.stringify({ policy: { ...stored.policy, access: { mode: "locked", capabilities: Object.fromEntries(capabilityFields.map(([key]) => [key, true])) } } }),
+      method: "PATCH", body: JSON.stringify({ policyName: stored.policyName, teamIds: [world.teamId], policy: { ...stored.policy, access: { mode: "locked", capabilities: Object.fromEntries(capabilityFields.map(([key]) => [key, true])) } } }),
     });
-    expect(legacy.response.ok).toBe(true);
+    expect(legacy.response.ok, JSON.stringify({ status: legacy.response.status, body: legacy.body })).toBe(true);
     expect(accessOf(await teamPolicy()).mode).toBe("locked");
     const legacyEffective = await effective(world.den.members.jordan);
     for (const key of lockedKeys) expect(legacyEffective[key]).toBe(false);
@@ -695,11 +703,24 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
     await admin.user.type({ role: "textbox", label: "Website address to approve" }, "https://portal.example.com/private", { replace: true });
     await admin.user.click("Add site");
     await admin.user.see({ text: "Enter complete website addresses" });
+    await admin.user.see({ text: "Add or clear the website address before reviewing changes." });
+    await admin.user.notSee({ role: "button", label: "Save permissions" });
     const invalidText = await admin.probe.text();
     expect(await effective(world.den.members.jordan)).toEqual(beforeExecution);
     await admin.user.type({ role: "textbox", label: "Website address to approve" }, new URL(world.den.mocks.witness.url).origin, { replace: true });
     await admin.user.click("Add site");
     await admin.user.see({ role: "button", label: `Remove ${new URL(world.den.mocks.witness.url).origin}` });
+    await admin.user.type({ role: "textbox", label: "Website address to approve" }, new URL(world.den.mocks.witness.url).origin, { replace: true });
+    await admin.user.click("Add site");
+    await admin.user.see({ text: "This website is already approved." });
+    await admin.user.click({ role: "button", label: `Remove ${new URL(world.den.mocks.witness.url).origin}` });
+    await admin.user.see({ text: "No websites are approved, so browsing is blocked" });
+    await admin.user.notSee({ role: "button", label: `Remove ${new URL(world.den.mocks.witness.url).origin}` });
+    const emptySites = await admin.probe.text();
+    await admin.user.click("Add site");
+    await admin.user.see({ role: "button", label: `Remove ${new URL(world.den.mocks.witness.url).origin}` });
+    await admin.user.notSee({ text: "This website is already approved." });
+    evidence.recordAssertionEvidence("Duplicate sites are rejected and removing the last approved site makes browsing blocked until it is added again", emptySites, emptySites.includes("No websites are approved, so browsing is blocked"));
     await admin.user.see({ text: "Computer commands can still access other websites and send data." });
     await admin.user.click("Block computer commands too");
     await admin.user.notSee({ text: "Computer commands can still access other websites and send data." });
@@ -709,6 +730,10 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
     await admin.user.click({ text: "AI setup" });
     await choose("Add AI providers", false);
     await admin.user.click("Preview member experience");
+    await admin.user.see({ testId: "team-permission-preview-browserOrigins" }, { text: /1 approved site/ });
+    await admin.user.see({ testId: "team-permission-preview-commands" }, { text: /Blocked/ });
+    await admin.user.see({ testId: "team-permission-preview-blockBrowserUploads" }, { text: /Blocked/ });
+    await admin.user.see({ testId: "team-permission-preview-allowCustomProviders" }, { text: /Blocked/ });
     const executionPreview = await admin.probe.text();
     expect(await effective(world.den.members.jordan)).toEqual(beforeExecution);
     evidence.recordAssertionEvidence("The admin sees invalid-site feedback, adds a complete site, and closes the command bypass before saving", JSON.stringify({ invalidText, executionPreview }), invalidText.includes("Enter complete website addresses") && executionPreview.includes("1 approved site") && !executionPreview.includes("Computer commands can still access other websites and send data."));

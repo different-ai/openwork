@@ -62,7 +62,7 @@ export function TeamExecutionFields({ value, onChange, onPendingSiteChange }: {
         <ul aria-label="Approved websites" className="space-y-2">
           {value.browserOrigins?.map((origin) => <li key={origin} className="flex items-center gap-2 rounded-lg border border-gray-200 py-1 pl-3 pr-1">
             <span className="min-w-0 flex-1 break-all text-sm text-gray-700">{origin}</span>
-            <DenButton variant="ghost" size="xs" aria-label={`Remove ${origin}`} onClick={() => { setEditingSites(true); onChange({ ...value, browserOrigins: value.browserOrigins?.filter((site) => site !== origin) }); }}><X aria-hidden="true" className="h-4 w-4" /></DenButton>
+            <DenButton variant="ghost" size="xs" aria-label={`Remove ${origin}`} onClick={() => { setEditingSites(true); setSiteError(null); onChange({ ...value, browserOrigins: value.browserOrigins?.filter((site) => site !== origin) }); }}><X aria-hidden="true" className="h-4 w-4" /></DenButton>
           </li>)}
         </ul>
         <div className="mt-2 flex gap-2">
