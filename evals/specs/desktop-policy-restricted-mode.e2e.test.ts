@@ -607,4 +607,80 @@ test(teamJourney, async ({ world: selectedWorld, user, agent, probe, step, evide
   await admin.user.see({ text: "What this team can do" }, { timeoutMs: 60_000 });
   const teamText = await admin.probe.text();
   evidence.recordAssertionEvidence("Advanced policy settings direct changes to Team Access", JSON.stringify({ legacyText, teamText }), legacyText.includes("Managed in Team access") && teamText.includes("What this team can do"));
+  await step("the admin restricts commands and browsing for one team while the other desktop stays unrestricted", async () => {
+    await admin.user.reload();
+    await admin.user.see({ role: "checkbox", label: "Run OS commands" }, { timeoutMs: 60_000 });
+    await admin.user.click({ role: "checkbox", label: "Run OS commands" });
+    await admin.user.click({ role: "checkbox", label: "Restrict browsing to approved sites" });
+    await admin.user.type({ role: "textbox", label: "Approved websites" }, new URL(world.den.mocks.witness.url).origin, { replace: true });
+    await admin.user.click({ role: "checkbox", label: "Block browser uploads and form submissions" });
+    await admin.user.click("Save permissions");
+    await admin.probe.eventually(async () => (await effective(world.den.members.jordan)).execution, {
+      within: 30_000, label: "team execution policy saved", until: (value) => isRecord(value) && value.commands === "deny",
+    });
+    const other = { user: user.on(world.control), agent: agent.on(world.control), probe: probe.on(world.control) };
+    const targetPolicy = await member.probe.desktopApi("/managed-policy");
+    const otherPolicy = await other.probe.desktopApi("/managed-policy");
+    expect(targetPolicy.status).toBe(200);
+    expect(otherPolicy.status).toBe(200);
+    const attempts = [
+      { action: "shell", input: { command: "printf TEAM_POLICY_EXECUTED" } },
+      { action: "browser", input: { url: "https://unapproved.example.org", method: "GET" } },
+      { action: "browser", input: { url: world.den.mocks.witness.url, method: "POST", hasUpload: true } },
+    ];
+    for (const attempt of attempts) {
+      const denied = await member.agent.desktopApi("/managed-policy/evaluate", { method: "POST", body: attempt });
+      const allowed = await other.agent.desktopApi("/managed-policy/evaluate", { method: "POST", body: attempt });
+      expect(denied.status).toBe(403);
+      expect(allowed.status).toBe(200);
+      evidence.recordAssertionEvidence(`Team policy isolates ${attempt.action} ${JSON.stringify(attempt.input)}`, JSON.stringify({ denied, allowed }), denied.status === 403 && allowed.status === 200);
+    }
+    const permittedSite = await member.agent.desktopApi("/managed-policy/evaluate", { method: "POST", body: { action: "browser", input: { url: world.den.mocks.witness.url, method: "GET" } } });
+    expect(permittedSite.status).toBe(200);
+    await other.user.reload();
+    await other.user.click(accountMenu);
+    await other.user.see(settingsMenuItem);
+    await other.user.press("Escape");
+    await other.user.click("Library");
+    await other.user.notSee(manageExtensionsNotice);
+    await admin.user.reload();
+    await admin.user.see({ role: "textbox", label: "Approved websites" }, { value: new URL(world.den.mocks.witness.url).origin });
+    const allowedBrowser = await member.agent.browserRequest({ url: `${world.den.mocks.witness.url}/health` });
+    expect(allowedBrowser.reached).toBe(true);
+    const outside = new URL("/health", world.den.ref.apiUrl).toString();
+    const blockedBrowser = await member.agent.browserRequest({ url: outside });
+    const otherBrowser = await other.agent.browserRequest({ url: outside });
+    expect(blockedBrowser.reached).toBe(false);
+    expect(otherBrowser.reached).toBe(true);
+    const blockedUpload = await member.agent.browserRequest({ url: `${world.den.mocks.witness.url}/token`, method: "POST", body: "grant_type=invalid_policy_witness" });
+    const otherUpload = await other.agent.browserRequest({ url: `${world.den.mocks.witness.url}/token`, method: "POST", body: "grant_type=invalid_policy_witness" });
+    expect(blockedUpload.reached).toBe(false);
+    expect(otherUpload.reached).toBe(true);
+    evidence.recordAssertionEvidence("Real browser requests obey the team website and upload rules", JSON.stringify({ allowedBrowser, blockedBrowser, otherBrowser, blockedUpload, otherUpload }), allowedBrowser.reached && !blockedBrowser.reached && otherBrowser.reached && !blockedUpload.reached && otherUpload.reached);
+    for (const [index, desktop] of [member, other].entries()) {
+      const surface = index === 0 ? world.member : world.control;
+      const proof = world.commandProofs[index];
+      if (!proof) throw new Error("Missing command witness");
+      const filePath = `/workspace/${surface.workspaceId}/files/content?path=${encodeURIComponent(proof.file)}`;
+      expect((await desktop.probe.desktopApi(filePath)).status).toBe(404);
+      await desktop.agent.createSession(`Team policy ${index === 0 ? "restricted" : "control"}`);
+      await desktop.agent.send(`Write the policy test witness by running this OS command: ${proof.command}. Request ${proof.marker}.`);
+      await desktop.probe.eventually(async () => {
+        if (await desktop.probe.has("Allow once")) await desktop.user.click("Allow once");
+        return desktop.probe.has(proof.reply);
+      }, { within: 120_000, label: "real engine finishes the command attempt", until: Boolean });
+      const witness = await desktop.probe.desktopApi(filePath);
+      expect(witness.status).toBe(index === 0 ? 404 : 200);
+      if (index === 1) expect(isRecord(witness.body) && witness.body.content).toBe(world.nonce);
+      const requests = await world.den.mocks.witness.agentRequests({ promptMarker: proof.marker, atLeast: 1 });
+      expect(requests.some((request) => request.kind === "tool")).toBe(true);
+      evidence.recordAssertionEvidence(`Real command attempt ${index === 0 ? "blocked before writing" : "writes for the other member"}`, JSON.stringify({ witness, requests }), witness.status === (index === 0 ? 404 : 200));
+    }
+    const target = await effective(world.den.members.jordan);
+    const unaffected = await effective(world.den.members.casey);
+    expect(isRecord(target.execution) && target.execution.commands).toBe("deny");
+    expect(isRecord(unaffected.execution) && unaffected.execution.commands).toBe("allow");
+    evidence.recordAssertionEvidence("The admin's saved team policy persists while the second member retains Settings and local tool management", JSON.stringify({ target, unaffected, targetPolicy, otherPolicy }), isRecord(target.execution) && target.execution.commands === "deny" && isRecord(unaffected.execution) && unaffected.execution.commands === "allow");
+  });
+
 });

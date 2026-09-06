@@ -1,5 +1,7 @@
 "use client";
 
+import { ExecutionPolicyFields } from "./execution-policy-fields";
+import { desktopExecutionPolicySchema } from "@openwork/types/den/desktop-policies";
 import { useState } from "react";
 import { LockKeyhole, SlidersHorizontal, ShieldCheck } from "lucide-react";
 import { desktopPolicyDefaults, desktopPolicyDefinitions, type TeamAccess } from "@openwork/types/den/desktop-policies";
@@ -49,10 +51,12 @@ function TeamPermissionsEditor({ teamId, teamName, policy, canManage, onSaved }:
   const { orgSlug } = useOrgDashboard();
   const initial: TeamAccess = policy?.policy.access ?? { mode: "custom", capabilities: { ...desktopPolicyDefaults } };
   const [draft, setDraft] = useState(initial);
+  const initialExecution = policy?.policy.execution ?? desktopExecutionPolicySchema.parse({});
+  const [execution, setExecution] = useState(initialExecution);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const dirty = JSON.stringify(draft) !== JSON.stringify(initial);
+  const dirty = JSON.stringify(draft) !== JSON.stringify(initial) || JSON.stringify(execution) !== JSON.stringify(initialExecution);
   const locked = draft.mode === "locked";
 
   async function save() {
@@ -61,7 +65,7 @@ function TeamPermissionsEditor({ teamId, teamName, policy, canManage, onSaved }:
     try {
       const payload = {
         policyName: policy?.policyName ?? `${teamName} access`,
-        policy: { ...policy?.policy, access: draft },
+        policy: { ...policy?.policy, access: draft, execution: desktopExecutionPolicySchema.parse(execution) },
         teamIds: [teamId],
         isEnabled: true,
       };
@@ -109,6 +113,7 @@ function TeamPermissionsEditor({ teamId, teamName, policy, canManage, onSaved }:
             })}
           </div>
         </div>
+        <ExecutionPolicyFields value={execution} onChange={(value) => { setExecution(value); setSaved(false); }} />
       </fieldset>
       <div className="rounded-xl bg-gray-50 px-4 py-3 text-sm leading-6 text-gray-600">
         <p className="font-medium text-gray-800">Members can still chat and use available connections.</p>

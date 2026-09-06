@@ -13,6 +13,7 @@ import {
 } from "@openwork/behaviors";
 import {
   callFunctionOnSurface,
+  callFunction, connect, debuggerUrlFor, listTargets,
   clickAt,
   dumpScreenState,
   evaluateOnSurface,
@@ -764,6 +765,52 @@ export class AgentChannel implements Agent {
       if (action.startsWith("composer.")) await waitForControlAction(surface, action);
       else await waitForControlRail(surface, action);
       return control(surface, action, args);
+    });
+  }
+
+  browserRequest(input: { url: string; method?: string; body?: string }): Promise<{ reached: boolean; error?: string }> {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("agent", "browserRequest", `browserRequest(${input.method ?? "GET"} ${input.url})`, surface, async () => {
+      const handle = await callFunctionOnSurface(surface, `async () => window.__OPENWORK_ELECTRON__.browser.openUrl("about:blank")`, [], { awaitPromise: true });
+      if (!isRecord(handle) || typeof handle.target_id !== "string") throw new Error("Browser did not return a target");
+      const target = (await listTargets(surface.handle.cdpUrl)).find((entry) => entry.id === handle.target_id);
+      if (!target) throw new Error("Browser target missing");
+      const client = await connect(debuggerUrlFor(surface.handle.cdpUrl, target));
+      try {
+        const result = await callFunction(client, `async (encoded) => {
+          const input = JSON.parse(encoded);
+          try {
+            await fetch(input.url, { method: input.method ?? "GET", body: input.body, mode: "no-cors", cache: "no-store", signal: AbortSignal.timeout(20000) });
+            return { reached: true };
+          } catch (error) { return { reached: false, error: String(error) }; }
+        }`, [JSON.stringify(input)], { awaitPromise: true, timeoutMs: 25000 });
+        if (!isRecord(result) || typeof result.reached !== "boolean") throw new Error("Invalid browser request result");
+        return { reached: result.reached, ...(typeof result.error === "string" ? { error: result.error } : {}) };
+      } finally { client.close(); }
+    });
+  }
+
+  desktopApi(path: string, input: { method: string; body?: unknown }): Promise<{ status: number; body: unknown }> {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("agent", "desktopApi", `desktopApi(${input.method} ${path})`, surface, async () => {
+      if (!path.startsWith("/") || path.startsWith("//") || /[\\\s]/.test(path)) throw new Error("A root-relative server path is required.");
+      const value = await callFunctionOnSurface(surface, `async (path, encodedInput) => {
+        const input = JSON.parse(encodedInput);
+        const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
+        if (!info?.running || !info.baseUrl) return { status: 0, body: { error: "local_server_unavailable" } };
+        const response = await fetch(String(info.baseUrl).replace(/\\/+$/, "") + path, {
+          method: input.method,
+          headers: { Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? ""), "Content-Type": "application/json" },
+          body: input.body === undefined ? undefined : JSON.stringify(input.body),
+          redirect: "error", signal: AbortSignal.timeout(30_000),
+        });
+        const text = await response.text();
+        let body = text;
+        try { body = JSON.parse(text); } catch {}
+        return { status: response.status, body };
+      }`, [path, JSON.stringify(input)], { awaitPromise: true, timeoutMs: 35_000 });
+      if (!isRecord(value) || typeof value.status !== "number") throw new Error("Invalid desktop API result");
+      return { status: value.status, body: value.body };
     });
   }
 

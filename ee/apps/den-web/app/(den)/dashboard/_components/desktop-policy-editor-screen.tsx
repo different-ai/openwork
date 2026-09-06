@@ -1,5 +1,7 @@
 "use client";
 
+import { ExecutionPolicyFields } from "./execution-policy-fields";
+import { desktopExecutionPolicySchema, type DesktopExecutionPolicy } from "@openwork/types/den/desktop-policies";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -31,6 +33,7 @@ import { EnterprisePlanNotice } from "./enterprise-plan-notice";
 type PolicyMode = "custom" | "restricted";
 
 type PolicyDraft = {
+  execution: DesktopExecutionPolicy;
   policyName: string;
   mode: PolicyMode;
   policy: Required<DesktopPolicyValue>;
@@ -44,6 +47,7 @@ type PolicyDraft = {
 };
 
 const EMPTY_DRAFT: PolicyDraft = {
+  execution: desktopExecutionPolicySchema.parse({}),
   policyName: "New desktop policy",
   mode: "custom",
   policy: { ...desktopPolicyDefaults },
@@ -88,6 +92,7 @@ function draftFromPolicy(policy: DenDesktopPolicy): PolicyDraft {
   const onboardingPromptDescriptions = policy.policy.onboardingPromptDescriptions ?? [];
   const policyValue = requiredPolicyValue(policy.policy);
   return {
+    execution: policy.policy.execution ?? desktopExecutionPolicySchema.parse({}),
     policyName: policy.policyName,
     mode: isRestrictedDesktopPolicyValue(policyValue) ? "restricted" : "custom",
     policy: policyValue,
@@ -204,6 +209,7 @@ function policyDocumentFromDraft(draft: PolicyDraft): DesktopPolicyDocumentWrite
     ? getOnboardingPromptDescriptions(draft, onboardingPrompts.length)
     : undefined;
   return {
+    execution: desktopExecutionPolicySchema.parse(draft.execution),
     ...draft.policy,
     ...(draft.onboardingPromptsEnabled
       ? onboardingPrompts !== undefined
@@ -459,6 +465,7 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
             ) : null}
           </div>
 
+          <ExecutionPolicyFields value={draft.execution} onChange={(execution) => setDraft({ ...draft, execution })} />
           <fieldset className="grid gap-3" aria-describedby={POLICY_MODE_HELP_ID} data-testid="desktop-policy-mode">
             <legend className="text-[13px] font-medium text-gray-700">Policy mode</legend>
             <div className="grid gap-3 sm:grid-cols-2">

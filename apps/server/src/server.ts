@@ -1,3 +1,4 @@
+import { managedDesktopPolicy } from "./managed-desktop-policy.js";
 import { readFile, realpath, writeFile, rm, stat } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -1020,6 +1021,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     },
     logger: toManagedProviderAuthLogger(logger),
   });
+  managedDesktopPolicy(config).onChange = () => cloudProviderSync.markReloadPending();
   const engineV2Preview = createEngineV2Preview({ config, env });
   const routes = createRoutes(
     config,
@@ -1086,6 +1088,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
         try {
           const actor = await requireClient(request, config, tokens);
           assertOpencodeProxyAllowed(actor, request.method, mount.restPath);
+          await managedDesktopPolicy(config).assertRequest(request, mount.restPath, true);
           const workspace = await resolveWorkspaceWithoutBootstrap(config, mount.workspaceId);
           await assertWorkspaceOwnsProxiedSessionRead(config, workspace, request.method, mount.restPath);
           proxyService = "opencode";
@@ -1112,6 +1115,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
         try {
           const actor = await requireClient(request, config, tokens);
           assertOpencodeProxyAllowed(actor, request.method, mount.restPath);
+          await managedDesktopPolicy(config).assertRequest(request, mount.restPath, true);
           const workspace = await resolveWorkspaceWithoutBootstrap(config, mount.workspaceId);
           const connection = engineV2Preview.connection();
           if (!connection) {
@@ -1189,6 +1193,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
         try {
           const actor = await requireClient(request, config, tokens);
           assertOpencodeProxyAllowed(actor, request.method, url.pathname);
+          await managedDesktopPolicy(config).assertRequest(request, url.pathname, true);
           proxyService = "opencode";
           const workspace = config.workspaces[0];
           if (workspace) {
@@ -1229,6 +1234,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
               : route.auth === "client"
                 ? await requireClient(request, config, tokens)
                 : undefined;
+        await managedDesktopPolicy(config).assertRequest(request, url.pathname);
         const response = await route.handler({
           request,
           url,
@@ -1323,6 +1329,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
   return {
     ...server,
     stop: async () => {
+      managedDesktopPolicy(config).onChange = undefined;
       cloudProviderSync.stop();
       await engineV2Preview.stop().catch(() => undefined);
       engineInstanceReaper.close();
@@ -3082,12 +3089,14 @@ function createRoutes(
     ensureWritable(config);
     const session = parseCloudProviderDenSession(await readJsonBody(ctx.request));
     if (!session) throw new ApiError(400, "invalid_payload", "baseUrl, token, and orgId are required");
+    await managedDesktopPolicy(config).setSession(session);
     await cloudProviderSync.setSession(session);
     return new Response(null, { status: 204 });
   });
 
   addRoute(routes, "DELETE", "/den-session", "host-token", async () => {
     ensureWritable(config);
+    await managedDesktopPolicy(config).clearSession();
     await cloudProviderSync.clearSession();
     return new Response(null, { status: 204 });
   });
@@ -3099,6 +3108,15 @@ function createRoutes(
       throw new ApiError(400, "invalid_payload", "reason must be a string");
     }
     return jsonResponse(await cloudProviderSync.run(typeof body.reason === "string" ? body.reason : undefined));
+  });
+
+  addRoute(routes, "GET", "/managed-policy", "client", async () =>
+    jsonResponse({ policy: await managedDesktopPolicy(config).current() }));
+  addRoute(routes, "POST", "/managed-policy/evaluate", "client", async (ctx) => {
+    const body = await readJsonBody(ctx.request);
+    if (typeof body.action !== "string" || !isRecord(body.input)) throw new ApiError(400, "invalid_payload", "action and input are required");
+    await managedDesktopPolicy(config).assert(body.action, body.input);
+    return jsonResponse({ allowed: true });
   });
 
   addRoute(routes, "GET", "/cloud-provider-sync/status", "client", async () => {
@@ -3310,6 +3328,7 @@ function createRoutes(
       // rendered from the ENGINE_GLOBAL row only, so a workspace-row write
       // would never reach the engine.
       const providerUpdate = isRecord(provider) ? provider : {};
+      if (Object.keys(providerUpdate).length) await managedDesktopPolicy(config).assert("provider");
       if (Object.keys(providerUpdate).length) {
         const providerResult = await writeGlobalRuntimeOpencodeConfig(config, (current) => ({
           ...current,

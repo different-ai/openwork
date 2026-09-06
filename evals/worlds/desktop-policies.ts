@@ -1,3 +1,4 @@
+import { mcpMock } from "@openwork/env";
 import type { Seed } from "@openwork/env";
 import { isRecord, records } from "./library.ts";
 
@@ -58,7 +59,16 @@ export async function defaultPolicyEditorAndMemberDesktop(seed: Seed) {
  * focused team and an overlapping grant team; Casey is the unaffected control.
  * The admin starts at Team Access and Jordan starts in a real desktop. */
 export async function teamAccess(seed: Seed) {
+  const nonce = `team-policy-${Date.now()}`;
+  const shellTool = process.env.OPENWORK_EVAL_ENGINE === "v2" ? "shell" : "bash";
+  const commandProofs = ["restricted", "control"].map((member) => ({
+    marker: `${nonce}-${member}`, file: `${nonce}-${member}.txt`, reply: `${nonce}-${member}-finished`,
+    command: `printf '${nonce}' > '${nonce}-${member}.txt'`,
+  }));
   const den = await seed.den({
+    mocks: { witness: mcpMock({ allowUnauthenticatedMcp: true, agentWorkloads: commandProofs.map((proof) => ({
+      promptMarker: proof.marker, finalReply: proof.reply, steps: [{ tool: shellTool, arguments: { command: proof.command, description: "Write a policy test witness" } }],
+    })) }) },
     org: {
       name: `Team Access ${Date.now()}`,
       admin: { name: "Sarah" },
@@ -79,8 +89,9 @@ export async function teamAccess(seed: Seed) {
         id: "team-access-eval-provider",
         name: "Team access model",
         npm: "@ai-sdk/openai-compatible",
+        options: { baseURL: `${den.mocks.witness.url}/v1` },
         env: ["TEAM_ACCESS_EVAL_PROVIDER_API_KEY"],
-        models: [{ id: "team-access-eval-model", name: "Team access model" }],
+        models: [{ id: "mock-agent-workload-model", name: "Team access model", tool_call: true }],
       },
       apiKey: "sk-openwork-team-access-eval-only",
       allMembers: true,
@@ -93,10 +104,12 @@ export async function teamAccess(seed: Seed) {
   if (provider.response.status !== 201 || typeof llmProvider?.id !== "string") {
     throw new Error(`Organization model setup failed: HTTP ${provider.response.status}`);
   }
-  const connected = await seed.api(den.members.jordan, `/v1/llm-providers/${encodeURIComponent(llmProvider.id)}/connect`, {
+  for (const account of [den.members.jordan, den.members.casey]) {
+  const connected = await seed.api(account, `/v1/llm-providers/${encodeURIComponent(llmProvider.id)}/connect`, {
     signal: AbortSignal.timeout(30_000),
   });
   if (connected.response.status !== 200) throw new Error(`Member model entitlement setup failed: HTTP ${connected.response.status}`);
+  }
   const flags = {
     allowCustomProviders: true, allowZenModel: true, allowMultipleWorkspaces: true,
     allowControlSettings: true, allowManageExtensions: true, allowBuiltInExtensions: true,
@@ -137,7 +150,8 @@ export async function teamAccess(seed: Seed) {
   });
   if (!shared.response.ok) throw new Error(`Approved skill sharing failed: ${shared.text}`);
   const editorPath = `/dashboard/members/teams/${teamId}`;
-  const member = await seed.desktop({ den, as: "jordan" });
+  const member = await seed.desktop({ den, as: "jordan", model: `${llmProvider.id}/mock-agent-workload-model` });
+  const control = await seed.desktop({ den, as: "casey", model: `${llmProvider.id}/mock-agent-workload-model` });
   const admin = await seed.web({ den, signedInAs: den.admin, startPath: editorPath, headless: true, viewport: { width: 1440, height: 2100 } });
-  return { den, member, admin, teamId, grantTeamId, editorPath, pluginId, pluginName, rawSourceText };
+  return { den, member, control, admin, commandProofs, nonce, providerId: llmProvider.id, teamId, grantTeamId, editorPath, pluginId, pluginName, rawSourceText };
 }

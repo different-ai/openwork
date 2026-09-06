@@ -26,7 +26,19 @@ const MENU_OVERLAY_WIDTH = 196;
 const MENU_OVERLAY_HEIGHT = 176;
 const MENU_OVERLAY_READY_TIMEOUT_MS = 2000;
 
-export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
+export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, checkPolicy }) {
+  let policyRequestHookInstalled = false;
+  function installPolicyRequestHook() {
+    if (policyRequestHookInstalled || !checkPolicy) return;
+    policyRequestHookInstalled = true;
+    // The session request boundary covers normal navigation, redirects, frames,
+    // scripted fetches and CDP navigation; window navigation events do not.
+    session.fromPartition(BROWSER_SESSION_PARTITION).webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, callback) => {
+      if (["about:", "data:", "blob:"].some((scheme) => details.url.startsWith(scheme))) { callback({ cancel: false }); return; }
+      Promise.resolve(checkPolicy({ url: details.url, method: details.method, hasUpload: Boolean(details.uploadData?.length) }))
+        .then(() => callback({ cancel: false }), () => callback({ cancel: true }));
+    });
+  }
   // tabId -> { tabId, view, favicon, background }. Order, ownership, the active
   // tab per conversation, and which conversation is on screen live in the
   // registry; this map only holds the native views.
@@ -449,7 +461,10 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
         break;
       case "open-external":
         if (request.url && isHttpUrl(request.url)) {
-          runDetachedTask("open browser tab externally", () => shell.openExternal(request.url));
+          runDetachedTask("open browser tab externally", async () => {
+            await checkPolicy?.({ url: request.url, external: true });
+            await shell.openExternal(request.url);
+          });
         }
         break;
       case "close-tab":
@@ -521,6 +536,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
   });
 
   function createBrowserTab(url = "about:blank", { select = true, initializeBlank = true, ownerSessionId = null } = {}) {
+    installPolicyRequestHook();
     const tabId = createBrowserTabId();
     const view = new WebContentsView({
       webPreferences: {
@@ -543,7 +559,11 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
       runDetachedTask("initialize browser tab", () => view.webContents.loadURL("about:blank"));
     }
     view.webContents.setWindowOpenHandler(({ url: targetUrl }) => {
-      runDetachedTask("open browser popup externally", () => shell.openExternal(targetUrl));
+      runDetachedTask("open browser popup", async () => {
+        try { await checkPolicy?.({ url: targetUrl, external: true }); }
+        catch { createBrowserTab(targetUrl, { ownerSessionId, initializeBlank: false }); return; }
+        await shell.openExternal(targetUrl);
+      });
       return { action: "deny" };
     });
     view.webContents.on("did-start-navigation", (_event, targetUrl, isInPlace, isMainFrame) => {
