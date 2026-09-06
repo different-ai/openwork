@@ -44,6 +44,17 @@ test("a streaming answer renders as markdown block by block and settles to the s
     await user.notSee({ text: streamedMarkdownReasoning });
   });
 
+  await step("live reasoning can be inspected before any reload while the answer is still streaming", async () => {
+    const reasoningControl = { role: "button", label: /^(Thinking…|Thought)$/ } as const;
+    await user.see(reasoningControl);
+    await user.click(reasoningControl);
+    await user.see({ text: streamedMarkdownReasoning });
+    expect(occurrences(await probe.text(), streamedMarkdownReasoning)).toBe(1);
+    await user.notSee({ text: closingText });
+    await user.click(reasoningControl);
+    await user.notSee({ text: streamedMarkdownReasoning });
+  });
+
   await step("sent text and finished blocks stay visible before reloading the active stream", async () => {
     // The observer belongs to this document and must be verified before navigation.
     const continuity = await transcript.finish();
