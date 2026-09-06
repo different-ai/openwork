@@ -23,7 +23,7 @@ type ContextMenuRequest = {
 
 type MenuOverlayApi = {
   ready: () => void;
-  onShow: (callback: (request: ContextMenuRequest) => void) => () => void;
+  onShow: (callback: (request: ContextMenuRequest | null) => void) => () => void;
   choose: (requestId: string, itemId: string) => void;
   close: (requestId?: string) => void;
 };

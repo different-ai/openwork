@@ -388,6 +388,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     if (!view || !mainWindow) return;
     const restoreFocus = !view.webContents.isDestroyed() && view.webContents.isFocused?.();
     view.setVisible?.(false);
+    if (!view.webContents.isDestroyed()) view.webContents.send("openwork:menu-overlay:hide");
     try {
       if (mainWindow.contentView.children.includes(view)) {
         mainWindow.contentView.removeChildView(view);

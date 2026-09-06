@@ -153,13 +153,13 @@ test("a transcript link's menu copies its exact address and opens only its own c
   if (!attached) throw new Error("The link context menu has no native overlay surface.");
   await using overlay = attached;
   const menu = user.on(overlay);
-  const menuFocus = (focused: boolean) => eventually(() => world.menuFocused(overlay), {
-    within: 10_000, until: value => value === focused,
-    label: focused ? "the native link menu receives keyboard focus" : "the native link menu releases keyboard focus",
+  const menuShown = (shown: boolean) => eventually(() => world.menuShown(overlay), {
+    within: 10_000, until: value => value === shown,
+    label: shown ? "the native link menu is rendered" : "the dismissed link menu is cleared",
   });
 
   await step("Right-click and Escape leave the transcript and every browser page unchanged", async () => {
-    await menuFocus(true);
+    await menuShown(true);
     for (const label of ["Open in OpenWork", "Open in Default Browser", "Copy Link Address"]) {
       await menu.see(menuItem(label));
     }
@@ -168,15 +168,15 @@ test("a transcript link's menu copies its exact address and opens only its own c
     await user.notSee(menuItem("Edit message"));
     await unchanged();
     await menu.press("Escape");
-    await menuFocus(false);
+    await menuShown(false);
     await unchanged();
   });
 
   await step("Copy Link Address copies the exact URL, not the whole message, without opening a page", async () => {
     await user.rightClick(link);
-    await menuFocus(true);
+    await menuShown(true);
     await menu.click(menuItem("Copy Link Address"));
-    await menuFocus(false);
+    await menuShown(false);
     // Clipboard reads require the app document to be focused.
     await user.click("composer");
     expect(await world.readClipboard()).toBe(world.linkUrl);
@@ -188,7 +188,7 @@ test("a transcript link's menu copies its exact address and opens only its own c
     await user.see(menuItem("Edit message"));
     await user.see(menuItem("Copy"));
     await user.notSee(menuItem("Open in OpenWork"));
-    expect(await world.menuFocused(overlay)).toBe(false);
+    expect(await world.menuShown(overlay)).toBe(false);
     await user.press("Escape");
     await user.notSee(menuItem("Edit message"));
     await unchanged();
@@ -196,9 +196,9 @@ test("a transcript link's menu copies its exact address and opens only its own c
 
   const opened = await step("Open in OpenWork creates exactly one tab owned by the link's conversation", async () => {
     await user.rightClick(link);
-    await menuFocus(true);
+    await menuShown(true);
     await menu.click(menuItem("Open in OpenWork"));
-    await menuFocus(false);
+    await menuShown(false);
     const state = await eventually(() => world.readBrowserState(), {
       within: 30_000,
       until: value => value.tabs.some(tab => tab.url === world.linkUrl && tab.id === value.activeTabId),
@@ -262,7 +262,7 @@ test("a transcript link's menu copies its exact address and opens only its own c
       expect(popups[0]?.url).toBe(world.linkUrl);
       expect((await world.readBrowserState()).tabs).toEqual(browserBefore.tabs);
       expect(await world.readMainUrl()).toBe(mainUrl);
-      expect(await world.menuFocused(overlay)).toBe(false);
+      expect(await world.menuShown(overlay)).toBe(false);
     } finally {
       for (const popup of popups) await world.closePopup(popup.id);
     }

@@ -531,9 +531,10 @@ export async function transcriptLinkWorld(seed: Seed, world: Awaited<ReturnType<
         menu => menu.getAttribute("aria-label"))`);
     },
 
-    async menuFocused(surface: Surface) {
-      // Native hiding retains the DOM; backgroundThrottling also affects visibilityState.
-      return await evaluate(surface.client, "document.hasFocus()") === true;
+    async menuShown(surface: Surface) {
+      // Chromium can retain document.hasFocus() on a detached native view. The
+      // renderer clears its menu on dismissal, so stale choices cannot persist.
+      return await evaluate(surface.client, 'Boolean(document.querySelector(\'[role="menu"]\'))') === true;
     },
 
     async closePopup(targetId: string) {
