@@ -44,6 +44,35 @@ function renderList(messages: UIMessage[], status: ThreadStatus, syncHealth?: Ru
 }
 
 describe("message-list loading feedback", () => {
+  test("renders native video for either role while preserving file actions", () => {
+    const roles: UIMessage["role"][] = ["user", "assistant"];
+    for (const role of roles) {
+      const markup = renderList([{
+        id: `video-${role}`, role,
+        parts: [{ type: "file", mediaType: "video/mp4", filename: "clip.mp4", url: "file:///workspace/clip.mp4" }],
+      }], "ready");
+      expect(markup).toContain("<video");
+      expect(markup).toContain('controls=""');
+      expect(markup.toLowerCase()).toContain('playsinline=""');
+      expect(markup).toContain('preload="metadata"');
+      expect(markup).toContain("Loading video...");
+      expect(markup).toContain("Open clip.mp4 in Artifacts");
+      expect(markup.toLowerCase()).not.toContain("autoplay");
+      expect(markup).not.toContain('src="file:');
+    }
+    const remoteMarkup = renderList([{
+      id: "video-remote", role: "user",
+      parts: [{ type: "file", mediaType: "application/octet-stream", filename: "clip.webm", url: "https://example.com/clip.webm" }],
+    }], "ready");
+    expect(remoteMarkup).toContain("<video");
+    // Public links retain the existing card policy: no direct-download action.
+    expect(remoteMarkup).not.toContain("More actions for clip.webm");
+    expect(renderList([{
+      id: "document", role: "user",
+      parts: [{ type: "file", mediaType: "application/pdf", filename: "notes.pdf", url: "file:///workspace/notes.pdf" }],
+    }], "ready")).not.toContain("<video");
+  });
+
   test("acknowledges a submitted message before streaming starts", () => {
     const markup = renderList([userMessage], "submitted");
 

@@ -175,3 +175,61 @@ test("native Responses preserve the configured provider header", async () => {
   assert.ok(events.some(event => event.type === "response.completed"));
   assert.equal(events.filter(event => event.type === "response.output_text.delta").map(event => event.delta).join(""), "The header reached the provider");
 });
+
+test("Google generation and streaming retain exact native media and return configured text", async () => {
+  const marker = "native-video-proof";
+  const reply = "The video reached the model";
+  const media = { mimeType: "video/mp4", data: Buffer.from([0, 255, 128, 1, 254]).toString("base64") };
+  await using mock = await startMockMcp({
+    port: await allocateFreePort(),
+    agentWorkloads: [{ promptMarker: marker, finalReply: reply, finalReplyChunkSize: 5, steps: [] }],
+    agentRequiredHeader: { name: "x-goog-api-key", value: "google-fixture-key" },
+  });
+  for (const method of ["generateContent", "streamGenerateContent"]) {
+    const body = JSON.stringify({ contents: [{ role: "user", parts: [{ text: marker }, { inlineData: media }] }] });
+    const url = `${mock.url}/v1beta/models/video-fixture:${method}?alt=sse`;
+    const denied = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body });
+    assert.equal(denied.status, 401);
+    await denied.text();
+    const accepted = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-goog-api-key": "google-fixture-key" },
+      body,
+    });
+    assert.equal(accepted.status, 200);
+    if (method === "generateContent") {
+      const result = await accepted.json();
+      assert.equal(result.candidates[0].content.parts[0].text, reply);
+      assert.equal(result.candidates[0].finishReason, "STOP");
+    } else {
+      assert.match(accepted.headers.get("content-type") ?? "", /text\/event-stream/);
+      const events = (await accepted.text()).split("\n").filter(line => line.startsWith("data: ")).map(line => JSON.parse(line.slice(6)));
+      assert.ok(events.length > 2);
+      assert.equal(events.map(event => event.candidates[0].content.parts[0].text).join(""), reply);
+      assert.equal(events.at(-1)?.candidates[0].finishReason, "STOP");
+    }
+  }
+  const requests = await mock.agentRequests({ promptMarker: marker });
+  assert.deepEqual(requests.map(request => request.kind), ["error", "final", "error", "final"]);
+  for (const request of requests) {
+    assert.equal(request.model, "video-fixture");
+    assert.deepEqual(request.inlineMedia, [media]);
+  }
+});
+
+test("Google generation rejects tool workloads rather than silently ignoring their steps", async () => {
+  await using mock = await startMockMcp({
+    port: await allocateFreePort(),
+    agentWorkloads: [{ promptMarker: "tool-required", finalReply: "must not be returned", steps: [{ tool: "read", arguments: {} }] }],
+  });
+  for (const method of ["generateContent", "streamGenerateContent"]) {
+    const response = await fetch(`${mock.url}/v1beta/models/video-fixture:${method}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: "tool-required" }] }] }),
+    });
+    assert.equal(response.status, 400);
+    assert.match(await response.text(), /empty steps/);
+  }
+  assert.deepEqual((await mock.agentRequests()).map(request => request.kind), ["error", "error"]);
+});

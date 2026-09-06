@@ -5,7 +5,7 @@ export async function observeTranscript(probe: Probe, entries: readonly { role: 
   const key = `transcript-observer-${crypto.randomUUID()}`;
   await probe.eval(`(key, entriesJson) => {
     const entries = JSON.parse(entriesJson);
-    const state = { frames: 0, seen: entries.map(() => false), violations: [], stopped: false };
+    const state = { frames: 0, seen: entries.map(() => false), firstSeenFrames: entries.map(() => null), violations: [], stopped: false };
     let frame;
     const started = performance.now();
     const sample = () => {
@@ -14,7 +14,10 @@ export async function observeTranscript(probe: Probe, entries: readonly { role: 
         const nodes = [...document.querySelectorAll('[data-message-role="' + entry.role + '"]')]
           .filter(node => node.getClientRects().length && getComputedStyle(node).visibility !== "hidden");
         const count = nodes.reduce((sum, node) => sum + ((node.innerText ?? "").split(entry.text).length - 1), 0);
-        if (count > 0) state.seen[index] = true;
+        if (count > 0) {
+          if (!state.seen[index]) state.firstSeenFrames[index] = state.frames;
+          state.seen[index] = true;
+        }
         if (state.seen[index] && count !== 1 && state.violations.length < 30)
           state.violations.push({ index, count, atMs: Math.round(performance.now() - started) });
       });
@@ -25,6 +28,13 @@ export async function observeTranscript(probe: Probe, entries: readonly { role: 
     window[key] = { state, stop() { clearTimeout(timer); cancelAnimationFrame(frame); } };
   }`, { args: [key, JSON.stringify(entries)] });
   return {
+    async firstSeenFrames(): Promise<Array<number | null>> {
+      const frames = await probe.eval(`(key) => window[key]?.state.firstSeenFrames`, { args: [key] });
+      if (!Array.isArray(frames) || !frames.every((frame): frame is number | null => frame === null || typeof frame === "number")) {
+        throw new Error("Transcript frame observations were unavailable");
+      }
+      return frames;
+    },
     read() {
       return probe.eval(`(key) => {
         const observer = window[key];

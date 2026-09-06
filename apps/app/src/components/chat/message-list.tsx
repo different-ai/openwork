@@ -76,6 +76,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
 import { ImageAttachmentBadge } from "@/components/chat/image-attachment-badge"
+import { VideoAttachment } from "@/components/chat/video-attachment"
 import { Image } from "@/components/ui/image"
 import {
   Message,
@@ -120,6 +121,7 @@ import { isToolPartInFlight } from "@/lib/tool-activity"
 import { faviconUrlForHref } from "@/lib/favicon"
 import { useOpenArtifactPath } from "@/lib/artifacts"
 import { cn } from "@/lib/utils"
+import { videoMimeType } from "@/lib/video-source"
 import { DevProfiler } from "@/react-app/shell/dev-profiler"
 import { groupMessages, isMessageGroup, getLastTextPart, getAggregateOnlyParts, getAssistantRenderGroups, getFileTitle, getMediaBadge, getMessageCompleted, getMessageCreated, formatMessageTimestamp, splitTurnAtAnswer, type UIMessageWithIndex, getMessagesText, getSafeFileDownloadUrl, getSafeFileRevealPath } from "./utils"
 import type { AnyToolPart } from "@/lib/tool-aggregate"
@@ -339,6 +341,7 @@ function FileMessage({ part, tone }: FileMessageProps) {
   const title = getFileTitle(part)
   const badge = getMediaBadge(part)
   const isImage = part.mediaType.startsWith("image/") && Boolean(part.url)
+  const isVideo = part.mediaType.startsWith("video/") || Boolean(videoMimeType(part.filename ?? part.url))
   const downloadUrl = getSafeFileDownloadUrl(part)
   const revealPath = getSafeFileRevealPath(part)
   const canReveal = isElectronRuntime() && Boolean(revealPath)
@@ -393,7 +396,7 @@ function FileMessage({ part, tone }: FileMessageProps) {
     )
   }
 
-  return (
+  const fileCard = (
     <div className="flex h-auto w-fit min-w-0 max-w-full shrink items-center justify-start gap-2 rounded-xl border border-border/70 bg-background/40 ps-2 pe-2 py-1 text-left text-sm font-medium whitespace-normal">
       {revealPath ? (
         <button
@@ -439,6 +442,13 @@ function FileMessage({ part, tone }: FileMessageProps) {
       ) : null}
     </div>
   )
+
+  return isVideo ? (
+    <div className="flex w-full min-w-0 max-w-lg flex-col gap-2">
+      <VideoAttachment src={part.url} title={title} mediaType={part.mediaType} />
+      {fileCard}
+    </div>
+  ) : fileCard
 }
 
 interface CopyMessageButtonProps {

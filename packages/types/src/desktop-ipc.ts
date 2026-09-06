@@ -303,6 +303,7 @@ export type DesktopFetchInit = {
   headers?: Record<string, string>;
   body?: string;
   timeoutMs?: number;
+  responseType?: "arraybuffer";
   agentContextDiagnostics?: {
     deadlineAtMs: number;
   };
@@ -313,6 +314,7 @@ export type DesktopFetchResult = {
   statusText: string;
   headers: [string, string][];
   body: string;
+  bodyBytes?: ArrayBuffer;
 };
 
 export type DesktopMultipartUploadInput = {

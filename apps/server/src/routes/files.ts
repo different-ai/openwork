@@ -214,6 +214,10 @@ function contentTypeForPath(path: string): string {
   if (lowered.endsWith(".jpg") || lowered.endsWith(".jpeg")) return "image/jpeg";
   if (lowered.endsWith(".gif")) return "image/gif";
   if (lowered.endsWith(".webp")) return "image/webp";
+  if (lowered.endsWith(".mp4") || lowered.endsWith(".m4v")) return "video/mp4";
+  if (lowered.endsWith(".webm")) return "video/webm";
+  if (lowered.endsWith(".mov")) return "video/quicktime";
+  if (lowered.endsWith(".ogv")) return "video/ogg";
   if (lowered.endsWith(".pdf")) return "application/pdf";
   if (lowered.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
   if (lowered.endsWith(".csv")) return "text/csv; charset=utf-8";

@@ -1,5 +1,5 @@
 import { expect } from "vitest";
-import { eventually, observeTranscript, spec } from "@openwork/testkit";
+import { eventually, observeTranscript, readTranscriptMessages, spec } from "@openwork/testkit";
 import { streamedMarkdown, streamedMarkdownMarker } from "../worlds/chat.ts";
 
 const test = spec.world(streamedMarkdown, { timeout: 300_000 });
@@ -31,14 +31,34 @@ test("a streaming answer renders as markdown block by block and settles to the s
   await using transcript = await observeTranscript(probe, [
     { role: "user", text: prompt },
     ...blockSentinels.map((text): { role: "assistant"; text: string } => ({ role: "assistant", text })),
+    ...rawSyntax.map((text): { role: "assistant"; text: string } => ({ role: "assistant", text })),
+    ...rawSyntax.map((text): { role: "user"; text: string } => ({ role: "user", text })),
   ]);
   await user.type("composer", prompt);
+  await probe.eventually(() => probe.composer(), {
+    within: 10_000,
+    label: "composer is ready to send the typed draft",
+    until: (state) => state.runTaskEnabled && state.draftText === prompt,
+  });
   await user.click("Run task");
-  await user.see({ text: prompt }, { timeoutMs: 2_000 });
+  // Cold engine initialization is not a Markdown-rendering latency contract.
+  // Observe the real user bubble (which also contains its timestamp), not the draft.
+  expect(await probe.eventually(() => readTranscriptMessages(probe, "user"), {
+    within: 30_000,
+    label: "sent text appears in the transcript, not just the composer",
+    until: (messages) => messages.some(message => message.includes(prompt)),
+  })).toEqual([expect.stringContaining(prompt)]);
 
   await step("finished blocks render as markdown while later blocks are still arriving", async () => {
     await user.see({ text: headingText }, { timeoutMs: 90_000 });
-    await user.notSee({ text: closingText });
+    await user.see({ text: closingText }, { timeoutMs: 120_000 });
+    // Judge the frames observed throughout streaming, not how quickly this
+    // process polls after the heading. A buffered whole answer fails this too.
+    const frames = await transcript.firstSeenFrames();
+    const headingFrame = frames[1];
+    const closingFrame = frames[blockSentinels.length];
+    expect(headingFrame).toEqual(expect.any(Number));
+    expect(closingFrame).toBeGreaterThan(headingFrame ?? Number.POSITIVE_INFINITY);
     await user.notSee({ text: "## Streamed" });
   });
 
@@ -53,7 +73,7 @@ test("a streaming answer renders as markdown block by block and settles to the s
 
   await step("sent text and streamed blocks never disappear or duplicate", async () => {
     expect(await transcript.finish()).toMatchObject({
-      seen: [true, ...blockSentinels.map(() => true)],
+      seen: [true, ...blockSentinels.map(() => true), ...rawSyntax.map(() => false), ...rawSyntax.map(() => false)],
       violations: [],
       stopped: false,
       frames: expect.any(Number),

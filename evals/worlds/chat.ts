@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join, resolve } from "node:path";
 import { evalIn, assertNoLiveSecret, liveOpenAiEnabled, liveOpenAiModel, liveProviderId, provisionLiveOpenAi } from "@openwork/behaviors";
-import { resolveEvalEngine, type Seed } from "@openwork/env";
+import { resolveEvalEngine, SkipError, type Seed } from "@openwork/env";
 import type { MockAgentWorkload } from "@openwork/labs";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
@@ -203,6 +203,22 @@ async function seedSessionRetry(
     }
   }
   throw new Error(`Session creation did not settle: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
+}
+
+async function readySessionComposer(seed: Seed, app: Awaited<ReturnType<Seed["desktop"]>>, sessionId: string) {
+  // Session creation returns before its routed composer necessarily mounts.
+  const ready = await seed.evalIn(app, `async (sessionId) => {
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
+      const editor = document.querySelector('[contenteditable="true"][data-lexical-editor="true"]');
+      if (editor?.closest('[data-session-surface-id]')?.getAttribute('data-session-surface-id') === sessionId) return true;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    return false;
+  }`, { args: [sessionId], awaitPromise: true, timeoutMs: 35000 });
+  if (ready !== true) throw new Error("The session composer did not mount");
+  // A background Electron window can ignore CDP input without focus emulation.
+  await app.client.send("Emulation.setFocusEmulationEnabled", { enabled: true });
 }
 
 export async function emptyChat(seed: Seed) {
@@ -462,21 +478,25 @@ async function startManualApprovalServer(approvalTimeoutMs: number) {
 }
 
 export async function attachmentUpload(seed: Seed) {
+  if (resolveEvalEngine() !== "v1") {
+    throw new SkipError("native video send and playback require OPENWORK_EVAL_ENGINE=v1; v2 rejects video input");
+  }
   const providerId = "attachment-upload-mock";
   const modelId = "attachment-upload-model";
+  const modelName = "Attachment unsupported-video model";
+  const imageProviderId = "attachment-google-mock";
+  const imageModelId = "attachment-image-model";
+  const imageModelName = "Attachment image-only model";
+  const videoModelId = "attachment-video-model";
+  const videoModelName = "Attachment video model";
+  const videoName = "assistant-video.mp4";
+  const videoBase64 = (await readFile(new URL("../fixtures/assistant-video.mp4", import.meta.url))).toString("base64");
   const reply = "attachment upload loading proof";
   const mock = seed.mock({
     agentWorkloads: [{
       promptMarker: "Describe the attached image.",
-      finalReply: reply,
-      steps: [{
-        tool: "bash",
-        arguments: {
-          command: "printf '%s\\n' 'attachment-upload-ready'",
-          timeout: 30_000,
-          description: "Acknowledge the attachment upload",
-        },
-      }],
+      finalReply: `${reply}\n\n[Play workspace video](clip.mp4)`,
+      steps: [],
     }],
   });
   const den = await seed.den({ mocks: { agent: mock } });
@@ -500,23 +520,112 @@ export async function attachmentUpload(seed: Seed) {
     });
     const writeElapsedMs = Date.now() - writeStartedAt;
 
-    const app = await seed.desktop({ den, as: "admin", model: `${providerId}/${modelId}` });
+    const app = await seed.desktop({ den, as: "admin", model: `${imageProviderId}/${imageModelId}` });
     const workspace = await seed.workspace(app, seed.tmpPath("attachment-upload"));
-    await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    await configureProvider(seed, app, workspace.workspaceId, imageProviderId, imageModelId, {
+      small_model: `${providerId}/${modelId}`,
       provider: {
+        [imageProviderId]: {
+          npm: "@ai-sdk/google",
+          name: "Attachment Google mock",
+          options: { baseURL: `${den.mocks.agent.url}/v1beta`, apiKey: "attachment-google-fixture" },
+          models: {
+            [imageModelId]: { name: imageModelName, modalities: { input: ["text", "image"], output: ["text"] } },
+            [videoModelId]: { name: videoModelName, modalities: { input: ["text", "image", "video"], output: ["text"] } },
+          },
+        },
         [providerId]: {
           npm: "@ai-sdk/openai-compatible",
           name: "Attachment upload mock",
           options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-attachment-upload" },
-          models: { [modelId]: { name: "Attachment upload model" } },
+          models: { [modelId]: { name: modelName, modalities: { input: ["text", "image", "video"], output: ["text"] } } },
         },
       },
     });
+    // Exercise authenticated workspace playback as well as the native attachment.
+    await seed.evalIn(app, `async (workspaceId, dataBase64) => {
+      const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
+      const response = await fetch(base + "/workspace/" + encodeURIComponent(workspaceId) + "/files/raw", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token"), "Content-Type": "application/json" },
+        body: JSON.stringify({ path: "clip.mp4", dataBase64 }),
+      });
+      if (!response.ok) throw new Error("Video fixture write failed: " + response.status);
+    }`, { args: [workspace.workspaceId, videoBase64], awaitPromise: true });
     const session = await seedSessionRetry(seed, app);
+    await readySessionComposer(seed, app, session.sessionId);
     return {
       app,
       workspace,
       session,
+      modelName,
+      imageModelName,
+      videoModelId,
+      videoModelName,
+      videoName,
+      expectedVideo: { mimeType: "video/mp4", data: videoBase64 },
+      reply,
+      async pasteVideo() {
+        // TODO(primitive): paste a fixture file through the composer clipboard.
+        const pasted = await seed.evalIn(app, `(name, dataBase64) => {
+          const editor = document.querySelector('[contenteditable="true"][data-lexical-editor="true"]');
+          if (!(editor instanceof HTMLElement)) throw new Error("No composer to paste into");
+          const bytes = Uint8Array.from(atob(dataBase64), character => character.charCodeAt(0));
+          const transfer = new DataTransfer();
+          transfer.items.add(new File([bytes], name, { type: "video/mp4" }));
+          editor.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: transfer }));
+          return bytes.length;
+        }`, { args: [videoName, videoBase64] });
+        if (typeof pasted !== "number" || pasted === 0) throw new Error("Video fixture was not pasted");
+      },
+      draftAttachments() {
+        // Observe attachment identities rather than their DOM representations.
+        return evalIn(app, `Array.from(new Map(Array.from(document.querySelectorAll('[data-attachment-id]'), chip => [
+          chip.getAttribute('data-attachment-id'), {
+            id: chip.getAttribute('data-attachment-id'),
+            name: chip.getAttribute('title'),
+            status: chip.getAttribute('data-attachment-status'),
+          }
+        ])).values())`);
+      },
+      async modelRequests() {
+        // Count attempted calls as well as successful completions.
+        return (await den.mocks.agent.requests()).filter(request => request.method === "POST"
+          && /\/(?:chat\/completions|responses)$|:(?:streamGenerateContent|generateContent)$/.test(request.path));
+      },
+      agentRequests() {
+        return den.mocks.agent.agentRequests({ promptMarker: "Describe the attached image." });
+      },
+      async videoState(play = false, reference = false) {
+        const state = await seed.evalIn(app, `async (name, play, reference) => {
+          const players = Array.from(document.querySelectorAll('video'));
+          const matches = players.filter(video => reference
+            ? video.getAttribute('data-openwork-video-path') === 'clip.mp4'
+            : video.getAttribute('aria-label') === name);
+          const video = matches[0];
+          if (!video) return null;
+          if (play) await video.play();
+          return {
+            count: matches.length, totalPlayers: players.length,
+            controls: video.controls, autoplay: video.autoplay, paused: video.paused,
+            ready: video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0,
+            blobSource: video.currentSrc.startsWith('blob:'),
+            time: video.currentTime, error: video.error?.message ?? null,
+          };
+        }`, { args: [videoName, play, reference], awaitPromise: true, timeoutMs: 10_000 });
+        if (state === null) return null;
+        if (!isRecord(state) || typeof state.count !== "number" || typeof state.totalPlayers !== "number"
+          || typeof state.time !== "number" || (state.error !== null && typeof state.error !== "string")
+          || !["controls", "autoplay", "paused", "ready"].every(key => typeof state[key] === "boolean")) {
+          throw new Error("Invalid video playback observation");
+        }
+        return {
+          count: state.count, totalPlayers: state.totalPlayers, time: state.time, error: state.error,
+          controls: state.controls === true, autoplay: state.autoplay === true,
+          paused: state.paused === true, ready: state.ready === true,
+          blobSource: state.blobSource === true,
+        };
+      },
       approvalTimeoutMs,
       uploadStatus: uploadResponse.status,
       uploadElapsedMs,
@@ -704,6 +813,7 @@ export async function streamedMarkdown(seed: Seed) {
   }`, { args: [workspace.workspaceId, engine, providerId, modelId], awaitPromise: true, timeoutMs: 65000 });
   if (ready !== true) throw new Error(`Selected ${engine} engine was not ready for the streaming journey`);
   const session = await seedSessionRetry(seed, app);
+  await readySessionComposer(seed, app, session.sessionId);
   return { app, den, workspace, session,
     async videoState(play = false) {
       return seed.evalIn(app, `async (play) => {

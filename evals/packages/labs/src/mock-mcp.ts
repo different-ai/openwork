@@ -54,6 +54,8 @@ export interface MockAgentRequest {
   kind: "utility" | "tool" | "final" | "error";
   toolName: string | null;
   arguments: Record<string, unknown>;
+  /** Native Google inlineData entries, preserving the submitted MIME and base64 bytes. */
+  inlineMedia?: { mimeType: string; data: string }[];
   at: string;
 }
 
@@ -114,7 +116,7 @@ export interface StartMockMcpOptions {
   extraToolCount?: number;
   /** Serve one app-visible MCP App launch tool (`_meta.ui.resourceUri`) under this name. */
   appToolName?: string;
-  /** Script deterministic OpenAI-compatible agent turns through this mock. */
+  /** Script deterministic agent turns; native Google supports empty-step text replies with media input. */
   agentWorkloads?: MockAgentWorkload[];
   /** Verify native provider requests retain this private model header. */
   agentRequiredHeader?: { name: string; value: string };
@@ -437,6 +439,11 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
         kind,
         toolName: typeof completion.toolName === "string" ? completion.toolName : null,
         arguments: isRecord(completion.arguments) ? completion.arguments : {},
+        ...(Array.isArray(completion.inlineMedia) ? {
+          inlineMedia: completion.inlineMedia.flatMap(media => isRecord(media)
+            && typeof media.mimeType === "string" && typeof media.data === "string"
+            ? [{ mimeType: media.mimeType, data: media.data }] : []),
+        } : {}),
         at,
       });
     }

@@ -20,7 +20,7 @@ import {
   subscribeQueuedDrain,
 } from "../surface/queued-drain-machine";
 import { getSessionModelSelection, useSessionModelStore } from "../surface/session-model-store";
-import { draftToParts } from "./draft-parts";
+import { draftToParts, validateVideoDraft } from "./draft-parts";
 import { buildOpenworkSessionSystemContext } from "./env-context";
 import {
   clearQueuedSendContext,
@@ -102,6 +102,7 @@ async function performQueuedDraftSend(
     context.workspaceRoot || undefined,
     { token: context.openworkToken, mode: "openwork" },
   );
+  const video = await validateVideoDraft(draft, { client: opencodeClient, model: sendModel, baseUrl: context.opencodeBaseUrl });
 
   if (draft.mode === "shell") {
     await shellInSession(opencodeClient, sessionId, text);
@@ -121,7 +122,7 @@ async function performQueuedDraftSend(
   const parts = await draftToParts(draft, context.workspaceRoot, sessionId, {
     client: context.client,
     workspaceId: context.workspaceId,
-  });
+  }, video);
   const system = await buildOpenworkSessionSystemContext(context.client, {
     workspaceId: context.workspaceId,
     cacheKey: sessionId,

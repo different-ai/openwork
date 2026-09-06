@@ -4,9 +4,12 @@ import type {
   TextPartInput,
 } from "@opencode-ai/sdk/v2/client";
 
-import type { ComposerDraft, ComposerPart } from "@/app/types";
+import type { Client, ComposerDraft, ComposerPart, ModelRef } from "@/app/types";
+import { unwrap } from "@/app/lib/opencode";
+import { isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
 import {
   composerAttachmentsToWorkspaceFileParts,
+  resolveAttachmentMime,
   type ChatAttachmentWorkspaceEndpoint,
 } from "./attachment-file-part";
 import {
@@ -19,6 +22,44 @@ import { mentionPromptParts } from "./mention-parts";
 import { parseConnectSkillToken } from "../surface/composer/connect-skill-token";
 import { decodeComposerMentionValue } from "../surface/composer/mention-encoding";
 
+const VIDEO_INPUT_MIMES = new Set([
+  "video/mp4", "video/x-m4v", "video/mpeg", "video/quicktime", "video/webm",
+  "video/x-msvideo", "video/x-flv", "video/mpg", "video/wmv", "video/3gpp",
+]);
+
+/** Run before uploads, edits, or command dispatch; use the same captured model when sending. */
+export async function validateVideoDraft(
+  draft: ComposerDraft,
+  context: { client: Pick<Client, "provider">; model: ModelRef | null | undefined; baseUrl: string },
+): Promise<boolean> {
+  const videos = draft.attachments.filter((attachment) => resolveAttachmentMime(attachment.file).startsWith("video/"));
+  if (!videos.length) return false;
+  if (draft.mode === "shell" || draft.command) {
+    throw new Error("Send videos as a chat message, not a shell or slash command. Your draft has been kept.");
+  }
+  if (isOpencodeV2BaseUrl(context.baseUrl)) {
+    throw new Error("Video input is not available in the experimental engine. Switch to the standard engine before sending.");
+  }
+  const selection = context.model;
+  if (!selection) throw new Error("Choose a video-capable model before sending this attachment.");
+  // Query this workspace's runtime rather than trusting names, image support,
+  // a different pane's catalog, or the model that was selected at attach time.
+  const catalog = unwrap(await context.client.provider.list());
+  const provider = catalog.all.find((item) => item.id === selection.providerID && catalog.connected.includes(item.id));
+  const model = provider?.models[selection.modelID];
+  if (model?.capabilities.input.video !== true
+    || !["@ai-sdk/google", "@ai-sdk/google-vertex"].includes(model.api.npm)) {
+    throw new Error("This model connection does not support video input. Choose a video-capable Google or Vertex model, or remove the video. Your draft has been kept.");
+  }
+  for (const attachment of videos) {
+    if (!VIDEO_INPUT_MIMES.has(resolveAttachmentMime(attachment.file))) {
+      throw new Error(`Video format for "${attachment.file.name}" is not supported by this connection. Convert it to MP4 or WebM before sending.`);
+    }
+    if (attachment.file.size === 0) throw new Error(`Video "${attachment.file.name}" is empty. Choose a playable file before sending.`);
+  }
+  return true;
+}
+
 // All workspace-scoped server URLs/clients/tokens come from
 // `resolveWorkspaceEndpoint` in apps/app/src/app/lib/workspace-endpoint.ts.
 // Don't compose `<baseUrl>/workspace/<id>` here.
@@ -27,6 +68,7 @@ export async function draftToParts(
   workspaceRoot: string,
   sessionId: string,
   endpoint: ChatAttachmentWorkspaceEndpoint | null,
+  video = false,
 ) {
   const parts: Array<TextPartInput | FilePartInput | AgentPartInput> = [];
   const root = workspaceRoot.trim();
@@ -56,6 +98,7 @@ export async function draftToParts(
       endpoint,
       sessionId,
       workspaceRoot: root,
+      video,
     });
     if (uploaded) {
       parts.push(uploaded.note);

@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import { attachVideoSource, resolveVideoSource, workspaceVideoPath } from "../src/lib/video-source";
 
 import {
   createStreamingMarkdownRenderer,
@@ -160,4 +161,99 @@ test("video references render native players without autoplay or unsafe sources"
   }
   expect(renderMarkdownHtml("[Bad](javascript:evil.mp4)")).not.toContain("<video");
   expect(renderMarkdownHtml("[Document](notes.md)")).not.toContain("<video");
+});
+
+describe("shared video sources", () => {
+  const data = Uint8Array.from([0, 128, 200, 254, 255]).buffer;
+  const workspace = { workspaceId: "ws_video", workspaceRoot: "/workspace" };
+  const download = { data, contentType: "application/octet-stream", filename: null };
+
+  test("normalizes contained file URLs and relative paths without suffix matching", () => {
+    for (const path of ["clip.mp4", "./clip.mp4", "workspace/clip.mp4", "workspaces/ws_video/clip.mp4", "file:///workspace/clip.mp4", "/workspace/clip.mp4"]) {
+      expect(workspaceVideoPath(path, "/workspace")).toBe("clip.mp4");
+    }
+    expect(workspaceVideoPath("file:///workspace/a%20b.mp4", "/workspace")).toBe("a b.mp4");
+    expect(workspaceVideoPath("file:///C:/Work/clip.mp4", "c:\\Work")).toBe("clip.mp4");
+    expect(workspaceVideoPath("file://server/share/clip.mp4", "\\\\server\\share")).toBe("clip.mp4");
+    for (const path of ["/outside/clip.mp4", "/workspace-other/clip.mp4", "../clip.mp4", "%2e%2e/clip.mp4", "file:///workspace/../outside/clip.mp4", "file://outside/workspace/clip.mp4", "//outside/clip.mp4", "javascript:clip.mp4", "java\nscript:clip.mp4", "https://example.com/clip.mp4"]) {
+      expect(workspaceVideoPath(path, "/workspace")).toBeNull();
+    }
+    expect(workspaceVideoPath("/workspace/clip.mp4")).toBeNull();
+  });
+
+  test("downloads through the authenticated client with intact bytes and MIME fallback", async () => {
+    const requests: string[][] = [];
+    const client = {
+      baseUrl: "https://worker.example.test/api",
+      downloadWorkspaceFile: async (id: string, path: string) => { requests.push([id, path]); return download; },
+    };
+    for (const href of ["file:///workspace/clip.MOV", "./clip.MOV", `${client.baseUrl}/workspace/ws_video/files/raw?path=clip.MOV`]) {
+      const result = await resolveVideoSource({ href, client, ...workspace });
+      expect(result).toBeInstanceOf(Blob);
+      if (!(result instanceof Blob)) throw new Error("Expected video bytes");
+      expect(result.type).toBe("video/quicktime");
+      expect(await result.arrayBuffer()).toEqual(data);
+    }
+    expect(requests).toEqual(Array.from({ length: 3 }, () => ["ws_video", "clip.MOV"]));
+    await expect(resolveVideoSource({ href: "file:///outside/clip.MOV", client, ...workspace })).rejects.toThrow();
+    expect(requests).toHaveLength(3);
+  });
+
+  test("allows public, data and blob videos without sending workspace credentials", async () => {
+    const client = { baseUrl: "https://worker.example.test", downloadWorkspaceFile: async () => { throw new Error("Must not download"); } };
+    for (const href of ["https://example.com/clip.mp4?signature=test", "data:video/mp4;base64,AA==", "blob:https://example.com/clip", "blob:null/clip"]) {
+      expect(await resolveVideoSource({ href, client, ...workspace })).toBe(href);
+    }
+    for (const href of ["javascript:clip.mp4", "data:text/html,<script></script>", "blob:javascript:clip", "ftp://example.com/clip.mp4", "https://user:secret@example.com/clip.mp4"]) {
+      await expect(resolveVideoSource({ href, client, ...workspace })).rejects.toThrow();
+    }
+  });
+
+  test("shows loading and errors, releases URLs, and ignores late resolution after cleanup", async () => {
+    const { GlobalRegistrator } = await import("@happy-dom/global-registrator");
+    GlobalRegistrator.register({ url: "https://app.example.test" });
+    const created = spyOn(URL, "createObjectURL").mockReturnValue("blob:https://app.example.test/video");
+    const revoked = spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    let cleanup: (() => void) | undefined;
+    try {
+      const video = document.createElement("video");
+      const notice = document.createElement("span");
+      const pending = Promise.withResolvers<typeof download>();
+      const client = { baseUrl: "https://worker.example.test", downloadWorkspaceFile: () => pending.promise };
+      cleanup = attachVideoSource(video, notice, { href: "clip.mp4", client, ...workspace });
+      expect(notice.textContent).toBe("Loading video...");
+      expect(video.controls).toBe(true);
+      expect(video.autoplay).toBe(false);
+      cleanup();
+      pending.resolve(download);
+      await pending.promise;
+      await Promise.resolve();
+      expect(created).not.toHaveBeenCalled();
+      expect(video.hasAttribute("src")).toBe(false);
+
+      cleanup = attachVideoSource(video, notice, { href: "clip.mp4", client, ...workspace });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(created).toHaveBeenCalledTimes(1);
+      video.dispatchEvent(new Event("loadedmetadata"));
+      expect(notice.hidden).toBe(true);
+      video.dispatchEvent(new Event("error"));
+      expect(notice.hidden).toBe(false);
+      expect(notice.textContent).toContain("Video preview unavailable");
+      cleanup();
+      expect(revoked).toHaveBeenCalledWith("blob:https://app.example.test/video");
+      expect(video.hasAttribute("src")).toBe(false);
+
+      cleanup = attachVideoSource(video, notice, { href: "../clip.mp4", client, ...workspace });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(notice.textContent).toContain("Video preview unavailable");
+      expect(created).toHaveBeenCalledTimes(1);
+    } finally {
+      cleanup?.();
+      created.mockRestore();
+      revoked.mockRestore();
+      await GlobalRegistrator.unregister();
+    }
+  });
 });
