@@ -198,7 +198,7 @@ test("an existing Models subscriber can decline, enable and disable task analyti
   }
   const activity = async () => list(record((await api(`/v1/inference/analytics/activity?sessionId=${session.sessionId}`)).body).events);
   await send("Summarize the plan before enabling task analytics.");
-  const legacyRequests = await probe.eventually(() => analyticsTransport.requestLog(), {
+  const legacyRequests = await probe.eventually(async () => (await analyticsTransport.admin.requests()).requests, {
     within: 30_000, label: "the desktop encounters an unavailable analytics endpoint",
     until: (requests) => requests.some((request) => request.path.endsWith("/inference/analytics/settings") && request.status === 404 && request.faulted),
   });
@@ -237,9 +237,12 @@ test("an existing Models subscriber can decline, enable and disable task analyti
   expect(providerCalls.at(-1)).toMatchObject({ model: "minimax/minimax-m3", authenticated: true, kind: "success" });
   await webUser.click({ role: "button", label: "Enable task analytics" });
   await webUser.see({ role: "tab", label: "Activity" });
+  // Observe beyond background reporting and the cached settings interval so a
+  // delayed upload cannot make the disabled-period task appear after this check.
+  await new Promise((resolve) => setTimeout(resolve, 40_000));
   expect(await activity()).toHaveLength(withSkill.length);
   await user.on(app).see({ text: "Keep working after turning off task analytics." });
-  evidence.recordAssertionEvidence("Turning analytics off leaves the existing desktop conversation and selected model usable", "A new assistant reply arrived after disable; after re-enabling, the disabled-period task was absent and the earlier conversation was still visible", true);
+  evidence.recordAssertionEvidence("Turning analytics off leaves the existing desktop conversation and selected model usable", "A new assistant reply arrived from the same selected model after disable; after re-enabling and observing 40 seconds of background reporting, the disabled-period task was absent and the earlier conversation was still visible", true);
   expect((await api("/v1/org", { method: "DELETE" })).response.status).toBe(200);
   await world.verifyErasure();
   evidence.recordAssertionEvidence("Deleting a workspace erases its task analytics and stored export credentials", "Workspace deletion returned 200; an independent data-store witness found no retained history or analytics configuration", true);

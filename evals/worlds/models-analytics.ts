@@ -96,15 +96,22 @@ export async function modelsAnalyticsWorld(seed: Seed) {
       return other;
     },
     async desktop() {
-      const analyticsTransport = await seed.faultProxy(den);
+      // Shape the API directly: the web /api/den route redirects to another
+      // origin, which would strip bearer credentials before reaching Den.
+      const analyticsTransport = await seed.denLink({ ...den, ref: { ...den.ref, webUrl: den.ref.apiUrl } }, remote ? { sandboxId: remote } : {});
+      const desktopDen = { apiUrl: analyticsTransport.ref.webUrl, webUrl: analyticsTransport.ref.webUrl };
+      const runtimeConfig = object(await fetch(`${den.ref.webUrl}/api/runtime-config`, { signal: AbortSignal.timeout(5_000) }).then((response) => response.json()));
       const upgradeDenApi = async () => {
-        await analyticsTransport.faults.clear();
         // API discovery must keep the desktop on the independently observed link.
-        await analyticsTransport.faults.status("/api/runtime-config", 200, { times: 10_000, body: { denApiUrl: analyticsTransport.ref.apiUrl } });
+        await analyticsTransport.admin.rules([{ kind: "status", pathPrefix: "/api/runtime-config", statusCode: 200, times: 10_000, body: { ...runtimeConfig, denApiUrl: desktopDen.apiUrl } }]);
       };
-      await upgradeDenApi();
-      await analyticsTransport.faults.status("/api/den/v1/inference/analytics", 404, { times: 10_000, body: { error: "not_found" } });
-      const app = await seed.desktop({ den: { ...den, ref: analyticsTransport.ref }, as: "admin", model: "openwork/z-ai/glm-5.2" });
+      await analyticsTransport.admin.rules([
+        { kind: "status", pathPrefix: "/api/runtime-config", statusCode: 200, times: 10_000, body: { ...runtimeConfig, denApiUrl: desktopDen.apiUrl } },
+        { kind: "status", pathPrefix: "/v1/inference/analytics", statusCode: 404, times: 10_000, body: { error: "not_found" } },
+      ]);
+      const modelsAccess = await fetch(`${desktopDen.apiUrl}/v1/inference`, { headers: { authorization: `Bearer ${den.admin.token}`, "x-openwork-org-id": orgId }, signal: AbortSignal.timeout(10_000) });
+      if (!modelsAccess.ok) throw new Error(`Observed Den link cannot access the existing Models subscription: HTTP ${modelsAccess.status}`);
+      const app = await seed.desktop({ den: { ...den, ref: desktopDen }, as: "admin", model: "openwork/z-ai/glm-5.2" });
       const workspacePath = seed.tmpPath("models-analytics-upgrade");
       const skillPath = join(workspacePath, ".opencode/skills/analytics-fixture");
       const skill = "---\nname: analytics-fixture\ndescription: A harmless skill for the Models analytics upgrade journey.\n---\n\nReport that Models are working. No files or external services are needed.\n";
