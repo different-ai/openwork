@@ -31,11 +31,13 @@ export type DaytonaProviderConfig = {
   image: string
   resources: SandboxResources
   pollIntervalMs: number
+  helperCreateTimeoutMs: number
 }
 
 /** The slice of the SDK the provider drives; production wraps `Daytona`, tests substitute. */
 export type DaytonaSandboxClient = {
   readonly id: string
+  readonly name?: string
   readonly state: string | null
   readonly target: string | null
   readonly labels?: Readonly<Record<string, string>>
@@ -71,6 +73,7 @@ export type DaytonaProviderDeps = {
 }
 
 const maxSignedPreviewExpirySeconds = 60 * 60 * 24
+const sandboxCacheCapacity = 256
 const helperResources: SandboxResources = { cpu: 1, memoryGb: 1, diskGb: 4 }
 const probeMountPath = "/mnt/openwork-probe"
 const eraseMountRoot = "/mnt/openwork-erase"
@@ -120,6 +123,9 @@ function toSandboxClient(sandbox: Sandbox): DaytonaSandboxClient {
   return {
     get id() {
       return sandbox.id
+    },
+    get name() {
+      return sandbox.name
     },
     get state() {
       return sandbox.state ?? null
@@ -175,7 +181,7 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
   const sleep = deps.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)))
   const now = deps.now ?? Date.now
   const randomSuffix = deps.randomSuffix ?? (() => randomUUID().replace(/-/g, "").slice(0, 8))
-  const sandboxes = new Map<string, DaytonaSandboxClient>()
+  const sandboxes = new Map<string, { sandbox: DaytonaSandboxClient; name?: string }>()
 
   function wrap<T>(operation: () => Promise<T>): Promise<T> {
     return operation().catch((error: unknown) => {
@@ -183,15 +189,30 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
     })
   }
 
-  function remember(sandbox: DaytonaSandboxClient) {
-    sandboxes.set(sandbox.id, sandbox)
+  function forget(sandboxIdOrName: string) {
+    for (const [id, cached] of sandboxes) {
+      if (id === sandboxIdOrName || cached.name === sandboxIdOrName || cached.sandbox.name === sandboxIdOrName) sandboxes.delete(id)
+    }
+  }
+
+  function remember(sandbox: DaytonaSandboxClient, sandboxIdOrName = sandbox.id) {
+    const name = sandboxIdOrName === sandbox.id ? sandboxes.get(sandbox.id)?.name : sandboxIdOrName
+    sandboxes.delete(sandbox.id)
+    if (mapDaytonaState(sandbox.state) === "missing") return sandbox
+    sandboxes.set(sandbox.id, { sandbox, name })
+    if (sandboxes.size > sandboxCacheCapacity) {
+      const oldest = sandboxes.keys().next().value
+      if (oldest !== undefined) sandboxes.delete(oldest)
+    }
     return sandbox
   }
 
   function handleOf(sandbox: DaytonaSandboxClient): SandboxHandle {
+    const state = mapDaytonaState(sandbox.state)
+    if (state === "missing") forget(sandbox.id)
     return {
       ref: { providerId, ref: { sandboxId: sandbox.id } },
-      state: mapDaytonaState(sandbox.state),
+      state,
       region: sandbox.target,
       observedAt: now(),
     }
@@ -210,17 +231,30 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
 
   async function resolve(handle: SandboxHandle) {
     const sandboxId = sandboxIdOf(handle.ref)
-    return sandboxes.get(sandboxId) ?? remember(await wrap(() => client.get(sandboxId)))
+    const cached = sandboxes.get(sandboxId)
+    if (cached) return remember(cached.sandbox)
+    try {
+      return remember(await client.get(sandboxId), sandboxId)
+    } catch (error) {
+      const mapped = toRuntimeProviderError(error, providerId)
+      if (mapped.code === "not_found") forget(sandboxId)
+      throw mapped
+    }
   }
 
   async function getFresh(sandboxIdOrName: string) {
+    let sandbox: DaytonaSandboxClient | undefined
     try {
-      const sandbox = remember(await client.get(sandboxIdOrName))
+      sandbox = await client.get(sandboxIdOrName)
       await sandbox.refreshData()
-      return sandbox
+      return remember(sandbox, sandboxIdOrName)
     } catch (error) {
       const mapped = toRuntimeProviderError(error, providerId)
-      if (mapped.code === "not_found") return null
+      if (mapped.code === "not_found") {
+        forget(sandboxIdOrName)
+        if (sandbox) forget(sandbox.id)
+        return null
+      }
       throw mapped
     }
   }
@@ -270,8 +304,8 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
     }
   }
 
-  async function runInHelper(spec: SandboxSpec, command: string, opts: ProviderTimeout) {
-    const sandbox = remember(await wrap(() => client.create(createParams(spec), { timeout: seconds(opts.timeoutMs) })))
+  async function runInHelper(spec: SandboxSpec, command: string, opts: ProviderTimeout, createTimeoutMs = opts.timeoutMs) {
+    const sandbox = remember(await wrap(() => client.create(createParams(spec), { timeout: seconds(createTimeoutMs) })), spec.idempotencyKey)
     try {
       const exec = await execOn(sandbox, { command: `sh -lc ${shellQuote(command)}`, detach: false, timeoutMs: opts.timeoutMs })
       // The helper's toolbox disappears on deletion; capture the result first.
@@ -281,7 +315,7 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
       }
     } finally {
       await wrap(() => sandbox.delete(seconds(opts.timeoutMs))).catch(() => undefined)
-      sandboxes.delete(sandbox.id)
+      forget(sandbox.id)
     }
   }
 
@@ -373,6 +407,7 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
         { ...helperSpec(slug(`den-daytona-cleanup-${randomSuffix()}`).slice(0, 63), "cleanup", mounts), image: null },
         script,
         opts,
+        config.helperCreateTimeoutMs,
       )
       if (exitCode !== 0) {
         throw new RuntimeProviderError({
@@ -408,7 +443,7 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
     describe: () => capabilities,
     currentImage,
     async create(spec, opts) {
-      const sandbox = remember(await wrap(() => client.create(createParams(spec), { timeout: seconds(opts.timeoutMs) })))
+      const sandbox = remember(await wrap(() => client.create(createParams(spec), { timeout: seconds(opts.timeoutMs) })), spec.idempotencyKey)
       return handleOf(sandbox)
     },
     async find(query: SandboxQuery) {
@@ -431,6 +466,26 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
       }
       return handleOf(sandbox)
     },
+    async list(query: SandboxQuery) {
+      if (query.idempotencyKey) {
+        const found = await provider.find(query)
+        return found ? [found] : []
+      }
+      const matches: SandboxHandle[] = []
+      const labels = query.labels ?? {}
+      return wrap(async () => {
+        const seen = new Set<string>()
+        // Exhaust the iterator before callers delete anything and shift its pages.
+        for await (const entry of client.list({ labels: { ...labels }, limit: 100 })) {
+          if (seen.has(entry.id)) continue
+          seen.add(entry.id)
+          const sandbox = await getFresh(entry.id)
+          if (!sandbox || Object.entries(labels).some(([key, value]) => sandbox.labels?.[key] !== value)) continue
+          matches.push(handleOf(sandbox))
+        }
+        return matches
+      })
+    },
     async get(ref) {
       const sandbox = await getFresh(sandboxIdOf(ref))
       return sandbox ? handleOf(sandbox) : null
@@ -442,6 +497,7 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
         return handleOf(sandbox)
       } catch (error) {
         if (toRuntimeProviderError(error, providerId).code === "not_found") {
+          forget(sandboxIdOf(handle.ref))
           return { ...handle, state: "missing", observedAt: now() }
         }
         throw error
@@ -456,9 +512,14 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
       await wrap(() => sandbox.stop(seconds(opts.timeoutMs)))
     },
     async destroy(handle, opts) {
-      const sandbox = await resolve(handle)
-      await wrap(() => sandbox.delete(seconds(opts.timeoutMs)))
-      sandboxes.delete(sandbox.id)
+      let sandboxId = sandboxIdOf(handle.ref)
+      try {
+        const sandbox = await resolve(handle)
+        sandboxId = sandbox.id
+        await wrap(() => sandbox.delete(seconds(opts.timeoutMs)))
+      } finally {
+        forget(sandboxId)
+      }
     },
     async exec(handle, spec) {
       return execOn(await resolve(handle), spec)

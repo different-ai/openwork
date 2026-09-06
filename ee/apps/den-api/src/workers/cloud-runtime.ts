@@ -41,6 +41,7 @@ const providers: Record<string, {
         diskGb: env.daytona.resources.disk,
       },
       pollIntervalMs: env.daytona.pollIntervalMs,
+      helperCreateTimeoutMs: env.daytona.createTimeoutSeconds * 1000,
     }),
   },
 }

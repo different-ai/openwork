@@ -20,6 +20,7 @@ function config(overrides: Partial<DaytonaProviderConfig> = {}): DaytonaProvider
     image: "node:20-bookworm",
     resources: { cpu: 2, memoryGb: 4, diskGb: 8 },
     pollIntervalMs: 1,
+    helperCreateTimeoutMs: 300_000,
     ...overrides,
   }
 }
@@ -44,6 +45,9 @@ function fakeSandbox(options: FakeSandboxOptions) {
   const sandbox: DaytonaSandboxClient = {
     get id() {
       return options.id
+    },
+    get name() {
+      return options.name
     },
     get state() {
       return state
@@ -99,18 +103,22 @@ function fakeSandbox(options: FakeSandboxOptions) {
 
 function fakeClient(input: {
   sandboxes?: Record<string, DaytonaSandboxClient>
-  onCreate?: (params: DaytonaCreateParams) => DaytonaSandboxClient | Promise<DaytonaSandboxClient>
+  onCreate?: (params: DaytonaCreateParams, options: { timeout: number }) => DaytonaSandboxClient | Promise<DaytonaSandboxClient>
   volumeStates?: string[]
   listed?: Array<{ id: string }>
 }) {
   const created: DaytonaCreateParams[] = []
+  const createTimeouts: number[] = []
   const lookups: string[] = []
+  const listQueries: Array<{ labels: Record<string, string>; limit: number }> = []
+  const listedIds: string[] = []
   const volumeStates = [...(input.volumeStates ?? ["ready"])]
   const client: DaytonaClient = {
-    async create(params) {
+    async create(params, options) {
       created.push(params)
+      createTimeouts.push(options.timeout)
       if (!input.onCreate) throw new Error("create not expected")
-      return input.onCreate(params)
+      return input.onCreate(params, options)
     },
     async get(sandboxIdOrName) {
       lookups.push(sandboxIdOrName)
@@ -118,10 +126,14 @@ function fakeClient(input: {
       if (!sandbox) throw new DaytonaNotFoundError(`sandbox ${sandboxIdOrName} not found`)
       return sandbox
     },
-    list() {
+    list(query) {
+      listQueries.push(query)
       const items = input.listed ?? []
       return (async function* () {
-        for (const item of items) yield item
+        for (const item of items) {
+          listedIds.push(item.id)
+          yield item
+        }
       })()
     },
     volume: {
@@ -131,7 +143,7 @@ function fakeClient(input: {
       },
     },
   }
-  return { client, created, lookups }
+  return { client, created, createTimeouts, lookups, listQueries, listedIds }
 }
 
 describe("Daytona state and error mapping", () => {
@@ -248,6 +260,7 @@ describe("Daytona provider", () => {
     const inspected = await provider.inspect(found!)
     expect(inspected.state).toBe("running")
     expect(fake.lookups).toEqual(["den-name"])
+    expect(fake.listQueries).toEqual([])
   })
 
   test.each(["den-name", undefined])("find requires every requested label after refresh (name: %s)", async (idempotencyKey) => {
@@ -297,12 +310,94 @@ describe("Daytona provider", () => {
   test("find by labels takes the first listed instance", async () => {
     const labels = { "openwork.den.provider": "daytona", "openwork.den.worker-id": "w" }
     const orphan = fakeSandbox({ id: "sbx_orphan", state: "stopped", labels })
-    const fake = fakeClient({ listed: [{ id: "sbx_orphan" }], sandboxes: { sbx_orphan: orphan.sandbox } })
+    const fake = fakeClient({ listed: [{ id: "sbx_orphan" }, { id: "sbx_later" }], sandboxes: { sbx_orphan: orphan.sandbox } })
     const provider = createDaytonaProvider(config(), { client: fake.client })
 
     const found = await provider.find({ labels })
     expect(found?.ref.ref.sandboxId).toBe("sbx_orphan")
+    expect(fake.listedIds).toEqual(["sbx_orphan"])
     expect(await createDaytonaProvider(config(), { client: fakeClient({}).client }).find({ labels: { x: "y" } })).toBeNull()
+  })
+
+  test("list exhausts the iterator and returns every unique owned sandbox before accepted deletes", async () => {
+    const labels = { "openwork.den.provider": "daytona", "openwork.den.worker-id": "worker_1" }
+    const first = fakeSandbox({ id: "sbx_first", labels })
+    const second = fakeSandbox({ id: "sbx_second", labels: { ...labels, extra: "allowed" } })
+    const foreignLabels = { ...labels }
+    const foreign = fakeSandbox({ id: "sbx_foreign", labels: foreignLabels })
+    foreign.sandbox.refreshData = async () => {
+      foreign.calls.push("refresh")
+      foreignLabels["openwork.den.worker-id"] = "worker_2"
+    }
+    const unlabelled = fakeSandbox({ id: "sbx_unlabelled" })
+    const missing = fakeSandbox({ id: "sbx_missing" })
+    missing.sandbox.refreshData = async () => { throw new DaytonaNotFoundError("sandbox disappeared during refresh") }
+    const listed = ["sbx_first", "sbx_foreign", "sbx_gone", "sbx_unlabelled", "sbx_missing", "sbx_first", "sbx_second"].map((id) => ({ id }))
+    const fake = fakeClient({
+      listed,
+      sandboxes: { sbx_first: first.sandbox, sbx_second: second.sandbox, sbx_foreign: foreign.sandbox, sbx_unlabelled: unlabelled.sandbox, sbx_missing: missing.sandbox },
+    })
+    first.sandbox.delete = async (timeout) => {
+      expect(fake.listedIds).toEqual(listed.map(({ id }) => id))
+      first.calls.push(`delete:${timeout}`)
+      // Acceptance does not remove the resource from subsequent SDK listings.
+    }
+    const provider = createDaytonaProvider(config(), { client: fake.client })
+
+    const handles = await provider.list({ labels })
+
+    expect(handles.map((handle) => handle.ref.ref.sandboxId)).toEqual(["sbx_first", "sbx_second"])
+    expect(fake.listQueries).toEqual([{ labels, limit: 100 }])
+    expect(fake.listedIds).toEqual(listed.map(({ id }) => id))
+    expect(fake.lookups).toEqual(["sbx_first", "sbx_foreign", "sbx_gone", "sbx_unlabelled", "sbx_missing", "sbx_second"])
+    for (const handle of handles) await provider.destroy(handle, { timeoutMs: 120_000 })
+    expect(first.calls).toEqual(["refresh", "delete:120"])
+    expect(second.calls).toEqual(["refresh", "delete:120"])
+    expect(foreign.calls).toEqual(["refresh"])
+    expect(unlabelled.calls).toEqual(["refresh"])
+    expect((await provider.find({ labels }))?.ref.ref.sandboxId).toBe("sbx_first")
+  })
+
+  test("list intersects the name and refreshed labels without falling back to other names", async () => {
+    const labels = { "openwork.den.provider": "daytona", "openwork.den.worker-id": "worker_1" }
+    const observedLabels = { ...labels }
+    const named = fakeSandbox({ id: "sbx_named", labels: observedLabels })
+    const fake = fakeClient({ sandboxes: { "den-name": named.sandbox }, listed: [{ id: "sbx_other" }] })
+    const provider = createDaytonaProvider(config(), { client: fake.client })
+
+    expect((await provider.list({ idempotencyKey: "den-name" })).map((handle) => handle.ref.ref.sandboxId)).toEqual(["sbx_named"])
+    expect((await provider.list({ idempotencyKey: "den-name", labels })).map((handle) => handle.ref.ref.sandboxId)).toEqual(["sbx_named"])
+    named.sandbox.refreshData = async () => { observedLabels["openwork.den.worker-id"] = "worker_2" }
+    expect(await provider.list({ idempotencyKey: "den-name", labels })).toEqual([])
+    expect(await provider.list({ idempotencyKey: "absent", labels })).toEqual([])
+    expect(fake.lookups).toEqual(["den-name", "den-name", "den-name", "absent"])
+    expect(fake.listQueries).toEqual([])
+  })
+
+  test("list propagates iterator failures instead of returning a partial inventory", async () => {
+    const labels = { owner: "worker_1" }
+    const existing = fakeSandbox({ id: "sbx_first", labels })
+    const fake = fakeClient({ sandboxes: { sbx_first: existing.sandbox } })
+    fake.client.list = async function* () {
+      yield { id: "sbx_first" }
+      throw new DaytonaRateLimitError("retry enumeration")
+    }
+    const provider = createDaytonaProvider(config(), { client: fake.client })
+
+    const failure = await provider.list({ labels }).catch((error: unknown) => error)
+
+    expect(isRuntimeProviderError(failure) && failure.code).toBe("rate_limited")
+    expect(existing.calls).toEqual(["refresh"])
+  })
+
+  test("list without filters enumerates all sandboxes", async () => {
+    const existing = fakeSandbox({ id: "sbx_existing" })
+    const fake = fakeClient({ listed: [{ id: "sbx_existing" }], sandboxes: { sbx_existing: existing.sandbox } })
+    const provider = createDaytonaProvider(config(), { client: fake.client })
+
+    expect((await provider.list({})).map((handle) => handle.ref.ref.sandboxId)).toEqual(["sbx_existing"])
+    expect(fake.listQueries).toEqual([{ labels: {}, limit: 100 }])
+    expect(existing.calls).toEqual(["refresh"])
   })
 
   test("start maps a state-change conflict to a retryable invalid_state", async () => {
@@ -321,6 +416,135 @@ describe("Daytona provider", () => {
     const provider = createDaytonaProvider(config(), { client: fakeClient({}).client })
     const inspected = await provider.inspect({ ref: { providerId: "daytona", ref: { sandboxId: "gone" } }, state: "running", region: null, observedAt: 0 })
     expect(inspected.state).toBe("missing")
+  })
+
+  test.each(["get", "refresh"])("evicts cached IDs and name aliases after %s reports not found", async (failureAt) => {
+    for (const key of ["sbx_cached", "den-name"]) {
+      const existing = fakeSandbox({ id: "sbx_cached" })
+      const sandboxes: Record<string, DaytonaSandboxClient> = { sbx_cached: existing.sandbox, "den-name": existing.sandbox }
+      const fake = fakeClient({ sandboxes })
+      const provider = createDaytonaProvider(config(), { client: fake.client })
+      const handle = (await provider.find({ idempotencyKey: "den-name" }))!
+      await provider.get(handle.ref)
+      if (failureAt === "get") delete sandboxes[key]
+      else existing.sandbox.refreshData = async () => { throw new DaytonaNotFoundError("sandbox missing") }
+
+      expect(key === "sbx_cached" ? await provider.get(handle.ref) : await provider.find({ idempotencyKey: key })).toBeNull()
+      const replacement = fakeSandbox({ id: "sbx_cached" })
+      sandboxes.sbx_cached = replacement.sandbox
+      await provider.start(handle, { timeoutMs: 1_000 })
+
+      expect(fake.lookups).toEqual(["den-name", "sbx_cached", key, "sbx_cached"])
+      expect(replacement.calls).toEqual(["start:1"])
+      expect(existing.calls.every((call) => call === "refresh")).toBe(true)
+    }
+  })
+
+  test.each(["get", "find"])("evicts cached resources when %s refreshes to a missing state", async (operation) => {
+    const existing = fakeSandbox({ id: "sbx_cached" })
+    const sandboxes = { sbx_cached: existing.sandbox, "den-name": existing.sandbox }
+    const fake = fakeClient({ sandboxes })
+    const provider = createDaytonaProvider(config(), { client: fake.client })
+    const handle = (await provider.find({ idempotencyKey: "den-name" }))!
+    existing.sandbox.refreshData = async () => { existing.setState("destroying") }
+
+    const missing = operation === "get" ? await provider.get(handle.ref) : await provider.find({ idempotencyKey: "den-name" })
+    expect(missing?.state).toBe("missing")
+    const replacement = fakeSandbox({ id: "sbx_cached" })
+    sandboxes.sbx_cached = replacement.sandbox
+    await provider.start(handle, { timeoutMs: 1_000 })
+
+    expect(fake.lookups).toEqual(["den-name", operation === "get" ? "sbx_cached" : "den-name", "sbx_cached"])
+    expect(replacement.calls).toEqual(["start:1"])
+  })
+
+  test("evicts on a name miss even when the cached resource was only looked up by ID", async () => {
+    const existing = fakeSandbox({ id: "sbx_cached", name: "den-name" })
+    const sandboxes = { sbx_cached: existing.sandbox }
+    const fake = fakeClient({ sandboxes })
+    const provider = createDaytonaProvider(config(), { client: fake.client })
+    const handle = (await provider.get({ providerId: "daytona", ref: { sandboxId: "sbx_cached" } }))!
+
+    expect(await provider.find({ idempotencyKey: "den-name" })).toBeNull()
+    const replacement = fakeSandbox({ id: "sbx_cached" })
+    sandboxes.sbx_cached = replacement.sandbox
+    await provider.start(handle, { timeoutMs: 1_000 })
+
+    expect(fake.lookups).toEqual(["sbx_cached", "den-name", "sbx_cached"])
+    expect(replacement.calls).toEqual(["start:1"])
+  })
+
+  test.each(["not_found", "destroyed", "destroying"])("inspect evicts cached resources after observing %s", async (state) => {
+    const existing = fakeSandbox({ id: "sbx_cached" })
+    const sandboxes = { sbx_cached: existing.sandbox }
+    const fake = fakeClient({ sandboxes })
+    const provider = createDaytonaProvider(config(), { client: fake.client })
+    const handle = (await provider.get({ providerId: "daytona", ref: { sandboxId: "sbx_cached" } }))!
+    existing.sandbox.refreshData = async () => {
+      if (state === "not_found") throw new DaytonaNotFoundError("sandbox missing")
+      existing.setState(state)
+    }
+
+    expect((await provider.inspect(handle)).state).toBe("missing")
+    const replacement = fakeSandbox({ id: "sbx_cached" })
+    sandboxes.sbx_cached = replacement.sandbox
+    await provider.start(handle, { timeoutMs: 1_000 })
+
+    expect(fake.lookups).toEqual(["sbx_cached", "sbx_cached"])
+    expect(replacement.calls).toEqual(["start:1"])
+  })
+
+  test.each([undefined, new DaytonaNotFoundError("sandbox missing"), new DaytonaRateLimitError("try later")])("destroy evicts on attempt completion (%s)", async (error) => {
+    const existing = fakeSandbox({ id: "sbx_cached" })
+    existing.sandbox.delete = async (timeout) => {
+      existing.calls.push(`delete:${timeout}`)
+      if (error) throw error
+    }
+    const sandboxes = { sbx_cached: existing.sandbox }
+    const fake = fakeClient({ sandboxes })
+    const provider = createDaytonaProvider(config(), { client: fake.client })
+    const handle = (await provider.get({ providerId: "daytona", ref: { sandboxId: "sbx_cached" } }))!
+
+    const failure = await provider.destroy(handle, { timeoutMs: 120_000 }).catch((error: unknown) => error)
+    if (error) expect(isRuntimeProviderError(failure) && failure.code).toBe(classifyDaytonaError(error))
+    else expect(failure).toBeUndefined()
+    const replacement = fakeSandbox({ id: "sbx_cached" })
+    sandboxes.sbx_cached = replacement.sandbox
+    await provider.start(handle, { timeoutMs: 1_000 })
+
+    expect(fake.lookups).toEqual(["sbx_cached", "sbx_cached"])
+    expect(existing.calls).toEqual(["refresh", "delete:120"])
+    expect(replacement.calls).toEqual(["start:1"])
+  })
+
+  test("caps the SDK cache at 256 resources with LRU refetch and preserves running exec handles", async () => {
+    const instances = Array.from({ length: 257 }, (_, index) => fakeSandbox({ id: `sbx_${index}`, exitCodes: [null, 0] }))
+    const sandboxes = Object.fromEntries(instances.map(({ sandbox }) => [sandbox.id, sandbox]))
+    const fake = fakeClient({ sandboxes })
+    const provider = createDaytonaProvider(config(), { client: fake.client })
+    const first = (await provider.get({ providerId: "daytona", ref: { sandboxId: "sbx_0" } }))!
+    const second = (await provider.get({ providerId: "daytona", ref: { sandboxId: "sbx_1" } }))!
+    const running = await provider.exec(second, { command: "long-running", detach: true, timeoutMs: 0 })
+    for (const { sandbox } of instances.slice(2, 256)) {
+      await provider.get({ providerId: "daytona", ref: { sandboxId: sandbox.id } })
+    }
+    await provider.endpoint(first, 8787)
+    expect(fake.lookups).toHaveLength(256)
+
+    await provider.get({ providerId: "daytona", ref: { sandboxId: "sbx_256" } })
+    await provider.endpoint(first, 8787)
+    expect(fake.lookups).toHaveLength(257)
+    const replacement = fakeSandbox({ id: "sbx_1" })
+    replacement.sandbox.process.getSessionCommandLogs = async () => ({ stdout: "replacement", stderr: "" })
+    sandboxes.sbx_1 = replacement.sandbox
+    await provider.endpoint(second, 8787)
+
+    expect(fake.lookups).toHaveLength(258)
+    expect(fake.lookups.slice(-2)).toEqual(["sbx_256", "sbx_1"])
+    expect(await running.exitCode()).toBeNull()
+    expect(await running.exitCode()).toBe(0)
+    expect(await running.logs()).toEqual({ stdout: "out", stderr: "err" })
+    expect(instances.every(({ calls }) => calls.every((call) => !call.startsWith("delete:")))).toBe(true)
   })
 
   test("exec runs through a session, waits for completion when not detached, and exposes logs", async () => {
@@ -371,6 +595,7 @@ describe("Daytona provider", () => {
     )
 
     expect(exists).toBe(true)
+    expect(fake.createTimeouts).toEqual([30])
     expect(fake.created[0]).toMatchObject({
       name: "den-daytona-probe-abcd1234",
       snapshot: "openwork-0.18.8",
@@ -382,12 +607,16 @@ describe("Daytona provider", () => {
     expect(helper.commands[0]?.command).toContain("-maxdepth 1 -name")
     expect(helper.commands[0]?.command).toContain("ckpt-*.tar")
     expect(helper.commands[0]?.runAsync).toBe(false)
+    expect(helper.commands[0]?.timeout).toBe(30)
     expect(helper.calls).toContain("delete:30")
   })
 
-  test("eraseSubpaths clears only the mounted worker subpaths and always deletes the helper", async () => {
+  test("eraseSubpaths gives slow helper creation its own budget without extending exec or delete", async () => {
     const helper = fakeSandbox({ id: "sbx_cleanup", exitCodes: [0] })
-    const fake = fakeClient({ onCreate: () => helper.sandbox })
+    const fake = fakeClient({ onCreate: (_params, options) => {
+      if (options.timeout < 180) throw new Error("helper creation needs 180 seconds")
+      return helper.sandbox
+    } })
     const provider = createDaytonaProvider(config(), { client: fake.client, sleep: async () => undefined, randomSuffix: () => "abcd1234" })
 
     await provider.storage.eraseSubpaths(
@@ -396,6 +625,7 @@ describe("Daytona provider", () => {
       { timeoutMs: 120_000 },
     )
 
+    expect(fake.createTimeouts).toEqual([300])
     expect(fake.created[0]).toMatchObject({
       name: "den-daytona-cleanup-abcd1234",
       image: "node:20-bookworm",
@@ -409,6 +639,7 @@ describe("Daytona provider", () => {
     expect(helper.commands[0]?.command).toContain("/mnt/openwork-erase/0")
     expect(helper.commands[0]?.command).toContain("/mnt/openwork-erase/1")
     expect(helper.commands[0]?.command).toContain("fs.rmSync")
+    expect(helper.commands[0]?.timeout).toBe(120)
     expect(helper.calls).toContain("delete:120")
   })
 })
