@@ -78,6 +78,15 @@ test("tiles come only from kept tool results: a suggestion, a hand-over, never a
   assert.equal(referral.to.name, "Editor");
   assert.equal(referral.message, "Draft the launch announcement");
   assert.equal(referral.state, "open");
+  for (const avatarGlasses of ["sunglasses", "monocle"]) {
+    const appearance = { avatarColor: "sage", avatarGlasses };
+    const [suggested, referred] = teamCardsFromCalls([
+      { tool: "team_suggest", status: "success", output: null, metadata: kept({ suggestion: { ...SUGGESTION, ...appearance } }) },
+      { tool: "team_refer", status: "success", output: null, metadata: kept({ referral: { ...REFERRAL, to: { ...REFERRAL.to, ...appearance } } }) },
+    ]);
+    assert.deepEqual(suggested, { ...suggestion, ...appearance });
+    assert.deepEqual(referred, { ...referral, to: { ...referral.to, ...appearance } });
+  }
   // Unknown looks fall back rather than break the tile.
   const odd = teamCardsFromCalls([{ tool: "team_suggest", status: "success", output: null, metadata: kept({ suggestion: { ...SUGGESTION, avatarColor: "plaid", personality: "grumpy" } }) }]);
   assert.equal(odd[0]?.kind === "suggestion" ? odd[0].avatarColor : "", "blue");

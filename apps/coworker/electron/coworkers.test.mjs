@@ -93,6 +93,32 @@ test("template imports reject extra private fields and separate account and serv
   assert.notEqual(templateScope(session, "member@example.test"), templateScope(session, "colleague@example.test"));
 });
 
+test("avatar choices survive creation, template export and import, and reload", async () => {
+  const dir = await tempCoworkersDir();
+  const importedDir = await tempCoworkersDir();
+  const install = createTemplateInstaller(importedDir, (input) => createCoworker(importedDir, input));
+  for (const [avatarColor, avatarGlasses] of [
+    ["blue", "round"], ["violet", "square"], ["mint", "oval"], ["orange", "none"],
+    ["rose", "round"], ["slate", "square"], ["sand", "oval"],
+    ["sage", "sunglasses"], ["sage", "monocle"],
+  ]) {
+    const created = await createCoworker(dir, { name: `${avatarColor}-${avatarGlasses}`, avatarColor, avatarGlasses });
+    assert.equal(created.avatarColor, avatarColor);
+    assert.equal(created.avatarGlasses, avatarGlasses);
+    const template = parseCoworkerTemplateFile(JSON.stringify(await exportCoworkerTemplate(dir, created.slug)));
+    assert.equal(template.avatarColor, avatarColor);
+    assert.equal(template.avatarGlasses, avatarGlasses);
+    const imported = await install({ scope: "file", items: [{ id: created.slug, versionId: "one", template }], installIds: [created.slug] });
+    assert.equal(imported.created.length, 1);
+    const reloaded = (await listCoworkers(importedDir)).find((coworker) => coworker.slug === imported.created[0].slug);
+    assert.equal(reloaded.avatarColor, avatarColor);
+    assert.equal(reloaded.avatarGlasses, avatarGlasses);
+    for (const patch of [{ avatarColor: "unknown" }, { avatarGlasses: "unknown" }]) {
+      assert.throws(() => parseCoworkerTemplateFile(JSON.stringify({ ...template, ...patch })), /Choose a valid coworker template/);
+    }
+  }
+});
+
 after(async () => {
   await Promise.all(roots.map((dir) => rm(dir, { recursive: true, force: true })));
 });
@@ -385,6 +411,13 @@ test("updateCoworker patches profile and platform references", async () => {
   assert.equal(reread.conversationThreadId, "ses_discussion_1");
   assert.equal(reread.model, "anthropic/claude-haiku-4-5");
   assert.equal(reread.modelVariant, "high");
+  const soul = await readCoworkerFile(coworkersDir, "ops", "soul.md");
+  for (const avatarGlasses of ["sunglasses", "monocle"]) {
+    const patch = { avatarColor: "sage", avatarGlasses };
+    assert.deepEqual(await updateCoworker(coworkersDir, "ops", patch), { ...reread, ...patch });
+    assert.deepEqual(await getCoworker(coworkersDir, "ops"), { ...reread, ...patch });
+    assert.equal(await readCoworkerFile(coworkersDir, "ops", "soul.md"), soul, "appearance leaves instructions untouched");
+  }
   const cleared = await updateCoworker(coworkersDir, "ops", { model: "", modelVariant: "" });
   assert.equal(cleared.model, "");
   assert.equal(cleared.modelVariant, "");
@@ -439,7 +472,7 @@ test("avatar settings fall back when stored or patched values are unknown", asyn
   const created = await createCoworker(coworkersDir, {
     name: "Classic",
     avatarColor: "chartreuse",
-    avatarGlasses: "monocle",
+    avatarGlasses: "unknown",
   });
   assert.equal(created.avatarColor, "blue");
   assert.equal(created.avatarGlasses, "round");

@@ -9,7 +9,13 @@ export function useAvatarPointerGaze(enabled = true, ambient = false, intensity 
   const avatarRef = useRef<SVGSVGElement>(null);
 
   useEffect(() => {
-    if (!enabled || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const avatar = avatarRef.current;
+    if (!avatar) return;
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
+    let inView = typeof IntersectionObserver === "undefined";
+    let focused = document.hasFocus();
+    let paused = true;
+    let disposed = false;
     let pointerX = window.innerWidth / 2;
     let pointerY = window.innerHeight / 2;
     let lastPointerAt = performance.now();
@@ -19,14 +25,12 @@ export function useAvatarPointerGaze(enabled = true, ambient = false, intensity 
     const later = (work: () => void, delay: number) => {
       const timer = window.setTimeout(() => {
         gestureTimers.delete(timer);
-        work();
+        if (!paused) work();
       }, delay);
       gestureTimers.add(timer);
     };
 
     const resetIdlePose = () => {
-      const avatar = avatarRef.current;
-      if (!avatar) return;
       avatar.classList.remove("is-idle-looking", "is-idle-blinking", "is-idle-bobbing");
       avatar.style.setProperty("--avatar-idle-feature-x", "0px");
       avatar.style.setProperty("--avatar-idle-feature-y", "0px");
@@ -42,12 +46,12 @@ export function useAvatarPointerGaze(enabled = true, ambient = false, intensity 
     };
 
     const scheduleIdleGesture = () => {
-      if (!ambient) return;
+      if (paused || !enabled || !ambient) return;
       if (idleTimer !== undefined) window.clearTimeout(idleTimer);
       idleTimer = window.setTimeout(() => {
         idleTimer = undefined;
-        const avatar = avatarRef.current;
-        if (!avatar || document.hidden || performance.now() - lastPointerAt < IDLE_AFTER_POINTER_MS) {
+        if (paused || document.hidden) return;
+        if (performance.now() - lastPointerAt < IDLE_AFTER_POINTER_MS) {
           scheduleIdleGesture();
           return;
         }
@@ -76,8 +80,6 @@ export function useAvatarPointerGaze(enabled = true, ambient = false, intensity 
     };
 
     const render = () => {
-      const avatar = avatarRef.current;
-      if (!avatar) return;
       const bounds = avatar.getBoundingClientRect();
       const deltaX = pointerX - (bounds.left + bounds.width / 2);
       const deltaY = pointerY - (bounds.top + bounds.height / 2);
@@ -106,6 +108,7 @@ export function useAvatarPointerGaze(enabled = true, ambient = false, intensity 
     // properties on one element, so the gaze follows the pointer directly rather than
     // waiting for an animation frame that a hidden or busy window may not deliver.
     const onPointerMove = (event: PointerEvent) => {
+      if (paused || !enabled) return;
       pointerX = event.clientX;
       pointerY = event.clientY;
       lastPointerAt = performance.now();
@@ -115,30 +118,66 @@ export function useAvatarPointerGaze(enabled = true, ambient = false, intensity 
       if (ambient && idleTimer === undefined) scheduleIdleGesture();
     };
     const reset = () => {
-      const avatar = avatarRef.current;
       clearGestureTimers();
       resetIdlePose();
-      avatar?.style.setProperty("--avatar-feature-look-x", "0px");
-      avatar?.style.setProperty("--avatar-feature-look-y", "0px");
-      avatar?.style.setProperty("--avatar-look-x", "0px");
-      avatar?.style.setProperty("--avatar-look-y", "0px");
-      avatar?.style.setProperty("--avatar-head-x", "0px");
-      avatar?.style.setProperty("--avatar-head-y", "0px");
-      avatar?.style.setProperty("--avatar-turn", "0deg");
-      if (ambient && idleTimer === undefined) scheduleIdleGesture();
+      avatar.style.setProperty("--avatar-feature-look-x", "0px");
+      avatar.style.setProperty("--avatar-feature-look-y", "0px");
+      avatar.style.setProperty("--avatar-look-x", "0px");
+      avatar.style.setProperty("--avatar-look-y", "0px");
+      avatar.style.setProperty("--avatar-head-x", "0px");
+      avatar.style.setProperty("--avatar-head-y", "0px");
+      avatar.style.setProperty("--avatar-turn", "0deg");
     };
-
-    scheduleIdleGesture();
-    window.addEventListener("pointermove", onPointerMove, { passive: true });
-    document.documentElement.addEventListener("pointerleave", reset);
-    window.addEventListener("blur", reset);
-    return () => {
+    const onPointerLeave = () => {
+      reset();
+      if (idleTimer === undefined) scheduleIdleGesture();
+    };
+    const stop = () => {
       if (idleTimer !== undefined) window.clearTimeout(idleTimer);
-      clearGestureTimers();
-      resetIdlePose();
+      idleTimer = undefined;
       window.removeEventListener("pointermove", onPointerMove);
-      document.documentElement.removeEventListener("pointerleave", reset);
-      window.removeEventListener("blur", reset);
+      document.documentElement.removeEventListener("pointerleave", onPointerLeave);
+      reset();
+    };
+    const sync = () => {
+      if (disposed) return;
+      // Environmental pause also controls ambient CSS when JS gaze is disabled.
+      const nextPaused = reduced.matches || document.hidden || !focused || !inView;
+      avatar.dataset.motionPaused = String(nextPaused);
+      if (paused === nextPaused) return;
+      paused = nextPaused;
+      if (paused) {
+        stop();
+      } else if (enabled) {
+        window.addEventListener("pointermove", onPointerMove, { passive: true });
+        document.documentElement.addEventListener("pointerleave", onPointerLeave);
+        scheduleIdleGesture();
+      }
+    };
+    const onBlur = () => { focused = false; sync(); };
+    const onFocus = () => { focused = true; sync(); };
+    const observer = typeof IntersectionObserver === "undefined" ? undefined : new IntersectionObserver(([entry]) => {
+      inView = !!entry?.isIntersecting && entry.intersectionRatio >= 0.15;
+      sync();
+    }, { threshold: [0, 0.15] });
+
+    reset();
+    reduced.addEventListener("change", sync);
+    document.addEventListener("visibilitychange", sync);
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("focus", onFocus);
+    sync();
+    observer?.observe(avatar);
+    return () => {
+      disposed = true;
+      paused = true;
+      avatar.dataset.motionPaused = "true";
+      stop();
+      observer?.disconnect();
+      reduced.removeEventListener("change", sync);
+      document.removeEventListener("visibilitychange", sync);
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
     };
   }, [ambient, enabled, intensity]);
 

@@ -42,21 +42,23 @@ function activityTextTone(activity: CoworkerActivity | undefined): string {
 
 const DOT_BG: Record<Tone, string> = { spark: "bg-spark", ready: "bg-ready", amber: "bg-amber", rose: "bg-rose", mist: "bg-mist" };
 
-/** Up to three member avatars overlapped into one mark; a fourth and beyond become a count. */
+/** Keep each face readable; a fourth member and beyond become a quiet count. */
 export function GroupAvatars({ members, size = 26 }: { members: readonly CoworkerSummary[]; size?: number }) {
   const shown = members.slice(0, 3);
   const extra = members.length - shown.length;
-  const step = Math.round(size * 0.62);
-  const width = shown.length ? size + step * (shown.length - 1) + (extra > 0 ? step : 0) : size;
+  const step = Math.round(size * 0.94);
+  const facesWidth = shown.length ? size + step * (shown.length - 1) : size;
+  const countWidth = Math.max(Math.round(size * 0.7), String(extra).length * 6 + 12);
+  const width = facesWidth + (extra > 0 ? countWidth + 2 : 0);
   return (
     <span className="relative block shrink-0" style={{ width, height: size }} data-testid="group-avatars" data-count={members.length} aria-hidden="true">
       {shown.map((member, index) => (
-        <span key={member.slug} className="absolute top-0 rounded-full ring-2 ring-[rgb(7_10_15)]" style={{ left: index * step, zIndex: index + 1 }}>
-          <CoworkerAvatar color={member.avatarColor} glasses={member.avatarGlasses} name={member.name} size={size} />
+        <span key={member.slug} className="absolute top-0" style={{ left: index * step }}>
+          <CoworkerAvatar color={member.avatarColor} glasses={member.avatarGlasses} name={member.name} size={size} animated={false} gaze={false} />
         </span>
       ))}
       {extra > 0 ? (
-        <span className="absolute top-0 flex items-center justify-center rounded-full bg-panel text-[10px] font-semibold text-mist ring-2 ring-[rgb(7_10_15)]" style={{ left: shown.length * step, width: size, height: size, zIndex: shown.length + 1 }}>
+        <span className="absolute top-0 flex items-center justify-center text-[10px] font-semibold text-mist" style={{ left: facesWidth + 2, width: countWidth, height: size }}>
           +{extra}
         </span>
       ) : null}
@@ -147,7 +149,7 @@ export function CoworkerRail({
               <PlusIcon />
             </IconButton>
           </div>
-          <nav aria-label="Coworkers" className="flex flex-1 flex-col items-center gap-1.5 overflow-y-auto px-3 pb-4 pt-3">
+          <nav aria-label="Coworkers" className="flex flex-1 flex-col items-center gap-1 overflow-y-auto px-1 pb-4 pt-3">
             {coworkers.map((coworker) => {
               const activity = activityBySlug[coworker.slug];
               const active = coworker.slug === selectedSlug;
@@ -167,7 +169,7 @@ export function CoworkerRail({
                   onPointerLeave={() => setPeek(null)}
                   onFocus={(event) => show(event.currentTarget)}
                   onBlur={() => setPeek(null)}
-                  className={`window-no-drag relative flex size-14 shrink-0 items-center justify-center rounded-2xl transition-all duration-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60 ${
+                  className={`coworker-rail-person window-no-drag relative flex size-14 shrink-0 items-center justify-center rounded-xl transition-colors duration-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60 ${
                     active ? "bg-white/8 ring-1 ring-white/10" : "hover:bg-white/5"
                   }`}
                 >
@@ -177,7 +179,7 @@ export function CoworkerRail({
                     color={coworker.avatarColor}
                     glasses={coworker.avatarGlasses}
                     name={coworker.name}
-                    size={40}
+                    size={44}
                     working={activity?.state === "working"}
                   />
                   <span
@@ -201,12 +203,12 @@ export function CoworkerRail({
                   data-group-id={group.id}
                   data-active={active ? "true" : "false"}
                   onClick={() => onSelectGroup?.(group.id)}
-                  className={`window-no-drag relative flex size-14 shrink-0 items-center justify-center rounded-2xl transition-all duration-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60 ${
+                  className={`window-no-drag relative flex h-14 w-20 shrink-0 items-center justify-center rounded-xl transition-colors duration-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60 ${
                     active ? "bg-white/8 ring-1 ring-white/10" : "hover:bg-white/5"
                   }`}
                 >
-                  {active ? <span aria-hidden="true" className="absolute -left-3 top-4 h-6 w-[3px] rounded-full bg-spark" /> : null}
-                  <GroupAvatars members={membersOf(group)} size={26} />
+                  {active ? <span aria-hidden="true" className="absolute left-0 top-4 h-6 w-[3px] rounded-full bg-spark" /> : null}
+                  <GroupAvatars members={membersOf(group)} size={18} />
                 </button>
               );
             })}
@@ -221,7 +223,7 @@ export function CoworkerRail({
             <div
               role="tooltip"
               data-testid="coworker-rail-peek"
-              className="pointer-events-none fixed z-50 w-56 rounded-xl border border-line bg-ink p-3 shadow-[0_12px_40px_rgb(0_0_0/0.55)]"
+              className="pointer-events-none fixed z-50 w-56 rounded-lg border border-line bg-ink p-2.5 shadow-[0_12px_40px_rgb(0_0_0/0.55)]"
               style={{ left: panel.width + 8, top: peek.top }}
             >
               <p className="truncate text-sm font-semibold text-snow">{peeked.name}</p>
@@ -250,7 +252,7 @@ export function CoworkerRail({
             <input
               ref={searchRef}
               aria-label="Search coworkers"
-              className="window-no-drag h-8 min-w-0 flex-1 rounded-xl border border-line bg-black/18 px-3 text-xs text-snow outline-none placeholder:text-mist/70 focus:border-spark/50 focus:bg-black/28"
+              className="window-no-drag h-8 min-w-0 flex-1 rounded-lg border border-line bg-black/18 px-2.5 text-xs text-snow outline-none placeholder:text-mist/70 focus:border-spark/50 focus:bg-black/28"
               placeholder="Search coworkers"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
@@ -260,7 +262,7 @@ export function CoworkerRail({
             </Button>
           </div>
           <p className="px-4 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Coworkers</p>
-          <nav aria-label="Coworkers" className="flex-1 space-y-1 overflow-y-auto px-2 pb-5">
+          <nav aria-label="Coworkers" className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-5">
             {visibleCoworkers.map((coworker) => {
               const activity = activityBySlug[coworker.slug];
               const active = coworker.slug === selectedSlug;
@@ -272,7 +274,7 @@ export function CoworkerRail({
                   data-slug={coworker.slug}
                   data-active={active ? "true" : "false"}
                   onClick={() => onSelect(coworker.slug)}
-                  className={`window-no-drag group flex w-full items-start gap-3 rounded-2xl px-2.5 py-3 text-left transition-all duration-200 ${
+                  className={`coworker-rail-person window-no-drag group flex w-full items-start gap-2.5 rounded-xl px-2 py-2 text-left transition-colors duration-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60 ${
                     active ? "bg-white/8 text-snow ring-1 ring-white/10" : "text-mist hover:bg-white/5 hover:text-snow"
                   }`}
                 >
@@ -282,7 +284,7 @@ export function CoworkerRail({
                       color={coworker.avatarColor}
                       glasses={coworker.avatarGlasses}
                       name={coworker.name}
-                      size={40}
+                      size={44}
                       working={activity?.state === "working"}
                     />
                   </span>
@@ -291,12 +293,12 @@ export function CoworkerRail({
                       <span className="truncate text-sm font-semibold text-snow">{coworker.name}</span>
                       <span className="shrink-0 text-[10px] text-mist">{relativeTime(activity?.updatedAt ?? 0)}</span>
                     </span>
-                    <span data-testid="coworker-rail-status" className={`mt-1 flex items-center gap-1.5 text-[11px] font-medium ${activityTextTone(activity)}`}>
+                    <span data-testid="coworker-rail-status" className={`mt-0.5 flex items-center gap-1.5 text-[11px] font-medium ${activityTextTone(activity)}`}>
                       <StatusDot tone={activityTone(activity)} />
                       <RailStatusLabel coworker={coworker} activity={activity} />
                     </span>
                     <span
-                      className="mt-1 block line-clamp-2 text-[11px] leading-[1.35] text-mist"
+                      className="mt-0.5 block line-clamp-2 text-[11px] leading-[1.35] text-mist"
                       data-testid="coworker-rail-line"
                       title={activity?.detail || coworker.role || undefined}
                     >
@@ -310,7 +312,7 @@ export function CoworkerRail({
             {coworkers.length > 0 && visibleCoworkers.length === 0 ? <p className="px-2.5 py-4 text-xs text-mist">No matching coworkers.</p> : null}
             {coworkers.length >= 2 || visibleGroups.length > 0 ? (
               <>
-                <p className="px-2 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Group chats</p>
+                <p className="px-2 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-mist">Group chats</p>
                 {visibleGroups.map((group) => {
                   const members = membersOf(group);
                   const active = group.id === selectedGroupId;
@@ -323,16 +325,16 @@ export function CoworkerRail({
                       data-group-id={group.id}
                       data-active={active ? "true" : "false"}
                       onClick={() => onSelectGroup?.(group.id)}
-                      className={`window-no-drag flex w-full items-start gap-3 rounded-2xl px-2.5 py-3 text-left transition-all duration-200 ${
+                      className={`window-no-drag flex w-full items-start gap-2.5 rounded-xl px-2 py-2 text-left transition-colors duration-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60 ${
                         active ? "bg-white/8 text-snow ring-1 ring-white/10" : "text-mist hover:bg-white/5 hover:text-snow"
                       }`}
                     >
-                      <span className="mt-0.5 flex size-11 shrink-0 items-center justify-center">
-                        <GroupAvatars members={members} size={26} />
+                      <span className="mt-0.5 flex h-11 min-w-11 shrink-0 items-center justify-center">
+                        <GroupAvatars members={members} size={22} />
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-semibold text-snow">{group.name}</span>
-                        <span className="mt-1 block truncate text-[11px] text-mist" data-testid="group-rail-line">{groupLines[group.id] || members.map((member) => member.name).join(", ")}</span>
+                        <span className="mt-0.5 block truncate text-[11px] text-mist" data-testid="group-rail-line">{groupLines[group.id] || members.map((member) => member.name).join(", ")}</span>
                       </span>
                     </button>
                   );
@@ -342,7 +344,7 @@ export function CoworkerRail({
                     type="button"
                     data-testid="new-group-chat"
                     onClick={onNewGroup}
-                    className="window-no-drag flex w-full items-center gap-3 rounded-2xl px-2.5 py-2 text-left text-xs text-mist transition-colors hover:bg-white/5 hover:text-snow"
+                    className="window-no-drag flex w-full items-center gap-2.5 rounded-xl px-2 py-1.5 text-left text-xs text-mist transition-colors hover:bg-white/5 hover:text-snow"
                   >
                     <span aria-hidden="true" className="flex size-11 shrink-0 items-center justify-center text-base">+</span>
                     New group chat

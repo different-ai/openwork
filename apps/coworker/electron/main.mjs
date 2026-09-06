@@ -17,7 +17,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { BrowserWindow, Menu, app, dialog, ipcMain, nativeTheme, shell } from "electron";
-import { bindWindowAppearance } from "./window-appearance.mjs";
+import { bindWindowAppearance, windowMaterial } from "./window-appearance.mjs";
 import { openworkConfigDir } from "@openwork/paths";
 import { createHeadlessThreadClient, isRunning, toTranscript } from "@openwork/headless-threads";
 import { createCollaboration, collaborationId } from "./collaboration.mjs";
@@ -2371,8 +2371,13 @@ function rendererUrl() {
 }
 
 async function createMainWindow() {
+  const initialMaterial = windowMaterial(nativeTheme);
   const macWindowChrome = process.platform === "darwin"
     ? {
+        // Match the appearance binding before Chromium creates its layers,
+        // rather than switching an initially opaque backing to vibrancy later.
+        backgroundColor: initialMaterial === "vibrancy" ? "#00000000" : "#090c12",
+        vibrancy: initialMaterial === "vibrancy" ? "under-window" : undefined,
         hasShadow: true,
         titleBarStyle: "hiddenInset",
         trafficLightPosition: { x: 18, y: 18 },

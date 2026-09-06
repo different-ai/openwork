@@ -1,8 +1,8 @@
 import type { Ref } from "react";
 
 /** Shared artwork for the app and its product walkthrough. */
-export type AvatarColor = "blue" | "violet" | "mint" | "orange" | "rose" | "slate" | "sand";
-export type AvatarGlasses = "round" | "square" | "oval" | "none";
+export type AvatarColor = "blue" | "violet" | "mint" | "orange" | "rose" | "slate" | "sand" | "sage";
+export type AvatarGlasses = "round" | "square" | "oval" | "none" | "sunglasses" | "monocle";
 
 const AVATAR_COLORS: Array<{ id: AvatarColor; label: string; swatch: string }> = [
   { id: "blue", label: "OpenWork blue", swatch: "#b8c9f0" },
@@ -12,6 +12,7 @@ const AVATAR_COLORS: Array<{ id: AvatarColor; label: string; swatch: string }> =
   { id: "rose", label: "Rose", swatch: "#e2c1cb" },
   { id: "slate", label: "Pearl", swatch: "#e3e6ea" },
   { id: "sand", label: "Sand", swatch: "#ded0b0" },
+  { id: "sage", label: "Sage", swatch: "#becab4" },
 ];
 
 const AVATAR_GLASSES: Array<{ id: AvatarGlasses; label: string }> = [
@@ -19,6 +20,8 @@ const AVATAR_GLASSES: Array<{ id: AvatarGlasses; label: string }> = [
   { id: "square", label: "Soft square" },
   { id: "oval", label: "Oval" },
   { id: "none", label: "None" },
+  { id: "sunglasses", label: "Sunglasses" },
+  { id: "monocle", label: "Monocle" },
 ];
 
 const PALETTES: Record<AvatarColor, { fill: string; edge: string; depth: string }> = {
@@ -29,6 +32,7 @@ const PALETTES: Record<AvatarColor, { fill: string; edge: string; depth: string 
   rose: { fill: "#e2c1cb", edge: "#cda1ae", depth: "#9c7682" },
   slate: { fill: "#e3e6ea", edge: "#c2c8d0", depth: "#939aa4" },
   sand: { fill: "#ded0b0", edge: "#c1ae86", depth: "#95825c" },
+  sage: { fill: "#becab4", edge: "#9eaf91", depth: "#788b6c" },
 };
 
 function motionPhase(name: string) {
@@ -146,6 +150,21 @@ export function CoworkerAvatar({
                   <rect x="64.5" y="39" width="36" height="36" rx="10" />
                   <path d="M58 57c1-3.5 3-3.5 4 0" />
                   <path d="M15 57h4.5M100.5 57h4.5" strokeWidth="7" />
+                </g>
+              ) : null}
+              {glasses === "sunglasses" ? (
+                <g className="coworker-avatar__glasses" stroke="#11151d" strokeLinecap="round" strokeLinejoin="round" strokeWidth="4.5">
+                  <rect x="19.5" y="41" width="36" height="32" rx="12" fill="#263349" fillOpacity="0.24" />
+                  <rect x="64.5" y="41" width="36" height="32" rx="12" fill="#263349" fillOpacity="0.24" />
+                  <path d="M57.5 55c1.25-2.5 3.75-2.5 5 0M15 55h4.5M100.5 55h4.5" fill="none" />
+                  <path d="M27 47h12M72 47h12" stroke="#ffffff" strokeOpacity="0.25" strokeWidth="1.5" />
+                </g>
+              ) : null}
+              {glasses === "monocle" ? (
+                <g className="coworker-avatar__glasses" fill="none" stroke="#11151d" strokeLinecap="round">
+                  <circle cx="82.5" cy="57" r="17.5" strokeWidth="3.5" />
+                  <path d="M96 68l2 2" strokeWidth="2.5" />
+                  {size > 36 ? <path className="coworker-avatar__monocle-chain" d="M98 70c5 6 6 16 0 20-3 2-5 1-5-2" strokeWidth="1.25" strokeOpacity="0.7" /> : null}
                 </g>
               ) : null}
             </g>

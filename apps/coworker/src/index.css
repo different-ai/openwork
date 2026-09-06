@@ -350,6 +350,14 @@ body.is-resizing-panel * {
   transform-origin: center;
 }
 
+/* A logo-like resting tilt belongs to the face, never the row or its hit target.
+ * At 44px this stepped SVG float travels about one screen pixel. */
+.coworker-rail-person .coworker-avatar {
+  --avatar-float-lift: -2.8px;
+  transform: rotate(-5deg);
+  transform-origin: center;
+}
+
 .coworker-avatar__pointer-body {
   transform: translate(var(--avatar-head-x), var(--avatar-head-y)) rotate(var(--avatar-turn));
   transition: transform 220ms cubic-bezier(0.22, 0.72, 0.24, 1);
@@ -466,6 +474,15 @@ body.is-resizing-panel * {
 .coworker-avatar.blink-phase-5 {
   --avatar-blink-delay: -5.4s;
   --avatar-blink-duration: 12.1s;
+}
+
+/* Environmental pause stops the lifecycle as well as its visual layers. Keep
+ * structural SVG transforms and the sidebar's static tilt intact. */
+:is(.coworker-avatar, .coworker-mark)[data-motion-paused="true"] g:not([transform]) {
+  animation: none !important;
+  transform: none !important;
+  transition: none !important;
+  will-change: auto;
 }
 
 .coworker-mark {
@@ -921,7 +938,7 @@ body.is-resizing-panel * {
 
 @keyframes coworker-float {
   0%, 100% { transform: translateY(0); }
-  44%, 54% { transform: translateY(-0.8px); }
+  44%, 54% { transform: translateY(var(--avatar-float-lift, -0.8px)); }
 }
 
 @keyframes coworker-depth-turn {

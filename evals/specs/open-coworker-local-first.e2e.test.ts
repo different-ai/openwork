@@ -324,6 +324,12 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(welcomeLayout.launcherWidth as number).toBeLessThanOrEqual(680);
   expect(welcomeLayout.localTop as number).toBeGreaterThan(welcomeLayout.cloudTop as number);
   expect(Math.abs((welcomeLayout.cloudWidth as number) - (welcomeLayout.localWidth as number))).toBeLessThan(2);
+  // Native blur initialization can paint before the window receives focus. Gaze
+  // intentionally stays paused until the visible window is ready for interaction.
+  await app.client.send("Page.bringToFront", {});
+  await waitFor(app, `document.hasFocus() && document.querySelector('svg[aria-label="Open Coworker"].coworker-mark')?.dataset.motionPaused === "false"`, {
+    timeoutMs: 10_000, label: "visible welcome mascot ready to follow the pointer",
+  });
   const brandGaze = await evalIn(app, `(() => {
     const mark = document.querySelector('svg[aria-label="Open Coworker"].coworker-mark');
     if (!mark) return null;
@@ -1011,6 +1017,17 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     const rail = q('[data-testid="coworker-rail"]');
     const panel = q('[data-testid="context-panel"]');
     if (!(rail instanceof HTMLElement) || !(panel instanceof HTMLElement)) return null;
+    const compactNav = (button) => {
+      const face = getComputedStyle(button.querySelector('svg.coworker-avatar'));
+      const row = getComputedStyle(button);
+      const matrix = new DOMMatrixReadOnly(face.transform);
+      return {
+        faceSize: [face.width, face.height], tilt: Math.round(Math.atan2(matrix.b, matrix.a) * 180 / Math.PI),
+        faceTranslation: [matrix.e, matrix.f], hitboxTransform: row.transform,
+        radius: row.borderRadius, padding: row.padding, gap: row.gap,
+      };
+    };
+    const expandedNav = compactNav(q('[data-testid="coworker-rail-row"]'));
     const expandedRailWidth = rail.getBoundingClientRect().width;
     const expandedRailLogo = Boolean(rail.querySelector('svg.coworker-mark'));
     const expandedPanelWidth = panel.getBoundingClientRect().width;
@@ -1035,6 +1052,9 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
       avatarCount: document.querySelectorAll('[data-testid="coworker-rail-avatar"]').length,
       avatarLabel: avatar?.getAttribute("aria-label"),
       avatarCurrent: avatar?.getAttribute("aria-current"),
+      compactNav: compactNav(avatar),
+      hitboxSize: [avatar.getBoundingClientRect().width, avatar.getBoundingClientRect().height],
+      peekStyle: peek ? [getComputedStyle(peek).borderRadius, getComputedStyle(peek).padding] : null,
       indicatorTone: indicator?.dataset.tone,
       indicatorAtBottom: indicator && avatar ? indicator.getBoundingClientRect().bottom > avatar.getBoundingClientRect().top + avatar.getBoundingClientRect().height / 2 : false,
       peekText: peek?.innerText ?? "",
@@ -1075,6 +1095,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     q('[aria-label="Back to activity"]')?.click();
     await wait(200);
     return {
+      expandedNav,
       expandedRailWidth,
       expandedRailLogo,
       expandedPanelWidth,
@@ -1113,6 +1134,11 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     };
   })()`, { awaitPromise: true, timeoutMs: 30_000 });
   if (!isRecord(foldedPanels) || !isRecord(foldedPanels.collapsed) || !isRecord(foldedPanels.afterIcon)) throw new Error("Folded panel facts were unavailable.");
+  const compactFace = { faceSize: ["44px", "44px"], tilt: -5, faceTranslation: [0, 0], hitboxTransform: "none", radius: "12px" };
+  expect(foldedPanels.expandedNav).toMatchObject({ ...compactFace, padding: "8px", gap: "10px" });
+  expect(foldedPanels.collapsed.compactNav).toMatchObject(compactFace);
+  expect(foldedPanels.collapsed.hitboxSize).toEqual([56, 56]);
+  expect(foldedPanels.collapsed.peekStyle).toEqual(["8px", "10px"]);
   expect(foldedPanels.expandedRailWidth).toBeGreaterThanOrEqual(220);
   expect(foldedPanels.expandedRailLogo).toBe(false);
   expect(foldedPanels.expandedPanelWidth).toBeGreaterThanOrEqual(320);
@@ -1157,6 +1183,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     "With no fold buttons anywhere, a click on each panel's edge folded it: the team rail became an 88px rail clear of the window controls, without the logo, with a search icon, Scout's avatar marked current, a bottom status dot, and a hover card beside the rail naming Scout and Ready; the context panel became a 56px strip with exactly three icons — Activity, Memory, and Coworker settings — and no words, and choosing Memory unfolded the panel on that view. Resting on the Activity icon showed one tooltip beside the strip (Activity — what Scout is doing now, recently, and the assignments, Workers, and documents it holds), named to assistive tech and with no native title behind it. Dragging the rail edge past the fold threshold closed it, a click on the edge reopened and refolded it, and the search icon reopened it with the cursor in the search box.",
     true,
   );
+  evidence.recordAssertionEvidence("Compact navigation tilts the face, not its hit target", JSON.stringify({ expanded: foldedPanels.expandedNav, folded: foldedPanels.collapsed.compactNav, hitbox: foldedPanels.collapsed.hitboxSize, tooltip: foldedPanels.collapsed.peekStyle }), true);
 
   // The open panel is transient: Escape closes it, a strip icon reopens it on that view,
   // and a click on its edge closes it again.
@@ -1277,6 +1304,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     `The strip's Coworker settings icon opened the settings with Apps & tools as their first row, then the AI model section${appChoseFirst ? ", whose one line said the model was chosen for the person and where it came from" : ", with no chosen-for-you line because the person had started this model on the local mode screen"}; the searchable picker selected Big Pickle for Scout, the record then said the person chose it and the line was gone, and the thinking-effort control appears only when the chosen model offers reasoning variants.`,
     true,
   );
+  await app.client.send("Page.bringToFront", {});
   const avatarMotion = await evalIn(app, `(() => {
     const avatar = document.querySelector('svg[aria-label="Scout avatar"].is-animated');
     if (!avatar) return null;
@@ -1293,6 +1321,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
         animationName: style.animationName,
         animationDuration: style.animationDuration,
         animationDelay: style.animationDelay,
+        animationTimingFunction: style.animationTimingFunction,
       };
     };
     return {
@@ -1306,7 +1335,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     };
   })()`);
   expect(avatarMotion).toMatchObject({
-    body: { animationName: "coworker-float", animationDuration: "8.8s" },
+    body: { animationName: "coworker-float", animationDuration: "8.8s", animationTimingFunction: "steps(6, jump-none)" },
     depth: { animationName: "coworker-depth-turn", animationDuration: "8.8s" },
     features: { animationName: "coworker-feature-turn", animationDuration: "8.8s" },
     gaze: { animationName: "coworker-gaze-turn", animationDuration: "8.8s" },
@@ -1419,6 +1448,8 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(startupScreens).toMatchObject({ wrongScreenObservations: 0, ready: true });
   evidence.recordAssertionEvidence("Restoring an existing team never flashes onboarding or Add a coworker, including under slower rendering", JSON.stringify(startupScreens), true);
   await waitForText(app, "Nova", { timeoutMs: 120_000 });
+  // Pointer tracking and idle glances both require a visible, focused window.
+  await app.client.send("Page.bringToFront", {});
   const railAvatars = await waitFor(app, `(() => {
     const avatars = [...document.querySelectorAll("aside nav svg.coworker-avatar")];
     if (avatars.length !== 2) return false;
@@ -1464,9 +1495,6 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     "Scout and Nova moved their eyewear and pupils toward the same bottom-right pointer, then added a restrained whole-avatar nod and lean. Both stayed animated while unselected and retained different blink durations and offsets so the team never blinked in sync.",
     true,
   );
-  // Idle glances are skipped while the window is hidden or covered (they are for a person who
-  // can see them), so make sure the window is in front before waiting for one.
-  await app.client.send("Page.bringToFront", {});
   // The glance-and-blink overlap lasts about a quarter of a second every five to twelve
   // seconds; polling over the wire would miss it, so the page itself records the moment
   // both classes are present, with the values in force at that instant.
@@ -1516,6 +1544,75 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     "After the pointer became still, one rail avatar briefly looked down: its glasses, pupils, and whole-avatar pose moved by separate sub-pixel amounts with a 0.35-degree lean, and its short blink carried a sub-pixel check-and-rebound before it settled back.",
     true,
   );
+  const railMotionFacts = `(() => {
+    const rows = [...document.querySelectorAll('.coworker-rail-person')];
+    if (rows.length !== 2) return false;
+    for (const [clientX, clientY] of [[2, 2], [window.innerWidth - 2, window.innerHeight - 2]]) {
+      window.dispatchEvent(new PointerEvent("pointermove", { clientX, clientY }));
+    }
+    const avatars = rows.map((row) => row.querySelector('svg.coworker-avatar'));
+    const outside = [...document.querySelectorAll('.coworker-avatar')].filter((avatar) => !avatar.closest('.coworker-rail-person'));
+    const boxes = [...rows, ...avatars, ...outside, ...['coworker-rail', 'conversation-header', 'context-panel', 'coworker-input-surface'].map((id) => document.querySelector('[data-testid="' + id + '"]')), document.querySelector('.glass-main')];
+    return {
+      focused: document.hasFocus(), hidden: document.hidden,
+      stable: {
+        selection: rows.map((row) => [row.dataset.slug, row.dataset.active, row.getAttribute('aria-current')]),
+        title: document.querySelector('[data-testid="conversation-header"]')?.textContent,
+        outsideFaces: outside.map((avatar) => { const style = getComputedStyle(avatar); return [style.width, style.height, style.transform]; }),
+        layout: boxes.filter(Boolean).map((node) => {
+          const style = getComputedStyle(node);
+          return [node.getBoundingClientRect().toJSON(), style.transform, style.width, style.height, style.borderRadius, style.padding, style.gap];
+        }),
+      },
+      avatars: avatars.map((avatar) => {
+        const body = avatar.querySelector('.coworker-avatar__body');
+        const gaze = ['feature-look-x', 'feature-look-y', 'look-x', 'look-y', 'head-x', 'head-y', 'turn', 'idle-feature-x', 'idle-feature-y', 'idle-look-x', 'idle-look-y', 'idle-head-y', 'idle-turn'];
+        return {
+          paused: avatar.dataset.motionPaused,
+          animations: avatar.getAnimations({ subtree: true }).length,
+          floatRunning: body.getAnimations().some((animation) => animation.playState === 'running'),
+          floatY: new DOMMatrixReadOnly(getComputedStyle(body).transform).f * parseFloat(getComputedStyle(avatar).width) / avatar.viewBox.baseVal.width,
+          neutral: gaze.every((name) => parseFloat(avatar.style.getPropertyValue('--avatar-' + name)) === 0) && !avatar.matches('.is-idle-looking, .is-idle-blinking, .is-idle-bobbing') && [...avatar.querySelectorAll('g:not([transform])')].every((layer) => getComputedStyle(layer).transform === 'none'),
+          lookX: parseFloat(avatar.style.getPropertyValue('--avatar-look-x')),
+        };
+      }),
+    };
+  })()`;
+  try {
+    await app.client.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "no-preference" }] });
+    const before = await waitFor(app, `(() => { const facts = ${railMotionFacts}; return facts && facts.focused && !facts.hidden && facts.avatars.every((avatar) => avatar.paused === 'false' && avatar.floatRunning && avatar.lookX > 0) ? facts : false; })()`, { timeoutMs: 5_000, label: "visible rail motion before live accessibility change" });
+    if (!isRecord(before)) throw new Error("Rail motion baseline was unavailable.");
+    for (const paused of [true, false]) {
+      await app.client.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: paused ? "reduce" : "no-preference" }] });
+      const state = await waitFor(app, `(async () => {
+        const first = ${railMotionFacts};
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        const last = ${railMotionFacts};
+        return [first, last].every((facts) => facts && facts.avatars.every((avatar) => avatar.paused === '${paused}')) ? last : false;
+      })()`, { awaitPromise: true, timeoutMs: 5_000, label: paused ? "rail pauses live while the pointer moves" : "rail resumes live while the pointer moves" });
+      if (!isRecord(state) || !Array.isArray(state.avatars)) throw new Error("Live rail motion facts were unavailable.");
+      expect(state).toMatchObject({ focused: true, hidden: false, stable: before.stable });
+      for (const avatar of state.avatars) {
+        if (!isRecord(avatar)) throw new Error("Live avatar facts were unavailable.");
+        expect(avatar).toMatchObject({ paused: String(paused), floatRunning: !paused, neutral: paused });
+        expect(Math.abs(Number(avatar.floatY))).toBeLessThanOrEqual(1.1);
+        if (paused) expect(avatar).toMatchObject({ animations: 0, lookX: 0, floatY: 0 });
+        else {
+          expect(avatar.animations).toBeGreaterThan(0);
+          expect(avatar.lookX).toBeGreaterThan(0);
+        }
+      }
+      let moving: unknown;
+      if (!paused) {
+        moving = await waitFor(app, `(() => { const facts = ${railMotionFacts}; return facts && facts.avatars.every((avatar) => avatar.floatRunning && Math.abs(avatar.floatY) <= 1.1) && facts.avatars.some((avatar, index) => Math.abs(avatar.floatY - ${json(state.avatars)}[index].floatY) > 0.01) ? facts : false; })()`, { timeoutMs: 6_000, label: "resumed float changes the child transform, not the hitbox" });
+        expect(moving).toMatchObject({ stable: before.stable });
+      }
+      evidence.recordAssertionEvidence(paused ? "Reduced motion pauses live avatar activity without changing navigation or conversation layout" : "Restoring motion resumes a bounded float without changing selection, tilt, or layout", JSON.stringify({ state, moving }), true);
+    }
+    await screenshot(app);
+  } finally {
+    await app.client.send("Emulation.setEmulatedMedia", { features: [] });
+  }
   await clickButtonContaining(app, "Scout");
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Scout")`, { timeoutMs: 30_000, label: "Scout discussion view" });
 
