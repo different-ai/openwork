@@ -9,9 +9,8 @@ import {
 import type { DashboardTileFacts } from "../worlds/dashboard-launch-input.ts";
 
 /**
- * Customer report (2026-09): Dashboard tiles for the Atlassian remote MCP
- * "don't work" with the exact pasted JSON payloads, identically across an
- * org-account and an individual-accounts connection.
+ * Dashboard tiles must surface the provider's missing-argument rejection
+ * when saved launch input omits the required `cloudId` argument.
  *
  * Root cause: both payloads omit the required `cloudId` argument. Before the
  * fix every hop hid the provider's rejection and the tile read "Unexpected
@@ -33,7 +32,7 @@ function requireTile(value: DashboardTileFacts | null, label: string): Dashboard
 }
 
 test(
-  "a dashboard tile launched with the reported Atlassian JSON names the missing required argument",
+  "a dashboard tile launched with saved JSON names the missing required argument",
   async ({ world, user, probe, evidence }) => {
     await probe.eventually(() => world.openDashboard(), {
       within: 90_000,
@@ -83,8 +82,8 @@ test(
     const witnessedByTool = new Map(calls.map((call) => [call.name, call.args]));
     expect(witnessedByTool.get("getConfluencePage")).toEqual({ pageId: "1122334455" });
     expect(witnessedByTool.get("searchJiraIssuesUsingJql")).toEqual({ jql: expectedJql });
-    expect(world.receivedCalls.filter((call) => call.name === "getConfluencePage")).toHaveLength(1);
-    expect(world.receivedCalls.filter((call) => call.name === "searchJiraIssuesUsingJql")).toHaveLength(1);
+    expect(calls.filter((call) => call.name === "getConfluencePage")).toHaveLength(1);
+    expect(calls.filter((call) => call.name === "searchJiraIssuesUsingJql")).toHaveLength(1);
 
     evidence.recordAssertionEvidence(
       "The dashboard tile names the missing required argument instead of a generic server error",
