@@ -488,7 +488,8 @@ export function createCloudRuntimeOrchestrator(deps: CloudRuntimeOrchestratorDep
       logger.warn("instance recycle failed; waking existing instance", { worker_id: input.provisionInput.workerId, error })
       return wakeExisting({
         input: input.provisionInput,
-        handle: input.oldHandle,
+        // A failed wake may have started the old instance since this handle was read.
+        handle: await provider.inspect(input.oldHandle),
         workspaceVolumeId: input.oldWorkspaceVolumeId,
         dataVolumeId: input.oldDataVolumeId,
         imageVersion: input.oldImageVersion,
@@ -714,13 +715,8 @@ export function createCloudRuntimeOrchestrator(deps: CloudRuntimeOrchestratorDep
       return
     }
 
-    const seen = new Set<string>()
-    while (true) {
-      const orphan = await provider.find({ labels: labels(workerId) })
-      if (!orphan) break
-      const key = JSON.stringify(orphan.ref.ref)
-      if (seen.has(key)) break
-      seen.add(key)
+    const orphans = await provider.list({ labels: labels(workerId) })
+    for (const orphan of orphans) {
       await provider.destroy(orphan, { timeoutMs: config.destroyTimeoutMs }).catch((error) => {
         logger.warn("failed to destroy instance", { worker_id: workerId, instance: orphan.ref.ref, error })
       })

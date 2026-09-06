@@ -25,6 +25,7 @@ export type FakeExecResult = {
 export type FakeOperationName =
   | "create"
   | "find"
+  | "list"
   | "get"
   | "inspect"
   | "start"
@@ -78,7 +79,7 @@ export type FakeProvider = SandboxProvider & {
     /** Register an instance the host already has, bypassing hooks and counters. */
     seed(input: { idempotencyKey: string; state: SandboxState; workerId?: string; labels?: Record<string, string>; hidden?: boolean }): FakeSandboxRecord
     setState(sandboxId: string, state: SandboxState): void
-    /** Hidden instances are invisible to `find` and `get` (read-after-write lag). */
+    /** Hidden instances are invisible to `find`, `list`, and `get` (read-after-write lag). */
     setVisible(sandboxId: string, visible: boolean): void
     count(operation: FakeOperationName, sandboxId?: string): number
     volumeFiles(volumeName: string): Set<string>
@@ -228,6 +229,18 @@ export function createFakeProvider(options: FakeProviderOptions = {}): FakeProvi
         return handleOf(record)
       }
       return null
+    },
+    async list(query: SandboxQuery) {
+      calls.push(`list:${query.idempotencyKey ?? JSON.stringify(query.labels ?? {})}`)
+      await before("list", { idempotencyKey: query.idempotencyKey })
+      const handles: SandboxHandle[] = []
+      for (const record of sandboxes.values()) {
+        if (record.state === "missing" || hidden.has(record.id)) continue
+        if (query.idempotencyKey !== undefined && record.spec.idempotencyKey !== query.idempotencyKey) continue
+        if (query.labels && Object.entries(query.labels).some(([key, value]) => record.spec.labels[key] !== value)) continue
+        handles.push(handleOf(record))
+      }
+      return handles
     },
     async get(ref) {
       calls.push(`get:${ref.ref.sandboxId ?? "?"}`)

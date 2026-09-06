@@ -558,6 +558,40 @@ describe("Cloud runtime version-aware recycle", () => {
     expect(h.warnings).toContain("instance recycle failed; waking existing instance")
   })
 
+  test("stops the old instance before a second bootstrap after endpoint and replacement creation failures", async () => {
+    const input = provisionInput()
+    const h = harness({
+      onOperation: (operation) => {
+        if (operation.name === "endpoint" && operation.attempt === 1) throw new Error("endpoint unavailable")
+        if (operation.name === "create") throw new Error("replacement creation failed")
+      },
+    })
+    const old = h.provider.fake.seed({ idempotencyKey: "sbx-recovery-fallback", state: "stopped" })
+    await seedRecord(h, input, old.id, imageVersion)
+    const storage = { workspaceVolumeId: "vol-old-workspace", dataVolumeId: "vol-old-data" }
+    h.store.records.get(input.workerId)!.storage = storage
+    await seedCheckpoint(h, input)
+
+    const result = await h.orchestrator.wake(input)
+
+    expect(h.provider.fake.calls.filter((call) => /^(start|stop|exec):/.test(call))).toEqual([
+      `start:${old.id}`,
+      `exec:${old.id}`,
+      `stop:${old.id}`,
+      `start:${old.id}`,
+      `exec:${old.id}`,
+    ])
+    expect(result.status).toBe("healthy")
+    expect(result.imageVersion).toBe(imageVersion)
+    expect(h.provider.fake.count("create")).toBe(1)
+    expect(h.provider.fake.count("destroy")).toBe(0)
+    expect(h.provider.fake.count("endpoint", old.id)).toBe(2)
+    expect(h.healthChecks).toHaveLength(1)
+    expect(h.store.upserts).toHaveLength(1)
+    expect(h.store.upserts[0]?.sandbox.ref.sandboxId).toBe(old.id)
+    expect(h.store.upserts[0]?.storage).toEqual(storage)
+  })
+
   test("keeps the same-version stopped instance on the normal wake path", async () => {
     const input = provisionInput()
     const h = harness()
@@ -572,6 +606,9 @@ describe("Cloud runtime version-aware recycle", () => {
     expect(h.provider.fake.count("create")).toBe(0)
     expect(h.checkpointChecks()).toBe(0)
     expect(h.provider.fake.count("start", old.id)).toBe(1)
+    expect(h.provider.fake.count("inspect", old.id)).toBe(1)
+    expect(h.provider.fake.count("endpoint", old.id)).toBe(1)
+    expect(h.healthChecks).toHaveLength(1)
     expect(h.provider.fake.count("destroy", old.id)).toBe(0)
     expect(h.store.upserts[0]?.sandbox.ref.sandboxId).toBe(old.id)
   })
@@ -808,18 +845,44 @@ describe("Cloud runtime instance maintenance", () => {
     expect(Array.from(h.provider.fake.volumeFiles("den-cloud-workers"))).toEqual(["workers/worker_other/data/checkpoints/ckpt-1.tar"])
   })
 
-  test("deprovision without a record destroys every labelled orphan", async () => {
+  test.each(["succeeds", "fails"])("deprovision snapshots every labelled orphan when the first delete %s", async (firstDelete) => {
     const input = provisionInput()
-    const h = harness()
-    const labels = { "openwork.den.provider": "fake", "openwork.den.worker-id": input.workerId }
+    const h = harness({
+      onOperation: (operation) => {
+        if (operation.name === "destroy" && operation.sandboxId === first.id && firstDelete === "fails") {
+          throw new Error("delete failed")
+        }
+      },
+    })
+    const labels = ownerLabels(input)
     const first = h.provider.fake.seed({ idempotencyKey: "orphan-1", state: "stopped", labels })
     const second = h.provider.fake.seed({ idempotencyKey: "orphan-2", state: "running", labels })
-    const other = h.provider.fake.seed({ idempotencyKey: "other", state: "running", labels: { ...labels, "openwork.den.worker-id": "worker_other" } })
+    const other = h.provider.fake.seed({ idempotencyKey: "other", state: "running", labels: { ...labels, "openwork.den.worker-id": workerIds[1] } })
+    const otherProvider = h.provider.fake.seed({ idempotencyKey: "other-provider", state: "running", labels: { ...labels, "openwork.den.provider": "other" } })
+    await seedCheckpoint(h, input)
+    h.provider.fake.writeVolumeFile("den-cloud-workers", `workers/${input.workerId}/workspace/file.txt`)
+    const otherFile = `workers/${workerIds[1]}/data/checkpoints/ckpt-1.tar`
+    h.provider.fake.writeVolumeFile("den-cloud-workers", otherFile)
 
     await h.orchestrator.deprovision(input.workerId)
 
     expect(h.provider.fake.count("destroy", first.id)).toBe(1)
     expect(h.provider.fake.count("destroy", second.id)).toBe(1)
     expect(h.provider.fake.count("destroy", other.id)).toBe(0)
+    expect(h.provider.fake.count("destroy", otherProvider.id)).toBe(0)
+    expect(h.provider.fake.calls.filter((call) => /^(list|find|destroy):/.test(call))).toEqual([
+      `list:${JSON.stringify(labels)}`,
+      `destroy:${first.id}`,
+      `destroy:${second.id}`,
+    ])
+    expect(first.state).toBe(firstDelete === "fails" ? "stopped" : "missing")
+    expect(second.state).toBe("missing")
+    expect(other.state).toBe("running")
+    expect(otherProvider.state).toBe("running")
+    expect(Array.from(h.provider.fake.volumeFiles("den-cloud-workers"))).toEqual([otherFile])
+    if (firstDelete === "fails") {
+      expect((await h.provider.find({ labels }))?.ref.ref.sandboxId).toBe(first.id)
+      expect(h.warnings).toContain("failed to destroy instance")
+    }
   })
 })
