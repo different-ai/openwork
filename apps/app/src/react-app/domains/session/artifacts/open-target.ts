@@ -28,6 +28,20 @@ export type OpenTarget = {
   updatedAt?: number;
 };
 
+/** Explicit links preserve the full address, unlike URLs extracted from prose. */
+export function openTargetFromUrl(href: string): OpenTarget | null {
+  const value = href.trim();
+  try {
+    if (!["http:", "https:"].includes(new URL(value).protocol)) return null;
+  } catch {
+    return null;
+  }
+  return {
+    id: `url:${value}`, kind: "url", value, name: value,
+    preview: "browser", confidence: 100, reason: "explicit link",
+  };
+}
+
 export function sameOpenTargets(left: OpenTarget[], right: OpenTarget[]): boolean {
   return left.length === right.length && left.every((target, index) => {
     const other = right[index];

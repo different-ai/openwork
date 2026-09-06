@@ -13,6 +13,7 @@ export const session = { fromPartition() { return { webRequest: { onBeforeReques
 export const shell = { async openExternal(url) { effects.push({ type: "external", url }); } };
 export const createdViews = [];
 export class BrowserWindow {
+  static getAllWindows() { return []; }
   constructor(options) {
     if (options.show !== false || options.focusable !== false) throw new Error("background host must never show or focus");
     const children = [];
@@ -24,6 +25,7 @@ export class BrowserWindow {
     this.destroyed = false;
   }
   isDestroyed() { return this.destroyed; }
+  isVisible() { return false; }
   destroy() { this.destroyed = true; }
 }
 export class WebContentsView {
@@ -264,7 +266,8 @@ test("a tab opened for a background conversation loads silently and leaves the v
   assert.deepEqual(commands(backgroundView), BACKGROUND_SEQUENCE, "the page lays out and focuses like a visible one");
   assert.equal(backgroundView.webContents.debugger.isAttached(), true, "our emulation session stays open while unseen");
   assert.deepEqual(commands(visibleView), [], "the visible tab is untouched");
-  assert.deepEqual(messages("openwork:browser:panel-opened"), [], "no panel pops for a silent tab until it navigates");
+  assert.equal(messages("openwork:browser:panel-opened").at(-1).tab.id, tabId, "the explicit open selects B's page only in B's panel");
+  assert.equal(messages("openwork:browser:panel-opened").at(-1).ownerSessionId, "B");
 
   // Even an unexpectedly large background surface must not intercept the app.
   backgroundView.setBounds({ x: 0, y: 0, width: 1280, height: 800 });
@@ -279,7 +282,7 @@ test("navigating a background conversation's tab reports its owner instead of ta
   invoke("openwork:browser:show", PANEL_BOUNDS, "A");
   invoke("openwork:browser:createTab", "https://a.example", "A");
   const visibleView = onScreen();
-  invoke("openwork:browser:createTab", "https://b.example", "B");
+  const { tabId } = invoke("openwork:browser:createTab", "https://b.example", "B");
   const backgroundView = views().find((view) => view !== visibleView);
   await flush();
 
@@ -287,7 +290,9 @@ test("navigating a background conversation's tab reports its owner instead of ta
   await flush();
 
   assert.equal(onScreen(), visibleView, "A's tab stays on screen");
-  assert.deepEqual(messages("openwork:browser:panel-opened"), [{ ownerSessionId: "B" }]);
+  const opens = messages("openwork:browser:panel-opened");
+  assert.equal(opens.at(-2).tab.id, tabId, "the explicit open selects its page");
+  assert.deepEqual(opens.at(-1), { ownerSessionId: "B" }, "later navigation does not override an artifact selection");
 });
 
 test("switching to the background conversation swaps its tab on screen and restores a normal viewport", async () => {

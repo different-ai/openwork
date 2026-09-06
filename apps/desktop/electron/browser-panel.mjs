@@ -699,6 +699,15 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     } else {
       sendBrowserState();
     }
+    if (select) {
+      // Explicit opens select their page in the owner's unified panel. Later
+      // navigations may keep that panel open, but must not displace an artifact
+      // the user selected while a page was loading or refreshing itself.
+      sendToRenderer("openwork:browser:panel-opened", {
+        ownerSessionId: registry.ownerOf(tabId),
+        tab: browserTabToPanelTab(tabId, tab),
+      });
+    }
     const finalUrl = normalizeBrowserUrl(url, "about:blank");
     if (finalUrl !== "about:blank") {
       runDetachedTask("navigate new browser tab", () => view.webContents.loadURL(finalUrl));
@@ -1048,7 +1057,12 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         view.setBounds(scaleRendererBounds(bounds));
       }
     });
-    ipcMain.handle("openwork:browser:state", () => ({ ...browserStatePayload(), nativeViews: browserNativeViews() }));
+    ipcMain.handle("openwork:browser:state", () => ({
+      ...browserStatePayload(),
+      nativeViews: browserNativeViews(),
+      backgroundWindowVisible: Boolean(backgroundWindow && !backgroundWindow.isDestroyed() && backgroundWindow.isVisible()),
+      visibleWindowCount: BrowserWindow.getAllWindows().filter((host) => host.isVisible()).length,
+    }));
     ipcMain.handle("openwork:browser:createTab", (_event, url, sessionId) => {
       const target = typeof url === "string" && url.trim() ? url : BROWSER_NEW_TAB_URL;
       const ownerSessionId = sessionId === undefined ? registry.visibleSessionId() : normalizeSessionId(sessionId);

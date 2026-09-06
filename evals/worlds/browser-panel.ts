@@ -30,6 +30,8 @@ export interface BrowserTabState {
 export interface BrowserState {
   activeTabId: string | null;
   visibleSessionId: string | null;
+  visibleWindowCount: number;
+  backgroundWindowVisible: boolean;
   tabs: BrowserTabState[];
   nativeViews: Array<{
     tabId: string;
@@ -64,9 +66,14 @@ function pngSize(png: Buffer): Viewport {
 function parseBrowserState(value: unknown): BrowserState {
   if (!isRecord(value) || !Array.isArray(value.tabs)) throw new Error("The desktop bridge did not report browser state.");
   if (!Array.isArray(value.nativeViews)) throw new Error("The desktop bridge did not report native browser views.");
+  if (typeof value.visibleWindowCount !== "number" || typeof value.backgroundWindowVisible !== "boolean") {
+    throw new Error("The desktop bridge did not report native window visibility.");
+  }
   return {
     activeTabId: typeof value.activeTabId === "string" ? value.activeTabId : null,
     visibleSessionId: typeof value.visibleSessionId === "string" ? value.visibleSessionId : null,
+    visibleWindowCount: value.visibleWindowCount,
+    backgroundWindowVisible: value.backgroundWindowVisible,
     nativeViews: value.nativeViews.map((view) => {
       if (!isRecord(view) || typeof view.attached !== "boolean" || typeof view.aboveApp !== "boolean"
         || !isRecord(view.bounds) || typeof view.bounds.x !== "number" || typeof view.bounds.y !== "number") {
@@ -151,7 +158,8 @@ function parsePageProbe(value: unknown): PageProbe {
  */
 async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string>) {
   const app = await seed.desktop({ name: "builtin-browser", env });
-  const workspace = await seed.workspace(app, seed.tmpPath("builtin-browser"));
+  const workspacePath = seed.tmpPath("builtin-browser");
+  const workspace = await seed.workspace(app, workspacePath);
   const session = await seed.session(app);
   const origin = await embeddedServerUrl(seed, app);
 
@@ -159,6 +167,37 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
     app,
     workspace,
     session,
+
+    /** Persist a real transcript link and an attached file without invoking a model. */
+    async seedTranscriptLink(sessionId: string) {
+      const url = `${origin}/?viewport-probe=transcript-link&source=chat%20link#working-page`;
+      const artifactName = "browser-handoff.md";
+      const artifactText = "Keep these notes open while following the research link.";
+      await seed.evalIn(app, `async (workspaceId, sessionId, url, artifactName, artifactText, fileUrl) => {
+        const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+        const base = info.baseUrl.replace(/\\/+$/, "") + "/workspace/" + encodeURIComponent(workspaceId);
+        const headers = { Authorization: "Bearer " + (info.ownerToken ?? info.clientToken), "Content-Type": "application/json" };
+        const file = await fetch(base + "/files/content", {
+          method: "POST", headers, signal: AbortSignal.timeout(15000),
+          body: JSON.stringify({ path: artifactName, content: artifactText, baseUpdatedAt: null }),
+        });
+        if (!file.ok) throw new Error("Could not seed the handoff file: " + file.status);
+        const message = await fetch(base + "/opencode/session/" + encodeURIComponent(sessionId) + "/message", {
+          method: "POST", headers, signal: AbortSignal.timeout(30000),
+          body: JSON.stringify({ noReply: true, parts: [
+            { type: "text", text: "Continue research at " + url },
+            { type: "file", mime: "text/plain", filename: artifactName, url: fileUrl },
+          ] }),
+        });
+        if (!message.ok) throw new Error("Could not seed the transcript link: " + message.status);
+        await message.json();
+      }`, {
+        args: [workspace.workspaceId, sessionId, url, artifactName, artifactText, new URL(`file://${workspacePath}/${artifactName}`).href],
+        awaitPromise: true,
+        timeoutMs: 50_000,
+      });
+      return { url, artifactName, artifactText };
+    },
 
     /** Create another conversation in the same workspace; the app shows it. */
     async openSession(title: string): Promise<{ sessionId: string; title: string }> {
@@ -371,6 +410,13 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
       ));
     },
 
+    /** Resolve a user-opened tab without opening or selecting another page. */
+    async tabHandle(tab: BrowserTabState): Promise<BuiltinBrowserTab> {
+      const targets = (await listTargets(app.handle.cdpUrl)).filter((target) => target.type === "page" && target.url === tab.url);
+      if (targets.length !== 1) throw new Error(`Expected one CDP page for ${tab.url}, found ${targets.length}.`);
+      return { tabId: tab.id, targetId: targets[0].id, name: tab.label };
+    },
+
     /** The viewport a tab lays out for and whether its page believes it has focus. */
     async readPageProbe(tab: BuiltinBrowserTab): Promise<PageProbe> {
       return withTabClient(app, tab.targetId, async (client) => parsePageProbe(
@@ -412,6 +458,12 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
         }
         return { clicks: result.clicks, value: result.value };
       });
+    },
+
+    /** Observe the existing document without focusing its hidden native view. */
+    async readInputProbe(tab: BuiltinBrowserTab): Promise<unknown> {
+      return withTabClient(app, tab.targetId, (client) => evaluate(client,
+        "({ clicks: window.__clicks, value: document.getElementById('field').value })"));
     },
 
     /**
