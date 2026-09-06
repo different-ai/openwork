@@ -114,7 +114,7 @@ async function clickOpenSplit(user: User): Promise<void> {
 }
 
 async function closeSecondaryPane(app: Surface, user: User, primary: SplitCandidate): Promise<void> {
-  await user.click({ role: "button", label: "Close side chat" });
+  await user.click({ role: "button", label: "Back to main chat", nth: 1 });
   await waitFor(app, `!document.querySelector('[data-workbench-pane="secondary"]')
     && Boolean(document.querySelector('[data-session-surface-id="${primary.sessionId}"]'))`, {
     timeoutMs: 15000, label: "side chat closes and the main conversation remains visible",

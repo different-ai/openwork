@@ -788,17 +788,10 @@ function RemoteConnectionIssueCard(props: {
 
 type SidebarSplitPillProps = {
   workspaceSessionGroups: WorkspaceSessionGroup[];
-  selectedWorkspaceId: string;
-  selectedSessionId: string | null;
-  onOpenSession: (workspaceId: string, sessionId: string) => void;
 };
 
-/**
- * Arc-style joined pill: while a split view is active the pair renders as a
- * single unit at the top of the vertical tab list (the sidebar). Clicking a
- * segment focuses its pane; closing a segment dissolves the split.
- */
-function SidebarSplitPill({ workspaceSessionGroups, onOpenSession }: SidebarSplitPillProps) {
+/** Readable shortcuts to the two currently visible conversations. */
+function SidebarSplitPill({ workspaceSessionGroups }: SidebarSplitPillProps) {
   const primary = useWorkbenchStore((state) => state.primary);
   const secondary = useWorkbenchStore((state) => state.secondary);
   const focusedPane = useWorkbenchStore((state) => state.focusedPane);
@@ -826,61 +819,34 @@ function SidebarSplitPill({ workspaceSessionGroups, onOpenSession }: SidebarSpli
   const crossWorkspace = primary.workspaceId !== secondary.workspaceId;
 
   return (
-    <div className="px-2 pb-1">
-      <div className="mb-1 flex h-8 items-center gap-1 px-1 text-[12px] font-normal text-muted-foreground">
-        <Columns2 className="size-3" />
-        {t("session_management.split_view")}
+    <div className="px-2 pb-3">
+      <div className="px-2 pb-2 text-xs font-medium text-muted-foreground">
+        {t("session_management.open_chats")}
       </div>
-      <div
-        data-session-tab-split-pill
-        className="flex items-stretch divide-x divide-sidebar-border overflow-hidden rounded-[11px] border border-sidebar-border"
-      >
+      <div data-session-tab-split-pill className="space-y-1">
         {segments.map(({ session, pane }) => {
           const details = detailsFor(session.workspaceId, session.sessionId);
           const focused = focusedPane === pane;
-          const closeLabel = pane === "primary" ? "Close main chat" : t("session_management.close_split_view");
           return (
-            <div
+            <button
               key={pane}
+              type="button"
               data-session-tab-id={session.sessionId}
               data-session-tab-workspace-id={session.workspaceId}
+              aria-pressed={focused}
               className={cn(
-                "flex min-w-0 flex-1 items-center gap-1 px-2 py-1.5 text-xs transition-colors",
-                focused
-                  ? "bg-black/[0.07] text-sidebar-foreground dark:bg-white/[0.12]"
-                  : "text-sidebar-foreground/70 hover:bg-black/[0.05] dark:hover:bg-white/[0.09]",
+                "flex w-full min-w-0 items-center gap-2 rounded-lg border px-3 py-2 text-left",
+                focused ? "border-sidebar-border bg-sidebar-accent text-sidebar-accent-foreground" : "border-transparent text-sidebar-foreground/70 hover:bg-sidebar-accent/50",
               )}
+              onClick={() => useWorkbenchStore.getState().focusPane(pane)}
             >
-              <button
-                type="button"
-                className="min-w-0 flex-1 ow-fade-truncate text-left"
-                title={crossWorkspace ? `${details.title} — ${details.workspaceTitle}` : details.title}
-                onClick={() => useWorkbenchStore.getState().focusPane(pane)}
-              >
-                <span className="block truncate">{details.title}</span>
-                {crossWorkspace ? (
-                  <span className="block truncate text-[10px] text-muted-foreground">{details.workspaceTitle}</span>
-                ) : null}
-              </button>
-              <button
-                type="button"
-                className="shrink-0 rounded p-0.5 text-sidebar-foreground/50 hover:text-sidebar-foreground"
-                title={closeLabel}
-                aria-label={closeLabel}
-                onClick={() => {
-                  if (pane === "primary") {
-                    // Closing the primary segment promotes the split session
-                    // to primary, which dissolves the split.
-                    useWorkbenchStore.getState().setSplit(null);
-                    onOpenSession(secondary.workspaceId, secondary.sessionId);
-                  } else {
-                    useWorkbenchStore.getState().setSplit(null);
-                  }
-                }}
-              >
-                <X className="size-3.5" />
-              </button>
-            </div>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[11px] text-muted-foreground">{t(pane === "primary" ? "session_management.main_chat" : "session_management.split_view")}</span>
+                <span className="block truncate text-sm" title={details.title}>{details.title}</span>
+                {crossWorkspace ? <span className="block truncate text-[11px] text-muted-foreground">{details.workspaceTitle}</span> : null}
+              </span>
+              {focused ? <span className="size-1.5 shrink-0 rounded-full bg-current" aria-hidden="true" /> : null}
+            </button>
           );
         })}
       </div>
@@ -943,6 +909,8 @@ function isSessionActivityStatus(status: string | undefined): status is SessionA
 }
 
 export function AppSidebar(props: AppSidebarProps) {
+  const sideChatOpen = useWorkbenchStore((state) => state.secondary !== null);
+  const sideChatAction = t(sideChatOpen ? "session_management.close_split_view" : "session_management.new_split");
   // Lives in the UI store (not component state) so the open/closed state of
   // each workspace group survives this sidebar unmounting, e.g. while the
   // user is in Settings.
@@ -1160,6 +1128,24 @@ export function AppSidebar(props: AppSidebarProps) {
                 <span className="flex-1 truncate">{t("session.new_task")}</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                type="button"
+                data-sidebar-new-split
+                className="text-sidebar-foreground/60"
+                aria-label={sideChatAction}
+                tooltip={sideChatOpen ? sideChatAction : t("session_management.side_chat_hint")}
+                isActive={sideChatOpen}
+                disabled={!sideChatOpen && props.newTaskDisabled}
+                onClick={() => {
+                  if (sideChatOpen) useWorkbenchStore.getState().setSplit(null);
+                  else props.onCreateSplitTaskInWorkspace(props.selectedWorkspaceId);
+                }}
+              >
+                <Columns2 className="size-4" />
+                <span className="flex-1 truncate">{sideChatAction}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
             {props.onOpenSessionSearch ? (
               <SidebarMenuItem>
                 <SidebarMenuButton
@@ -1216,9 +1202,6 @@ export function AppSidebar(props: AppSidebarProps) {
         </SidebarHeader>
         <SidebarSplitPill
           workspaceSessionGroups={props.workspaceSessionGroups}
-          selectedWorkspaceId={props.selectedWorkspaceId}
-          selectedSessionId={props.selectedSessionId}
-          onOpenSession={props.onOpenSession}
         />
         <LazyMotion features={domMax}>
           <m.div

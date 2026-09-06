@@ -3,7 +3,7 @@ import type { CSSProperties } from "react";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
 import { DesktopUpdateButton } from "../../settings/state/desktop-updater-provider";
-import { ArrowLeft, Cloud, FileText, Globe, Mic2, MoreHorizontal, PanelRight, TextSearch, X, Zap } from "lucide-react";
+import { ArrowLeft, Cloud, FileText, Globe, Maximize2, Mic2, MoreHorizontal, PanelRight, TextSearch, X, Zap } from "lucide-react";
 
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { t } from "../../../../i18n";
@@ -303,38 +303,35 @@ function WorkbenchPaneHeader(props: {
   focused: boolean;
   onFocus: () => void;
   onClose: () => void;
+  onExpand?: () => void;
 }) {
   const title = props.session.title?.trim() || t("session.default_title");
   return (
     <div
-      className={cn(
-        "flex h-10 shrink-0 items-center gap-2 border-b border-border px-3",
-        props.focused && "bg-muted/40",
-      )}
+      className={cn("shrink-0 border-b border-border px-4 py-3", props.focused && "bg-muted/40")}
       data-workbench-pane-header={props.pane}
       data-workbench-pane-workspace-name={props.workspaceTitle}
     >
-      <button type="button" className="min-w-0 flex-1 text-left" onClick={props.onFocus}>
-        <span className="block truncate text-xs font-medium text-foreground">{title}</span>
-        {props.showWorkspace ? (
-          <span className="block truncate text-[10px] text-muted-foreground">{props.workspaceTitle}</span>
-        ) : null}
+      <button type="button" className="flex w-full min-w-0 items-start gap-2 text-left" onClick={props.onFocus}>
+        <span className="min-w-0 flex-1">
+          <span className="block text-xs font-semibold">{t(props.pane === "primary" ? "session_management.main_chat" : "session_management.split_view")}</span>
+          <span className="block truncate text-sm text-muted-foreground" title={title}>{title}</span>
+          {props.showWorkspace ? <span className="block truncate text-xs text-muted-foreground">{props.workspaceTitle}</span> : null}
+        </span>
+        {props.focused ? <span className="rounded-full bg-background px-2 py-0.5 text-[10px] text-muted-foreground">{t("session_management.selected_chat")}</span> : null}
       </button>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              aria-label={props.pane === "secondary" ? "Close side chat" : "Close main chat"}
-              onClick={props.onClose}
-            >
-              <X data-icon="inline-start" />
-            </Button>
-          }
-        />
-        <TooltipContent>{props.pane === "primary" ? "Keep the other session" : "Close side chat"}</TooltipContent>
-      </Tooltip>
+      {props.pane === "secondary" ? (
+        <div className="mt-2 flex flex-wrap gap-1">
+          <Button variant="outline" size="sm" aria-label={t("session_management.close_split_view")} onClick={props.onClose}>
+            <ArrowLeft data-icon="inline-start" />
+            {t("session_management.close_split_view")}
+          </Button>
+          <Button variant="ghost" size="sm" aria-label={t("session_management.expand_side_chat")} onClick={props.onExpand}>
+            <Maximize2 data-icon="inline-start" />
+            {t("session_management.expand_side_chat")}
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1117,7 +1114,7 @@ export function SessionPage(props: SessionPageProps) {
   })();
   const narrowPaneOptions = useMemo<NarrowPaneOption[]>(() => {
     const options: NarrowPaneOption[] = [{ id: "chat", label: "Chat" }];
-    if (splitSession) options.push({ id: "split", label: "Side chat" });
+    if (splitSession) options.push({ id: "split", label: t("session_management.split_view") });
     if (sidePanelOpen) {
       options.push({
         id: "panel",
@@ -1793,6 +1790,7 @@ export function SessionPage(props: SessionPageProps) {
                             workspaceId={props.runtimeWorkspaceId!}
                             sessionId={props.selectedSessionId!}
                             isControlTarget={activeWorkbenchPane === "primary"}
+                            chatPane={canRenderSplitSurface ? "primary" : undefined}
                             opencodeBaseUrl={reactSessionBaseUrl}
                             openworkToken={reactSessionToken}
                             todos={props.todos}
@@ -1832,6 +1830,7 @@ export function SessionPage(props: SessionPageProps) {
                               focused={activeWorkbenchPane === "secondary"}
                               onFocus={() => focusWorkbenchPane("secondary")}
                               onClose={closeSecondaryWorkbenchPane}
+                              onExpand={closePrimaryWorkbenchPane}
                             />
                             {splitPaneRuntime.status === "ready" ? (
                               <div className="min-h-0 flex-1">
@@ -1849,6 +1848,7 @@ export function SessionPage(props: SessionPageProps) {
                                   workspaceRoot={splitPaneRuntime.workspaceRoot}
                                   sessionId={splitSession.sessionId}
                                   isControlTarget={activeWorkbenchPane === "secondary"}
+                                  chatPane="secondary"
                                   opencodeBaseUrl={splitPaneRuntime.opencodeBaseUrl}
                                   openworkToken={splitPaneRuntime.openworkToken}
                                   todos={[]}
