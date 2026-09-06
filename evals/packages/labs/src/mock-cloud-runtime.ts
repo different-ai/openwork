@@ -26,6 +26,7 @@ export async function startCloudRuntimeWitness() {
   const sessions: Array<{ id: string; sandboxId: string; title: string; prompts: string[] }> = [];
   const unexpected: string[] = [];
   let healthy = false;
+  let sessionError: { code: string; message: string } | null = null;
   let url = "";
 
   function sandboxDto(sandbox: typeof sandboxes[number]) {
@@ -66,6 +67,7 @@ export async function startCloudRuntimeWitness() {
       if (route === "/health") return json(response, healthy ? 200 : 503, { ready: healthy });
       if (route === "/workspaces") return json(response, 200, { activeId: "workspace_witness", items: [] });
       if (method === "POST" && route === "/workspace/workspace_witness/opencode/session") {
+        if (sessionError) return json(response, 400, sessionError);
         const input = await body(request);
         const session = { id: `ses_witness_${sessions.length + 1}`, sandboxId, title: String(input.title), prompts: [] };
         sessions.push(session);
@@ -99,6 +101,7 @@ export async function startCloudRuntimeWitness() {
   return {
     url, sandboxes, sessions, unexpected,
     ready() { healthy = true; },
+    sessionFailure(error: { code: string; message: string } | null) { sessionError = error; },
     async [Symbol.asyncDispose]() {
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));

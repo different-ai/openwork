@@ -53,9 +53,12 @@ export async function savedAppCreation(seed: Seed) {
   });
   const token = field(tokenResponse.body, "token");
   let requestId = 0;
-  const rpc = async (name: string, args: Record<string, unknown>) => {
+  const rpc = async (name: string, args: Record<string, unknown>, session = den.admin) => {
+    const sessionToken = session === den.admin ? token : field((await seed.api(session, "/v1/mcp/token", {
+      method: "POST", headers: { "x-openwork-org-id": orgId }, body: JSON.stringify({ scopes: ["mcp:read", "mcp:write"] }),
+    })).body, "token");
     const response = await fetch(`${den.ref.apiUrl}/mcp/agent`, {
-      method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+      method: "POST", headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
       body: JSON.stringify({ jsonrpc: "2.0", id: ++requestId, method: "tools/call", params: { name, arguments: args } }),
       signal: AbortSignal.timeout(90_000),
     });
@@ -98,7 +101,14 @@ export async function savedAppCreation(seed: Seed) {
   if (!configured.ok) throw new Error(`Model fixture setup failed: ${configured.status}`);
   const providerId = "saved-app-model";
   const modelId = "saved-app-model";
-  const app = await seed.desktop({ den, name: "saved-app-creation", model: `${providerId}/${modelId}` });
+  const proxy = await seed.faultProxy(den);
+  // Keep runtime API discovery on the same proxy as the simulated old server.
+  const resetProxy = async () => {
+    await proxy.faults.clear();
+    await proxy.faults.status("/api/runtime-config", 200, { times: 1000, body: { denApiUrl: proxy.ref.apiUrl } });
+  };
+  await resetProxy();
+  const app = await seed.desktop({ den: { ...den, ref: proxy.ref }, name: "saved-app-creation", model: `${providerId}/${modelId}` });
   const workspace = await seed.workspace(app, seed.tmpPath("saved-app-creation"));
   await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
     provider: { [providerId]: {
@@ -118,7 +128,7 @@ export async function savedAppCreation(seed: Seed) {
     finally { client.close(); }
   };
   return {
-    app, den, workspace, configObjectId, dashboardId, rpc, run,
+    app, den, proxy, resetProxy, workspace, configObjectId, dashboardId, rpc, run,
     open: (path: string) => go(app, path),
     previewText: async () => String(await inPreview("return appDocument.body.innerText")),
     showDetails: () => inPreview('appDocument.querySelector("button")?.click()'),

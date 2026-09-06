@@ -44,7 +44,7 @@ import {
   retireArtifactView,
 } from "../../artifact-views.js"
 
-import { getSavedApp, listSavedApps, setAppOnDashboard } from "../../saved-apps.js"
+import { getSavedApp, listSavedApps, setAppOnDashboard, shareSavedApp } from "../../saved-apps.js"
 
 const capabilitySchema = z.object({ capabilityName: z.string(), scriptPath: z.string() })
 const scriptSchema = z.object({
@@ -173,24 +173,13 @@ function routeFailure(error: unknown) {
       },
     } as const
   }
-  const readOnlyPrefix = "workflow_requires_read_only_capabilities:"
-  if (message.startsWith(readOnlyPrefix)) {
-    const capability = message.slice(readOnlyPrefix.length)
-    return {
-      status: 400,
-      body: {
-        error: "workflow_requires_read_only_capabilities",
-        capability,
-        message: `${capability} can change data, so it cannot run unattended in a Workflow. Workflows may only call read-only tools; keep write actions in interactive Code Mode runs.`,
-      },
-    } as const
-  }
   return { status: 400, body: { error: "workflow_rejected", message } } as const
 }
 
 function appRouteFailure(error: unknown) {
   const failure = routeFailure(error)
   const code = error instanceof Error ? error.message : ""
+  if (code === "teammate_not_found") return { ...failure, body: { error: code, message: "No teammate with that email belongs to this organization. Ask an admin to invite them first." } }
   const message = code.includes("not_found")
     ? "This app is unavailable or you no longer have access."
     : code === "artifact_view_schema_incompatible"
@@ -315,14 +304,36 @@ export function registerOrgWorkflowRoutes<T extends { Variables: OrgRouteVariabl
   app.get(
     "/v1/apps",
     describeRoute({ tags: ["Apps"], summary: "List saved reusable apps", responses: {
-      200: jsonResponse("Saved apps returned.", z.object({ enabled: z.boolean(), items: z.array(savedAppSummarySchema) })),
+      200: jsonResponse("Saved apps returned.", z.object({ enabled: z.boolean(), sharingEnabled: z.boolean(), items: z.array(savedAppSummarySchema) })),
     } }),
     orgMemberRoute(),
     async (c) => {
-      if (!env.generatedArtifactViewsEnabled) return c.json({ enabled: false, items: [] })
+      if (!env.generatedArtifactViewsEnabled) return c.json({ enabled: false, sharingEnabled: false, items: [] })
       try {
         const { actorContext } = await contextFor(c)
-        return c.json({ enabled: true, items: await listSavedApps(actorContext) })
+        return c.json({ enabled: true, sharingEnabled: true, items: await listSavedApps(actorContext) })
+      } catch (error) {
+        const failure = appRouteFailure(error)
+        return c.json(failure.body, failure.status)
+      }
+    },
+  )
+
+  app.post(
+    "/v1/apps/:appId/share",
+    describeRoute({ tags: ["Apps"], summary: "Share a saved app with a teammate", responses: {
+      200: jsonResponse("App shared to the teammate's dashboard.", z.object({ ok: z.literal(true) })),
+      403: jsonResponse("Only app managers can share.", forbiddenSchema),
+      404: jsonResponse("App or teammate not found.", notFoundSchema),
+    } }),
+    orgMemberRoute(),
+    jsonValidator(z.object({ email: z.string().trim().email().max(320) })),
+    async (c) => {
+      if (!env.generatedArtifactViewsEnabled) return c.json({ error: "artifact_view_not_found" }, 404)
+      try {
+        const { actorContext } = await contextFor(c)
+        await shareSavedApp(actorContext, c.req.param("appId"), c.req.valid("json").email)
+        return c.json({ ok: true })
       } catch (error) {
         const failure = appRouteFailure(error)
         return c.json(failure.body, failure.status)

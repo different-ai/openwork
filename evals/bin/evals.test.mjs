@@ -72,6 +72,7 @@ test("parseArgs validates values, exclusivity, and unknown flags", () => {
   assert.throws(() => parseArgs(["--publish", "--pr", "1", "--den", "x"]), /mutually exclusive with --den/);
   assert.throws(() => parseArgs(["app-smoke", "--local", "--daytona"]), /--local is mutually exclusive with --daytona/);
   assert.throws(() => parseArgs(["app-smoke", "--local", "--den", "https:\/\/den.example"]), /--local is mutually exclusive with --den/);
+  assert.throws(() => parseArgs(["--list", "--publish", "--pr", "42"]), /mutually exclusive/);
   assert.throws(() => parseArgs(["--unknown"]), /Unknown flag: --unknown/);
 });
 
@@ -204,4 +205,16 @@ test("worldSnapshotsSince returns only snapshots written during the run, newest 
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+
+test("scenario names and explicit paths resolve alongside legacy specs", () => {
+  const scenario = new URL("../../scenarios/onboarding/e2e.test.ts", import.meta.url).pathname;
+  const legacy = new URL("../specs/signup-workspace-intent.e2e.test.ts", import.meta.url).pathname;
+  const files = [scenario, legacy];
+  assert.deepEqual(resolveTestNames(["onboarding"], files), [scenario]);
+  assert.deepEqual(resolveTestNames(["scenarios/onboarding/e2e.test.ts"], files), [scenario]);
+  assert.deepEqual(resolveTestNames(["signup-workspace-intent"], files), [legacy]);
+  assert.deepEqual(resolveTestNames(["onboarding", "scenarios/onboarding/e2e.test.ts"], files), [scenario]);
+  assert.throws(() => resolveTestNames(["missing"], files), /No test matches/);
 });

@@ -3,7 +3,7 @@ import { useCallback, useMemo } from "react";
 
 import type { createClient } from "../../../../app/lib/opencode";
 import type { OpenworkServerClient, OpenworkWorkspaceInfo } from "../../../../app/lib/openwork-server";
-import { deleteNativeSession } from "../../../../app/lib/opencode-session-native";
+import { deleteRouteSession } from "../../../shell/route-workspaces";
 import { setSessionArchived } from "../../../../app/lib/opencode-session";
 import type { ResolvedWorkspaceEndpoint } from "../../../../app/lib/workspace-endpoint";
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
@@ -217,7 +217,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
       if (!targetWorkspace) return { ok: false, error: "Session was not found in the current session list" };
       const endpoint = endpointForWorkspace(targetWorkspace);
       if (!endpoint) return { ok: false, error: "Workspace runtime is not connected" };
-      await deleteNativeSession(endpoint, sessionId);
+      await deleteRouteSession(endpoint, sessionId);
       if (selectedSessionId === sessionId) {
         navigateToSessionRoot();
       }

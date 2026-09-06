@@ -3058,7 +3058,7 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       if (!isRecord(payload) || !Array.isArray(payload.items) || typeof payload.enabled !== "boolean") {
         throw new Error("Your apps could not be loaded.");
       }
-      return { enabled: payload.enabled, items: payload.items.map((item) => savedAppSummarySchema.parse(item)) };
+      return { enabled: payload.enabled, sharingEnabled: payload.sharingEnabled === true, items: payload.items.map((item) => savedAppSummarySchema.parse(item)) };
     },
     async getSavedApp(orgId: string, appId: string, options: { revisionId?: string; receiptId?: string } = {}) {
       const params = new URLSearchParams();
@@ -3072,6 +3072,16 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
       return generatedArtifactViewSchema.parse(await requestJson<unknown>(baseUrls, `/v1/apps/${encodeURIComponent(appId)}/save`, {
         method: "POST", token, organizationId: orgId, body: input,
       }));
+    },
+    async deleteApp(orgId: string, appId: string) {
+      await requestJson<unknown>(baseUrls, `/v1/artifact-views/${encodeURIComponent(appId)}/retire`, {
+        method: "POST", token, organizationId: orgId,
+      });
+    },
+    async shareSavedApp(orgId: string, appId: string, email: string) {
+      await requestJson<unknown>(baseUrls, `/v1/apps/${encodeURIComponent(appId)}/share`, {
+        method: "POST", token, organizationId: orgId, body: { email },
+      });
     },
     async setAppOnDashboard(orgId: string, appId: string, added: boolean) {
       await requestJson<unknown>(baseUrls, `/v1/apps/${encodeURIComponent(appId)}/dashboard`, {

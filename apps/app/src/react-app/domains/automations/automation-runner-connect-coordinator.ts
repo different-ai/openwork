@@ -19,6 +19,7 @@ export function createAutomationRunnerConnectCoordinator(
   let running: Promise<void> | undefined
   let cancelRefresh: (() => void) | undefined
   let rejectionAttempt = 0
+  let failureAttempt = 0
   const schedule = options.schedule ?? defaultSchedule
 
   const clearRefresh = () => {
@@ -35,23 +36,29 @@ export function createAutomationRunnerConnectCoordinator(
     const drain = async () => {
       while (!disposed) {
         const connectRevision = revision
-        await options.connect(() => !disposed && revision === connectRevision)
+        try {
+          await options.connect(() => !disposed && revision === connectRevision)
+        } catch (error) {
+          if (disposed || connectRevision !== revision) continue
+          throw error
+        }
         if (connectRevision === revision) return
       }
     }
     const task = drain()
     running = task
-    const settle = () => {
+    const settle = (failed: boolean) => {
       if (running !== task) return
       running = undefined
+      failureAttempt = failed ? failureAttempt + 1 : 0
       if (!disposed && !cancelRefresh) {
         cancelRefresh = schedule(() => {
           cancelRefresh = undefined
           void request().catch(() => undefined)
-        }, options.refreshMs)
+        }, failed ? Math.min(30_000, 1_000 * (2 ** Math.min(failureAttempt - 1, 5))) : options.refreshMs)
       }
     }
-    void task.then(settle, settle)
+    void task.then(() => settle(false), () => settle(true))
     return task
   }
 

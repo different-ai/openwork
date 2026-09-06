@@ -1,3 +1,5 @@
+import { legacyExecutionPermissions } from "./managed-policy-rules.js";
+import { managedPolicyPluginPath } from "./managed-policy-plugin.js";
 /**
  * Runtime OpenCode configuration injected via a server-managed config file
  * passed to the engine as OPENCODE_CONFIG.
@@ -56,9 +58,16 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
   runtimeConfig: RuntimeOpencodeConfig,
 ): Record<string, unknown> {
   const disabledProviders = runtimeDisabledProviderList(runtimeConfig);
+  const permissions = legacyExecutionPermissions(runtimeConfig.managedPolicy?.execution);
+  const { managedPolicy: _managedPolicy, ...engineConfig } = runtimeConfig;
   const provider = runtimeProviderMap(runtimeConfig);
   return {
-    ...runtimeConfig,
+    ...engineConfig,
+    ...(runtimeConfig.managedPolicy?.allowCustomProviders === false ? { enabled_providers: [
+      ...Object.keys(provider).filter((id) => /^(?:lpr_|openwork$)/i.test(id)),
+      ...(runtimeConfig.managedPolicy.allowZenModel !== false ? ["opencode"] : []),
+    ] } : {}),
+    permission: { ...engineConfig.permission, ...permissions },
     default_agent: runtimeConfig.default_agent ?? "openwork",
     agent: {
       openwork: {
@@ -67,6 +76,7 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
         temperature: 0.2,
         prompt: OPENWORK_AGENT_PROMPT,
         permission: {
+          ...permissions,
           skill: {
             // OpenWork supplies its own current skill routing and no longer
             // supports these engine or legacy workspace skills.
@@ -80,6 +90,7 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
       },
     },
     plugin: [
+      managedPolicyPluginPath(),
       openworkChromeDevtoolsPluginPath(),
       // Registration order is prompt order: the knowledge plugin appends the
       // operating rules first, then the extensions plugin adds app-control

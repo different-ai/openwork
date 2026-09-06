@@ -12,6 +12,7 @@ import {
 } from "./inference-reporting.js"
 import type { InferenceReporter } from "./inference-reporting.js"
 import { listModelCatalog, resolveModelAlias } from "./model-catalog.js"
+import type { AnalyticsObserver, beginModelAnalytics } from "./task-analytics.js"
 
 type JsonObject = Record<string, unknown>
 type PreparedBody = {
@@ -52,6 +53,10 @@ const defaultProxyDependencies: ProxyDependencies = {
     return limits.ensureUsableBuckets(organizationId)
   },
   fetch,
+  async analytics(input) {
+    const { beginModelAnalytics } = await import("./task-analytics.js")
+    return beginModelAnalytics(input)
+  },
 }
 
 type ProxyDependencies = {
@@ -60,6 +65,7 @@ type ProxyDependencies = {
   ensureUsableBuckets: typeof ensureUsableBucketsFn
   fetch: typeof fetch
   reporter?: InferenceReporter
+  analytics?: typeof beginModelAnalytics
 }
 
 function readInferenceBearerKey(request: Request) {
@@ -234,7 +240,12 @@ function secondsUntil(date: Date) {
   return Math.max(0, Math.ceil((date.getTime() - Date.now()) / 1000))
 }
 
-function trackStream(body: ReadableStream<Uint8Array> | null, done: () => Promise<void>, fail: () => Promise<void>) {
+function trackStream(body: ReadableStream<Uint8Array> | null, observer: AnalyticsObserver | null, ok: boolean) {
+  const finish = (status: "completed" | "failed" | "cancelled") => {
+    try { observer?.finish(status) } catch { /* Optional analytics cannot interrupt inference. */ }
+  }
+  const complete = () => finish(ok ? "completed" : "failed")
+  if (!body) complete()
   if (!body) return body
   const reader = body.getReader()
   return new ReadableStream<Uint8Array>({
@@ -242,18 +253,19 @@ function trackStream(body: ReadableStream<Uint8Array> | null, done: () => Promis
       try {
         const chunk = await reader.read()
         if (chunk.done) {
-          await done()
+          complete()
           controller.close()
           return
         }
+        try { observer?.chunk(chunk.value) } catch { /* Forward the original bytes even if observation fails. */ }
         controller.enqueue(chunk.value)
       } catch (error) {
-        await fail()
+        finish("failed")
         controller.error(error)
       }
     },
     async cancel(reason) {
-      await fail()
+      finish("cancelled")
       await reader.cancel(reason)
     },
   })
@@ -623,6 +635,14 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
 
     const upstreamPath = c.req.path.replace(/^\/api\/v1/, "")
     const upstreamUrl = new URL(`${env.openRouterUpstreamUrl}${upstreamPath}`)
+    const startedAt = Date.now()
+    // Fail closed and bound the optional analytics check; it cannot hold up
+    // inference when the analytics store is unavailable.
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const analytics = await Promise.race([
+      dependencies.analytics?.({ key: inferenceKey, request: c.req.raw, requestId: openworkRequestId, model: prepared.upstreamModel, startedAt }).catch(() => null) ?? null,
+      new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), 250) }),
+    ]).finally(() => { if (timer) clearTimeout(timer) })
     let upstream: Response
     try {
       const upstreamInit: ProxyRequestInit = {
@@ -633,6 +653,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
       }
       upstream = await dependencies.fetch(upstreamUrl, upstreamInit)
     } catch (error) {
+      analytics?.(false).finish("failed")
       logProxyError("Failed to reach OpenRouter upstream", {
         openworkRequestId,
         organizationId: inferenceKey.organization_id,
@@ -682,11 +703,8 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
 
     const headers = new Headers(upstream.headers)
     headers.set("x-openwork-request-id", openworkRequestId)
-    return new Response(trackStream(
-      upstream.body,
-      async () => {},
-      async () => {},
-    ), { status: upstream.status, statusText: upstream.statusText, headers })
+    return new Response(trackStream(upstream.body, analytics?.(upstream.headers.get("content-type")?.includes("text/event-stream") === true) ?? null, upstream.ok),
+      { status: upstream.status, statusText: upstream.statusText, headers })
   }
 
   app.all("/api/v1", handleApiRequest)

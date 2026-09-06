@@ -35,7 +35,7 @@ test("the per-workspace New task plus stays clickable over a long truncated work
   // TODO(primitive): probe.attribute should read the accessible control's aria-expanded value.
   const expandedBefore = await probe.eval(`document.querySelector('[data-workspace-new-task]')
     ?.closest("[data-workspace-actions]")?.parentElement?.querySelector("[aria-expanded]")?.getAttribute("aria-expanded")`);
-  await user.click({ role: "button", label: "New task", nth: 1 });
+  await user.click({ role: "button", label: `New session · ${workspaceName}` });
   await probe.eventually(() => agent.list(), {
     within: 60_000,
     label: "session created by workspace New task",

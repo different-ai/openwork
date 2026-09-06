@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 
 import {
   classifyRouteSessionReadError,
+  createRouteSession,
+  deleteRouteSession,
   mergeRouteWorkspaces,
   readRouteSessionsWithRetry,
   refreshRouteWorkspaceListState,
@@ -21,6 +23,70 @@ import {
   workspaceExtensionsRoute,
   workspaceSettingsRoute,
 } from "../src/react-app/shell/workspace-routes";
+import { resolveWorkspaceEndpoint } from "../src/app/lib/workspace-endpoint";
+
+describe("workspace session mutations", () => {
+  for (const engine of ["v1", "v2", "legacy"]) {
+    test(`creates and deletes through the owning server's ${engine} engine`, async () => {
+      const originalFetch = globalThis.fetch;
+      const requests: string[] = [];
+      globalThis.fetch = async (input, init) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        const path = new URL(request.url).pathname;
+        requests.push(`${request.method} ${path}`);
+        if (path === "/experimental/engine-v2-preview/status") {
+          return Response.json({
+            enabled: engine === "v2", running: engine === "v2", chatRouting: engine === "v2",
+            mirroredProviderIds: [], skippedProviderIds: [], catalogModelIds: [],
+          }, {
+            status: engine === "legacy" ? 404 : 200,
+          });
+        }
+        expect(request.headers.get("Authorization")).toBe("Bearer fixture-token");
+        if (request.method === "DELETE") return Response.json(true);
+        if (engine === "v2") expect(await request.json()).toMatchObject({ location: { directory: "/existing" } });
+        return Response.json({ id: "ses_created", title: "New session", time: { created: 1, updated: 1 } });
+      };
+      try {
+        const endpoint = resolveWorkspaceEndpoint({ id: "ws_existing", workspaceType: "local" }, {
+          baseUrl: "http://owner.test", token: "fixture-token",
+        });
+        if (!endpoint) throw new Error("Workspace endpoint missing");
+        expect((await createRouteSession(endpoint, "/existing")).id).toBe("ses_created");
+        expect(await deleteRouteSession(endpoint, "ses_created")).toBe(true);
+        expect(requests).toEqual([
+          "GET /experimental/engine-v2-preview/status",
+          `POST /workspace/ws_existing/${engine === "v2" ? "opencode2/api/session" : "opencode/session"}`,
+          "GET /experimental/engine-v2-preview/status",
+          `DELETE /workspace/ws_existing/${engine === "v2" ? "opencode2/api/session" : "opencode/session"}/ses_created`,
+        ]);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  }
+
+  test("a failed routing read cannot silently mutate a v1 session", async () => {
+    const originalFetch = globalThis.fetch;
+    const methods: string[] = [];
+    globalThis.fetch = async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      methods.push(request.method);
+      return Response.json({ message: "Routing unavailable" }, { status: 503 });
+    };
+    try {
+      const endpoint = resolveWorkspaceEndpoint({ id: "ws_existing", workspaceType: "local" }, {
+        baseUrl: "http://owner.test", token: "fixture-token",
+      });
+      if (!endpoint) throw new Error("Workspace endpoint missing");
+      await expect(createRouteSession(endpoint, "/existing")).rejects.toThrow();
+      await expect(deleteRouteSession(endpoint, "ses_created")).rejects.toThrow();
+      expect(methods).toEqual(["GET", "GET"]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
 
 describe("workspace surface routes", () => {
   test("keeps Extensions outside Settings and preserves deep links", () => {

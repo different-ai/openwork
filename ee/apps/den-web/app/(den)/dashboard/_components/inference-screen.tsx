@@ -14,6 +14,7 @@ import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-fl
 import { getBillingRoute, getCustomLlmProvidersRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { ModelsAnalyticsPanel } from "./models-analytics-panel";
 
 type InferenceWindowType = "five_hour" | "weekly" | "monthly";
 
@@ -453,6 +454,8 @@ export function InferenceScreen() {
       )}
 
       {showGettingStarted ? <GettingStartedCard /> : null}
+
+      {enabled && subscribed && canManageModels ? <ModelsAnalyticsPanel key={orgContext?.organization.id} /> : null}
 
       <ModelsLineup subscribed={subscribed} />
 

@@ -5,10 +5,12 @@ import type {
   PermissionV2Request,
   Provider,
   ProviderListResponse,
+  QuestionRequest,
   Session,
   SessionStatus,
   TextPart,
   ToolPart,
+  UnknownError,
 } from "@opencode-ai/sdk/v2/client";
 
 import { createClient, createDesktopFetch, type FieldsResult } from "./opencode";
@@ -55,6 +57,7 @@ type PromptParameters = SessionParameters & {
 
 type SessionCreateParameters = DirectoryParameters & {
   model?: ModelBinding;
+  title?: string;
 };
 
 type SessionUpdateParameters = SessionParameters & {
@@ -83,6 +86,44 @@ type V2PermissionReplyParameters = {
   message?: string;
 };
 
+type V2QuestionField = {
+  key: string;
+  multiple: boolean;
+  options: { value: string; label: string; description: string }[];
+};
+
+function mapV2Question(value: unknown): { request: QuestionRequest; fields: V2QuestionField[] } | null {
+  if (!isRecord(value) || readString(value.metadata, "kind") !== "question") return null;
+  const id = readString(value, "id");
+  const sessionID = readString(value, "sessionID");
+  if (!id || !sessionID || !Array.isArray(value.fields) || value.fields.length === 0) return null;
+  const fields: V2QuestionField[] = [];
+  const questions: QuestionRequest["questions"] = [];
+  for (const field of value.fields) {
+    const key = readString(field, "key");
+    const type = readString(field, "type");
+    if (!isRecord(field) || !key || (type !== "string" && type !== "multiselect")) return null;
+    const options = Array.isArray(field.options) ? field.options.flatMap((option) => {
+      const label = readString(option, "label");
+      const value = readString(option, "value");
+      return label !== undefined && value !== undefined
+        ? [{ label, value, description: readString(option, "description") ?? "" }] : [];
+    }) : [];
+    fields.push({ key, multiple: type === "multiselect", options });
+    questions.push({
+      header: readString(field, "title") ?? "",
+      question: readString(field, "description") ?? readString(field, "title") ?? "",
+      options: options.map(({ label, description }) => ({ label, description })),
+      multiple: type === "multiselect",
+      custom: field.custom !== false,
+    });
+  }
+  const source = readRecord(value.metadata, "tool");
+  const messageID = readString(source, "messageID");
+  const callID = readString(source, "id");
+  return { request: { id, sessionID, questions, ...(messageID && callID ? { tool: { messageID, callID } } : {}) }, fields };
+}
+
 type V2MessageRole = "user" | "assistant" | "system";
 
 export type V2MappedMessage = {
@@ -94,6 +135,7 @@ export type V2MappedMessage = {
       created: number;
       completed?: number;
     };
+    error?: UnknownError;
   };
   parts: Part[];
 };
@@ -182,7 +224,7 @@ function readTimestamp(value: Record<string, unknown>): number {
   return readNumber(value, "timestamp") ?? Date.now();
 }
 
-function mapV2Session(value: unknown, directory: string | undefined): Session | null {
+function mapV2Session(value: unknown, directory: string | undefined, eventCreated?: number): Session | null {
   const data = responseData(value);
   if (!isRecord(data)) return null;
   const source = readRecord(data, "info") ?? data;
@@ -190,7 +232,7 @@ function mapV2Session(value: unknown, directory: string | undefined): Session | 
   if (!id) return null;
   const time = readRecord(source, "time");
   const location = readRecord(source, "location");
-  const created = readNumber(time, "created") ?? readNumber(source, "created") ?? 0;
+  const created = readNumber(time, "created") ?? readNumber(source, "created") ?? eventCreated ?? 0;
   const updated = readNumber(time, "updated") ?? readNumber(source, "updated") ?? created;
   const archived = readNumber(time, "archived");
   const parentID = readString(source, "parentID");
@@ -199,7 +241,8 @@ function mapV2Session(value: unknown, directory: string | undefined): Session | 
     slug: readString(source, "slug") ?? id,
     projectID: readString(source, "projectID") ?? "v2",
     directory: readString(source, "directory") ?? readString(location, "directory") ?? directory ?? "",
-    title: readString(source, "title") ?? "Untitled session",
+    // Keep native untitled sessions eligible for compatibility title recovery.
+    title: readString(source, "title") || `New session - ${new Date(created).toISOString()}`,
     version: readString(source, "version") ?? "v2",
     time: {
       created,
@@ -231,6 +274,11 @@ function parseToolInput(value: unknown): Record<string, unknown> {
 
 function compatibleToolName(tool: string): string {
   return tool === "shell" ? "bash" : tool;
+}
+
+function toolPartMetadata(tool: string): Pick<ToolPart, "metadata"> {
+  // Adapter provenance stays separate from metadata returned by the tool.
+  return tool === "execute" ? { metadata: { openworkV2CodeMode: true } } : {};
 }
 
 function toolOutput(value: unknown, result?: unknown): string {
@@ -277,6 +325,7 @@ function mapV2ToolPart(
     type: "tool",
     callID,
     tool,
+    ...toolPartMetadata(sourceTool),
   };
 
   if (status === "pending") {
@@ -359,15 +408,20 @@ function mapV2Message(value: unknown, sessionID: string): V2MappedMessage | null
   const completed = readNumber(time, "completed");
   const resolvedSessionID = readString(value, "sessionID") ?? sessionID;
   const parts = mapV2MessageParts(value, id, resolvedSessionID, created);
+  const role = messageRole(value);
+  const error = readRecord(value, "error");
   return {
     info: {
       id,
       sessionID: resolvedSessionID,
-      role: messageRole(value),
+      role,
       time: {
         created,
         ...(completed === undefined ? {} : { completed }),
       },
+      ...(role === "assistant" && error
+        ? { error: { name: "UnknownError", data: { message: errorMessage(error) } } }
+        : {}),
     },
     parts,
   };
@@ -586,6 +640,7 @@ function pendingToolPart(stream: ToolStream): ToolPart {
     type: "tool",
     callID: stream.callID,
     tool: stream.tool,
+    ...toolPartMetadata(stream.tool),
     state: {
       status: "pending",
       input: stream.input,
@@ -602,6 +657,7 @@ function runningToolPart(stream: ToolStream, start: number): ToolPart {
     type: "tool",
     callID: stream.callID,
     tool: stream.tool,
+    ...toolPartMetadata(stream.tool),
     state: {
       status: "running",
       input: stream.input,
@@ -624,6 +680,7 @@ function completedToolPart(
     type: "tool",
     callID: stream.callID,
     tool: stream.tool,
+    ...toolPartMetadata(stream.tool),
     state: {
       status: "completed",
       input: stream.input,
@@ -647,6 +704,7 @@ function failedToolPart(
     type: "tool",
     callID: stream.callID,
     tool: stream.tool,
+    ...toolPartMetadata(stream.tool),
     state: {
       status: "error",
       input: stream.input,
@@ -695,6 +753,33 @@ export function translateV2Event(
   if (!type) return null;
   const properties = eventProperties(value);
   const sessionID = readSessionID(properties);
+
+  if (type === "session.inbox.enqueued") {
+    const messageID = readString(properties, "inboxID");
+    const item = readRecord(properties, "item");
+    const payload = readRecord(item, "payload");
+    if (!sessionID || !messageID || readString(item, "type") !== "user" || !payload) return null;
+    // The inbox ID becomes the persisted user-message ID on delivery. Using
+    // it here lets the live row reconcile with history without duplicating it.
+    const message = mapV2Message({
+      ...payload,
+      id: messageID,
+      type: "user",
+      time: { created: readNumber(value, "created") ?? readTimestamp(properties) },
+    }, sessionID);
+    if (!message) return null;
+    return [
+      { type: "message.updated", properties: { info: message.info } },
+      ...message.parts.map((part): OpencodeEvent => ({ type: "message.part.updated", properties: { part } })),
+    ];
+  }
+
+  if (type === "session.inbox.cancelled") {
+    const messageID = readString(properties, "inboxID");
+    return sessionID && messageID
+      ? [{ type: "message.removed", properties: { sessionID, messageID } }]
+      : null;
+  }
 
   if (type === "session.execution.started") {
     if (!sessionID) return null;
@@ -887,6 +972,17 @@ export function translateV2Event(
     return permission ? [{ type: "permission.asked", properties: permission }] : null;
   }
 
+  if (type === "form.created") {
+    const question = mapV2Question(properties.form);
+    return question ? [{ type: "question.asked", properties: question.request }] : null;
+  }
+
+  if (type === "form.replied" || type === "form.cancelled") {
+    const requestID = readString(properties, "id");
+    if (!sessionID || !requestID) return null;
+    return [{ type: type === "form.replied" ? "question.replied" : "question.rejected", properties: { sessionID, requestID } }];
+  }
+
   if (type === "permission.replied" || type === "permission.v2.replied") {
     const requestID = readString(properties, "requestID");
     const reply = readString(properties, "reply");
@@ -903,13 +999,23 @@ export function translateV2Event(
     return sessionID ? [{ type: "session.idle", properties: { sessionID } }] : null;
   }
 
-  if (type === "session.created" || type === "session.renamed") {
-    const info = mapV2Session(properties, readString(readRecord(value, "location") ?? {}, "directory"));
+  if (type === "session.created") {
+    const info = mapV2Session(
+      properties,
+      readString(readRecord(value, "location") ?? {}, "directory"),
+      readNumber(value, "created"),
+    );
     if (!info) return null;
     return [{
-      type: type === "session.created" ? "session.created" : "session.updated",
+      type: "session.created",
       properties: { info },
     }];
+  }
+
+  if (type === "session.renamed") {
+    const title = readString(properties, "title");
+    if (!sessionID || title === undefined) return null;
+    return [{ type: "session.updated", properties: { info: { id: sessionID, title } } }];
   }
 
   if (type === "session.deleted") {
@@ -1124,6 +1230,7 @@ export function createClientV2(
   const compatibilityClient = createClient(baseUrl, directory, { mode: "openwork", token: auth.token });
   const injectedEventListeners = new Set<(event: OpencodeEvent) => void>();
   const permissionSessionByRequestID = new Map<string, string>();
+  const questionFormsByID = new Map<string, NonNullable<ReturnType<typeof mapV2Question>>>();
 
   const emitInjectedEvent = (event: OpencodeEvent) => {
     for (const listener of injectedEventListeners) listener(event);
@@ -1246,6 +1353,49 @@ export function createClientV2(
     return { data: true, request: result.request, response: result.response };
   };
 
+  const listQuestions = async (
+    _parameters: DirectoryParameters = {}, options?: RequestOptions,
+  ): Promise<FieldsResult<QuestionRequest[]>> => {
+    const result = await request("GET", "/api/form/request", undefined, options?.signal);
+    if (!result.response.ok) return failedResult(result);
+    const questions = responseItems(result.payload).flatMap((item) => {
+      const question = mapV2Question(item);
+      if (!question) return [];
+      questionFormsByID.set(question.request.id, question);
+      return [question.request];
+    });
+    return successfulResult(result, questions);
+  };
+
+  const settleQuestion = async (
+    parameters: DirectoryParameters & { requestID: string; answers?: string[][] },
+    options?: RequestOptions,
+  ): Promise<FieldsResult<boolean>> => {
+    // SSE and interaction clients have separate lifetimes. A question received
+    // live must also be answerable without having appeared in the initial list.
+    if (!questionFormsByID.has(parameters.requestID)) {
+      const listed = await listQuestions(parameters, options);
+      if (listed.data === undefined) return { error: listed.error, request: listed.request, response: listed.response };
+    }
+    const question = questionFormsByID.get(parameters.requestID);
+    if (!question) return {
+      error: { name: "QuestionNotFound", requestID: parameters.requestID },
+      request: new Request(`${baseUrl}/api/form/request`),
+      response: new Response(null, { status: 404 }),
+    };
+    const answer = parameters.answers ? Object.fromEntries(question.fields.map((field, index) => {
+      const values = (parameters.answers?.[index] ?? []).map((label) =>
+        field.options.find((option) => option.label === label)?.value ?? label);
+      return [field.key, field.multiple ? values : values[0] ?? ""];
+    })) : undefined;
+    const result = await request("POST",
+      `/api/session/${encodeURIComponent(question.request.sessionID)}/form/${encodeURIComponent(parameters.requestID)}/${answer ? "reply" : "cancel"}`,
+      answer ? { answer } : undefined, options?.signal);
+    if (!result.response.ok) return failedResult(result);
+    questionFormsByID.delete(parameters.requestID);
+    return successfulResult(result, true);
+  };
+
   const getSession = async (
     parameters: SessionParameters,
     options?: RequestOptions,
@@ -1271,6 +1421,7 @@ export function createClientV2(
     const location = parameters.directory ?? directory;
     const result = await request("POST", "/api/session", {
       ...(model ? { model } : {}),
+      ...(parameters.title === undefined ? {} : { title: parameters.title }),
       ...(location ? { location: { directory: location } } : {}),
     }, options?.signal);
     if (!result.response.ok) return failedResult(result);
@@ -1351,6 +1502,12 @@ export function createClientV2(
         options?.signal,
       );
       if (!modelResult.response.ok) return failedResult(modelResult);
+      if (parameters.system !== undefined) {
+        const instructions = await request("PUT",
+          `/api/session/${encodeURIComponent(parameters.sessionID)}/instructions/entries/openwork-context`,
+          { value: parameters.system }, options?.signal);
+        if (!instructions.response.ok) return failedResult(instructions);
+      }
       const text = (parameters.parts ?? [])
         .filter((part) => part.type === "text" && typeof part.text === "string")
         .map((part) => typeof part.text === "string" ? part.text : "")
@@ -1507,7 +1664,9 @@ export function createClientV2(
       respond: respondPermission,
     },
     question: {
-      list: async (): Promise<FieldsResult<never[]>> => localResult(baseUrl, "/api/question", []),
+      list: listQuestions,
+      reply: settleQuestion,
+      reject: (parameters: DirectoryParameters & { requestID: string }, options?: RequestOptions) => settleQuestion(parameters, options),
     },
     v2: {
       session: {

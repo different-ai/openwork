@@ -93,3 +93,85 @@ test("scripts and records deterministic OpenAI-compatible agent tool rounds", as
   assert.deepEqual(requests.map((request) => request.completedTools), [0, 1, 2]);
   assert.deepEqual(requests.map((request) => request.matchedMarkers), [[marker], [marker], [marker]]);
 });
+
+test("unadvertised calls require an explicit adversarial workload", async () => {
+  await using mock = await startMockMcp({
+    port: await allocateFreePort(),
+    agentWorkloads: [false, true].map((allowUnadvertisedTool) => ({
+      promptMarker: `unadvertised-${allowUnadvertisedTool}`,
+      finalReply: "attempt complete",
+      steps: [{ tool: "unadvertised-shell", allowUnadvertisedTool, arguments: { command: "true" } }],
+    })),
+  });
+  for (const enabled of [false, true]) {
+    const marker = `unadvertised-${enabled}`;
+    const response = await fetch(`${mock.url}/v1/chat/completions`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify(completionBody(marker, 0)),
+    });
+    assert.equal(response.status, enabled ? 200 : 400);
+    const body = await response.text();
+    assert.match(body, enabled ? /"name":"unadvertised-shell"/ : /was not offered/);
+    const requests = await mock.agentRequests({ promptMarker: marker, atLeast: 1 });
+    assert.deepEqual(requests.map((request) => request.kind), [enabled ? "tool" : "error"]);
+  }
+});
+
+test("turn-scoped workloads isolate revisions from earlier markers and tool rounds", async () => {
+  await using mock = await startMockMcp({
+    port: await allocateFreePort(),
+    agentWorkloads: ["first sketch", "revise sketch"].map((promptMarker) => ({
+      latestUserTurn: true,
+      promptMarker,
+      finalReply: `${promptMarker} complete`,
+      steps: [{ tool: "write", arguments: { content: promptMarker } }],
+    })),
+  });
+  const history = [
+    { role: "user", content: "first sketch" },
+    { role: "tool", tool_call_id: "old", content: "old result" },
+    { role: "assistant", content: "first sketch complete" },
+    { role: "user", content: "revise sketch" },
+  ];
+  for (const completed of [false, true]) {
+    const response = await fetch(`${mock.url}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ...completionBody("unused", 0),
+        messages: [...history, ...(completed ? [{ role: "tool", tool_call_id: "new", content: "new result" }] : [])],
+      }),
+    });
+    assert.equal(response.status, 200);
+    const text = await response.text();
+    assert.match(text, completed ? /revise sketch complete/ : /"name":"write"/);
+    assert.doesNotMatch(text, /first sketch complete/);
+  }
+  const requests = await mock.agentRequests({ promptMarker: "revise sketch" });
+  assert.deepEqual(requests.map((request) => request.kind), ["tool", "final"]);
+  assert.deepEqual(requests.map((request) => request.completedTools), [0, 1]);
+  assert.deepEqual(requests.map((request) => request.matchedMarkers), [["revise sketch"], ["revise sketch"]]);
+});
+
+
+test("native Responses preserve the configured provider header", async () => {
+  await using mock = await startMockMcp({
+    port: await allocateFreePort(),
+    agentWorkloads: [{ promptMarker: "native-header-proof", finalReply: "The header reached the provider", steps: [] }],
+    agentRequiredHeader: { name: "x-private-model-setting", value: "fixture-only-value" },
+  });
+  const request = (header?: string) => fetch(`${mock.url}/v1/responses`, {
+    method: "POST", headers: { "content-type": "application/json", ...(header ? { "x-private-model-setting": header } : {}) },
+    body: JSON.stringify({ model: "native-fixture", input: "native-header-proof", stream: true }),
+  });
+  for (const header of [undefined, "wrong-value"]) {
+    const denied = await request(header);
+    assert.equal(denied.status, 401);
+    await denied.text();
+  }
+  const accepted = await request("fixture-only-value");
+  assert.equal(accepted.status, 200);
+  const events = (await accepted.text()).split("\n").filter(line => line.startsWith("data: ")).map(line => JSON.parse(line.slice(6)));
+  assert.ok(events.some(event => event.type === "response.completed"));
+  assert.equal(events.filter(event => event.type === "response.output_text.delta").map(event => event.delta).join(""), "The header reached the provider");
+});

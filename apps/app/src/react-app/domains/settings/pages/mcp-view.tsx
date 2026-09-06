@@ -1329,12 +1329,6 @@ export function McpView(props: McpViewProps) {
 
   return (
     <section className="w-full max-w-3xl animate-in fade-in duration-300">
-      {props.mcpStatus ? (
-        <div className="mb-5 whitespace-pre-wrap wrap-break-word rounded-xl border border-dls-border bg-dls-hover px-4 py-3 text-xs text-dls-secondary">
-          {props.mcpStatus}
-        </div>
-      ) : null}
-
       {props.builtInExtensionsDisabled && props.allowManageExtensions ? (
         <div className="mb-5 rounded-xl border border-amber-6 bg-amber-2 px-4 py-3 text-xs text-amber-11">
           Built-in OpenWork extensions are disabled by your organization. Use Show hidden to review blocked built-ins.
@@ -1428,6 +1422,13 @@ export function McpView(props: McpViewProps) {
           ) : null}
         </div>
       </div>
+
+      {/* Async refresh status must not move the Add button or filter controls. */}
+      {props.mcpStatus ? (
+        <div className="mb-5 whitespace-pre-wrap wrap-break-word rounded-xl border border-dls-border bg-dls-hover px-4 py-3 text-xs text-dls-secondary">
+          {props.mcpStatus}
+        </div>
+      ) : null}
 
       <McpQuickConnectSection
         skillCount={skillCount}

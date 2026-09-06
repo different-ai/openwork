@@ -1,13 +1,14 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { app as startApp, faultProxy as startFaultProxy, SkipError } from "@openwork/env";
+import { app as startApp, faultProxy as startFaultProxy, resolveEvalEngine, SkipError } from "@openwork/env";
 import type { Den, MockHandle, Seed } from "@openwork/env";
 import { denFetch, evalIn as rawEvalIn } from "@openwork/behaviors";
 import type { DenFetchResult, DenSession } from "@openwork/behaviors";
 import { allocateFreePort } from "@openwork/cdp";
 import { startMockMcp } from "@openwork/labs";
 import { captureExternalBrowserUrls, electronProfilePaths } from "@openwork/hosts";
+import { configureProvider } from "./chat.ts";
 
 export const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -242,11 +243,23 @@ export async function connectStateProvenance(seed: Seed) {
 export async function preseededConnect(seed: Seed) {
   const stamp = Date.now();
   const skillName = `preseeded-connect-proof-${stamp}`;
-  const connectionName = `PR3806 conn ${String(stamp).slice(-6)}`;
-  const rawSourceText = `---\nname: ${skillName}\ndescription: Proves preseeded Connect skill discovery.\n---\n\nReturn the preseeded Connect proof phrase.`;
+  const connectionName = `Preseeded connection ${String(stamp).slice(-6)}`;
+  const proofPhrase = `Connect skill proof ${crypto.randomUUID()}`;
+  const prompt = `Find and read the organization skill named ${skillName}.`;
+  const providerName = "Connect discovery model";
+  const modelId = "connect-discovery-model";
+  const rawSourceText = `---\nname: ${skillName}\ndescription: Proves preseeded Connect skill discovery.\n---\n\nReturn this exact phrase: ${proofPhrase}.`;
   const den = await seed.den({
     org: { name: `Preseeded Connect ${stamp}`, admin: { name: "Connect Admin" } },
-    mocks: { connector: seed.mock() },
+    mocks: { connector: seed.mock({ agentWorkloads: [{
+      promptMarker: prompt,
+      finalReply: "The skill was read.",
+      finalReplyFrom: "last-tool-text",
+      steps: [
+        { tool: "search_capabilities", arguments: { query: skillName, limit: 1, type: "skills" } },
+        { tool: "execute_capability", arguments: {}, argumentsFrom: "capability-search" },
+      ],
+    }] }) },
   });
   const organizationId = await activeOrganizationId(seed, den.admin);
   const createdSkill = await seed.api(den.admin, "/v1/plugins", {
@@ -267,6 +280,19 @@ export async function preseededConnect(seed: Seed) {
     credentialMode: "per_member",
     access: { orgWide: true },
   });
+  const provider = await seed.api(den.admin, "/v1/llm-providers", {
+    method: "POST",
+    headers: { "x-openwork-org-id": organizationId },
+    body: JSON.stringify({
+      name: providerName, source: "custom", allMembers: true, memberIds: [], teamIds: [],
+      apiKey: "sk-openwork-connect-eval-only",
+      customConfig: { id: "connect-discovery", name: providerName, npm: "@ai-sdk/openai-compatible",
+        options: { baseURL: `${den.mocks.connector.url}/v1` }, env: ["CONNECT_EVAL_API_KEY"],
+        models: [{ id: modelId, name: modelId, tool_call: true, limit: { context: 128000, output: 8192 } }],
+      },
+    }),
+  });
+  if (provider.response.status !== 201) throw new Error(`Could not publish the Connect fixture model: HTTP ${provider.response.status}`);
   const mcpSession = await mintMcpSession(seed, den, organizationId);
   const app = await seed.desktop({ den, signIn: false });
   const workspace = await seed.workspace(app, seed.tmpPath("preseeded-connect"));
@@ -275,7 +301,7 @@ export async function preseededConnect(seed: Seed) {
     args: [workspace.workspaceId],
   });
   return {
-    app,
+    app, den, prompt, proofPhrase, providerName, modelId,
     admin: den.admin,
     member: den.admin,
     mcpSession,
@@ -290,15 +316,61 @@ export async function preseededConnect(seed: Seed) {
 }
 
 export async function connectorBranding(seed: Seed) {
-  const app = await seed.desktop({ name: "connector-tool-call-branding" });
-  await seed.workspace(app, seed.tmpPath("connector-tool-call-branding"));
-  await seed.session(app);
-  // TODO(primitive): seed.connectorToolCall
-  await seed.evalIn(app, `window.__openworkControl.execute("eval.connector_tool_call.seed")`, {
-    awaitPromise: true,
-    timeoutMs: 60_000,
+  const engine = resolveEvalEngine();
+  const proof = `Channel list ${crypto.randomUUID()}`;
+  const prompt = "List three of my Slack channels.";
+  const failurePrompt = "Read the three latest items in my Slack history.";
+  const toolArguments = { limit: 3 };
+  const inputSchema = { type: "object", properties: { limit: { type: "integer" } }, required: ["limit"] };
+  const search = (name: string) => ({ query: `Slack ${name}`, type: "mcp", limit: 1 });
+  const steps = (name: string) => engine === "v2" ? [{
+    tool: "execute",
+    arguments: { code: `
+      const found = await tools["openwork-cloud"].search_capabilities(${JSON.stringify(search(name))});
+      const result = typeof found === "string" ? JSON.parse(found) : found;
+      const catalog = result.matches ? result : JSON.parse(result.content[0].text);
+      return await tools["openwork-cloud"].execute_capability({ name: catalog.matches[0].name, body: ${JSON.stringify(toolArguments)} });
+    ` },
+  }] : [
+    { tool: "search_capabilities", arguments: search(name) },
+    { tool: "execute_capability", arguments: { body: toolArguments }, argumentsFrom: "capability-search" },
+  ];
+  const den = await seed.den({
+    org: { name: "Connector tool display", admin: { name: "Connector Admin" } },
+    mocks: { connector: seed.mock({
+      allowUnauthenticatedMcp: true,
+      tools: [
+        { name: "list_channels", description: "List Slack channels", inputSchema,
+          delayMs: 4_000, result: { content: [{ type: "text", text: proof }] } },
+        { name: "read_history", description: "Read Slack history", inputSchema,
+          delayMs: 4_000, result: { isError: true, content: [{ type: "text", text: "History lookup failed." }] } },
+      ],
+    }) },
   });
-  return { app };
+  await seed.orgConnection(den.admin, {
+    name: "Slack", url: den.mocks.connector.mcpUrl, authType: "none", credentialMode: "shared", access: { orgWide: true },
+  });
+  const workloads = await fetch(`${den.mocks.connector.url}/admin/agent-workloads`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workloads: [
+      { promptMarker: prompt, latestUserTurn: true, finalReply: "Listed the channels.", finalReplyFrom: "last-tool-text", steps: steps("list_channels") },
+      { promptMarker: failurePrompt, latestUserTurn: true, finalReply: "The history lookup failed.", steps: steps("read_history") },
+    ] }),
+  });
+  if (!workloads.ok) throw new Error("Could not arrange connector model turns.");
+  const providerId = "connector-display";
+  const modelId = "connector-display-model";
+  const app = await seed.desktop({ den, as: "admin", model: `${providerId}/${modelId}` });
+  const workspace = await seed.workspace(app, seed.tmpPath("connector-tool-call-branding"));
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    provider: { [providerId]: {
+      npm: "@ai-sdk/openai-compatible", name: "Connector display model",
+      options: { baseURL: `${den.mocks.connector.url}/v1`, apiKey: "sk-connector-display-fixture" },
+      models: { [modelId]: { name: "Connector display model" } },
+    } },
+  });
+  await seed.session(app);
+  return { app, den, prompt, failurePrompt, proof };
 }
 
 export async function connectorsQuickAdd(seed: Seed) {

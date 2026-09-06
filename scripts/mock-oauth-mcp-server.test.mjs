@@ -131,6 +131,41 @@ test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeo
     { name: "execute_capability", args: { target: "desktop" } },
   ]);
 
+  const appTool = {
+    name: "get_page",
+    title: "Get page",
+    inputSchema: { type: "object", properties: { cloudId: { type: "string" } }, required: ["cloudId"] },
+    _meta: { ui: { resourceUri: "ui://mock/page" } },
+    appHtml: "<!doctype html><html><body>Page</body></html>",
+    validateRequiredArguments: true,
+    result: { content: [{ type: "text", text: "page loaded" }] },
+  };
+  const appConfigured = await fetch(`${origin}/admin/tools`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ tools: [appTool] }),
+  });
+  assert.equal(appConfigured.status, 200);
+  const appCatalog = await rpc("tools/list", {});
+  assert.equal(appCatalog.result.tools[0]._meta.ui.resourceUri, "ui://mock/page");
+  assert.equal("appHtml" in appCatalog.result.tools[0], false);
+  assert.equal("validateRequiredArguments" in appCatalog.result.tools[0], false);
+  const appInitialized = await rpc("initialize", {});
+  assert.deepEqual(appInitialized.result.capabilities.resources, {});
+  const resource = await rpc("resources/read", { uri: "ui://mock/page" });
+  assert.equal(resource.result.contents[0].text, appTool.appHtml);
+  assert.equal(resource.result.contents[0].mimeType, "text/html;profile=mcp-app");
+  const rejected = await rpc("tools/call", { name: "get_page", arguments: {} });
+  assert.equal(rejected.error.code, -32602);
+  assert.match(rejected.error.message, /cloudId/);
+  assert.equal("result" in rejected, false);
+  const recovered = await rpc("tools/call", { name: "get_page", arguments: { cloudId: "workspace" } });
+  assert.equal(recovered.result.content[0].text, "page loaded");
+  assert.equal("error" in recovered, false);
+  const appLog = await (await fetch(`${origin}/requests`)).json();
+  assert.deepEqual(appLog.requests.flatMap((entry) => entry.toolCalls ?? [])
+    .filter((call) => call.name === "get_page").map((call) => call.args), [{}, { cloudId: "workspace" }]);
+
   const workload = await fetch(`${origin}/admin/agent-workloads`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -160,6 +195,57 @@ test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeo
     const call = frames.flatMap((frame) => frame.choices[0].delta.tool_calls ?? [])[0];
     assert.deepEqual(JSON.parse(call.function.arguments), { name: "remote-session:create", body: { target, prompt: task } });
   }
+
+  const discoveryWorkload = await fetch(`${origin}/admin/agent-workloads`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workloads: [{ promptMarker: "Find the assigned skill", finalReply: "unused fixture reply",
+      finalReplyFrom: "last-tool-text", steps: [
+        { tool: "search_capabilities", arguments: { query: "Assigned skill" } },
+        { tool: "execute_capability", arguments: { body: { limit: 3 } }, argumentsFrom: "capability-search" },
+      ],
+    }] }),
+  });
+  assert.equal(discoveryWorkload.status, 200);
+  const modelRequest = async (toolResults) => {
+    const response = await fetch(`${origin}/v1/chat/completions`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "discovery-model", messages: [
+        { role: "user", content: "Find the assigned skill" },
+        ...toolResults.map(content => ({ role: "tool", content })),
+      ], tools: ["search_capabilities", "execute_capability"].map(name => ({ type: "function", function: { name } })) }),
+    });
+    const body = await response.text();
+    return { status: response.status, frames: body.split("\n").filter(line => line.startsWith("data: {")).map(line => JSON.parse(line.slice(6))) };
+  };
+  for (const name of ["plugin:first:skill", "plugin:second:skill"]) {
+    const result = await modelRequest([JSON.stringify({ matches: [{ name }] })]);
+    assert.equal(result.status, 200);
+    const call = result.frames.flatMap(frame => frame.choices[0].delta.tool_calls ?? [])[0];
+    assert.deepEqual(JSON.parse(call.function.arguments), { name, body: { limit: 3 } });
+  }
+  const missing = await modelRequest([JSON.stringify({ matches: [] })]);
+  assert.equal(missing.status, 500);
+  const final = await modelRequest([JSON.stringify({ matches: [{ name: "plugin:first:skill" }] }), "unique text returned by the real tool"]);
+  assert.equal(final.status, 200);
+  assert.equal(final.frames.map(frame => frame.choices[0].delta.content ?? "").join(""), "unique text returned by the real tool");
+
+  const contextWorkload = await fetch(`${origin}/admin/agent-workloads`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workloads: [{ promptMarker: "Inspect context", finalReply: "unused fixture reply",
+      finalReplyFrom: "system-text", latestUserTurn: true, steps: [],
+    }] }),
+  });
+  assert.equal(contextWorkload.status, 200);
+  const contextResponse = await fetch(`${origin}/v1/chat/completions`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: "context-model", messages: [
+      { role: "system", content: "system witness" }, { role: "developer", content: "developer witness" },
+      { role: "user", content: "Inspect context; user text must not be echoed" },
+    ], tools: [{ type: "function", function: { name: "question" } }] }),
+  });
+  assert.equal(contextResponse.status, 200);
+  const contextFrames = (await contextResponse.text()).split("\n").filter(line => line.startsWith("data: {")).map(line => JSON.parse(line.slice(6)));
+  assert.equal(contextFrames.map(frame => frame.choices[0].delta.content ?? "").join(""), "system witness\ndeveloper witness");
 
   const failedResponse = await fetch(`${origin}/admin/agent-workloads`, {
     method: "POST",

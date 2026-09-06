@@ -19,6 +19,10 @@ To run tests, just use `pnpm evals:e2e <slug>` — it picks Daytona automaticall
 when the CLI is authenticated. `--local` forces local; `--daytona` requires
 Daytona and fails when it is unavailable.
 
+For a PR preview that should open inside Codex and support named scenarios,
+use [preview-my-work](../preview-my-work/SKILL.md). It composes the same maintained
+world and Daytona primitives with scoped ownership and teardown.
+
 ## Long-lived manual Electron sandbox
 
 Run `bash .devcontainer/test-on-daytona.sh <ref>`. The maintained helper uses

@@ -9,6 +9,7 @@ import type { ComposerAttachment, McpServerEntry, McpStatusMap, ModelOption, Mod
 import { t } from "@/i18n";
 import type { ComposerSettingsSection } from "@/react-app/domains/settings/library";
 import { ReactSessionComposer } from "@/react-app/domains/session/surface/composer/composer";
+import { WorkspaceRunModeMenu } from "@/react-app/domains/session/surface/composer/workspace-run-mode-menu";
 import { encodeComposerMentionValue, type ComposerMentionKind } from "@/react-app/domains/session/surface/composer/mention-encoding";
 import {
   createPastedTextChip,
@@ -253,6 +254,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
 
   return (
     <ReactSessionComposer
+      runModeControl={<WorkspaceRunModeMenu client={workspaceClient} workspaceId={workspaceId} busy={props.busy} />}
       draft={props.draft}
       mentions={mentions}
       onDraftChange={handleDraftChange}

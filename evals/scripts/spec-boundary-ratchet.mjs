@@ -1,6 +1,7 @@
+import { journeyFiles, filesUnder, testName } from "../bin/test-files.mjs";
 // Run with --write-baseline to replace the baseline with every currently violating spec.
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const evalsRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -54,8 +55,9 @@ export function compareBaseline(files, baseline) {
 
 export function scanSpecs(directory = specsDirectory) {
   const files = {};
-  for (const file of readdirSync(directory).filter((name) => name.endsWith(".test.ts")).sort()) {
-    files[file] = classifySpec(readFileSync(resolve(directory, file), "utf8"));
+  for (const path of directory === specsDirectory ? journeyFiles(/\.test\.ts$/) : filesUnder(directory, /\.test\.ts$/)) {
+    const file = directory === specsDirectory ? testName(path) : relative(directory, path);
+    files[file] = classifySpec(readFileSync(path, "utf8"));
   }
   return files;
 }

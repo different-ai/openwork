@@ -287,7 +287,7 @@ function AuthorizeStep({ providerName, scopes }: { providerName: string; scopes:
         {scopes.map((scope) => (
           <li key={scope} className="flex items-center gap-2">
             <Lock className="h-3.5 w-3.5 text-gray-400" />
-            <code className="rounded bg-white px-1.5 py-0.5 text-[12px] text-gray-700 ring-1 ring-gray-200">
+            <code className="rounded-sm bg-white px-1.5 py-0.5 text-[12px] text-gray-700 ring-1 ring-gray-200">
               {scope}
             </code>
           </li>

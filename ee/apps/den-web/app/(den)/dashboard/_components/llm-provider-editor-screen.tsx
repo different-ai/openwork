@@ -855,12 +855,12 @@ export function LlmProviderEditorScreen({
                                 <p className="font-semibold">Azure resource name</p>
                                 <p className="mt-1 text-sky-800">
                                     Azure Foundry may show a project URL such as{" "}
-                                    <code className="rounded bg-white/70 px-1.5 py-0.5 font-mono text-[12px]">
+                                    <code className="rounded-sm bg-white/70 px-1.5 py-0.5 font-mono text-[12px]">
                                         https://yourFoundryResourceName.services.ai.azure.com/api/projects/your-project
                                     </code>
                                     . Paste that full URL here and we will save just the
                                     resource name, for example{" "}
-                                    <code className="rounded bg-white/70 px-1.5 py-0.5 font-mono text-[12px]">
+                                    <code className="rounded-sm bg-white/70 px-1.5 py-0.5 font-mono text-[12px]">
                                         yourFoundryResourceName
                                     </code>
                                     .
@@ -875,7 +875,7 @@ export function LlmProviderEditorScreen({
                             return (
                                 <label key={envName} className="grid gap-3">
                                     <span className="flex flex-wrap items-center gap-2 text-[14px] font-medium text-gray-700">
-                                        <code className="rounded bg-gray-100 px-2 py-0.5 font-mono text-[12px]">
+                                        <code className="rounded-sm bg-gray-100 px-2 py-0.5 font-mono text-[12px]">
                                             {envName}
                                         </code>
                                         {configured ? (
@@ -1138,7 +1138,7 @@ export function LlmProviderEditorScreen({
                         <p className="-mt-3 text-[13px] text-gray-500">
                             The OpenAI-compatible endpoint of the provider
                             (usually ends in{" "}
-                            <code className="rounded bg-gray-100 px-1 py-0.5">
+                            <code className="rounded-sm bg-gray-100 px-1 py-0.5">
                                 /v1
                             </code>
                             ).
@@ -1277,7 +1277,7 @@ export function LlmProviderEditorScreen({
                         <p className="text-[13px] text-gray-500">
                             Paste a models.dev provider, a single provider block,
                             or a full{" "}
-                            <code className="rounded bg-gray-100 px-1 py-0.5">
+                            <code className="rounded-sm bg-gray-100 px-1 py-0.5">
                                 opencode.jsonc
                             </code>
                             . Model maps are imported automatically.
@@ -1342,7 +1342,7 @@ export function LlmProviderEditorScreen({
                                     {index > 0 ? ", " : null}
                                     <RuntimeEnvKeyChip
                                         envKey={envKey}
-                                        className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[12px]"
+                                        className="rounded-sm bg-gray-100 px-1.5 py-0.5 font-mono text-[12px]"
                                     />
                                 </span>
                             ))}
@@ -1504,7 +1504,7 @@ export function LlmProviderEditorScreen({
                             setAccessTab("teams");
                             setAccessQuery("");
                         }}
-                        className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 transition ${accessTab === "teams" ? "bg-white text-gray-900 shadow-sm" : "hover:text-gray-700"}`}
+                        className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 transition ${accessTab === "teams" ? "bg-white text-gray-900 shadow-xs" : "hover:text-gray-700"}`}
                     >
                         <Users className="h-4 w-4" />
                         {`Teams (${selectedTeamIds.length})`}
@@ -1515,7 +1515,7 @@ export function LlmProviderEditorScreen({
                             setAccessTab("people");
                             setAccessQuery("");
                         }}
-                        className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 transition ${accessTab === "people" ? "bg-white text-gray-900 shadow-sm" : "hover:text-gray-700"}`}
+                        className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 transition ${accessTab === "people" ? "bg-white text-gray-900 shadow-xs" : "hover:text-gray-700"}`}
                     >
                         <User className="h-4 w-4" />
                         {`People (${selectedMemberIds.length})`}

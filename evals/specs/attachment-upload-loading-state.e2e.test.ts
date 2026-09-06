@@ -64,6 +64,18 @@ test("attaching an image shows its chip instantly and sends with a visible uploa
   expect(attached.chipStatus).toBe("ready");
   await user.screenshot();
 
+  await step("paste a video alongside the image", async () => {
+    expect(await seed.evalIn(world.app, `(() => {
+      const editor = document.querySelector('[contenteditable="true"]');
+      if (!(editor instanceof HTMLElement)) return false;
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112])], "pasted-recording.mp4", { type: "video/mp4" }));
+      editor.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: transfer }));
+      return true;
+    })()`)).toBe(true);
+    await user.see({ text: "pasted-recording.mp4" });
+  });
+
   // TODO(primitive): observe a transient attachment status during a user send.
   await seed.evalIn(world.app, `(() => {
     globalThis.__attachmentUploadingSeen = false;
@@ -89,5 +101,13 @@ test("attaching an image shows its chip instantly and sends with a visible uploa
   // TODO(primitive): inspect attachment cleanup and error-toast state after send.
   expect(await probe.eval(`!document.querySelector("[data-attachment-id]")
     && !document.querySelector('[data-sonner-toast][data-type="error"]')`)).toBe(true);
+  await step("sent video remains visible without a binary model error", async () => {
+    await user.see({ text: "pasted-recording.mp4" });
+    await user.see({ text: "attachment upload loading proof" });
+    await user.notSee({ text: /Cannot read binary file|UnsupportedFunctionalityError/ });
+  });
+  await user.reload();
+  await user.see({ text: "pasted-recording.mp4" });
+  expect(await probe.eval(`document.querySelectorAll('button[title="Open pasted-recording.mp4 in Artifacts"]').length`)).toBe(1);
   await user.screenshot();
 });

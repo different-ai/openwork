@@ -189,6 +189,28 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
     true,
   )
 
+  const initialDraftSource = "export default function Briefing({ data }) { return <article><h1>Briefing</h1><p>{data.briefing.topic}</p></article> }"
+  const emptyDraft = await agentRpc(den.ref.apiUrl, mcpToken, "tools/call", {
+    name: "save_artifact_view",
+    arguments: { configObjectId, title: "Briefing app", reactSource: initialDraftSource },
+  })
+  expect(emptyDraft.isError).toBe(true)
+  expect(emptyDraft._meta).toBeUndefined()
+  const emptyDraftText = records(emptyDraft.content).find((part) => part.type === "text")?.text
+  if (typeof emptyDraftText !== "string") throw new Error("Missing preview recovery instructions")
+  const emptyDraftError = requireRecord(JSON.parse(emptyDraftText), "empty preview error")
+  expect(emptyDraftError.error).toBe("artifact_view_preview_unavailable")
+  expect(emptyDraftError.reason).toBe("workflow_snapshot_not_found")
+  expect(emptyDraftError.message).toContain("Run the current saved Workflow version")
+  expect(emptyDraftError.artifactViewId).toBeTypeOf("string")
+  const beforeExplicitRun = await readWorkflowDetail(den.admin, configObjectId)
+  expect(beforeExplicitRun.script.latestSuccessfulSnapshot).toBeNull()
+  evidence.recordAssertionEvidence(
+    "An app without a saved Workflow result returns a recovery step instead of an empty ready preview",
+    "An ad-hoc success plus save is insufficient: the builder returns an actionable error and retained draft id, no host preview metadata, and does not execute the workflow implicitly.",
+    emptyDraft.isError === true && emptyDraftError.reason === "workflow_snapshot_not_found",
+  )
+
   const manualResult = await runWorkflow(den.admin, configObjectId, {
     pluginId,
     configObjectVersionId,
@@ -208,12 +230,13 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
   const draft = await agentRpc(den.ref.apiUrl, mcpToken, "tools/call", {
     name: "save_artifact_view",
     arguments: {
-      configObjectId, title: "Briefing app",
-      reactSource: "export default function Briefing({ data }) { return <article><h1>Briefing</h1><p>{data.briefing.topic}</p></article> }",
+      artifactViewId: emptyDraftError.artifactViewId, configObjectId, title: "Briefing app",
+      reactSource: initialDraftSource,
     },
   })
   expect(draft.isError).not.toBe(true)
   const view = requireRecord(requireRecord(draft.structuredContent, "draft result").view, "draft view")
+  expect(view.id).toBe(emptyDraftError.artifactViewId)
   const revision = records(view.revisions)[0]
   expect(revision?.buildStatus).toBe("ready")
   expect(requireRecord(draft._meta, "draft host metadata")["openwork/appDraft"]).toEqual({
@@ -367,7 +390,10 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
   const matches = records(requireRecord(JSON.parse(discoveryText), "capability search").matches)
   const externalMatch = matches.find((match) => match.name === `mcp:${connection.id}:mock_echo`)
   expect(externalMatch?.scriptPath).toBe("tools.report_source.mock_echo")
-  const externalCode = `return { briefing: await ${externalMatch?.scriptPath}({ text: input.topic }) }`
+  const batchTool = catalogTools.find((tool) => tool.name === "mock_batch")
+  expect(batchTool).toBeDefined()
+  expect(isRecord(batchTool?.annotations) ? batchTool.annotations.readOnlyHint : undefined).not.toBe(true)
+  const externalCode = `await tools.report_source.mock_batch({ items: [{ text: input.topic }] }); return { briefing: await ${externalMatch?.scriptPath}({ text: input.topic }) }`
   const externalRunStartedAt = new Date().toISOString()
   const externalExecuted = await agentRpc(den.ref.apiUrl, mcpToken, "tools/call", {
     name: "execute_capability_script",
@@ -421,7 +447,7 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
   const externalSaved = requireRecord(externalSavedResponse.body, "external saved Workflow")
   const externalPluginId = typeof externalSaved.pluginId === "string" ? externalSaved.pluginId : ""
   const externalConfigObjectId = typeof externalSaved.configObjectId === "string" ? externalSaved.configObjectId : ""
-  const externalConfigObjectVersionId = typeof externalSaved.configObjectVersionId === "string" ? externalSaved.configObjectVersionId : ""
+  let externalConfigObjectVersionId = typeof externalSaved.configObjectVersionId === "string" ? externalSaved.configObjectVersionId : ""
   expect(externalPluginId).not.toBe("")
   expect(externalConfigObjectId).not.toBe("")
   expect(externalConfigObjectVersionId).not.toBe("")
@@ -442,6 +468,48 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
     "A saved Workflow exposes a structural step graph for visual rendering",
     "The save response and the Workflow detail carry the same tool/input/return graph plus a Mermaid flowchart.",
     true,
+  )
+
+  const editedDraft = {
+    name: `${scriptName} edited external`,
+    description: "A manually refreshed report using an unclassified provider tool.",
+    code: externalCode,
+    exampleInput: { topic: externalMarker },
+    inputSchema,
+    outputSchema,
+    requiredCapabilities: [
+      { capabilityName: `mcp:${connection.id}:mock_batch`, scriptPath: "tools.report_source.mock_batch" },
+      { capabilityName: `mcp:${connection.id}:mock_echo`, scriptPath: "tools.report_source.mock_echo" },
+    ],
+  }
+  const testedDraft = await denFetch(den.admin, "/v1/workflows/test", {
+    method: "POST",
+    headers: { authorization: `Bearer ${den.admin.token}` },
+    body: JSON.stringify({ ...editedDraft, configObjectId: externalConfigObjectId }),
+  })
+  expect(testedDraft.response.status, testedDraft.text).toBe(200)
+  const testReceipt = requireRecord(testedDraft.body, "draft test receipt")
+  const rejectedEdit = await denFetch(den.admin, `/v1/workflows/${externalConfigObjectId}/versions`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${den.admin.token}` },
+    body: JSON.stringify({ ...editedDraft, code: `${externalCode}\n`, receiptId: testReceipt.receiptId }),
+  })
+  expect(rejectedEdit.response.status, rejectedEdit.text).toBe(400)
+  expect(rejectedEdit.text).toContain("workflow_matching_test_receipt_required")
+  const editedVersion = await denFetch(den.admin, `/v1/workflows/${externalConfigObjectId}/versions`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${den.admin.token}` },
+    body: JSON.stringify({ ...editedDraft, receiptId: testReceipt.receiptId }),
+  })
+  expect(editedVersion.response.status, editedVersion.text).toBe(201)
+  const editedDetail = requireRecord(editedVersion.body, "edited Workflow")
+  const editedCurrentVersion = requireRecord(editedDetail.currentVersion, "edited current version")
+  expect(typeof editedCurrentVersion.id).toBe("string")
+  externalConfigObjectVersionId = String(editedCurrentVersion.id)
+  evidence.recordAssertionEvidence(
+    "A successful manual report can be saved and edited with an unclassified provider tool",
+    "Both initial save and a tested new version succeed without granting unattended execution.",
+    externalSavedResponse.status === 201 && editedVersion.response.status === 201,
   )
 
   const externalManualRun = await runWorkflow(den.admin, externalConfigObjectId, {
@@ -495,7 +563,7 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
   const latestScript = latestDetail.script
   const latest = requireRecord(latestScript.latestSnapshot, "latest snapshot")
   const externalToolCallNames = records(latest.toolCalls).map((call) => call.name)
-  expect(externalToolCallNames).toEqual(["report_source.mock_echo"])
+  expect(externalToolCallNames).toEqual(["report_source.mock_batch", "report_source.mock_echo"])
 
   const internalDetail = await readWorkflowDetail(den.admin, configObjectId)
   const internalScript = internalDetail.script
@@ -504,9 +572,10 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
   expect(internalToolCallNames).toEqual(["den.getWorkers"])
   evidence.recordAssertionEvidence(
     "Each Workflow run records the tool calls it made for step-level replay",
-    "The latest snapshot lists report_source.mock_echo for the external Workflow and only den.getWorkers for the internal one.",
-    externalToolCallNames.length === 1
-      && externalToolCallNames[0] === "report_source.mock_echo"
+    "The latest snapshot lists both external tools for the external Workflow and only den.getWorkers for the internal one.",
+    externalToolCallNames.length === 2
+      && externalToolCallNames[0] === "report_source.mock_batch"
+      && externalToolCallNames[1] === "report_source.mock_echo"
       && internalToolCallNames.length === 1
       && internalToolCallNames[0] === "den.getWorkers",
   )
@@ -586,7 +655,6 @@ test("a Code Mode result becomes a cloud Automation and a durable artifact resul
   let unattendedExternalCalls = 0
   try {
     unattendedExternalCalls = (await den.mocks.reports.toolCalls({
-      name: "mock_echo",
       atLeast: 1,
       sinceIso: unattendedRunStartedAt,
       timeoutMs: 5_000,

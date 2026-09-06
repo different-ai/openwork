@@ -169,15 +169,19 @@ test("openwork-server persists structured, credential-free logs when OPENWORK_SE
   }
 });
 
-for (const code of ["ENOSPC", "EDQUOT"]) {
-  for (const mode of ["sync", "async"]) {
-    test(`openwork-server keeps serving requests after ${mode} stdout ${code}`, async ({ evidence }) => {
+for (const { code, stream } of [
+  ...["ENOSPC", "EDQUOT", "EIO"].map((code) => ({ code, stream: "stdout" })),
+  { code: "EIO", stream: "stderr" },
+]) {
+  for (const mode of stream === "stderr" ? ["async"] : ["sync", "async"]) {
+    test(`openwork-server keeps serving requests after ${mode} ${stream} ${code}`, async ({ evidence }) => {
       const root = mkdtempSync(join(tmpdir(), "openwork-stdout-storage-spec-"));
       const logFile = join(root, "server.log");
       const server = bootServer({
         OPENWORK_SERVER_LOG_FILE: logFile,
         OPENWORK_TEST_STDOUT_ERROR: code,
         OPENWORK_TEST_STDOUT_MODE: mode,
+        OPENWORK_TEST_STDOUT_STREAM: stream,
       }, root, "storage-fault-test-token", join(repoRoot, "evals/packages/labs/src/fixtures/stdout-storage-fault.mjs"));
       try {
         const port = await eventually(() => listeningPort(server.output()), { within: 60_000, intervalMs: 250 });
@@ -186,9 +190,9 @@ for (const code of ["ENOSPC", "EDQUOT"]) {
         await eventually(() => server.output(), {
           within: 5_000,
           intervalMs: 50,
-          until: (output) => output.includes(`stdout-storage-fault:${code}`),
+          until: (output) => output.includes(`${stream}-storage-fault:${code}`),
         });
-        // A second request proves the failed stdout cannot kill the server or
+        // A second request proves the failed output cannot kill the server or
         // prevent the independent structured file sink from recording requests.
         expect((await fetch(url)).status).toBe(200);
         const requests = await eventually(() => jsonLines(logFile).filter((entry) => String(entry.body).includes("GET /health 200")), {
@@ -198,10 +202,90 @@ for (const code of ["ENOSPC", "EDQUOT"]) {
         });
         expect(requests).toHaveLength(2);
         expect(server.child.exitCode).toBeNull();
-        expect(server.output().split(`stdout-storage-fault:${code}`)).toHaveLength(2);
+        expect(server.output().split(`${stream}-storage-fault:${code}`)).toHaveLength(2);
         evidence.recordAssertionEvidence(
-          `Requests survive ${mode} stdout ${code}`,
-          "Two real HTTP health requests returned 200; the injected stdout failure occurred exactly once, the process stayed alive, and both requests reached the independent JSON file sink.",
+          `Requests survive ${mode} ${stream} ${code}`,
+          `Two real HTTP health requests returned 200; the injected ${stream} failure occurred exactly once, the process stayed alive, and both requests reached the independent JSON file sink.`,
+          true,
+        );
+      } finally {
+        await server.stop();
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+  }
+}
+
+
+for (const outputState of ["healthy", "repeated EIO"]) {
+  for (const fatalStream of ["stdout", "stderr"]) {
+    test(`openwork-server retains HTTP error diagnostics and exposes ${fatalStream} exceptions with ${outputState} logging`, async ({ evidence }) => {
+      const root = mkdtempSync(join(tmpdir(), "openwork-log-collateral-spec-"));
+      const logFile = join(root, "server.log");
+      const token = "synthetic-diagnostic-secret";
+      const server = bootServer({
+        OPENWORK_SERVER_LOG_FILE: logFile,
+        OPENWORK_LOG_FORMAT: "json",
+        OPENWORK_TEST_STDIO_CONTROL: "1",
+      }, root, token, join(repoRoot, "evals/packages/labs/src/fixtures/stdout-storage-fault.mjs"));
+      try {
+        const port = await eventually(() => listeningPort(server.output()), { within: 60_000, intervalMs: 250 });
+        const controlPort = await eventually(() => server.output().match(/stdio-control-port:(\d+)/)?.[1], {
+          within: 5_000, intervalMs: 50,
+        });
+        const url = `http://127.0.0.1:${port}`;
+        expect((await fetch(`${url}/health`)).status).toBe(200);
+        if (outputState === "repeated EIO") {
+          for (const stream of ["stdout", "stderr"]) {
+            for (let count = 1; count <= 2; count += 1) {
+              expect((await fetch(`http://127.0.0.1:${controlPort}/${stream}/EIO`, { method: "POST" })).status).toBe(200);
+              await eventually(() => server.output().split(`stdio-control:${stream}:EIO:handled`).length - 1, {
+                within: 5_000, intervalMs: 50, until: (handled) => handled === count,
+              });
+              expect((await fetch(`${url}/health`)).status).toBe(200);
+            }
+          }
+        }
+        // Deliberately put synthetic credentials in both the logged message and
+        // path attribute. Retaining an error must not weaken file redaction.
+        const missing = await fetch(`${url}/missing-${token}-${token}-host`);
+        expect(missing.status).toBe(404);
+        expect(await missing.json()).toEqual({ code: "not_found", message: "Not found" });
+        const records = await eventually(() => jsonLines(logFile), {
+          within: 5_000, intervalMs: 50,
+          until: (entries) => entries.some((entry) => String(entry.body).startsWith("GET /missing-")),
+        });
+        expect(records.filter((entry) => String(entry.body).startsWith("GET /missing-"))).toEqual([
+          expect.objectContaining({
+            severityText: "WARN",
+            body: expect.stringMatching(/^GET \/missing-<redacted>-<redacted>-host 404 \d+ms$/),
+            attributes: expect.objectContaining({ status: 404, path: "/missing-<redacted>-<redacted>-host", error: "not_found" }),
+          }),
+        ]);
+        expect(readFileSync(logFile, "utf8")).not.toContain(token);
+        expect(server.child.exitCode).toBeNull();
+        if (outputState === "repeated EIO") {
+          expect(server.output()).not.toContain("GET /missing-");
+        } else {
+          expect(server.output()).toContain(`GET /missing-${token}-${token}-host 404`);
+        }
+        evidence.recordAssertionEvidence(
+          `HTTP errors and redacted diagnostics survive ${outputState} logging (${fatalStream} comparison)`,
+          "The real missing-route request retained HTTP 404 and its not_found body. Exactly one WARN file record retained status/path/error with synthetic credentials redacted; the process stayed alive. In the EIO case, two events per stream completed and every following health request returned 200 while stdout stayed disabled.",
+          true,
+        );
+        // EACCES is deliberately outside the unavailable-output allowlist.
+        // It must remain fatal/observable, even after expected EIO events.
+        expect((await fetch(`http://127.0.0.1:${controlPort}/${fatalStream}/EACCES`, { method: "POST" })).status).toBe(200);
+        const exitCode = await eventually(() => server.child.exitCode, {
+          within: 10_000, intervalMs: 50, until: (code) => code !== null,
+        });
+        expect(exitCode).not.toBe(0);
+        expect(server.output()).toContain("synthetic-stream-EACCES");
+        expect(server.output()).not.toContain(`stdio-control:${fatalStream}:EACCES:handled`);
+        evidence.recordAssertionEvidence(
+          `Unrelated ${fatalStream} errors remain observable with ${outputState} logging`,
+          "A subsequent asynchronous EACCES event produced its synthetic error message and a nonzero server subprocess exit; it was not reported as handled.",
           true,
         );
       } finally {

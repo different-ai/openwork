@@ -26,6 +26,8 @@ import { isDesktopRuntime } from "@/app/utils";
 import { t } from "@/i18n";
 import { ControlPlaneUrlEditor } from "../cloud/control-plane-url-editor";
 import { usePlatform } from "../../../kernel/platform";
+import { useFeatureFlagsPreferences } from "../state/feature-flags-preferences";
+import { useDesktopRestriction } from "../../cloud/desktop-config-provider";
 import {
   displayCustomControlPlaneUrl,
   isValidControlPlaneUrl,
@@ -201,7 +203,7 @@ export function AdvancedOrganizationServerSection(props: AdvancedOrganizationSer
   };
 
   return (
-    <LayoutSection>
+    <LayoutSection id="advanced-organization-server">
       <LayoutSectionHeader>
         <LayoutSectionTitle>{t("settings.organization_server_title")}</LayoutSectionTitle>
         <LayoutSectionDescription>{t("settings.organization_server_desc")}</LayoutSectionDescription>
@@ -298,7 +300,7 @@ interface AdvancedRuntimeSectionProps {
 
 export function AdvancedRuntimeSection(props: AdvancedRuntimeSectionProps) {
   return (
-    <LayoutSection>
+    <LayoutSection id="advanced-runtime">
       <LayoutSectionHeader>
         <LayoutSectionTitle>{t("settings.runtime_title")}</LayoutSectionTitle>
         <LayoutSectionDescription>{t("settings.runtime_desc")}</LayoutSectionDescription>
@@ -397,7 +399,7 @@ export function AdvancedCloudMcpDiagnosticsSection(props: AdvancedCloudMcpDiagno
   };
 
   return (
-    <LayoutSection>
+    <LayoutSection id="advanced-agent-access">
       <LayoutSectionHeader>
         <LayoutSectionTitle>Agent access diagnostics</LayoutSectionTitle>
         <LayoutSectionDescription>
@@ -595,7 +597,7 @@ export function AdvancedRuntimeConfigSourcesSection(props: AdvancedRuntimeConfig
     : null;
   const runtimeConfig = props.configStatus ? sanitizedConfig(props.configStatus.runtime) : null;
   return (
-    <LayoutSection>
+    <LayoutSection id="advanced-config-sources">
       <LayoutSectionHeader>
         <LayoutSectionTitle>OpenCode config sources</LayoutSectionTitle>
         <LayoutSectionDescription>
@@ -738,6 +740,34 @@ export function AdvancedOpencodeSection(props: AdvancedOpencodeSectionProps) {
   );
 }
 
+export function AdvancedWorkspaceRunModeSection() {
+  const { workspaceRunModeEnabled, toggleWorkspaceRunMode } = useFeatureFlagsPreferences();
+  const restricted = useDesktopRestriction("allowControlSettings");
+  if (!isDesktopRuntime()) return null;
+  return (
+    <LayoutSection id="advanced-workspace-run-mode">
+      <LayoutSectionHeader>
+        <LayoutSectionTitle>Workspace run mode</LayoutSectionTitle>
+        <LayoutSectionDescription>Experimental approval controls in the composer.</LayoutSectionDescription>
+      </LayoutSectionHeader>
+      <LayoutSectionItem>
+        <LayoutSectionItemHeader>
+          <LayoutSectionItemTitle>Show workspace run mode</LayoutSectionItemTitle>
+          <LayoutSectionItemDescription>
+            Choose when OpenWork asks before acting, using the icon beside attachments. Off by default. Available with the standard desktop engine.
+          </LayoutSectionItemDescription>
+          <LayoutSectionItemHeaderActions>
+            <Switch data-testid="workspace-run-mode-flag" aria-label="Show workspace run mode" checked={workspaceRunModeEnabled} disabled={restricted} onCheckedChange={toggleWorkspaceRunMode} />
+          </LayoutSectionItemHeaderActions>
+        </LayoutSectionItemHeader>
+        <LayoutSectionItemFootnote>
+          This switch only shows or hides the control. Hiding it does not reset workspace permissions; choose Workspace defaults in the menu first if you want to remove the override.
+        </LayoutSectionItemFootnote>
+      </LayoutSectionItem>
+    </LayoutSection>
+  );
+}
+
 interface AdvancedFeatureFlagsSectionProps {
   busy: boolean;
   microsandboxCreateSandboxEnabled: boolean;
@@ -839,7 +869,7 @@ export function AdvancedEngineV2PreviewSection(props: AdvancedEngineV2PreviewSec
   const starting = status?.enabled && !status.running && !error ? "Starting the OpenCode v2 sidecar…" : null;
 
   return (
-    <LayoutSection>
+    <LayoutSection id="advanced-experimental-engine">
       <LayoutSectionHeader>
         <LayoutSectionTitle>Experimental engine</LayoutSectionTitle>
       </LayoutSectionHeader>
@@ -896,7 +926,7 @@ interface AdvancedDeveloperSectionProps {
 
 export function AdvancedDeveloperSection(props: AdvancedDeveloperSectionProps) {
   return (
-    <LayoutSection>
+    <LayoutSection id="advanced-developer">
       <LayoutSectionHeader>
         <LayoutSectionTitle>{t("settings.developer")}</LayoutSectionTitle>
       </LayoutSectionHeader>

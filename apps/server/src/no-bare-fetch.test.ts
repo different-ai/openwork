@@ -55,3 +55,14 @@ test("server source does not use bare fetch", async () => {
     throw new Error(`Bare fetch is banned in apps/server/src. Use externalFetch for external egress, loopbackFetch for loopback/engine traffic, or runtimeDiagnosticFetch for the independent runtime diagnostic probe. Offenders:\n${offenders.join("\n")}`);
   }
 });
+
+// An ordinary runtime edit must never become a second policy authority.
+test("only the verified Den session writes managed policy", async () => {
+  const allowed = new Set(["runtime-opencode-config-store.ts", "managed-desktop-policy.ts"]);
+  const offenders: string[] = [];
+  for (const file of (await collectTypescriptFiles(srcDir)).filter(shouldCheck)) {
+    if (allowed.has(relativeSrcPath(file))) continue;
+    if (/\bwriteManagedDesktopPolicy\b/.test(await readFile(file, "utf8"))) offenders.push(relativeSrcPath(file));
+  }
+  if (offenders.length) throw new Error(`Managed policy must be written through the verified Den session: ${offenders.join(", ")}`);
+});

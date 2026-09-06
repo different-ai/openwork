@@ -33,7 +33,7 @@ export function useSavedApps() {
       if (!client || !orgId) throw new Error("Sign in to open your apps.");
       try { return await client.listSavedApps(orgId); }
       catch (error) {
-        if (error instanceof DenApiError && error.status === 404) return { enabled: false, items: [] };
+        if (error instanceof DenApiError && error.status === 404) return { enabled: false, sharingEnabled: false, items: [] };
         throw error;
       }
     },

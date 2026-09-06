@@ -13,6 +13,8 @@ export interface SeedDesktopOptions {
   signIn?: false;
   model?: string;
   workspacePath?: string;
+  /** Arrange a previously activated private-Den installation; does not test activation. */
+  enterpriseActivated?: boolean;
   profileDir?: string;
   name?: string;
 }
@@ -89,7 +91,8 @@ export interface Seed {
   den(options?: Omit<ServerOptions, "place">): Promise<Den>;
   desktop(options?: SeedDesktopOptions): Promise<App | DesktopHandle>;
   web(options: SeedWebOptions): Promise<AttachedSurface>;
-  workspace(app: Surface, path?: string): Promise<{ workspaceId: string; route: string }>;
+  /** Ensure a selected workspace; create:true explicitly creates another workspace. */
+  workspace(app: Surface, path?: string, options?: { create?: boolean }): Promise<{ workspaceId: string; route: string }>;
   session(app: Surface, options?: { title?: string }): Promise<{ sessionId: string; title: string }>;
   sessions(app: Surface, titles: readonly string[]): Promise<{ sessionId: string; title: string }[]>;
   signIn(app: Surface, member: DenSession, identity: string): Promise<void>;
