@@ -67,6 +67,8 @@ type SessionUpdateParameters = SessionParameters & {
   time?: { archived?: number };
 };
 
+export const V2_SESSION_ARCHIVE_UNAVAILABLE = "Archiving and unarchiving are not available in the OpenCode v2 preview.";
+
 type PermissionReply = "once" | "always" | "reject";
 
 type PermissionReplyParameters = DirectoryParameters & {
@@ -1196,9 +1198,9 @@ function localResult<T>(baseUrl: string, path: string, data: T): FieldsResult<T>
   };
 }
 
-function unsupportedResult<T>(baseUrl: string, operation: string): FieldsResult<T> {
+function unsupportedResult<T>(baseUrl: string, operation: string, message?: string): FieldsResult<T> {
   return {
-    error: { name: "UnsupportedInV2Preview", operation },
+    error: { name: "UnsupportedInV2Preview", operation, ...(message ? { message } : {}) },
     request: new Request(`${baseUrl}/unsupported/${encodeURIComponent(operation)}`),
     response: new Response(null, { status: 501, statusText: "Unsupported in OpenCode v2 preview" }),
   };
@@ -1523,6 +1525,12 @@ export function createClientV2(
       parameters: SessionUpdateParameters,
       options?: RequestOptions,
     ): Promise<FieldsResult<Session>> => {
+      // The native preview exposes archived state but no archive mutation.
+      // Reject the entire update before a rename or read can imply success.
+      if (parameters.time?.archived !== undefined) {
+        if (options?.throwOnError) throw new Error(V2_SESSION_ARCHIVE_UNAVAILABLE);
+        return unsupportedResult(baseUrl, "session.archive", V2_SESSION_ARCHIVE_UNAVAILABLE);
+      }
       if (!parameters.title) return getSession(parameters, options);
       const result = await request(
         "POST",

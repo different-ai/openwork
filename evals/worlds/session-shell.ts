@@ -305,6 +305,7 @@ export async function commandPaletteSearch(seed: Seed) {
 }
 
 export async function archiveSessions(seed: Seed) {
+  const engine = resolveEvalEngine();
   const app = await seed.desktop({ name: "session-archive-undo" });
   const workspacePath = seed.tmpPath("session-archive-undo");
   const workspace = await seed.workspace(app, workspacePath);
@@ -317,11 +318,11 @@ export async function archiveSessions(seed: Seed) {
    */
   // TODO(primitive): probe.sessions should expose the workspace's native session list.
   async function archivedAt(): Promise<Record<string, number>> {
-    const value = await seed.evalIn(app, `async (workspaceId) => {
+    const value = await seed.evalIn(app, `async (workspaceId, engine) => {
       const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
       if (!info?.running || !info.baseUrl) throw new Error("OpenWork server is unavailable");
       const response = await fetch(
-        String(info.baseUrl).replace(/\\/+$/, "") + "/workspace/" + encodeURIComponent(workspaceId) + "/opencode/session?limit=200",
+        String(info.baseUrl).replace(/\\/+$/, "") + "/workspace/" + encodeURIComponent(workspaceId) + (engine === "v2" ? "/opencode2/api/session?limit=200" : "/opencode/session?limit=200"),
         {
           headers: { Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? "") },
           signal: AbortSignal.timeout(15000),
@@ -329,11 +330,12 @@ export async function archiveSessions(seed: Seed) {
       );
       if (!response.ok) throw new Error("Workspace session listing failed with HTTP " + response.status);
       const body = await response.json();
-      if (!Array.isArray(body)) throw new Error("Workspace session listing was not an array");
-      return Object.fromEntries(body
+      const sessions = engine === "v2" ? body.data : body;
+      if (!Array.isArray(sessions)) throw new Error("Workspace session listing was not an array");
+      return Object.fromEntries(sessions
         .filter((session) => typeof session?.id === "string")
         .map((session) => [session.id, typeof session?.time?.archived === "number" ? session.time.archived : 0]));
-    }`, { args: [workspace.workspaceId], awaitPromise: true, timeoutMs: 20_000 });
+    }`, { args: [workspace.workspaceId, engine], awaitPromise: true, timeoutMs: 20_000 });
     if (!isRecord(value)) throw new Error(`Workspace archived state was malformed: ${JSON.stringify(value)}`);
     const stamps: Record<string, number> = {};
     for (const [sessionId, stamp] of Object.entries(value)) {
@@ -345,22 +347,25 @@ export async function archiveSessions(seed: Seed) {
 
   /** Which rows the workspace's own session tree shows, and whether the global Archived section exists. */
   // TODO(primitive): probe.sidebar should expose the workspace tree and the Archived section.
-  async function sidebar(): Promise<{ active: string[]; archivedSection: boolean }> {
+  async function sidebar(): Promise<{ active: string[]; archivedSection: boolean; archiveMenuDisabled: boolean }> {
     const value = await seed.evalIn(app, `(workspaceId) => {
       const tree = document.querySelector('[data-sidebar-workspace-id="' + workspaceId + '"]');
       return {
         active: [...(tree?.querySelectorAll("[data-sidebar-session-id]") ?? [])]
           .map((row) => row.getAttribute("data-sidebar-session-id")),
         archivedSection: Boolean(document.querySelector("[data-global-archived-sessions]")),
+        archiveMenuDisabled: [...document.querySelectorAll('[role="menuitem"][aria-disabled="true"]')]
+          .some((item) => item.textContent?.trim() === "Archive session"),
       };
     }`, { args: [workspace.workspaceId] });
     if (!isRecord(value)
       || !Array.isArray(value.active)
       || !value.active.every((sessionId) => typeof sessionId === "string")
-      || typeof value.archivedSection !== "boolean") {
+      || typeof value.archivedSection !== "boolean"
+      || typeof value.archiveMenuDisabled !== "boolean") {
       throw new Error(`Sidebar archive facts were malformed: ${JSON.stringify(value)}`);
     }
-    return { active: value.active, archivedSection: value.archivedSection };
+    return { active: value.active, archivedSection: value.archivedSection, archiveMenuDisabled: value.archiveMenuDisabled };
   }
 
   /** True once the undo pill is on screen and its slide-in has finished, i.e. when a person would reach for it. */
@@ -376,7 +381,7 @@ export async function archiveSessions(seed: Seed) {
     return value === true;
   }
 
-  return { app, workspace, workspacePath, candidate, neighbor, archivedAt, sidebar, undoToastSettled };
+  return { app, engine, workspace, workspacePath, candidate, neighbor, archivedAt, sidebar, undoToastSettled };
 }
 
 export async function responsiveSessions(seed: Seed) {
