@@ -3,15 +3,16 @@ import { z } from "zod";
 type DesktopPolicyDefinitionEntry = {
   id: string;
   name: string;
+  teamLabel: string;
   description: string;
   userNotice: string;
   defaultValue: boolean;
-  /**
-   * Value the Restricted policy mode locks this key to, or `null` when the key
-   * is a display preference that Restricted leaves editable.
-   */
-  restrictedValue: boolean | null;
-};
+} & (
+  // Every restricted capability must have a place in the team editor.
+  // Display preferences remain editable in Restricted mode.
+  | { restrictedValue: boolean; group: "ai" | "tools" | "app" }
+  | { restrictedValue: null; group: "display" }
+);
 
 // Canonical desktop policy catalog.
 //
@@ -22,7 +23,7 @@ type DesktopPolicyDefinitionEntry = {
 //    the key to, or `null` for a display preference Restricted leaves alone.
 // 4. Wire desktop app behavior to read the key through the desktop config hooks.
 // 5. If the key affects Den web editing copy, update the `name`, `description`,
-//    and `userNotice` here rather than duplicating that copy elsewhere.
+//    `teamLabel`, `group`, and `userNotice` here rather than duplicating them elsewhere.
 // 6. Do not manually edit `desktopPolicyValueSchema`; it is generated from the
 //    IDs in this definition list.
 //
@@ -33,6 +34,8 @@ type DesktopPolicyDefinitionEntry = {
 export const desktopPolicyDefinitions = [
   {
     id: "allowCustomProviders",
+    teamLabel: "Add AI providers",
+    group: "ai",
     name: "Custom providers",
     description:
       "Allow users to add and use models that are not deployed through OpenWork Cloud.",
@@ -43,6 +46,8 @@ export const desktopPolicyDefinitions = [
   },
   {
     id: "allowZenModel",
+    teamLabel: "Use OpenCode models",
+    group: "ai",
     name: "Enable OpenCode Zen Models",
     description: "Allow users to use the built in models provided by OpenCode.",
     userNotice: "Your administrator has disabled access to OpenCode Models.",
@@ -51,6 +56,8 @@ export const desktopPolicyDefinitions = [
   },
   {
     id: "allowMultipleWorkspaces",
+    teamLabel: "Create more workspaces",
+    group: "app",
     name: "Multiple workspaces",
     description:
       "Allow users to create or configure more than one workspace on their machine.",
@@ -61,6 +68,8 @@ export const desktopPolicyDefinitions = [
   },
   {
     id: "allowControlSettings",
+    teamLabel: "Change app settings",
+    group: "app",
     name: "Control Settings",
     description: "Allow users to access and change the desktop app settings.",
     userNotice:
@@ -70,6 +79,8 @@ export const desktopPolicyDefinitions = [
   },
   {
     id: "allowManageExtensions",
+    teamLabel: "Add local tools, skills & MCP servers",
+    group: "tools",
     name: "Manage Extensions",
     description: "Allow users to install and manage extensions locally.",
     userNotice:
@@ -79,6 +90,8 @@ export const desktopPolicyDefinitions = [
   },
   {
     id: "allowBuiltInExtensions",
+    teamLabel: "Use built-in extensions",
+    group: "tools",
     name: "Built-in Extensions",
     description:
       "Allow users to see and use OpenWork's built-in extensions, including browser, image, and local-provider extensions.",
@@ -89,6 +102,8 @@ export const desktopPolicyDefinitions = [
   },
   {
     id: "allowAlphaUpdates",
+    teamLabel: "Try experimental updates",
+    group: "app",
     name: "Alpha updates",
     description:
       "Allow users to opt into experimental Alpha desktop updates.",
@@ -99,6 +114,8 @@ export const desktopPolicyDefinitions = [
   },
   {
     id: "showWelcomePage",
+    teamLabel: "Show welcome page",
+    group: "display",
     name: "Welcome Page",
     description: "Show the Getting Started page to new users.",
     userNotice:
@@ -109,7 +126,7 @@ export const desktopPolicyDefinitions = [
 ] as const satisfies readonly DesktopPolicyDefinitionEntry[];
 
 export type DesktopPolicyKey = (typeof desktopPolicyDefinitions)[number]["id"];
-export type DesktopPolicyDefinition = Omit<DesktopPolicyDefinitionEntry, "id"> & {
+export type DesktopPolicyDefinition = Omit<DesktopPolicyDefinitionEntry, "id" | "teamLabel" | "group"> & {
   id: DesktopPolicyKey;
 };
 
@@ -563,6 +580,12 @@ export function allDesktopPolicies(
   ) as Required<DesktopPolicyValue>;
 }
 
+/** Materialize the restrictions a team applies, including legacy Locked policies. */
+export function resolveTeamAccessCapabilities(access: TeamAccess): Required<DesktopPolicyValue> {
+  const capabilities = normalizeDefaultDesktopPolicyValue(access.capabilities);
+  return access.mode === "locked" ? applyRestrictedDesktopPolicy(capabilities) : capabilities;
+}
+
 export function calculateEffectiveDesktopPolicy(input: {
   orgPolicyCount: number;
   defaultPolicy?: unknown;
@@ -591,9 +614,10 @@ export function calculateEffectiveDesktopPolicy(input: {
   for (const document of [input.defaultPolicy, ...input.assignedPolicies]) {
     const access = normalizeTeamAccess(document);
     if (!access) continue;
+    const capabilities = resolveTeamAccessCapabilities(access);
     for (const definition of desktopPolicyDefinitions) {
       if (definition.restrictedValue === null) continue;
-      if (access.mode === "locked" || access.capabilities[definition.id] === false) {
+      if (capabilities[definition.id] === false) {
         calculated[definition.id] = false;
       }
     }

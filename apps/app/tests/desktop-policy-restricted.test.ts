@@ -14,6 +14,7 @@ import {
   restrictedDesktopPolicyValue,
   normalizeDesktopPolicyDocument,
   resolveDesktopPolicyDocumentWrite,
+  resolveTeamAccessCapabilities,
 } from "@openwork/types/den/desktop-policies";
 import {
   SETTINGS_TAB_WITHOUT_CONTROL,
@@ -129,6 +130,20 @@ describe("allowControlSettings settings gate", () => {
 
 
 describe("explicit team access limits", () => {
+  test("editing one capability from a legacy lock does not revive its other saved grants", () => {
+    const capabilities = resolveTeamAccessCapabilities({ mode: "locked", capabilities: { ...desktopPolicyDefaults, showWelcomePage: false } });
+    expect(capabilities.showWelcomePage).toBe(false);
+    const result = calculateEffectiveDesktopPolicy({
+      orgPolicyCount: 3,
+      defaultPolicy: desktopPolicyDefaults,
+      assignedPolicies: [desktopPolicyDefaults, { access: { mode: "custom", capabilities: { ...capabilities, allowControlSettings: true } } }],
+    });
+    expect(result.allowControlSettings).toBe(true);
+    for (const definition of desktopPolicyDefinitions) {
+      if (definition.restrictedValue !== null && definition.id !== "allowControlSettings") expect(result[definition.id]).toBe(false);
+    }
+  });
+
   test("a lock wins over all matching grants while preserving display preferences", () => {
     const result = calculateEffectiveDesktopPolicy({
       orgPolicyCount: 3,
