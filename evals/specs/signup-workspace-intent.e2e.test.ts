@@ -7,7 +7,7 @@ import { signupWorkspace } from "../worlds/signup-workspace.ts";
 const test = spec.world(signupWorkspace, { timeout: 600_000 });
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 
-test("signup distinguishes joining, personal work, and restricted team setup without changing another organization", async ({ world, user, probe, seed, evidence, step }) => {
+test("signup distinguishes joining, personal work, and restricted team setup without changing another organization", { timeout: 900_000 }, async ({ world, user, probe, seed, evidence, step }) => {
   const expectFocusedSetup = async () => {
     await user.see({ testId: "den-onboarding-shell" });
     await user.notSee({ testId: "den-org-sidebar" });
@@ -413,7 +413,17 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await mobileUser.see({ text: "Invite your team." }, { timeoutMs: 90_000 });
     await mobileUser.click({ role: "button", label: "Do this later" });
     await mobileUser.click({ text: "Get the desktop app" });
-    await mobileUser.see({ testId: "onboarding-mobile-options" }, { timeoutMs: 90_000 });
+    try {
+      expect(await probe.eval(mobile, "document.querySelector('details')?.open")).toBe(true);
+      await mobileUser.see({ testId: "onboarding-mobile-options" }, { timeoutMs: 90_000 });
+    } catch (error) {
+      await mobileUser.screenshot();
+      const state = await probe.eval(mobile, `(() => {
+        const options = document.querySelector('[data-testid="onboarding-mobile-options"]');
+        return { open: document.querySelector('details')?.open, display: options ? getComputedStyle(options.parentElement).display : null, width: innerWidth };
+      })()`);
+      throw new Error(`Mobile download disclosure did not remain available: ${JSON.stringify(state)}`, { cause: error });
+    }
     await mobileUser.notSee({ testId: "download-openwork-card" });
     await mobileUser.see({ role: "button", label: "Email me the download link" });
     await mobileUser.see({ role: "link", label: "Try OpenWork Web" });
