@@ -130,22 +130,33 @@ export async function configureProvider(
   });
   if (result !== "ok") throw new Error(`Provider configuration failed: ${String(result)}`);
   await seed.evalIn(app, "location.reload(); true");
-  const ready = await seed.evalIn(app, `async (workspaceId) => {
+  const engine = resolveEvalEngine();
+  const ready = await seed.evalIn(app, `async (workspaceId, engine, providerId, modelId) => {
     const deadline = Date.now() + 60000;
     while (Date.now() < deadline) {
-      const port = localStorage.getItem("openwork.server.port");
-      const token = localStorage.getItem("openwork.server.token");
+      const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
+      const headers = { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") };
       try {
-        const response = await fetch("http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId) + "/opencode/session", {
-          headers: { Authorization: "Bearer " + token },
-        });
-        if (response.ok && window.__openworkControl) return true;
+        const statusResponse = await fetch(base + "/experimental/engine-v2-preview/status", { headers });
+        const status = statusResponse.ok ? await statusResponse.json() : null;
+        const selected = status ? status.enabled && status.chatRouting : false;
+        if ((engine === "v2") !== selected || (!statusResponse.ok && statusResponse.status !== 404)) {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          continue;
+        }
+        const mounted = base + "/workspace/" + encodeURIComponent(workspaceId);
+        const response = await fetch(mounted + (engine === "v2" ? "/opencode2/api/model" : "/opencode/session"), { headers });
+        if (response.ok && window.__openworkControl) {
+          if (engine === "v1") return true;
+          const catalog = JSON.stringify(await response.json());
+          if (catalog.includes(providerId) && catalog.includes(modelId)) return true;
+        }
       } catch {}
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
     return false;
-  }`, { args: [workspaceId], awaitPromise: true, timeoutMs: 120_000 });
-  if (ready !== true) throw new Error("Engine did not become ready after provider configuration.");
+  }`, { args: [workspaceId, engine, providerId, modelId], awaitPromise: true, timeoutMs: 120_000 });
+  if (ready !== true) throw new Error(`Selected ${engine} engine did not become ready after provider configuration.`);
 }
 
 async function seedControls(

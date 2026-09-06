@@ -29,6 +29,10 @@ test("side chats keep questions, replies, and saved splits attached to their own
     until: (value) => value.primary === main && value.panes === 1
       && Boolean(value.secondary) && (side === undefined || value.secondary === side)
       && value.primaryWorkspace === workspaceId && value.secondaryWorkspace === workspaceId,
+  }).catch(async (error: unknown) => {
+    await user.screenshot();
+    const persisted = await probe.storage("openwork.session-splits.v1");
+    throw new Error(`${String(error)}; saved split: ${JSON.stringify(persisted)}`);
   });
   const send = async (pane: "primary" | "secondary", text: string) => {
     await user.type({ placeholder: "Describe your task...", nth: pane === "primary" ? 0 : 1 }, text);
