@@ -22,7 +22,7 @@ export async function checkManagedTool(tool: string, raw: unknown): Promise<void
 }
 export async function check(action: ManagedPolicyAction, input: Record<string, unknown>): Promise<void> {
   const base = process.env.OPENWORK_SERVER_URL;
-  const token = process.env.OPENWORK_SERVER_TOKEN;
+  const token = process.env.OPENWORK_POLICY_TOKEN;
   if (!base || !token) throw new Error("OpenWork policy service is unavailable.");
   const response = await fetch(`${base}/managed-policy/evaluate`, {
     method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },

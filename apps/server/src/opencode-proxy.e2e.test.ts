@@ -230,10 +230,11 @@ describe("workspace OpenCode proxy", () => {
       expect(response.status).toBe(200);
       expect((await response.json()).id).toBe("ses_created");
     }
-    const forwarded = mock.requests.length;
+    const sessionPosts = () => mock.requests.filter((request) => request.method === "POST" && request.pathname === "/session");
+    expect(sessionPosts()).toHaveLength(2);
     const malformed = await fetch(url, { method: "POST", headers: auth(openwork.token), body: "{" });
     expect(malformed.status).toBe(400);
-    expect(mock.requests).toHaveLength(forwarded);
+    expect(sessionPosts()).toHaveLength(2);
   });
 
   test("accepts guest-side rem_ workspace aliases", async () => {

@@ -1,4 +1,5 @@
 import { executionRules } from "./managed-policy-rules.js";
+import { managedDesktopPolicy } from "./managed-desktop-policy.js";
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -492,7 +493,7 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
     const managed = await createManagedOpencodeV2Server({
       bin: resolved.bin,
       rootDir,
-      env: { OPENCODE_MODELS_URL: opencodeModelsUrl, OPENWORK_SERVER_URL: `http://127.0.0.1:${config.port}`, OPENWORK_SERVER_TOKEN: config.token },
+      env: { OPENCODE_MODELS_URL: opencodeModelsUrl, OPENWORK_SERVER_URL: `http://127.0.0.1:${config.port}`, OPENWORK_POLICY_TOKEN: managedDesktopPolicy(config).evaluationToken },
       permissions: async () => executionRules((await readGlobalRuntimeOpencodeConfig(config)).managedPolicy?.execution),
     });
     sidecar = managed;

@@ -1022,7 +1022,11 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     },
     logger: toManagedProviderAuthLogger(logger),
   });
-  managedDesktopPolicy(config).onChange = () => cloudProviderSync.markReloadPending();
+  managedDesktopPolicy(config).onChange = () => {
+    // Sign-in can precede the first workspace. Its future engine reads the
+    // persisted policy at startup; there is no running workspace to reload.
+    if (config.workspaces.length > 0) cloudProviderSync.markReloadPending();
+  };
   const engineV2Preview = createEngineV2Preview({ config, env, deferStart: true });
   const routes = createRoutes(
     config,
@@ -1232,7 +1236,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
             ? requireHostToken(request, config)
             : route.auth === "host"
               ? await requireHost(request, config, tokens)
-              : route.auth === "client"
+              : route.auth === "client" || (route.auth === "policy" && !managedDesktopPolicy(config).authenticatesEvaluation(request))
                 ? await requireClient(request, config, tokens)
                 : undefined;
         await managedDesktopPolicy(config).assertRequest(request, url.pathname);
@@ -3116,7 +3120,7 @@ function createRoutes(
 
   addRoute(routes, "GET", "/managed-policy", "client", async () =>
     jsonResponse({ policy: await managedDesktopPolicy(config).current() }));
-  addRoute(routes, "POST", "/managed-policy/evaluate", "client", async (ctx) => {
+  addRoute(routes, "POST", "/managed-policy/evaluate", "policy", async (ctx) => {
     const body = await readJsonBody(ctx.request);
     const action = managedPolicyActionSchema.safeParse(body.action);
     if (!action.success || !isRecord(body.input)) throw new ApiError(400, "invalid_payload", "A supported policy action and input are required");

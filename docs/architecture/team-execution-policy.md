@@ -36,6 +36,11 @@ verify policy before execution, while the normal engine refresh mechanism update
 native configuration. Policy reads in flight are shared to prevent older parallel
 responses from replacing newer policy.
 
+Engine policy hooks use an ephemeral credential accepted only by
+`POST /managed-policy/evaluate`. It grants no workspace, configuration, session,
+or host API access. The next engine never inherits the general OpenWork client
+credential; the legacy engine retains its existing credential for built-in tools.
+
 The browser restriction applies to OpenWork's built-in browser. Native fetch
 and search are blocked while approved sites are configured: their redirects do
 not expose a per-request enforcement hook. The agent is directed to the built-in

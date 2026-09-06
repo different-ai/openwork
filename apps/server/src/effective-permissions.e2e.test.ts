@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { startServer } from "./server.js";
+import { managedDesktopPolicy } from "./managed-desktop-policy.js";
 import type { ServerConfig } from "./types.js";
 
 type Served = { port: number; stop: (closeActiveConnections?: boolean) => void | Promise<void> };
@@ -106,5 +107,32 @@ describe("effective permissions route", () => {
     expect(rows.env_files).toMatchObject({ action: "ask", source: "engine" });
     expect(rows.doom_loop).toMatchObject({ action: "ask", source: "engine" });
     expect(isRecord(body.files) ? body.files.workspace : null).toBe(join(root, "opencode.json"));
+
+    const policyService = managedDesktopPolicy(config);
+    const policyHeaders = { authorization: `Bearer ${policyService.evaluationToken}`, "Content-Type": "application/json" };
+    const evaluate = (headers: Record<string, string>) => fetch(`http://127.0.0.1:${server.port}/managed-policy/evaluate`, {
+      method: "POST", headers, body: JSON.stringify({ action: "shell", input: { command: "echo hello" } }),
+    });
+    expect((await evaluate({})).status).toBe(401);
+    expect((await evaluate({ authorization: "Bearer invalid-policy-token" })).status).toBe(401);
+    expect((await evaluate(policyHeaders)).status).toBe(200);
+    expect((await evaluate({ authorization: `Bearer ${CLIENT_TOKEN}` })).status).toBe(200);
+    for (const [method, path] of [
+      ["GET", "/workspaces"],
+      ["GET", "/managed-policy"],
+      ["GET", "/workspace/ws_1/permissions/effective"],
+      ["PATCH", "/workspace/ws_1/config"],
+      ["PUT", "/den-session"],
+      ["POST", "/opencode/session"],
+    ]) {
+      const rejected = await fetch(`http://127.0.0.1:${server.port}${path}`, { method, headers: policyHeaders });
+      expect({ method, path, status: rejected.status }).toEqual({ method, path, status: 401 });
+    }
+    const den = Bun.serve({ port: 0, fetch: () => Response.json({ execution: { commands: "deny" } }) });
+    stops.push(() => den.stop(true));
+    await policyService.setSession({ baseUrl: `http://127.0.0.1:${den.port}`, token: "test-den-token", orgId: "test-org" });
+    const denied = await evaluate(policyHeaders);
+    expect(denied.status).toBe(403);
+    expect(await denied.json()).toMatchObject({ code: "organization_policy_denied" });
   });
 });

@@ -1,3 +1,4 @@
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { desktopConfigSchema, type DesktopConfig } from "@openwork/types/den/desktop-policies";
 import type { CloudProviderDenSession } from "./cloud-provider-sync.js";
 import type { ServerConfig } from "./types.js";
@@ -16,11 +17,20 @@ export function managedDesktopPolicy(config: ServerConfig): ManagedDesktopPolicy
   return service;
 }
 class ManagedDesktopPolicy {
+  // Only the evaluation route accepts this ephemeral engine credential.
+  readonly evaluationToken = randomBytes(32).toString("base64url");
   private session: CloudProviderDenSession | null = null;
   private generation = 0;
   private fetching: { generation: number; promise: Promise<DesktopConfig | null> } | undefined;
   onChange: (() => void) | undefined;
   constructor(private readonly config: ServerConfig) {}
+  authenticatesEvaluation(request: Request): boolean {
+    const supplied = request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1];
+    if (!supplied) return false;
+    const actual = Buffer.from(supplied);
+    const expected = Buffer.from(this.evaluationToken);
+    return actual.length === expected.length && timingSafeEqual(actual, expected);
+  }
   async setSession(session: CloudProviderDenSession): Promise<void> {
     this.session = session;
     this.generation++;
