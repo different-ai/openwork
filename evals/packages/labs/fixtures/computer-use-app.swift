@@ -52,7 +52,7 @@ final class Fixture: NSObject, NSApplicationDelegate {
         }
     }
     func makeWindow(_ title: String, x: CGFloat) -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(x: x, y: 250, width: 420, height: 330), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        let window = NSWindow(contentRect: NSRect(x: x, y: 250, width: 420, height: 330), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = title; window.isReleasedWhenClosed = false
         window.orderFront(nil)
         return window
@@ -64,8 +64,12 @@ final class Fixture: NSObject, NSApplicationDelegate {
         var result: [String: Any] = [:]
         switch method {
         case "state": result = ["count": count, "otherCount": otherCount, "draft": draft.stringValue]
+        case "minimized": result = ["minimized": windows[0].isMiniaturized]
+        case "minimize": windows[0].miniaturize(nil); result = ["ok": true]
+        case "restore": windows[0].deminiaturize(nil); result = ["ok": true]
         case "prepare_drag": windows[0].makeFirstResponder(nil); result = ["ok": true]
         case "drag_state": result = ["downs": dragSurface.downs, "moves": dragSurface.moves, "ups": dragSurface.ups]
+        case "foreground_window": result = ["title": NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier ? (NSApp.keyWindow?.title ?? "") : ""]
         case "human_edit":
             windows[0].makeKeyAndOrderFront(nil)
             Task { @MainActor in
@@ -112,17 +116,22 @@ final class Fixture: NSObject, NSApplicationDelegate {
         case "resize":
             windows[0].setContentSize(NSSize(width: 440, height: 350)); result = ["ok": true]
         case "front": windows[0].makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); result = ["ok": true]
-        case "press_helper_button", "select_helper_window":
+        case "press_helper_button", "select_helper_window", "helper_panel":
             Task.detached {
                 var result: [String: Any] = [:]
-                let buttons: Set<String> = ["Allow this session", "Cancel", "Pause", "Resume", "Stop"]
+                let buttons: Set<String> = ["Allow this session", "Cancel", "Take over", "Continue", "Stop"]
                 if let params = request["params"] as? [String: Any], let pid = params["pid"] as? Int32,
                    let name = params["name"] as? String,
-                   (method == "select_helper_window" ? name == "Workspace window" : buttons.contains(name)),
+                   (method == "helper_panel" || (method == "select_helper_window" ? name == "Workspace window" : buttons.contains(name))),
                    let expected = params["executable"] as? String,
                    let process = NSRunningApplication(processIdentifier: pid),
                    process.executableURL?.resolvingSymlinksInPath().path == URL(fileURLWithPath: expected).resolvingSymlinksInPath().path {
-                    result = method == "select_helper_window" ? self.selectWindow(pid: pid, title: name) : ["ok": self.pressButton(pid: pid, title: name)]
+                    if method == "helper_panel" {
+                        let task = self.findControl(pid: pid, title: nil, role: kAXWindowRole)
+                        result = ["text": task.map(self.accessibleText) ?? ""]
+                    } else {
+                        result = method == "select_helper_window" ? self.selectWindow(pid: pid, title: name) : ["ok": self.pressButton(pid: pid, title: name)]
+                    }
                 } else { result = ["ok": false] }
                 await self.respond(request, result: result)
             }
@@ -135,6 +144,24 @@ final class Fixture: NSObject, NSApplicationDelegate {
         if let data = try? JSONSerialization.data(withJSONObject: ["id": request["id"] ?? NSNull(), "result": result], options: [.sortedKeys]) {
             FileHandle.standardOutput.write(data + Data([10]))
         }
+    }
+    nonisolated func accessibleText(_ root: AXUIElement) -> String {
+        var visited = 0
+        func read(_ element: AXUIElement, depth: Int) -> [String] {
+            visited += 1
+            guard depth < 18, visited < 800 else { return [] }
+            var result: [String] = []
+            for attribute in [kAXTitleAttribute, kAXValueAttribute] {
+                var value: CFTypeRef?
+                AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
+                if let text = value as? String { result.append(text) }
+            }
+            var children: CFTypeRef?
+            AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &children)
+            for child in children as? [AXUIElement] ?? [] { result += read(child, depth: depth + 1) }
+            return result
+        }
+        return read(root, depth: 0).joined(separator: "\n")
     }
     nonisolated func findControl(pid: pid_t, title: String?, role expectedRole: String) -> AXUIElement? {
         let root = AXUIElementCreateApplication(pid)

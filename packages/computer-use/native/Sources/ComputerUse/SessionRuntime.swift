@@ -9,6 +9,7 @@ final class SessionRuntime {
     private var session: Session?
     private var lease: ControlLease?
     private var busy = false
+    private var resumingSessionID: String?
 
     private struct Session {
         let id: String
@@ -28,7 +29,7 @@ final class SessionRuntime {
     }
     init() {
         controls.onPause = { [weak self] reason in self?.pause(reason) }
-        controls.onResume = { [weak self] in self?.resume() }
+        controls.onResume = { [weak self] in Task { await self?.resume() } }
         controls.onStop = { [weak self] in self?.close() }
         controls.onTick = { [weak self] in self?.expire() }
     }
@@ -68,10 +69,10 @@ final class SessionRuntime {
             let id = UUID().uuidString.lowercased()
             session = Session(id: id, app: identity, target: target, mode: mode, started: now, lastUsed: now)
             lease = reservation
-            controls.show(app: identity, target: target, mode: mode)
+            controls.show(app: identity, target: target, mode: mode, purpose: purpose)
             if mode == .control {
                 // Consent surfaced our app. Only the person chooses when foreground control starts.
-                pause("Bring the approved window forward, then click Resume here.")
+                pause("Ready when you are. Continue will bring the approved window forward.")
             }
             return text(["ok": true, "session_id": id, "app_id": identity.bundleID, "pid": Int(identity.pid),
                 "window_id": Int(target.id), "window_title": target.title, "mode": mode.rawValue,
@@ -122,7 +123,7 @@ final class SessionRuntime {
     private func current(_ id: String, allowPaused: Bool = false) throws -> Session {
         expire()
         guard let current = session, current.id == id else { throw UseError("session_unavailable", "This session ended or belongs to another connection. Open a new session.", next: "open_session") }
-        guard allowPaused || !current.paused else { throw UseError("session_paused", "The person must resume in the Computer Use panel. Do not retry automatically.", next: "human_takeover") }
+        guard allowPaused || !current.paused else { throw UseError("session_paused", "The person must click Continue in the Computer Use panel. Do not retry automatically.", next: "human_takeover") }
         try Task.checkCancellation()
         try current.app.validate()
         return current
@@ -220,33 +221,56 @@ final class SessionRuntime {
         }
     }
     func pause(_ reason: String) {
-        guard let current = session, !current.paused else { return }
+        guard let current = session, !current.paused || resumingSessionID == current.id else { return }
         input.releaseAll()
         session?.pauseReason = reason
         session?.paused = true; session?.generation += 1; session?.observation = nil; session?.records = []
         controls.update(reason, paused: true)
     }
-    private func resume() {
-        guard let current = session else { return }
+    private func resume() async {
+        guard let current = session, current.paused, resumingSessionID == nil else { return }
+        resumingSessionID = current.id
+        defer { if resumingSessionID == current.id { resumingSessionID = nil } }
         do {
+            // This is called only by the person's native Continue button, never MCP.
+            if current.mode == .control {
+                _ = try access.validate(current.target, app: current.app)
+                guard AXUIElementPerformAction(current.target.element, kAXRaiseAction as CFString) == .success,
+                      current.app.app.activate(options: []) else {
+                    throw UseError("window_unavailable", "Open the approved window, then click Continue.", next: "human_takeover")
+                }
+                // Activation is asynchronous. Request it once and wait briefly, without
+                // repeatedly stealing focus if the person changes their mind.
+                for attempt in 0..<10 {
+                    guard session?.id == current.id, session?.generation == current.generation else { return }
+                    if (try? access.validate(current.target, app: current.app, requireFrontmost: true)) != nil { break }
+                    if attempt < 9 { try await Task.sleep(nanoseconds: 50_000_000) }
+                }
+            }
+            guard session?.id == current.id, session?.generation == current.generation else { return }
             _ = try access.validate(current.target, app: current.app, requireFrontmost: current.mode == .control)
             expire(); guard session != nil else { return }
             session?.pauseReason = nil
             session?.paused = false; session?.generation += 1; session?.observation = nil; session?.lastUsed = now
-            controls.update("Active · observe again before continuing", paused: false)
-        } catch { controls.update(error.localizedDescription, paused: true) }
+            controls.update("OpenWork is working. You can take over at any time.", paused: false)
+        } catch {
+            guard session?.id == current.id else { return }
+            session?.pauseReason = error.localizedDescription
+            controls.update(error.localizedDescription, paused: true)
+        }
     }
     private func expire() {
         guard let current = session else { return }
+        controls.updateExpiry(seconds: max(0, Int(900 - (now - current.started))))
         if now - current.started >= 900 || current.app.app.isTerminated { close(); return }
         if !current.paused && now - current.lastUsed >= 120 { pause("Paused after two minutes without activity.") }
     }
     func close() {
-        input.releaseAll(); session = nil; lease = nil; controls.close()
+        input.releaseAll(); resumingSessionID = nil; session = nil; lease = nil; controls.close()
     }
     func cancel() {
         controls.cancelConsent()
-        pause("Paused after cancellation. Resume here to continue.")
+        pause("Cancelled. You have control; click Continue when ready.")
     }
     private func text(_ payload: [String: Any]) -> [[String: Any]] {
         let data = try! JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])

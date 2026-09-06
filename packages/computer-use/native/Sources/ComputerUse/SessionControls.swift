@@ -24,6 +24,7 @@ final class SessionControls: NSObject {
     private var panel: NSPanel?
     private var status: NSTextField?
     private var toggle: NSButton?
+    private var expiry: NSTextField?
     private var monitor: Any?
     private var workspaceObservers: [NSObjectProtocol] = []
     private var stopObserver: NSObjectProtocol?
@@ -65,8 +66,8 @@ final class SessionControls: NSObject {
         if let host = consentWindow, let sheet = host.attachedSheet { host.endSheet(sheet, returnCode: .cancel) }
     }
 
-    func show(app: AppIdentity, target: WindowTarget, mode: AccessMode) {
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 380, height: 155),
+    func show(app: AppIdentity, target: WindowTarget, mode: AccessMode, purpose: String) {
+        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 380, height: 230),
             styleMask: [.titled, .nonactivatingPanel], backing: .buffered, defer: false)
         panel.title = "OpenWork Computer Use"
         panel.level = .floating
@@ -77,15 +78,22 @@ final class SessionControls: NSObject {
         title.font = .boldSystemFont(ofSize: 14)
         let window = NSTextField(labelWithString: String(target.title.prefix(80)))
         window.lineBreakMode = .byTruncatingTail
-        let status = NSTextField(wrappingLabelWithString: "Ready · expires in 15 minutes")
+        let task = NSTextField(wrappingLabelWithString: String(purpose.prefix(500)))
+        task.maximumNumberOfLines = 3
+        task.lineBreakMode = .byTruncatingTail
+        task.setAccessibilityLabel("Current task")
+        let expiry = NSTextField(labelWithString: "Access ends in 15:00")
+        expiry.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        expiry.textColor = .secondaryLabelColor
+        let status = NSTextField(wrappingLabelWithString: "OpenWork is working. You can take over at any time.")
         status.font = .systemFont(ofSize: 12)
         status.textColor = .secondaryLabelColor
-        let toggle = NSButton(title: "Pause", target: self, action: #selector(togglePause))
+        let toggle = NSButton(title: "Take over", target: self, action: #selector(togglePause))
         let stop = NSButton(title: "Stop", target: self, action: #selector(stopSession))
         stop.bezelColor = .systemRed
         let buttons = NSStackView(views: [toggle, stop])
         buttons.spacing = 8
-        let stack = NSStackView(views: [title, window, status, buttons])
+        let stack = NSStackView(views: [title, window, task, status, expiry, buttons])
         stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 9
         stack.translatesAutoresizingMaskIntoConstraints = false
         panel.contentView?.addSubview(stack)
@@ -97,7 +105,7 @@ final class SessionControls: NSObject {
         if let screen = NSScreen.main {
             panel.setFrameTopLeftPoint(NSPoint(x: screen.visibleFrame.maxX - 400, y: screen.visibleFrame.maxY - 20))
         }
-        self.panel = panel; self.status = status; self.toggle = toggle
+        self.panel = panel; self.status = status; self.toggle = toggle; self.expiry = expiry
         panel.orderFrontRegardless()
         monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown,
             .keyDown, .scrollWheel, .mouseMoved, .leftMouseDragged, .rightMouseDragged]) { [weak self] event in
@@ -105,20 +113,20 @@ final class SessionControls: NSObject {
             // Our own postToPid events cannot be mistaken for a person taking over.
             if event.cgEvent?.getIntegerValueField(.eventSourceUnixProcessID) == Int64(ProcessInfo.processInfo.processIdentifier) { return }
             if mode == .control || NSWorkspace.shared.frontmostApplication?.processIdentifier == app.pid {
-                self.onPause?("Paused after local input. Resume here when ready.")
+                self.onPause?("You have control. Click Continue when you are ready.")
             }
         }
         let center = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification, NSWorkspace.sessionDidResignActiveNotification] {
             workspaceObservers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.onPause?("Paused while the desktop is unavailable. Resume here when ready.") }
+                MainActor.assumeIsolated { self?.onPause?("Paused while the desktop is unavailable. Click Continue when you are ready.") }
             })
         }
         workspaceObservers.append(center.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] notification in
             MainActor.assumeIsolated {
                 if mode == .control, let activated = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
                    activated.processIdentifier != app.pid {
-                    self?.onPause?("Paused after switching apps. Bring the approved window forward and resume here.")
+                    self?.onPause?("You switched apps. Continue will return to the approved window.")
                 }
             }
         })
@@ -130,7 +138,10 @@ final class SessionControls: NSObject {
         }
     }
     func update(_ message: String, paused: Bool) {
-        isPaused = paused; status?.stringValue = message; toggle?.title = paused ? "Resume" : "Pause"
+        isPaused = paused; status?.stringValue = message; toggle?.title = paused ? "Continue" : "Take over"
+    }
+    func updateExpiry(seconds: Int) {
+        expiry?.stringValue = String(format: "Access ends in %d:%02d", seconds / 60, seconds % 60)
     }
     func close() {
         cancelConsent()
@@ -140,7 +151,7 @@ final class SessionControls: NSObject {
         workspaceObservers.removeAll()
         if let stopObserver { DistributedNotificationCenter.default().removeObserver(stopObserver) }; stopObserver = nil
     }
-    @objc private func togglePause() { if isPaused { onResume?() } else { onPause?("Paused by you.") } }
+    @objc private func togglePause() { if isPaused { onResume?() } else { onPause?("You have control. Click Continue when you are ready.") } }
     @objc private func stopSession() { onStop?() }
 }
 
