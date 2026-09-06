@@ -120,24 +120,63 @@ export function runtimeExternalDirectory(config: RuntimeOpencodeConfig): Record<
   return externalDirectory ?? {};
 }
 
+/** Helper function to deeply compare plain objects for provider patch no-op checks */
+function isDeepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== "object" || a === null || typeof b !== "object" || b === null) return false;
+  
+  const keysA = Object.keys(a as object);
+  const keysB = Object.keys(b as object);
+  
+  if (keysA.length !== keysB.length) return false;
+  
+  for (const key of keysA) {
+    if (!Object.prototype.hasOwnProperty.call(b, key)) return false;
+    if (!isDeepEqual((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key])) {
+      return false;
+    }
+  }
+  
+  return true;
+}
+
 /**
  * Per-provider merge for runtime config patches: record values upsert the
  * provider, explicit `null` deletes it (so clients can remove runtime-managed
  * providers, e.g. cloud imports, without racing a read-modify-write of the
  * whole map). Returns undefined when the resulting map is empty.
+ *
+ * CRITICAL FIX (#3321): Evaluates whether changes actually occurred.
+ * If no-op, returns the original `current` input unchanged to prevent
+ * triggering unnecessary engine.reload() side-effects in production.
  */
 export function mergeRuntimeProviderUpdate(
   current: unknown,
   update: Record<string, unknown>,
 ): Record<string, unknown> | undefined {
-  const next: Record<string, unknown> = { ...(isRecord(current) ? current : {}) };
+  const currentMap = isRecord(current) ? (current as Record<string, unknown>) : {};
+  const next: Record<string, unknown> = { ...currentMap };
+  let modified = false;
+
   for (const [providerId, value] of Object.entries(update)) {
     if (value === null) {
-      delete next[providerId];
+      if (Object.prototype.hasOwnProperty.call(next, providerId)) {
+        delete next[providerId];
+        modified = true;
+      }
     } else if (isRecord(value)) {
-      next[providerId] = value;
+      if (!isDeepEqual(next[providerId], value)) {
+        next[providerId] = value;
+        modified = true;
+      }
     }
   }
+
+  // If no keys mutated, return original reference to preserve no-op identity
+  if (!modified) {
+    return isRecord(current) ? currentMap : (Object.keys(next).length ? next : undefined);
+  }
+
   return Object.keys(next).length ? next : undefined;
 }
 
