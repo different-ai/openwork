@@ -4,16 +4,15 @@ type DesktopPolicyDefinitionEntry = {
   id: string;
   name: string;
   teamLabel: string;
-  group: "ai" | "tools" | "app" | "display";
   description: string;
   userNotice: string;
   defaultValue: boolean;
-  /**
-   * Value the Restricted policy mode locks this key to, or `null` when the key
-   * is a display preference that Restricted leaves editable.
-   */
-  restrictedValue: boolean | null;
-};
+} & (
+  // Every restricted capability must have a place in the team editor.
+  // Display preferences remain editable in Restricted mode.
+  | { restrictedValue: boolean; group: "ai" | "tools" | "app" }
+  | { restrictedValue: null; group: "display" }
+);
 
 // Canonical desktop policy catalog.
 //
@@ -24,7 +23,7 @@ type DesktopPolicyDefinitionEntry = {
 //    the key to, or `null` for a display preference Restricted leaves alone.
 // 4. Wire desktop app behavior to read the key through the desktop config hooks.
 // 5. If the key affects Den web editing copy, update the `name`, `description`,
-//    and `userNotice` here rather than duplicating that copy elsewhere.
+//    `teamLabel`, `group`, and `userNotice` here rather than duplicating them elsewhere.
 // 6. Do not manually edit `desktopPolicyValueSchema`; it is generated from the
 //    IDs in this definition list.
 //

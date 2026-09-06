@@ -373,12 +373,22 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
   const openAppGroups = async () => {
     for (const text of ["Tools & connections", "AI setup", "Settings, workspaces & updates"]) await admin.user.click({ text });
   };
-  const saveReviewed = async () => {
+  type ReviewChange = { label: string; before: string; after: string };
+  const reviewChanges = async (expected: ReviewChange[]) => {
     await admin.user.click("Review changes");
     await admin.user.see({ text: "Members of Focused work" });
+    await admin.user.see({ text: `${expected.length} permission ${expected.length === 1 ? "change" : "changes"}` });
+    const text = (await admin.probe.text()).replace(/\s+/g, " ");
+    for (const change of expected) expect(text).toContain(`${change.label} Before ${change.before} After ${change.after}`);
+    evidence.recordAssertionEvidence(`Change review shows the requested values for ${expected.map((change) => change.label).join(", ")}`, JSON.stringify({ expected, text }), expected.every((change) => text.includes(`${change.label} Before ${change.before} After ${change.after}`)));
+    return text;
+  };
+  const saveReviewed = async (expected: ReviewChange[]) => {
+    await reviewChanges(expected);
     await admin.user.click("Save permissions");
     await admin.user.see({ text: "No unsaved changes" }, { timeoutMs: 30_000 });
   };
+  const initialRestrictions = capabilityFields.map(([, label]) => ({ label, before: "Allowed", after: "Blocked" }));
 
   const targetBaseline = await effective(world.den.members.jordan);
   const controlBaseline = await effective(world.den.members.casey);
@@ -441,11 +451,8 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
     await admin.user.see({ text: "This team’s choices are shown below. Other team and organization restrictions may further limit access." });
     const previewText = await admin.probe.text();
     const before = await policies();
-    await admin.user.click("Review changes");
-    await admin.user.see({ text: "Members of Focused work" });
-    await admin.user.see({ text: "7 permission changes" });
+    const reviewText = await reviewChanges(initialRestrictions);
     await admin.user.notSee({ text: "Members of Everyday work" });
-    const reviewText = await admin.probe.text();
     expect(await policies()).toEqual(before);
     expect(await effective(world.den.members.jordan)).toEqual(targetBaseline);
     expect(await effective(world.den.members.casey)).toEqual(controlBaseline);
@@ -455,7 +462,7 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
     for (const [, label] of capabilityFields) await admin.user.see({ role: "combobox", label }, { value: "deny" });
     expect(await policies()).toEqual(before);
     evidence.recordAssertionEvidence("Preview and review show the selected team and seven changes without saving; Keep editing retains the draft", JSON.stringify({ previewText, reviewText, before }), reviewText.includes("7 permission changes") && reviewText.includes("Members of Focused work") && !reviewText.includes("Members of Everyday work"));
-    await saveReviewed();
+    await saveReviewed(initialRestrictions);
     await admin.user.reload();
     await admin.user.see({ text: "No unsaved changes" }, { timeoutMs: 60_000 });
   });
@@ -581,14 +588,14 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
     await openAppGroups();
     for (const [, label] of capabilityFields) await admin.user.see({ role: "combobox", label }, { value: "deny" });
     await choose("Change app settings", true);
-    await saveReviewed();
+    await saveReviewed([{ label: "Change app settings", before: "Blocked", after: "Allowed" }]);
     const settingsOnly = await effective(world.den.members.jordan);
     for (const key of lockedKeys) expect(settingsOnly[key]).toBe(key === "allowControlSettings");
     expect(await effective(world.den.members.casey)).toEqual(controlBaseline);
     evidence.recordAssertionEvidence("Opening a legacy Locked policy preserves its restrictions; allowing Settings does not restore hidden grants or affect the other team", JSON.stringify({ legacyEffective, settingsOnly }), lockedKeys.every((key) => legacyEffective[key] === false && settingsOnly[key] === (key === "allowControlSettings")));
     await openAppGroups();
     for (const [key, label] of capabilityFields) if (key !== "allowManageExtensions" && key !== "allowControlSettings") await choose(label, true);
-    await saveReviewed();
+    await saveReviewed(capabilityFields.filter(([key]) => key !== "allowManageExtensions" && key !== "allowControlSettings").map(([, label]) => ({ label, before: "Blocked", after: "Allowed" })));
     await admin.user.reload();
     await admin.user.see({ text: "No unsaved changes" }, { timeoutMs: 60_000 });
     const restored = accessOf(await teamPolicy());
@@ -705,7 +712,12 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
     const executionPreview = await admin.probe.text();
     expect(await effective(world.den.members.jordan)).toEqual(beforeExecution);
     evidence.recordAssertionEvidence("The admin sees invalid-site feedback, adds a complete site, and closes the command bypass before saving", JSON.stringify({ invalidText, executionPreview }), invalidText.includes("Enter complete website addresses") && executionPreview.includes("1 approved site") && !executionPreview.includes("Computer commands can still access other websites and send data."));
-    await saveReviewed();
+    await saveReviewed([
+      { label: "Browse websites", before: "All websites", after: new URL(world.den.mocks.witness.url).origin },
+      { label: "Run computer commands", before: "Allowed", after: "Blocked" },
+      { label: "Upload files & submit forms", before: "Allowed", after: "Blocked" },
+      { label: "Add AI providers", before: "Allowed", after: "Blocked" },
+    ]);
     await admin.probe.eventually(async () => (await effective(world.den.members.jordan)).execution, {
       within: 30_000, label: "team execution policy saved", until: (value) => isRecord(value) && value.commands === "deny",
     });
@@ -719,7 +731,7 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
     expect(beforeBuiltIn.status).toBe(200);
     await admin.user.click({ text: "AI setup" });
     await choose("Use OpenCode models", false);
-    await saveReviewed();
+    await saveReviewed([{ label: "Use OpenCode models", before: "Allowed", after: "Blocked" }]);
     await admin.probe.eventually(async () => (await effective(world.den.members.jordan)).allowZenModel, {
       within: 30_000, label: "built-in model restriction saved", until: (allowed) => allowed === false,
     });

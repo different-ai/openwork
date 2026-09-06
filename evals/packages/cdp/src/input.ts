@@ -152,6 +152,7 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
       if (explicit) return explicit;
       const tag = element.tagName.toLowerCase();
       if (tag === "button") return "button";
+      if (tag === "select") return element.multiple || element.size > 1 ? "listbox" : "combobox";
       if (tag === "a" && element.hasAttribute("href")) return "link";
       if (tag === "textarea" || element.isContentEditable) return "textbox";
       if (tag === "input") {
@@ -191,7 +192,7 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
       ? '[contenteditable="true"][data-lexical-editor="true"]'
       : target.text && !target.role && !target.label && !target.placeholder && !target.testId
         ? 'body *'
-        : 'button, a[href], input, textarea, [contenteditable="true"], [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="menuitem"], [role="tab"], [role="option"], [data-testid]';
+        : 'button, a[href], input, textarea, select, [role="combobox"], [role="listbox"], [contenteditable="true"], [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="menuitem"], [role="tab"], [role="option"], [data-testid]';
     const candidates = [...document.querySelectorAll(selector)].filter((element) => {
       if (target.role && implicitRole(element) !== target.role) return false;
       if (target.placeholder !== undefined && (element.getAttribute("placeholder") ?? element.getAttribute("aria-placeholder")) !== target.placeholder) return false;
@@ -250,7 +251,7 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
       name: accessibleName(element),
       visible: styleVisible && rect.width > 0 && rect.height > 0 && inViewport,
       hitTestOk,
-      editable: element.isContentEditable || !element.readOnly && (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement),
+      editable: element instanceof HTMLSelectElement ? !element.matches(":disabled") : element.isContentEditable || !element.readOnly && (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement),
       value: typeof element.value === "string" ? element.value : element.isContentEditable ? element.innerText : "",
       text: (element.isContentEditable ? element.innerText : element.innerText ?? element.value ?? element.textContent ?? "").trim(),
       covering: hit && !hitTestOk ? {

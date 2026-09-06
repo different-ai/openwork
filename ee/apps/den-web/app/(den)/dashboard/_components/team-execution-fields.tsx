@@ -44,7 +44,7 @@ export function TeamExecutionFields({ value, onChange, onPendingSiteChange }: {
   }
 
   return <>
-    <TeamPermissionGroup title="Browse websites" icon={Globe} defaultOpen status={browserMode === "all" ? "Allowed" : browserMode === "blocked" || value.browserOrigins?.length === 0 ? "Blocked" : "Approved sites only"} description={`${teamWebsiteSummary(value)} · uploads and forms ${value.blockBrowserUploads ? "blocked" : "allowed"}`}>
+    <TeamPermissionGroup title="Browse websites" icon={Globe} defaultOpen status={browserMode === "all" ? "Allowed" : browserMode === "blocked" || value.browserOrigins?.length === 0 ? "Blocked" : "Approved sites only"} description={value.browserOrigins?.length === 0 ? "No websites are approved, so browsing is blocked" : `${teamWebsiteSummary(value)} · uploads and forms ${value.blockBrowserUploads ? "blocked" : "allowed"}`}>
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 py-3">
         <label htmlFor={`${id}-browser`} className="text-sm text-gray-800">Website access</label>
         <select id={`${id}-browser`} value={browserMode} onChange={(event) => {
