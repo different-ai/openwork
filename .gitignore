@@ -28,6 +28,10 @@ _worktrees/
 # Desktop sidecars
 apps/desktop/resources/sidecars/
 apps/desktop/server/
+apps/coworker/dist-electron/
+apps/coworker/electron-dist/
+apps/coworker/resources/sidecars/
+apps/coworker/server/
 
 # Env
 .env

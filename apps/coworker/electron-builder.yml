@@ -1,0 +1,91 @@
+appId: com.differentai.opencoworker
+productName: Open Coworker
+artifactName: open-coworker-${os}-${arch}-${version}.${ext}
+protocols:
+  - name: Open Coworker
+    schemes:
+      - opencoworker
+directories:
+  output: dist-electron
+files:
+  - electron-dist/**/*
+  - dist/**/*
+  - server/**/*
+  - "!server/dist/opencode-plugins/**"
+  - resources/icons/**/*
+  - package.json
+extraMetadata:
+  main: electron-dist/main.mjs
+extraResources:
+  - from: resources/sidecars
+    to: sidecars
+    filter:
+      - opencode
+      - opencode.exe
+      - opencode-*
+      - versions.json
+      - versions.json-*
+  # The embedded server resolves its OpenWork engine plugins from
+  # Resources/opencode-plugins when it runs from an asar, as the desktop does.
+  - from: server/dist/opencode-plugins
+    to: opencode-plugins
+    filter:
+      - "*.js"
+      - "*.wasm"
+      - "!*.test.js"
+asar: true
+npmRebuild: false
+# Notarization runs in the after-sign hook only when a release asks for it
+# (MACOS_NOTARIZE=true with Apple API key credentials); electron-builder's own
+# notarize step stays off so local unsigned builds are unaffected.
+afterSign: scripts/electron-after-sign.cjs
+mac:
+  icon: resources/icons/icon.icns
+  category: public.app-category.productivity
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  notarize: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  target:
+    - dmg
+    - zip
+dmg:
+  title: Open Coworker
+  background: resources/installer/dmg-background.png
+  icon: resources/icons/icon.icns
+  iconSize: 118
+  iconTextSize: 13
+  window:
+    width: 760
+    # Keep the final launch step visible even when Finder shows tabs/path/status bars.
+    height: 600
+  contents:
+    - x: 180
+      y: 285
+    - x: 580
+      y: 285
+      type: link
+      path: /Applications
+linux:
+  executableName: open-coworker
+  icon: resources/icons/linux
+  syncDesktopName: true
+  target:
+    - AppImage
+    - tar.gz
+win:
+  icon: resources/icons/icon.ico
+  target:
+    - nsis
+nsis:
+  oneClick: true
+  perMachine: false
+  installerIcon: resources/icons/icon.ico
+  uninstallerIcon: resources/icons/icon.ico
+  installerHeaderIcon: resources/icons/icon.ico
+  shortcutName: Open Coworker
+  uninstallDisplayName: Open Coworker
+  createDesktopShortcut: false
+  runAfterFinish: true
+  deleteAppDataOnUninstall: false

@@ -730,6 +730,26 @@ export async function mockToolsListCount(mock: MockHandle): Promise<number> {
   }).length;
 }
 
+export async function coworkerTemplateEditor(seed: Seed) {
+  const den = await seed.den({
+    org: { name: "Prepared coworker team", admin: { name: "Preview operator" }, members: { teammate: { name: "Team Member" } } },
+  });
+  const created = await seed.api(den.admin, "/v1/plugins", {
+    method: "POST",
+    body: JSON.stringify({ name: "Prepared marketing team", orgWide: true, components: [] }),
+  });
+  const pluginId = stringField(itemOf(created.body), "id");
+  if (created.response.status !== 201 || !pluginId) throw new Error("The team plugin could not be prepared.");
+  const web = await seed.web({
+    den,
+    signedInAs: den.admin,
+    startPath: `/dashboard/plugins/${pluginId}`,
+    headless: true,
+    viewport: { width: 1440, height: 1400 },
+  });
+  return { den, web, pluginId, organizationId: await activeOrganizationId(seed, den.admin) };
+}
+
 export async function pluginEditorWithConnector(seed: Seed) {
   const stamp = Date.now();
   const den = await seed.den({

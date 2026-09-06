@@ -1,0 +1,1006 @@
+import { patternDrafts, workPattern } from "@/lib/work-patterns";
+import { AllHandsOverview, allHandsContext } from "@/ui/all-hands";
+import type { AllHandsSettings } from "@/lib/bridge";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { coworkerBridge, type CoworkerGroupSummary, type CoworkerGroupTurn, type CoworkerSummary, type CoworkerTemplateSync, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
+import { publishGroupRun, subscribeGroupRuns } from "@/lib/group-runs";
+import { describeGroupActivity } from "@/lib/groups";
+import {
+  createDenAutomationsClient,
+  exchangeGrant,
+  parsePastedGrant,
+  providerSyncSession,
+  readDenSession,
+  writeDenSession,
+  type ConnectToken,
+  type DenSession,
+} from "@/lib/den";
+import {
+  connectReconcilePayload,
+  connectStateFromHealth,
+  reconcileConnect,
+  removeConnect,
+  type ConnectState,
+} from "@/lib/connect";
+import { readCoworkerActivity, type CoworkerActivity } from "@/lib/threads";
+import { Button, ErrorNote } from "@/ui/kit";
+import { NewCoworker } from "@/ui/new-coworker";
+import { GroupDetailsSheet } from "@/ui/group-details";
+import { NewGroupSheet } from "@/ui/new-group";
+import { GroupChat } from "@/ui/group-chat";
+import { SignInGate } from "@/ui/sign-in";
+import { CoworkerHome, type CoworkerHomeRequest } from "@/ui/coworker-home";
+import { CoworkerRail } from "@/ui/coworker-rail";
+import { useResizablePanel } from "@/ui/use-resizable-panel";
+import type { PanelBounds } from "@/lib/panel-layout";
+
+/** The team rail: drag it narrower than a row can show and it folds to avatars. */
+const RAIL_BOUNDS: PanelBounds = { min: 220, max: 380, collapsedWidth: 88, collapseBelow: 170 };
+import { LocalModeScreen } from "@/ui/local-mode";
+import { OnboardingWelcome } from "@/ui/onboarding";
+import { OnboardingIntents } from "@/ui/onboarding-intents";
+import { OnboardingTeam } from "@/ui/onboarding-team";
+import { emptyOnboardingDraft, loadOnboardingDraft, saveOnboardingDraft, toggleIntent, type OnboardingDraft } from "@/lib/onboarding-team";
+import type { TeamRole } from "@/lib/bridge";
+import { AppLoader, CoworkerMark } from "@/ui/brand";
+import { OpenWorkSettings, type SettingsSection } from "@/ui/openwork-settings";
+
+/** How long a freshly (re)started workspace may stay silent before it is a problem worth naming. */
+const WORKSPACE_WARMUP_MS = 45_000;
+
+/** Identity of a pushed account context; the server itself no-ops on a repeat. */
+function sessionKey(session: DenSession): string {
+  return `${session.baseUrl}\u0000${session.orgId}\u0000${session.token}`;
+}
+
+export default function App() {
+  const [runtime, setRuntime] = useState<RuntimeInfo | null>(null);
+  const [bootError, setBootError] = useState("");
+  const [session, setSession] = useState<DenSession | null>(() => readDenSession());
+  const [providerSync, setProviderSync] = useState<ProviderSyncRun | null>(null);
+  const [templateSync, setTemplateSync] = useState<CoworkerTemplateSync | null>(null);
+  const [templateError, setTemplateError] = useState("");
+  const [signInBusy, setSignInBusy] = useState(false);
+  const [signInError, setSignInError] = useState("");
+  const [coworkers, setBots] = useState<CoworkerSummary[]>([]);
+  const [selectedSlug, setSelectedSlug] = useState("");
+  const [creating, setCreating] = useState(false);
+  /** Group chats: several coworkers in one conversation. Selecting one takes the main column. */
+  const [groups, setGroups] = useState<CoworkerGroupSummary[]>([]);
+  const [selectedGroupId, setSelectedGroupId] = useState("");
+  const [allHandsSettings, setAllHandsSettings] = useState<AllHandsSettings | null>(null);
+  const [briefingRequest, setBriefingRequest] = useState<{ id: string; text: string } | null>(null);
+  const [allHandsError, setAllHandsError] = useState("");
+  useEffect(() => { void coworkerBridge.allHands.get().then(setAllHandsSettings).catch((cause) => setAllHandsError(String(cause))); }, []);
+  useEffect(() => {
+    if (!allHandsSettings?.enabled) return;
+    let cancelled = false;
+    void coworkerBridge.allHands.prepare().then(async (group) => {
+      if (cancelled) return;
+      if (group) replaceGroup(group);
+      const settings = await coworkerBridge.allHands.get();
+      if (!cancelled) setAllHandsSettings(settings);
+    }).catch((cause) => { if (!cancelled) setAllHandsError(String(cause)); });
+    return () => { cancelled = true; };
+  }, [allHandsSettings?.enabled, coworkers.length]);
+
+  const [creatingGroup, setCreatingGroup] = useState(false);
+  const [groupLines, setGroupLines] = useState<Record<string, string>>({});
+  const setGroupLine = useCallback((id: string, line: string) => {
+    setGroupLines((current) => (current[id] === line ? current : { ...current, [id]: line }));
+  }, []);
+  const replaceGroup = useCallback((group: CoworkerGroupSummary) => {
+    setGroups((current) => [group, ...current.filter((item) => item.id !== group.id)].sort((a, b) => b.updatedAt - a.updatedAt));
+  }, []);
+  /** A request made of one coworker's view from elsewhere: a group's "Choose AI model" or an assignment it created. */
+  const [homeRequest, setHomeRequest] = useState<(CoworkerHomeRequest & { slug: string }) | null>(null);
+  const [groupDetailsOpen, setGroupDetailsOpen] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [onboardingReady, setOnboardingReady] = useState(false);
+  /** The "Use this Mac" step: what this Mac already has, before the first coworker. */
+  const [localSetup, setLocalSetup] = useState(false);
+  /** After the account or local-mode step: what the team will help with, then the proposed team. */
+  const [onboardingStep, setOnboardingStep] = useState<"" | "intents" | "team">("");
+  const [onboardingDraft, setOnboardingDraft] = useState<OnboardingDraft>(() => emptyOnboardingDraft());
+  const [teamCatalog, setTeamCatalog] = useState<TeamRole[]>([]);
+  const [globalSettings, setGlobalSettings] = useState<SettingsSection | null>(null);
+  const [globalSettingsMounted, setGlobalSettingsMounted] = useState(false);
+  const [activityBySlug, setActivityBySlug] = useState<Record<string, CoworkerActivity>>({});
+  const [liveActivityBySlug, setLiveActivityBySlug] = useState<Record<string, CoworkerActivity>>({});
+  const [attentionBySlug, setAttentionBySlug] = useState<Record<string, string>>({});
+  /** OpenWork Connect (the `openwork-cloud` gateway) state per coworker, while signed in. */
+  const [connectBySlug, setConnectBySlug] = useState<Record<string, ConnectState>>({});
+  const connectTokenRef = useRef<{ sessionKey: string; token: ConnectToken } | null>(null);
+  const connectedWorkspacesRef = useRef<Set<string>>(new Set());
+  /** Automatic retries per coworker while the AI service is still coming up; cleared on success. */
+  const connectRetryRef = useRef<Record<string, { attempts: number; timer: number }>>({});
+  /** Cloud responsibilities Den is running right now, per coworker: "Running in OpenWork Cloud". */
+  const [cloudRunBySlug, setCloudRunBySlug] = useState<Record<string, CoworkerActivity>>({});
+  const pushedSessionKeyRef = useRef("");
+  /** When each coworker's workspace first stopped answering; cleared by the next good read. */
+  const notAnsweringSinceRef = useRef<Record<string, number>>({});
+  const settingsReturnFocusRef = useRef<HTMLElement | null>(null);
+
+  const boot = useCallback(async () => {
+    try {
+      const list = await coworkerBridge.coworkers.list();
+      const info = await coworkerBridge.runtimeInfo();
+      // A fresh window runs no group turn, so any still recorded as running was cut off: settle it first.
+      await coworkerBridge.groups.recoverInterrupted().catch(() => []);
+      const groups = await coworkerBridge.groups.list().catch(() => []);
+      // Publish the saved team and its selection together, keeping the loader up until both are ready.
+      setRuntime(info);
+      setBots(list);
+      setGroups(groups);
+      setSelectedSlug((current) =>
+        current && list.some((coworker) => coworker.slug === current) ? current : (list[0]?.slug ?? ""),
+      );
+      if (list.length === 0) {
+        // A team drafted before a quit or reload comes back where it was left.
+        const saved = loadOnboardingDraft(window.sessionStorage);
+        setOnboardingDraft(saved);
+        if (saved.drafts.length > 0) setOnboardingStep("team");
+      }
+      setBootError("");
+    } catch (cause) {
+      setBootError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, []);
+
+  useEffect(() => {
+    void boot();
+  }, [boot]);
+
+  // A group turn keeps running when its view is closed; the rail line still says who is replying.
+  useEffect(() => {
+    const lastTurn = new Map<string, CoworkerGroupTurn>();
+    return subscribeGroupRuns((update) => {
+      const nameFor = (slug: string) => coworkers.find((coworker) => coworker.slug === slug)?.name ?? slug;
+      if (update.turn) {
+        lastTurn.set(update.groupId, update.turn);
+        if (update.turn.status === "routing" || update.turn.status === "running") setGroupLine(update.groupId, describeGroupActivity([], nameFor, update.turn));
+      }
+      if (update.done) {
+        const turn = lastTurn.get(update.groupId);
+        const last = turn ? [...turn.speakers].reverse().find((speaker) => speaker.status === "succeeded") : undefined;
+        if (last) setGroupLine(update.groupId, `${nameFor(last.slug)} replied`);
+        lastTurn.delete(update.groupId);
+      }
+    });
+  }, [coworkers, setGroupLine]);
+
+  useEffect(() => {
+    if (!runtime) return;
+    let cancelled = false;
+    let reading = false;
+    const refresh = async () => {
+      if (reading) return;
+      reading = true;
+      try {
+        const list = await coworkerBridge.groups.list();
+        if (cancelled) return;
+        setGroups((current) => current.length === list.length && current.every((group, index) => group.id === list[index]?.id && group.updatedAt === list[index]?.updatedAt) ? current : list);
+        for (const group of list.filter((group) => !group.archivedAt)) {
+          const status = await coworkerBridge.groups.status(group.id);
+          if (cancelled) return;
+          publishGroupRun({ groupId: group.id, active: status.active, ...(status.turn ? { turn: status.turn } : {}), done: !status.active });
+          const nameFor = (slug: string) => coworkers.find((coworker) => coworker.slug === slug)?.name ?? slug;
+          if (status.interactions.length) setGroupLine(group.id, `${status.interactions.map((entry) => nameFor(entry.slug)).join(", ")} waiting for you`);
+          else if (status.active) setGroupLine(group.id, status.turn ? describeGroupActivity([], nameFor, status.turn) : "Choosing who should respond…");
+          else {
+            const last = group.turns.at(-1)?.speakers.filter((speaker) => speaker.status === "succeeded").at(-1);
+            if (last) setGroupLine(group.id, `${nameFor(last.slug)} replied`);
+          }
+        }
+      } finally { reading = false; }
+    };
+    const timer = window.setInterval(() => void refresh().catch(() => undefined), 2000);
+    const open = (event: Event) => {
+      if (event instanceof CustomEvent && typeof event.detail === "string") {
+        void coworkerBridge.groups.get(event.detail).then((group) => { if (!group.archivedAt) { setGroups((current) => current.some((entry) => entry.id === group.id) ? current : [...current, group]); setSelectedGroupId(group.id); } });
+      }
+    };
+    window.addEventListener("coworker:open-group", open);
+    return () => { cancelled = true; window.clearInterval(timer); window.removeEventListener("coworker:open-group", open); };
+  }, [runtime?.serverUrl, coworkers, setGroupLine]);
+
+  const openGlobalSettings = useCallback((section: SettingsSection = "general") => {
+    const opener = document.activeElement;
+    settingsReturnFocusRef.current = opener instanceof HTMLElement && opener !== document.body ? opener : null;
+    setGlobalSettingsMounted(true);
+    setGlobalSettings(section);
+  }, []);
+
+  const closeGlobalSettings = useCallback(() => {
+    setGlobalSettings(null);
+  }, []);
+
+  useEffect(() => {
+    if (globalSettings) return;
+    const target = settingsReturnFocusRef.current;
+    settingsReturnFocusRef.current = null;
+    if (target?.isConnected) target.focus({ preventScroll: true });
+  }, [globalSettings]);
+
+  const refreshRuntime = useCallback(async () => {
+    const info = await coworkerBridge.runtimeInfo();
+    setRuntime(info);
+  }, []);
+
+  const restartRuntime = useCallback(async () => {
+    setRuntime(await coworkerBridge.restartRuntime());
+  }, []);
+
+  const receiveImportedTemplates = useCallback((result: CoworkerTemplateSync) => {
+    const first = result.created[0];
+    if (!first) return;
+    setBots((current) => [...current, ...result.created.filter((item) => !current.some((known) => known.slug === item.slug))]);
+    setSelectedSlug((current) => current || first.slug);
+    setOnboardingReady(true);
+    setOnboardingStep("");
+    setCreating(false);
+    void refreshRuntime();
+  }, [refreshRuntime]);
+
+  const receiveTemplates = useCallback((result: CoworkerTemplateSync) => {
+    setTemplateSync(result);
+    setTemplateError("");
+    receiveImportedTemplates(result);
+  }, [receiveImportedTemplates]);
+
+  const syncAssignedCoworkers = useCallback(async (installIds: string[] = []) => {
+    if (!session) return;
+    const key = sessionKey(session);
+    try {
+      const result = await coworkerBridge.templates.sync({ userEmail: session.userEmail, automatic: true, installIds });
+      if (pushedSessionKeyRef.current === key) receiveTemplates(result);
+    } catch (cause) {
+      if (pushedSessionKeyRef.current === key) setTemplateError(cause instanceof Error ? cause.message : "Your team's coworkers could not be refreshed.");
+    }
+  }, [receiveTemplates, session]);
+
+  /**
+   * Hand the signed-in account to the embedded server so the member's
+   * authorized providers become available to every coworker. Runs on boot for a stored
+   * session and again after every sign-in; the server ignores a repeat.
+   */
+  const pushSession = useCallback(async (next: DenSession): Promise<ProviderSyncRun> => {
+    pushedSessionKeyRef.current = sessionKey(next);
+    try {
+      const run = await coworkerBridge.den.setSession(providerSyncSession(next));
+      setProviderSync(run);
+      setTemplateSync(null);
+      setTemplateError("");
+      try {
+        const result = await coworkerBridge.templates.sync({ userEmail: next.userEmail, automatic: true });
+        if (pushedSessionKeyRef.current === sessionKey(next)) receiveTemplates(result);
+      } catch (cause) {
+        if (pushedSessionKeyRef.current === sessionKey(next)) setTemplateError(cause instanceof Error ? cause.message : "Your team's coworkers could not be loaded. Refresh them in Account settings.");
+      }
+      return run;
+    } catch (cause) {
+      const failed: ProviderSyncRun = { status: "failed", message: cause instanceof Error ? cause.message : String(cause) };
+      setProviderSync(failed);
+      return failed;
+    } finally {
+      void refreshRuntime();
+    }
+  }, [receiveTemplates, refreshRuntime]);
+
+  useEffect(() => {
+    if (!runtime || !session || pushedSessionKeyRef.current === sessionKey(session)) return;
+    void pushSession(session);
+  }, [pushSession, runtime, session]);
+
+  const signInWithGrant = useCallback(async (grant: string, baseUrl?: string) => {
+    if (!runtime) return;
+    setSignInBusy(true);
+    setSignInError("");
+    try {
+      const next = await exchangeGrant(baseUrl ?? runtime.denBaseUrl, grant);
+      writeDenSession(next);
+      setSession(next);
+      await pushSession(next);
+      setConnecting(false);
+      if (coworkers.length === 0) setOnboardingStep("intents");
+    } catch (cause) {
+      setSignInError(cause instanceof Error ? cause.message : String(cause));
+      setConnecting(true);
+    } finally {
+      setSignInBusy(false);
+    }
+  }, [coworkers.length, pushSession, runtime]);
+
+  // Den's "Open in app" button returns here as an opencoworker://den-auth link.
+  useEffect(() => {
+    if (!runtime) return;
+    return coworkerBridge.onDeepLink((urls) => {
+      for (const url of urls) {
+        const parsed = parsePastedGrant(url);
+        if (parsed) {
+          void signInWithGrant(parsed.grant, parsed.baseUrl);
+          return;
+        }
+      }
+    });
+  }, [runtime, signInWithGrant]);
+
+  const signOut = useCallback(async () => {
+    // The organization's capabilities leave with the account.
+    if (runtime) {
+      await Promise.all(coworkers
+        .filter((coworker) => coworker.workspaceId)
+        .map((coworker) => removeConnect(runtime, coworker.workspaceId).catch(() => undefined)));
+    }
+    for (const pending of Object.values(connectRetryRef.current)) window.clearTimeout(pending.timer);
+    connectRetryRef.current = {};
+    connectedWorkspacesRef.current.clear();
+    connectTokenRef.current = null;
+    setConnectBySlug({});
+    writeDenSession(null);
+    setSession(null);
+    setProviderSync(null);
+    pushedSessionKeyRef.current = "";
+    try {
+      await coworkerBridge.den.clearSession();
+    } finally {
+      void refreshRuntime();
+    }
+  }, [coworkers, refreshRuntime, runtime]);
+
+  const syncProviders = useCallback(async (): Promise<ProviderSyncRun> => {
+    try {
+      const run = await coworkerBridge.den.syncProviders();
+      setProviderSync(run);
+      return run;
+    } catch (cause) {
+      const failed: ProviderSyncRun = { status: "failed", message: cause instanceof Error ? cause.message : String(cause) };
+      setProviderSync(failed);
+      return failed;
+    } finally {
+      void refreshRuntime();
+    }
+  }, [refreshRuntime]);
+
+  /**
+   * Bring the organization's capabilities to every coworker: mint one gateway
+   * token for the session and register the gateway in each coworker's
+   * workspace. Idempotent; `force` re-registers (Repair) and re-mints a token
+   * that is about to expire.
+   */
+  const syncConnect = useCallback(async (options: { force?: boolean; remint?: boolean; slug?: string } = {}) => {
+    if (!runtime?.engineManaged || !session) return;
+    const key = sessionKey(session);
+    const targets = coworkers.filter((coworker) =>
+      coworker.workspaceId
+      && (!options.slug || coworker.slug === options.slug)
+      && (options.force || !connectedWorkspacesRef.current.has(`${key}\u0000${coworker.workspaceId}`)),
+    );
+    if (targets.length === 0) return;
+    for (const coworker of targets) {
+      const pending = connectRetryRef.current[coworker.slug];
+      if (pending) window.clearTimeout(pending.timer);
+    }
+    setConnectBySlug((current) => {
+      const next = { ...current };
+      for (const coworker of targets) next[coworker.slug] = { status: "connecting" };
+      return next;
+    });
+    let token = connectTokenRef.current?.sessionKey === key ? connectTokenRef.current.token : null;
+    const expiresSoon = token ? Date.parse(token.expiresAt) - Date.now() < 5 * 60_000 : true;
+    try {
+      if (!token || expiresSoon || options.remint) {
+        token = await createDenAutomationsClient(session).mintMcpToken();
+        connectTokenRef.current = { sessionKey: key, token };
+      }
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      setConnectBySlug((current) => {
+        const next = { ...current };
+        for (const coworker of targets) next[coworker.slug] = { status: "unavailable", message: `OpenWork could not issue a Connect token: ${message}` };
+        return next;
+      });
+      return;
+    }
+    const minted = token;
+    await Promise.all(targets.map(async (coworker) => {
+      const payload = connectReconcilePayload({ workspaceId: coworker.workspaceId, session, token: minted, appVersion: runtime.version });
+      let state: ConnectState;
+      try {
+        if (!payload) throw new Error("OpenWork did not name a gateway for this organization.");
+        state = connectStateFromHealth(await reconcileConnect(runtime, coworker.workspaceId, payload));
+        connectedWorkspacesRef.current.add(`${key}\u0000${coworker.workspaceId}`);
+      } catch (cause) {
+        state = { status: "unavailable", message: cause instanceof Error ? cause.message : String(cause) };
+      }
+      setConnectBySlug((current) => ({ ...current, [coworker.slug]: state }));
+      // Right after a coworker is created its AI service may still be starting, so the first
+      // registration can land before the engine answers. Try again by itself a few times.
+      const previous = connectRetryRef.current[coworker.slug]?.attempts ?? 0;
+      if (state.status === "connected" || previous >= 6) {
+        delete connectRetryRef.current[coworker.slug];
+        return;
+      }
+      const attempts = previous + 1;
+      const timer = window.setTimeout(() => void syncConnect({ force: true, slug: coworker.slug }), Math.min(60_000, 5_000 * attempts));
+      connectRetryRef.current[coworker.slug] = { attempts, timer };
+    }));
+  }, [coworkers, runtime, session]);
+
+  useEffect(() => {
+    if (!session || !runtime?.engineManaged) return;
+    void syncConnect();
+    // Tokens are short-lived: refresh before they lapse while the app stays open.
+    const timer = window.setInterval(() => void syncConnect({ force: true, remint: true }), 20 * 60_000);
+    return () => window.clearInterval(timer);
+  }, [runtime?.engineManaged, session, syncConnect]);
+
+  useEffect(() => {
+    if (!runtime) return;
+    let cancelled = false;
+    const refreshActivity = async () => {
+      const entries = await Promise.all(
+        coworkers.map(async (coworker) => {
+          if (!coworker.workspaceId) {
+            return [
+              coworker.slug,
+              { state: "offline", label: "Setting up", detail: "Workspace is not ready", updatedAt: 0 },
+            ] as const;
+          }
+          if (!runtime.engineManaged) {
+            // One phrase for one fact: the header, rail, and sidebar all say the AI service is unavailable.
+            return [coworker.slug, { state: "offline", label: "AI unavailable", detail: "", updatedAt: 0 }] as const;
+          }
+          // Worker threads are work in progress, never finished assignments; their ids come from the main process.
+          const workers = await coworkerBridge.workers.list(coworker.slug).catch(() => []);
+          const [readActivity, localResponsibilities] = await Promise.all([
+            readCoworkerActivity({
+              serverUrl: runtime.serverUrl,
+              workspaceId: coworker.workspaceId,
+              token: runtime.ownerToken,
+              conversationThreadId: coworker.conversationThreadId,
+              workerThreadIds: workers.map((worker) => worker.threadId).filter(Boolean),
+            }),
+            coworkerBridge.localResponsibilities.list(coworker.slug).catch(() => []),
+          ]);
+          // A workspace that has just been (re)started may not answer for a moment.
+          // That is a warm-up, shown calmly; it becomes a problem only if it lasts.
+          const now = Date.now();
+          if (readActivity.state !== "offline") delete notAnsweringSinceRef.current[coworker.slug];
+          const notAnsweringSince = readActivity.state === "offline"
+            ? (notAnsweringSinceRef.current[coworker.slug] ??= now)
+            : null;
+          const threadActivity: CoworkerActivity =
+            notAnsweringSince !== null && now - notAnsweringSince < WORKSPACE_WARMUP_MS
+              ? { state: "starting", label: "Starting up", detail: "", updatedAt: 0 }
+              : readActivity;
+          // A Worker waiting on a decision needs the person as much as a pending question does; the card is in the discussion.
+          const deciding = workers.find((worker) => worker.status === "waiting" && worker.waitingFor === "decision");
+          if (deciding && threadActivity.state !== "attention" && threadActivity.state !== "offline" && threadActivity.state !== "starting") {
+            return [
+              coworker.slug,
+              {
+                state: "attention",
+                label: "Needs you",
+                detail: `${deciding.name} needs a decision`,
+                updatedAt: deciding.updatedAt,
+                ...(coworker.conversationThreadId ? { threadId: coworker.conversationThreadId } : {}),
+                ...(threadActivity.last ? { last: threadActivity.last } : {}),
+                ...(threadActivity.recent ? { recent: threadActivity.recent } : {}),
+              },
+            ] as const;
+          }
+          const localRunning = localResponsibilities.find((item) => item.latestRun?.status === "running");
+          const localSuccess = localResponsibilities
+            .filter((item) => item.latestRun?.status === "succeeded")
+            .sort((left, right) => (right.latestRun?.finishedAt ?? 0) - (left.latestRun?.finishedAt ?? 0))[0];
+          const localSuccessAt = localSuccess?.latestRun?.finishedAt ?? 0;
+          const latestActivity = localSuccess && localSuccessAt > (threadActivity.last?.updatedAt ?? 0)
+            ? { title: localSuccess.name, updatedAt: localSuccessAt, threadId: localSuccess.latestRun?.threadId }
+            : threadActivity.last;
+          if (localRunning?.latestRun) {
+            return [
+              coworker.slug,
+              {
+                state: "working",
+                label: "Running locally",
+                detail: localRunning.name,
+                updatedAt: localRunning.latestRun.startedAt,
+                ...(localRunning.latestRun.threadId ? { threadId: localRunning.latestRun.threadId } : {}),
+                ...(latestActivity ? { last: latestActivity } : {}),
+                ...(threadActivity.recent ? { recent: threadActivity.recent } : {}),
+              },
+            ] as const;
+          }
+          const localFailure = localResponsibilities
+            .filter((item) => item.latestRun?.status === "failed")
+            .sort((left, right) => (right.latestRun?.finishedAt ?? 0) - (left.latestRun?.finishedAt ?? 0))[0];
+          if (localFailure?.latestRun) {
+            return [
+              coworker.slug,
+              {
+                state: "attention",
+                label: "Run failed",
+                detail: localFailure.name,
+                updatedAt: localFailure.latestRun.finishedAt ?? localFailure.latestRun.startedAt,
+                ...(localFailure.latestRun.threadId ? { threadId: localFailure.latestRun.threadId } : {}),
+                ...(latestActivity ? { last: latestActivity } : {}),
+                ...(threadActivity.recent ? { recent: threadActivity.recent } : {}),
+              },
+            ] as const;
+          }
+          // The soonest scheduled responsibility, so an idle coworker can say what is next.
+          const upcoming = localResponsibilities
+            .filter((item) => item.state === "active" && typeof item.nextDueAt === "number" && item.nextDueAt > now)
+            .sort((left, right) => (left.nextDueAt ?? 0) - (right.nextDueAt ?? 0))[0];
+          const withNext = upcoming && upcoming.nextDueAt ? { next: { name: upcoming.name, at: upcoming.nextDueAt } } : {};
+          return [coworker.slug, { ...threadActivity, ...(latestActivity ? { last: latestActivity } : {}), ...withNext }] as const;
+        }),
+      );
+      if (!cancelled) setActivityBySlug(Object.fromEntries(entries));
+    };
+    if (runtime.engineManaged) {
+      // The service is back: a label recorded while it was down is stale now,
+      // and the first fresh read may take a moment while the service warms up.
+      setActivityBySlug((current) => {
+        let changed = false;
+        const next: Record<string, CoworkerActivity> = { ...current };
+        for (const [slug, activity] of Object.entries(current)) {
+          if (activity.label !== "AI unavailable") continue;
+          next[slug] = { state: "starting", label: "Starting up", detail: "", updatedAt: 0 };
+          changed = true;
+        }
+        return changed ? next : current;
+      });
+    }
+    void refreshActivity();
+    const timer = window.setInterval(() => void refreshActivity(), 4_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [runtime, coworkers]);
+
+  useEffect(() => {
+    if (!session) {
+      setAttentionBySlug({});
+      setCloudRunBySlug({});
+      return;
+    }
+    let cancelled = false;
+    const den = createDenAutomationsClient(session);
+    const refreshAttention = async () => {
+      try {
+        const list = await den.list();
+        const next: Record<string, string> = {};
+        const running: Record<string, CoworkerActivity> = {};
+        for (const coworker of coworkers) {
+          const owned = list.items.filter(
+            (entry) =>
+              coworker.automations.includes(entry.automation.id) ||
+              Boolean(coworker.workspaceId && entry.revision.workspaceId === coworker.workspaceId),
+          );
+          const attention = owned.find((entry) => entry.automation.state === "needs_attention");
+          if (attention) {
+            next[coworker.slug] =
+              attention.automation.needsAttentionReason?.message || attention.automation.name;
+          }
+          const active = owned.find((entry) =>
+            entry.latestRun !== null && ["queued", "claimed", "running"].includes(entry.latestRun.status),
+          );
+          if (active?.latestRun) {
+            running[coworker.slug] = {
+              state: "working",
+              label: active.latestRun.status === "running" ? "Running in OpenWork Cloud" : "Queued in OpenWork Cloud",
+              detail: active.automation.name,
+              updatedAt: active.latestRun.startedAt ?? active.latestRun.createdAt,
+            };
+          }
+        }
+        if (!cancelled) {
+          setAttentionBySlug(next);
+          setCloudRunBySlug(running);
+        }
+      } catch {
+        // The responsibilities rail presents connection errors in context.
+      }
+    };
+    void refreshAttention();
+    const timer = window.setInterval(() => void refreshAttention(), 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [session, coworkers]);
+
+  const rail = useResizablePanel({
+    storageKey: "open-coworker.team-rail",
+    side: "left",
+    bounds: RAIL_BOUNDS,
+    defaultWidth: 272,
+  });
+
+  // The catalog the onboarding steps propose from, read once when they are first needed.
+  useEffect(() => {
+    if (!onboardingStep || teamCatalog.length > 0) return;
+    let cancelled = false;
+    coworkerBridge.team.catalog()
+      .then((catalog) => {
+        if (!cancelled) setTeamCatalog(catalog);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [onboardingStep, teamCatalog.length]);
+
+  /** Change the draft from its latest value (two quick taps must both land) and keep it for the session. */
+  const updateOnboardingDraft = useCallback((next: OnboardingDraft | ((current: OnboardingDraft) => OnboardingDraft)) => {
+    setOnboardingDraft((current) => {
+      const resolved = typeof next === "function" ? next(current) : next;
+      saveOnboardingDraft(window.sessionStorage, resolved);
+      return resolved;
+    });
+  }, []);
+
+  /** Skip the proposed team: today's blank Add screen. */
+  const addOwnCoworker = useCallback(() => {
+    setOnboardingStep("");
+    setOnboardingReady(true);
+    setCreating(true);
+  }, []);
+
+  const proposeTeam = useCallback(async () => {
+    try {
+      const drafts = patternDrafts(await coworkerBridge.team.recommend(onboardingDraft.intents), onboardingDraft.patternId ?? "");
+      updateOnboardingDraft((current) => ({ ...current, drafts }));
+      setOnboardingStep("team");
+    } catch (cause) {
+      setBootError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, [onboardingDraft.intents, onboardingDraft.patternId, updateOnboardingDraft]);
+
+  const updateSelectedLiveActivity = useCallback((activity: CoworkerActivity | null) => {
+    if (!selectedSlug) return;
+    setLiveActivityBySlug((current) => {
+      if (activity) return { ...current, [selectedSlug]: activity };
+      if (!(selectedSlug in current)) return current;
+      const next = { ...current };
+      delete next[selectedSlug];
+      return next;
+    });
+  }, [selectedSlug]);
+
+  if (bootError) {
+    return (
+      <div className="window-shell window-drag flex h-full items-center justify-center p-8">
+        <div className="window-no-drag w-full max-w-md rounded-[26px] border border-line bg-ink/88 p-7 text-center">
+          <CoworkerMark className="mx-auto" label="Open Coworker" size={64} />
+          <h1 className="mt-4 text-xl font-semibold tracking-[-0.025em] text-snow">Open Coworker needs a moment</h1>
+          <p className="mb-5 mt-1 text-sm text-mist">The local workspace could not finish starting.</p>
+          <ErrorNote>{bootError}</ErrorNote>
+          <Button className="mt-4 w-full" onClick={() => void boot()}>
+            Retry
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!runtime) {
+    return <AppLoader />;
+  }
+
+  if (connecting) {
+    return (
+      <SignInGate
+        runtime={runtime}
+        busy={signInBusy}
+        error={signInError}
+        onGrant={(grant, baseUrl) => void signInWithGrant(grant, baseUrl)}
+        onDismiss={() => {
+          setSignInError("");
+          setConnecting(false);
+        }}
+      />
+    );
+  }
+
+  if (coworkers.length === 0 && !onboardingReady && !creating) {
+    if (onboardingStep === "team") {
+      return (
+        <OnboardingTeam
+          catalog={teamCatalog}
+          draft={onboardingDraft}
+          onChange={updateOnboardingDraft}
+          onBack={() => setOnboardingStep("intents")}
+          onCreated={(team, firstSlug) => {
+            setBots(team);
+            setSelectedSlug(team.some((coworker) => coworker.slug === firstSlug) ? firstSlug : (team[0]?.slug ?? ""));
+            setOnboardingDraft(emptyOnboardingDraft());
+            setOnboardingStep("");
+            setOnboardingReady(true);
+            void refreshRuntime();
+          }}
+        />
+      );
+    }
+    if (onboardingStep === "intents") {
+      return (
+        <OnboardingIntents
+          catalog={teamCatalog}
+          selected={onboardingDraft.intents}
+          patternId={onboardingDraft.patternId ?? ""}
+          onPattern={(patternId) => updateOnboardingDraft((current) => ({ ...current, patternId, intents: workPattern(patternId)?.jobs.map((job) => job.roleId) ?? [] }))}
+          onToggle={(id) => updateOnboardingDraft((current) => ({ ...current, intents: toggleIntent(current.intents, id) }))}
+          onContinue={() => void proposeTeam()}
+          onOwn={addOwnCoworker}
+          onBack={() => setOnboardingStep("")}
+        />
+      );
+    }
+    if (localSetup) {
+      return (
+        <LocalModeScreen
+          runtime={runtime}
+          session={session}
+          onConnectAccount={() => setConnecting(true)}
+          onRuntimeChanged={refreshRuntime}
+          onBack={() => setLocalSetup(false)}
+          onContinue={() => {
+            setLocalSetup(false);
+            setOnboardingStep("intents");
+          }}
+        />
+      );
+    }
+    return (
+      <OnboardingWelcome
+        onConnect={() => setConnecting(true)}
+        onContinueLocally={() => setLocalSetup(true)}
+        onImport={async () => {
+          const result = await coworkerBridge.templates.import();
+          if (result) {
+            if (result.created.length === 0) throw new Error("This template was already added. Its previous working copy has been kept.");
+            receiveImportedTemplates(result);
+          }
+        }}
+      />
+    );
+  }
+
+  const selected = coworkers.find((coworker) => coworker.slug === selectedSlug) ?? null;
+  const liveGroups = groups.filter((group) => !group.archivedAt);
+  const allHandsGroup = allHandsSettings?.enabled ? liveGroups.find((group) => group.id === allHandsSettings.groupId) : undefined;
+  const selectedGroup = liveGroups.find((group) => group.id === selectedGroupId) ?? null;
+  const visibleActivityBySlug: Record<string, CoworkerActivity> = {};
+  for (const coworker of coworkers) {
+    const attention = attentionBySlug[coworker.slug];
+    const activity = activityBySlug[coworker.slug];
+    const liveActivity = liveActivityBySlug[coworker.slug];
+    const cloudRun = cloudRunBySlug[coworker.slug];
+    if (attention) {
+      visibleActivityBySlug[coworker.slug] = {
+        state: "attention",
+        label: "Needs you",
+        detail: attention,
+        updatedAt: activity?.updatedAt ?? 0,
+        ...(activity?.last ? { last: activity.last } : {}),
+        ...(activity?.recent ? { recent: activity.recent } : {}),
+      };
+    } else if (liveActivity) {
+      // The thread view knows the live state; the polled read still owns the history.
+      visibleActivityBySlug[coworker.slug] = {
+        ...liveActivity,
+        ...(liveActivity.last ?? activity?.last ? { last: liveActivity.last ?? activity?.last } : {}),
+        ...(activity?.recent ? { recent: activity.recent } : {}),
+      };
+    } else if (cloudRun) {
+      visibleActivityBySlug[coworker.slug] = {
+        ...cloudRun,
+        ...(activity?.last ? { last: activity.last } : {}),
+        ...(activity?.recent ? { recent: activity.recent } : {}),
+      };
+    } else if (activity) {
+      visibleActivityBySlug[coworker.slug] = activity;
+    }
+  }
+
+  function updateCoworkerInList(updated: CoworkerSummary) {
+    setBots((current) => current.map((coworker) => (coworker.slug === updated.slug ? updated : coworker)));
+  }
+
+  /** A coworker joined the team (from onboarding, the Add screen, or a teammate's suggestion the person accepted). */
+  function addCoworkerToList(coworker: CoworkerSummary) {
+    setBots((current) => [...current.filter((item) => item.slug !== coworker.slug), coworker].sort((a, b) => a.name.localeCompare(b.name)));
+    void refreshRuntime();
+  }
+
+  /** Open another coworker's conversation, optionally with a message to send there as the person's own. */
+  function visitCoworker(slug: string, prompt?: string) {
+    setSelectedGroupId("");
+    setSelectedSlug(slug);
+    if (prompt) setHomeRequest({ id: Date.now(), slug, kind: "turn", prompt });
+  }
+
+  function removeCoworkerFromList(slug: string) {
+    const remaining = coworkers.filter((coworker) => coworker.slug !== slug);
+    setBots(remaining);
+    if (selectedSlug === slug) {
+      setSelectedSlug(remaining[0]?.slug ?? "");
+    }
+  }
+
+  return (
+    <div className="window-shell relative flex h-full overflow-hidden" data-testid="coworker-shell">
+      <div
+        className={globalSettings ? "hidden" : "flex min-w-0 flex-1"}
+        data-testid="coworker-workspace"
+        data-active={globalSettings ? "false" : "true"}
+      >
+        {creating || !selected ? (
+          // Creation takes the whole window: the team list returns once the coworker exists.
+          <div key="create" className="view-enter flex min-w-0 flex-1">
+            <NewCoworker
+              team={coworkers}
+              onAskTeam={(slug, prompt) => { setCreating(false); visitCoworker(slug, prompt); }}
+              onCancel={selected || coworkers.length > 0 ? () => setCreating(false) : null}
+              onCreated={(coworker) => {
+                setCreating(false);
+                addCoworkerToList(coworker);
+                setSelectedSlug(coworker.slug);
+              }}
+            />
+          </div>
+        ) : (
+          <div key="team" className="view-enter flex min-w-0 flex-1">
+            <CoworkerRail
+              runtime={runtime}
+              session={session}
+              coworkers={coworkers}
+              activityBySlug={visibleActivityBySlug}
+              selectedSlug={selectedGroup ? "" : selectedSlug}
+              panel={rail}
+              onSelect={(slug) => {
+                setSelectedGroupId("");
+                setSelectedSlug(slug);
+              }}
+              onNewCoworker={() => setCreating(true)}
+              onOpenOpenWork={() => openGlobalSettings()}
+              groups={liveGroups.filter((group) => allHandsSettings?.enabled || group.id !== allHandsSettings?.groupId)}
+              groupLines={groupLines}
+              selectedGroupId={selectedGroup?.id ?? ""}
+              onSelectGroup={setSelectedGroupId}
+              onNewGroup={() => setCreatingGroup(true)}
+            />
+            {creatingGroup ? (
+              <NewGroupSheet
+                coworkers={coworkers}
+                onCancel={() => setCreatingGroup(false)}
+                onCreated={(group) => {
+                  replaceGroup(group);
+                  setCreatingGroup(false);
+                  setSelectedGroupId(group.id);
+                }}
+              />
+            ) : null}
+            {selectedGroup && groupDetailsOpen ? (
+              <GroupDetailsSheet
+                group={selectedGroup}
+                managed={selectedGroup.id === allHandsSettings?.groupId}
+                coworkers={coworkers}
+                runtime={runtime}
+                onClose={() => setGroupDetailsOpen(false)}
+                onChanged={replaceGroup}
+                onArchived={(group) => {
+                  replaceGroup(group);
+                  setGroupDetailsOpen(false);
+                  setSelectedGroupId("");
+                }}
+              />
+            ) : null}
+            {allHandsGroup && allHandsSettings ? (
+              <div className={selectedGroupId === allHandsGroup.id ? "flex min-w-0 flex-1" : "hidden"} data-testid="all-hands-space" data-active={selectedGroupId === allHandsGroup.id}>
+                <GroupChat
+                  key={allHandsGroup.id}
+                  group={allHandsGroup}
+                  coworkers={coworkers}
+                  runtime={runtime}
+                  active={selectedGroupId === allHandsGroup.id && !globalSettings}
+                  briefing={{ enabled: allHandsSettings.enabled, context: allHandsContext(allHandsSettings, coworkers, visibleActivityBySlug), request: briefingRequest }}
+                  onRememberFocus={async (focus) => { setAllHandsSettings(await coworkerBridge.allHands.update({ focus })); }}
+                  introduction={<AllHandsOverview settings={allHandsSettings} coworkers={coworkers.filter((coworker) => allHandsGroup.participantSlugs.includes(coworker.slug))} activity={visibleActivityBySlug} onSettings={() => openGlobalSettings("all-hands")} onRequest={(text) => setBriefingRequest({ id: `all-hands-manual:${Date.now()}`, text })} onOpenCoworker={(slug, threadId) => { setSelectedGroupId(""); setSelectedSlug(slug); if (threadId) setHomeRequest({ id: Date.now(), slug, kind: "thread", threadId }); }} />}
+                  onGroupChanged={replaceGroup}
+                  onGroupArchived={replaceGroup}
+                  onActivityLine={setGroupLine}
+                  onChooseModel={(slug) => { setSelectedGroupId(""); setSelectedSlug(slug); setHomeRequest({ id: Date.now(), slug, kind: "settings", section: "model" }); }}
+                  onOpenAssignment={(slug, threadId) => { setSelectedGroupId(""); setSelectedSlug(slug); setHomeRequest({ id: Date.now(), slug, kind: "thread", threadId }); }}
+                  onOpenDetails={() => setGroupDetailsOpen(true)}
+                />
+              </div>
+            ) : null}
+            {allHandsError ? <div role="alert" className="p-4 text-sm text-rose">All Hands: {allHandsError}</div> : null}
+            {selectedGroup && selectedGroup.id !== allHandsGroup?.id ? (
+              <GroupChat
+                key={selectedGroup.id}
+                group={selectedGroup}
+                coworkers={coworkers}
+                runtime={runtime}
+                onGroupChanged={replaceGroup}
+                onGroupArchived={(group) => {
+                  replaceGroup(group);
+                  setSelectedGroupId("");
+                }}
+                onActivityLine={setGroupLine}
+                onChooseModel={(slug) => {
+                  setSelectedGroupId("");
+                  setSelectedSlug(slug);
+                  setHomeRequest({ id: Date.now(), slug, kind: "settings", section: "model" });
+                }}
+                onOpenAssignment={(slug, threadId) => {
+                  setSelectedGroupId("");
+                  setSelectedSlug(slug);
+                  setHomeRequest({ id: Date.now(), slug, kind: "thread", threadId });
+                }}
+                onOpenDetails={() => setGroupDetailsOpen(true)}
+              />
+            ) : (
+            selectedGroupId === allHandsGroup?.id ? null : <CoworkerHome
+              key={selected.slug}
+              runtime={runtime}
+              session={session}
+              coworkers={coworkers}
+              coworker={selected}
+              activity={visibleActivityBySlug[selected.slug]}
+              request={homeRequest?.slug === selected.slug ? homeRequest : null}
+              onActivityChange={updateSelectedLiveActivity}
+              onCoworkerChanged={updateCoworkerInList}
+              onCoworkerRemoved={removeCoworkerFromList}
+              onRefreshRuntime={refreshRuntime}
+              onRestartRuntime={restartRuntime}
+              onSyncProviders={syncProviders}
+              onOpenOpenWork={(section) => openGlobalSettings(section ?? "general")}
+              connect={connectBySlug[selected.slug] ?? null}
+              onRepairConnect={() => syncConnect({ force: true, remint: true, slug: selected.slug })}
+              onConnectAccount={() => setConnecting(true)}
+              railWidth={rail.width}
+              onCoworkerAdded={addCoworkerToList}
+              onHandOff={(slug, prompt) => visitCoworker(slug, prompt)}
+              onVisitCoworker={(slug) => visitCoworker(slug)}
+            />
+            )}
+          </div>
+        )}
+      </div>
+      {globalSettingsMounted ? (
+        <div
+          className={globalSettings ? "absolute inset-0 flex" : "hidden"}
+          data-testid="openwork-settings-pane"
+          data-active={globalSettings ? "true" : "false"}
+        >
+          <OpenWorkSettings
+            onAllHandsChanged={(settings) => { setAllHandsSettings(settings); if (!settings.enabled && selectedGroupId === settings.groupId) setSelectedGroupId(""); }}
+            active={Boolean(globalSettings)}
+            runtime={runtime}
+            session={session}
+            providerSync={providerSync}
+            templateSync={session ? templateSync : null}
+            templateError={session ? templateError : ""}
+            onSyncTemplates={syncAssignedCoworkers}
+            onImportedTemplates={receiveImportedTemplates}
+            coworkers={coworkers}
+            selectedCoworker={selected}
+            initialSection={globalSettings ?? "general"}
+            onClose={closeGlobalSettings}
+            onConnect={() => setConnecting(true)}
+            onSignOut={signOut}
+            onSyncProviders={syncProviders}
+            onRefreshRuntime={refreshRuntime}
+            onRestartRuntime={restartRuntime}
+            onCoworkerChanged={updateCoworkerInList}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}

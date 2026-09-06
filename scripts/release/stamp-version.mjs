@@ -16,6 +16,7 @@ const root = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 
 export const STAMPED_PACKAGE_PATHS = [
   "apps/app/package.json",
+  "apps/coworker/package.json",
   "apps/desktop/package.json",
   "apps/server/package.json",
 ];

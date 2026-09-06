@@ -1,0 +1,249 @@
+name: Build Electron Open Coworker
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      # Alpha line: every push builds a signed, notarized macOS app as a run artifact.
+      - coworker-pre
+      - electron-coworker-notary-test
+    tags:
+      # Alpha tags publish a GitHub pre-release; the prefix keeps them out of the
+      # desktop's `v*` release workflow.
+      - "coworker-v*"
+    paths:
+      - apps/coworker/**
+      - apps/server/**
+      - packages/headless-threads/**
+      - packages/automations/**
+      - constants.json
+      - pnpm-lock.yaml
+      - package.json
+      - .github/workflows/build-electron-coworker.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build-electron:
+    if: github.ref_type != 'tag'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            artifact: macos
+          - os: ubuntu-latest
+            artifact: linux
+          - os: windows-latest
+            artifact: windows
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # pnpm before setup-node so setup-node finds it on PATH (same bootstrap as the desktop workflow).
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.4.0
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.10
+
+      - name: Install dependencies
+        run: |
+          pnpm config set node-linker hoisted --location project
+          pnpm install --frozen-lockfile
+
+      - name: Typecheck and unit tests
+        run: |
+          # The tests import the built workspace packages, as build:electron does.
+          pnpm --filter @openwork/automations build
+          pnpm --filter @openwork/headless-threads build
+          pnpm --filter @openwork/coworker typecheck
+          pnpm --filter @openwork/coworker test
+
+      - name: Package Open Coworker (unpacked)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then ulimit -n 65536; fi
+          pnpm --filter @openwork/coworker build:electron
+          pnpm --dir apps/coworker exec electron-builder --config electron-builder.yml --config.electronVersion=43.2.0 --dir --publish never
+
+      - name: Upload Open Coworker artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: open-coworker-electron-${{ matrix.artifact }}
+          path: apps/coworker/dist-electron/**
+
+  electron-macos-signed:
+    name: Open Coworker macOS signed + notarized
+    runs-on: macos-14
+    # Runs on the manual button, on every push to the alpha branch, and on alpha tags.
+    # Signing uses the Apple secrets the desktop release already uses.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.ref == 'refs/heads/coworker-pre' ||
+      github.ref == 'refs/heads/electron-coworker-notary-test' ||
+      github.ref_type == 'tag'
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.4.0
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.10
+
+      - name: Install dependencies
+        run: |
+          pnpm config set node-linker hoisted --location project
+          pnpm install --frozen-lockfile
+
+      - name: Resolve alpha version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            # coworker-v0.1.0-alpha.1 -> 0.1.0-alpha.1
+            version="${GITHUB_REF_NAME#coworker-v}"
+          else
+            version="0.0.0-alpha.${GITHUB_RUN_NUMBER}+${GITHUB_SHA::9}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Open Coworker alpha version: $version"
+
+      - name: Stamp alpha version
+        shell: bash
+        env:
+          COWORKER_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          node -e '
+            const fs = require("node:fs");
+            const p = "apps/coworker/package.json";
+            const pkg = JSON.parse(fs.readFileSync(p, "utf8"));
+            pkg.version = process.env.COWORKER_VERSION;
+            fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + "\n");
+          '
+
+      - name: Write notary API key
+        env:
+          APPLE_NOTARY_API_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_API_KEY_P8_BASE64 }}
+          APPLE_NOTARY_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_NOTARY_API_ISSUER_ID: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
+          APPLE_CODESIGN_CERT_P12_BASE64: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
+          APPLE_CODESIGN_CERT_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in \
+            APPLE_NOTARY_API_KEY_P8_BASE64 \
+            APPLE_NOTARY_API_KEY_ID \
+            APPLE_NOTARY_API_ISSUER_ID \
+            APPLE_CODESIGN_CERT_P12_BASE64 \
+            APPLE_CODESIGN_CERT_PASSWORD; do
+            if [ -z "${!name:-}" ]; then
+              missing+=("$name")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf 'Missing macOS signing/notarization secrets for this workflow: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+          NOTARY_KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
+          printf '%s' "$APPLE_NOTARY_API_KEY_P8_BASE64" | base64 --decode > "$NOTARY_KEY_PATH"
+          chmod 600 "$NOTARY_KEY_PATH"
+          echo "NOTARY_KEY_PATH=$NOTARY_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Package Open Coworker (signed + notarized, no publish)
+        env:
+          CSC_LINK: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
+          MACOS_NOTARIZE: true
+          APPLE_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
+          APPLE_API_KEY_PATH: ${{ env.NOTARY_KEY_PATH }}
+        run: |
+          set -euo pipefail
+          ulimit -n 65536
+          pnpm --filter @openwork/coworker run build:electron
+          pnpm --dir apps/coworker exec electron-builder --config electron-builder.yml --config.electronVersion=43.2.0 --mac dmg zip --publish never
+
+      - name: Verify signature and notarization ticket
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="$(find apps/coworker/dist-electron -maxdepth 2 -name 'Open Coworker.app' -print -quit)"
+          test -n "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          spctl --assess --type execute --verbose=2 "$app"
+          xcrun stapler validate "$app"
+          # Signing alone cannot prove that the embedded workspace can load.
+          ELECTRON_RUN_AS_NODE=1 "$app/Contents/MacOS/Open Coworker" \
+            --input-type=module -e 'await import(process.argv[1])' \
+            "$PWD/$app/Contents/Resources/app.asar/server/dist/embedded.js"
+
+      - name: Upload signed macOS artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: open-coworker-macos-signed
+          path: |
+            apps/coworker/dist-electron/*.dmg
+            apps/coworker/dist-electron/*.zip
+
+  alpha-prerelease:
+    name: Publish Open Coworker alpha pre-release
+    needs: electron-macos-signed
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download signed macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: open-coworker-macos-signed
+          path: release-assets
+
+      - name: Create or update pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.electron-macos-signed.outputs.version }}
+        run: |
+          set -euo pipefail
+          notes="Open Coworker alpha ${VERSION}. Signed and notarized macOS build for early testing; not a general release."
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-assets/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" release-assets/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --prerelease \
+              --title "Open Coworker ${VERSION} (alpha)" \
+              --notes "$notes"
+          fi

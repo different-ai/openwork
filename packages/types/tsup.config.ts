@@ -2,6 +2,7 @@ import { defineConfig } from "tsup"
 
 export default defineConfig({
   entry: {
+    "coworker-template": "src/coworker-template.ts",
     index: "src/index.ts",
     "agent-context-diagnostics": "src/agent-context-diagnostics.ts",
     "openwork-affordance": "src/openwork-affordance.ts",
