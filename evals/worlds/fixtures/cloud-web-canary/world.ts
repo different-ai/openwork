@@ -101,7 +101,7 @@ export async function attachedCanary(seed: Seed, { place }: { place: Place }) {
       const stopped = await owned("runtime");
       if (stopped.state !== "stopped") throw new Error("CLI did not confirm runtime stopped");
       await cli(["start", runtime.id]);
-      await cli(["exec", runtime.id, "--", "sh", "-c", "nohup sh /tmp/cloud-web-canary/start.sh >/tmp/cloud-web-canary/restart.log 2>&1 </dev/null &"]);
+      await cli(["exec", runtime.id, "--", "sh -c 'nohup sh /tmp/cloud-web-canary/start.sh >/tmp/cloud-web-canary/restart.log 2>&1 </dev/null &'"]);
       const deadline = Date.now() + 120_000;
       while (Date.now() < deadline) {
         try {
