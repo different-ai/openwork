@@ -152,7 +152,10 @@ final class Fixture: NSObject, NSApplicationDelegate {
                         let button = self.findControl(pid: pid, title: "Continue", role: kAXButtonRole)
                         var enabled: CFTypeRef?
                         if let button { AXUIElementCopyAttributeValue(button, kAXEnabledAttribute as CFString, &enabled) }
-                        result = ["text": task.map(self.accessibleText) ?? "", "continue_enabled": enabled as? Bool ?? false,
+                        let restore = self.findControl(pid: pid, title: "Show Computer Use task", role: kAXMenuBarItemRole)
+                        var help: CFTypeRef?
+                        if let restore { AXUIElementCopyAttributeValue(restore, kAXHelpAttribute as CFString, &help) }
+                        result = ["restore_help": help as? String ?? "", "text": task.map(self.accessibleText) ?? "", "continue_enabled": enabled as? Bool ?? false,
                                   "restore_available": self.findControl(pid: pid, title: "Show Computer Use task", role: kAXMenuBarItemRole) != nil]
                     } else {
                         result = method == "select_helper_window" ? self.selectWindow(pid: pid, title: name) : ["ok": self.pressButton(pid: pid, title: name)]

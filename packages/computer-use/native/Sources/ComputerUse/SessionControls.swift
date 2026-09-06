@@ -114,7 +114,7 @@ final class SessionControls: NSObject {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.title = "OW"
         item.button?.setAccessibilityTitle("Show Computer Use task")
-        item.button?.toolTip = "\(purpose) — Show Computer Use controls"
+        item.button?.toolTip = "Show Computer Use controls"
         item.button?.target = self
         item.button?.action = #selector(showPanel)
         statusItem = item

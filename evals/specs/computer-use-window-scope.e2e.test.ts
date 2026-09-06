@@ -50,6 +50,8 @@ test("Computer Use respects window consent, fresh observations and the person's 
 
   await step("Hiding the task panel preserves the grant and the menu bar restores its controls", async () => {
     await world.pressControl("Hide panel");
+    expect(await world.panel()).toMatchObject({ restore_help: "Show Computer Use controls" });
+    expect(JSON.stringify(await world.panel())).not.toContain("Edit the disposable fixture draft");
     expect(toolState(await world.call("computer_session_status", { session_id: session }))).toMatchObject({
       state: "active", panel_visible: false, purpose: "Edit the disposable fixture draft and increment its counter.", window_title: "Workspace window",
     });

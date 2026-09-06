@@ -177,8 +177,8 @@ control. Session status exposes `phase`: `person_interacting`,
 an observation succeeds. Old input is never replayed.
 
 **Hide panel** hides this session's floating controls without revoking access.
-The **OW** menu bar item restores the task panel; its tooltip identifies the
-requested task. Stop removes both surfaces. Session status includes the task
+The **OW** menu bar item restores the task panel; its tooltip is generic so
+hiding the panel also hides task details. Stop removes both surfaces. Session status includes the task
 purpose, approved window title, and panel visibility for the owning caller.
 This associates the native panel with the approved task; navigation back to an
 OpenWork conversation is not added by this package.
