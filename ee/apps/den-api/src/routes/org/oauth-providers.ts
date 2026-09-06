@@ -36,6 +36,7 @@ import {
   disconnectProviderAccountsForOrganization,
   getConnectedAccount,
   getOrgOAuthClient,
+  resolveOAuthClient,
   upsertConnectedAccount,
   upsertOrgOAuthClient,
 } from "../../capability-sources/oauth-credentials.js"
@@ -74,6 +75,8 @@ const clientConfigResponseSchema = z.object({
 const clientConfigDetailResponseSchema = z.object({
   providerId: z.string(),
   configured: z.boolean(),
+  /** "org" when the org saved its own client, "openwork" for the OpenWork-provided default, null when neither exists. */
+  source: z.enum(["org", "openwork"]).nullable(),
   clientId: z.string().nullable(),
   features: z.array(z.string()),
   scopes: z.array(z.string()),
@@ -192,7 +195,7 @@ export async function beginNativeProviderConnect(input: OrgIds & {
     if (!canUse) return { error: "forbidden" }
   }
 
-  const client = await getOrgOAuthClient(input.organizationId, input.credentialProviderId)
+  const client = await resolveOAuthClient(input.organizationId, input.credentialProviderId)
   if (!client) {
     return { error: "client_not_configured" }
   }
@@ -435,11 +438,12 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
       }
       const { provider, credentialProviderId } = resolved
 
-      const client = await getOrgOAuthClient(payload.organization.id, credentialProviderId)
+      const client = await resolveOAuthClient(payload.organization.id, credentialProviderId)
       const features = clientSelectedFeatures(provider, client?.extra ?? null)
       return c.json({
         providerId,
         configured: Boolean(client),
+        source: client?.source ?? null,
         clientId: client?.clientId ?? null,
         features,
         scopes: resolveProviderScopes(provider, features),
@@ -454,7 +458,7 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Authentication"],
       summary: "Begin connecting the calling member's account for a provider",
-      description: "Returns an authorize URL to redirect the member's browser to. Requires the org to have already saved an OAuth client for this provider.",
+      description: "Returns an authorize URL to redirect the member's browser to. Uses the org's saved OAuth client for this provider, or the OpenWork-provided default when the org has none.",
       responses: {
         200: jsonResponse("Authorize URL to redirect to.", connectStartResponseSchema),
         400: jsonResponse("Unknown providerId.", invalidRequestSchema),
@@ -607,7 +611,7 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
       }
       const credentialProviderId = resolved.credentialProviderId
 
-      const client = await getOrgOAuthClient(statePayload.organizationId, credentialProviderId)
+      const client = await resolveOAuthClient(statePayload.organizationId, credentialProviderId)
       const pending = await getConnectedAccount({
         organizationId: statePayload.organizationId,
         orgMembershipId: statePayload.orgMembershipId,

@@ -14,7 +14,7 @@ import { DenPageHeader } from "../../_components/ui/page-header";
 import { getConfiguredMcpConnectionsRoute, getMcpConnectionRoute, getMcpConnectionsRoute, getPluginRoute, getToolTesterRoute } from "../../_lib/den-org";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
 import { ConnectorCatalog, connectorChatHref } from "./connector-catalog-list";
-import type { PopularConnector } from "./connector-catalog";
+import { googleWorkspaceReadyNotice, popularAddAction, type PopularConnector } from "./connector-catalog";
 import {
   connectorDetailEffort,
   connectorDetailFacts,
@@ -282,6 +282,10 @@ export function McpConnectionsScreen({ view = "catalog", connectorId }: { view?:
   const saveNativeClient = useSaveNativeProviderClient();
   const reviewIssuer = useReviewMcpIssuer();
   const resolveSmartBarConnection = useResolveMcpConnection();
+  // Whether Gmail, Drive, and Calendar can connect without setup: the org's own
+  // Google client or the OpenWork-provided default. Decides what "+" does.
+  const googleWorkspaceClient = useNativeProviderClient(GOOGLE_WORKSPACE_QUICK_ADD_ID, view === "catalog");
+  const googleWorkspaceClientReady = googleWorkspaceClient.data?.configured === true;
 
   const [formOpen, setFormOpen] = useState(false);
   const [formPreset, setFormPreset] = useState<ExternalMcpPreset | null>(null);
@@ -365,16 +369,19 @@ export function McpConnectionsScreen({ view = "catalog", connectorId }: { view?:
   }
 
   function addPopularConnector(connector: PopularConnector) {
-    if (connector.target.kind === "google-workspace") {
-      openQuickAdd(GOOGLE_WORKSPACE_QUICK_ADD_ID);
+    const action = popularAddAction(connector, { googleWorkspaceClientReady });
+    if (action.kind === "connect") {
+      // One click: the org-wide Google client already exists, so start the
+      // admin's own Google sign-in; every member now sees these connectors.
+      setConnectionActionNotice(googleWorkspaceReadyNotice(orgContext?.organization.name ?? "the organization"));
+      void handleConnectOAuth(action.connectionId);
       return;
     }
-    if (connector.target.kind === "microsoft-365") {
-      openQuickAdd(MICROSOFT_365_QUICK_ADD_ID);
+    if (action.kind === "quick-add") {
+      openQuickAdd(action.id);
       return;
     }
-    const presetId = connector.target.presetId;
-    const preset = presets.find((entry) => entry.presetId === presetId);
+    const preset = presets.find((entry) => entry.presetId === action.presetId);
     if (preset) addPreset(preset);
     else openAdvancedSetup(connector.displayName);
   }
@@ -436,9 +443,21 @@ export function McpConnectionsScreen({ view = "catalog", connectorId }: { view?:
       || quickAddId === MICROSOFT_365_QUICK_ADD_ID
       || presets.some((preset) => preset.presetId === quickAddId);
     if (!isKnownTarget) return;
-    handledQuickAddId.current = quickAddId;
+    // ?quickAdd=google-workspace behaves like its "+": wait until we know
+    // whether an org-wide Google client exists, then connect or open setup.
+    if (quickAddId === GOOGLE_WORKSPACE_QUICK_ADD_ID) {
+      if (!googleWorkspaceClient.isFetched) return;
+      handledQuickAddId.current = quickAddId;
+      if (googleWorkspaceClientReady) {
+        setConnectionActionNotice(googleWorkspaceReadyNotice(orgContext?.organization.name ?? "the organization"));
+        void handleConnectOAuth(GOOGLE_WORKSPACE_QUICK_ADD_ID);
+        return;
+      }
+    } else {
+      handledQuickAddId.current = quickAddId;
+    }
     openQuickAdd(quickAddId);
-  }, [presets, searchParams]);
+  }, [presets, searchParams, googleWorkspaceClient.isFetched, googleWorkspaceClientReady]);
 
   useEffect(() => {
     return () => {
@@ -995,9 +1014,11 @@ export function McpConnectionsScreen({ view = "catalog", connectorId }: { view?:
             onAddPopular={addPopularConnector}
             onAddPreset={addPreset}
             onAddMicrosoft365={() => openQuickAdd(MICROSOFT_365_QUICK_ADD_ID)}
+            onConnect={(connection) => void handleConnectOAuth(connection.id)}
             onManage={manageConnection}
             onRemove={handleRemove}
             addingPresetId={instantAddingPresetId}
+            connectingConnectionId={startOAuth.isPending ? startOAuth.variables ?? null : pollingConnectionId}
           />
         </div>
       </div>
@@ -1625,6 +1646,7 @@ function GoogleWorkspaceDialog({
   }
 
   const configured = mode === "legacy" && (clientConfig.data?.configured ?? false);
+  const providedByOpenWork = configured && clientConfig.data?.source === "openwork";
   const savedClientId = clientConfig.data?.clientId;
   const redirectUri = clientConfig.data?.redirectUri ?? "";
   const loadingConfig = clientConfig.isLoading;
@@ -1633,7 +1655,10 @@ function GoogleWorkspaceDialog({
   const trimmedClientId = clientId.trim();
   const trimmedClientSecret = clientSecret.trim();
   const showCredentialFields = !loadingConfig && (!configured || replacingCredentials);
+  // Permission changes are stored on the org's own client; the OpenWork-provided
+  // one has nothing to save until the org brings its own.
   const saveDisabled = loadingConfig || (mode === "create" && !trimmedName)
+    || (providedByOpenWork && !replacingCredentials)
     || (showCredentialFields && (!trimmedClientId || !trimmedClientSecret));
 
   function toggleFeature(feature: string) {
@@ -1661,7 +1686,9 @@ function GoogleWorkspaceDialog({
           {mode === "legacy" ? "Update Google Workspace" : "Add Google Workspace"}
         </h2>
         <p className="mt-1 text-[13px] leading-6 text-gray-600">
-          Use a Google OAuth web app for this connector. Members then connect their own Google account from Your Connections — sign-ins stay in your org&apos;s cloud.
+          {mode === "legacy" && clientConfig.data?.source === "openwork"
+            ? "OpenWork provides the Google client for this workspace, so members can already connect their own Google account from Your Connections. Save your own Google OAuth web app below only if you would rather use it instead."
+            : "Use a Google OAuth web app for this connector. Members then connect their own Google account from Your Connections — sign-ins stay in your org's cloud."}
         </p>
 
         <div className="mt-5 space-y-4">
@@ -1745,16 +1772,18 @@ function GoogleWorkspaceDialog({
             <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4">
               <div className="flex items-center gap-2">
                 <Check className="h-4 w-4 text-emerald-600" />
-                <p className="text-[13px] font-semibold text-gray-900">Credentials saved</p>
+                <p className="text-[13px] font-semibold text-gray-900">{providedByOpenWork ? "Provided by OpenWork" : "Credentials saved"}</p>
               </div>
               <p className="mt-1 text-[12px] leading-5 text-gray-500">
-                OpenWork keeps the saved Google client ID and secret when you save permission changes. Replace them only if you are rotating credentials.
+                {providedByOpenWork
+                  ? "Members can connect right away with OpenWork's Google client and its default permissions. Bring your own client only if you need different permissions or your own consent screen."
+                  : "OpenWork keeps the saved Google client ID and secret when you save permission changes. Replace them only if you are rotating credentials."}
               </p>
               <div className="mt-3 rounded-xl border border-gray-100 bg-white px-3 py-2 text-[12px] text-gray-800">
-                Saved client ID: <span className="font-mono">{savedClientId ?? "stored in OpenWork"}</span>
+                {providedByOpenWork ? "Client ID: " : "Saved client ID: "}<span className="font-mono">{savedClientId ?? "stored in OpenWork"}</span>
               </div>
               <DenButton className="mt-3" variant="secondary" size="sm" onClick={startReplacingCredentials} disabled={submitting}>
-                Replace credentials
+                {providedByOpenWork ? "Use your own client" : "Replace credentials"}
               </DenButton>
             </div>
           ) : null}

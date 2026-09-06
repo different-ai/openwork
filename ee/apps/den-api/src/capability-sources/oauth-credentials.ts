@@ -6,6 +6,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
+import { env } from "../env.js"
 
 /**
  * Generic, provider-agnostic reads/writes for the two credential tables.
@@ -16,6 +17,14 @@ import { db } from "../db.js"
 
 export type OrgOAuthClientRow = typeof OrgOAuthClientTable.$inferSelect
 export type ConnectedAccountRow = typeof ConnectedAccountTable.$inferSelect
+
+/**
+ * What an OAuth flow needs from a client. Org rows satisfy it, and so does an
+ * OpenWork-provided default that never touches the table.
+ */
+export type OAuthClientCredentials = Pick<OrgOAuthClientRow, "clientId" | "clientSecret" | "extra">
+
+export type ResolvedOAuthClient = OAuthClientCredentials & { source: "org" | "openwork" }
 
 type OrganizationId = DenTypeId<"organization">
 type OrgMembershipId = DenTypeId<"member">
@@ -85,6 +94,26 @@ export async function getOrgOAuthClient(organizationId: OrganizationId, provider
     .where(and(eq(OrgOAuthClientTable.organizationId, organizationId), eq(OrgOAuthClientTable.providerId, providerId)))
     .limit(1)
   return rows[0] ? normalizeOrgOAuthClientRow(rows[0]) : null
+}
+
+/**
+ * The client a native provider flow should use for `providerId`: the org's own
+ * saved client when it has one, otherwise the OpenWork-provided default for
+ * that provider (only defined for literal registry keys such as
+ * `google-workspace`, never for connector rows or external MCP connections).
+ * Writes keep using getOrgOAuthClient so an org override is always a real row.
+ */
+export async function resolveOAuthClient(organizationId: OrganizationId, providerId: string): Promise<ResolvedOAuthClient | null> {
+  const own = await getOrgOAuthClient(organizationId, providerId)
+  if (own) return { clientId: own.clientId, clientSecret: own.clientSecret, extra: own.extra, source: "org" }
+  const provided = openWorkProvidedOAuthClient(providerId)
+  return provided ? { ...provided, source: "openwork" } : null
+}
+
+export function openWorkProvidedOAuthClient(providerId: string): OAuthClientCredentials | null {
+  // hasOwn keeps prototype names such as "constructor" from reading as a client.
+  const configured = Object.hasOwn(env.connectorOAuthClients, providerId) ? env.connectorOAuthClients[providerId] : undefined
+  return configured ? { clientId: configured.clientId, clientSecret: configured.clientSecret, extra: null } : null
 }
 
 export async function deleteOrgOAuthClient(organizationId: OrganizationId, providerId: string): Promise<void> {
