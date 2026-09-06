@@ -142,13 +142,12 @@ export async function attachedCanary(seed: Seed, { place }: { place: Place }) {
         atDen: location.origin === den,
         route: location.origin === gateway ? location.pathname + location.hash : "",
         takeover: document.querySelector('[data-testid="cloud-workspace-takeover"]')?.getAttribute('data-cloud-workspace-state') ?? null,
-        ready: document.querySelector('[data-testid="cloud-workspace-pill"]')?.getAttribute('data-cloud-workspace-state') === 'ready',
         assistant: [...document.querySelectorAll('[data-message-role="assistant"]')].map(node => node.textContent ?? '').join('\\n')
       })`, [gatewayUrl, webUrl]);
       if (!record(value) || typeof value.atGateway !== "boolean" || typeof value.atDen !== "boolean"
-        || typeof value.route !== "string" || typeof value.ready !== "boolean" || typeof value.assistant !== "string"
+        || typeof value.route !== "string" || typeof value.assistant !== "string"
         || !(value.takeover === null || typeof value.takeover === "string")) throw new Error("Invalid canary page observation");
-      return { atGateway: value.atGateway, atDen: value.atDen, route: value.route, ready: value.ready, takeover: value.takeover, assistant: value.assistant };
+      return { atGateway: value.atGateway, atDen: value.atDen, route: value.route, takeover: value.takeover, assistant: value.assistant };
     },
     async stats() {
       // No redirect forwarding, no raw provider body in errors/evidence.
