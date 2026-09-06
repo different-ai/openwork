@@ -1,10 +1,9 @@
-import { describe, expect } from "vitest";
+import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { parentChildPermissionWorld, scopedPermissionRefreshWorld } from "../worlds/first-run.ts";
 import { delegatedQuestionHandoff, permissionStopRecovery } from "../worlds/chat.ts";
 
-describe("Parent permission presentation", () => {
-const test = spec.world(parentChildPermissionWorld, { scope: "file" });
+const test = spec.world(parentChildPermissionWorld);
 
 const scopeTest = spec.world(scopedPermissionRefreshWorld, { timeout: 600_000 });
 
@@ -76,7 +75,6 @@ test("a parent task surfaces and resolves its child session permission request",
     })))).toEqual({ permissionPanelVisible: false, waitingIconVisible: false, runningTreatmentVisible: true });
   });
 });
-});
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -97,8 +95,7 @@ function text(value: unknown): string {
   return value;
 }
 
-describe("Stop and retry reliability", () => {
-const stopTest = spec.world(permissionStopRecovery, { scope: "file", timeout: 600_000 });
+const stopTest = spec.world(permissionStopRecovery, { timeout: 600_000 });
 
 stopTest("retry recovery and stopping a permission leave other requests and fresh work intact", async ({ world, user, probe, step }) => {
   const v2 = world.engine === "v2";
@@ -177,10 +174,8 @@ stopTest("retry recovery and stopping a permission leave other requests and fres
     await user.screenshot();
   });
 });
-});
 
-describe("Delegated question handoff", () => {
-const questionTest = spec.world(delegatedQuestionHandoff, { scope: "file", timeout: 600_000 });
+const questionTest = spec.world(delegatedQuestionHandoff, { timeout: 600_000 });
 questionTest("a parent answers its real child question without settling an unrelated root question", { timeout: 1_200_000 }, async ({ world, user, probe, step }) => {
   const v2 = world.engine === "v2";
   const mount = `/workspace/${encodeURIComponent(world.workspace.workspaceId)}/${v2 ? "opencode2/api" : "opencode"}`;
@@ -350,5 +345,4 @@ questionTest("a parent answers its real child question without settling an unrel
     expect(await transcript(child.sessionID)).toEqual(finished.child);
     await user.screenshot();
   });
-});
 });
