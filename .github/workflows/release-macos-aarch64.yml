@@ -1204,6 +1204,16 @@ jobs:
           name: openwork-server-npm-${{ env.RELEASE_VERSION }}
           path: ${{ runner.temp }}/openwork-server-npm
 
+      - name: Restore exec bit lost in the artifact round-trip
+        run: |
+          set -euo pipefail
+          # upload-artifact does not preserve file permissions, so the compiled
+          # server binary arrives 0644 and npm ships that mode in the tarball.
+          # The bin shim then spawns a non-executable binary and every global
+          # install fails with EACCES (issue #4001). npm reads modes from the
+          # filesystem at pack time, so restoring them here is enough.
+          find "$RUNNER_TEMP/openwork-server-npm/dist/bin" -type f -exec chmod 0755 {} +
+
       - name: Publish openwork-server
         run: npm publish "$RUNNER_TEMP/openwork-server-npm" --access public --provenance
 
