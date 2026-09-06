@@ -250,7 +250,7 @@ export async function preseededConnect(seed: Seed) {
   const modelId = "connect-discovery-model";
   const rawSourceText = `---\nname: ${skillName}\ndescription: Proves preseeded Connect skill discovery.\n---\n\nReturn this exact phrase: ${proofPhrase}.`;
   const den = await seed.den({
-    org: { name: `Preseeded Connect ${stamp}`, admin: { name: "Connect Admin" } },
+    org: { name: `Preseeded Connect ${stamp}`, admin: { name: "Connect Admin" }, members: { member: { name: "Connect Member" } } },
     mocks: { connector: seed.mock({ agentWorkloads: [{
       promptMarker: prompt,
       finalReply: "The skill was read.",
@@ -273,6 +273,13 @@ export async function preseededConnect(seed: Seed) {
   });
   const pluginId = stringField(isRecord(createdSkill.body) ? createdSkill.body.item : null, "id");
   if (createdSkill.response.status !== 201 || !pluginId) throw new Error("Could not seed the Connect skill.");
+  const privateSkillName = `admin-only-skill-${stamp}`;
+  const privateSkill = await seed.api(den.admin, "/v1/plugins", {
+    method: "POST",
+    headers: { "x-openwork-org-id": organizationId },
+    body: JSON.stringify({ name: privateSkillName, orgWide: false, components: [{ type: "skill", input: { rawSourceText: `---\nname: ${privateSkillName}\ndescription: Private admin instructions.\n---\nPrivate instructions.` } }] }),
+  });
+  if (privateSkill.response.status !== 201) throw new Error(`Could not seed the unassigned skill: HTTP ${privateSkill.response.status} ${privateSkill.text.slice(0, 500)}`);
   const connection = await seed.orgConnection(den.admin, {
     name: connectionName,
     url: den.mocks.connector.mcpUrl,
@@ -303,11 +310,12 @@ export async function preseededConnect(seed: Seed) {
   return {
     app, den, prompt, proofPhrase, providerName, modelId,
     admin: den.admin,
-    member: den.admin,
+    member: den.members.member,
     mcpSession,
     pluginId,
     rawSourceText,
     skillName,
+    privateSkillName,
     nonsenseName: `no-such-capability-${stamp}`,
     connection,
     connectionName,

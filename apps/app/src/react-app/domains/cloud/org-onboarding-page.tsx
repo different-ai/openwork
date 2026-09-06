@@ -19,7 +19,6 @@ import {
   createDenClient,
   readDenBootstrapConfig,
   readDenSettings,
-  resolveDenBaseUrls,
   setDenBootstrapConfig,
   writeDenSettings,
   type DenDesktopConfig,
@@ -65,12 +64,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Empty,
-  EmptyContent,
   EmptyDescription,
   EmptyHeader,
   EmptyTitle,
 } from "@/components/ui/empty";
 import { cn } from "@/lib/utils";
+import { OnboardingIntro, OnboardingResourceRow } from "@openwork/ui/react";
+import { listAssignedConnectCapabilities } from "../session/surface/connect-capability-inventory";
+import { resolveOrgMcpConnectionCardState } from "../connections/use-org-mcp-connections";
+import { connectionNeedsReconnect } from "../connections/native-provider-connections";
 import { ScrollArea, ScrollAreaViewport } from "@/components/ui/scroll-area";
 import { Field, FieldLabel, FieldTitle } from "@/components/ui/field"
 import {
@@ -382,7 +384,7 @@ export function resolveOrgOnboardingPostListStep({
 
   return {
     kind: "resources",
-    autoContinue: autoContinueResources || orgs.length <= 1,
+    autoContinue: autoContinueResources,
   };
 }
 
@@ -476,7 +478,7 @@ export function OrgOnboardingPage() {
           activeOrgSlug: autoSelectOrg.slug,
           activeOrgName: autoSelectOrg.name,
         });
-        setAutoContinueResources(true);
+        setAutoContinueResources(false);
         setHasSelectedOrganization(true);
       })
       .catch(() => {
@@ -579,7 +581,6 @@ export function OrgOnboardingPage() {
 
 export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?: boolean }) {
   const navigate = useNavigate();
-  const platform = usePlatform();
   const { markRouteReady } = useBootState();
   const { authToken, denClient, orgId, orgName, settings } = useDenClient();
   const { refreshFresh } = useDesktopConfig();
@@ -606,24 +607,36 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
     }
   }, [authToken, navigate, orgId]);
 
-  const { providers, marketplaces, loading, error } = useQueries({
+  const { providers, marketplaces, capabilities, connections, loading, error } = useQueries({
     queries: [
       {
-        queryKey: ["den-org-onboarding", settings.baseUrl, orgId, "providers"],
+        queryKey: ["den-org-onboarding", settings.baseUrl, authToken, orgId, "providers"],
         enabled: Boolean(authToken && orgId),
         queryFn: () => denClient.listOrgLlmProviders(orgId),
       },
       {
-        queryKey: ["den-org-onboarding", settings.baseUrl, orgId, "marketplaces"],
+        queryKey: ["den-org-onboarding", settings.baseUrl, authToken, orgId, "marketplaces"],
         enabled: Boolean(authToken && orgId),
         queryFn: () => denClient.listOrgMarketplaces(orgId),
       },
+      {
+        queryKey: ["den-org-onboarding", settings.baseUrl, authToken, orgId, "capabilities"],
+        enabled: Boolean(authToken && orgId),
+        queryFn: () => listAssignedConnectCapabilities({ client: denClient, organizationId: orgId }),
+      },
+      {
+        queryKey: ["den-org-onboarding", settings.baseUrl, authToken, orgId, "connections"],
+        enabled: Boolean(authToken && orgId),
+        queryFn: () => denClient.listMcpConnections(orgId, "usable"),
+      },
     ],
-    combine: ([providersQuery, marketplacesQuery]) => ({
+    combine: ([providersQuery, marketplacesQuery, capabilitiesQuery, connectionsQuery]) => ({
       providers: providersQuery.data ?? [],
       marketplaces: marketplacesQuery.data ?? [],
-      loading: providersQuery.isPending || marketplacesQuery.isPending,
-      error: providersQuery.error?.message ?? marketplacesQuery.error?.message ?? null,
+      capabilities: capabilitiesQuery.data,
+      connections: connectionsQuery.data ?? [],
+      loading: providersQuery.isPending || marketplacesQuery.isPending || capabilitiesQuery.isPending || connectionsQuery.isPending,
+      error: providersQuery.error?.message ?? marketplacesQuery.error?.message ?? capabilitiesQuery.error?.message ?? connectionsQuery.error?.message ?? null,
     }),
   });
 
@@ -729,7 +742,7 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
   }, [brandingRestart, finishOnboarding]);
 
   const totalModels = providers.reduce((sum, provider) => sum + provider.models.length, 0);
-  const hasResources = providers.length > 0 || marketplaces.length > 0;
+  const hasResources = providers.length > 0 || marketplaces.length > 0 || Boolean(capabilities?.skills.length) || connections.length > 0;
   const autoContinuePending =
     autoContinue && !loading && !error && !brandingRestart;
 
@@ -841,9 +854,11 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
               Setup complete — OpenWork prepared this workspace
             </div>
           ) : null}
-          <PageTitle>
-            {orgName || "Your organization"}
-          </PageTitle>
+          <OnboardingIntro
+            eyebrow={orgName || "Your organization"}
+            title="Discover what your team shared"
+            description="Explore your skills and tools, choose a model, then start a task."
+          />
           {loading ? (
             null
           ) : error ? (
@@ -851,10 +866,6 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
               <CircleAlert />
               <AlertDescription>{error}</AlertDescription>
             </Alert>
-          ) : hasResources ? (
-            <PageDescription>
-              You have access to the following resources.
-            </PageDescription>
           ) : null}
         </PageHeader>
 
@@ -869,26 +880,52 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
           <PageContent>
             <Empty className="h-fit flex-none">
               <EmptyHeader>
-                <EmptyTitle>No resources have been configured for this organization yet.</EmptyTitle>
+                <EmptyTitle>{error ? "Your shared resources could not be loaded." : "Your team has not shared resources with you yet."}</EmptyTitle>
                 <EmptyDescription>
-                  Add AI providers or marketplaces from the OpenWork Cloud dashboard.
+                  {error ? "Continue to your workspace and check Library again, or ask the person who invited you for help." : "Ask the person who invited you to share a model, skill, or tool. You can continue to your workspace while they prepare your access."}
                 </EmptyDescription>
               </EmptyHeader>
-              <EmptyContent>
-                <Button
-                  variant="outline"
-                  onClick={() => platform.openLink(resolveDenBaseUrls(settings.baseUrl).baseUrl)}
-                >
-                  Open OpenWork Cloud
-                  <ArrowUpRightIcon data-icon="inline-end" />
-                </Button>
-              </EmptyContent>
             </Empty>
           </PageContent>
         ) : (
           <PageContent>
             <ScrollArea className="px-2.5">
               <ScrollAreaViewport>
+                <div className="mb-5" data-testid="onboarding-member-capabilities">
+                  {capabilities?.skills.length ? (
+                    <section aria-label="Skills shared with you" className="mb-5">
+                      <h2 className="text-sm font-semibold">Skills shared with you</h2>
+                      <p className="mt-1 mb-2 text-sm text-muted-foreground">Reusable instructions for your tasks. Find these in the task composer and Library.</p>
+                      {capabilities.skills.map((skill) => (
+                        <OnboardingResourceRow key={skill.path} title={skill.name} description={skill.description} status="Available" />
+                      ))}
+                    </section>
+                  ) : null}
+                  {connections.length > 0 ? (
+                    <section aria-label="Tools shared with you">
+                      <h2 className="text-sm font-semibold">Tools shared with you</h2>
+                      <p className="mt-1 mb-2 text-sm text-muted-foreground">Connect your account from Library when you need a tool.</p>
+                      {connections.map((connection) => {
+                        const state = resolveOrgMcpConnectionCardState(connection);
+                        const ready = state.connected && !connectionNeedsReconnect(connection) && !connection.issuerReviewRequired && !connection.setupRequired;
+                        const adminSetup = connection.setupRequired || connection.issuerReviewRequired || connection.credentialMode === "shared" || connection.reconnectActionOwner === "organization_admin";
+                        return (
+                          <OnboardingResourceRow
+                            key={connection.id}
+                            title={connection.name}
+                            description={ready
+                              ? connection.credentialMode === "shared" ? "Managed by your team" : "Your account is connected"
+                              : adminSetup ? "Ask your workspace admin to finish connecting this tool." : "Sign in with your own account in Library."}
+                            status={ready ? "Ready" : adminSetup ? "Admin setup needed" : "Connect your account"}
+                          />
+                        );
+                      })}
+                    </section>
+                  ) : null}
+                  {totalModels === 0 && !error ? (
+                    <p className="mt-4 rounded-xl border border-border p-3 text-sm text-muted-foreground">No team model is available to you yet. Ask the person who invited you about model access before starting a task.</p>
+                  ) : null}
+                </div>
                 <Accordion
                   multiple
                   className="rounded-2xl border border-border bg-transparent shadow-none before:hidden"
@@ -943,7 +980,7 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
           {/* Footer hint */}
           {!loading && hasResources ? (
             <p className="text-center text-xs text-muted-foreground text-balance leading-relaxed tracking-wide">
-              Providers are added to your workspace automatically. Collections are available from Cloud settings.
+              Your team models are added automatically. Skills and tools are available in Library; personal accounts connect separately.
             </p>
           ) : null}
           <Button
