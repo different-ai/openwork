@@ -111,7 +111,8 @@ final class Fixture: NSObject, NSApplicationDelegate {
                     CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
                 }
                 for _ in 0..<20 {
-                    if NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier { break }
+                    if NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier,
+                       NSApp.keyWindow == self.windows[0] { break }
                     try? await Task.sleep(nanoseconds: 50_000_000)
                 }
                 // Only post person-input events while our disposable window owns focus.

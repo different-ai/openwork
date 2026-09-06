@@ -62,7 +62,7 @@ export function useSettingsExtensionController(input: SettingsExtensionControlle
     hostOpenworkServerClient: input.hostOpenworkServerClient,
     restartLocalServer: input.restartLocalServer,
     computerUse: {
-      connected: input.mcpServers.some((server) => server.name === "computer-use"),
+      connected: input.enablementContext.mcpStatuses?.["computer-use"]?.status === "connected",
       connecting: input.mcpConnectingName === entry.name,
       onConnect: () => input.connectMcp(entry),
       onRefresh: input.refreshMcpServers,

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 import { needs, SkipError } from "@openwork/env";
 import type { Place, Seed } from "@openwork/env";
+import { desktop } from "@openwork/hosts";
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -93,6 +94,8 @@ export async function computerUseWorld(_seed: Seed, { place }: { place: Place })
     await helper.request("initialize", { protocolVersion: "2025-11-25", clientInfo: { name: "native-journey", version: "1" }, capabilities: {} });
     await peer.request("initialize", { protocolVersion: "2025-11-25", clientInfo: { name: "peer-journey", version: "1" }, capabilities: {} });
     return {
+      desktop: () => desktop({ name: "computer-use-setup", host: place.host(), env: { OPENWORK_COMPUTER_USE_BINARY: executable } }),
+      workspacePath: join(directory, "workspace"),
       appId: "org.example.openwork.computer-use-fixture",
       appPid: fixture.pid,
       call: (name: string, args: Record<string, unknown> = {}) => helper.request("tools/call", { name, arguments: args }),
@@ -103,6 +106,28 @@ export async function computerUseWorld(_seed: Seed, { place }: { place: Place })
       refreshStable: () => fixture.request("refresh_stable"),
       refreshState: () => fixture.request("refresh_state"),
       resize: () => fixture.request("resize"),
+      async setupPanel() {
+        const setup = spawn(executable, ["setup"], { stdio: "ignore" });
+        try {
+          await new Promise<void>((resolve, reject) => { setup.once("spawn", resolve); setup.once("error", reject); });
+          const deadline = Date.now() + 5_000;
+          let lastPanel: unknown;
+          while (Date.now() < deadline) {
+            const result = await fixture.request("helper_panel", { name: "", pid: setup.pid, executable });
+            lastPanel = result;
+            if (record(result) && typeof result.text === "string" && result.text.includes("Accessibility")) return result;
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
+          throw new Error(`The setup window did not show permission status: ${JSON.stringify(lastPanel)}`);
+        } finally {
+          setup.kill("SIGTERM");
+          await new Promise<void>((resolve) => {
+            if (setup.exitCode !== null || setup.signalCode !== null || !setup.pid) { resolve(); return; }
+            const timeout = setTimeout(() => { setup.kill("SIGKILL"); resolve(); }, 2_000);
+            setup.once("exit", () => { clearTimeout(timeout); resolve(); });
+          });
+        }
+      },
       panel: () => fixture.request("helper_panel", { name: "", pid: helper.pid, executable }),
       foregroundWindow: () => fixture.request("foreground_window"),
       minimized: () => fixture.request("minimized"),

@@ -58,7 +58,16 @@ case "setup":
     NSApplication.shared.setActivationPolicy(.regular)
     let delegate = PermissionSetup()
     NSApplication.shared.delegate = delegate
-    withExtendedLifetime(delegate) { NSApplication.shared.run() }
+    signal(SIGUSR1, SIG_IGN)
+    let reopen = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: .main)
+    reopen.setEventHandler {
+        MainActor.assumeIsolated {
+            NSApp.windows.first?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+    reopen.resume()
+    withExtendedLifetime((delegate, reopen)) { NSApplication.shared.run() }
 default:
     fputs("Usage: ComputerUse [mcp|--check|--list-apps|setup]\n", stderr)
     exit(1)
