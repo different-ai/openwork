@@ -388,6 +388,12 @@ jobs:
             exit 1
           fi
 
+          if [ ! -x /usr/bin/openwork ]; then
+            echo "/usr/bin/openwork is missing or points at a non-executable target" >&2
+            ls -l /usr/bin/openwork >&2 || true
+            exit 1
+          fi
+
           launch_bin=""
           for candidate in \
             "$(command -v openwork 2>/dev/null || true)" \

@@ -1204,6 +1204,13 @@ jobs:
           name: openwork-server-npm-${{ env.RELEASE_VERSION }}
           path: ${{ runner.temp }}/openwork-server-npm
 
+      - name: Restore executable bits lost in the artifact round-trip
+        run: |
+          set -euo pipefail
+          chmod 755 "$RUNNER_TEMP/openwork-server-npm/bin/openwork-server.mjs" \
+            "$RUNNER_TEMP/openwork-server-npm/dist/bin/openwork-server"
+          test -x "$RUNNER_TEMP/openwork-server-npm/dist/bin/openwork-server"
+
       - name: Publish openwork-server
         run: npm publish "$RUNNER_TEMP/openwork-server-npm" --access public --provenance
 
