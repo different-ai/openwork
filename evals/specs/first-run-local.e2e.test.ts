@@ -33,7 +33,7 @@ test("first use without an invite or cloud reaches local task UI with honest mod
     await user.type({ placeholder: "/workspace/my-project" }, world.workspacePath);
     await user.click("Use this folder");
     await user.see({ text: "Power your first task" }, { timeoutMs: 120_000 });
-    await user.notSee({ text: "Your first useful task" });
+    await user.see({ text: "Bring your own API key" });
     evidence.recordAssertionEvidence("Use Without Cloud reaches model setup using the selected local folder", "The existing folder picker accepted the test workspace and opened Power your first task without requesting OpenWork sign-in.", true);
   });
 
