@@ -60,6 +60,8 @@ test("an existing Models subscriber can decline, enable and disable task analyti
   await user.see({ role: "tab", label: "Activity" });
   expect(await settings()).toMatchObject({ enabled: true, consentVersion: 1 });
   expect(await activity()).toHaveLength(0);
+  await user.see({ text: "Your next OpenWork Models task appears here" });
+  await user.see({ text: "Tasks using your own provider connections" });
   const subscription = record(record((await api("/v1/inference")).body).inference);
   expect(subscription).toEqual(baseline);
 
@@ -94,8 +96,10 @@ test("an existing Models subscriber can decline, enable and disable task analyti
   expect(record(isolated.body).events).toEqual([]);
   evidence.recordAssertionEvidence("A second paid, opted-in organization cannot see the first organization's activity", "The second organization has analytics access, returns HTTP 200, and sees zero events", true);
 
-  await user.click({ role: "button", label: "Refresh analytics" });
-  await user.see({ text: "completed" });
+  await user.see({ text: "completed" }, { timeoutMs: 45_000 });
+  await user.notSee({ text: "Your next OpenWork Models task appears here" });
+  evidence.recordAssertionEvidence("New Models activity appears without a manual refresh", "The empty activity screen became a completed task after real model requests, without reloading or pressing Refresh; provider coverage guidance was visible before the first task", true);
+  await user.screenshot();
   await user.click({ role: "tab", label: "Consumption" });
   await user.see({ text: "$0.0123" });
   await user.screenshot();
@@ -136,8 +140,8 @@ test("an existing Models subscriber can decline, enable and disable task analyti
   await webUser.reload();
   await webUser.see({ role: "tab", label: "Integrations" }, { timeoutMs: 60_000 });
   await webUser.click({ role: "tab", label: "Integrations" });
-  await webUser.click({ text: /^Data region/ });
-  await webUser.press("End"); await webUser.press("Enter");
+  await webUser.click({ role: "button", label: "Data region" });
+  await webUser.click({ role: "option", label: "Self-hosted" });
   await webUser.type({ role: "textbox", label: "Langfuse address" }, "https://127.0.0.1", { replace: true });
   await webUser.type({ role: "textbox", label: "Public key" }, "fixture-public", { replace: true });
   await webUser.type({ label: "Secret key" }, "fixture-secret", { replace: true });

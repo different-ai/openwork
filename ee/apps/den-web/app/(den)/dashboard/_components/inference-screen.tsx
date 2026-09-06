@@ -7,7 +7,7 @@ import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference";
 import { DenButton } from "../../_components/ui/button";
 import { DenCard } from "../../_components/ui/card";
 import { DenNotice } from "../../_components/ui/notice";
-import { DenPageHeader } from "../../_components/ui/page-header";
+import { AnalyticsPageHeader, analyticsPageClass, analyticsSurfaceClass } from "../_features/analytics/analytics-layout";
 import { DenSectionHeader } from "../../_components/ui/section-header";
 import { DenTable, type DenTableColumn } from "../../_components/ui/table";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
@@ -120,40 +120,25 @@ function UsageLimitsCard({ buckets }: { buckets: InferenceUsageBucket[] }) {
 
   if (ordered.length === 0) return null;
 
-  return (
-    <DenCard className="overflow-hidden p-0">
-      <div className="border-b border-gray-100 px-6 py-4">
-        <DenSectionHeader
-          title="Usage limits"
-          description="Shared across your organization and scale with the number of active members."
-        />
-      </div>
-      <ul className="divide-y divide-gray-100">
-        {ordered.map((bucket) => {
-          const remaining = computeRemainingPercent(bucket);
-          return (
-            <li key={bucket.windowType} className="flex items-center gap-6 px-6 py-5">
-              <div className="min-w-[200px]">
-                <p className="text-[15px] font-medium text-gray-950">{WINDOW_LABEL[bucket.windowType]}</p>
-                <p className="mt-1 text-[13px] text-gray-500">{formatResetLabel(bucket)}</p>
-              </div>
-              <div className="flex flex-1 items-center gap-4">
-                <div className="h-2 flex-1 overflow-hidden rounded-full bg-gray-100">
-                  <div
-                    className="h-full rounded-full bg-gray-900 transition-[width] duration-500"
-                    style={{ width: `${remaining}%` }}
-                  />
-                </div>
-                <span className="min-w-[80px] text-right text-[13px] font-medium text-gray-700">
-                  {remaining.toFixed(1)}% left
-                </span>
-              </div>
-            </li>
-          );
-        })}
-      </ul>
-    </DenCard>
-  );
+  return <section aria-label="Usage limits" className="grid gap-3">
+    <div className="flex flex-wrap items-baseline justify-between gap-2">
+      <h2 className="text-sm font-semibold text-[#07192C]">Shared usage limits</h2>
+      <p className="text-xs text-[#637291]">Included in your plan · Shared across active members</p>
+    </div>
+    <div className="grid gap-3.5 sm:grid-cols-3">
+      {ordered.map((bucket) => {
+        const remaining = computeRemainingPercent(bucket);
+        return <div key={bucket.windowType} className={`${analyticsSurfaceClass} p-5`}>
+          <p className="text-xs font-medium text-[#637291]">{WINDOW_LABEL[bucket.windowType]}</p>
+          <p className="mt-3 text-[26px] font-semibold tracking-tight text-[#07192C] tabular-nums">{remaining.toFixed(1)}% <span className="text-sm font-normal text-[#637291]">left</span></p>
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[#edf0f5]" role="progressbar" aria-label={`${WINDOW_LABEL[bucket.windowType]} remaining`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={remaining}>
+            <div className={`h-full rounded-full transition-[width] ${remaining <= 10 ? "bg-amber-500" : "bg-[#6F3DFF]"}`} style={{ width: `${remaining}%` }} />
+          </div>
+          <p className="mt-2.5 text-xs text-[#637291]">{formatResetLabel(bucket)}</p>
+        </div>;
+      })}
+    </div>
+  </section>;
 }
 
 /**
@@ -426,10 +411,10 @@ export function InferenceScreen() {
     : "billed per active member";
 
   return (
-    <div className="mx-auto grid max-w-[860px] gap-6 px-8 pb-16 pt-8">
-      <DenPageHeader
+    <div className={analyticsPageClass}>
+      <AnalyticsPageHeader orgName={activeOrg?.name ?? "OpenWork Cloud"} orgSlug={activeOrgSlug} active="models"
         title="OpenWork Models"
-        description="Reliable, hand-picked models for knowledge work. No API keys to manage."
+        description={subscribed ? "Your team’s model activity, consumption, and shared limits in one place." : "Reliable, hand-picked models for knowledge work. No API keys to manage."}
         action={
           <DenButton
             type="button"
@@ -455,11 +440,14 @@ export function InferenceScreen() {
 
       {showGettingStarted ? <GettingStartedCard /> : null}
 
+      {enabled && status ? <UsageLimitsCard buckets={status.buckets} /> : null}
+
       {enabled && subscribed && canManageModels ? <ModelsAnalyticsPanel key={orgContext?.organization.id} /> : null}
 
-      <ModelsLineup subscribed={subscribed} />
-
-      {enabled && status ? <UsageLimitsCard buckets={status.buckets} /> : null}
+      {subscribed ? <details className={`${analyticsSurfaceClass} group p-5`}>
+        <summary className="cursor-pointer text-sm font-semibold text-[#30405F]">Included models <span className="ml-2 text-xs font-normal text-[#637291]">{MODEL_LINEUP.length} models available to every member</span></summary>
+        <div className="mt-5"><ModelsLineup subscribed={subscribed} /></div>
+      </details> : <ModelsLineup subscribed={subscribed} />}
 
       <p className="text-[13px] text-gray-400">
         Prefer your own provider accounts?{" "}
