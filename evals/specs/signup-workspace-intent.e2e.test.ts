@@ -137,6 +137,9 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
         const completed = await probe.eventually(() => world.film?.downloads.find((item) => item.state === "completed"), {
           within: 180_000, label: "Chromium completed the installer download", until: (item) => Boolean(item),
         });
+        const begun = world.film.downloads.find((item) => item.event === "Browser.downloadWillBegin");
+        expect(begun?.suggestedFilename).toMatch(/^openwork-linux-x86_64-.*\.AppImage$/);
+        expect(completed?.guid).toBe(begun?.guid);
         expect(completed?.receivedBytes).toBeGreaterThan(1_000_000);
         expect(completed?.receivedBytes).toBe(completed?.totalBytes);
         expect(world.film.downloads.some((item) => item.state === "canceled")).toBe(false);
