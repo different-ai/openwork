@@ -1,6 +1,6 @@
 import { control } from "@openwork/behaviors";
 import { captureScreenshot, connect, debuggerUrlFor, evaluate, listTargets, navigate } from "@openwork/cdp";
-import type { CdpClient, Surface } from "@openwork/cdp";
+import type { AttachedSurface, CdpClient, Surface } from "@openwork/cdp";
 import type { Seed } from "@openwork/env";
 
 export interface BuiltinBrowserTab {
@@ -23,6 +23,7 @@ export interface PageProbe extends Viewport {
 export interface BrowserTabState {
   id: string;
   label: string;
+  url: string;
   ownerSessionId: string | null;
 }
 
@@ -83,6 +84,7 @@ function parseBrowserState(value: unknown): BrowserState {
       return {
         id: stringField(tab.id),
         label: stringField(tab.label),
+        url: stringField(tab.url),
         ownerSessionId: typeof tab.ownerSessionId === "string" ? tab.ownerSessionId : null,
       };
     }),
@@ -107,6 +109,14 @@ async function embeddedServerUrl(seed: Seed, app: Surface): Promise<string> {
   const info = await seed.evalIn(app, `window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo")`, { awaitPromise: true });
   if (!isRecord(info) || info.running !== true) throw new Error("The embedded OpenWork server is not running.");
   return stringField(info.baseUrl).replace(/\/+$/, "");
+}
+
+async function loginWitnessUrl(seed: Seed, app: Surface): Promise<string> {
+  return stringField(await seed.evalIn(
+    app,
+    "window.__OPENWORK_ELECTRON__.browserLogins.testWitnessUrl()",
+    { awaitPromise: true },
+  ));
 }
 
 async function withTabClient<T>(app: Surface, targetId: string, run: (client: CdpClient) => Promise<T>): Promise<T> {
@@ -144,11 +154,6 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
   const workspace = await seed.workspace(app, seed.tmpPath("builtin-browser"));
   const session = await seed.session(app);
   const origin = await embeddedServerUrl(seed, app);
-  const loginWitnessOrigin = stringField(await seed.evalIn(
-    app,
-    "window.__OPENWORK_ELECTRON__.browserLogins.testWitnessUrl()",
-    { awaitPromise: true },
-  ));
 
   return {
     app,
@@ -207,7 +212,7 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
 
     /** Open a page that reports only whether an HttpOnly session cookie arrived. */
     async openLoginWitnessTab(name: string): Promise<BuiltinBrowserTab> {
-      const url = `${loginWitnessOrigin}/?login-probe=${encodeURIComponent(name)}`;
+      const url = `${await loginWitnessUrl(seed, app)}/?login-probe=${encodeURIComponent(name)}`;
       const result = await seed.evalIn(
         app,
         `window.__OPENWORK_ELECTRON__.browser.openUrl(${JSON.stringify(url)})`,
@@ -219,7 +224,7 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
 
     /** Open the value-free login witness from a conversation that is not on screen. */
     async openLoginWitnessTabAs(name: string, ownerSessionId: string): Promise<OpenedTab> {
-      const url = `${loginWitnessOrigin}/?login-probe=${encodeURIComponent(name)}`;
+      const url = `${await loginWitnessUrl(seed, app)}/?login-probe=${encodeURIComponent(name)}`;
       const result = await seed.evalIn(
         app,
         `window.__openworkControl.command(${JSON.stringify({
@@ -273,9 +278,6 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
 
     /** The page origin the built-in browser can always reach: the embedded OpenWork server. */
     origin,
-
-    /** Host used by the value-free HttpOnly login witness. */
-    loginWitnessHost: new URL(loginWitnessOrigin).hostname,
 
     /**
      * Seed a Firefox-shaped cookie store the import dialog can find, so the
@@ -440,6 +442,103 @@ export function builtinBrowserWorld(seed: Seed) {
   return createBuiltinBrowserWorld(seed);
 }
 
-export function browserLoginSyncWorld(seed: Seed) {
-  return createBuiltinBrowserWorld(seed, { OPENWORK_EVAL_BROWSER_LOGIN_SYNC: "1" });
+export async function browserLoginSyncWorld(seed: Seed) {
+  const world = await createBuiltinBrowserWorld(seed, { OPENWORK_EVAL_BROWSER_LOGIN_SYNC: "1" });
+  const loginWitnessOrigin = await loginWitnessUrl(seed, world.app);
+  return {
+    ...world,
+    /** Host used by the value-free HttpOnly login witness. */
+    loginWitnessHost: new URL(loginWitnessOrigin).hostname,
+  };
+}
+
+/** Add a persisted transcript link to an existing world without launching another desktop. */
+export async function transcriptLinkWorld(seed: Seed, world: Awaited<ReturnType<typeof builtinBrowserWorld>>) {
+  const { app, workspace } = world;
+  const reading = { ...world.session, title: "Reading a shared link" };
+  await world.renameSession(reading.sessionId, reading.title);
+  const neighbor = await world.openSession("Unrelated browser research");
+  const neighborTab = await world.openTabAs("link-neighbor", neighbor.sessionId);
+  const origin = await embeddedServerUrl(seed, app);
+  const linkUrl = `${origin}/?link-context=alpha%20beta&encoded=%2Fkeep%3Fyes%3D1#thread-link`;
+  const note = "Keep this note in its own conversation.";
+  await seed.evalIn(app, `async (workspaceId, sessionId, note, url) => {
+    const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+    const response = await fetch(info.baseUrl.replace(/\\/+$/, "")
+      + "/workspace/" + encodeURIComponent(workspaceId)
+      + "/opencode/session/" + encodeURIComponent(sessionId) + "/message", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + info.ownerToken, "Content-Type": "application/json" },
+      body: JSON.stringify({ noReply: true, parts: [
+        { type: "text", text: note },
+        { type: "text", text: "Reference: " + url },
+      ] }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) throw new Error("Transcript message seed failed: " + response.status);
+    return true;
+  }`, { args: [workspace.workspaceId, reading.sessionId, note, linkUrl], awaitPromise: true, timeoutMs: 35_000 });
+  await world.showSession(reading.sessionId);
+
+  return {
+    ...world,
+    reading,
+    neighbor,
+    neighborTab,
+    linkUrl,
+    note,
+
+    async readLink() {
+      return evaluate(app.client, `(() => {
+        const link = [...document.querySelectorAll('[data-message-role="user"] a[href]')]
+          .find(node => node.getAttribute("href") === ${JSON.stringify(linkUrl)});
+        return link ? { href: link.href, sessionId: link.closest("[data-session-surface-id]")?.dataset.sessionSurfaceId } : null;
+      })()`);
+    },
+
+    async readMainUrl() {
+      return evaluate(app.client, "location.href");
+    },
+
+    async readClipboard() {
+      return evaluate(app.client, "navigator.clipboard.readText()", { awaitPromise: true });
+    },
+
+    /** Exclude the menu document, but include popups and all built-in pages. */
+    async pageTargets() {
+      return (await listTargets(app.handle.cdpUrl))
+        .filter(target => target.type === "page" && !/\/overlay\.html(?:[?#]|$)/.test(target.url))
+        .map(({ id, url }) => ({ id, url }))
+        .sort((a, b) => a.id.localeCompare(b.id));
+    },
+
+    /** Attach to the real WebContentsView, never invoke its choice/close bridge. */
+    async menuOverlay(): Promise<AttachedSurface | null> {
+      const target = (await listTargets(app.handle.cdpUrl))
+        .find(target => target.type === "page" && /\/overlay\.html(?:[?#]|$)/.test(target.url));
+      if (!target) return null;
+      const client = await connect(debuggerUrlFor(app.handle.cdpUrl, target));
+      return {
+        handle: { ...app.handle, name: "link-context-menu" },
+        client,
+        async stop() { client.close(); },
+        async [Symbol.asyncDispose]() { client.close(); },
+      };
+    },
+
+    async menuLabels(surface: Surface) {
+      return evaluate(surface.client, `Array.from(document.querySelectorAll('[role="menu"]'),
+        menu => menu.getAttribute("aria-label"))`);
+    },
+
+    async menuShown(surface: Surface) {
+      // Chromium can retain document.hasFocus() on a detached native view. The
+      // renderer clears its menu on dismissal, so stale choices cannot persist.
+      return await evaluate(surface.client, 'Boolean(document.querySelector(\'[role="menu"]\'))') === true;
+    },
+
+    async closePopup(targetId: string) {
+      await app.client.send("Target.closeTarget", { targetId });
+    },
+  };
 }

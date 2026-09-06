@@ -49,6 +49,26 @@ function installMenuOverlayDismissListeners() {
   }
 }
 
+// Capture before message-bubble menus, but leave files, app routes, editable
+// text, and ordinary clicks to their existing handlers.
+window.addEventListener("contextmenu", (event) => {
+  const anchor = event.composedPath().find((node) => node instanceof HTMLAnchorElement);
+  if (!anchor || anchor.isContentEditable || anchor.hasAttribute("download")) return;
+  const href = anchor.getAttribute("href") ?? "";
+  if (!/^(https?:)?\/\//i.test(href)) return;
+  let url;
+  try { url = new URL(anchor.href); } catch { return; }
+  if (!["http:", "https:"].includes(url.protocol)) return;
+  if (url.origin === location.origin && url.pathname === location.pathname && url.search === location.search) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  ipcRenderer.send("openwork:browser:linkContextMenu", {
+    url: url.href,
+    point: { x: event.clientX, y: event.clientY },
+    sessionId: anchor.closest("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? null,
+  });
+}, { capture: true });
+
 let desktopBootstrap = null;
 let desktopDistribution = null;
 try {

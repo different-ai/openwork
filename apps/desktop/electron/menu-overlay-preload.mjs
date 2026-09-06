@@ -8,6 +8,11 @@ ipcRenderer.on("openwork:menu-overlay:show", (_event, request) => {
   showCallback?.(request);
 });
 
+ipcRenderer.on("openwork:menu-overlay:hide", () => {
+  latestRequest = null;
+  showCallback?.(null);
+});
+
 contextBridge.exposeInMainWorld("__OPENWORK_MENU_OVERLAY__", {
   ready() {
     ipcRenderer.send("openwork:menu-overlay:ready");
