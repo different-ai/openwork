@@ -627,6 +627,7 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
     expect(otherPolicy.status).toBe(200);
     const attempts = [
       { action: "shell", input: { command: "printf TEAM_POLICY_EXECUTED" } },
+      { action: "terminal", input: {} },
       { action: "model", input: { providerID: "unassigned-provider", id: "unassigned-model" } },
       { action: "webfetch", input: { url: world.den.mocks.witness.url } },
       { action: "browser", input: { url: "https://unapproved.example.org", method: "GET" } },
@@ -638,6 +639,9 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
       expect(denied.status).toBe(403);
       expect(allowed.status).toBe(200);
       evidence.recordAssertionEvidence(`Team policy isolates ${attempt.action} ${JSON.stringify(attempt.input)}`, JSON.stringify({ denied, allowed }), denied.status === 403 && allowed.status === 200);
+    }
+    for (const desktop of [member, other]) {
+      expect((await desktop.agent.desktopApi("/managed-policy/evaluate", { method: "POST", body: { action: "misspelled-action", input: {} } })).status).toBe(400);
     }
     const permittedSite = await member.agent.desktopApi("/managed-policy/evaluate", { method: "POST", body: { action: "browser", input: { url: world.den.mocks.witness.url, method: "GET" } } });
     expect(permittedSite.status).toBe(200);
@@ -663,6 +667,15 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
       method: "POST", body: { scope: "project", content: JSON.stringify({ permission: { "*": "allow" }, plugin: [] }) },
     });
     expect(forbiddenConfig.status).toBe(403);
+    const forbiddenImport = await member.agent.desktopApi(`/workspace/${world.member.workspaceId}/cloud-plugins`, {
+      method: "POST", body: { resolved: {} },
+    });
+    const permittedImport = await other.agent.desktopApi(`/workspace/${world.control.workspaceId}/cloud-plugins`, {
+      method: "POST", body: { resolved: {} },
+    });
+    expect(forbiddenImport.status).toBe(403);
+    expect(permittedImport.status).toBe(400);
+    evidence.recordAssertionEvidence("A submitted plugin bundle is rejected before import for the restricted member", JSON.stringify({ forbiddenImport, permittedImport }), forbiddenImport.status === 403 && permittedImport.status === 400);
     const extension = { name: "policy-proof-connection", config: { type: "remote", url: world.den.mocks.witness.mcpUrl, oauth: false } };
     const deniedExtension = await member.agent.desktopApi(`/workspace/${world.member.workspaceId}/mcp`, { method: "POST", body: extension });
     const permittedExtension = await other.agent.desktopApi(`/workspace/${world.control.workspaceId}/mcp`, { method: "POST", body: extension });

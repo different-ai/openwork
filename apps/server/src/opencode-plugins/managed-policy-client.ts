@@ -1,12 +1,13 @@
 // Both engine generations call this same OpenWork boundary before side effects.
 // This module has no engine SDK dependency so it can be loaded by either build.
+import type { ManagedPolicyAction } from "../managed-policy-rules.js";
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function record(value: unknown): Record<string, unknown> { return isRecord(value) ? value : {}; }
 export async function checkManagedTool(tool: string, raw: unknown): Promise<void> {
   const input = record(raw);
-  let action: string | undefined;
+  let action: ManagedPolicyAction | undefined;
   if (tool === "bash" || tool === "shell") action = "shell";
   else if (["write", "edit", "apply_patch", "patch"].includes(tool)) action = "file_write";
   else if (tool === "webfetch" || tool === "websearch") action = tool;
@@ -19,7 +20,7 @@ export async function checkManagedTool(tool: string, raw: unknown): Promise<void
   // running with a previous member's loaded configuration.
   await check(action ?? "sync", input);
 }
-export async function check(action: string, input: Record<string, unknown>): Promise<void> {
+export async function check(action: ManagedPolicyAction, input: Record<string, unknown>): Promise<void> {
   const base = process.env.OPENWORK_SERVER_URL;
   const token = process.env.OPENWORK_SERVER_TOKEN;
   if (!base || !token) throw new Error("OpenWork policy service is unavailable.");

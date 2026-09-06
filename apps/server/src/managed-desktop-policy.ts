@@ -5,7 +5,7 @@ import { isRecord } from "./workspace-kv-store.js";
 import { externalFetch } from "./server-fetch.js";
 import { ApiError } from "./errors.js";
 import { readGlobalRuntimeOpencodeConfig, writeManagedDesktopPolicy, runtimeProviderMap } from "./runtime-opencode-config-store.js";
-import { policyDenial, policyRequestActions } from "./managed-policy-rules.js";
+import { policyDenial, policyRequestActions, type ManagedPolicyAction } from "./managed-policy-rules.js";
 
 const services = new WeakMap<ServerConfig, ManagedDesktopPolicy>();
 export function managedDesktopPolicy(config: ServerConfig): ManagedDesktopPolicy {
@@ -83,14 +83,14 @@ class ManagedDesktopPolicy {
       if (typeof value === "object" && value !== null && !Array.isArray(value)) input = Object.fromEntries(Object.entries(value));
     }
     await this.assert("sync");
-    if (terminal) await this.assert("shell", input);
+    if (terminal) await this.assert(/\/shell(?:\/|$)/.test(decoded) ? "shell" : "terminal", input);
     if (/^\/(?:config|global\/config)(?:\/|$)/.test(enginePath)) await this.assert("engine_config");
-    if (/^\/(?:mcp|plugin|skill)(?:\/|$)/.test(enginePath)) await this.assert("extensions");
-    if (/^\/auth(?:\/|$)/.test(enginePath)) await this.assert("provider");
+    if (/^\/(?:mcp|plugins?|skills?|agents?)(?:\/|$)/.test(enginePath)) await this.assert("extensions");
+    if (/^\/(?:auth|providers?)(?:\/|$)/.test(enginePath)) await this.assert("provider");
     const model = typeof input.model === "object" && input.model !== null ? Object.fromEntries(Object.entries(input.model)) : input;
     if ("providerID" in model) await this.assert("model", model);
   }
-  async assert(action: string, input: Record<string, unknown> = {}): Promise<void> {
+  async assert(action: ManagedPolicyAction, input: Record<string, unknown> = {}): Promise<void> {
     const policy = await this.current();
     if (!policy) return;
     const denial = policyDenial(policy, action, input);

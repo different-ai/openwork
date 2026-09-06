@@ -1,4 +1,5 @@
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
+import { managedPolicyActionSchema } from "./managed-policy-rules.js";
 import { readFile, realpath, writeFile, rm, stat } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -3114,8 +3115,9 @@ function createRoutes(
     jsonResponse({ policy: await managedDesktopPolicy(config).current() }));
   addRoute(routes, "POST", "/managed-policy/evaluate", "client", async (ctx) => {
     const body = await readJsonBody(ctx.request);
-    if (typeof body.action !== "string" || !isRecord(body.input)) throw new ApiError(400, "invalid_payload", "action and input are required");
-    await managedDesktopPolicy(config).assert(body.action, body.input);
+    const action = managedPolicyActionSchema.safeParse(body.action);
+    if (!action.success || !isRecord(body.input)) throw new ApiError(400, "invalid_payload", "A supported policy action and input are required");
+    await managedDesktopPolicy(config).assert(action.data, body.input);
     return jsonResponse({ allowed: true });
   });
 

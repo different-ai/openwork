@@ -1,4 +1,11 @@
 import type { DesktopConfig, DesktopExecutionPolicy, DesktopPolicyKey } from "@openwork/types/den/desktop-policies";
+import { z } from "zod";
+
+export const managedPolicyActionSchema = z.enum([
+  "sync", "shell", "terminal", "file_write", "engine_config", "browser_external",
+  "model", "webfetch", "websearch", "browser", "extensions", "settings", "provider", "workspace",
+]);
+export type ManagedPolicyAction = z.infer<typeof managedPolicyActionSchema>;
 
 // Every existing Den control must have an explicit owner. Adding a key without
 // mapping it is a type error; UI-only fields cannot pretend to be tool rules.
@@ -56,8 +63,9 @@ function matches(pattern: string, value: string): boolean {
   return ruleIndex === rule.length;
 }
 
-export function policyDenial(policy: DesktopConfig, action: string, input: Record<string, unknown>): string | null {
+export function policyDenial(policy: DesktopConfig, action: ManagedPolicyAction, input: Record<string, unknown>): string | null {
   const execution = policy.execution;
+  if (action === "terminal" && (execution?.commands === "deny" || execution?.blockedCommands.length)) return "Interactive terminals are blocked by your team's command policy.";
   if (action === "shell") {
     if (execution?.commands === "deny") return "Your organization has blocked OS commands for your team.";
     const command = typeof input.command === "string" ? input.command : "";
@@ -103,14 +111,15 @@ export function hasExecutionLimits(execution: DesktopExecutionPolicy | undefined
   return !!execution && (execution.commands === "deny" || execution.blockedCommands.length > 0 || execution.browserOrigins !== undefined || execution.blockBrowserUploads);
 }
 
-export function policyRequestActions(method: string, path: string): string[] {
+export function policyRequestActions(method: string, path: string): ManagedPolicyAction[] {
   if (["GET", "HEAD", "OPTIONS"].includes(method)) return [];
-  const actions: string[] = [];
+  const actions: ManagedPolicyAction[] = [];
   if (/^\/workspaces\/(local|remote)$/.test(path)) actions.push("workspace");
   if (/^\/runtime-config\/providers$/.test(path)) actions.push("provider");
-  if (/^\/workspace\/[^/]+\/(?:claude-plugins|plugins|skills|commands|mcp)(?:\/|$)/.test(path)
+  if (/^\/workspace\/[^/]+\/(?:cloud-plugins|claude-plugins|plugins|skills|commands|mcp)(?:\/|$)/.test(path)
     && !/\/mcp\/[^/]+\/(?:auth|managed\/connect)$/.test(path)) actions.push("extensions");
   if (/^\/workspace\/[^/]+\/(?:config|opencode-config|permissions|authorized-folders)(?:\/|$)/.test(path)) actions.push("settings");
+  if (path === "/experimental/engine-v2-preview") actions.push("settings");
   if (/\/opencode-config$/.test(path)) actions.push("engine_config");
   return actions;
 }
