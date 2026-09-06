@@ -838,6 +838,7 @@ function SidebarSplitPill({ workspaceSessionGroups, onOpenSession }: SidebarSpli
         {segments.map(({ session, pane }) => {
           const details = detailsFor(session.workspaceId, session.sessionId);
           const focused = focusedPane === pane;
+          const closeLabel = pane === "primary" ? "Close main chat" : t("session_management.close_split_view");
           return (
             <div
               key={pane}
@@ -864,8 +865,8 @@ function SidebarSplitPill({ workspaceSessionGroups, onOpenSession }: SidebarSpli
               <button
                 type="button"
                 className="shrink-0 rounded p-0.5 text-sidebar-foreground/50 hover:text-sidebar-foreground"
-                title={t("session_management.close_split_view")}
-                aria-label={t("session_management.close_split_view")}
+                title={closeLabel}
+                aria-label={closeLabel}
                 onClick={() => {
                   if (pane === "primary") {
                     // Closing the primary segment promotes the split session
