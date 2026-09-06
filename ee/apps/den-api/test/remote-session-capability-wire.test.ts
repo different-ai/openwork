@@ -54,6 +54,7 @@ const witness = {
   requests: [] as WitnessRequest[],
   sessions: new Map<string, WitnessSession>(),
   nextSessionId: 1,
+  engineReady: false,
 };
 
 function readBody(request: IncomingMessage): Promise<unknown> {
@@ -110,6 +111,7 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
 
   const prefix = `/workspace/${WORKSPACE_ID}/opencode/session`;
   if (method === "POST" && path === prefix) {
+    if (!witness.engineReady) return json(response, 400, { code: "opencode_unconfigured", message: "OpenCode base URL is missing for this workspace" });
     const title = typeof body === "object" && body !== null && typeof (body as Record<string, unknown>).title === "string"
       ? String((body as Record<string, unknown>).title)
       : "Untitled";
@@ -214,6 +216,12 @@ test("remote-session capabilities drive a real openwork-server wire with scoped 
   const matches = searchRemoteSessionCapabilities("send a chat to my cloud web session", 10);
   expect(matches.map((match) => match.name)).toContain("remote-session:send");
   expect(matches.every((match) => match.invocation?.argumentsField === "body")).toBe(true);
+  const waking = await executeRemoteSessionCapability(input("create", { title: "Witness handoff", prompt: "start working" }), deps);
+  expect(waking.isError).toBe(true);
+  expect(payload(waking)).toMatchObject({ error: "cloud_runtime_waking", retryable: true, retryAfterMs: 30_000 });
+  expect(witness.sessions.size).toBe(0);
+  expect(witness.requests.some((request) => request.path.includes("/prompt_async"))).toBe(false);
+  witness.engineReady = true;
   const created = await executeRemoteSessionCapability(
     input("create", { title: "Witness handoff", prompt: "start working" }),
     deps,
@@ -224,6 +232,8 @@ test("remote-session capabilities drive a real openwork-server wire with scoped 
   expect(sessionId.startsWith("ses_witness_")).toBe(true);
   expect(createdBody.workspaceId).toBe(WORKSPACE_ID);
   expect(createdBody.started).toBe(true);
+  expect(witness.sessions.size).toBe(1);
+  expect(witness.sessions.get(sessionId)?.prompts).toEqual(["start working"]);
 
   const createRequest = witness.requests.find(
     (request) => request.method === "POST" && request.path === `/workspace/${WORKSPACE_ID}/opencode/session`,

@@ -448,6 +448,19 @@ function threadErrorStatus(error: unknown): number | null {
 
 function threadErrorResult(action: RemoteSessionAction, sessionId: string | null, error: unknown): RemoteSessionToolResult {
   const status = threadErrorStatus(error)
+  // The worker binds HTTP before its managed engine finishes starting. Only
+  // retry creation when the session endpoint itself rejected the request;
+  // a later prompt failure may already have created a session.
+  if (action === "create" && status === 400 && isRecord(error)
+    && error.code === "opencode_unconfigured" && typeof error.path === "string"
+    && error.path.endsWith("/opencode/session")) {
+    return errorResult({
+      error: "cloud_runtime_waking",
+      message: "Your OpenWork Cloud workspace is reachable, but its engine is not ready yet. Retry the same call in about 30 seconds; no session was created.",
+      retryable: true,
+      retryAfterMs: 30_000,
+    })
+  }
   if (status === 404 && sessionId) {
     return errorResult({
       error: "unknown_session",
