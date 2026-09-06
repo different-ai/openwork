@@ -1319,7 +1319,7 @@ export async function computerMentions(seed: Seed) {
         messages.sort((a, b) => a.info.time.created - b.info.time.created);
         return messages.filter((message) => message.info.role === "user").map((message) => ({
           visible: message.parts.filter((part) => part.type === "text" && !part.synthetic).map((part) => part.text).join("").trim(),
-          routing: message.parts.filter((part) => part.type === "text" && part.synthetic && part.text.includes("remote-session:create")).map((part) => part.text),
+          routing: message.parts.filter((part) => part.type === "text" && part.synthetic).map((part) => part.text),
         }));
       }`, { args: [workspace.workspaceId], awaitPromise: true });
     },
