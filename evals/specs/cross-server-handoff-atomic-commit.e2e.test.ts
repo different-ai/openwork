@@ -12,6 +12,7 @@ import {
   eventually,
   localMysqlIsRunning,
   needs,
+  quitDesktop,
   readDenClientState,
   relaunchDesktop,
   server,
@@ -250,6 +251,9 @@ test.skipIf(!e2eTestsEnabled || !localPlacement || !mysqlOpen)(
       // port would otherwise rotate the origin that scopes localStorage.
       const rendererPort = desktop.handle.meta?.vitePort;
       if (!rendererPort) throw new Error("The first launch did not record its renderer port.");
+      // Exercise a user quit, allowing Chromium to persist renderer storage,
+      // before disposing the dev processes. stop() alone sends SIGINT.
+      await quitDesktop(desktop);
       await desktop.stop();
       desktop = null;
       // The dev server auto-increments a busy port instead of failing, which

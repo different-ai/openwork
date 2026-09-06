@@ -1,4 +1,5 @@
-name: OpenWork Tests
+name: Build and core checks
+run-name: ${{ github.event_name == 'schedule' && 'Full regression — component checks' || 'Build and core checks' }}
 
 on:
   pull_request:
