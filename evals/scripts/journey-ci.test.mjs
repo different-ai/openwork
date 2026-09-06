@@ -1,4 +1,8 @@
 import test from 'node:test';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { judgeJourneys } from './judge-journeys.mjs';
 import assert from 'node:assert/strict';
 import { catalog, selectJourneys } from './journey-catalog.mjs';
 import { aggregate, classify, markdown } from './journey-report.mjs';
@@ -104,4 +108,30 @@ test('Slack delivery carries thread and state only advances after accepted respo
     ...options, request: async () => ({ ok: true, json: async () => ({ ok: false, error: 'not_in_channel' }) }),
   }), /not_in_channel/);
   assert.equal(state.failures.length, 1);
+});
+
+
+test('every journey record is judged; the last passing test cannot hide earlier failure or pending evidence', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'journey-evidence-'));
+  try {
+    for (const name of ['first', 'second']) {
+      await mkdir(join(root, name));
+      await writeFile(join(root, name, 'test-run.json'), JSON.stringify({ gitSha: 'expected' }));
+    }
+    const visited = [];
+    assert.deepEqual(await judgeJourneys(root, 'expected', path => { visited.push(path); return path.endsWith('first') ? 1 : 0; }), { count: 2, result: 'failure' });
+    assert.equal(visited.length, 2);
+    assert.deepEqual(await judgeJourneys(root, 'expected', path => path.endsWith('first') ? 2 : 0), { count: 2, result: 'incomplete' });
+    assert.deepEqual(await judgeJourneys(root, 'expected', () => 0), { count: 2, result: 'success' });
+    assert.deepEqual(await judgeJourneys(root, 'wrong-sha', () => { throw new Error('must not judge mismatched evidence'); }), { count: 0, result: 'incomplete' });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('missing evidence and a different executed spec are not passing coverage', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'journey-empty-'));
+  try {
+    assert.deepEqual(await judgeJourneys(root, 'expected'), { count: 0, result: 'incomplete' });
+    assert.equal(classify({ ...summary, files: ['other.e2e.test.ts'] }, 'success', 'success', entry.spec), 'not tested');
+    assert.equal(classify({ ...summary, files: [entry.spec] }, 'success', 'success', entry.spec), 'passed');
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

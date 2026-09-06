@@ -188,18 +188,17 @@ jobs:
           OPENWORK_EVAL_MODEL="${MODEL}" pnpm evals:e2e "${SPEC_SLUG}" --daytona 2>&1 | tee /tmp/daytona-e2e.log
           cli_status="${PIPESTATUS[0]}"
           set -e
-          tail -1 /tmp/daytona-e2e.log | jq -r '"- `\(.files[0])`: **\(.verdict)** (\(.placement))"' >> "$GITHUB_STEP_SUMMARY" \
-            || echo "- \`${SPEC_SLUG}\`: CLI exit ${cli_status} (no JSON summary)" >> "$GITHUB_STEP_SUMMARY"
           exit "$cli_status"
 
       - name: Judge deferred vision claims
         id: vision
-        if: steps.run.outcome == 'success'
+        if: success() || failure()
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          EXPECTED_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
         run: |
           set -euo pipefail
-          pnpm --dir evals evidence:judge -- --test-run latest
+          node evals/scripts/judge-journeys.mjs
 
       - name: Record journey outcome
         if: always()
@@ -207,7 +206,7 @@ jobs:
           SPEC_SLUG: ${{ matrix.journey.spec }}
           JOURNEY_LOG: /tmp/daytona-e2e.log
           EXECUTION: ${{ steps.run.outcome }}
-          VISION: ${{ steps.vision.outcome }}
+          VISION: ${{ steps.vision.outputs.result }}
         run: node evals/scripts/journey-report.mjs record
       - name: Upload journey evidence
         if: always()
@@ -266,17 +265,18 @@ jobs:
           xvfb-run -a pnpm evals:e2e "$SPEC_SLUG" --local 2>&1 | tee /tmp/local-handoff-e2e.log
       - name: Judge deferred vision claims
         id: vision
-        if: steps.run.outcome == 'success'
+        if: success() || failure()
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: pnpm --dir evals evidence:judge -- --test-run latest
+          EXPECTED_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+        run: node evals/scripts/judge-journeys.mjs
       - name: Record journey outcome
         if: always()
         env:
           SPEC_SLUG: ${{ matrix.journey.spec }}
           JOURNEY_LOG: /tmp/local-handoff-e2e.log
           EXECUTION: ${{ steps.run.outcome }}
-          VISION: ${{ steps.vision.outcome }}
+          VISION: ${{ steps.vision.outputs.result }}
         run: node evals/scripts/journey-report.mjs record
       - name: Upload journey evidence
         if: always()

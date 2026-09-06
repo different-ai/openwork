@@ -2,7 +2,8 @@ import { readdir, readFile, writeFile, appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export function classify(summary, execution, vision) {
+export function classify(summary, execution, vision, expectedSpec) {
+  if (expectedSpec && !summary?.files?.includes(expectedSpec)) return 'not tested';
   if (!summary || summary.command !== 'evals:e2e' || !['passed', 'failed', 'skipped'].every(key => Number.isInteger(summary[key]) && summary[key] >= 0)) return 'not tested';
   if (summary.failed > 0 || vision === 'failure') return 'failed';
   if (summary.skipped > 0 || summary.passed === 0 || execution !== 'success' || vision !== 'success' || summary.verdict !== 'passed') return 'not tested';
@@ -33,7 +34,7 @@ async function main() {
         try { const value = JSON.parse(line); if (value.command === 'evals:e2e') summary = value; } catch { /* non-summary log line */ }
       }
     } catch { /* setup never reached the test command */ }
-    const status = classify(summary, process.env.EXECUTION, process.env.VISION);
+    const status = classify(summary, process.env.EXECUTION, process.env.VISION, process.env.SPEC_SLUG);
     await writeFile('journey-result.json', JSON.stringify({ spec: process.env.SPEC_SLUG, status, summary }, null, 2));
     await appendFile(process.env.GITHUB_STEP_SUMMARY, `\nJourney result: **${status}**\n`);
   } else {
