@@ -125,6 +125,32 @@ describe("markdown safety and links", () => {
   });
 });
 
+describe("markdown tables", () => {
+  test("renders tables inside scrollable wrapper for sidebar compatibility", () => {
+    const markdown = `| Name | Value |\n|------|-------|\n| Foo  | Bar   |`;
+    const html = renderMarkdownHtml(markdown);
+
+    // Table should be wrapped in a scrollable container
+    expect(html).toContain('class="my-4 overflow-x-auto"');
+    // Table should have text-sm for better readability in narrow containers
+    expect(html).toContain('class="w-full border-collapse text-sm"');
+    // Table structure should be intact
+    expect(html).toContain("<table");
+    expect(html).toContain("<tr>");
+    expect(html).toContain("<th");
+    expect(html).toContain("<td");
+  });
+
+  test("renders surface markdown tables with scrollable wrapper", () => {
+    const markdown = `| Header 1 | Header 2 |\n|----------|----------|\n| Cell 1   | Cell 2   |`;
+    const html = renderPrimitiveMarkdownHtml(markdown, "surface");
+
+    expect(html).toContain('class="my-4 overflow-x-auto"');
+    expect(html).toContain('class="w-full border-collapse text-sm"');
+    expect(html).toContain("<table");
+  });
+});
+
 describe("markdown text highlighting", () => {
   test("splits matching text without changing the original casing", () => {
     expect(textHighlightParts("Markdown makes marks in markdown.", "MARK")).toEqual([
