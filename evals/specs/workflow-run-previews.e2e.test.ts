@@ -109,7 +109,7 @@ test("workflow activity shows linked version diagrams and keeps one-off and inac
     await user.notSee({ testId: `workflow-run-link-${oneOffReceiptId}` });
     await user.notSee({ testId: `workflow-run-visualization-${oneOffReceiptId}` });
     await user.click({ testId: `workflow-run-details-${oneOffReceiptId}` });
-    await user.see({ testId: `workflow-run-${oneOffReceiptId}` }, { text: /Source[\s\S]*adhoc[\s\S]*Tool calls[\s\S]*den.getWorkers[\s\S]*Duration[\s\S]*ms/ });
+    await user.see({ testId: `workflow-run-${oneOffReceiptId}` }, { text: /Source[\s\S]*adhoc[\s\S]*Tool calls[\s\S]*den.getWorkers[\s\S]*Duration[\s\S]*\d+(?:\.\d+)? (?:ms|s)/ });
     await user.click({ testId: `workflow-run-details-${oneOffReceiptId}` });
     await user.notSee({ role: "link", label: "One-off task" });
     await user.notSee({ label: "One-off task workflow visualization" });
