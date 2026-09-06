@@ -20,7 +20,7 @@ export function OnboardingToolsScreen() {
   const { orgId, orgContext, orgError } = useOrgDashboard();
   const { user } = useDenFlow();
   if (!orgId || !orgContext || orgContext.organization.id !== orgId || !user) {
-    return <SetupFrame step="tools" title="Give your team a head start." description={description} embedded>
+    return <SetupFrame step="tools" title="Give your team a head start." description={description}>
       <p role={orgError ? "alert" : "status"} className="text-sm text-neutral-500">{orgError ?? "Getting your workspace ready…"}</p>
     </SetupFrame>;
   }
@@ -104,7 +104,7 @@ function ToolsForm() {
     router.push(getMarketplaceOnboardingRoute(orgSlug));
   }
 
-  return <SetupFrame step="tools" title="Give your team a head start." description={description} panelVisual={<OnboardingTexture />} embedded>
+  return <SetupFrame step="tools" title="Give your team a head start." description={description} panelVisual={<OnboardingTexture />}>
     <div className="mb-5">
       <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-neutral-400">Optional · Team tools</p>
       <h2 className="mt-2 text-xl font-semibold tracking-[-0.03em] text-neutral-950">What do you work with?</h2>

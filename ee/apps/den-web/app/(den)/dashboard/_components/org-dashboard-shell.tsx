@@ -38,6 +38,7 @@ import {
   getOrgDashboardRoute,
   getOrgSettingsRoute,
   getMarketplacesRoute,
+  getMarketplaceOnboardingRoute,
   getPluginsRoute,
   getSsoRoute,
   getScimRoute,
@@ -296,6 +297,8 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
 
 export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const onboardingRoute = getMarketplaceOnboardingRoute();
+  const isOnboarding = pathname === onboardingRoute || pathname.startsWith(`${onboardingRoute}/`);
   const { user, signOut, updateUserProfile, runtimeConfig, runtimeConfigLoaded } = useDenFlow();
   const {
     activeOrg,
@@ -332,6 +335,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
+      if (isOnboarding) return;
       if (
         event.key.toLowerCase() !== "k"
         || (!event.metaKey && !event.ctrlKey)
@@ -346,7 +350,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [isOnboarding]);
 
   useEffect(() => {
     if (commandPaletteWasOpenRef.current && !commandPaletteOpen) {
@@ -391,6 +395,16 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
         onPick={switchOrganization}
         onSignOut={() => void signOut()}
       />
+    );
+  }
+
+  // Setup owns the full page until the user leaves for their dashboard.
+  if (isOnboarding) {
+    return (
+      <>
+        <WorkspaceFavicon metadata={orgContext?.organization.metadata} />
+        <main data-testid="den-onboarding-shell">{children}</main>
+      </>
     );
   }
 

@@ -143,7 +143,6 @@ export function MarketplaceOnboardingScreen({
   return (
     <SetupFrame
       step="ready"
-      embedded
       title="Put your tools to work."
       description={`Start a chat. Build dashboards, run workflows, and use ${orgName}’s tools—with the model you choose.`}
     >
@@ -229,12 +228,15 @@ export function MarketplaceOnboardingScreen({
           <p className="mt-1 text-[13px]">OpenWork’s MCP gateway brings shared tools into compatible AI apps. Each person uses their own connected accounts and team permissions.</p>
           <Link href={getYourConnectionsRoute(orgSlug)} className="mt-3 inline-block font-medium text-neutral-900 underline-offset-4 hover:underline">Connect your accounts →</Link>
         </div>
-        <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--dls-border)] pt-5 text-sm">
-          <span className="text-[var(--dls-text-secondary)]">Keep setting up at your own pace.</span>
-          <Link href={getOrgDashboardRoute(orgSlug)} className="rounded-sm font-medium text-[var(--dls-text-primary)] underline-offset-4 hover:underline focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[var(--dls-text-primary)]">
-            Go to dashboard →
+        <section aria-labelledby="setup-finish-heading" className="grid gap-4 border-t border-[var(--dls-border)] pt-7" data-testid="onboarding-finish">
+          <div>
+            <h2 id="setup-finish-heading" className="text-base font-semibold tracking-tight text-[var(--dls-text-primary)]">Your workspace is ready</h2>
+            <p className="mt-2 text-sm leading-6 text-[var(--dls-text-secondary)]">Finish setup to open your dashboard. You can download the app, connect accounts, and choose models whenever you’re ready.</p>
+          </div>
+          <Link href={getOrgDashboardRoute(orgSlug)} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-neutral-950 px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-neutral-800">
+            Finish setup<ArrowRight className="size-4" aria-hidden />
           </Link>
-        </footer>
+        </section>
       </div>
     </SetupFrame>
   );

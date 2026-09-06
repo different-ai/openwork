@@ -8,6 +8,31 @@ const test = spec.world(signupWorkspace, { timeout: 600_000 });
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 
 test("signup distinguishes joining, personal work, and restricted team setup without changing another organization", async ({ world, user, probe, seed, evidence, step }) => {
+  const expectFocusedSetup = async () => {
+    await user.see({ testId: "den-onboarding-shell" });
+    await user.notSee({ testId: "den-org-sidebar" });
+    await user.notSee({ role: "button", label: "Open menu" });
+    expect(await probe.eval(`(() => {
+      const frame = document.querySelector('[data-testid="setup-frame"]');
+      const frameBounds = frame?.getBoundingClientRect();
+      const footer = frame?.querySelector('footer')?.getBoundingClientRect();
+      const story = frame?.querySelector('aside')?.getBoundingClientRect();
+      const panel = frame?.querySelector('aside')?.nextElementSibling?.getBoundingClientRect();
+      const brand = frame?.querySelector('header > div')?.getBoundingClientRect();
+      const progress = frame?.querySelector('nav[aria-label="Setup progress"]')?.getBoundingClientRect();
+      return Boolean(frameBounds && footer && story && panel && brand && progress
+        && Math.abs(frameBounds.left) < 2
+        && Math.abs(frameBounds.right - document.documentElement.clientWidth) < 2
+        && Math.abs(panel.right - story.left - 1130) < 2
+        && Math.abs(footer.left - story.left) < 2
+        && Math.abs(footer.right - panel.right) < 2
+        && story.right <= panel.left && Math.abs(story.top - panel.top) < 2
+        && Math.abs(brand.left - story.left) < 2
+        && Math.abs(progress.left - panel.left) < 2
+        && Math.abs(progress.right - panel.right) < 2);
+    })()`)).toBe(true);
+    expect(await probe.eval("document.documentElement.scrollWidth <= window.innerWidth")).toBe(true);
+  };
   const orgs = async () => {
     const result = await probe.api(world.den.admin, "/v1/me/orgs");
     expect(result.response.ok).toBe(true);
@@ -91,6 +116,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await user.type({ role: "textbox", label: "Organization name" }, "Personal work");
     await user.click({ role: "button", label: "Continue" });
     await user.see({ text: "Bring your people." }, { timeoutMs: 90_000 });
+    await expectFocusedSetup();
     const memberships = await orgs();
     expect(memberships).toHaveLength(1);
     const personal = memberships.find((entry) => entry.name === "Personal work");
@@ -106,10 +132,12 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     if (typeof defaultPolicy?.id !== "string") throw new Error("Expected default desktop policy id");
     await user.navigate(new URL(`/dashboard/desktop-policies/${encodeURIComponent(defaultPolicy.id)}?setup=restricted`, world.den.ref.webUrl).toString());
     await user.see({ text: "Bring your people." }, { timeoutMs: 90_000 });
+    await expectFocusedSetup();
     expect(await world.pathname()).toMatch(/\/onboarding\/people$/);
     expect(await policyFor(personalId)).toEqual(personalPolicy);
     await user.reload();
     await user.see({ text: "Bring your people." }, { timeoutMs: 90_000 });
+    await expectFocusedSetup();
     expect(await policyFor(personalId)).toEqual(personalPolicy);
     evidence.recordAssertionEvidence("Opening a legacy Restricted setup link never changes an existing flexible policy", "The personal workspace kept its complete original desktop policy after opening the legacy URL and reloading; navigation only resumed optional People onboarding.", true);
     expect(await invitationsFor(personalId)).toEqual([]);
@@ -117,11 +145,13 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await user.type({ role: "textbox", label: "Teammate email 1" }, "unsent@openwork.test");
     await user.click({ role: "button", label: "Do this later" });
     await user.see({ text: "Give your team a head start." }, { timeoutMs: 90_000 });
+    await expectFocusedSetup();
     const connectionsBeforeSkip = await connectionsFor(personalId);
     expect(connectionsBeforeSkip).toEqual([]);
     await user.click({ role: "checkbox", label: "Add Notion" });
     await user.click({ role: "button", label: "Do this later" });
     await user.see({ testId: "marketplace-onboarding" }, { timeoutMs: 90_000 });
+    await expectFocusedSetup();
     expect(await connectionsFor(personalId)).toEqual(connectionsBeforeSkip);
     evidence.recordAssertionEvidence("Skipping optional tools does not save even a selected connection", "Notion was selected, then Do this later continued to Ready; the personal organization's connection inventory stayed empty.", true);
     await user.click({ text: "Other platforms and versions" });
@@ -136,6 +166,34 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     evidence.recordAssertionEvidence("Personal setup preserves desktop defaults and explicit skip never submits a typed invitation", JSON.stringify({ memberships: memberships.length, personalPolicy, invitations: [], emailsUnchanged: true }), true);
   });
 
+  await step("finish opens the dashboard without requiring an installation or provider", async () => {
+    for (const shortcut of ["Control+k", "Meta+k"]) {
+      if (shortcut === "Meta+k") {
+        await user.navigate(new URL("/dashboard/onboarding", world.den.ref.webUrl).toString());
+      }
+      await user.see({ text: "Your workspace is ready" });
+      await user.notSee({ testId: "den-org-sidebar" });
+      await user.press(shortcut);
+      await user.notSee({ testId: "den-command-palette" });
+      await user.click({ role: "link", label: "Finish setup" });
+      await user.see({ testId: "den-org-sidebar" }, { timeoutMs: 30_000 });
+      await user.notSee({ testId: "den-onboarding-shell" });
+      expect(await world.pathname()).toBe("/dashboard");
+      // Assert before reload: navigation must not reveal a queued shortcut.
+      await user.notSee({ testId: "den-command-palette" });
+      await user.press(shortcut);
+      await user.see({ testId: "den-command-palette" });
+      await user.press("Escape");
+      await user.notSee({ testId: "den-command-palette" });
+      evidence.recordAssertionEvidence(`${shortcut} is suppressed during onboarding and restored on the dashboard`, "Pressing the shortcut during setup leaves the palette closed both before and after Finish setup, without reloading; pressing it on the dashboard opens the palette, and Escape closes it.", true);
+    }
+    await user.reload();
+    await user.see({ testId: "den-org-sidebar" }, { timeoutMs: 30_000 });
+    expect(await connectionsFor(personalId)).toEqual([]);
+    expect(await invitationsFor(personalId)).toEqual([]);
+    evidence.recordAssertionEvidence("Setup keeps two panes and hides dashboard navigation until Finish setup", "People, Tools and Ready fill the viewport with a 1130px desktop content area and matching footer edges, with the logo aligned to the story and the stepper aligned to both panel edges, without the sidebar or menu; Finish setup opens /dashboard and restores navigation, including after reload, with no tools or invitations required.", true);
+  });
+
   let flexibleId = "";
   await step("a flexible team keeps existing defaults without opening policy setup", async () => {
     await user.navigate(new URL("/organization", world.den.ref.webUrl).toString());
@@ -145,6 +203,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await user.click({ text: "Flexible" });
     await user.click({ role: "button", label: "Continue" });
     await user.see({ text: "Bring your people." }, { timeoutMs: 90_000 });
+    await expectFocusedSetup();
     await user.notSee({ text: "Review your team’s desktop access" });
     const memberships = await orgs();
     expect(memberships).toHaveLength(2);
@@ -206,6 +265,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await user.looks(["The optional people setup shows two completed invitations and a clear Continue action within the same neutral onboarding frame"]);
     await user.click({ role: "button", label: "Continue" });
     await user.see({ text: "Give your team a head start." }, { timeoutMs: 90_000 });
+    await expectFocusedSetup();
     evidence.recordAssertionEvidence("Partial invitation failure preserves the unsuccessful address and retries it without resending successful invitations or granting admin access", JSON.stringify({ invitations, recipientCounts: [1, 1], personalInvitations: 0 }), true);
   });
 
@@ -230,10 +290,12 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await user.looks(["The optional Tools screen shows Notion and Linear added for the team while explaining that each person still signs in to their own account, with a clear Continue action. Its product example is a chat with inline team tools and a persistent composer"]);
     await user.reload();
     await user.see({ text: "Give your team a head start." }, { timeoutMs: 90_000 });
+    await expectFocusedSetup();
     expect(await connectionsFor(flexibleId)).toEqual(added);
     await user.see({ text: "Already added" });
     await user.click({ role: "button", label: "Continue" });
     await user.see({ testId: "marketplace-onboarding" }, { timeoutMs: 90_000 });
+    await expectFocusedSetup();
     expect(await connectionsFor(flexibleId)).toEqual(added);
     evidence.recordAssertionEvidence("Selected tools become organization-wide configuration without authorizing member accounts or creating duplicates on reload", JSON.stringify({ added, personalConnections: [], sameConnectionsAfterReload: true }), true);
   });
@@ -251,6 +313,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await user.looks(["Team setup uses subdued neutral cards with Restricted selected, without heavy black card outlines, and explains that restrictions apply on Continue"]);
     await user.click({ role: "button", label: "Continue" });
     await user.see({ text: "Bring your people." }, { timeoutMs: 90_000 });
+    await expectFocusedSetup();
     expect(await world.pathname()).toMatch(/\/onboarding\/people$/);
     await user.notSee({ text: "Review your team’s desktop access" });
     await user.notSee({ role: "button", label: "Save changes" });
@@ -263,6 +326,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     expect(saved.showWelcomePage).toBe(true);
     await user.reload();
     await user.see({ text: "Bring your people." }, { timeoutMs: 90_000 });
+    await expectFocusedSetup();
     expect(await world.pathname()).toMatch(/\/onboarding\/people$/);
     expect(await policyFor(team.id)).toEqual(saved);
     const policies = await probe.api(world.den.admin, "/v1/desktop-policies", { headers: { "x-openwork-org-id": team.id } });
@@ -272,6 +336,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     if (typeof defaultPolicy?.id !== "string") throw new Error("Expected default desktop policy id");
     await user.navigate(new URL(`/dashboard/desktop-policies/${encodeURIComponent(defaultPolicy.id)}?setup=restricted`, world.den.ref.webUrl).toString());
     await user.see({ text: "Bring your people." }, { timeoutMs: 90_000 });
+    await expectFocusedSetup();
     expect(await world.pathname()).toMatch(/\/onboarding\/people$/);
     await user.notSee({ text: "Review your team’s desktop access" });
     await user.notSee({ role: "button", label: "Save changes" });
@@ -282,9 +347,11 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     expect(await invitationsFor(team.id)).toEqual([]);
     await user.click({ role: "button", label: "Do this later" });
     await user.see({ text: "Give your team a head start." }, { timeoutMs: 90_000 });
+    await expectFocusedSetup();
     expect(await connectionsFor(team.id)).toEqual([]);
     await user.click({ role: "button", label: "Do this later" });
     await user.see({ testId: "marketplace-onboarding" }, { timeoutMs: 90_000 });
+    await expectFocusedSetup();
     expect(await connectionsFor(team.id)).toEqual([]);
     expect(await connectionsFor(personalId)).toEqual([]);
     expect(await invitationsFor(team.id)).toEqual([]);
@@ -310,6 +377,8 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     const toolsBefore = await connectionsFor(flexibleId);
     await mobileUser.see({ text: "Give your team a head start." }, { timeoutMs: 90_000 });
     await mobileUser.see({ text: "Already added" });
+    await mobileUser.notSee({ role: "button", label: "Open menu" });
+    await mobileUser.notSee({ testId: "den-org-sidebar" });
     expect(await probe.eval(mobile, "document.documentElement.scrollWidth <= window.innerWidth")).toBe(true);
     await mobileUser.press("Control+Home");
     await mobileUser.looks(["The top of the narrow Tools screen shows legible setup progress and the Give your team a head start heading without horizontal clipping"]);
@@ -326,6 +395,15 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await mobileUser.looks(["The mobile OpenWork Desktop card shows its complete heading, OpenWork mark, explanatory copy, and Email me the download link button in a restrained neutral card"]);
     await mobileUser.hover({ role: "link", label: "Try OpenWork Web" });
     await mobileUser.looks(["The mobile OpenWork Web card shows its complete heading, OpenWork mark, access-and-plans explanation, and Try OpenWork Web link without horizontal clipping"]);
+    await mobileUser.notSee({ role: "button", label: "Open menu" });
+    await mobileUser.click({ role: "link", label: "Finish setup" });
+    await mobileUser.see({ role: "button", label: "Open menu" }, { timeoutMs: 30_000 });
+    await mobileUser.notSee({ testId: "den-onboarding-shell" });
+    await mobileUser.click({ role: "button", label: "Open menu" });
+    await mobileUser.see({ testId: "den-org-sidebar", nth: 1 });
+    evidence.recordAssertionEvidence("Mobile onboarding finishes without downloading and reveals working dashboard navigation", "Tools and Ready omit the menu; Finish setup restores it and opening the menu reveals the sidebar.", true);
+    await mobileUser.navigate(new URL("/dashboard/onboarding", world.den.ref.webUrl).toString());
+    await mobileUser.see({ role: "button", label: "Email me the download link" }, { timeoutMs: 90_000 });
     const before = await downloadEmails();
     await mobileUser.click({ role: "button", label: "Email me the download link" });
     await mobileUser.see({ role: "button", label: "Download link sent" }, { timeoutMs: 30_000 });
