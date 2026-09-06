@@ -59,7 +59,7 @@ test("existing workspaces create usable sessions after changing chat engines", a
               let event = JSON.parse(line.slice(5).trim());
               if (typeof event === "string") event = JSON.parse(event);
               if (!event.type) continue;
-              events.push(/message|prompt/.test(event.type) ? event : { type: event.type });
+              events.push(/message|prompt|inbox/.test(event.type) ? event : { type: event.type });
             }
           }
         } catch (error) { if (!controller.signal.aborted) events.push({ error: String(error) }); }
@@ -89,8 +89,8 @@ test("existing workspaces create usable sessions after changing chat engines", a
   await step("a sidebar new session belongs to the engine that will open it", async () => {
     if (!world.otherName) throw new Error("Existing workspace name missing");
     await user.hover({ role: "button", label: world.otherName });
-    // The first New session is global; the revealed workspace plus follows it.
-    await user.click({ role: "button", label: "New session", nth: 1 });
+    // The global button and primary-workspace plus precede this workspace.
+    await user.click({ role: "button", label: "New session", nth: 2 });
     const route = await probe.eventually(() => probe.hash(), { within: 30_000,
       label: "other workspace new session route",
       until: (hash) => hash.includes(`/workspace/${world.other.workspaceId}/session/ses_`),
