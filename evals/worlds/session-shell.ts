@@ -1,9 +1,8 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { mkdir, rm } from "node:fs/promises";
-import { engineSessionProbe, readAvailableModels, waitFor } from "@openwork/behaviors";
+import { engineSessionProbe, readAvailableModels, selectModel, waitFor } from "@openwork/behaviors";
 import { resolveEvalEngine } from "@openwork/env";
 import type { Seed } from "@openwork/env";
-import { configureProvider } from "./chat.ts";
 import { daytonaSandbox, desktop as launchDesktop } from "@openwork/hosts";
 
 const stormProviderId = "active-session-storm-mock";
@@ -222,20 +221,15 @@ export async function workspaceNewTask(seed: Seed) {
   const prompt = "Confirm the new task is ready";
   const reply = "The new task is ready.";
   const mock = seed.mock({ agentWorkloads: [{ promptMarker: prompt, finalReply: reply, steps: [] }] });
-  const den = await seed.den({ mocks: { agent: mock } });
-  const app = await seed.desktop({ name: "workspace-new-task", den, as: "admin", model: `${providerId}/${modelId}` });
+  const den = await seed.den({ mocks: { agent: mock }, provision: false });
+  const app = await seed.desktop({ name: "workspace-new-task", model: `${providerId}/${modelId}` });
   const workspacePath = seed.tmpPath(`openwork-workspace-new-task-long-name-${Date.now()}`);
   const workspace = await seed.workspace(app, workspacePath, { create: true });
-  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
-    provider: {
-      [providerId]: {
-        npm: "@ai-sdk/openai-compatible",
-        name: "New task mock",
-        options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-new-task-mock" },
-        models: { [modelId]: { name: "New task model" } },
-      },
-    },
+  await configureWorkspaceProvider(seed, app, [workspace.workspaceId], {
+    providerId, modelId, modelName: "New task model", baseUrl: `${den.mocks.agent.url}/v1`,
   });
+  const selectedModel = await selectModel(app, modelId);
+  if (!selectedModel.selected) throw new Error("The mock task model was not selected.");
   const sessions = await seed.sessions(app, ["Existing task"]);
   // TODO(primitive): seed.networkFault should delay and observe renderer requests.
   // Keep real session creation behind a slow transport boundary. Opening the
