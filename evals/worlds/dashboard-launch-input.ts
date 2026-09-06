@@ -145,7 +145,10 @@ export async function atlassianDashboardTiles(seed: Seed) {
   }
 
   const { mcpToken, appHostToken } = await mintMcpTokens(seed, den, organizationId);
-  const app = await seed.desktop({ den, as: "admin" });
+  // The private test Den must be the installation's activated origin before
+  // the real App host will accept its credentials. Local dev loopback alone
+  // hid this prerequisite; seeding it leaves the product trust checks intact.
+  const app = await seed.desktop({ den, as: "admin", enterpriseActivated: true });
   const workspace = await seed.workspace(app, seed.tmpPath("dashboard-launch-input"));
   // The signed-in harness Desktop does not run the production Cloud
   // provisioning loop, so hand it the same Connect MCP configuration the

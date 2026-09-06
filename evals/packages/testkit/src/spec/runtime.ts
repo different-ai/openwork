@@ -431,6 +431,7 @@ export class SeedChannel implements Seed {
             model: options.model,
             workspacePath: options.workspacePath,
             profileDir: options.profileDir,
+            enterpriseActivated: options.enterpriseActivated,
           }));
         }
         return this.#runtime.stack.use(await startApp({
@@ -440,6 +441,7 @@ export class SeedChannel implements Seed {
           model: options.model,
           workspacePath: options.workspacePath,
           profileDir: options.profileDir,
+          enterpriseActivated: options.enterpriseActivated,
         }));
       }
       if (options.as) throw new Error("seed.desktop({ as }) requires a Den.");
