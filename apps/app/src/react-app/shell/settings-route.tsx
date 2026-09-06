@@ -1959,9 +1959,17 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     // Browser plugin detection: check if any configured plugin matches the chrome-devtools name.
     // For now, treat it as loaded if the plugin is in the MCP/plugin list — this will
     // be refined when we add a real plugin-loaded signal from the engine.
-    const browserPluginConfigured = connectionsSnapshot.mcpServers.some(
-      (s) => s.name === "opencode-chrome-devtools" || s.config.command?.some((c: string) => c.includes("chrome-devtools")),
-    );
+    const browserPluginConfigured = connectionsSnapshot.mcpServers.some((s) => {
+      if (s.name === "opencode-chrome-devtools") return true;
+      const cmd = s.config.command;
+      if (Array.isArray(cmd)) {
+        return cmd.some((c: string) => c.includes("chrome-devtools"));
+      }
+      if (typeof cmd === "string") {
+        return (cmd as string).includes("chrome-devtools");
+      }
+      return false;
+    });
     if (browserPluginConfigured) loadedPlugins.add("opencode-chrome-devtools");
 
     return {

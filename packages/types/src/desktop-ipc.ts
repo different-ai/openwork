@@ -473,7 +473,7 @@ export type DesktopCommandMap = {
   desktopIntegrationRemove: { args: []; result: DesktopIntegrationResult };
   getUiControlBridgeInfo: { args: []; result: UiControlBridgeInfo | null };
   getOpenworkUiMcpCommand: { args: []; result: string[] };
-  getComputerUseMcpCommand: { args: []; result: string[] };
+  getComputerUseMcpCommand: { args: []; result: string[] | null };
   getOpenworkUiMcpEnvironment: { args: []; result: Record<string, string> };
 
   // Computer use
