@@ -75,6 +75,7 @@ import ConnectionsModals from "@/react-app/domains/connections/modals";
 import { AiSettingsView } from "@/react-app/domains/settings/pages/ai-view";
 // Side-effect imports: register extension config components into the registry.
 import "@/react-app/domains/settings/ollama-config";
+import "@/react-app/domains/settings/lmstudio-config";
 import "@/react-app/domains/settings/computer-use-config";
 import "@/react-app/domains/settings/browser-extension-config";
 import "@/react-app/domains/settings/openwork-voice-config";

@@ -294,4 +294,30 @@ export const BUILT_IN_OPENWORK_EXTENSION_MANIFESTS: OpenWorkExtensionManifest[] 
     ],
     lifecycle: { reload: ["config"], detection: ["provider:ollama"] },
   },
+  {
+    schemaVersion: 1,
+    id: "lmstudio",
+    name: "LM Studio",
+    description: "Local model provider at http://127.0.0.1:1234.",
+    source: { format: "openwork-builtin", origin: "builtin", trusted: true },
+    icon: { src: "/ext-lmstudio.svg" },
+    composer: { prompt: "Use the LM Studio extension to " },
+    setup: {
+      instructions:
+        "Start LM Studio's local server (Developer tab), choose a downloaded model, then add it as an OpenCode provider.",
+      primaryCta: "Add LM Studio model",
+    },
+    resources: [
+      { type: "local-service", id: "lmstudio-api", label: "LM Studio API", description: "http://127.0.0.1:1234", required: true },
+      { type: "provider", id: "lmstudio", providerId: "lmstudio", packageName: "@ai-sdk/openai-compatible", required: true },
+    ],
+    contributions: [
+      { type: "settings-panel", ref: "openwork.lmstudio.settings", location: "settings-detail" },
+      { type: "composer-prompt", prompt: "Use the LM Studio extension to ", location: "composer" },
+    ],
+    enablement: [
+      { type: "provider-connected", ref: "lmstudio", label: "LM Studio provider" },
+    ],
+    lifecycle: { reload: ["config"], detection: ["provider:lmstudio"] },
+  },
 ];
