@@ -283,6 +283,9 @@ export function createBrowserTaskHost({ getTab, tabsFor, ownerOf, activeFor, vis
         dispatched = true;
         if (action.type === "fill") await contents.insertText(action.text);
         if (action.type === "click") {
+          // Chromium must route the pointer to an out-of-process child frame
+          // before its button events; a main-frame click does not need this hop.
+          contents.sendInputEvent({ type: "mouseMove", x: Math.round(point.x), y: Math.round(point.y) });
           contents.sendInputEvent({ type: "mouseDown", x: Math.round(point.x), y: Math.round(point.y), button: "left", clickCount: 1 });
           contents.sendInputEvent({ type: "mouseUp", x: Math.round(point.x), y: Math.round(point.y), button: "left", clickCount: 1 });
         }
