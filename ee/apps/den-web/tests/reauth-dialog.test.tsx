@@ -14,6 +14,8 @@ const verified = mock(async () => undefined);
 const cancelled = mock(() => undefined);
 const user = { id: "test-admin", email: "admin@example.test", name: "Admin", authProviders: ["sso", "google"] };
 
+let responseUser = user;
+
 async function click(label: string) {
   const button = Array.from(container.querySelectorAll("button")).find((entry) => entry.textContent?.trim() === label);
   if (!button) throw new Error(`Missing button: ${label}`);
@@ -26,6 +28,7 @@ beforeEach(async () => {
   Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
   closed = false;
   blocked = false;
+  responseUser = user;
   focus.mockClear();
   verified.mockClear();
   cancelled.mockClear();
@@ -37,7 +40,7 @@ beforeEach(async () => {
   spyOn(window, "open").mockImplementation(() => blocked ? null : popup);
   spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const path = String(input);
-    return Response.json(path.includes("/sso/resolve") ? { signInUrl: "/sso/test-org" } : { user });
+    return Response.json(path.includes("/sso/resolve") ? { signInUrl: "/sso/test-org" } : { user: responseUser });
   });
   container = document.createElement("div");
   document.body.append(container);
@@ -130,4 +133,21 @@ test("provider errors restore retry without completing the pending action", asyn
   expect(container.textContent).toContain("Continue with SSO");
   expect(closed).toBe(true);
   expect(verified).not.toHaveBeenCalled();
+});
+
+
+test("a different authenticated user cannot approve the pending action", async () => {
+  await click("Continue with SSO");
+  const errorCallback = new URL(popup.location.href).searchParams.get("errorCallbackURL");
+  expect(errorCallback).toContain("/reauth/complete?");
+  expect(errorCallback).toContain("error=1");
+  responseUser = { ...user, id: "another-user", email: "another@example.test" };
+  const nonce = container.querySelector("[role=dialog]")?.getAttribute("data-reauth-nonce");
+  await act(async () => window.dispatchEvent(new MessageEvent("message", {
+    origin: window.location.origin,
+    data: { type: "openwork:reauth-complete", nonce, error: null },
+  })));
+  expect(verified).not.toHaveBeenCalled();
+  expect(container.textContent).toContain(`Sign in as ${user.email} to confirm this change.`);
+  expect(container.textContent).toContain("Continue with SSO");
 });
