@@ -1,22 +1,23 @@
 import type { RuntimeInstanceRecord, RuntimeInstanceStore } from "@openwork-ee/cloud-runtime/orchestrator"
+import type { ProviderEndpointKind } from "@openwork-ee/cloud-runtime/contract"
 import { eq } from "@openwork-ee/den-db/drizzle"
-import { DaytonaSandboxTable, WorkerTable } from "@openwork-ee/den-db/schema"
+import { CloudRuntimeInstanceTable, DaytonaSandboxTable, WorkerTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
 
-type InstanceRow = typeof DaytonaSandboxTable.$inferSelect
+type InstanceRow = typeof CloudRuntimeInstanceTable.$inferSelect
 
 function workerId(value: string) {
   return normalizeDenTypeId("worker", value)
 }
 
-export function runtimeInstanceRecordFromRow(row: InstanceRow, providerId: string): RuntimeInstanceRecord {
+export function runtimeInstanceRecordFromRow(row: InstanceRow): RuntimeInstanceRecord {
   return {
     workerId: row.worker_id,
-    sandbox: { providerId, ref: { sandboxId: row.sandbox_id } },
+    sandbox: { providerId: row.provider_id, ref: row.provider_ref },
     storage: { workspaceVolumeId: row.workspace_volume_id, dataVolumeId: row.data_volume_id },
-    endpointUrl: row.signed_preview_url,
-    endpointExpiresAt: row.signed_preview_url_expires_at,
+    endpointUrl: row.endpoint_url,
+    endpointExpiresAt: row.endpoint_expires_at,
     region: row.region,
   }
 }
@@ -30,55 +31,87 @@ function sandboxIdOf(record: RuntimeInstanceRecord) {
 }
 
 /**
- * Den's durable instance records. The table still carries its original name
- * until the neutral store migration lands; the record shape is already
- * provider-neutral.
+ * Keep the pre-neutral table in step so a rollback to a Den that still reads
+ * `daytona_sandbox` sees the same instance and endpoint. Only Daytona records
+ * have a legacy shape; other providers write the neutral table alone.
  */
-export function createDatabaseRuntimeInstanceStore(input: { providerId: string }): RuntimeInstanceStore {
+async function mirrorLegacyDaytonaRow(record: RuntimeInstanceRecord) {
+  if (record.sandbox.providerId !== "daytona") return
+  const legacy = {
+    sandbox_id: sandboxIdOf(record),
+    workspace_volume_id: record.storage.workspaceVolumeId,
+    data_volume_id: record.storage.dataVolumeId,
+    signed_preview_url: record.endpointUrl,
+    signed_preview_url_expires_at: record.endpointExpiresAt,
+    region: record.region,
+  }
+  const existing = await db
+    .select({ id: DaytonaSandboxTable.id })
+    .from(DaytonaSandboxTable)
+    .where(eq(DaytonaSandboxTable.worker_id, workerId(record.workerId)))
+    .limit(1)
+  if (existing.length > 0) {
+    await db.update(DaytonaSandboxTable).set(legacy).where(eq(DaytonaSandboxTable.worker_id, workerId(record.workerId)))
+    return
+  }
+  await db.insert(DaytonaSandboxTable).values({
+    id: createDenTypeId("daytonaSandbox"),
+    worker_id: workerId(record.workerId),
+    ...legacy,
+  })
+}
+
+export function createDatabaseRuntimeInstanceStore(input: { endpointKind: ProviderEndpointKind }): RuntimeInstanceStore {
   return {
     async get(id) {
       const rows = await db
         .select()
-        .from(DaytonaSandboxTable)
-        .where(eq(DaytonaSandboxTable.worker_id, workerId(id)))
+        .from(CloudRuntimeInstanceTable)
+        .where(eq(CloudRuntimeInstanceTable.worker_id, workerId(id)))
         .limit(1)
       const row = rows[0]
-      return row ? runtimeInstanceRecordFromRow(row, input.providerId) : null
+      return row ? runtimeInstanceRecordFromRow(row) : null
     },
     async upsert(record) {
+      const values = {
+        provider_id: record.sandbox.providerId,
+        provider_ref: { ...record.sandbox.ref },
+        workspace_volume_id: record.storage.workspaceVolumeId,
+        data_volume_id: record.storage.dataVolumeId,
+        endpoint_url: record.endpointUrl,
+        endpoint_expires_at: record.endpointExpiresAt,
+        endpoint_kind: input.endpointKind,
+        region: record.region,
+      }
       const existing = await db
-        .select({ id: DaytonaSandboxTable.id })
-        .from(DaytonaSandboxTable)
-        .where(eq(DaytonaSandboxTable.worker_id, workerId(record.workerId)))
+        .select({ id: CloudRuntimeInstanceTable.id })
+        .from(CloudRuntimeInstanceTable)
+        .where(eq(CloudRuntimeInstanceTable.worker_id, workerId(record.workerId)))
         .limit(1)
 
       if (existing.length > 0) {
         await db
-          .update(DaytonaSandboxTable)
-          .set({
-            sandbox_id: sandboxIdOf(record),
-            workspace_volume_id: record.storage.workspaceVolumeId,
-            data_volume_id: record.storage.dataVolumeId,
-            signed_preview_url: record.endpointUrl,
-            signed_preview_url_expires_at: record.endpointExpiresAt,
-            region: record.region,
-          })
-          .where(eq(DaytonaSandboxTable.worker_id, workerId(record.workerId)))
-        return
+          .update(CloudRuntimeInstanceTable)
+          .set(values)
+          .where(eq(CloudRuntimeInstanceTable.worker_id, workerId(record.workerId)))
+      } else {
+        await db.insert(CloudRuntimeInstanceTable).values({
+          id: createDenTypeId("cloudRuntimeInstance"),
+          worker_id: workerId(record.workerId),
+          ...values,
+        })
       }
-
-      await db.insert(DaytonaSandboxTable).values({
-        id: createDenTypeId("daytonaSandbox"),
-        worker_id: workerId(record.workerId),
-        sandbox_id: sandboxIdOf(record),
-        workspace_volume_id: record.storage.workspaceVolumeId,
-        data_volume_id: record.storage.dataVolumeId,
-        signed_preview_url: record.endpointUrl,
-        signed_preview_url_expires_at: record.endpointExpiresAt,
-        region: record.region,
-      })
+      await mirrorLegacyDaytonaRow(record)
     },
     async updateEndpoint(id, update) {
+      await db
+        .update(CloudRuntimeInstanceTable)
+        .set({
+          endpoint_url: update.endpointUrl,
+          endpoint_expires_at: update.endpointExpiresAt,
+          region: update.region,
+        })
+        .where(eq(CloudRuntimeInstanceTable.worker_id, workerId(id)))
       await db
         .update(DaytonaSandboxTable)
         .set({

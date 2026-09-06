@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto"
 import { and, desc, eq, gt, isNull } from "@openwork-ee/den-db/drizzle"
-import { AuthSessionTable, AuthUserTable, DaytonaSandboxTable, DesktopHandoffGrantTable, WorkerTable } from "@openwork-ee/den-db/schema"
+import { AuthSessionTable, AuthUserTable, CloudRuntimeInstanceTable, DesktopHandoffGrantTable, WorkerTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
@@ -348,9 +348,9 @@ export function approveWebHandoffReturnUrlForSignedPreviews(input: {
 
 async function getCloudSignedPreviewUrls(organizationId: WorkerOrgId) {
   const rows = await db
-    .select({ signedPreviewUrl: DaytonaSandboxTable.signed_preview_url })
+    .select({ signedPreviewUrl: CloudRuntimeInstanceTable.endpoint_url })
     .from(WorkerTable)
-    .innerJoin(DaytonaSandboxTable, eq(WorkerTable.id, DaytonaSandboxTable.worker_id))
+    .innerJoin(CloudRuntimeInstanceTable, eq(WorkerTable.id, CloudRuntimeInstanceTable.worker_id))
     .where(and(
       eq(WorkerTable.org_id, organizationId),
       eq(WorkerTable.destination, "cloud"),

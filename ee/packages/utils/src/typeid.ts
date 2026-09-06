@@ -74,6 +74,7 @@ export const idTypesMapNameToPrefix = {
   worker: "wrk",
   workerInstance: "wki",
   daytonaSandbox: "dts",
+  cloudRuntimeInstance: "cri",
   workerToken: "wkt",
   workerBundle: "wkb",
   automation: "atm",

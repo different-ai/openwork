@@ -4,7 +4,7 @@ import {
   type CloudRuntimeOrchestratorConfig,
   type RuntimeInstanceStore,
 } from "@openwork-ee/cloud-runtime/orchestrator"
-import type { SandboxProvider } from "@openwork-ee/cloud-runtime/contract"
+import type { ProviderEndpointKind, SandboxProvider } from "@openwork-ee/cloud-runtime/contract"
 import { createDaytonaProvider, DAYTONA_PROVIDER_ID } from "@openwork-ee/cloud-runtime-daytona"
 import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
@@ -24,11 +24,13 @@ const providers: Record<string, {
   credentialConfigured: () => boolean
   /** The pinned image version new instances boot; configuration, not a credential. */
   imageVersion: () => string | null
+  endpointKind: ProviderEndpointKind
   create: () => SandboxProvider
 }> = {
   [DAYTONA_PROVIDER_ID]: {
     credentialConfigured: () => Boolean(env.daytona.apiKey?.trim()),
     imageVersion: () => env.daytona.snapshot ?? null,
+    endpointKind: "signed-expiring",
     create: () => createDaytonaProvider({
       apiKey: env.daytona.apiKey ?? "",
       apiUrl: env.daytona.apiUrl,
@@ -121,8 +123,19 @@ let cachedRuntime: CloudRuntimeOrchestrator | null = null
 
 /** Instance records are readable even before a provider is selected. */
 export function cloudRuntimeStore(): RuntimeInstanceStore {
-  cachedStore ??= createDatabaseRuntimeInstanceStore({ providerId: env.provisionerMode })
+  cachedStore ??= createDatabaseRuntimeInstanceStore({ endpointKind: cloudRuntimeEndpointKind() })
   return cachedStore
+}
+
+/** How the selected provider's endpoints behave; clients use this instead of the provider name. */
+export function cloudRuntimeEndpointKind(): ProviderEndpointKind {
+  return endpointKindForProvider(env.provisionerMode)
+}
+
+/** Endpoint behaviour recorded for an instance row, keyed by the provider that created it. */
+export function endpointKindForProvider(providerId: string): ProviderEndpointKind {
+  const entry = providers[providerId]
+  return entry ? entry.endpointKind : "stable"
 }
 
 /** The selected provider behind Den's lifecycle policy. Throws when no contract provider is configured. */

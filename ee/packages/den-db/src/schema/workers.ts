@@ -69,6 +69,32 @@ export const DaytonaSandboxTable = mysqlTable(
   ],
 )
 
+/**
+ * Provider-neutral record of the host instance behind a Cloud worker. The
+ * provider reference is opaque JSON owned by the provider that created it.
+ * `daytona_sandbox` stays dual-written until every deployment reads from here.
+ */
+export const CloudRuntimeInstanceTable = mysqlTable(
+  "cloud_runtime_instance",
+  {
+    id: denTypeIdColumn("cloudRuntimeInstance", "id").notNull().primaryKey(),
+    worker_id: denTypeIdColumn("worker", "worker_id").notNull(),
+    provider_id: varchar("provider_id", { length: 64 }).notNull(),
+    provider_ref: json("provider_ref").$type<Record<string, string>>().notNull(),
+    workspace_volume_id: varchar("workspace_volume_id", { length: 128 }).notNull(),
+    data_volume_id: varchar("data_volume_id", { length: 128 }).notNull(),
+    endpoint_url: varchar("endpoint_url", { length: 2048 }).notNull(),
+    endpoint_expires_at: timestamp("endpoint_expires_at", { fsp: 3 }).notNull(),
+    endpoint_kind: varchar("endpoint_kind", { length: 32 }).notNull(),
+    region: varchar("region", { length: 64 }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("cloud_runtime_instance_worker_id").on(table.worker_id),
+    index("cloud_runtime_instance_provider").on(table.provider_id),
+  ],
+)
+
 export const WorkerTokenTable = mysqlTable(
   "worker_token",
   {

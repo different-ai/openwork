@@ -69,6 +69,11 @@ describe("worker activity heartbeat", () => {
     });
   }
 
+  test("enables for any host when Den marks the instance as managed", () => {
+    expect(heartbeatConfig({ DEN_RUNTIME_PROVIDER: "docker", DEN_RUNTIME_MANAGED: "1" }).enabled).toBe(true);
+    expect(heartbeatConfig({ DEN_RUNTIME_PROVIDER: "", DEN_RUNTIME_MANAGED: "true" }).enabled).toBe(true);
+  });
+
   test("uses five-minute defaults when the gate passes", () => {
     const config = heartbeatConfig();
     expect(config.enabled).toBe(true);
