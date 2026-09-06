@@ -7,6 +7,7 @@ export type OnboardingIntroProps = {
   children?: ReactNode;
   className?: string;
   headingLevel?: 1 | 2;
+  size?: "default" | "compact";
 };
 
 /** Shared hierarchy; each product surface owns its navigation and actions. */
@@ -17,6 +18,7 @@ export function OnboardingIntro({
   children,
   className = "",
   headingLevel = 1,
+  size = "default",
 }: OnboardingIntroProps) {
   const Heading = headingLevel === 1 ? "h1" : "h2";
 
@@ -27,10 +29,14 @@ export function OnboardingIntro({
           {eyebrow}
         </p>
       ) : null}
-      <Heading className="text-[30px] font-semibold leading-[38px] tracking-[-0.03em] text-foreground sm:text-[38px] sm:leading-[46px]">
+      <Heading className={size === "compact"
+        ? "text-lg font-semibold leading-7 tracking-tight text-foreground"
+        : "text-[30px] font-semibold leading-[38px] tracking-[-0.03em] text-foreground sm:text-[38px] sm:leading-[46px]"}>
         {title}
       </Heading>
-      <p className="text-[15px] leading-[23px] text-muted-foreground">
+      <p className={size === "compact"
+        ? "text-sm leading-relaxed text-muted-foreground"
+        : "text-[15px] leading-[23px] text-muted-foreground"}>
         {description}
       </p>
       {children}

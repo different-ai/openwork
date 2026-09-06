@@ -17,7 +17,8 @@ must include `packages/ui/src` in their source scanning.
 
 - `OnboardingIntro` provides the eyebrow, heading, description, and optional
   supporting content. Set `headingLevel={2}` when the surrounding screen
-  already has its primary heading. Keep actions in the owning surface.
+  already has its primary heading, and use `size="compact"` for a supporting
+  preview or section introduction. Keep actions in the owning surface.
 - `OnboardingResourceRow` presents an icon, title, description, status, and
   action. Pass the existing application `Button` or `Badge` into its slots.
   Icons are decorative; put the resource's accessible name in `title`.
