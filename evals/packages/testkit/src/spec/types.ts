@@ -23,6 +23,8 @@ export interface ClickOptions {
 }
 
 export interface TypeOptions {
+  /** Optional visible character pacing for recorded journeys. */
+  intervalMs?: number;
   /** Replace existing text with a real select-all key chord before typing. Defaults to append. */
   replace?: boolean;
 }

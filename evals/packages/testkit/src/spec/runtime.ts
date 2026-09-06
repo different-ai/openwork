@@ -646,7 +646,14 @@ export class UserChannel implements User {
       }
       const mac = surface.handle.hostKind !== "daytona" && process.platform === "darwin";
       await pressKey(surface, options.replace ? (mac ? "Meta+A" : "Control+A") : (mac ? "Meta+ArrowDown" : "Control+End"));
-      await typeText(surface, text);
+      if (options.intervalMs) {
+        for (const character of text) {
+          await typeText(surface, character);
+          await new Promise((resolve) => setTimeout(resolve, options.intervalMs));
+        }
+      } else {
+        await typeText(surface, text);
+      }
     });
   }
 
