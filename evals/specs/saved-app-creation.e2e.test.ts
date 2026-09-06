@@ -6,6 +6,20 @@ import { creationPrompt, creationReply, field, record, savedAppCreation } from "
 const test = spec.world(savedAppCreation, { timeout: 900_000 });
 
 test("create, preview, save and reopen an app without changing already-open results", async ({ world, user, probe, seed, step, evidence }) => {
+  await step("discover the direct artifact builder without capability search", async () => {
+    const { tools } = await world.listTools();
+    if (!Array.isArray(tools)) throw new Error("MCP did not advertise tools.");
+    const search = tools.map(record).find((tool) => tool.name === "search_capabilities");
+    const builder = tools.map(record).find((tool) => tool.name === "save_artifact_view");
+    expect(search?.description).toContain("Direct MCP tools");
+    expect(search?.description).toContain("use save_artifact_view and follow its prerequisites");
+    expect(search?.description).not.toContain("Always search first");
+    expect(builder?.description).toContain("in-app dashboard or artifact view");
+    expect(builder?.description).toContain("current version must declare an explicit JSON Schema outputSchema");
+    expect(builder?.description).toContain("have a successful saved-Workflow run matching that schema");
+    expect(builder?.description).toContain("execute_capability_script alone does not create its artifact snapshot");
+  });
+  evidence.recordAssertionEvidence("Capability discovery routes dashboard requests to the available direct builder", "The live MCP tools/list advertises the artifact builder and search explicitly routes dashboard requests to it without requiring capability search; the builder requires a saved Workflow run.", true);
   const viewsPath = `/v1/workflows/${world.configObjectId}/views`;
   expect(record((await probe.api(world.den.admin, viewsPath)).body).items).toEqual([]);
   await step("only offer sharing when the server supports it", async () => {

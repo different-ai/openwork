@@ -223,10 +223,10 @@ export function registerAgentGeneratedArtifactViews(input: {
     {
       title: "Create or improve an app draft",
       description: [
-        "Compile React source into a self-contained immutable MCP App revision bound to one Workflow output schema.",
+        "Create or improve an in-app dashboard or artifact view of Workflow results. Call this Cloud MCP tool directly, not through search_capabilities or execute_capability. Compile React source into a self-contained immutable MCP App revision bound to one Workflow output schema.",
         "Prerequisites: the Workflow's current version must declare an explicit JSON Schema outputSchema and have a successful saved-Workflow run matching that schema. After saveWorkflow, run the saved version explicitly with its example inputs; execute_capability_script alone does not create its artifact snapshot. If the outputSchema is missing, test and create a new Workflow version with that schema before calling this tool.",
         "Provide a default-exported React component that receives { data, artifact }. React is already injected: use React.useState and other React APIs without imports. Do not import modules, fetch data, access browser globals, or add URL-bearing elements; all render-time data comes from data.",
-        "Every successful build is a draft. Show the preview so the user can try it and choose Save in OpenWork to keep the workflow and app together on their dashboard. Never activate a draft merely because it built successfully. Editing never changes the saved app.",
+        "Every successful build is a draft. Show the preview so the user can try it and choose Save in OpenWork to keep the workflow and app together on their dashboard. Never activate a draft merely because it built successfully. Editing never changes the saved app. Use one friendly name for the workflow and app. Only create an Automation when the user asks for a schedule. Generated views display, filter, and explore results; they do not submit approvals or other writes.",
         "OpenWork opens the artifact preview from a successful build automatically; no additional tool call is needed there. In other MCP clients, call the registered render_artifact_* or preview_artifact_* tool named in the result. A failed build returns artifact_view_build_failed with diagnostics; correct those diagnostics once and retry using the returned artifactViewId.",
       ].join(" "),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
