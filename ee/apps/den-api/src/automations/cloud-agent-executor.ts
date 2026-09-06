@@ -295,6 +295,8 @@ export function cloudAgentRuntimeUnavailableResult(input: {
   }
 }
 
+const OPENCODE_WARMUP_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000]
+
 async function connectHealth(input: {
   baseUrl: string
   workspaceId: string
@@ -322,28 +324,60 @@ async function connectHealth(input: {
     const value: unknown = await response.json()
     return isRecord(value) ? value : null
   }
-  let value = await request("GET", `/workspace/${encodedWorkspace}/mcp/openwork-cloud/health?${query}`)
-  let health = value
-  if (health?.usable !== true || health.usableByCurrentModel !== true) {
-    value = await request("POST", `/workspace/${encodedWorkspace}/mcp/openwork-cloud/engine-refresh`, {
-      provider: input.action.model.providerId,
-      model: input.action.model.modelId,
-      trigger: "automation_run",
-    })
-    health = isRecord(value?.health) ? value.health : null
+  // Midna 2026-09-02: right after a cold Daytona boot, the sandbox's managed
+  // OpenCode engine (OPENWORK_MANAGE_OPENCODE=1, apps/server/src/cli.ts)
+  // is still spawning in the background — the outer `/health` route that
+  // Den's own wake waits on (routes/core.ts) reports ok as soon as the HTTP
+  // server binds, well before the `opencode serve` child process finishes
+  // and registers config.opencodeBaseUrl for the workspace
+  // (opencode-connection.ts). A human typing into Cloud Chat loses this race
+  // in practice; an Automation's first turn, sent immediately on wake, does
+  // not. This one attempt() below is the original single-shot probe;
+  // wrapped in a bounded retry so a transient "opencode_unconfigured"
+  // failure (server.ts) gets a few seconds' grace instead of permanently
+  // failing the run.
+  const attempt = async (): Promise<
+    | { ok: true }
+    | { ok: false; code: "connect_access_unavailable" | "model_access_lost"; message: string; retryableWarmup: boolean }
+  > => {
+    let value = await request("GET", `/workspace/${encodedWorkspace}/mcp/openwork-cloud/health?${query}`)
+    let health = value
+    if (health?.usable !== true || health.usableByCurrentModel !== true) {
+      value = await request("POST", `/workspace/${encodedWorkspace}/mcp/openwork-cloud/engine-refresh`, {
+        provider: input.action.model.providerId,
+        model: input.action.model.modelId,
+        trigger: "automation_run",
+      })
+      health = isRecord(value?.health) ? value.health : null
+    }
+    if (health?.usable === true && health.usableByCurrentModel === true) return { ok: true }
+    if (health?.usable === true && health.usableByCurrentModel !== true) {
+      return {
+        ok: false,
+        code: "model_access_lost",
+        message: "The selected model cannot use the current OpenWork Connect capabilities.",
+        retryableWarmup: false,
+      }
+    }
+    const failure = isRecord(health?.firstFailure) ? health.firstFailure : null
+    return {
+      ok: false,
+      code: "connect_access_unavailable",
+      message: typeof failure?.message === "string"
+        ? failure.message
+        : "OpenWork Connect is not ready in the Cloud runtime. Reconnect it before retrying this Automation.",
+      retryableWarmup: failure?.code === "opencode_unconfigured",
+    }
   }
-  if (health?.usable === true && health.usableByCurrentModel === true) return { ok: true }
-  if (health?.usable === true && health.usableByCurrentModel !== true) {
-    return { ok: false, code: "model_access_lost", message: "The selected model cannot use the current OpenWork Connect capabilities." }
+  let result = await attempt()
+  for (const delayMs of OPENCODE_WARMUP_RETRY_DELAYS_MS) {
+    if (result.ok || !result.retryableWarmup) break
+    await abortableSleep(delayMs, input.signal)
+    result = await attempt()
   }
-  const failure = isRecord(health?.firstFailure) ? health.firstFailure : null
-  return {
-    ok: false,
-    code: "connect_access_unavailable",
-    message: typeof failure?.message === "string"
-      ? failure.message
-      : "OpenWork Connect is not ready in the Cloud runtime. Reconnect it before retrying this Automation.",
-  }
+  if (result.ok) return result
+  const { retryableWarmup: _retryableWarmup, ...outcome } = result
+  return outcome
 }
 
 function usageFromTranscript(usage: {
