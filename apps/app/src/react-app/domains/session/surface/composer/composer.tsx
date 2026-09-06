@@ -242,6 +242,8 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   const [pluginsLoading, setPluginsLoading] = useState(false);
   const [slashOpen, setSlashOpen] = useState(false);
   const [toolMenuOpen, setToolMenuOpen] = useState(false);
+  const [discoveryQuery, setDiscoveryQuery] = useState("");
+  const discoveryInputRef = useRef<HTMLInputElement>(null);
   const [toolMenuLayout, setToolMenuLayout] = useState<ToolMenuLayout | null>(null);
   const [toolMenuSection, setToolMenuSection] = useState<ToolMenuSection>("commands");
   const [mentionItems, setMentionItems] = useState<MentionItem[]>([]);
@@ -749,6 +751,17 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       skill.origin === "openwork-connect" || !localCommandSkillNames.has(skill.name)
     ),
   ];
+  const matchesDiscovery = (...fields: (string | undefined)[]) => {
+    const text = fields.filter(Boolean).join(" ").toLocaleLowerCase();
+    return discoveryQuery.trim().toLocaleLowerCase().split(/\s+/).every((word) => text.includes(word));
+  };
+  const visibleSkills = skillMenuItems.filter((skill) =>
+    matchesDiscovery(skill.name, skill.description, skill.marketplaceName, skill.pluginName)
+  );
+  useEffect(() => {
+    setDiscoveryQuery("");
+  }, [toolMenuOpen, toolMenuSection]);
+
   const connectionInventory = useMemo(
     () => mergeComposerConnectionInventory({
       mcpServers: props.mcpServers ?? [],
@@ -762,8 +775,21 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     : null;
   const canSend = props.draft.trim().length > 0 || props.attachments.length > 0;
 
+  const renderDiscoveryEmpty = () => (
+    <div className="px-3 py-4 text-xs text-gray-10" role="status">
+      <p>{t("composer.discovery_no_matches")}</p>
+      <button type="button" className="mt-2 rounded-md px-2 py-1 font-medium text-gray-12 hover:bg-gray-3"
+        onClick={() => { setDiscoveryQuery(""); discoveryInputRef.current?.focus(); }}>
+        {t("composer.discovery_clear")}
+      </button>
+    </div>
+  );
+
   const renderConnectionRows = () => {
-    const servers = connectionInventory.servers;
+    const servers = connectionInventory.servers.filter((server) =>
+      matchesDiscovery(server.name, server.marketplaceName, server.pluginName)
+    );
+    if (servers.length === 0 && discoveryQuery.trim() && mcpLoaded && orgMcp.loaded) return renderDiscoveryEmpty();
     if (servers.length === 0) {
       return (
         <div className="px-3 py-2 text-xs text-gray-10">
@@ -1063,7 +1089,15 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
 
     if (toolMenuOpen && event.key === "Escape") {
       event.preventDefault();
-      setToolMenuOpen(false);
+      event.stopPropagation();
+      // Portal events still pass through this capture handler. Keep search
+      // dismissal here so the menu does not close before its input can clear.
+      if (event.target === discoveryInputRef.current && discoveryQuery) {
+        setDiscoveryQuery("");
+      } else {
+        setToolMenuOpen(false);
+        rootRef.current?.querySelector<HTMLElement>("[contenteditable='true']")?.focus();
+      }
       return;
     }
 
@@ -1438,6 +1472,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                     aria-expanded={toolMenuOpen}
                     aria-haspopup="dialog"
                     title={t("composer.tools_label")}
+                    aria-label={t("composer.tools_label")}
                   >
                     <Plus size={16} />
                   </button>
@@ -1493,6 +1528,19 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                               {t("composer.configure")}
                             </button>
                           </div>
+                          {toolMenuSection === "skills" || toolMenuSection === "connections" ? (
+                            <div className="shrink-0 space-y-2 px-3 pb-3">
+                              <p className="text-xs leading-relaxed text-gray-10">
+                                {t(toolMenuSection === "skills" ? "composer.discovery_skills_hint" : "composer.discovery_connections_hint")}
+                              </p>
+                              <input ref={discoveryInputRef} type="search" value={discoveryQuery}
+                                aria-label={t(toolMenuSection === "skills" ? "composer.discovery_skills_search" : "composer.discovery_connections_search")}
+                                placeholder={t(toolMenuSection === "skills" ? "composer.discovery_skills_search" : "composer.discovery_connections_search")}
+                                onChange={(event) => setDiscoveryQuery(event.target.value)}
+                                className="h-9 w-full rounded-lg border border-dls-border bg-gray-1 px-3 text-xs text-gray-12 outline-none focus-visible:ring-2 focus-visible:ring-gray-8"
+                              />
+                            </div>
+                          ) : null}
                           <div className="min-h-0 flex-1 overflow-y-auto p-2">
                           {toolMenuSection === "agents" ? (
                             <div className="grid gap-1">
@@ -1550,13 +1598,14 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                             )
                           ) : null}
                           {toolMenuSection === "skills" ? (
-                            skillMenuItems.length > 0 ? (
+                            visibleSkills.length > 0 ? (
                               <div className="grid gap-1">
-                                {skillMenuItems.map((skill) => (
+                                {visibleSkills.map((skill) => (
                                   <button
                                     key={`${skill.origin ?? "local"}:${skill.path || skill.name}`}
                                     type="button"
                                     className="flex min-w-0 w-full items-start gap-3 rounded-[16px] px-3 py-2.5 text-left text-gray-11 transition-colors hover:bg-gray-2/70"
+                                    aria-label={`${t("composer.discovery_use_skill")} ${skill.name}`}
                                     onClick={() => applySkillSelection(skill)}
                                   >
                                     <Zap size={14} className="mt-0.5 shrink-0 text-gray-9" />
@@ -1571,7 +1620,8 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                                           </span>
                                         ) : null}
                                       </div>
-                                      {skill.description ? <div className="truncate text-xs text-gray-10">{skill.description}</div> : null}
+                                      {skill.description ? <div className="mt-1 whitespace-normal text-xs leading-relaxed text-gray-10">{skill.description}</div> : null}
+                                      <div className="mt-2 text-xs font-medium text-gray-12">{t("composer.discovery_use_skill")} <Plus size={12} aria-hidden="true" className="inline" /></div>
                                       {skill.origin === "openwork-connect" ? (
                                         <div className="truncate text-[10px] text-gray-9">
                                           {[skill.marketplaceName, skill.pluginName].filter(Boolean).join(" · ")}
@@ -1581,7 +1631,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                                   </button>
                                 ))}
                               </div>
-                            ) : (
+                            ) : discoveryQuery.trim() && skillsLoaded && commandsLoaded ? renderDiscoveryEmpty() : (
                               <div className="px-3 py-2 text-xs text-gray-10">
                                 {(!skillsLoaded && skillsLoading) || (!commandsLoaded && commandsLoading) ? t("composer.loading_commands") : t("context_panel.no_skills")}
                               </div>
