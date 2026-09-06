@@ -987,6 +987,18 @@ export function createConnectionsStore(options: {
                 type: "local" as const,
                 command: (mcpEntryConfig["command"] as string[]) ?? entry.command!,
                 enabled: true,
+                // Forward `environment` here the same way the remote branch
+                // above forwards `headers`/`oauth`. resolveLocalMcpEnvironment
+                // has already resolved it into mcpEntryConfig and it is written
+                // to opencode.json, but this hot-add call is what actually
+                // spawns the process on first connect. Omitting it starts the
+                // server with none of its configured environment, so a local
+                // server that resolves required state from an env var fails
+                // immediately with "Connection closed" even though the on-disk
+                // config is correct.
+                ...(mcpEntryConfig["environment"]
+                  ? { environment: mcpEntryConfig["environment"] as Record<string, string> }
+                  : {}),
               };
 
         unwrap(
