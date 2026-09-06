@@ -19,6 +19,7 @@ import type {
   UpdateAutomation,
 } from "@openwork/types/automations";
 import { generatedArtifactViewSchema, savedAppDetailSchema, savedAppSummarySchema, type SaveApp, type WorkflowDetail } from "@openwork/types/workflows";
+import { denTeamSchema, type DenTeam } from "./den-team";
 
 // Re-export the shared schema under the local alias so React consumers
 // (e.g. the cloud domain's desktop-config provider) can import it alongside
@@ -3002,6 +3003,35 @@ export function createDenClient(options: { baseUrl: string; apiBaseUrl?: string 
         organizationId: orgId,
       });
       return normalizeDenDesktopConfig(payload);
+    },
+
+    async getTeam(orgId: string): Promise<DenTeam> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/org", {
+        token,
+        organizationId: orgId,
+      });
+      const parsed = denTeamSchema.safeParse(payload);
+      if (!parsed.success || parsed.data.organization.id !== orgId) {
+        throw new DenApiError(502, "invalid_team_response", "Could not load this organization's people. Try refreshing.");
+      }
+      return parsed.data;
+    },
+
+    async inviteTeamMember(orgId: string, email: string): Promise<void> {
+      await requestJson<unknown>(baseUrls, "/v1/invitations", {
+        method: "POST",
+        token,
+        organizationId: orgId,
+        body: { email: email.trim(), role: "member" },
+      });
+    },
+
+    async cancelTeamInvitation(orgId: string, invitationId: string): Promise<void> {
+      await requestJson<unknown>(baseUrls, `/v1/invitations/${encodeURIComponent(invitationId)}/cancel`, {
+        method: "POST",
+        token,
+        organizationId: orgId,
+      });
     },
 
     async getResourceSnapshot(orgId?: string | null): Promise<DenResourceSnapshot> {
