@@ -655,8 +655,11 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
     await admin.user.see({ role: "textbox", label: "Approved websites" }, { value: new URL(world.den.mocks.witness.url).origin });
     await admin.user.looks(["Team access contains a Commands & browser section with Run OS commands unchecked, an approved website, and browser uploads blocked"]);
     await member.user.reload();
+    await member.user.see(manageExtensionsNotice, { timeoutMs: 90_000 });
     await member.user.click(accountMenu);
-    await member.user.click(accountMenuItem);
+    await member.user.click(settingsMenuItem);
+    await member.user.see(settingsHub, { timeoutMs: 60_000 });
+    await member.user.click({ role: "button", label: /^Account$/ });
     await member.user.click(permissionsTab);
     await member.user.see({ text: "OS commands" });
     await member.user.see({ text: "Approved websites" });

@@ -1023,7 +1023,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     logger: toManagedProviderAuthLogger(logger),
   });
   managedDesktopPolicy(config).onChange = () => cloudProviderSync.markReloadPending();
-  const engineV2Preview = createEngineV2Preview({ config, env });
+  const engineV2Preview = createEngineV2Preview({ config, env, deferStart: true });
   const routes = createRoutes(
     config,
     approvals,
@@ -1309,6 +1309,9 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
       });
     }
   }
+  // Policy hooks must receive the listener that actually bound, including
+  // ephemeral ports and retries after a port collision.
+  engineV2Preview.start();
 
   // Deliver server-managed provider credentials to the engine on startup. The
   // engine process receives a fixed env allowlist, so credentials materialized

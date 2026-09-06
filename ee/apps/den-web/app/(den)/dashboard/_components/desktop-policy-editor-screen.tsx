@@ -70,7 +70,7 @@ const POLICY_MODES: Array<{ id: PolicyMode; name: string; description: string }>
     id: "restricted",
     name: "Restricted",
     description:
-      "Chat and organization-approved skills only. Locks the capabilities below so members cannot change desktop settings, add providers or models, add workspaces, or install extensions and MCP servers.",
+      "Members cannot change desktop settings, add providers or models, add workspaces, or install local extensions and MCP servers. Set command and browser restrictions below.",
   },
 ];
 const POLICY_MODE_HELP_ID = "desktop-policy-mode-help";
