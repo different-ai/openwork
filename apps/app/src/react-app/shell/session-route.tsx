@@ -3373,6 +3373,16 @@ export function SessionRoute() {
         },
         onPrefetchSession: () => {},
         onCreateTaskInWorkspace: (workspaceId, groupId) => {
+          const { focusedPane, secondary } = useWorkbenchStore.getState();
+          if (!groupId && !(focusedPane === "secondary" && secondary)) {
+            // The empty composer creates its session on submit. Opening it must
+            // not wait for an engine request, especially on a cold v2 runtime.
+            setLegacySelectedWorkspaceId(workspaceId);
+            writeActiveWorkspaceId(workspaceId);
+            navigateToWorkspaceSession(workspaceId);
+            focusPromptSoon();
+            return;
+          }
           void handleCreateTaskInWorkspace(workspaceId).then((sessionId) => {
             if (sessionId && groupId) {
               sessionManagementStore.getState().assignGroup(workspaceId, sessionId, groupId);

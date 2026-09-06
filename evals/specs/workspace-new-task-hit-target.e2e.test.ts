@@ -8,7 +8,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-test("the per-workspace New task plus stays clickable over a long truncated workspace name", async ({ world, user, agent, probe, step }) => {
+test("workspace New task opens an editable composer immediately and creates one task on submit", async ({ world, user, agent, probe, step }) => {
   const workspaceName = world.workspacePath.split("/").at(-1) ?? world.workspacePath;
   await user.hover({ role: "button", label: workspaceName });
 
@@ -31,17 +31,37 @@ test("the per-workspace New task plus stays clickable over a long truncated work
     expect(hit.hitTitle).toBe(false);
   });
 
-  const before = (await agent.list()).length;
+  const before = (await agent.list()).map((session) => session.sessionId).sort();
+  const requests = () => probe.eval(`window.__newTaskRequests`);
   // TODO(primitive): probe.attribute should read the accessible control's aria-expanded value.
   const expandedBefore = await probe.eval(`document.querySelector('[data-workspace-new-task]')
     ?.closest("[data-workspace-actions]")?.parentElement?.querySelector("[aria-expanded]")?.getAttribute("aria-expanded")`);
   await user.click({ role: "button", label: `New session · ${workspaceName}` });
+  await user.see({ text: "What do you need done?" });
+  expect(await probe.hash()).not.toContain("/session/ses_");
+  expect(await requests()).toEqual([]);
+  expect((await agent.list()).map((session) => session.sessionId).sort()).toEqual(before);
+
+  await step("the empty composer accepts and keeps a draft without creating a session", async () => {
+    await user.type({ placeholder: "Describe your task..." }, world.prompt, { verify: true });
+    await user.hover({ role: "button", label: workspaceName });
+    await user.click({ role: "button", label: `New session · ${workspaceName}` });
+    expect(await probe.eval(`document.querySelector('[contenteditable="true"]')?.textContent`)).toBe(world.prompt);
+    expect(await requests()).toEqual([]);
+  });
+  await user.click({ placeholder: "Describe your task..." });
+  await user.press("Enter");
   await probe.eventually(() => agent.list(), {
     within: 60_000,
-    label: "session created by workspace New task",
-    until: (sessions) => sessions.length > before,
+    label: "submitting creates exactly one session after the slow engine responds",
+    until: (sessions) => sessions.length === before.length + 1,
   });
+  await user.see({ text: world.reply });
   expect(await probe.hash()).toContain("/session/ses_");
+  const creationRequests = await requests();
+  expect(Array.isArray(creationRequests) && creationRequests.length).toBe(1);
+  expect(JSON.stringify(creationRequests)).toContain(world.workspace.workspaceId);
+  expect((await agent.list()).length).toBe(before.length + 1);
   // TODO(primitive): probe.attribute should read the accessible control's aria-expanded value.
   const expandedAfter = await probe.eval(`document.querySelector('[data-workspace-new-task]')
     ?.closest("[data-workspace-actions]")?.parentElement?.querySelector("[aria-expanded]")?.getAttribute("aria-expanded")`);
