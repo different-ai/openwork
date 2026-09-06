@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join, resolve } from "node:path";
-import { evalIn } from "@openwork/behaviors";
+import { evalIn, assertNoLiveSecret, liveOpenAiEnabled, liveOpenAiModel, liveProviderId, provisionLiveOpenAi } from "@openwork/behaviors";
 import { resolveEvalEngine, type Seed } from "@openwork/env";
 import type { MockAgentWorkload } from "@openwork/labs";
 
@@ -1439,4 +1439,64 @@ export async function workspaceEngineUpgrade(seed: Seed) {
   return { app, den, primary, other, original, otherOriginal, providerId, modelId,
     otherName: otherPath.split("/").at(-1),
   };
+}
+
+/** A running conversation whose workspace skills can change through OpenWork. */
+export async function skillLifecycle(seed: Seed) {
+  const live = liveOpenAiEnabled();
+  const orgName = "Skill lifecycle";
+  const den = await seed.den({ org: { name: orgName }, mocks: { model: seed.mock({}) } });
+  const managed = await provisionLiveOpenAi(den.admin, orgName);
+  try {
+    const app = await seed.desktop({ den, as: "admin" });
+    const workspace = await seed.workspace(app, seed.tmpPath("skill-lifecycle"));
+    const request = async (path: string) => {
+      const response = await seed.evalIn(app, `async (path) => {
+        const response = await fetch("http://127.0.0.1:" + localStorage.getItem("openwork.server.port") + path, {
+          headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") },
+          signal: AbortSignal.timeout(10000),
+        });
+        return { status: response.status, json: await response.json() };
+      }`, { args: [path], awaitPromise: true });
+      if (!isRecord(response) || typeof response.status !== "number") throw new Error("Missing desktop response");
+      assertNoLiveSecret(response);
+      return { status: response.status, json: response.json };
+    };
+    const providerId = live ? await liveProviderId(request, managed.id) : "skill-lifecycle";
+    const modelId = live ? liveOpenAiModel() : "skill-lifecycle-model";
+    await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+      permission: { skill: "allow" },
+      ...(!live ? { provider: { [providerId]: {
+        npm: "@ai-sdk/openai-compatible", name: "Skill lifecycle model",
+        options: { baseURL: `${den.mocks.model.url}/v1`, apiKey: "eval-only-key" },
+        models: { [modelId]: { name: "Skill lifecycle model", tool_call: true } },
+      } } } : {}),
+    });
+    const session = await seedSessionRetry(seed, app, { title: "Release report" });
+    const skillName = "release-briefing";
+    return {
+      app, den, workspace, session, skillName, live, modelId,
+      async prepareTurn(prompt: string, available: boolean) {
+        if (live) return;
+        const result = await fetch(`${den.mocks.model.url}/admin/agent-workloads`, {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ workloads: [{ latestUserTurn: true, promptMarker: prompt,
+            finalReply: "OpenWork: UNAVAILABLE", ...(available ? { finalReplyFrom: "last-tool-text" } : {}),
+            steps: available ? [{ tool: "skill", argumentsFrom: "skill-catalog", arguments: { skill: skillName } }] : [],
+          }] }),
+        });
+        if (!result.ok) throw new Error("Could not arrange model response");
+      },
+      async runtimeIdentity() {
+        const result = await request("/experimental/engine-v2-preview/status");
+        if (!isRecord(result.json) || result.json.running !== true || result.json.chatRouting !== true
+          || typeof result.json.pid !== "number") throw new Error("The v2 conversation runtime is not running");
+        return result.json.pid;
+      },
+      async [Symbol.asyncDispose]() { await managed[Symbol.asyncDispose](); },
+    };
+  } catch (error) {
+    await managed[Symbol.asyncDispose]();
+    throw error;
+  }
 }

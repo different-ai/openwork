@@ -14,19 +14,15 @@ import {
 import type { ServerConfig } from "./types.js";
 import { buildOpenWorkV2Instructions } from "./opencode-v2-instructions.js";
 
-test("large v2 skill catalogs stay inside the native instruction limit", async () => {
-  const root = await mkdtemp(join(tmpdir(), "openwork-v2-instructions-"));
-  try {
-    const skills = Array.from({ length: 20 }, (_, index) => ({ name: `bounded-${index}`,
-      description: "Catalog description ".repeat(40), path: join(root, `bounded-${index}`, "SKILL.md") }));
-    const value = await buildOpenWorkV2Instructions(testConfig(root), skills, false);
+test("v2 app guidance fits the native entry limit and uses the current native tools", () => {
+  for (const connected of [true, false]) {
+    const value = buildOpenWorkV2Instructions(connected);
     expect(Buffer.byteLength(JSON.stringify(value), "utf8")).toBeLessThanOrEqual(7 * 1024);
-    expect(value.catalogTruncated).toBe(true);
     expect(value.operatingInstructions).not.toContain("openwork-cloud_search_capabilities");
     expect(value.operatingInstructions).not.toContain("openwork-cloud_execute_capability");
-    expect(value.remoteSkills).toEqual([]);
     expect(value.operatingInstructions).toStartWith("You are OpenWork.");
-  } finally { await rm(root, { recursive: true, force: true }); }
+    expect(value.connect.includes("not connected")).toBe(!connected);
+  }
 });
 
 test("maps enabled MCP transports without retaining unknown runtime fields", () => {

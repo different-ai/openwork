@@ -1447,12 +1447,12 @@ async function proxyOpencodeV2Request(input: {
       isRecord(entry) && entry.name === "openwork-cloud" && isRecord(entry.status) && entry.status.status === "connected");
     const skillUrl = new URL(target);
     skillUrl.pathname = "/api/skill";
-    const skills = await waitForOpenWorkV2Skills(input.workspace.path, async () => {
+    await waitForOpenWorkV2Skills(input.workspace.path, async () => {
       const response = await loopbackFetch(skillUrl.toString(), { headers: internalHeaders, signal: AbortSignal.timeout(5_000) });
       if (!response.ok) throw new ApiError(502, "engine_skill_sync_failed", "Native skills are unavailable");
       return response.json();
     });
-    const value = await buildOpenWorkV2Instructions(input.config, skills, connectReady);
+    const value = buildOpenWorkV2Instructions(connectReady);
     const instructionUrl = new URL(target);
     instructionUrl.pathname = `/api/session/${encodeURIComponent(sessionId)}/instructions/entries/${OPENWORK_V2_INSTRUCTION_KEY}`;
     const synced = await loopbackFetch(instructionUrl.toString(), {
