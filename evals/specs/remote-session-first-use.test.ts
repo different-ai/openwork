@@ -556,13 +556,14 @@ test("Cloud APIs recover after wake and replacement failures and attempt every o
   async function memberState(workerId: string) {
     return {
       workers: await queryDenDatabase(databaseUrl, "SELECT id, name, created_by_user_id, status, image_version FROM worker WHERE id = ?", [workerId]),
-      runtimes: await queryDenDatabase(databaseUrl, "SELECT id, sandbox_id, workspace_volume_id, data_volume_id FROM daytona_sandbox WHERE worker_id = ?", [workerId]),
+      runtimes: await queryDenDatabase(databaseUrl, "SELECT id, provider_id, provider_ref, workspace_volume_id, data_volume_id FROM cloud_runtime_instance WHERE worker_id = ?", [workerId]),
       tokens: await queryDenDatabase(databaseUrl, "SELECT id, scope, SHA2(token, 256) AS digest FROM worker_token WHERE worker_id = ? ORDER BY id", [workerId]),
     };
   }
 
   async function removeRuntimeRecord(workerId: string) {
     // Arrange the orphan path only; DELETE /v1/workers/:id owns deprovision and row removal.
+    await queryDenDatabase(databaseUrl, "DELETE FROM cloud_runtime_instance WHERE worker_id = ?", [workerId]);
     await queryDenDatabase(databaseUrl, "DELETE FROM daytona_sandbox WHERE worker_id = ?", [workerId]);
   }
 
