@@ -1,8 +1,8 @@
 # OpenWork Models task analytics
 
-This is the Den-first rollout. Land and deploy the API and migration before the
-desktop follow-up in #4563. Keep the rollout capability off until both phases are
-ready. This phase does not change any published desktop contract.
+The API and migration land first in #4567. This desktop follow-up uses that
+existing API after its deployment is verified. The organization rollout capability
+remains off by default, and analytics still requires explicit admin consent.
 
 Task analytics is included with a paid OpenWork Models subscription. An internal
 organization capability, `modelsAnalytics`, controls rollout and defaults to off.
@@ -75,10 +75,12 @@ settings route keeps analytics off and leaves chat running; failed checks are ca
 to avoid retrying on every streamed update.
 
 `pnpm evals:e2e models-analytics-upgrade` runs a continuous subscriber journey with
-an isolated Den database, real inference HTTP service and browser. Its
+an isolated Den database, real inference HTTP service, browser and desktop. Its
 upstream and Langfuse witnesses use synthetic credentials. The journey starts
 with an existing paid account before the analytics tables exist, applies the real
 migration, and checks the same model key, consent UI, accounting, tenant/member
-isolation, export, downgrade and workspace deletion. The desktop follow-up extends
-the same journey with live task/skill/tool reporting and continued conversation. It does not make a real
+isolation, export, downgrade, workspace deletion and continued conversation.
+An independently observed HTTP link first returns 404 for analytics settings,
+proving the newer desktop still chats without uploading task events. Restoring
+the endpoint then exercises live task/skill/tool reporting in the same conversation. It does not make a real
 Stripe purchase or call a paid model provider.

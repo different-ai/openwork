@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { allocateFreePort } from "@openwork/cdp";
 import { provisionOrg } from "@openwork/behaviors";
 import { createDaytonaHost, defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
@@ -92,6 +94,33 @@ export async function modelsAnalyticsWorld(seed: Seed) {
       const analytics = await seed.api(other.admin, "/v1/inference/analytics/settings", { method: "PATCH", headers: scoped, body: JSON.stringify({ enabled: true, consentVersion: 1 }) });
       if (!analytics.response.ok) throw new Error("Second subscriber analytics setup failed");
       return other;
+    },
+    async desktop() {
+      const analyticsTransport = await seed.faultProxy(den);
+      const upgradeDenApi = async () => {
+        await analyticsTransport.faults.clear();
+        // API discovery must keep the desktop on the independently observed link.
+        await analyticsTransport.faults.status("/api/runtime-config", 200, { times: 10_000, body: { denApiUrl: analyticsTransport.ref.apiUrl } });
+      };
+      await upgradeDenApi();
+      await analyticsTransport.faults.status("/api/den/v1/inference/analytics", 404, { times: 10_000, body: { error: "not_found" } });
+      const app = await seed.desktop({ den: { ...den, ref: analyticsTransport.ref }, as: "admin", model: "openwork/z-ai/glm-5.2" });
+      const workspacePath = seed.tmpPath("models-analytics-upgrade");
+      const skillPath = join(workspacePath, ".opencode/skills/analytics-fixture");
+      const skill = "---\nname: analytics-fixture\ndescription: A harmless skill for the Models analytics upgrade journey.\n---\n\nReport that Models are working. No files or external services are needed.\n";
+      if (app.handle.sandboxId) {
+        const script = `mkdir -p ${quote(skillPath)}\nprintf %s ${Buffer.from(skill).toString("base64")} | base64 -d > ${quote(join(skillPath, "SKILL.md"))}\nprintf %s eyJwZXJtaXNzaW9uIjp7InNraWxsIjoiYWxsb3cifX0= | base64 -d > ${quote(join(workspacePath, "opencode.json"))}`;
+        const encoded = Buffer.from(script).toString("base64");
+        const result = await execInSandbox(defaultDaytonaExec, app.handle.sandboxId, `printf %s ${encoded} | base64 -d | bash`, { timeoutMs: 15_000, context: "Seed native analytics skill" });
+        if (result.code !== 0) throw new Error("Native skill arrangement failed");
+      } else {
+        await mkdir(skillPath, { recursive: true });
+        await writeFile(join(skillPath, "SKILL.md"), skill);
+        await writeFile(join(workspacePath, "opencode.json"), JSON.stringify({ permission: { skill: "allow" } }));
+      }
+      await seed.workspace(app, workspacePath, { create: true });
+      const session = await seed.session(app, { title: "Existing Models conversation" });
+      return { app, session, analyticsTransport, upgradeDenApi };
     },
     async rollout(enabled: boolean) {
       const result = await seed.api(den.admin, `/v1/admin/organizations/${orgId}/capabilities`, { method: "PUT", body: JSON.stringify({ capabilities: { modelsAnalytics: enabled } }) });

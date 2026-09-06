@@ -156,6 +156,9 @@ importers:
       '@opencode-ai/sdk':
         specifier: ^1.18.15
         version: 1.18.18
+      '@openwork-ee/telemetry-contracts':
+        specifier: workspace:*
+        version: link:../../ee/packages/telemetry-contracts
       '@openwork/browser-tabs':
         specifier: workspace:*
         version: link:../../packages/browser-tabs
@@ -282,6 +285,9 @@ importers:
       tw-animate-css:
         specifier: ^1.4.0
         version: 1.4.0
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
       zustand:
         specifier: ^5.0.12
         version: 5.0.12(@types/react@19.2.14)(react@19.2.8)(use-sync-external-store@1.6.0(react@19.2.8))
