@@ -248,11 +248,23 @@ function skillCatalogArguments(messages, skillName) {
     return update ? [update[1].replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")] : [];
   }).join("\n");
   if (!system.includes("You are OpenWork.")) throw new Error("The model did not receive OpenWork operating instructions");
-  const entries = [...system.matchAll(/<skill>([\s\S]*?)<\/skill>/g)];
-  const entry = entries.reverse().find((match) => match[1].includes(`<name>${skillName}</name>`));
-  const id = entry?.[1].match(/<id>([^<]+)<\/id>/)?.[1];
-  if (!id) throw new Error("The current native skill catalog did not advertise the requested skill ID");
-  return { id };
+  // Replay the native catalog protocol in order: initial snapshots, additions,
+  // replacement snapshots, and removals. Historical entries are not current.
+  const catalog = new Map();
+  for (const update of system.split(/(?=<available_skills>|The available skills have changed|New skills are available|The following skill IDs|Skill guidance is no longer available|No skills are currently available)/)) {
+    if (update.startsWith("<available_skills>") || update.startsWith("The available skills have changed")
+      || update.startsWith("Skill guidance is no longer available") || update.startsWith("No skills are currently available")) catalog.clear();
+    for (const [, entry] of update.matchAll(/<skill>([\s\S]*?)<\/skill>/g)) {
+      const id = entry.match(/<id>([^<]+)<\/id>/)?.[1];
+      const name = entry.match(/<name>([^<]+)<\/name>/)?.[1];
+      if (id && name) catalog.set(id, name);
+    }
+    const removed = update.match(/The following skill IDs are no longer available and must not be used: ([^\n]+)\./)?.[1];
+    for (const id of removed?.split(", ") ?? []) catalog.delete(id);
+  }
+  const id = [...catalog].find(([, name]) => name === skillName)?.[0];
+  return id ? { id } : null;
+
 }
 
 function agentStream(res, model, chunks) {
@@ -420,6 +432,12 @@ async function handleAgentCompletion(req, res, entry) {
   const toolArguments = step.argumentsFrom === "computer-mention" ? computerMentionArguments(messages)
     : step.argumentsFrom === "skill-catalog" ? skillCatalogArguments(messages, step.arguments.skill)
     : step.argumentsFrom === "capability-search" ? { ...step.arguments, ...capabilitySearchArguments(scopedMessages) } : step.arguments;
+  if (step.argumentsFrom === "skill-catalog" && toolArguments === null) {
+    entry.agentCompletion = { ...baseRequest, kind: "final", promptMarker: workload.promptMarker, toolName: null, arguments: {} };
+    agentStream(res, model, [agentChunk(model, { role: "assistant" }),
+      ...finalReplyChunks(workload).map(content => agentChunk(model, { content })), agentChunk(model, {}, "stop")]);
+    return;
+  }
   const callId = `call_${workload.promptMarker.replace(/[^a-zA-Z0-9_-]/g, "_")}_${completedTools + 1}`;
   entry.agentCompletion = {
     ...baseRequest,

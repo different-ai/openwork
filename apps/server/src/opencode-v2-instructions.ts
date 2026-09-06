@@ -3,6 +3,7 @@ import { readFile, realpath } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { parseFrontmatter } from "./frontmatter.js";
 import { OPENWORK_AGENT_PROMPT } from "./openwork-agent-prompt.js";
+
 export const OPENWORK_V2_INSTRUCTION_KEY = "openwork.context";
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -27,7 +28,10 @@ export async function waitForOpenWorkV2Skills(directory: string, readNative: () 
     const matches = expected.every((skill) => canonical.some((entry) => entry.path === skill.path
       && entry.skill.name === skill.name && entry.skill.description === skill.description
       && String(entry.skill.content).trim() === skill.content));
-    const removed = canonical.some((entry) => entry.path.startsWith(join(root, ".opencode") + sep)
+    // Only reconcile directories OpenWork manages. Native plugin-provided
+    // skills elsewhere under .opencode are not deleted workspace skills.
+    const managedRoots = [join(root, ".opencode", "skills") + sep, join(root, ".claude", "skills") + sep];
+    const removed = canonical.some((entry) => managedRoots.some((directory) => entry.path.startsWith(directory))
       && !expected.some((skill) => skill.path === entry.path));
     if (matches && !removed) return;
     await new Promise((resolve) => setTimeout(resolve, 100));

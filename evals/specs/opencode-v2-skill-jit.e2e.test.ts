@@ -29,7 +29,7 @@ test("workspace skills change during an ongoing conversation", async ({ world, u
     expect(prompt).not.toContain(world.skillName);
     expect(prompt).not.toContain("SKILL.md");
     for (const code of [...previousCodes, ...(expected ? [expected] : [])]) expect(prompt).not.toContain(code);
-    await world.prepareTurn(prompt, expected !== null);
+    await world.prepareTurn(prompt);
     await using transcript = await observeTranscript(probe, [{ role: "user", text: prompt }]);
     await user.type({ placeholder: "Describe your task..." }, prompt, { verify: true });
     await user.press("Enter");
