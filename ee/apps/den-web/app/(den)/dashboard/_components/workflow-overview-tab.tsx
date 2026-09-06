@@ -15,7 +15,7 @@ import { DenSwitch } from "../../_components/ui/switch";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { WorkflowArtifactResult } from "./workflow-artifact-result";
 import { WorkflowFlowDiagram } from "./workflow-flow-diagram";
-import { WorkflowInputForm } from "./workflow-input-form";
+import { formFieldsFromSchema, WorkflowInputForm } from "./workflow-input-form";
 import { summarizeGraph } from "./workflow-plain-language";
 import {
   workflowDiagramInput,
@@ -93,7 +93,77 @@ export function WorkflowOverviewTab({
   const flowInput = workflowDiagramInput(latestReplay, replayVersion.exampleInput);
 
   return (
-    <div className="grid gap-6" data-tab="overview" role="tabpanel" aria-label="Overview">
+    <div className="grid gap-6" data-tab="overview" data-testid="workflow-overview" role="tabpanel" aria-label="Overview">
+      <DenCard>
+        <form
+          aria-label="Run workflow"
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (detail.canRun && !pending) onRun();
+          }}
+        >
+          <DenSectionHeader title="Run workflow" description="Check the details below, then run. Your result will appear here." />
+          {detail.canRun ? (
+            <fieldset disabled={pending} className="mt-5 min-w-0 space-y-5">
+              {hasInputForm ? (
+                formFieldsFromSchema(parsedInputSchema)?.length === 0 ? (
+                  <p className="text-[13px] text-gray-500">No details needed. This workflow is ready to run.</p>
+                ) : (
+                  <WorkflowInputForm
+                    schema={parsedInputSchema}
+                    value={inputFormValue}
+                    onChange={(next) => onInputChange(JSON.stringify(next, null, 2))}
+                  />
+                )
+              ) : (
+                <p className="text-[13px] text-gray-500">This workflow uses structured input. Review its saved values under Advanced input before running.</p>
+              )}
+              <div className="text-[12px] text-gray-500">
+                <DenButton type="button" variant="ghost" size="xs" aria-expanded={showJsonInput} onClick={() => onShowJsonInputChange(!showJsonInput)}>
+                  Advanced input
+                </DenButton>
+                {showJsonInput ? <label className="mt-3 block">
+                  Workflow input (JSON)
+                  <DenTextarea
+                    aria-label="Run input details"
+                    className="mt-2 min-h-32 font-mono text-[11px]"
+                    value={fields.input}
+                    onChange={(event) => onInputChange(event.currentTarget.value)}
+                  />
+                </label> : null}
+              </div>
+              <div className="border-t border-gray-100 pt-4">
+                <DenButton type="submit" icon={RefreshCw} loading={pending} className="w-full sm:w-auto">
+                  {pending ? "Running…" : "Run workflow"}
+                </DenButton>
+              </div>
+            </fieldset>
+          ) : (
+            <p className="mt-5 text-[13px] text-gray-500">You do not have permission to run this workflow.</p>
+          )}
+        </form>
+      </DenCard>
+
+      <DenCard>
+        <DenSectionHeader
+          title="Latest result"
+          description="The saved result from the most recent run."
+        />
+        <div className="mt-5">
+          {latestResult ? (
+            <WorkflowArtifactResult
+              snapshot={latestResult}
+              freshness={latestResult.receiptId === detail.latestSnapshot?.receiptId ? detail.freshness : undefined}
+              lastSuccessful={latestResult.receiptId === detail.latestSuccessfulSnapshot?.receiptId}
+              technical={technical}
+            />
+          ) : (
+            <p className="text-[13px] text-gray-400">Run this workflow to see its first result.</p>
+          )}
+        </div>
+      </DenCard>
+
       <DenCard>
         <DenSectionHeader
           title="How it works"
@@ -129,82 +199,8 @@ export function WorkflowOverviewTab({
         ) : null}
       </DenCard>
 
-      <DenCard>
-        <DenSectionHeader
-          title="Run it"
-          description="Fill in the details and run. Each run keeps its result."
-          action={detail.canRun ? (
-            <DenButton icon={RefreshCw} disabled={pending} onClick={onRun}>
-              Run now
-            </DenButton>
-          ) : null}
-        />
-        {detail.canRun ? (
-          hasInputForm ? (
-            <div className="mt-5">
-              <p className="text-[12px] font-medium text-gray-600">Run input</p>
-              <WorkflowInputForm
-                schema={parsedInputSchema}
-                value={inputFormValue}
-                onChange={(next) => onInputChange(JSON.stringify(next, null, 2))}
-              />
-              {technical ? (
-                <div className="mt-3">
-                  <DenButton
-                    variant="ghost"
-                    size="xs"
-                    onClick={() => onShowJsonInputChange(!showJsonInput)}
-                  >
-                    {showJsonInput ? "Hide formatted input" : "Edit formatted input"}
-                  </DenButton>
-                  {showJsonInput ? (
-                    <DenTextarea
-                      aria-label="Run input details"
-                      className="mt-2 min-h-32 font-mono text-[11px]"
-                      value={fields.input}
-                      onChange={(event) => onInputChange(event.currentTarget.value)}
-                    />
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-          ) : technical ? (
-            <label className="mt-5 block text-[12px] font-medium text-gray-600">
-              Run input
-              <DenTextarea
-                className="mt-1 min-h-32 font-mono text-[11px]"
-                value={fields.input}
-                onChange={(event) => onInputChange(event.currentTarget.value)}
-              />
-            </label>
-          ) : (
-            <p className="mt-5 text-[13px] text-gray-500">Show technical details to enter the run input for this workflow.</p>
-          )
-        ) : (
-          <p className="mt-5 text-[13px] text-gray-500">You do not have permission to run this workflow.</p>
-        )}
-      </DenCard>
-
-      <DenCard>
-        <DenSectionHeader
-          title="Latest result"
-          description="The saved result from the most recent run."
-        />
-        <div className="mt-5">
-          {latestResult ? (
-            <WorkflowArtifactResult
-              snapshot={latestResult}
-              freshness={latestResult.receiptId === detail.latestSnapshot?.receiptId ? detail.freshness : undefined}
-              lastSuccessful={latestResult.receiptId === detail.latestSuccessfulSnapshot?.receiptId}
-              technical={technical}
-            />
-          ) : (
-            <p className="text-[13px] text-gray-400">Run this workflow to see its first result.</p>
-          )}
-        </div>
-      </DenCard>
-
-      <DenCard>
+      <details className="rounded-2xl border border-gray-100 bg-white p-6">
+        <summary className="mb-5 cursor-pointer text-[13px] font-medium text-gray-600">Customize result display</summary>
         <DenSectionHeader
           title="Custom display"
           description="Show results as a chart, table, or card layout designed by your agent. Until then, results use the standard view."
@@ -303,7 +299,7 @@ export function WorkflowOverviewTab({
             </DenList>
           )}
         </div>
-      </DenCard>
+      </details>
     </div>
   );
 }
