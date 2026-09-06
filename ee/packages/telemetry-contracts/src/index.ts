@@ -146,3 +146,4 @@ export type TelemetryAnalyticsModels = z.infer<typeof telemetryAnalyticsModelsSc
 export type TelemetryAnalyticsResponse = z.infer<typeof telemetryAnalyticsResponseSchema>
 export type TelemetryDimensionListResponse = z.infer<typeof telemetryDimensionListResponseSchema>
 export type TelemetryDimensionListItem = TelemetryDimensionListResponse["items"][number]
+export * from "./models-analytics"

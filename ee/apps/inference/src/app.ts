@@ -67,6 +67,8 @@ if (env.corsOrigins.length > 0) {
         "X-Api-Key",
         "X-Webhook-Signature",
         "X-Test-Connection",
+        "X-Openwork-Session-Id",
+        "X-Openwork-Task-Id",
       ],
       allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       maxAge: 600,

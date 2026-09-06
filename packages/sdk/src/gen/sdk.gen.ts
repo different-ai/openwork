@@ -36,6 +36,7 @@ import type {
   DeleteV1DesktopPoliciesByDesktopPolicyIdErrors,
   DeleteV1DesktopPoliciesByDesktopPolicyIdResponses,
   DeleteV1DesktopPoliciesByKeyByExternalKeyResponses,
+  DeleteV1InferenceAnalyticsLangfuseResponses,
   DeleteV1LlmProvidersByKeyByExternalKeyResponses,
   DeleteV1LlmProvidersByLlmProviderIdAccessByAccessIdErrors,
   DeleteV1LlmProvidersByLlmProviderIdAccessByAccessIdResponses,
@@ -213,6 +214,9 @@ import type {
   GetV1DevEmailsResponses,
   GetV1DiagnosticsEgressErrors,
   GetV1DiagnosticsEgressResponses,
+  GetV1InferenceAnalyticsActivityResponses,
+  GetV1InferenceAnalyticsConsumptionResponses,
+  GetV1InferenceAnalyticsSettingsResponses,
   GetV1InferenceErrors,
   GetV1InferenceResponses,
   GetV1InstallByPlatformErrors,
@@ -384,6 +388,7 @@ import type {
   PatchV1DashboardsByDashboardIdResponses,
   PatchV1DesktopPoliciesByDesktopPolicyIdErrors,
   PatchV1DesktopPoliciesByDesktopPolicyIdResponses,
+  PatchV1InferenceAnalyticsSettingsResponses,
   PatchV1InferenceErrors,
   PatchV1InferenceResponses,
   PatchV1LlmProvidersByLlmProviderIdErrors,
@@ -511,6 +516,9 @@ import type {
   PostV1DirectUploadsGoogleWorkspaceDriveFilesResponses,
   PostV1DirectUploadsGoogleWorkspaceGmailDraftsErrors,
   PostV1DirectUploadsGoogleWorkspaceGmailDraftsResponses,
+  PostV1InferenceAnalyticsEventsResponses,
+  PostV1InferenceAnalyticsLangfuseConnectResponses,
+  PostV1InferenceAnalyticsLangfuseTestResponses,
   PostV1InstallConnectExchangeErrors,
   PostV1InstallConnectExchangeResponses,
   PostV1InstallConnectPreviewErrors,
@@ -3858,6 +3866,248 @@ export class DenClient extends HeyApiClient {
         ...options?.headers,
         ...params.headers,
       },
+    });
+  }
+
+  /**
+   * Read the OpenWork Models task analytics choice
+   */
+  public getV1InferenceAnalyticsSettings<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<GetV1InferenceAnalyticsSettingsResponses, unknown, ThrowOnError>({
+      url: "/v1/inference/analytics/settings",
+      ...options,
+    });
+  }
+
+  /**
+   * Choose whether to collect task analytics included with OpenWork Models
+   */
+  public patchV1InferenceAnalyticsSettings<ThrowOnError extends boolean = false>(
+    parameters?: {
+      enabled?: boolean;
+      consentVersion?: 1;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "enabled" },
+            { in: "body", key: "consentVersion" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).patch<PatchV1InferenceAnalyticsSettingsResponses, unknown, ThrowOnError>({
+      url: "/v1/inference/analytics/settings",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  public postV1InferenceAnalyticsEvents<ThrowOnError extends boolean = false>(
+    parameters?: {
+      events?: Array<{
+        id: string;
+        type:
+          | "task.started"
+          | "task.completed"
+          | "task.failed"
+          | "task.cancelled"
+          | "tool.executed"
+          | "skill.loaded"
+          | "model.call";
+        timestamp: string;
+        sessionId: string;
+        taskId: string;
+        callId?: string;
+        durationMs?: number;
+        status?: "completed" | "failed" | "cancelled";
+        model?: string;
+        provider?: string;
+        inputTokens?: number;
+        outputTokens?: number;
+        cacheReadTokens?: number;
+        cacheWriteTokens?: number;
+        costUsd?: number;
+        usageComplete?: boolean;
+        tool?: string;
+        skill?: string;
+        skillVersion?: string;
+        mcp?: string;
+        metadata?: {
+          [key: string]: string | number | boolean;
+        };
+      }>;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "events" }] }]);
+    return (options?.client ?? this.client).post<PostV1InferenceAnalyticsEventsResponses, unknown, ThrowOnError>({
+      url: "/v1/inference/analytics/events",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Read task activity collected after the analytics choice
+   */
+  public getV1InferenceAnalyticsActivity<ThrowOnError extends boolean = false>(
+    parameters?: {
+      days?: number;
+      memberId?: string;
+      taskId?: string;
+      sessionId?: string;
+      before?: string;
+      beforeId?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "days" },
+            { in: "query", key: "memberId" },
+            { in: "query", key: "taskId" },
+            { in: "query", key: "sessionId" },
+            { in: "query", key: "before" },
+            { in: "query", key: "beforeId" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<GetV1InferenceAnalyticsActivityResponses, unknown, ThrowOnError>({
+      url: "/v1/inference/analytics/activity",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Read provider-reported consumption for OpenWork Models
+   */
+  public getV1InferenceAnalyticsConsumption<ThrowOnError extends boolean = false>(
+    parameters?: {
+      days?: number;
+      memberId?: string;
+      taskId?: string;
+      sessionId?: string;
+      before?: string;
+      beforeId?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "days" },
+            { in: "query", key: "memberId" },
+            { in: "query", key: "taskId" },
+            { in: "query", key: "sessionId" },
+            { in: "query", key: "before" },
+            { in: "query", key: "beforeId" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).get<GetV1InferenceAnalyticsConsumptionResponses, unknown, ThrowOnError>({
+      url: "/v1/inference/analytics/consumption",
+      ...options,
+      ...params,
+    });
+  }
+
+  public postV1InferenceAnalyticsLangfuseTest<ThrowOnError extends boolean = false>(
+    parameters?: {
+      host?: string;
+      publicKey?: string;
+      secretKey?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "host" },
+            { in: "body", key: "publicKey" },
+            { in: "body", key: "secretKey" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<PostV1InferenceAnalyticsLangfuseTestResponses, unknown, ThrowOnError>({
+      url: "/v1/inference/analytics/langfuse/test",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  public postV1InferenceAnalyticsLangfuseConnect<ThrowOnError extends boolean = false>(
+    parameters?: {
+      host?: string;
+      publicKey?: string;
+      secretKey?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "host" },
+            { in: "body", key: "publicKey" },
+            { in: "body", key: "secretKey" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PostV1InferenceAnalyticsLangfuseConnectResponses,
+      unknown,
+      ThrowOnError
+    >({
+      url: "/v1/inference/analytics/langfuse/connect",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  public deleteV1InferenceAnalyticsLangfuse<ThrowOnError extends boolean = false>(
+    options?: Options<never, ThrowOnError>,
+  ) {
+    return (options?.client ?? this.client).delete<DeleteV1InferenceAnalyticsLangfuseResponses, unknown, ThrowOnError>({
+      url: "/v1/inference/analytics/langfuse",
+      ...options,
     });
   }
 
