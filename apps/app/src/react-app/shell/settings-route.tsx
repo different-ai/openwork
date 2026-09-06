@@ -2198,6 +2198,12 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       runtime: "direct",
       workspacePaths,
       openworkRemoteAccess: openworkServerSnapshot.openworkServerSettings.remoteAccessEnabled === true,
+      // Environment variables are only read at process spawn. Without this,
+      // engineStart's healthy-engine short-circuit keeps the existing engine
+      // process alive and a newly added variable never reaches it, silently
+      // breaking the "Apply changes" button's promise. Do not remove this as
+      // a supposedly redundant flag.
+      forceRestart: true,
     });
     const reconnected = await openworkServerStore.reconnectOpenworkServer();
     if (!reconnected) {
