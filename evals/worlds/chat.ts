@@ -219,16 +219,99 @@ export async function paletteSessionActions(seed: Seed) {
   return { app, workspace, session };
 }
 
-export async function newSplitPrimary(seed: Seed) {
+async function splitPaneQuestions(
+  seed: Seed,
+  name: string,
+  agentWorkloads: MockAgentWorkload[],
+  policy: Record<string, unknown> = { permission: { question: "allow" } },
+) {
   const providerId = "split-send-mock";
   const modelId = "split-send-model";
+  const mock = seed.mock({ agentWorkloads });
+  const den = await seed.den({ mocks: { agent: mock } });
+  const app = await seed.desktop({ name, den, as: "admin", model: `${providerId}/${modelId}` });
+  const workspace = await seed.workspace(app, seed.tmpPath(name));
+  // Arrange an allowed native question tool independently of custom-agent defaults.
+  // TODO(primitive): write workspace fixture files through a first-class seed API.
+  const questionPolicyWritten = await seed.evalIn(app, `async (workspaceId, content) => {
+    const port = localStorage.getItem("openwork.server.port");
+    const token = localStorage.getItem("openwork.server.token");
+    const response = await fetch("http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId) + "/files/content", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+      body: JSON.stringify({ path: "opencode.json", content }),
+    });
+    return response.ok;
+  }`, { args: [workspace.workspaceId, JSON.stringify(policy)], awaitPromise: true });
+  if (questionPolicyWritten !== true) throw new Error("Could not arrange the question-tool policy.");
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    provider: {
+      [providerId]: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "Split send mock",
+        options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-split-send" },
+        models: { [modelId]: { name: "Split send model" } },
+      },
+    },
+  });
+  return { app, workspace, mock: den.mocks.agent };
+}
+
+export async function delegatedQuestionHandoff(seed: Seed) {
+  const engine = resolveEvalEngine();
+  const delegationTool = engine === "v2" ? "subagent" : "task";
+  const rootPrompt = "Delegate choosing the task format, then report the result.";
+  const child = {
+    prompt: "Help me choose the delegated task format",
+    question: "Which format should the child task use?",
+    answer: "Child checklist",
+    alternative: "Child outline",
+  };
+  const unrelated = {
+    prompt: "Help me choose the unrelated task format",
+    question: "Which format should the unrelated task use?",
+    answer: "Unrelated outline",
+    alternative: "Unrelated checklist",
+  };
+  const base = await splitPaneQuestions(seed, "delegated-question-handoff", [
+    {
+      promptMarker: rootPrompt, latestUserTurn: true,
+      finalReply: "Unused: return the actual child result.", finalReplyFrom: "last-tool-text",
+      steps: [{ tool: delegationTool, arguments: {
+        description: "Choose delegated task format", prompt: child.prompt,
+        // v2 beta-19086 calls this subagent; foreground must await the child's answer.
+        ...(engine === "v2" ? { agent: "general", background: false } : { subagent_type: "general" }),
+      } }],
+    },
+    ...[child, unrelated].map((question): MockAgentWorkload => ({
+      promptMarker: question.prompt, latestUserTurn: true,
+      finalReply: "Unused: return the actual question result.", finalReplyFrom: "last-tool-text",
+      steps: [{ tool: "question", arguments: { questions: [{
+        header: "Task format", question: question.question,
+        options: [
+          { label: question.answer, description: "Use this format" },
+          { label: question.alternative, description: "Use the other format" },
+        ],
+      }] } }],
+    })),
+  ], {
+    permission: { question: "allow", task: "allow" },
+    // Both engines deny questions for general by default; v2 migrates task to subagent.
+    agent: { general: { permission: { question: "allow" } } },
+  });
+  const root = await seedSessionRetry(seed, base.app, { title: "Delegated question parent" });
+  const other = await seedSessionRetry(seed, base.app, { title: "Unrelated question root" });
+  return { ...base, engine, delegationTool, root: { ...root, prompt: rootPrompt }, child, unrelated: { ...other, ...unrelated } };
+}
+
+export async function newSplitPrimary(seed: Seed) {
   const primaryPrompt = "Reply to the primary split message";
   const secondaryPrompt = "Reply to the secondary split message";
   const switchPrompt = "Reply after switching the primary session";
   const primaryQuestionPrompt = "Help me choose the main task format";
   const secondaryQuestionPrompt = "Help me choose the side task format";
   const contextPrompt = "Describe your conversation context";
-  const mock = seed.mock({ agentWorkloads: [
+  const { app, workspace } = await splitPaneQuestions(seed, "new-split-session", [
     ...["Main", "Side"].map((pane): MockAgentWorkload => ({
       promptMarker: pane === "Main" ? primaryQuestionPrompt : secondaryQuestionPrompt,
       latestUserTurn: true, finalReply: "Answered the format question.", finalReplyFrom: "last-tool-text",
@@ -241,33 +324,7 @@ export async function newSplitPrimary(seed: Seed) {
     { latestUserTurn: true, promptMarker: primaryPrompt, finalReply: "Primary split received", steps: [] },
     { latestUserTurn: true, promptMarker: secondaryPrompt, finalReply: "Secondary split received", steps: [] },
     { latestUserTurn: true, promptMarker: switchPrompt, finalReply: "Switched session received", steps: [] },
-  ] });
-  const den = await seed.den({ mocks: { agent: mock } });
-  const app = await seed.desktop({ name: "new-split-session", den, as: "admin", model: `${providerId}/${modelId}` });
-  const workspace = await seed.workspace(app, seed.tmpPath("new-split-session"));
-  // Arrange an allowed native question tool independently of custom-agent defaults.
-  // TODO(primitive): write workspace fixture files through a first-class seed API.
-  const questionPolicyWritten = await seed.evalIn(app, `async (workspaceId) => {
-    const port = localStorage.getItem("openwork.server.port");
-    const token = localStorage.getItem("openwork.server.token");
-    const response = await fetch("http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId) + "/files/content", {
-      method: "POST",
-      headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
-      body: JSON.stringify({ path: "opencode.json", content: JSON.stringify({ permission: { question: "allow" } }) }),
-    });
-    return response.ok;
-  }`, { args: [workspace.workspaceId], awaitPromise: true });
-  if (questionPolicyWritten !== true) throw new Error("Could not arrange the question-tool policy.");
-  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
-    provider: {
-      [providerId]: {
-        npm: "@ai-sdk/openai-compatible",
-        name: "Split send mock",
-        options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-split-send" },
-        models: { [modelId]: { name: "Split send model" } },
-      },
-    },
-  });
+  ]);
   const switchSession = await seedSessionRetry(seed, app, { title: "Split switch target" });
   const session = await seedSessionRetry(seed, app, { title: "New split primary" });
   const splitFacts = () => evalIn(app, `(() => {
