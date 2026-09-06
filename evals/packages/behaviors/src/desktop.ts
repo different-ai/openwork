@@ -38,6 +38,24 @@ export async function evalIn(
   });
 }
 
+/** Quit through Chromium before disposing a surface. Process-group signals
+ * are cleanup, not a user quit: they can lose pending localStorage writes.
+ * Matches the graceful restart used by the updater-channel journey. */
+export async function quitDesktop(app: Surface): Promise<void> {
+  await app.client.send("Browser.close").catch((error: unknown) => {
+    if (!/CDP websocket (?:failed|closed)/i.test(messageText(error))) throw error;
+  });
+  const deadline = Date.now() + DEFAULT_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const stopped = await fetch(`${app.handle.cdpUrl.replace(/\/$/, "")}/json/version`, {
+      signal: AbortSignal.timeout(1_000),
+    }).then(() => false, () => true);
+    if (stopped) return;
+    await sleep(POLL_INTERVAL_MS);
+  }
+  throw new Error("Desktop did not quit within 30000ms.");
+}
+
 async function timeoutError(app: Surface, message: string): Promise<Error> {
   return new Error(`${message} On screen: ${await dumpScreenState(app)}.`);
 }

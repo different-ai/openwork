@@ -231,22 +231,74 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
+  local-handoff:
+    # The profile-permission fault and restart must run beside Electron.
+    # Keep this one journey scheduled even though it cannot use Daytona.
+    if: >-
+      github.repository == 'different-ai/openwork' &&
+      (github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' &&
+      (inputs.only == '' || contains('cross-server-handoff-atomic-commit.e2e.test.ts', inputs.only))))
+    name: E2E local (cross-server-handoff-atomic-commit.e2e.test.ts)
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-tests
+      - name: Prepare local Den and Electron
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y xvfb x11-utils libgtk-3-0 libnss3 libasound2t64 libgbm1
+          pnpm --filter @openwork/types build
+          pnpm --filter @openwork-ee/den-db build
+          pnpm --filter @openwork/email build
+          pnpm dev:den:mysql
+      - name: Run local handoff journey
+        run: |
+          set -euo pipefail
+          # Permission failures must be real; root would bypass the fault.
+          test "$(id -u)" -ne 0
+          xvfb-run -a pnpm evals:e2e cross-server-handoff-atomic-commit.e2e.test.ts --local 2>&1 | tee /tmp/local-handoff-e2e.log
+      - name: Upload local handoff evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: local-handoff-e2e
+          path: |
+            evals/results/test-runs/
+            /tmp/local-handoff-e2e.log
+          retention-days: 14
+          if-no-files-found: warn
+
   verdict:
     needs:
       - plan
       - e2e
-    if: always() && needs.plan.outputs.enabled == 'true'
+      - local-handoff
+    if: always() && (needs.plan.outputs.enabled == 'true' || needs.local-handoff.result != 'skipped')
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - name: Report Daytona E2E verdict
         env:
           E2E_RESULT: ${{ needs.e2e.result }}
+          LOCAL_HANDOFF_RESULT: ${{ needs.local-handoff.result }}
           EVENT_NAME: ${{ github.event_name }}
           HAS_TESTS: ${{ needs.plan.outputs.has_tests }}
         run: |
           set -euo pipefail
 
+          echo "Local handoff E2E result: **$LOCAL_HANDOFF_RESULT**." >> "$GITHUB_STEP_SUMMARY"
+          if [ "$LOCAL_HANDOFF_RESULT" != "success" ] && [ "$LOCAL_HANDOFF_RESULT" != "skipped" ]; then
+            exit 1
+          fi
+          # A manual filter can select only the local journey.
+          if [ "$HAS_TESTS" != "true" ] && [ "$LOCAL_HANDOFF_RESULT" = "success" ]; then
+            exit 0
+          fi
           if [ "$EVENT_NAME" = "workflow_run" ] && [ "$HAS_TESTS" != "true" ]; then
             echo "Warden suggestion: add or update an evals/specs/<feature>.e2e.test.ts test for this PR." >> "$GITHUB_STEP_SUMMARY"
             exit 0
