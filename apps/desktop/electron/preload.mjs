@@ -213,7 +213,7 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     signedInSites() { return ipcRenderer.invoke("openwork:browser-logins:signedIn"); },
     forgetSite(site) { return ipcRenderer.invoke("openwork:browser-logins:forgetSite", site); },
     forgetAll() { return ipcRenderer.invoke("openwork:browser-logins:forgetAll"); },
-    ...(process.env.OPENWORK_EVAL_BROWSER_LOGIN_SYNC === "1" ? {
+    ...(process.env.OPENWORK_EVAL_E2E_TESTS === "1" ? {
       writeTestStore(request) { return ipcRenderer.invoke("openwork:browser-logins:writeTestStore", request); },
     } : {}),
   },
