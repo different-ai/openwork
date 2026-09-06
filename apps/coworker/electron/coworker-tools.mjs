@@ -366,17 +366,23 @@ function sendJson(response, status, payload) {
  * bearer token belongs to (null rejects the request). Returns the base URL the
  * engine connects to and the config to register in a workspace.
  */
-export async function createCoworkerToolsServer({ resolveSlug, handlers, tools = toolCatalog(), instructions = DEFAULT_INSTRUCTIONS, version = "0.0.0", host = "127.0.0.1", port = 0 }) {
+export async function createCoworkerToolsServer({ resolveSlug, handlers, onContextTool, tools = toolCatalog(), instructions = DEFAULT_INSTRUCTIONS, version = "0.0.0", host = "127.0.0.1", port = 0 }) {
   const serverInfo = { name: "open-coworker", version };
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
-    if (url.pathname !== "/mcp") {
+    if (url.pathname !== "/mcp" && !(url.pathname === "/context" && onContextTool)) {
       sendJson(response, 404, { error: "not_found" });
       return;
     }
     const slug = resolveSlug(bearerToken(request));
     if (!slug) {
       sendJson(response, 401, { error: "unauthorized", message: "This coworker token is not known to Open Coworker." });
+      return;
+    }
+    if (url.pathname === "/context") {
+      if (request.method !== "POST") { sendJson(response, 405, { error: "Use POST." }); return; }
+      try { sendJson(response, 200, await onContextTool(slug, JSON.parse(await readBody(request)))); }
+      catch (error) { sendJson(response, 400, { error: error.message || "Collaboration could not be requested." }); }
       return;
     }
     if (request.method === "GET") {

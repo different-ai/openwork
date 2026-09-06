@@ -1,24 +1,14 @@
 import { useComposerDraft } from "@/ui/use-composer-draft";
-import { createHeadlessThreadClient, isRunning, type HeadlessThreadClient, type HeadlessTurnAcceptance } from "@openwork/headless-threads";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { coworkerBridge, type CoworkerGroupSummary, type CoworkerGroupTurn, type CoworkerSummary, type GroupTimelineEvent, type RuntimeInfo } from "@/lib/bridge";
+import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
+import { coworkerBridge, type CollaborationReceipt, type CoworkerGroupSummary, type CoworkerGroupTurn, type CoworkerSummary, type GroupTimelineEvent, type RuntimeInfo } from "@/lib/bridge";
 import { assignmentPrompt, assignmentTitle, timeLabelBetween, type DiscussionMessage } from "@/lib/conversation";
 import { combineSummaryLines, describeCoworkerSummary, type CoworkerSummaryLine } from "@/lib/coworker-summary";
-import { classifyThreads, discussionIds, loadDiscussionRegistry, registerDiscussion } from "@/lib/discussions";
+import { classifyThreads, discussionIds, loadDiscussionRegistry } from "@/lib/discussions";
 import { lastDocumentsOpened } from "@/ui/documents";
-import { effortForTurn, effortLevelFor, variantForLevel } from "@/lib/effort";
-import { ROUTING_TIMEOUT_MS, earlierSpeakerOrders, facilitatorModels, facilitatorPrompt, routeWithFacilitator, type FacilitatorAsk } from "@/lib/facilitator";
 import {
-  busyGroupSpeakers,
-  dequeueGroupMessage,
-  enqueueGroupMessage,
-  liveGroupRun,
   publishGroupRun,
-  queuedGroupMessages,
-  startGroupRun,
   stopGroupRun,
-  subscribeGroupRuns,
-  type LiveGroupRun,
   type QueuedGroupMessage,
 } from "@/lib/group-runs";
 import {
@@ -28,22 +18,18 @@ import {
   describeTurnProgress,
   listNames,
   mentionCandidates,
-  replyTextSince,
-  resumeGroupTurn,
-  runGroupTurn,
   unfinishedSpeakers,
   type GroupParticipant,
-  type GroupTurnDeps,
-  type RoutingPlan,
-  unavailableModelReason,
 } from "@/lib/groups";
-import { createCoworkerThreads, type EngineModelCatalog } from "@/lib/threads";
-import { failureText } from "@/lib/turn-failure";
+import { createCoworkerThreads } from "@/lib/threads";
+import { executionProgress, type ExecutionActivity } from "@/lib/progress-activity";
+import { PROGRESS_LIMITS } from "@/lib/progress-config";
+import { LiveRow } from "@/ui/live-row";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
 import { GroupAvatars } from "@/ui/coworker-rail";
 import { InteractionCard, LETTERS, OptionRow, typingInField } from "@/ui/interactions";
-import { ActionMenu, Button, ErrorNote, PlusIcon, StatusDot } from "@/ui/kit";
-import { SendButton, SummaryLine } from "@/ui/threads";
+import { ActionMenu, Button, ErrorNote, PlusIcon } from "@/ui/kit";
+import { CollaborationReceipts, SendButton, SummaryLine } from "@/ui/threads";
 import { useAutoGrow } from "@/ui/use-auto-grow";
 
 /** How long one coworker may take over one reply before the turn moves on. */
@@ -55,67 +41,6 @@ function newId(prefix: string): string {
 
 function timeLabel(at: number): string {
   return new Date(at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-}
-
-/** The hidden coordinator workspace, registered once per app run; a failure is forgotten so the next turn tries again. */
-let coordinatorPromise: Promise<{ workspaceId: string }> | null = null;
-function coordinatorReady(): Promise<{ workspaceId: string }> {
-  coordinatorPromise ??= coworkerBridge.coordinator.ensure().then((coordinator) => {
-    if (!coordinator.workspaceId) throw new Error("The coordinator workspace is not ready.");
-    return coordinator;
-  });
-  coordinatorPromise.catch(() => {
-    coordinatorPromise = null;
-  });
-  return coordinatorPromise;
-}
-const CATALOG_TTL_MS = 60_000;
-/** How long a settled thread may still be catching up on its reply text before it counts as no reply. */
-const REPLY_TEXT_GRACE_MS = 10_000;
-
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(done, ms);
-    function done() {
-      clearTimeout(timer);
-      signal.removeEventListener("abort", done);
-      resolve();
-    }
-    signal.addEventListener("abort", done, { once: true });
-  });
-}
-
-/**
- * The visible text of one accepted turn once the thread is done with it. A
- * thread can read idle for a moment before its reply text has landed, so an
- * empty reply gets a short grace period (and another wait if the thread turns
- * out to be running again) before it counts as no reply.
- */
-async function settledReplyText(client: HeadlessThreadClient, threadId: string, acceptance: HeadlessTurnAcceptance, timeoutMs: number, signal: AbortSignal, name: string): Promise<string> {
-  const deadline = Date.now() + timeoutMs;
-  let result = await client.waitForThread(threadId, { timeoutMs, pollIntervalMs: 600, since: acceptance, signal });
-  for (;;) {
-    if (result.outcome === "aborted") throw new Error("Stopped.");
-    if (result.outcome === "timeout") {
-      await client.abortThread(threadId).catch(() => undefined);
-      throw new Error(`${name} took too long to reply.`);
-    }
-    if (result.outcome === "failed") throw new Error(result.terminalError ? failureText(result.terminalError) : `${name} could not reply.`);
-    const text = replyTextSince(result.snapshot.messages, acceptance.messageCountBefore);
-    if (text) return text;
-    const graceEnd = Date.now() + REPLY_TEXT_GRACE_MS;
-    let snapshot = result.snapshot;
-    while (Date.now() < graceEnd && !signal.aborted) {
-      await sleep(500, signal);
-      snapshot = await client.getThreadSnapshot(threadId, { signal });
-      const later = replyTextSince(snapshot.messages, acceptance.messageCountBefore);
-      if (later) return later;
-      if (isRunning(snapshot.status)) break;
-    }
-    if (signal.aborted) throw new Error("Stopped.");
-    if (!isRunning(snapshot.status)) return "";
-    result = await client.waitForThread(threadId, { timeoutMs: Math.max(1_000, deadline - Date.now()), pollIntervalMs: 600, since: acceptance, signal });
-  }
 }
 
 /** The `@handle` being typed just before the caret, if any. */
@@ -178,6 +103,75 @@ function useGroupHoldings(members: readonly CoworkerSummary[], runtime: RuntimeI
   return line;
 }
 
+/** One admitted native execution. Closing this observer only disconnects its event stream. */
+function GroupExecutionRow({ activity, coworker, runtime }: { activity: ExecutionActivity; coworker: CoworkerSummary; runtime: RuntimeInfo }) {
+  const currentRef = useRef(activity);
+  currentRef.current = activity;
+  const [streamed, setStreamed] = useState<Array<{ messageId: string; id: string; text: string }>>([]);
+  useEffect(() => {
+    if (!coworker.workspaceId || !runtime.engineManaged) return;
+    const controller = new AbortController();
+    const approved = new Set<string>();
+    const parts = new Map<string, { messageId: string; id: string; text: string }>();
+    const client = createOpencodeClient({ baseUrl: `${runtime.serverUrl}/workspace/${encodeURIComponent(coworker.workspaceId)}/opencode`, headers: { Authorization: `Bearer ${runtime.ownerToken}` }, redirect: "error" });
+    const accepts = (messageId: string) => approved.has(messageId) || currentRef.current.replies.some((reply) => reply.id === messageId && reply.parentId === activity.messageId);
+    const keep = (messageId: string, id: string, text: string) => {
+      const key = `${messageId}:${id}`;
+      if (!parts.has(key) && parts.size >= PROGRESS_LIMITS.maxReplyParts) return;
+      const used = [...parts].reduce((size, [other, part]) => size + (other === key ? 0 : part.text.length), 0);
+      parts.set(key, { messageId, id, text: text.slice(0, Math.max(0, PROGRESS_LIMITS.maxReplyChars - used)) });
+      setStreamed([...parts.values()]);
+    };
+    void (async () => {
+      try {
+        const subscription = await client.event.subscribe(undefined, { signal: controller.signal });
+        for await (const event of subscription.stream) {
+          if (controller.signal.aborted) return;
+          if (event.type === "message.updated") {
+            const info = event.properties.info;
+            if (info.sessionID === activity.threadId && info.role === "assistant" && info.parentID === activity.messageId && approved.size < PROGRESS_LIMITS.maxReplyParts) approved.add(info.id);
+          } else if (event.type === "message.part.updated") {
+            const part = event.properties.part;
+            if (part.sessionID !== activity.threadId || !accepts(part.messageID) || part.type !== "text") continue;
+            if (part.synthetic || part.ignored) {
+              parts.delete(`${part.messageID}:${part.id}`);
+              setStreamed([...parts.values()]);
+              continue;
+            }
+            const current = parts.get(`${part.messageID}:${part.id}`);
+            keep(part.messageID, part.id, part.time?.end === undefined && current && current.text.length > part.text.length ? current.text : part.text);
+          } else if (event.type === "message.part.delta") {
+            const part = event.properties;
+            if (part.sessionID !== activity.threadId || !accepts(part.messageID) || part.field !== "text") continue;
+            // Deltas cannot establish that a part is visible text. Require an announced or projected text part.
+            const known = parts.get(`${part.messageID}:${part.partID}`) ?? currentRef.current.replies.find((reply) => reply.id === part.messageID)?.parts.find((item) => item.id === part.partID);
+            if (known) keep(part.messageID, part.partID, known.text + part.delta);
+          }
+        }
+      } catch { /* The bounded snapshot poll remains authoritative when live events disconnect. */ }
+    })();
+    return () => { controller.abort(); };
+  }, [activity.executionId, activity.messageId, activity.threadId, coworker.workspaceId, runtime.engineManaged, runtime.ownerToken, runtime.serverUrl]);
+
+  const replies = new Map<string, Map<string, string>>();
+  for (const reply of activity.replies) replies.set(reply.id, new Map(reply.parts.map((part) => [part.id, part.text])));
+  for (const part of streamed) {
+    const parts = replies.get(part.messageId) ?? new Map<string, string>();
+    if (part.text.length > (parts.get(part.id)?.length ?? 0)) parts.set(part.id, part.text);
+    replies.set(part.messageId, parts);
+  }
+  const text = [...replies.values()].map((parts) => [...parts.values()].join("")).filter(Boolean).join("\n").slice(0, PROGRESS_LIMITS.maxReplyChars);
+  const progress = executionProgress(activity, Boolean(text.trim()));
+  return <div className="min-w-0" data-testid="group-working" data-execution-id={activity.executionId} data-message-id={activity.messageId} data-thread-id={activity.threadId} data-speaker={activity.slug}>
+    <p className="mb-1 px-2 text-[11px] font-medium text-mist [overflow-wrap:anywhere]" data-testid="group-speaker-name">{coworker.name}</p>
+    {text ? <div className="flex min-w-0 items-end gap-2" data-message-role="assistant" data-live="true">
+      <span className="shrink-0"><CoworkerAvatar animated={false} color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={24} /></span>
+      <div className="bubble bubble-coworker bubble-tail-left min-w-0 max-w-[76%] whitespace-pre-wrap [overflow-wrap:anywhere]" data-testid="group-live-reply">{text}</div>
+    </div> : null}
+    <LiveRow coworker={coworker} progress={progress} phase={text ? "writing" : "thinking"} wordsArrived={Boolean(text)} />
+  </div>;
+}
+
 /**
  * A group chat: the person and several coworkers in one conversation. Each
  * reply is a real turn in that coworker's own workspace on a group-specific
@@ -217,12 +211,15 @@ export function GroupChat({
   /** Open an assignment a group created, in its owner's view. */
   onOpenAssignment?: (slug: string, threadId: string) => void;
 }) {
-  const [events, setEvents] = useState<GroupTimelineEvent[]>([]);
+  const [observed, setObserved] = useState<{ groupId: string; timeline: GroupTimelineEvent[]; executions: ExecutionActivity[] }>({ groupId: "", timeline: [], executions: [] });
+  const events = observed.groupId === group.id ? observed.timeline : [];
+  const executions = observed.groupId === group.id ? observed.executions : [];
   const [loaded, setLoaded] = useState(false);
   const [message, setMessage] = useComposerDraft(`group:${group.id}`);
-  const [live, setLive] = useState(() => Boolean(liveGroupRun(group.id)));
-  const [liveTurn, setLiveTurn] = useState<CoworkerGroupTurn | null>(() => liveGroupRun(group.id)?.turn ?? null);
-  const [queue, setQueue] = useState<QueuedGroupMessage[]>(() => queuedGroupMessages(group.id));
+  const [live, setLive] = useState(false);
+  const [liveTurn, setLiveTurn] = useState<CoworkerGroupTurn | null>(null);
+  const [queue, setQueue] = useState<QueuedGroupMessage[]>([]);
+  const [receipts, setReceipts] = useState<CollaborationReceipt[]>([]);
   const [failedSend, setFailedSend] = useState<{ text: string; clientMessageId: string; error: string } | null>(null);
   const [error, setError] = useState("");
   const [renaming, setRenaming] = useState(false);
@@ -241,7 +238,8 @@ export function GroupChat({
   eventsRef.current = events;
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
-  const catalogRef = useRef<{ at: number; catalog: EngineModelCatalog } | null>(null);
+  const changedRef = useRef(onGroupChanged);
+  changedRef.current = onGroupChanged;
   useAutoGrow(composerRef, message);
 
   const members = useMemo(
@@ -254,41 +252,38 @@ export function GroupChat({
   const nameFor = useCallback((slug: string) => coworkers.find((coworker) => coworker.slug === slug)?.name ?? slug, [coworkers]);
 
   useEffect(() => {
-    let cancelled = false;
     setLoaded(false);
-    void coworkerBridge.groups.readTimeline(group.id).then((items) => {
-      if (cancelled) return;
-      // A line the live run appended while the timeline was loading is already in state.
-      setEvents((current) => {
-        const known = new Set(items.map((item) => item.id));
-        return [...items, ...current.filter((item) => !known.has(item.id))];
-      });
-      setLoaded(true);
-    }).catch((cause: unknown) => {
-      if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause));
-    });
-    return () => {
-      cancelled = true;
-    };
+    setLive(false);
+    setLiveTurn(null);
+    setQueue([]);
+    setReceipts([]);
   }, [group.id]);
 
-  // The run lives outside the view: pick it up on mount and follow it while here.
-  useEffect(() => subscribeGroupRuns((update) => {
-    if (update.groupId !== group.id) return;
-    if (update.turn) {
-      setLive(true);
-      setLiveTurn(update.turn);
-    }
-    if (update.event) {
-      const stored = update.event;
-      setEvents((current) => (current.some((item) => item.id === stored.id) ? current : [...current, stored]));
-    }
-    if (update.queue) setQueue(update.queue);
-    if (update.done) {
-      setLive(false);
-      setLiveTurn(null);
-    }
-  }), [group.id]);
+  useEffect(() => {
+    let cancelled = false;
+    let reading = false;
+    const refresh = async () => {
+      if (reading) return;
+      reading = true;
+      try {
+        const [status, activity, updated, work] = await Promise.all([coworkerBridge.groups.status(group.id), coworkerBridge.groups.activity(group.id), coworkerBridge.groups.get(group.id), coworkerBridge.collaboration.receipts({ groupId: group.id })]);
+        if (cancelled) return;
+        setLive(status.active); setLiveTurn(status.turn); setQueue(status.queue);
+        publishGroupRun({ groupId: group.id, active: status.active, ...(status.turn ? { turn: status.turn } : {}), done: !status.active });
+        setObserved({ groupId: group.id, ...activity }); setReceipts(work); setLoaded(true); setError("");
+        if (updated.updatedAt !== groupRef.current.updatedAt) changedRef.current(updated);
+      } catch {
+        if (!cancelled) {
+          setObserved((current) => ({ ...current, executions: [] }));
+          setError("Live activity could not be refreshed. Recorded replies and waiting receipts are kept.");
+        }
+      }
+      finally { reading = false; }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), PROGRESS_LIMITS.activityPollMs);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [group.id]);
 
   useEffect(() => {
     onActivityLine(group.id, live && !liveTurn ? "Choosing who should respond…" : describeGroupActivity(events, nameFor, liveTurn));
@@ -302,165 +297,23 @@ export function GroupChat({
     if (loaded && active) composerRef.current?.focus();
   }, [loaded, group.id, active]);
 
-  /** The connected models, read through any workspace and kept for a minute. */
-  async function connectedCatalog(threads: ReturnType<typeof createCoworkerThreads>): Promise<EngineModelCatalog> {
-    if (!catalogRef.current || Date.now() - catalogRef.current.at > CATALOG_TTL_MS) {
-      catalogRef.current = { at: Date.now(), catalog: await threads.listModelCatalog() };
-    }
-    return catalogRef.current.catalog;
-  }
-
-  /** Send one prompt to a member's group thread (created and registered on first use) and return its reply. */
-  async function ask(run: LiveGroupRun, slug: string, prompt: string, signal: AbortSignal): Promise<{ text: string; threadId: string }> {
-    const coworker = coworkersRef.current.find((item) => item.slug === slug);
-    if (!coworker) throw new Error("That coworker is no longer here.");
-    const workspaceId = coworker.workspaceId || (await coworkerBridge.coworkers.ensureWorkspace(slug)).workspaceId;
-    if (!workspaceId) throw new Error(`${coworker.name}'s workspace is not ready.`);
-    // A group reply is an ordinary reply: the effort dial decides its effort from what the model offers; an exact effort the person fixed wins.
-    const catalogThreads = createCoworkerThreads({ serverUrl: runtime.serverUrl, workspaceId, token: runtime.ownerToken });
-    const connected = (await connectedCatalog(catalogThreads)).models;
-    // A saved model that is not connected fails here, by name, rather than as a provider error mid-turn.
-    const unavailable = unavailableModelReason(coworker.model, connected);
-    if (unavailable) throw new Error(unavailable);
-    const offered = connected.find((model) => model.id === coworker.model)?.variants ?? [];
-    const modelVariant = effortForTurn({ kind: "reply", stop: coworker.effortPreference, fixedVariant: coworker.modelVariant, variants: offered });
-    const threads = createCoworkerThreads({ serverUrl: runtime.serverUrl, workspaceId, token: runtime.ownerToken, model: coworker.model, modelVariant });
-    let threadId = groupRef.current.participantThreadIds[slug] ?? "";
-    if (!threadId) {
-      const created = await threads.client.createThread({ title: `Group chat: ${groupRef.current.name}`, signal });
-      threadId = created.id;
-      await registerDiscussion(slug, threadId);
-      const updated = await coworkerBridge.groups.update(groupRef.current.id, { participantThreadIds: { [slug]: threadId } });
-      groupRef.current = updated;
-      onGroupChanged(updated);
-    }
-    run.abortCurrent = () => threads.client.abortThread(threadId);
-    try {
-      const acceptance = await threads.client.sendTurn(threadId, { prompt: briefing ? `${briefing.context}\n\n${prompt}` : prompt, messageId: newId("msg"), signal });
-      return { text: await settledReplyText(threads.client, threadId, acceptance, REPLY_TIMEOUT_MS, signal, coworker.name), threadId };
-    } finally {
-      if (run.abortCurrent) run.abortCurrent = null;
-    }
-  }
-
-  /**
-   * The silent facilitator's one routing pass for a message. It runs in the
-   * hidden coordinator workspace on the model the coworkers use; whatever goes
-   * wrong (no model, an unusable answer, a timeout) resolves null and the
-   * deterministic scorer decides instead — the person only ever sees
-   * "Choosing who should respond…".
-   */
-  async function route(input: Parameters<NonNullable<GroupTurnDeps["route"]>>[0]): Promise<RoutingPlan | null> {
-    // One name already decides who speaks; there is nothing to route.
-    if (!input.mentions.everyone && input.mentions.slugs.length === 1) return null;
-    const current = groupRef.current;
-    const signal = AbortSignal.any([input.signal, AbortSignal.timeout(ROUTING_TIMEOUT_MS)]);
-    const coordinator = await coordinatorReady();
-    const threads = createCoworkerThreads({ serverUrl: runtime.serverUrl, workspaceId: coordinator.workspaceId, token: runtime.ownerToken });
-    const models = facilitatorModels(await connectedCatalog(threads), membersRef.current, current.facilitatorModel);
-    if (!models.primary) return null;
-    const busy = busyGroupSpeakers(current.id);
-    const prompt = facilitatorPrompt({
-      group: current,
-      members: input.participants.map((participant) => ({ ...participant, busy: busy.has(participant.slug) })),
-      recent: input.recent,
-      earlierOrders: earlierSpeakerOrders(current.turns),
-      message: briefing ? `${briefing.context}\n\nUser message: ${input.message}` : input.message,
-      mentions: input.mentions,
-      nameFor,
-    });
-    const client = createHeadlessThreadClient({ baseUrl: runtime.serverUrl, workspaceId: coordinator.workspaceId, token: runtime.ownerToken });
-    let threadId = current.facilitatorThreadId;
-    if (!threadId) {
-      const created = await client.createThread({ title: `Facilitator · ${current.name}`, signal });
-      threadId = created.id;
-      const updated = await coworkerBridge.groups.update(current.id, { facilitatorThreadId: threadId });
-      groupRef.current = updated;
-      onGroupChanged(updated);
-    }
-    const ask: FacilitatorAsk = async (text, model, askSignal) => {
-      // The facilitator thinks least: the lowest effort its model offers, whatever any dial says.
-      const variant = variantForLevel(effortLevelFor("facilitator", "balanced"), model.variants);
-      const acceptance = await client.sendTurn(threadId, { prompt: text, model: { providerId: model.providerId, modelId: model.modelId, ...(variant ? { variant } : {}) }, messageId: newId("msg"), signal: askSignal });
-      return settledReplyText(client, threadId, acceptance, ROUTING_TIMEOUT_MS, askSignal, "The facilitator");
-    };
-    return routeWithFacilitator({
-      prompt,
-      participants: input.participants,
-      mentions: input.mentions,
-      models,
-      ask,
-      signal,
-      // Never shown to the person; kept in the console so a silent fallback can be understood later.
-      onAttempt: (detail) => console.info(`[open-coworker] facilitator ${detail.outcome} on ${detail.model}${detail.reason ? `: ${detail.reason}` : ""}`),
-    });
-  }
-
-  function depsFor(run: LiveGroupRun): GroupTurnDeps {
-    const groupId = group.id;
-    return {
-      ask: (slug, prompt, signal) => ask(run, slug, prompt, signal),
-      route: (input) => route(input),
-      append: async (event) => {
-        const stored = await coworkerBridge.groups.appendEvent(groupId, event);
-        publishGroupRun({ groupId, event: stored });
-        return stored;
-      },
-      begin: async (input) => {
-        const begun = await coworkerBridge.groups.beginTurn(groupId, input);
-        if (begun.userEvent) publishGroupRun({ groupId, event: begun.userEvent });
-        return begun;
-      },
-      record: async (turnId, patch) => {
-        const turn = await coworkerBridge.groups.updateTurn(groupId, turnId, patch);
-        run.turn = turn;
-        return turn;
-      },
-      onTurn: (turn) => {
-        run.turn = turn;
-        publishGroupRun({ groupId, turn });
-      },
-    };
-  }
-
-  /** After a run, the stored record is the truth the view renders: refresh it, then start whatever waited. */
-  async function settleRun(): Promise<void> {
-    const groupId = group.id;
-    const updated = await coworkerBridge.groups.get(groupId).catch(() => null);
-    if (updated) onGroupChanged(updated);
-    const next = dequeueGroupMessage(groupId);
-    if (next) void startTurn(next.text, next.clientMessageId);
-  }
-
   async function startTurn(text: string, clientMessageId: string): Promise<void> {
-    const participants: GroupParticipant[] = membersRef.current;
-    const recent = eventsRef.current;
-    const current = groupRef.current;
     try {
-      await startGroupRun(current.id, async (run) => {
-        publishGroupRun({ groupId: current.id, turn: { id: "", clientMessageId, prompt: text, createdAt: Date.now(), updatedAt: Date.now(), status: "routing", mode: "sequential", routedBy: "fallback", speakers: [] } });
-        await runGroupTurn({ group: { id: current.id, name: current.name }, participants, recent, message: text, clientMessageId, signal: run.controller.signal, deps: depsFor(run) });
-      });
+      await coworkerBridge.groups.submit(group.id, { text, clientMessageId, context: briefing?.context });
+      setLive(true);
     } catch (cause) {
       setFailedSend({ text, clientMessageId, error: cause instanceof Error ? cause.message : String(cause) });
     }
-    await settleRun();
   }
 
   async function resume(turn: CoworkerGroupTurn, only?: string): Promise<void> {
-    const participants: GroupParticipant[] = membersRef.current;
-    const current = groupRef.current;
     setError("");
     try {
-      await startGroupRun(current.id, async (run) => {
-        run.turn = turn;
-        publishGroupRun({ groupId: current.id, turn });
-        await resumeGroupTurn({ group: { id: current.id, name: current.name }, participants, turn, events: eventsRef.current, only, signal: run.controller.signal, deps: depsFor(run) });
-      });
+      await coworkerBridge.groups.submit(group.id, { text: turn.prompt, clientMessageId: newId("resume"), turnId: turn.id, only, attempt: Date.now(), context: briefing?.context });
+      setLive(true);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     }
-    await settleRun();
   }
 
   const briefingRef = useRef(briefing);
@@ -479,7 +332,7 @@ export function GroupChat({
     let checking = false;
     let cancelled = false;
     async function tick() {
-      if (checking || liveGroupRun(group.id)) return;
+      if (checking) return;
       checking = true;
       try {
         const due = await coworkerBridge.allHands.claim();
@@ -511,11 +364,6 @@ export function GroupChat({
     setMessage("");
     setMention(null);
     const clientMessageId = newId("m");
-    if (live || liveGroupRun(group.id)) {
-      // The composer stays usable while a turn runs: this message goes next.
-      enqueueGroupMessage(group.id, { clientMessageId, text });
-      return;
-    }
     void startTurn(text, clientMessageId);
   }
 
@@ -623,15 +471,14 @@ export function GroupChat({
   const unfinished = recoverable ? unfinishedSpeakers(recoverable) : [];
   const showContinue = recoverable && !(unfinished.length === 1 && unfinished[0]?.status === "failed");
   const progressLine = liveTurn ? describeTurnProgress(liveTurn, nameFor) : "";
-  const statusLine = live ? (progressLine || "Choosing who should respond…") : "Ready";
-  const replying = liveTurn?.speakers.find((speaker) => speaker.status === "running");
-  const replyingMember = replying ? coworkers.find((coworker) => coworker.slug === replying.slug) : null;
+  const waiting = receipts.some((receipt) => ["waiting", "waiting-person", "resumption-queued"].includes(receipt.state));
+  const statusLine = !loaded || observed.groupId !== group.id ? "Checking activity" : error ? "Activity unavailable" : executions.length ? `${executions.length} active execution${executions.length === 1 ? "" : "s"}` : live ? (progressLine || "Choosing who should respond…") : waiting ? "Waiting for requested work" : "Ready";
 
   return (
     <div className="glass-main flex h-full min-w-0 flex-1 flex-col" data-testid="group-chat" data-group-id={group.id} data-live={live ? "true" : "false"}>
-      <header className="glass-header window-drag flex h-[78px] items-center gap-3 border-b border-line px-6 pt-2" data-testid="conversation-header">
+      <header className="glass-header window-drag flex min-h-[78px] shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-line px-4 py-3" data-testid="conversation-header">
         <GroupAvatars members={members} size={30} />
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-[1_1_10rem]">
           {renaming ? (
             <input
               autoFocus
@@ -647,9 +494,9 @@ export function GroupChat({
               }}
             />
           ) : (
-            <h1 className="truncate text-sm font-semibold text-snow" data-testid="group-name">{group.name}</h1>
+            <h1 className="whitespace-normal text-sm font-semibold text-snow [overflow-wrap:anywhere]" data-testid="group-name">{group.name}</h1>
           )}
-          <p className="truncate text-xs text-mist" data-testid="conversation-header-title">{members.map((member) => member.name).join(", ")}</p>
+          <p className="whitespace-normal text-xs text-mist [overflow-wrap:anywhere]" data-testid="conversation-header-title">{members.map((member) => member.name).join(", ")}</p>
         </div>
         <div className="window-no-drag flex shrink-0 items-center gap-1" data-testid="conversation-header-actions">
           {live ? <Button variant="ghost" onClick={() => void stopGroupRun(group.id)}>Stop all</Button> : null}
@@ -663,7 +510,7 @@ export function GroupChat({
           />
         </div>
         {/* One plain line, no dot: who is replying, or Ready. */}
-        <span data-testid="coworker-top-status" data-tone={live ? "mist" : "ready"} className={`shrink-0 text-xs ${live ? "text-mist" : "text-ready"}`}>
+        <span data-testid="coworker-top-status" data-tone={statusLine === "Ready" ? "ready" : "mist"} className={`min-w-0 max-w-full whitespace-normal text-xs [overflow-wrap:anywhere] ${statusLine === "Ready" ? "text-ready" : "text-mist"}`}>
           {statusLine}
         </span>
       </header>
@@ -746,12 +593,12 @@ export function GroupChat({
               </div>
             );
           })}
-          {live ? (
-            <div className="flex items-center gap-2.5 px-1 text-xs text-spark" data-testid="group-working" data-phase={liveTurn?.status ?? "routing"}>
-              {replyingMember ? <CoworkerAvatar color={replyingMember.avatarColor} glasses={replyingMember.avatarGlasses} name={replyingMember.name} size={20} /> : <StatusDot tone="spark" />}
-              <span data-testid="group-progress-phrase">{statusLine}</span>
-            </div>
-          ) : null}
+          <CollaborationReceipts receipts={observed.groupId === group.id ? receipts : []} />
+          {executions.map((execution) => {
+            const member = coworkers.find((coworker) => coworker.slug === execution.slug);
+            return member ? <GroupExecutionRow key={execution.executionId} activity={execution} coworker={member} runtime={runtime} /> : null;
+          })}
+          {live && executions.length === 0 ? <p className="px-1 text-[11px] text-mist [overflow-wrap:anywhere]" data-testid="group-progress-phrase">{statusLine}</p> : null}
           {showContinue && recoverable ? (
             <div className="flex items-center justify-center gap-3 text-[11px] text-mist" data-testid="group-turn-recovery" data-turn-id={recoverable.id}>
               <span>{listNames(unfinished.map((speaker) => nameFor(speaker.slug)))} still to reply</span>
@@ -793,7 +640,7 @@ export function GroupChat({
             <div key={item.clientMessageId} className="mb-1.5 flex items-center gap-2 px-4 text-[11px] text-mist" data-testid="group-queued">
               <span className="font-medium text-snow/70">Next</span>
               <span className="min-w-0 flex-1 truncate">{item.text}</span>
-              <button type="button" className="rounded-full px-1.5 text-mist hover:text-snow" aria-label="Do not send this" onClick={() => dequeueGroupMessage(group.id, item.clientMessageId)}>×</button>
+              <button type="button" className="rounded-full px-1.5 text-mist hover:text-snow" aria-label="Do not send this" onClick={() => void coworkerBridge.groups.removeQueued(group.id, item.clientMessageId)}>×</button>
             </div>
           ))}
           <div className={`relative rounded-[24px] border bg-panel/60 p-3 transition-colors focus-within:border-spark/50 ${assignmentMode ? "border-spark/35" : "border-line"}`} data-testid="coworker-input-surface">

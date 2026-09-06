@@ -61,6 +61,7 @@ const partSchema = z
         output: z.unknown().optional(),
         error: z.string().optional(),
         metadata: z.record(z.string(), z.unknown()).optional(),
+        time: z.object({ start: z.number().nonnegative().optional(), end: z.number().nonnegative().optional() }).passthrough().optional(),
       })
       .passthrough()
       .optional(),
@@ -141,6 +142,8 @@ function toPart(part: PartWire): HeadlessThreadMessagePart {
   if (part.state?.output !== undefined) mapped.toolOutput = part.state.output;
   if (part.state?.error !== undefined) mapped.toolError = part.state.error;
   if (part.state?.metadata !== undefined) mapped.toolMetadata = part.state.metadata;
+  if (part.state?.time?.start !== undefined) mapped.toolStartedAt = part.state.time.start;
+  if (part.state?.time?.end !== undefined) mapped.toolCompletedAt = part.state.time.end;
   if (part.synthetic !== undefined) mapped.synthetic = part.synthetic;
   if (part.ignored !== undefined) mapped.ignored = part.ignored;
   return mapped;

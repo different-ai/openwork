@@ -97,6 +97,7 @@ function normalizeTurn(raw) {
     mode: TURN_MODES.has(raw.mode) ? raw.mode : "sequential",
     routedBy: ROUTED_BY.has(raw.routedBy) ? raw.routedBy : "fallback",
     speakers,
+    dependsOn: Array.isArray(raw.dependsOn) ? raw.dependsOn.filter((edge) => Array.isArray(edge) && edge.length === 2 && edge.every((slug) => SLUG.test(slug))) : [],
   };
 }
 
@@ -180,11 +181,15 @@ function normalizeStoredGroup(raw) {
   };
 }
 
-export async function createGroup(coworkersDir, { name, participantSlugs }, { now = Date.now() } = {}) {
+export async function createGroup(coworkersDir, { id, name, participantSlugs }, { now = Date.now() } = {}) {
   const slugs = normalizeParticipantSlugs(participantSlugs);
+  if (id) {
+    if (!isGroupId(id)) throw new Error("Invalid group id.");
+    try { return await getGroup(coworkersDir, id); } catch (error) { if (error.code !== "ENOENT") throw error; }
+  }
   const group = {
     schemaVersion: GROUP_SCHEMA_VERSION,
-    id: newGroupId(),
+    id: id ?? newGroupId(),
     name: normalizeName(name, "Group chat"),
     participantSlugs: slugs,
     participantThreadIds: {},
@@ -297,9 +302,8 @@ export async function beginGroupTurn(coworkersDir, id, { clientMessageId, prompt
     const next = { ...group, turns: [...group.turns, turn].slice(-MAX_TURNS), updatedAt: now };
     return { next, result: { group: next, turn, created: true } };
   });
-  if (!outcome.created) return { ...outcome, userEvent: null };
-  const userEvent = await appendGroupEvent(coworkersDir, id, { kind: "user", text, turnId: outcome.turn.id, clientMessageId: messageId }, { now });
-  return { ...outcome, userEvent };
+  const userEvent = await appendGroupEvent(coworkersDir, id, { id: `evt_${outcome.turn.id}_user`, kind: "user", text, turnId: outcome.turn.id, clientMessageId: messageId }, { now });
+  return { ...outcome, userEvent: outcome.created ? userEvent : null };
 }
 
 /**
@@ -324,6 +328,7 @@ export async function updateGroupTurn(coworkersDir, id, turnId, patch = {}, { no
     const turn = {
       ...current,
       speakers,
+      dependsOn: patch.dependsOn ?? current.dependsOn ?? [],
       mode: TURN_MODES.has(patch.mode) ? patch.mode : current.mode,
       routedBy: ROUTED_BY.has(patch.routedBy) ? patch.routedBy : current.routedBy,
       status: TURN_STATUSES.has(patch.status) ? patch.status : deriveTurnStatus(speakers),
@@ -395,6 +400,7 @@ export function normalizeEvent(input, { now = Date.now() } = {}) {
   // An action line links what the group did (an assignment, say) to where it lives.
   if (typeof input.action === "string" && input.action) event.action = input.action;
   if (typeof input.title === "string" && input.title) event.title = input.title;
+  if (SPEAKER_PARTS.has(input.part)) event.part = input.part;
   return event;
 }
 
@@ -435,6 +441,10 @@ export async function appendGroupEvent(coworkersDir, id, input, { now = Date.now
     .catch(() => undefined)
     .then(async () => {
       await mkdir(path.dirname(target), { recursive: true });
+      if (input.id) {
+        const existing = (await readGroupTimeline(coworkersDir, id, { limit: Number.MAX_SAFE_INTEGER })).find((entry) => entry.id === input.id || (input.kind === "user" && input.turnId && entry.kind === "user" && entry.turnId === input.turnId));
+        if (existing) return existing;
+      }
       await appendFile(target, `${JSON.stringify(event)}\n`, "utf8");
       return event;
     });

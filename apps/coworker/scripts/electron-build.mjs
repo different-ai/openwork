@@ -53,13 +53,14 @@ copyFileSync(
 const serverDistDir = resolve(repoRoot, "apps", "server", "dist");
 const constantsSource = resolve(repoRoot, "constants.json");
 copyFileSync(constantsSource, resolve(serverDistDir, "constants.json"));
-const serverEntry = resolve(serverDistDir, "server.js");
-const serverSource = readFileSync(serverEntry, "utf8");
-const patchedServer = serverSource.replace(
-  /from\s+["']\.\.\/\.\.\/\.\.\/constants\.json["']/,
-  'from "./constants.json"',
-);
-if (patchedServer !== serverSource) writeFileSync(serverEntry, patchedServer, "utf8");
+// Every top-level server module resolves the same packaged copy. New server
+// modules (including engine preview selection) must not reach outside the asar.
+for (const name of readdirSync(serverDistDir).filter((name) => name.endsWith(".js"))) {
+  const entry = resolve(serverDistDir, name);
+  const source = readFileSync(entry, "utf8");
+  const packaged = source.replace(/from\s+["']\.\.\/\.\.\/\.\.\/constants\.json["']/g, 'from "./constants.json"');
+  if (packaged !== source) writeFileSync(entry, packaged, "utf8");
+}
 
 rmSync(packagedServerRoot, { recursive: true, force: true });
 cpSync(serverDistDir, resolve(packagedServerRoot, "dist"), { recursive: true });

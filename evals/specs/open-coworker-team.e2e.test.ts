@@ -15,11 +15,16 @@ import { expect, onTestFinished } from "vitest";
  * leave no tile behind. A deterministic OpenAI-compatible model plays the
  * coworkers' side so every tool call is exact; everything else is the real
  * product path.
+ *
+ * Coverage gap: this team journey also needs private consultation -> visible
+ * group answer -> one original-thread synthesis, and Worker yield -> one return
+ * through the installed plugin. Only inference is scripted; user sends start
+ * work and backend reads witness it. No collaboration records are seeded.
  */
 
 const enabled = process.env.OPENWORK_EVAL_E2E_TESTS === "1";
 const title = enabled
-  ? "Open Coworker proposes a team at onboarding, teammates know each other and hand work over, and a coworker's suggestion adds a teammate in one tap"
+  ? "Open Coworker builds a team, hands work over, consults through a visible group and returns bounded Worker results to the original thread once"
   : "Open Coworker team journey skipped — needs: set OPENWORK_EVAL_E2E_TESTS=1";
 
 const SCRIPTED_PROVIDER = "eval-scripted";
@@ -43,11 +48,79 @@ const SALES_REPLY = "A sales coworker could own that — want me to add one?";
 const SALES_AGAIN_PROMPT = "Anyone for the sales leads, then?";
 const SALES_AGAIN_REPLY = "Understood, I'll leave that be for now.";
 
+const PRIVATE_CANARY = "PRIVATE-NOVA-CANARY-73";
+const CONSULT_PROMPT = `Ask Editor which launch headline fits the public brief, then bring me your recommendation here. Share only the public brief: a weekly planning tool for small teams. Keep this private note here: ${PRIVATE_CANARY}.`;
+const CONSULT_QUESTION = "Which launch headline fits a weekly planning tool for small teams?";
+const CONSULT_CONTEXT = "Public brief: a weekly planning tool for small teams.";
+const CONSULT_OBJECTIVE = "Recommend a launch headline after Editor's consultation.";
+const CONSULT_ACK = "I have asked Editor about the public brief and will bring the recommendation back here.";
+const CONSULT_ANSWER = "Choose Plan the week together: it names the shared weekly outcome without an unsupported claim.";
+const CONSULT_SYNTHESIS = "Editor's recommendation is Plan the week together. I recommend it because it matches the public brief without overstating the benefit.";
+const WORKER_PROMPT = "Start one bounded Worker to check the supplied inventory and bring its finding back here. Inventory: three notebooks and two pens. Give it one turn.";
+const WORKER_NAME = "Inventory check";
+const WORKER_OBJECTIVE = "Review the bounded inventory check and report the total here.";
+const WORKER_ACK = "I have started the inventory check and will review its finding here.";
+const WORKER_FINDING = "The supplied inventory contains five items: three notebooks and two pens.";
+const WORKER_SYNTHESIS = "I reviewed the Worker's inventory finding: five items in total, with no outside lookup needed.";
+const FOREGROUND_PROMPT = "While that check runs, what is two plus two?";
+const FOREGROUND_REPLY = "Two plus two is four.";
+const CANCEL_PROMPT = "Start a separate one-turn Worker to check the supplied spare inventory: one folder. I may stop its follow-up.";
+const CANCEL_NAME = "Spare inventory check";
+const CANCEL_OBJECTIVE = "Review the spare inventory check here.";
+const CANCEL_ACK = "I have started the spare inventory check.";
+const CANCEL_FINDING = "The spare inventory contains one folder.";
+const CANCEL_SYNTHESIS = "The spare inventory review is complete.";
+const FOLLOW_UP = "Continue the original task using these requested results.";
+const OTHER_DISCUSSION_PROMPT = "Keep this separate discussion for tomorrow's agenda.";
+const OTHER_DISCUSSION_REPLY = "This discussion is for tomorrow's agenda.";
+const PRIVATE_EDITOR_PROMPT = "Can you answer this private question while the consultation is running?";
+const PRIVATE_EDITOR_REPLY = "Yes. This private reply is independent of the group consultation.";
+
+type GateName = "consultation" | "worker" | "foreground" | "cancelled-worker";
 type ScriptedCall = { name: string; arguments: Record<string, unknown> };
-type ScriptedTurn = { call: ScriptedCall | null; reply: string };
+type ScriptedTurn = { call: ScriptedCall | null; reply: string; gate?: GateName };
 
 /** First match wins: a request passed on carries the original words too, so the hand-over line comes first. */
 const SCRIPT: Array<{ match: string; turn: ScriptedTurn }> = [
+  { match: PRIVATE_EDITOR_PROMPT, turn: { call: null, reply: PRIVATE_EDITOR_REPLY } },
+  { match: OTHER_DISCUSSION_PROMPT, turn: { call: null, reply: OTHER_DISCUSSION_REPLY } },
+  { match: `Objective: ${CONSULT_OBJECTIVE}`, turn: { call: null, reply: CONSULT_SYNTHESIS } },
+  { match: `Objective: ${WORKER_OBJECTIVE}`, turn: { call: null, reply: WORKER_SYNTHESIS } },
+  { match: `Objective: ${CANCEL_OBJECTIVE}`, turn: { call: null, reply: CANCEL_SYNTHESIS } },
+  { match: `Question: ${CONSULT_QUESTION}`, turn: { call: null, reply: CONSULT_ANSWER, gate: "consultation" } },
+  { match: `You are a Worker named "${WORKER_NAME}"`, turn: { call: null, reply: `## Done\n${WORKER_FINDING}`, gate: "worker" } },
+  { match: `You are a Worker named "${CANCEL_NAME}"`, turn: { call: null, reply: `## Done\n${CANCEL_FINDING}`, gate: "cancelled-worker" } },
+  { match: FOREGROUND_PROMPT, turn: { call: null, reply: FOREGROUND_REPLY, gate: "foreground" } },
+  {
+    match: CONSULT_PROMPT,
+    turn: {
+      call: { name: "coworker_team_consult", arguments: {
+        to: "editor", question: CONSULT_QUESTION, context: CONSULT_CONTEXT,
+        continuation: { objective: CONSULT_OBJECTIVE, refs: ["public launch brief"], completedActions: ["Shared the public brief with Editor"], resumeInstructions: "Evaluate Editor's answer and recommend a headline here without asking again." },
+      } },
+      reply: CONSULT_ACK,
+    },
+  },
+  {
+    match: WORKER_PROMPT,
+    turn: {
+      call: { name: "coworker_worker_spawn", arguments: {
+        name: WORKER_NAME, goal: "Count the supplied inventory: three notebooks and two pens. Report the total; no tools or outside lookup are needed.", lifespan: { kind: "turns", turns: 1 },
+        continuation: { objective: WORKER_OBJECTIVE, completedActions: ["Delegated the supplied inventory count"], resumeInstructions: "Check the finding against the supplied inventory and report the total here. Do not start another Worker." },
+      } },
+      reply: WORKER_ACK,
+    },
+  },
+  {
+    match: CANCEL_PROMPT,
+    turn: {
+      call: { name: "coworker_worker_spawn", arguments: {
+        name: CANCEL_NAME, goal: "Count the supplied spare inventory: one folder. No tools or outside lookup are needed.", lifespan: { kind: "turns", turns: 1 },
+        continuation: { objective: CANCEL_OBJECTIVE, resumeInstructions: "Review the spare inventory finding here." },
+      } },
+      reply: CANCEL_ACK,
+    },
+  },
   { match: "Passed from Nova", turn: { call: null, reply: EDITOR_REPLY } },
   { match: "Go ahead, Nova", turn: { call: null, reply: KEPT_REPLY } },
   {
@@ -141,7 +214,7 @@ function toolResults(body: unknown): string[] {
 }
 
 /** What one request tells about the instruction stack the model received: the system prompt's size and what it carries, and the tools offered. */
-type PromptFacts = { systemChars: number; contractInPrompt: boolean; toolServerLineInPrompt: boolean; tools: number; bodyChars: number; prompt: string; reasoningEffort: string };
+type PromptFacts = { systemChars: number; contractInPrompt: boolean; toolServerLineInPrompt: boolean; tools: number; toolNames: string[]; privateCanary: boolean; bodyChars: number; prompt: string; reasoningEffort: string };
 
 function promptFacts(body: unknown, raw: string, prompt: string): PromptFacts {
   const system = isRecord(body) && Array.isArray(body.messages)
@@ -155,6 +228,8 @@ function promptFacts(body: unknown, raw: string, prompt: string): PromptFacts {
     contractInPrompt: system.includes("Which shape an answer takes"),
     toolServerLineInPrompt: system.includes("Open Coworker's own tools for this coworker"),
     tools: isRecord(body) && Array.isArray(body.tools) ? body.tools.length : 0,
+    toolNames: isRecord(body) && Array.isArray(body.tools) ? body.tools.flatMap((entry) => isRecord(entry) && isRecord(entry.function) && typeof entry.function.name === "string" ? [entry.function.name] : []) : [],
+    privateCanary: raw.includes(PRIVATE_CANARY),
     bodyChars: raw.length,
     prompt,
     // The thinking effort as the provider receives it (the "high" variant declared on the scripted model).
@@ -171,8 +246,10 @@ function streamChunks(response: ServerResponse, deltas: Array<Record<string, unk
   response.end();
 }
 
-async function startScriptedModel(): Promise<{ baseUrl: string; seenToolResults: string[]; prompts: string[]; facts: PromptFacts[] }> {
-  const state = { baseUrl: "", seenToolResults: [] as string[], prompts: [] as string[], facts: [] as PromptFacts[] };
+async function startScriptedModel() {
+  const held = new Map<GateName, { response: ServerResponse; reply: string; timer: ReturnType<typeof setTimeout> }>();
+  const gated = new Set<GateName>();
+  const state: { baseUrl: string; seenToolResults: string[]; prompts: string[]; facts: PromptFacts[]; errors: string[] } = { baseUrl: "", seenToolResults: [], prompts: [], facts: [], errors: [] };
   const server = createServer((request, response) => {
     const url = request.url ?? "";
     if (request.method === "GET" && url.startsWith("/v1/models")) {
@@ -201,8 +278,26 @@ async function startScriptedModel(): Promise<{ baseUrl: string; seenToolResults:
           }], "tool_calls");
           return;
         }
+        if (scripted?.turn.gate) {
+          const { gate, reply } = scripted.turn;
+          if (gated.has(gate)) {
+            state.errors.push(`Duplicate inference request for ${gate}`);
+            response.writeHead(409).end();
+            return;
+          }
+          gated.add(gate);
+          // Hold the provider response, never product state. A forgotten gate fails
+          // closed rather than releasing an answer on a timing-dependent sleep.
+          const timer = setTimeout(() => {
+            state.errors.push(`Response gate expired: ${gate}`);
+            held.delete(gate);
+            response.destroy();
+          }, 180_000);
+          held.set(gate, { response, reply, timer });
+          return;
+        }
         streamChunks(response, [{ role: "assistant" }, { content: scripted?.turn.reply ?? "Okay." }], "stop");
-      });
+      }).catch(() => { state.errors.push("Scripted request failed"); response.destroy(); });
       return;
     }
     response.writeHead(404, { "content-type": "application/json" });
@@ -213,13 +308,24 @@ async function startScriptedModel(): Promise<{ baseUrl: string; seenToolResults:
     server.listen(0, "127.0.0.1", resolve);
   });
   onTestFinished(async () => {
+    for (const { timer } of held.values()) clearTimeout(timer);
     server.closeAllConnections();
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   });
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Scripted model did not bind a TCP port.");
   state.baseUrl = `http://127.0.0.1:${address.port}/v1`;
-  return state;
+  return { ...state, held, release(gate: GateName, cancelled = false) {
+    const pending = held.get(gate);
+    if (!pending) throw new Error(`No held response for ${gate}`);
+    held.delete(gate);
+    clearTimeout(pending.timer);
+    if (pending.response.destroyed) {
+      if (!cancelled) throw new Error(`The ${gate} response was abandoned before release`);
+      return;
+    }
+    streamChunks(pending.response, [{ role: "assistant" }, { content: pending.reply }], "stop");
+  } };
 }
 
 type App = Awaited<ReturnType<typeof coworker>>;
@@ -247,12 +353,12 @@ function resultText(response: unknown): string {
   return typeof record.content === "string" ? record.content : "";
 }
 
-async function waitForConversation(app: App, name: string): Promise<void> {
+async function waitForConversation(app: App, name: string, ready = true): Promise<void> {
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]') || document.querySelector('[data-testid="coworker-discussion-empty"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === ${json(name)})`, {
     timeoutMs: 120_000,
     label: `${name}'s conversation`,
   });
-  await waitFor(app, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready"`, { timeoutMs: 240_000, label: `${name} ready` });
+  if (ready) await waitFor(app, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Ready"`, { timeoutMs: 240_000, label: `${name} ready` });
 }
 
 /** The engine has connected to this coworker's own tools; the first message never races the registration. */
@@ -321,8 +427,8 @@ async function converse(app: App, name: string, prompt: string, reply: string, a
     const summary = line.querySelector('[data-testid="coworker-work-summary"]');
     if (summary instanceof HTMLElement && summary.getAttribute("aria-expanded") !== "true") summary.click();
     return {
-      summary: summary?.querySelector("span.truncate")?.textContent?.trim() ?? "",
-      steps: [...line.querySelectorAll('[data-testid="coworker-work-step"]')].map((step) => step.querySelector("span.truncate")?.textContent?.trim() ?? ""),
+      summary: summary?.querySelector("span")?.textContent?.trim() ?? "",
+      steps: [...line.querySelectorAll('[data-testid="coworker-work-step"]')].map((step) => step.querySelector("p")?.textContent?.trim() ?? ""),
       text: line.innerText,
     };
   })()`, { timeoutMs: 60_000, label: `the action line between ${json(prompt)} and its reply` });
@@ -361,18 +467,71 @@ async function tapPill(app: App, choice: string): Promise<void> {
 }
 
 /** Open one coworker from the rail. After a reload the app opens the first coworker by name, so the journey always says who it wants. */
-async function openCoworker(app: App, slug: string, name: string): Promise<void> {
+async function openCoworker(app: App, slug: string, name: string, ready = true): Promise<void> {
   await waitFor(app, `(() => {
     const row = document.querySelector('[data-testid="coworker-rail-row"][data-slug=${json(slug)}]') ?? document.querySelector('[data-testid="coworker-rail-avatar"][data-slug=${json(slug)}]');
     if (!(row instanceof HTMLElement)) return false;
     row.click();
     return true;
   })()`, { timeoutMs: 120_000, label: `${name}'s rail row` });
-  await waitForConversation(app, name);
+  await waitForConversation(app, name, ready);
+}
+
+async function waitForReceipt(app: App, threadId: string, kind: "consultation" | "worker", state: string, except: string[] = []): Promise<Record<string, unknown>> {
+  const receipt = await waitFor(app, `(async () => {
+    const response = await window.__COWORKER__.invoke("collaboration.receipts", { slug: "nova", threadId: ${json(threadId)} });
+    if (!response.ok) throw new Error(response.error);
+    const receipt = response.result.find((item) => !${json(except)}.includes(item.id) && item.dependencies.some((dependency) => dependency.kind === ${json(kind)}));
+    return receipt?.state === ${json(state)} ? receipt : false;
+  })()`, { awaitPromise: true, timeoutMs: 120_000, label: `${kind} receipt ${state}` });
+  if (!isRecord(receipt)) throw new Error("Missing collaboration receipt.");
+  return receipt;
+}
+
+/** Native message ids and tool receipts are witnesses, not a route for sending work. */
+async function readThreadMessages(app: App, slug: string, threadId: string): Promise<Record<string, unknown>[]> {
+  const messages = await evalIn(app, `(async () => {
+    const runtime = (await window.__COWORKER__.invoke("runtime.info")).result;
+    const member = (await window.__COWORKER__.invoke("coworkers.get", { slug: ${json(slug)} })).result;
+    const response = await fetch(runtime.serverUrl + "/workspace/" + encodeURIComponent(member.workspaceId) + "/opencode/session/" + encodeURIComponent(${json(threadId)}) + "/message", {
+      headers: { Authorization: "Bearer " + runtime.ownerToken },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!response.ok) throw new Error("Native messages unavailable: " + response.status);
+    return (await response.json()).map((message) => ({
+      id: message.info.id, parentId: message.info.parentID ?? "", role: message.info.role,
+      completed: typeof message.info.time?.completed === "number",
+      text: message.parts.filter((part) => part.type === "text" && !part.synthetic).map((part) => part.text ?? "").join(""),
+      tools: message.parts.filter((part) => part.type === "tool").map((part) => ({ name: part.tool, callId: part.callID, status: part.state.status, output: part.state.output ?? "" })),
+    }));
+  })()`, { awaitPromise: true, timeoutMs: 30_000 });
+  if (!Array.isArray(messages) || !messages.every(isRecord)) throw new Error("Unexpected native message list.");
+  return messages;
+}
+
+async function openGroup(app: App, id: string): Promise<void> {
+  await waitFor(app, `(() => {
+    const row = document.querySelector('[data-testid="group-rail-row"][data-group-id=${json(id)}]') ?? document.querySelector('[data-testid="group-rail-avatar"][data-group-id=${json(id)}]');
+    if (!(row instanceof HTMLElement)) return false;
+    row.click();
+    return true;
+  })()`, { timeoutMs: 30_000, label: "the consultation's visible group" });
+  await waitFor(app, `document.querySelector('[data-testid="group-chat"]')?.dataset.groupId === ${json(id)}`, { label: "the selected group" });
+}
+
+async function openDiscussion(app: App, threadId: string): Promise<void> {
+  await evalIn(app, `document.querySelector('[data-testid="coworker-discussion-switcher"]').click(); true`);
+  await waitFor(app, `(() => {
+    const choice = document.querySelector('[data-testid="coworker-discussion-menu"] [data-thread-id=${json(threadId)}]');
+    if (!(choice instanceof HTMLButtonElement)) return false;
+    choice.click();
+    return true;
+  })()`, { label: "the chosen private discussion" });
+  await waitFor(app, `(async () => (await window.__COWORKER__.invoke("coworkers.get", { slug: "nova" })).result.conversationThreadId === ${json(threadId)})()`, { awaitPromise: true, label: "private selection saved" });
 }
 
 test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
-  needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"], commands: ["opencode"] });
+  needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"], env: ["OPENWORK_EVAL_ELECTRON_BINARY"], commands: ["opencode"], placement: "local" });
   const scripted = await startScriptedModel();
   // Nothing found on "this Mac" and no keys from the host: the local mode step is a plain Continue.
   const emptyCodexHome = await mkdtemp(path.join(os.tmpdir(), "open-coworker-team-codex-"));
@@ -383,7 +542,7 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   const profileDir = await mkdtemp(path.join(os.tmpdir(), "open-coworker-team-profile-"));
   onTestFinished(() => rm(emptyCodexHome, { recursive: true, force: true }));
   onTestFinished(() => rm(profileDir, { recursive: true, force: true }));
-  await using app = await coworker({
+  const launchOptions = {
     name: "team",
     profileDir,
     env: {
@@ -398,7 +557,8 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
       OLLAMA_HOST: "127.0.0.1:9",
       LMSTUDIO_HOST: "127.0.0.1:9",
     },
-  });
+  };
+  await using app = await coworker(launchOptions);
 
   // --- 1. Onboarding proposes a team: two intents, two coworkers to meet, one renamed, created in one step.
   await waitFor(app, `(document.body?.innerText ?? "").toLowerCase().includes("welcome to open coworker")`, { timeoutMs: 120_000, label: "Open Coworker welcome screen" });
@@ -459,7 +619,9 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   expect(novaRoster).toContain("- Editor (`editor`) — Writing and content — I turn the campaign brief into consistent posts");
   expect(resultText(await invokeCoworker(app, "coworkers.files.read", { slug: "editor", path: "team/roster.md" }))).toContain("- Nova (`nova`) — Research and synthesis");
   const agents = resultText(await invokeCoworker(app, "coworkers.files.read", { slug: "nova", path: "AGENTS.md" }));
-  expect(agents).toContain("<!-- open-coworker-contract: 8 -->");
+  expect(agents).toContain("<!-- open-coworker-contract: 10 -->");
+  expect(agents).toContain("coworker_team_consult");
+  expect(agents).toContain("end my turn; I never poll");
   expect(agents).toContain("## My team");
   // The shape rule is one section with an example per shape; the roster carries facts only, the rule is not said twice.
   expect(agents).toContain("### Which shape an answer takes");
@@ -537,7 +699,7 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
 
   // --- 2. A request that is Editor's job: Nova offers to pass it on, and Ask Editor hands it over with a brief.
   const offered = await converse(app, "Nova", DRAFT_PROMPT, DRAFT_REPLY);
-  expect(offered.summary).toBe("Offered to pass this to Editor");
+  expect(offered.summary).toBe("Team collaboration: Completed");
   expect(offered.text).not.toMatch(/coworker_|team_refer|ref_|\{/);
   const referralTiles = await waitFor(app, `(() => { const tiles = ${READ_TILES}; return tiles.length === 1 && tiles[0].state === "open" ? tiles : false; })()`, { timeoutMs: 30_000, label: "the hand-over tile" });
   expect(referralTiles).toEqual([{
@@ -593,13 +755,13 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
 
   // --- 2b. A request the person keeps with Nova is never offered again: the same request comes back as a check, not a tile.
   const proofread = await converse(app, "Nova", PROOFREAD_PROMPT, PROOFREAD_REPLY);
-  expect(proofread.summary).toBe("Offered to pass this to Editor");
+  expect(proofread.summary).toBe("Team collaboration: Completed");
   await waitFor(app, `(() => { const tiles = ${READ_TILES}; return tiles.length === 2 && tiles[1].state === "open" && tiles[1].pills.join(",") === "Ask Editor,Continue with Nova"; })()`, { timeoutMs: 30_000, label: "the second hand-over tile" });
   await tapPill(app, "continue");
   await waitFor(app, `[...document.querySelectorAll('[data-message-role="assistant"]')].some((message) => (message.textContent ?? "").includes(${json(KEPT_REPLY)}))`, { timeoutMs: 300_000, label: "Nova taking the request back" });
   await waitFor(app, `(() => { const tiles = ${READ_TILES}; return tiles.length === 2 && tiles[1].state === "continued" && tiles[1].pills.length === 0; })()`, { timeoutMs: 30_000, label: "the kept tile settled" });
   const keptAgain = await converse(app, "Nova", PROOFREAD_AGAIN_PROMPT, PROOFREAD_AGAIN_REPLY);
-  expect(keptAgain.summary).toBe("Checked the team · you asked to keep this here");
+  expect(keptAgain.summary).toBe("Team collaboration: Completed");
   expect(await evalIn(app, `${READ_TILES}.length`)).toBe(2);
   evidence.recordAssertionEvidence(
     "A request the person chose to keep with the coworker is never offered to a teammate again",
@@ -627,7 +789,7 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   expect(scripted.prompts.some((prompt) => prompt.includes(INBOX_PROMPT) && prompt.includes("Customer success & support") && prompt.includes("Prefer existing teammates"))).toBe(true);
   expect(resultList(await invokeCoworker(app, "coworkers.list", {}))).toHaveLength(2);
   evidence.recordAssertionEvidence("The Add screen recommends roles for a profession and asks an existing coworker for AI advice", "The suggested roles were readable full-width rows. Customer success prioritized the missing support role. Asking Nova with the work description used the existing conversation and model, sent the profession and review boundaries, and returned a real teammate suggestion without creating anyone before Add to team.", true);
-  expect(inbox.summary).toBe("Suggested a teammate · Care");
+  expect(inbox.summary).toBe("Team collaboration: Completed");
   const suggestionTiles = await waitFor(app, `(() => { const tiles = ${READ_TILES}; return tiles.length === 3 && tiles[2].state === "open" ? tiles[2] : false; })()`, { timeoutMs: 30_000, label: "the suggested teammate tile" });
   expect(suggestionTiles).toEqual({
     kind: "suggestion",
@@ -669,11 +831,11 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   // --- 4. The guards leave no tile behind: a role a teammate covers, and a role the person declined.
   await openCoworker(app, "nova", "Nova");
   const covered = await converse(app, "Nova", WRITER_PROMPT, WRITER_REPLY);
-  expect(covered.summary).toBe("Checked the team · Editor already covers this");
+  expect(covered.summary).toBe("Team collaboration: Completed");
   expect(await evalIn(app, `${READ_TILES}.length`)).toBe(3);
   await openCoworker(app, "editor", "Editor");
   const sales = await converse(app, "Editor", SALES_PROMPT, SALES_REPLY);
-  expect(sales.summary).toBe("Suggested a teammate · Pipeline");
+  expect(sales.summary).toBe("Team collaboration: Completed");
   // A one-line question is a quick reply: the dial at Balanced asks the provider for low, never the dial's own value.
   expect(scripted.facts.find((facts) => facts.prompt.includes(SALES_PROMPT))?.reasoningEffort).toBe("low");
   const salesTile = await waitFor(app, `(() => { const tiles = ${READ_TILES}; const tile = tiles.find((candidate) => candidate.kind === "suggestion"); return tile && tile.state === "open" ? tile : false; })()`, { timeoutMs: 30_000, label: "the sales suggestion" });
@@ -683,7 +845,7 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   expect(declined).toMatchObject({ state: "declined", smallPrint: expect.stringMatching(/^Not now · /), pills: [] });
   expect(resultText(await invokeCoworker(app, "coworkers.files.read", { slug: "editor", path: "team/roster.md" }))).toMatch(/## Recently declined[\s\S]*- a sales and relationships coworker — [A-Z][a-z]{2} \d{1,2}/);
   const again = await converse(app, "Editor", SALES_AGAIN_PROMPT, SALES_AGAIN_REPLY);
-  expect(again.summary).toBe("Checked the team · you said not now to this one");
+  expect(again.summary).toBe("Team collaboration: Completed");
   expect(await evalIn(app, `${READ_TILES}.filter((tile) => tile.kind === "suggestion").length`)).toBe(1);
   expect(resultList(await invokeCoworker(app, "coworkers.list", {})).map((member) => member.slug)).toEqual(["care", "editor", "nova"]);
   evidence.recordAssertionEvidence(
@@ -733,4 +895,208 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   expect(groupReady).toEqual({ tone: "ready", color: "rgb(120, 148, 135)", dots: 0 });
   evidence.recordAssertionEvidence("Group availability shares the discreet Ready tone", "Creating a group from the rail opened an empty conversation with Ready in muted sage rgb(120, 148, 135), with no status dot or unsolicited message.", true);
 
+  // --- 6. A private request consults Editor in a visible group, then returns only to its origin.
+  const unrelatedGroupId = String(await evalIn(app, `document.querySelector('[data-testid="group-chat"]').dataset.groupId`));
+  const groupsBefore = resultList(await invokeCoworker(app, "groups.list", {}));
+  await openCoworker(app, "nova", "Nova");
+  const origin = String(resultRecord(await invokeCoworker(app, "coworkers.get", { slug: "nova" })).conversationThreadId);
+  expect(origin).toMatch(/^ses_/);
+  await converse(app, "Nova", CONSULT_PROMPT, CONSULT_ACK);
+  await expect.poll(() => scripted.held.has("consultation"), { timeout: 120_000 }).toBe(true);
+  const waitingConsult = await waitForReceipt(app, origin, "consultation", "waiting");
+  expect(waitingConsult).toMatchObject({ conversationId: origin, threadId: origin, dependencies: [{ kind: "consultation", state: "running" }] });
+  try {
+    await waitFor(app, `document.querySelector('[data-testid="collaboration-receipt"][data-work-id=${json(waitingConsult.id)}]')?.dataset.state === "waiting" && !document.querySelector('[data-testid="coworker-working"]')`, { label: "quiet waiting receipt, not endless typing" });
+  } catch (error) {
+    const receipts = resultList(await invokeCoworker(app, "collaboration.receipts", { slug: "nova", threadId: origin }));
+    const phase = await evalIn(app, `({ working: document.querySelector('[data-testid="coworker-working"]')?.outerHTML, receipts: document.querySelector('[data-testid="collaboration-receipts"]')?.textContent })`);
+    throw new Error(`${String(error)}\nCollaboration receipts: ${JSON.stringify(receipts)}\nView: ${JSON.stringify(phase)}\nFixture errors: ${JSON.stringify(scripted.errors)}`);
+  }
+
+  const consultFacts = scripted.facts.filter((facts) => facts.prompt.includes(`Question: ${CONSULT_QUESTION}`));
+  expect(consultFacts).toHaveLength(1);
+  expect(consultFacts[0]).toMatchObject({ privateCanary: false, prompt: expect.stringContaining(CONSULT_CONTEXT) });
+  expect(consultFacts[0]?.prompt).not.toContain(CONSULT_PROMPT);
+  const requestFacts = scripted.facts.find((facts) => facts.prompt === CONSULT_PROMPT);
+  expect(requestFacts).toMatchObject({ privateCanary: true, toolNames: expect.arrayContaining(["coworker_team_consult", "coworker_worker_spawn"]) });
+  const originMessages = await readThreadMessages(app, "nova", origin);
+  const consultRequest = originMessages.find((message) => message.role === "user" && message.text === CONSULT_PROMPT);
+  expect(consultRequest).toBeDefined();
+  const consultTools = originMessages.filter((message) => message.parentId === consultRequest?.id).flatMap((message) => Array.isArray(message.tools) ? message.tools.filter(isRecord) : []);
+  expect(consultTools).toEqual([{ name: "coworker_team_consult", callId: expect.any(String), status: "completed", output: expect.stringContaining("Requested Question for editor") }]);
+
+  const groupsDuring = resultList(await invokeCoworker(app, "groups.list", {}));
+  const pairs = groupsDuring.filter((group) => Array.isArray(group.participantSlugs) && group.participantSlugs.length === 2 && group.participantSlugs.includes("nova") && group.participantSlugs.includes("editor"));
+  expect(pairs).toHaveLength(1);
+  const pair = pairs[0];
+  if (!pair || typeof pair.id !== "string") throw new Error("The consultation did not create its visible pair group.");
+  expect(groupsDuring).toHaveLength(groupsBefore.length + 1);
+  expect(waitingConsult).toMatchObject({ dependencies: [{ groupId: pair.id }] });
+  await openGroup(app, pair.id);
+  await waitForText(app, CONSULT_QUESTION);
+  expect(await evalIn(app, `document.body.innerText.includes(${json(PRIVATE_CANARY)})`)).toBe(false);
+  expect(resultList(await invokeCoworker(app, "groups.readTimeline", { id: pair.id }))).toMatchObject([{ kind: "coworker", slug: "nova", status: "consultation", text: expect.stringContaining(CONSULT_QUESTION) }]);
+
+  await openCoworker(app, "nova", "Nova", false);
+  await evalIn(app, `document.querySelector('[data-testid="coworker-discussion-switcher"]').click(); true`);
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-menu"] [data-testid="coworker-new-discussion"]'))`, { label: "new discussion in the open switcher" });
+  await evalIn(app, `document.querySelector('[data-testid="coworker-discussion-menu"] [data-testid="coworker-new-discussion"]').click(); true`);
+  try {
+    await waitFor(app, `(async () => {
+      const member = (await window.__COWORKER__.invoke("coworkers.get", { slug: "nova" })).result;
+      return member.conversationThreadId !== ${json(origin)} && Boolean(document.querySelector('textarea[aria-label="Message Nova"]')) && document.querySelectorAll('[data-message-role]').length === 0;
+    })()`, { awaitPromise: true, label: "the new empty private discussion, not the origin" });
+  } catch (error) {
+    const state = await evalIn(app, `(async () => ({ selected: (await window.__COWORKER__.invoke("coworkers.get", { slug: "nova" })).result.conversationThreadId, body: document.body.innerText.slice(-5000), menus: document.querySelectorAll('[data-testid="coworker-discussion-menu"]').length }))()`, { awaitPromise: true });
+    throw new Error(`${String(error)}\nDiscussion switch state: ${JSON.stringify(state)}`);
+  }
+  await fill(app, 'textarea[aria-label="Message Nova"]', OTHER_DISCUSSION_PROMPT);
+  await clickButton(app, "Send");
+  await waitForText(app, OTHER_DISCUSSION_REPLY);
+  await waitFor(app, `document.querySelector('[data-testid="coworker-thread-status"]')?.dataset.state === "idle"`, { label: "separate discussion settled" });
+  const otherPrivate = String(resultRecord(await invokeCoworker(app, "coworkers.get", { slug: "nova" })).conversationThreadId);
+  expect(otherPrivate).toMatch(/^ses_/);
+  expect(otherPrivate).not.toBe(origin);
+  const otherMessages = await readThreadMessages(app, "nova", otherPrivate);
+
+  // Switch before the answer arrives: completing background work must not navigate.
+  await openCoworker(app, "editor", "Editor", false);
+  const editorPrivate = String(resultRecord(await invokeCoworker(app, "coworkers.get", { slug: "editor" })).conversationThreadId);
+  await fill(app, 'textarea[aria-label="Message Editor"]', PRIVATE_EDITOR_PROMPT);
+  await clickButton(app, "Send");
+  await waitForText(app, PRIVATE_EDITOR_REPLY);
+  await waitFor(app, `document.querySelector('[data-testid="coworker-thread-status"]')?.dataset.state === "idle" && !document.querySelector('[data-testid="coworker-working"]')`, { label: "Editor's private reply clears while its group consultation still runs" });
+  expect(scripted.held.has("consultation")).toBe(true);
+  const editorBefore = await readThreadMessages(app, "editor", editorPrivate);
+  scripted.release("consultation");
+  const completedConsult = await waitForReceipt(app, origin, "consultation", "succeeded");
+  expect(completedConsult).toMatchObject({ id: waitingConsult.id, conversationId: origin, dependencies: [{ state: "succeeded", groupId: pair.id }] });
+  expect(scripted.prompts.filter((prompt) => prompt.startsWith(FOLLOW_UP) && prompt.includes(CONSULT_OBJECTIVE))).toEqual([expect.stringContaining(CONSULT_ANSWER)]);
+  expect(await evalIn(app, `Boolean(document.querySelector('textarea[aria-label="Message Editor"]')) && !document.querySelector('[data-testid="group-chat"]')`)).toBe(true);
+  expect(resultRecord(await invokeCoworker(app, "coworkers.get", { slug: "editor" })).conversationThreadId).toBe(editorPrivate);
+  expect(await readThreadMessages(app, "editor", editorPrivate)).toEqual(editorBefore);
+  expect(resultRecord(await invokeCoworker(app, "coworkers.get", { slug: "nova" })).conversationThreadId).toBe(otherPrivate);
+  expect(await readThreadMessages(app, "nova", otherPrivate)).toEqual(otherMessages);
+  const consultationTimeline = resultList(await invokeCoworker(app, "groups.readTimeline", { id: pair.id }));
+  expect(consultationTimeline).toHaveLength(2);
+  const answer = consultationTimeline.find((event) => event.slug === "editor");
+  expect(answer).toMatchObject({ kind: "coworker", status: "succeeded", text: CONSULT_ANSWER });
+  if (!answer || typeof answer.threadId !== "string") throw new Error("The group answer has no native thread.");
+  expect(answer.threadId).not.toBe(editorPrivate);
+  expect(await invokeCoworker(app, "collaboration.excludedThreads", { slug: "editor" })).toMatchObject({ ok: true, result: expect.arrayContaining([answer.threadId]) });
+  await evalIn(app, `document.querySelector('[data-testid="coworker-discussion-switcher"]').click(); true`);
+  await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-menu"]'))`, { label: "private discussion choices" });
+  expect(await evalIn(app, `[...document.querySelectorAll('[data-testid="coworker-discussion-menu"] [data-thread-id]')].map((item) => item.dataset.threadId)`)).toEqual([editorPrivate]);
+  await evalIn(app, `document.querySelector('[data-testid="coworker-discussion-switcher"]').click(); true`);
+  await openGroup(app, pair.id);
+  await waitFor(app, `[...document.querySelectorAll('[data-message-role="assistant"][data-speaker="editor"]')].filter((node) => node.textContent.includes(${json(CONSULT_ANSWER)})).length === 1`, { label: "one signed Editor answer in the group" });
+  expect(await evalIn(app, `document.body.innerText.includes(${json(CONSULT_SYNTHESIS)}) || document.body.innerText.includes(${json(PRIVATE_CANARY)})`)).toBe(false);
+  expect(resultList(await invokeCoworker(app, "groups.readTimeline", { id: unrelatedGroupId }))).toEqual([]);
+  await openCoworker(app, "nova", "Nova");
+  await openDiscussion(app, origin);
+  expect(resultRecord(await invokeCoworker(app, "coworkers.get", { slug: "nova" })).conversationThreadId).toBe(origin);
+  await waitFor(app, `[...document.querySelectorAll('[data-message-role="assistant"]')].filter((node) => node.textContent.includes(${json(CONSULT_SYNTHESIS)})).length === 1`, { label: "one synthesis in Nova's original private conversation" });
+  const afterConsult = await readThreadMessages(app, "nova", origin);
+  expect(afterConsult.filter((message) => message.role === "assistant" && message.text === CONSULT_SYNTHESIS)).toEqual([expect.objectContaining({ completed: true, parentId: completedConsult.messageId })]);
+  evidence.recordAssertionEvidence("A private consultation shares only its explicit brief, publishes one group answer and returns one synthesis to the origin", "A user send invoked the installed consultation tool with a completed native tool receipt. Editor's entire inference request omitted the private canary. The pair group contained one question and one signed answer; its native answer thread was excluded from private discussions. Nova received one automatic synthesis in the originating thread while the selected Editor private conversation and unrelated group stayed unchanged.", true);
+
+  // --- 7. A one-turn Worker yields; its completion waits behind real foreground chat.
+  await converse(app, "Nova", WORKER_PROMPT, WORKER_ACK);
+  await expect.poll(() => scripted.held.has("worker"), { timeout: 120_000 }).toBe(true);
+  const waitingWorker = await waitForReceipt(app, origin, "worker", "waiting");
+  const workers = resultList(await invokeCoworker(app, "workers.list", { slug: "nova" }));
+  expect(workers).toHaveLength(1);
+  const worker = workers[0];
+  if (!worker || typeof worker.id !== "string" || typeof worker.threadId !== "string") throw new Error("The installed Worker tool did not start native work.");
+  expect(worker).toMatchObject({ name: WORKER_NAME, spawnedBy: "coworker", spawnedFromThreadId: origin, status: "running", lifespan: { kind: "turns", max: 1, used: 0 } });
+  expect(worker.threadId).toMatch(/^ses_/);
+  expect(worker.threadId).not.toBe(origin);
+  expect(resultRecord(await invokeCoworker(app, "turns.state", { slug: "nova", threadId: origin }))).toMatchObject({ pending: null, next: [] });
+  await waitFor(app, `document.querySelector('[data-testid="collaboration-receipt"][data-work-id=${json(waitingWorker.id)}]')?.dataset.state === "waiting" && !document.querySelector('[data-testid="coworker-working"]')`, { label: "Worker wait released the private turn" });
+  const workerTurn = scripted.facts.filter((facts) => facts.prompt.startsWith(`You are a Worker named "${WORKER_NAME}"`));
+  expect(workerTurn).toHaveLength(1);
+  expect(workerTurn[0]?.prompt).toContain('section titled "Done"');
+  expect(workerTurn[0]?.toolNames).not.toContain("coworker_worker_spawn");
+  expect(workerTurn[0]?.toolNames).not.toContain("coworker_team_consult");
+  const spawnMessages = await readThreadMessages(app, "nova", origin);
+  const spawnRequest = spawnMessages.find((message) => message.role === "user" && message.text === WORKER_PROMPT);
+  expect(spawnRequest).toBeDefined();
+  expect(spawnMessages.filter((message) => message.parentId === spawnRequest?.id).flatMap((message) => Array.isArray(message.tools) ? message.tools.filter(isRecord) : [])).toEqual([{ name: "coworker_worker_spawn", callId: expect.any(String), status: "completed", output: expect.stringContaining(`Requested ${WORKER_NAME}`) }]);
+
+  await fill(app, 'textarea[aria-label="Message Nova"]', FOREGROUND_PROMPT);
+  await clickButton(app, "Send");
+  await expect.poll(() => scripted.held.has("foreground"), { timeout: 120_000 }).toBe(true);
+  const foreground = resultRecord(await invokeCoworker(app, "turns.state", { slug: "nova", threadId: origin }));
+  expect(foreground).toMatchObject({ pending: { prompt: FOREGROUND_PROMPT, stoppedAt: null }, next: [] });
+  scripted.release("worker");
+  const queuedWorker = await waitForReceipt(app, origin, "worker", "resumption-queued");
+  expect(queuedWorker).toMatchObject({ id: waitingWorker.id, dependencies: [{ state: "succeeded" }] });
+  expect(scripted.prompts.filter((prompt) => prompt.startsWith(FOLLOW_UP) && prompt.includes(WORKER_OBJECTIVE))).toEqual([]);
+  expect(resultRecord(await invokeCoworker(app, "turns.state", { slug: "nova", threadId: origin }))).toEqual(foreground);
+  expect(resultRecord(await invokeCoworker(app, "workers.get", { slug: "nova", id: worker.id }))).toMatchObject({ status: "finished", lifespan: { kind: "turns", max: 1, used: 1 } });
+  expect(resultList(await invokeCoworker(app, "workers.findings", { slug: "nova", id: worker.id })).filter((event) => event.kind === "finding")).toEqual([expect.objectContaining({ report: "done", text: WORKER_FINDING })]);
+
+  await openDiscussion(app, otherPrivate);
+  await waitForText(app, OTHER_DISCUSSION_REPLY);
+  await openCoworker(app, "editor", "Editor");
+  scripted.release("foreground");
+  const completedWorker = await waitForReceipt(app, origin, "worker", "succeeded");
+  expect(completedWorker.id).toBe(waitingWorker.id);
+  expect(scripted.prompts.filter((prompt) => prompt.startsWith(FOLLOW_UP) && prompt.includes(WORKER_OBJECTIVE))).toEqual([expect.stringContaining(WORKER_FINDING)]);
+  expect(await evalIn(app, `Boolean(document.querySelector('textarea[aria-label="Message Editor"]'))`)).toBe(true);
+  expect(await readThreadMessages(app, "editor", editorPrivate)).toEqual(editorBefore);
+  expect(resultRecord(await invokeCoworker(app, "coworkers.get", { slug: "nova" })).conversationThreadId).toBe(otherPrivate);
+  expect(await readThreadMessages(app, "nova", otherPrivate)).toEqual(otherMessages);
+  await expect.poll(async () => resultList(await invokeCoworker(app, "workers.findings", { slug: "nova", id: worker.id })).filter((event) => event.kind === "review"), { timeout: 30_000 }).toEqual([expect.objectContaining({ reviewThreadId: origin })]);
+  await openCoworker(app, "nova", "Nova");
+  await openDiscussion(app, origin);
+  await waitForText(app, WORKER_SYNTHESIS);
+  const returnedMessages = await readThreadMessages(app, "nova", origin);
+  expect(returnedMessages.filter((message) => message.role === "assistant" && message.text === WORKER_SYNTHESIS)).toEqual([expect.objectContaining({ completed: true, parentId: completedWorker.messageId })]);
+  expect(returnedMessages.filter((message) => message.role === "assistant" && message.text === FOREGROUND_REPLY)).toHaveLength(1);
+  expect(returnedMessages.findIndex((message) => message.text === FOREGROUND_REPLY)).toBeLessThan(returnedMessages.findIndex((message) => message.text === WORKER_SYNTHESIS));
+  expect(resultList(await invokeCoworker(app, "groups.readTimeline", { id: pair.id }))).toEqual(consultationTimeline);
+  evidence.recordAssertionEvidence("A bounded Worker yields and returns once after foreground chat without stealing navigation", "The user send invoked the installed Worker tool and started a distinct native Worker thread with one turn. Its held Done response let the parent settle and accept a foreground message. Finishing the Worker queued, but did not send, the continuation while foreground inference was held. Releasing that reply delivered one reviewed finding to the original private thread, after the foreground answer, with Editor still selected and no group mutation.", true);
+
+  // Stop a second held child through the visible receipt; a late response,
+  // renderer reload and full restart must not replay any of these tasks.
+  await converse(app, "Nova", CANCEL_PROMPT, CANCEL_ACK);
+  await expect.poll(() => scripted.held.has("cancelled-worker"), { timeout: 120_000 }).toBe(true);
+  const stopped = await waitForReceipt(app, origin, "worker", "waiting", [String(waitingWorker.id)]);
+  const cancelWorker = resultList(await invokeCoworker(app, "workers.list", { slug: "nova" })).find((item) => item.name === CANCEL_NAME);
+  expect(cancelWorker).toBeDefined();
+  await clickButton(app, "Stop follow-up");
+  await waitForReceipt(app, origin, "worker", "cancelled", [String(waitingWorker.id)]);
+  await expect.poll(async () => resultRecord(await invokeCoworker(app, "workers.get", { slug: "nova", id: cancelWorker?.id })).status, { timeout: 30_000 }).toBe("cancelled");
+  scripted.release("cancelled-worker", true);
+  const settledMessages = await readThreadMessages(app, "nova", origin);
+  await evalIn(app, "location.reload(); true");
+  await openCoworker(app, "nova", "Nova");
+  await waitFor(app, `document.querySelector('[data-testid="collaboration-receipt"][data-work-id=${json(stopped.id)}]')?.dataset.state === "cancelled"`, { label: "stopped follow-up survives reload" });
+  expect(await readThreadMessages(app, "nova", origin)).toEqual(settledMessages);
+  await app.stop();
+  await using restarted = await coworker({ ...launchOptions, name: "team-restarted" });
+  await openCoworker(restarted, "nova", "Nova");
+  await waitForReceipt(restarted, origin, "consultation", "succeeded");
+  await waitForReceipt(restarted, origin, "worker", "succeeded");
+  await waitForReceipt(restarted, origin, "worker", "cancelled", [String(waitingWorker.id)]);
+  await waitFor(restarted, `document.querySelector('[data-testid="collaboration-receipt"][data-work-id=${json(stopped.id)}]')?.dataset.state === "cancelled"`, { label: "stopped follow-up survives full restart" });
+  // Observe several scheduler polls, not merely an immediate zero-count check.
+  for (let observation = 0; observation < 5; observation += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    expect(await readThreadMessages(restarted, "nova", origin)).toEqual(settledMessages);
+    expect(resultList(await invokeCoworker(restarted, "groups.readTimeline", { id: pair.id }))).toEqual(consultationTimeline);
+    expect(scripted.prompts.filter((prompt) => prompt.startsWith(FOLLOW_UP) && prompt.includes(CANCEL_OBJECTIVE))).toEqual([]);
+    expect(scripted.prompts.filter((prompt) => prompt.startsWith(FOLLOW_UP) && prompt.includes(CONSULT_OBJECTIVE))).toHaveLength(1);
+    expect(scripted.prompts.filter((prompt) => prompt.startsWith(FOLLOW_UP) && prompt.includes(WORKER_OBJECTIVE))).toHaveLength(1);
+  }
+  expect(await evalIn(restarted, `[...document.querySelectorAll('[data-message-role="assistant"]')].filter((node) => node.textContent.includes(${json(WORKER_SYNTHESIS)})).length`)).toBe(1);
+  expect(await evalIn(restarted, `document.body.innerText.includes(${json(CANCEL_SYNTHESIS)}) || document.body.innerText.includes(${json(CANCEL_FINDING)})`)).toBe(false);
+  expect(resultList(await invokeCoworker(restarted, "workers.list", { slug: "nova" }))).toHaveLength(2);
+  expect(resultRecord(await invokeCoworker(restarted, "workers.get", { slug: "nova", id: cancelWorker?.id })).status).toBe("cancelled");
+  expect(await readThreadMessages(restarted, "nova", otherPrivate)).toEqual(otherMessages);
+  expect(await readThreadMessages(restarted, "editor", editorPrivate)).toEqual(editorBefore);
+  expect(scripted.errors).toEqual([]);
+  expect(scripted.held.size).toBe(0);
+  evidence.recordAssertionEvidence("Stopping a held Worker prevents its late return and restart does not duplicate settled collaboration", "Stop follow-up cancelled the second Worker through the visible receipt. Releasing its late provider response, reloading the renderer, and relaunching the packaged app on the same temporary profile kept the cancellation. Across five seconds of scheduler polling, native private messages and the pair timeline stayed identical, both completed automatic follow-ups still numbered one, other private threads stayed unchanged, and no cancelled follow-up was requested.", true);
 });

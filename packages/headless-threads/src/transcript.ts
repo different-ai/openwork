@@ -37,6 +37,8 @@ function toToolCalls(message: HeadlessThreadMessage): HeadlessTranscriptToolCall
       output: part.toolOutput,
       error: part.toolError ?? null,
       metadata: part.toolMetadata ?? {},
+      ...(part.toolStartedAt === undefined ? {} : { startedAt: part.toolStartedAt }),
+      ...(part.toolCompletedAt === undefined ? {} : { completedAt: part.toolCompletedAt }),
     }));
 }
 
@@ -90,9 +92,9 @@ export function assistantReplyForTurn(messages: HeadlessThreadMessage[], input: 
   messageCountBefore: number;
 }): HeadlessThreadMessage | null {
   if (input.messageId) {
-    return messages.find((message) => message.role === "assistant" && message.parentId === input.messageId) ?? null;
+    return messages.filter((message) => message.role === "assistant" && message.parentId === input.messageId).at(-1) ?? null;
   }
-  return messages.slice(input.messageCountBefore).find((message) => message.role === "assistant") ?? null;
+  return messages.slice(input.messageCountBefore).filter((message) => message.role === "assistant").at(-1) ?? null;
 }
 
 /**

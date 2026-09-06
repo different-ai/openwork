@@ -1,125 +1,107 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
 import type { CoworkerSummary } from "@/lib/bridge";
-import { thinkingAvailability, type LivePhase } from "@/lib/live-phase";
+import type { LivePhase } from "@/lib/live-phase";
 import type { LiveStream } from "@/lib/live-stream";
-import type { WorkStep } from "@/lib/work-receipt";
+import { PROGRESS_STATES, createProgressService, isLongProgress, progressFingerprint, progressNoteText, type ProgressNote, type ProgressObservation } from "@/lib/progress-service";
+import { EXECUTION_KINDS, EXECUTION_STATES, executionMetadata, type ExecutionMetadataInput, type WorkStep } from "@/lib/work-receipt";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
 import { ToolIcon } from "@/ui/kit";
-import { ThinkingPopover, type ThinkingPopoverMode } from "@/ui/thinking-popover";
+import { ThinkingPopover } from "@/ui/thinking-popover";
+import { useActivityClock } from "@/ui/work-popover";
 
-/**
- * The live turn, the way someone typing reads in Messages. While the coworker
- * thinks: its avatar and a small typing bubble — three dots rising and falling
- * in turn — and no words. While a tool runs: the avatar and a chip with the
- * tool glyph and the step in plain words ("Reading launch-plan.md"). Tapping
- * the bubble or the chip opens a light popover with the thinking as it
- * arrives, or the step and its technical details. Past the wait budget the row
- * keeps its shape and gains the soft phrase and Stop. When the reply's words
- * start, the row is not shown at all: the bubble is.
- */
-export type LiveRowCall = { tool: string; input: Record<string, unknown>; output?: unknown; error?: string | null };
+/** Existing callers can pass their transcript call; no payload fields are read. */
+export type LiveRowCall = ExecutionMetadataInput;
 
-export function LiveRow({
-  coworker,
-  phase,
-  step,
-  stepCall,
-  stepSince,
-  stream,
-  reply,
-  wordsArrived,
-  sentAt,
-  stillWorking = "",
-  onStop,
-}: {
+export function LiveRow({ coworker, phase = "thinking", step = null, stepCall = null, stepSince = null, stream = null, reply = null, wordsArrived = false, sentAt = null, stillWorking = "", progress, progressNote, onStop }: {
   coworker: CoworkerSummary;
-  phase: LivePhase;
-  /** The tool step under way, when the phase is a tool. */
-  step: WorkStep | null;
-  stepCall: LiveRowCall | null;
-  /** When the current step started, for the popover's small print. */
-  stepSince: number | null;
-  stream: LiveStream | null;
-  /** The reply being written, as far as the transcript has it. */
-  reply: { text: string; reasoning: string } | null;
-  /** Words of the reply have arrived this turn (so a model that shared no thinking is known not to). */
-  wordsArrived: boolean;
-  /** When the person pressed Send, for "thinking for 4 s". */
-  sentAt: number | null;
-  /** The softened phrase once the wait budget has passed; empty while the phase alone speaks. */
+  phase?: LivePhase;
+  step?: WorkStep | null;
+  stepCall?: LiveRowCall | null;
+  stepSince?: number | null;
+  stream?: LiveStream | null;
+  /** Landed reply text is used only to suppress duplicate typing. Reasoning is never read. */
+  reply?: { text: string } | null;
+  wordsArrived?: boolean;
+  sentAt?: number | null;
+  /** Existing wait-budget signal; its free-form text is deliberately not rendered. */
   stillWorking?: string;
+  /** Main can supply execution status, recorded counts, and pending dependency counts. */
+  progress?: ProgressObservation;
+  progressNote?: ProgressNote;
   onStop?: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const anchorRef = useRef<HTMLDivElement | null>(null);
-  const thinking = stream && stream.type === "reasoning" && stream.text.trim() ? stream.text : reply?.reasoning ?? "";
-  const availability = thinkingAvailability({ stream, reply, wordsArrived });
-
-  // Words starting, or the turn ending, closes what was open.
+  const anchorRef = useRef<HTMLButtonElement | null>(null);
+  const id = useId();
+  const streaming = phase === "writing" || (stream?.type === "text" && !stream.ended && Boolean(stream.text.trim()));
+  const hasWords = streaming || wordsArrived || Boolean(reply?.text.trim());
+  const observation: ProgressObservation = progress ?? {
+    executionId: `${coworker.slug}:${sentAt ?? "unknown"}`,
+    status: streaming ? "streaming" : phase === "thinking" ? "preparing" : phase,
+    startedAt: sentAt,
+    tool: phase === "tool" && (stepCall || step) ? {
+      tool: stepCall?.tool ?? step?.tool ?? "",
+      status: stepCall?.status,
+      startedAt: stepSince,
+      completedAt: stepCall?.completedAt,
+    } : null,
+  };
+  const status = observation.status;
+  const terminal = status === "completed" || status === "failed" || status === "cancelled" || status === "unknown";
+  const quiet = terminal || status === "waiting" || status === "queued";
+  const now = useActivityClock(!terminal);
+  const long = isLongProgress(observation, now) || Boolean(stillWorking);
+  const hidden = !quiet && (streaming || status === "streaming");
+  const typing = !hasWords && !quiet && (status === "preparing" || status === "resuming");
+  const tool = observation.tool ? executionMetadata(observation.tool) : null;
+  const label = status === "tool" && tool ? `${EXECUTION_KINDS[tool.kind]}: ${EXECUTION_STATES[tool.status]}` : PROGRESS_STATES[status];
+  const serviceRef = useRef<ReturnType<typeof createProgressService> | null>(null);
+  const [observedNote, setObservedNote] = useState<ProgressNote>();
+  const fingerprint = progressFingerprint(observation);
+  const updateNote = useEffectEvent(() => {
+    const note = serviceRef.current?.update(observation);
+    if (note) setObservedNote((current) => current?.fingerprint === note.fingerprint ? current : note);
+  });
   useEffect(() => {
-    if (phase === "writing" || phase === "sending" || phase === "retrying") setOpen(false);
-  }, [phase]);
+    // Only deterministic copy is integrated here. No inference adapter or model is configured.
+    const service = createProgressService({ executionId: observation.executionId, onNote: setObservedNote });
+    serviceRef.current = service;
+    return () => { service.dispose(); serviceRef.current = null; };
+  }, [observation.executionId]);
+  useEffect(() => { updateNote(); }, [fingerprint, long]);
+  const note = progressNote ?? observedNote;
 
-  const mode: ThinkingPopoverMode = phase === "tool" && step && stepCall
-    ? { kind: "doing", step, call: stepCall, since: stepSince }
-    : { kind: "thinking", text: thinking, availability, since: sentAt };
-  const doingWords = step ? `${step.doing.charAt(0).toUpperCase()}${step.doing.slice(1)}` : "";
+  useEffect(() => { setOpen(false); }, [observation.executionId, hidden]);
 
-  // While the words are arriving the bubble is the live view: the row shows nothing — unless the
-  // words have stalled past the wait budget, when the soft phrase and Stop still need a place. A
-  // zero-height marker keeps saying a turn is running, and in which phase, for anything that reads it.
-  if (phase === "writing" && !stillWorking) {
-    return <div className="h-0 overflow-hidden" aria-hidden="true" data-testid="coworker-working" data-phase="writing" data-outcome="working" data-popover="closed" />;
-  }
+  if (hidden) return <div className="h-0 overflow-hidden" aria-hidden="true" data-testid="coworker-working" data-phase="writing" data-outcome="working" data-popover="closed" />;
 
   return (
-    <div className="px-1 py-1.5 text-xs text-mist" data-testid="coworker-working" data-phase={phase} data-outcome={stillWorking ? "slow" : "working"} data-popover={open ? "open" : "closed"}>
-      <div ref={anchorRef} className="flex items-center gap-2.5">
-        <CoworkerAvatar animated working={phase === "tool"} color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={22} />
-        {phase === "writing" ? null : phase === "tool" && step ? (
+    <div className="relative min-w-0 px-1 py-1.5 text-xs text-mist" data-testid="coworker-working" data-phase={status} data-outcome={terminal ? status : long ? "slow" : "working"} data-popover={open ? "open" : "closed"}>
+      <div className="flex min-w-0 items-start gap-2.5">
+        <span className="shrink-0">
+          <CoworkerAvatar animated={false} gaze={false} color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={22} />
+        </span>
+        <div className="min-w-0 flex-1">
           <button
+            ref={anchorRef}
             type="button"
-            className="flex h-6 max-w-[36ch] items-center gap-1.5 rounded-xl bg-panel-2 px-2.5 text-[12px] text-mist transition-colors hover:text-snow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/50"
-            title={open ? "Hide" : `See what ${coworker.name} is doing`}
-            aria-label={`${coworker.name} is ${step.doing}. See the details`}
+            className="flex min-h-6 max-w-full items-center gap-2 rounded-xl bg-panel-2 px-2.5 py-1 text-left text-[12px] leading-relaxed text-mist transition-colors hover:text-snow focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ready/50 motion-reduce:transition-none"
+            title={open ? "Hide activity" : "Inspect observed activity"}
+            aria-label={`${coworker.name}: ${label}. Inspect observed activity`}
             aria-expanded={open}
+            aria-controls={open ? id : undefined}
             aria-haspopup="dialog"
-            data-testid="coworker-tool-chip"
+            data-testid={typing ? "coworker-typing" : status === "tool" ? "coworker-tool-chip" : "coworker-activity-chip"}
             onClick={() => setOpen((value) => !value)}
           >
-            <ToolIcon className="size-3 shrink-0 motion-safe:animate-pulse" />
-            <span className="truncate">{doingWords}</span>
+            {typing ? <span className="flex shrink-0 items-center gap-[3px]" aria-hidden="true">{[0, 1, 2].map((index) => <span key={index} className="typing-dot size-[4px] rounded-full bg-mist/80" style={{ animationDelay: `${index * 160}ms` }} />)}</span> : status === "tool" ? <ToolIcon className="size-3 shrink-0 motion-safe:animate-pulse" /> : null}
+            {typing ? null : <span className="min-w-0 [overflow-wrap:anywhere]">{label}</span>}
           </button>
-        ) : (
-          <button
-            type="button"
-            className="typing-bubble bubble bubble-coworker flex h-[22px] w-[34px] items-center justify-center !px-0 !py-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-spark/50"
-            title={open ? "Hide" : `See what ${coworker.name} is thinking`}
-            aria-label={`${coworker.name} is thinking. See the thinking`}
-            aria-expanded={open}
-            aria-haspopup="dialog"
-            data-testid="coworker-typing"
-            onClick={() => setOpen((value) => !value)}
-          >
-            <span className="flex items-center gap-[3px]" aria-hidden="true">
-              {[0, 1, 2].map((index) => (
-                <span key={index} className="typing-dot size-[5px] rounded-full bg-mist/80" style={{ animationDelay: `${index * 160}ms` }} />
-              ))}
-            </span>
-          </button>
-        )}
-        {stillWorking ? (
-          <span className="flex items-center gap-x-3 text-[12px] text-mist" data-testid="coworker-still-working">
-            <span>{stillWorking}</span>
-            {onStop ? (
-              <button type="button" className="font-medium text-snow/80 underline-offset-2 hover:underline" data-testid="coworker-turn-choice" data-choice="stop" onClick={onStop}>
-                Stop
-              </button>
-            ) : null}
-          </span>
-        ) : null}
+          {long || quiet ? <p className="mt-1 text-[11px] leading-relaxed [overflow-wrap:anywhere]" data-testid="coworker-still-working">{progressNoteText(observation, note)}</p> : null}
+          {long && !terminal && onStop ? <button type="button" className="mt-1 rounded text-[11px] text-snow/80 underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ready/50" data-testid="coworker-turn-choice" data-choice="stop" onClick={onStop}>Stop</button> : null}
+        </div>
       </div>
-      {open ? <ThinkingPopover coworkerName={coworker.name} mode={mode} anchor={anchorRef.current} onClose={() => setOpen(false)} /> : null}
+      {open ? <ThinkingPopover coworkerName={coworker.name} observation={observation} note={note} id={id} anchor={anchorRef.current} onClose={() => setOpen(false)} /> : null}
     </div>
   );
 }

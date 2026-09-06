@@ -613,7 +613,9 @@ describe("waitForThread", () => {
     const double = createOpenworkDouble({
       beats: [
         { status: { type: "idle" }, messages: [reply("msg_1", "user")] },
-        { status: { type: "idle" }, messages: [reply("msg_1", "user"), { info: { id: "msg_2", role: "assistant", time: { created: 1 } }, parts: [] }] },
+        // A completed tool step is not the final reply: the latest assistant
+        // placeholder still has no completion timestamp.
+        { status: { type: "idle" }, messages: [reply("msg_1", "user"), reply("msg_tool", "assistant", "Checked the source."), { info: { id: "msg_2", role: "assistant", time: { created: 1 } }, parts: [] }] },
         { status: { type: "busy" }, messages: [reply("msg_1", "user")] },
         { status: { type: "retry", attempt: 1, message: "rate limited", next: 5 }, messages: [reply("msg_1", "user")] },
         { status: { type: "idle" }, messages: [reply("msg_1", "user"), reply("msg_2", "assistant", "Answer.")] },
@@ -787,7 +789,11 @@ describe("waitForThread", () => {
   test("reports a terminal assistant error", async () => {
     const failed = reply("msg_failed", "assistant", undefined, "msg_run_1");
     failed.info.error = { name: "ProviderAuthError", data: { message: "Reconnect the provider." } };
-    const double = createOpenworkDouble({ beats: [{ status: { type: "idle" }, messages: [failed] }] });
+    const double = createOpenworkDouble({ beats: [{ status: { type: "idle" }, messages: [
+      reply("msg_tool_step", "assistant", "Checked the source.", "msg_run_1"),
+      failed,
+      reply("msg_other", "assistant", "Unrelated reply", "msg_other_user"),
+    ] }] });
 
     const result = await createClient(double).waitForThread(SESSION_ID, {
       timeoutMs: 1_000,

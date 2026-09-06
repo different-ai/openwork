@@ -112,6 +112,7 @@ export type DiscussionStoreIO = {
   readFile: (slug: string, path: string) => Promise<string>;
   writeFile: (slug: string, path: string, content: string) => Promise<unknown>;
   listCoworkers: () => Promise<ReadonlyArray<{ slug: string; workspaceId: string }>>;
+  excludedThreads?: (slug: string) => Promise<string[]>;
 };
 
 let io: DiscussionStoreIO | null = null;
@@ -130,8 +131,9 @@ function isMissingFile(cause: unknown): boolean {
 }
 
 export async function loadDiscussionRegistry(slug: string): Promise<string[]> {
+  const excluded = new Set(await io?.excludedThreads?.(slug) ?? []);
   const cached = registryBySlug.get(slug);
-  if (cached) return cached;
+  if (cached) return cached.filter((id) => !excluded.has(id));
   if (!io) return [];
   let ids: string[] = [];
   try {
@@ -140,7 +142,7 @@ export async function loadDiscussionRegistry(slug: string): Promise<string[]> {
     if (!isMissingFile(cause)) throw cause;
   }
   registryBySlug.set(slug, ids);
-  return ids;
+  return ids.filter((id) => !excluded.has(id));
 }
 
 /** Record a thread as one of this coworker's discussions; returns the full registry. */

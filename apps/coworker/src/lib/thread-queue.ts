@@ -150,6 +150,8 @@ export function clearPending(state: ThreadTurnState): ThreadTurnState {
 export type TurnStoreIO = {
   readFile: (slug: string, path: string) => Promise<string>;
   writeFile: (slug: string, path: string, content: string) => Promise<unknown>;
+  readState?: (slug: string, threadId: string) => Promise<ThreadTurnState>;
+  updateState?: (slug: string, threadId: string, previous: ThreadTurnState, next: ThreadTurnState) => Promise<ThreadTurnState>;
 };
 
 let io: TurnStoreIO | null = null;
@@ -158,12 +160,15 @@ const loadsBySlug = new Map<string, Promise<TurnsFile>>();
 /** The latest known contents, kept current synchronously so two saves never lose each other's thread. */
 const fileBySlug = new Map<string, TurnsFile>();
 const writesBySlug = new Map<string, Promise<unknown>>();
+const remoteStates = new Map<string, ThreadTurnState>();
+export function backendOwnsTurns(): boolean { return Boolean(io?.readState); }
 
 export function configureTurnStore(next: TurnStoreIO | null): void {
   io = next;
   loadsBySlug.clear();
   fileBySlug.clear();
   writesBySlug.clear();
+  remoteStates.clear();
 }
 
 function isMissingFile(cause: unknown): boolean {
@@ -200,6 +205,11 @@ async function loadTurnsFile(slug: string): Promise<TurnsFile> {
 
 /** What this thread still owes: the turn in flight or left unresolved, and the messages waiting as Next. */
 export async function loadThreadTurns(slug: string, threadId: string): Promise<ThreadTurnState> {
+  if (io?.readState) {
+    const state = await io.readState(slug, threadId);
+    remoteStates.set(`${slug}:${threadId}`, state);
+    return state;
+  }
   return threadTurns(await loadTurnsFile(slug), threadId);
 }
 
@@ -208,7 +218,16 @@ export async function loadThreadTurns(slug: string, threadId: string): Promise<T
  * reader in the same window sees the change at once; the write itself is
  * queued behind any earlier write for the coworker.
  */
-export async function saveThreadTurns(slug: string, threadId: string, state: ThreadTurnState): Promise<ThreadTurnState> {
+export async function saveThreadTurns(slug: string, threadId: string, state: ThreadTurnState, previousState?: ThreadTurnState): Promise<ThreadTurnState> {
+  if (io?.updateState) {
+    const key = `${slug}:${threadId}`;
+    const previous = previousState ?? remoteStates.get(key) ?? EMPTY_THREAD_TURNS;
+    remoteStates.set(key, state);
+    const update = io.updateState;
+    const write = (writesBySlug.get(key) ?? Promise.resolve()).catch(() => undefined).then(() => update(slug, threadId, previous, state));
+    writesBySlug.set(key, write);
+    try { return await write; } finally { if (writesBySlug.get(key) === write) writesBySlug.delete(key); }
+  }
   await loadTurnsFile(slug);
   // Read the cache again after the await: another save may have landed meanwhile.
   const file = withThreadTurns(fileBySlug.get(slug) ?? { schemaVersion: 1, threads: {} }, threadId, state);

@@ -6,19 +6,10 @@ import type { CoworkerActivity } from "@/lib/threads";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
 import { Button, IconButton, PlusIcon, SearchIcon, SlidersIcon, StatusDot } from "@/ui/kit";
 import type { ResizablePanel } from "@/ui/use-resizable-panel";
-import { useWorkingSaying } from "@/ui/use-working-saying";
 
-/**
- * The status word for a rail row. While a coworker is working, a personality
- * speaks here ("Measuring twice…"); every other state keeps its truthful label.
- */
-function RailStatusLabel({ coworker, activity }: { coworker: CoworkerSummary; activity: CoworkerActivity | undefined }) {
-  const saying = useWorkingSaying(
-    coworker.personality,
-    `${coworker.slug}:${activity?.threadId ?? "work"}`,
-    activity?.state === "working",
-  );
-  return <span>{saying ? `${saying}…` : (activity?.label ?? "Checking status")}</span>;
+/** Identity keeps its personality; execution status only describes observed work. */
+function RailStatusLabel({ activity }: { coworker: CoworkerSummary; activity: CoworkerActivity | undefined }) {
+  return <span>{activity?.label ?? "Checking status"}</span>;
 }
 
 function relativeTime(timestamp: number): string {

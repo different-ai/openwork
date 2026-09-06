@@ -11,7 +11,6 @@ import { EffortDial } from "@/ui/effort-dial";
 import { createCoworkerThreads, recommendModel, type CoworkerActivity, type ThreadListItem } from "@/lib/threads";
 import { AvatarControls, CoworkerAvatar } from "@/ui/coworker-avatar";
 import { PersonalityPicker } from "@/ui/personality-picker";
-import { useWorkingSaying } from "@/ui/use-working-saying";
 import { CapabilitiesPanel } from "@/ui/capabilities";
 import { ActivityIcon, AppsIcon, Button, ErrorNote, IconButton, MemoryIcon, SlidersIcon, Tooltip } from "@/ui/kit";
 import { useResizablePanel } from "@/ui/use-resizable-panel";
@@ -84,7 +83,7 @@ export function HeaderStatusWord({ activity, engineManaged }: { activity: Cowork
         data-tone={status.tone}
         tabIndex={detail ? 0 : undefined}
         // A fixed minimum width, right-aligned: "Ready" ↔ "Working" ↔ "Needs you" swap in place instead of sliding what sits beside them.
-        className={`window-no-drag min-w-[4.5rem] shrink-0 rounded-md text-right text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60 ${STATUS_TEXT_TONE[status.tone]}`}
+        className={`window-no-drag min-w-[4.5rem] max-w-[9rem] shrink-0 whitespace-normal rounded-md text-right text-xs [overflow-wrap:anywhere] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-spark/60 ${STATUS_TEXT_TONE[status.tone]}`}
       >
         {status.word}
       </span>
@@ -442,7 +441,7 @@ export function CoworkerHome({
   return (
     <div className="glass-main relative flex h-full min-w-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="glass-header window-drag flex h-[78px] items-center gap-3 border-b border-line px-6 pt-2" data-testid="conversation-header">
+        <header className="glass-header window-drag flex min-h-[78px] items-center gap-3 border-b border-line px-6 py-2" data-testid="conversation-header">
           <CoworkerAvatar
             animated
             color={coworker.avatarColor}
@@ -451,7 +450,7 @@ export function CoworkerHome({
             size={40}
           />
           <div className="min-w-0 flex-1">
-            <h1 className="truncate text-sm font-semibold text-snow">{coworker.name}</h1>
+            <h1 className="whitespace-normal text-sm font-semibold text-snow [overflow-wrap:anywhere]">{coworker.name}</h1>
             <div ref={setHeaderTitleSlot} className="window-no-drag flex min-h-[18px] min-w-0 items-center gap-2 text-xs text-mist" data-testid="conversation-header-title" />
           </div>
           <div ref={setHeaderActionsSlot} className="window-no-drag flex shrink-0 items-center gap-1" data-testid="conversation-header-actions" />
@@ -733,12 +732,7 @@ function CoworkerOverview({
   onOpenLevel: (kind: SummaryKind) => void;
 }) {
   const now = describeNow(activity);
-  const saying = useWorkingSaying(
-    coworker.personality,
-    `${coworker.slug}:${activity?.threadId ?? "work"}`,
-    activity?.state === "working",
-  );
-  const nowNote = saying ? `${saying}…` : now.note;
+  const nowNote = now.note;
   const recent = mergeRecentWork(activity, scheduled);
   const nowTime = relativeTime(activity?.updatedAt ?? 0);
   const canOpenSubject = Boolean(activity?.threadId);

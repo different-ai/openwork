@@ -20,6 +20,12 @@ import { BrowserWindow, Menu, app, dialog, ipcMain, nativeTheme, shell } from "e
 import { bindWindowAppearance } from "./window-appearance.mjs";
 import { openworkConfigDir } from "@openwork/paths";
 import { createHeadlessThreadClient, isRunning, toTranscript } from "@openwork/headless-threads";
+import { createCollaboration, collaborationId } from "./collaboration.mjs";
+import { readExecutionActivity } from "../src/lib/progress-activity.ts";
+import { PROGRESS_LIMITS } from "../src/lib/progress-config.ts";
+import { createGroupExecution, repairGroupSelection } from "./group-execution.mjs";
+import { installCollaborationPlugin } from "./collaboration-plugin.mjs";
+import { connectedModelCatalog } from "../src/lib/threads.ts";
 import { cloudModelOptions, resolveCloudModel } from "../src/lib/cloud-responsibilities.ts";
 import { createDenAutomationsClient, listAssignedCoworkerTemplates } from "../src/lib/den.ts";
 import { createTemplateInstaller, exportCoworkerTemplate, parseCoworkerTemplateFile, templateScope } from "./templates.mjs";
@@ -103,19 +109,18 @@ import { SETTINGS_FILE, readSettings, scheduleGuardrails, updateSettings } from 
 import {
   RECOVERED_STATUS,
   appendWorkerEvent,
-  createReviewScheduler,
   createWorker,
   createWorkerToolHandlers,
   getWorker,
   isWorkerFinished,
   lifespanSpent,
+  lifespanFromToolArgs,
   listWorkers,
   nextWorkerState,
   prepareWorkerTurn,
   queueWorkerSteer,
   readWorkerEvents,
   registerWorkerThread,
-  reviewPrompt,
   updateWorker,
   workerProgressNote,
   workerThreadTitle,
@@ -386,6 +391,8 @@ async function startPlatformServer() {
   const tokens = await loadOrCreateTokens();
   await mkdir(coworkersDir, { recursive: true });
   const coworkers = await listCoworkers(coworkersDir);
+  const contextServer = await ensureToolsServer();
+  for (const coworker of coworkers) await installCollaborationPlugin(coworker, { url: contextServer.url.replace(/\/mcp$/, "/context"), token: coworkerToolToken(coworker.slug) });
   // The registry file is the source of truth once it exists; seeds only shape
   // the very first boot (mirrors the OpenWork desktop's embedded-server use).
   const seedWorkspaces = existsSync(serverConfigPath) ? [] : coworkers.map((coworker) => coworker.path);
@@ -797,16 +804,98 @@ function localRunStatus(limit) {
 /** Worker turns in flight in this process: `slug:wrk_…` → controller that cancels the wait. */
 const liveWorkerTurns = new Map();
 let workersRecovered = false;
-const REVIEW_IDLE_WAIT_MS = 5 * 60_000;
-const REVIEW_TURN_TIMEOUT_MS = 15 * 60_000;
+let workersRecovering = false;
 const WORKER_TURN_TIMEOUT_MS = 60 * 60_000;
 
-const workerReviews = createReviewScheduler({
-  review: (slug, findings) => reviewWorkerFindings(slug, findings),
-  onDropped: (slug, findings) => {
-    void recordDroppedReview(slug, findings);
+const collaboration = createCollaboration({
+  directory: coworkersDir,
+  clientFor: collaborationClient,
+  consult: (task) => groupExecution.consultation(task),
+  spawn: (slug, input) => spawnWorker(slug, input, "coworker"),
+  cancelWorker: (slug, id) => cancelWorker(slug, id, "The originating task stopped.", "person"),
+  publish: async (task) => {
+    if (!task.groupId) return;
+    await appendGroupEvent(coworkersDir, task.groupId, { id: `evt_${collaborationId(task.id, "answer").slice(5)}`, kind: task.state === "succeeded" ? "coworker" : "status", slug: task.to, threadId: task.owner.threadId, status: task.state, text: task.state === "succeeded" ? task.result : `${task.label}: ${task.error || "The request stopped."}` });
+  },
+  publishExecution: async (entry) => {
+    const task = await collaboration.read((state) => state.tasks[entry.taskId]);
+    if (entry.owner.groupId && task.kind !== "consultation") await appendGroupEvent(coworkersDir, entry.owner.groupId, { id: `evt_${collaborationId(entry.id, "follow-up").slice(5)}`, kind: entry.state === "succeeded" ? "coworker" : "status", slug: entry.owner.slug, threadId: entry.owner.threadId, turnId: entry.owner.turnId, status: entry.state, text: entry.state === "succeeded" ? entry.result : `The follow-up could not finish: ${entry.error}` });
+    const children = await collaboration.read((state) => state.tasks[entry.taskId].dependencies.map((id) => state.tasks[id]));
+    for (const child of children.filter((task) => task.kind === "worker")) await appendWorkerEvent(coworkersDir, child.origin.slug, child.workerId, { id: `evt_${collaborationId(entry.id, child.id, "review").slice(5)}`, kind: "review", reviewThreadId: entry.owner.threadId, text: entry.state === "succeeded" ? "The coworker reviewed this in the original conversation." : "The follow-up did not finish. Its receipt is in the original conversation.", ...(entry.state === "succeeded" ? {} : { error: entry.error }) });
   },
 });
+const groupExecution = createGroupExecution({
+  directory: coworkersDir,
+  collaboration,
+  coworkerFor: (slug) => getCoworker(coworkersDir, slug),
+  coordinator: () => ensureCoordinatorWorkspace(),
+  catalogFor: async (workspace, signal) => {
+    const handle = await ensurePlatformServer();
+    const response = await fetch(`${handle.url}/workspace/${encodeURIComponent(workspace.workspaceId)}/opencode/config/providers`, { headers: { Authorization: `Bearer ${ownerToken}` }, signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]) });
+    if (!response.ok) throw new Error("The group's AI models could not be read.");
+    const result = await response.json();
+    return connectedModelCatalog({ all: result.providers, connected: result.providers.map((provider) => provider.id), default: result.default });
+  },
+  clientFor: collaborationClient,
+});
+
+async function collaborationClient(slug, { kind = "reply", signal } = {}) {
+  const coworker = slug === ".coordinator" ? await ensureCoordinatorWorkspace() : await getCoworker(coworkersDir, slug);
+  const handle = await ensurePlatformServer();
+  if (!handle.managedOpencode || !coworker.workspaceId) throw new Error("The AI service is not ready. Your work has been kept.");
+  if (slug !== ".coordinator") {
+    const server = await ensureToolsServer();
+    await installCollaborationPlugin(coworker, { url: server.url.replace(/\/mcp$/, "/context"), token: coworkerToolToken(slug) });
+    if (!toolsRegistered.has(slug)) await registerCoworkerTools(coworker);
+  }
+  signal?.throwIfAborted();
+  const client = createHeadlessThreadClient({ baseUrl: handle.url, workspaceId: coworker.workspaceId, token: ownerToken, defaultModel: await localRunModel(coworker, kind) });
+  client.pendingInteractions = async (threadId, abort) => {
+    const base = `${handle.url}/workspace/${encodeURIComponent(coworker.workspaceId)}/opencode`;
+    const headers = { Authorization: `Bearer ${ownerToken}` };
+    const replies = await Promise.all(["/permission", "/question", `/v2/session/${encodeURIComponent(threadId)}/permission`].map(async (route) => {
+      const response = await fetch(`${base}${route}`, { headers, signal: AbortSignal.any([abort, AbortSignal.timeout(8_000)]) });
+      // Older native engines serve their HTML fallback for an unknown v2 route.
+      // That optional protocol probe is not a failed collaboration turn.
+      const optional = route.startsWith("/v2/");
+      const json = response.headers.get("content-type")?.includes("application/json");
+      if (optional && (!json || response.status === 404)) return [];
+      if (!response.ok || !json) throw new Error("The coworker's permission requests could not be read. Its work has been kept.");
+      const result = await response.json();
+      return Array.isArray(result) ? result : result.data ?? [];
+    }));
+    return replies.some((items) => items.some((item) => item.sessionID === threadId));
+  };
+  return client;
+}
+
+async function privateOwner(slug, threadId, kind = "private") {
+  await getCoworker(coworkersDir, slug);
+  const group = (await listGroups(coworkersDir)).find((group) => group.participantThreadIds[slug] === threadId);
+  const worker = (await listWorkers(coworkersDir, slug)).find((worker) => worker.threadId === threadId);
+  if (group || worker) throw new Error("This thread belongs to group or Worker work, not a private discussion.");
+  return collaboration.registerOwner({ slug, threadId, conversationId: threadId, kind });
+}
+
+/** Activity observation never starts a server, installs tools, or cancels native work. */
+async function readCollaborationActivity(scope) {
+  const entries = await collaboration.activityEntries(scope, PROGRESS_LIMITS.maxActivityExecutions);
+  const observed = await Promise.all(entries.map(async (entry) => {
+    const empty = { replies: [], tools: [], completedSteps: 0, failedSteps: 0, available: false, nativeStatus: "unknown" };
+    if (!serverHandle?.managedOpencode) return { ...entry, ...empty };
+    try {
+      const coworker = await getCoworker(coworkersDir, entry.slug);
+      if (!coworker.workspaceId) return { ...entry, ...empty };
+      const snapshot = await readExecutionActivity({ serverUrl: serverHandle.url, workspaceId: coworker.workspaceId, token: ownerToken, threadId: entry.threadId, messageId: entry.messageId, signal: AbortSignal.timeout(PROGRESS_LIMITS.activityReadTimeoutMs) });
+      return { ...entry, ...snapshot, available: true };
+    } catch { return { ...entry, ...empty }; }
+  }));
+  const current = await collaboration.activityEntries(scope, PROGRESS_LIMITS.maxActivityExecutions);
+  return observed.flatMap((entry) => {
+    const latest = current.find((item) => item.executionId === entry.executionId && item.messageId === entry.messageId && item.threadId === entry.threadId && item.slug === entry.slug);
+    return latest ? [{ ...entry, ...latest }] : [];
+  });
+}
 
 function workerKey(slug, id) {
   return `${slug}:${id}`;
@@ -846,13 +935,15 @@ async function spawnWorker(slug, input, spawnedBy) {
     ? { kind: "turns", max: workerTurnsFor(effortStopOf(coworker.effortPreference)), used: 0 }
     : input.lifespan;
   const worker = await createWorker(coworkersDir, slug, { ...input, lifespan, spawnedBy });
+  if (spawnedBy === "person" && worker.spawnedFromThreadId) await collaboration.attachWorker(worker, await privateOwner(slug, worker.spawnedFromThreadId));
   await appendWorkerEvent(coworkersDir, slug, worker.id, {
     kind: "status",
     text: spawnedBy === "coworker" ? `Started by ${coworker.name}` : "Started by you",
     by: spawnedBy,
   });
+  if (!worker.spawnedFromThreadId) await appendWorkerEvent(coworkersDir, slug, worker.id, { id: `evt_${collaborationId(worker.id, "origin-missing").slice(5)}`, kind: "status", text: "No originating conversation was recorded. Findings remain here; no private conversation will receive an automatic follow-up." });
   await syncWorkerNote(slug, worker);
-  void admitWorkerTurn(slug, worker.id);
+  if (!isWorkerFinished(worker)) void admitWorkerTurn(slug, worker.id);
   return worker;
 }
 
@@ -982,23 +1073,27 @@ async function settleWorkerTurn(slug, id, outcome) {
   let updated;
   try {
     updated = await updateWorker(coworkersDir, slug, id, (current) => {
-      step = nextWorkerState(current, outcome, { now, hasPendingSteer: current.pendingSteers.length > 0 });
-      return { ...step.patch, pendingTurn: null };
+      step = current.pendingSettlement ?? { ...nextWorkerState(current, outcome, { now, hasPendingSteer: current.pendingSteers.length > 0 }), messageId: current.pendingTurn?.messageId ?? collaborationId(id, now) };
+      return current.pendingSettlement ? null : { ...step.patch, pendingSettlement: step };
     }, { now });
   } catch {
     return false;
   }
+  // The durable settlement is replayable until both the continuation obligation
+  // and legacy finding projections are recorded. Only then clear the admitted turn.
+  await collaboration.completeWorker(updated, step.events);
+  if (updated.status === "cancelled") {
+    await updateWorker(coworkersDir, slug, id, { pendingTurn: null, pendingSettlement: null });
+    return false;
+  }
   let latestFinding = null;
-  for (const event of step.events) {
-    const recorded = await appendWorkerEvent(coworkersDir, slug, id, event, { now }).catch(() => null);
-    if (!recorded) continue;
+  for (const [index, event] of step.events.entries()) {
+    const recorded = await appendWorkerEvent(coworkersDir, slug, id, { ...event, id: `evt_${collaborationId(id, step.messageId, index).slice(5)}` }, { now });
     if (event.kind === "finding") {
       latestFinding = recorded;
-      workerReviews.add(slug, { id: recorded.id, workerId: id, workerName: updated.name, report: recorded.report, text: recorded.text });
-    } else if (updated.status === "failed") {
-      workerReviews.add(slug, { id: recorded.id, workerId: id, workerName: updated.name, report: "failed", text: updated.error || recorded.text });
     }
   }
+  await updateWorker(coworkersDir, slug, id, { pendingTurn: null, pendingSettlement: null });
   // A turn that reported nothing leaves the line as it was; a finding or an ending rewrites it.
   if (latestFinding || isWorkerFinished(updated)) await syncWorkerNote(slug, updated, latestFinding);
   return step.schedule === "continue";
@@ -1017,6 +1112,7 @@ async function cancelWorker(slug, id, reason, by) {
   if (isWorkerFinished(worker)) return worker;
   removeQueuedRun(key);
   const updated = await updateWorker(coworkersDir, slug, id, { status: "cancelled", pendingSteers: [], pendingTurn: null });
+  await collaboration.completeWorker(updated, []);
   const why = String(reason ?? "").trim();
   await appendWorkerEvent(coworkersDir, slug, id, { kind: "status", text: why ? `Stopped: ${why}` : "Stopped", by });
   await syncWorkerNote(slug, updated);
@@ -1062,11 +1158,21 @@ async function resumeWorker(slug, id, by = "person") {
  * keeps waiting; a paused one stays paused.
  */
 async function recoverInterruptedWorkers() {
-  if (workersRecovered || !serverHandle?.managedOpencode) return;
-  workersRecovered = true;
+  if (workersRecovered || workersRecovering || !serverHandle?.managedOpencode) return;
+  workersRecovering = true;
+  try {
   for (const coworker of await listCoworkers(coworkersDir)) {
     for (const worker of await listWorkers(coworkersDir, coworker.slug).catch(() => [])) {
       const key = workerKey(coworker.slug, worker.id);
+      const linked = await collaboration.read((state) => Object.values(state.tasks).some((task) => task.workerId === worker.id && task.origin.slug === coworker.slug));
+      if (!linked && worker.spawnedFromThreadId) {
+        const owner = await collaboration.owner(coworker.slug, worker.spawnedFromThreadId) ?? await privateOwner(coworker.slug, worker.spawnedFromThreadId);
+        await collaboration.attachWorker(worker, owner);
+      } else if (!linked) {
+        await appendWorkerEvent(coworkersDir, coworker.slug, worker.id, { id: `evt_${collaborationId(worker.id, "origin-missing").slice(5)}`, kind: "status", text: "No originating conversation was recorded. Findings remain here; no private conversation will receive an automatic follow-up." });
+      }
+      if (worker.pendingSettlement) await settleWorkerTurn(coworker.slug, worker.id, { kind: "failed", error: "Interrupted settlement" });
+      else if (isWorkerFinished(worker)) await collaboration.completeWorker(worker, await readWorkerEvents(coworkersDir, coworker.slug, worker.id));
       if (isWorkerFinished(worker) || worker.status === "paused" || activeLocalRuns.has(key) || isQueued(key)) continue;
       if (worker.status === "waiting" && worker.waitingFor === "decision") continue;
       if (worker.status === "running" || worker.status === "starting") {
@@ -1076,56 +1182,8 @@ async function recoverInterruptedWorkers() {
       void admitWorkerTurn(coworker.slug, worker.id);
     }
   }
-}
-
-/**
- * Wake the coworker: one normal turn in its open discussion carrying the new
- * findings. It never interleaves with a reply in progress or a turn waiting
- * on the person; without an open discussion the findings are held.
- */
-async function reviewWorkerFindings(slug, findings) {
-  const coworker = await getCoworker(coworkersDir, slug);
-  if (!coworker.workspaceId || !coworker.conversationThreadId || !serverHandle?.managedOpencode) return "hold";
-  const client = await readyWorkerClient(coworker, "review");
-  const threadId = coworker.conversationThreadId;
-  const idle = await client.waitUntilIdle(threadId, { timeoutMs: REVIEW_IDLE_WAIT_MS, pollIntervalMs: 1_000 });
-  if (idle.outcome !== "settled") return "hold";
-  const workers = await listWorkers(coworkersDir, slug);
-  const mentioned = new Set(findings.map((finding) => finding.workerId));
-  const prompt = reviewPrompt({
-    coworkerName: coworker.name,
-    workers: workers.filter((worker) => !isWorkerFinished(worker) || mentioned.has(worker.id)),
-    findings,
-    toolsAvailable: toolsRegistered.has(slug),
-  });
-  const acceptance = await client.sendTurn(threadId, { prompt });
-  const result = await client.waitForThread(threadId, { timeoutMs: REVIEW_TURN_TIMEOUT_MS, pollIntervalMs: 1_000, since: acceptance });
-  const failure = result.outcome !== "settled" || result.terminalError
-    ? result.terminalError?.message || `The review ${result.outcome}`
-    : "";
-  const now = Date.now();
-  for (const workerId of mentioned) {
-    await appendWorkerEvent(coworkersDir, slug, workerId, {
-      kind: "review",
-      text: failure ? `${coworker.name} could not review this yet.` : `${coworker.name} reviewed this.`,
-      reviewThreadId: threadId,
-      findingIds: findings.filter((finding) => finding.workerId === workerId).map((finding) => finding.id),
-      ...(failure ? { error: failure } : {}),
-    }, { now }).catch(() => undefined);
-  }
-  if (failure) throw new Error(failure);
-  return "reviewed";
-}
-
-async function recordDroppedReview(slug, findings) {
-  for (const workerId of new Set(findings.map((finding) => finding.workerId))) {
-    await appendWorkerEvent(coworkersDir, slug, workerId, {
-      kind: "review",
-      text: "Not reviewed: the coworker's reply failed twice. The findings stay here.",
-      findingIds: findings.filter((finding) => finding.workerId === workerId).map((finding) => finding.id),
-      error: "Review failed twice",
-    }).catch(() => undefined);
-  }
+  workersRecovered = true;
+  } finally { workersRecovering = false; }
 }
 
 async function runDueLocalResponsibilities() {
@@ -1196,6 +1254,10 @@ const coworkerWarmups = new Map();
 let coworkerWarmupTail = Promise.resolve();
 
 async function runCoworkerWorkspaceWarmup(coworker) {
+  if (coworker.slug) {
+    const contextServer = await ensureToolsServer();
+    await installCollaborationPlugin(coworker, { url: contextServer.url.replace(/\/mcp$/, "/context"), token: coworkerToolToken(coworker.slug) });
+  }
   let handle = await ensurePlatformServer();
   if (!handle.managedOpencode || !coworker?.workspaceId) return;
   let lastError = null;
@@ -1223,6 +1285,8 @@ async function runCoworkerWorkspaceWarmup(coworker) {
       lastError = error;
     }
     if (attempt === 0) {
+      const busy = activeLocalRuns.size > 0 || (await collaboration.read((state) => Object.values(state.executions).some((entry) => entry.state === "running")));
+      if (busy) break;
       handle = await restartPlatformServer();
       if (!handle.managedOpencode) break;
     }
@@ -1281,11 +1345,21 @@ async function ensureToolsServer() {
   // functions the panel views use, so the run limit, the guardrails, and the records agree.
   startingToolsServer ??= createCoworkerToolsServer({
     resolveSlug: (token) => toolTokenSlugs.get(token) ?? null,
+    onContextTool: async (slug, { name, args, context }) => {
+      const trusted = await collaboration.context(slug, context);
+      if (name === "team_consult") {
+        const target = (await listCoworkers(coworkersDir)).find((coworker) => coworker.slug === args.to || coworker.name.toLowerCase() === String(args.to).toLowerCase());
+        if (!target) throw new Error("Choose a teammate from the team roster.");
+        return collaboration.request(trusted, "consultation", { ...args, to: target.slug });
+      }
+      if (name === "worker_spawn") return collaboration.request(trusted, "worker", { ...args, lifespan: args.lifespan ? lifespanFromToolArgs(args.lifespan) : undefined });
+      throw new Error("Unknown collaboration tool.");
+    },
     handlers: {
       ...createToolHandlers({ coworkersDir }),
       ...createWorkerToolHandlers({
         coworkersDir,
-        spawn: (slug, input) => spawnWorker(slug, input, "coworker"),
+        spawn: () => { throw new Error("Starting a Worker requires the conversation-aware Worker tool. Try again after the workspace is ready."); },
         steer: (slug, id, text) => steerWorker(slug, id, text, "coworker"),
         cancel: (slug, id, reason) => cancelWorker(slug, id, reason, "coworker"),
         pause: (slug, id) => pauseWorker(slug, id, "coworker"),
@@ -1301,7 +1375,7 @@ async function ensureToolsServer() {
       ...createSelfToolHandlers({ coworkersDir }),
       ...createTeamToolHandlers({ coworkersDir }),
     },
-    tools: [...toolCatalog(), ...workerToolCatalog(), ...assignmentToolCatalog(), ...selfToolCatalog(), ...teamToolCatalog()],
+    tools: [...toolCatalog(), ...workerToolCatalog().filter((tool) => tool.name !== "worker_spawn"), ...assignmentToolCatalog(), ...selfToolCatalog(), ...teamToolCatalog()],
     // One line naming the server; the rules for each tool family are in the coworker's contract, said once.
     instructions: DEFAULT_INSTRUCTIONS,
     version: app.getVersion(),
@@ -1358,7 +1432,9 @@ function prepareCoworker(coworker) {
  * workspace registration and persists the platform id before the UI lists it.
  */
 async function listPreparedCoworkers() {
-  const coworkers = await listCoworkers(coworkersDir);
+  const stored = await listCoworkers(coworkersDir);
+  const groups = await listGroups(coworkersDir);
+  const coworkers = await Promise.all(stored.map((coworker) => repairGroupSelection(coworker, groups, (slug, patch) => updateCoworker(coworkersDir, slug, patch))));
   if (!coworkers.some((coworker) => !coworker.workspaceId)) {
     for (const coworker of coworkers) {
       await warmCoworkerWorkspace(coworker).catch((error) => {
@@ -1855,6 +1931,22 @@ function shortDate(at) {
 const installTemplates = createTemplateInstaller(coworkersDir, addCoworker);
 
 const commands = {
+  "collaboration.receipts": async (scope) => collaboration.receipts(scope),
+  "collaboration.cancel": async ({ id }) => { await collaboration.cancel(id); return { ok: true }; },
+  "collaboration.retry": async ({ id }) => { await collaboration.retry(id); return { ok: true }; },
+  "collaboration.excludedThreads": async ({ slug }) => {
+    const groupThreads = (await listGroups(coworkersDir)).map((group) => group.participantThreadIds[slug]).filter(Boolean);
+    return [...new Set([...groupThreads, ...await collaboration.excludedThreads(slug)])];
+  },
+  "turns.state": async ({ slug, threadId }) => { await getCoworker(coworkersDir, slug); return collaboration.threadState(slug, threadId); },
+  "turns.activity": async ({ slug, threadId }) => readCollaborationActivity({ slug, threadId }),
+  "turns.update": async ({ slug, threadId, previous, next }) => { await getCoworker(coworkersDir, slug); return collaboration.updateThread(slug, threadId, previous, next); },
+  "turns.send": async ({ slug, threadId, prompt, messageId, model, retry, kind }) => {
+    const owner = await privateOwner(slug, threadId, kind === "assignment" ? "assignment" : "private");
+    const entry = await collaboration.submit({ owner, prompt, messageId, model, retry, track: true });
+    return collaboration.acceptance(entry.id);
+  },
+  "turns.cancel": async ({ slug, threadId, messageId }) => { await collaboration.cancelThread(slug, threadId, messageId); return { ok: true }; },
   "templates.sync": async ({ userEmail, automatic = false, installIds = [] }) => {
     const session = denSession;
     if (!session) throw new Error("Sign in to OpenWork to get your team's coworkers.");
@@ -1886,7 +1978,7 @@ const commands = {
     return runtimeInfo();
   },
   "coworkers.list": async () => listPreparedCoworkers(),
-  "coworkers.get": async ({ slug }) => getCoworker(coworkersDir, slug),
+  "coworkers.get": async ({ slug }) => repairGroupSelection(await getCoworker(coworkersDir, slug), await listGroups(coworkersDir), (owner, patch) => updateCoworker(coworkersDir, owner, patch)),
   "coworkers.create": async ({ name, role, mission, avatarColor, avatarGlasses, personality, roleId, firstNote }) =>
     addCoworker({ name, role, mission, avatarColor, avatarGlasses, personality, roleId, firstNote }),
   // The team: the catalog onboarding proposes from, the person's answers to a
@@ -1945,7 +2037,10 @@ const commands = {
     prepareCoworker(updated);
     return updated;
   },
-  "coworkers.update": async ({ slug, patch }) => updateCoworker(coworkersDir, slug, patch ?? {}),
+  "coworkers.update": async ({ slug, patch }) => {
+    if (patch?.conversationThreadId) await privateOwner(slug, patch.conversationThreadId);
+    return updateCoworker(coworkersDir, slug, patch ?? {});
+  },
   "coworkers.delete": async ({ slug }) => {
     const activeIds = [...activeLocalRunIds(String(slug ?? ""))];
     const workersRunning = activeIds.filter((id) => id.startsWith("wrk_")).length;
@@ -1977,7 +2072,8 @@ const commands = {
       }).catch(() => undefined);
     }
     const retired = await retireCoworker(coworkersDir, slug);
-    coworkerToolServer.forget(String(slug ?? ""));
+    toolTokenSlugs.delete(coworkerToolTokens.get(slug));
+    coworkerToolTokens.delete(slug);
     return { ok: true, archiveId: retired.archiveId };
   },
   "coworkers.retired.list": async () => listRetiredCoworkers(coworkersDir),
@@ -2000,10 +2096,21 @@ const commands = {
   // Group chats: several coworkers in one conversation. Metadata and the timeline
   // live under the coworkers home beside the coworker folders.
   "groups.list": async () => listGroups(coworkersDir),
+  "groups.submit": async ({ id, ...input }) => groupExecution.submit(id, input),
+  "groups.status": async ({ id }) => groupExecution.status(id),
+  "groups.activity": async ({ id }) => {
+    // Read delivered bubbles first. An execution behind any of these is already terminal,
+    // so the later running-only projection cannot return the same reply as a live bubble.
+    const timeline = await readGroupTimeline(coworkersDir, id);
+    const executions = await readCollaborationActivity({ groupId: id });
+    return { timeline, executions };
+  },
+  "groups.cancel": async ({ id }) => { await groupExecution.cancel(id); return { ok: true }; },
+  "groups.removeQueued": async ({ id, clientMessageId }) => { await groupExecution.remove(id, clientMessageId); return { ok: true }; },
   "groups.get": async ({ id }) => getGroup(coworkersDir, id),
   "groups.create": async ({ name, participantSlugs }) => createGroup(coworkersDir, { name, participantSlugs }),
   "groups.update": async ({ id, patch }) => updateGroup(coworkersDir, id, patch ?? {}),
-  "groups.archive": async ({ id }) => archiveGroup(coworkersDir, id),
+  "groups.archive": async ({ id }) => { await groupExecution.cancel(id); return archiveGroup(coworkersDir, id); },
   "groups.readTimeline": async ({ id, limit }) => readGroupTimeline(coworkersDir, id, Number.isFinite(limit) ? { limit } : {}),
   "groups.appendEvent": async ({ id, event }) => appendGroupEvent(coworkersDir, id, event),
   // One turn per message from the person: the record is the source of truth the
@@ -2015,7 +2122,8 @@ const commands = {
   "groups.recoverInterrupted": async () => {
     const coworkers = await listCoworkers(coworkersDir).catch(() => []);
     const names = new Map(coworkers.map((coworker) => [coworker.slug, coworker.name]));
-    return reconcileInterruptedGroupTurns(coworkersDir, { nameFor: (slug) => names.get(slug) ?? slug });
+    const activeTurnIds = await collaboration.read((state) => new Set(Object.values(state.groups).flatMap((group) => group.queue.map((entry) => entry.turnId))));
+    return reconcileInterruptedGroupTurns(coworkersDir, { activeTurnIds, nameFor: (slug) => names.get(slug) ?? slug });
   },
   // The silent facilitator's own workspace: hidden, tool-less, registered like a
   // coworker's but never listed as one.
@@ -2304,7 +2412,7 @@ if (!singleInstanceLock) {
     installApplicationMenu();
     registerIpc();
     // Start the platform in the background; the renderer gates on runtime.info.
-    void ensurePlatformServer().catch((error) => {
+    void ensurePlatformServer().then(async () => { await groupExecution.start(); await collaboration.start(); }).catch((error) => {
       engineError = error instanceof Error ? error.message : String(error);
     });
     startLocalResponsibilitiesScheduler();
@@ -2320,6 +2428,8 @@ if (!singleInstanceLock) {
   });
 
   app.on("before-quit", (event) => {
+    groupExecution.stop();
+    void collaboration.stop();
     if (localResponsibilitiesTimer) {
       clearInterval(localResponsibilitiesTimer);
       localResponsibilitiesTimer = null;

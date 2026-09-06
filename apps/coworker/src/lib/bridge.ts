@@ -19,6 +19,20 @@ import type { ModelMode } from "./model-choice.ts";
 import type { Personality } from "./personalities";
 import type { WorkerEvent, WorkerLifespan, WorkerSummary } from "./workers";
 import type { AssignedCoworkerTemplate } from "@openwork/types/coworker-template";
+import type { HeadlessThreadModel, HeadlessTurnAcceptance } from "@openwork/headless-threads";
+import type { ThreadTurnState } from "./thread-queue.ts";
+import type { ExecutionActivity } from "./progress-activity.ts";
+
+export type CollaborationReceipt = {
+  id: string;
+  conversationId: string;
+  threadId: string;
+  messageId: string;
+  state: "running" | "waiting" | "waiting-person" | "resumption-queued" | "resuming" | "succeeded" | "failed" | "cancelled";
+  label: string;
+  error: string;
+  dependencies: Array<{ id: string; kind: "consultation" | "worker"; label: string; state: string; groupId: string; error: string }>;
+};
 
 export type CoworkerTemplateSync = {
   /** Present only for organization discovery, not local file imports. */
@@ -75,6 +89,7 @@ export type CoworkerGroupTurn = {
   mode: "sequential" | "parallel";
   routedBy: "facilitator" | "mentions" | "fallback";
   speakers: GroupSpeakerRun[];
+  dependsOn?: [string, string][];
 };
 
 export type GroupTimelineEventKind = "user" | "coworker" | "status" | "action";
@@ -93,6 +108,7 @@ export type GroupTimelineEvent = {
   /** What an action line links to, e.g. `assignment`. */
   action?: string;
   title?: string;
+  part?: GroupSpeakerPart;
 };
 
 export type CoworkerSummary = {
@@ -346,6 +362,7 @@ export type GroupTurnPatch = {
   mode?: CoworkerGroupTurn["mode"];
   routedBy?: CoworkerGroupTurn["routedBy"];
   status?: GroupTurnStatus;
+  dependsOn?: [string, string][];
 };
 
 type BridgeResponse = { ok: true; result: unknown } | { ok: false; error: string };
@@ -368,6 +385,19 @@ async function invoke<T>(command: string, payload?: unknown): Promise<T> {
 }
 
 export const coworkerBridge = {
+  collaboration: {
+    receipts: (scope: { slug?: string; threadId?: string; groupId?: string }) => invoke<CollaborationReceipt[]>("collaboration.receipts", scope),
+    cancel: (id: string) => invoke<{ ok: boolean }>("collaboration.cancel", { id }),
+    retry: (id: string) => invoke<{ ok: boolean }>("collaboration.retry", { id }),
+    excludedThreads: (slug: string) => invoke<string[]>("collaboration.excludedThreads", { slug }),
+  },
+  turns: {
+    activity: (slug: string, threadId: string) => invoke<ExecutionActivity[]>("turns.activity", { slug, threadId }),
+    state: (slug: string, threadId: string) => invoke<ThreadTurnState>("turns.state", { slug, threadId }),
+    update: (slug: string, threadId: string, previous: ThreadTurnState, next: ThreadTurnState) => invoke<ThreadTurnState>("turns.update", { slug, threadId, previous, next }),
+    send: (input: { slug: string; threadId: string; prompt: string; messageId: string; model?: HeadlessThreadModel; retry?: boolean; kind: "discussion" | "assignment" | "worker" }) => invoke<HeadlessTurnAcceptance>("turns.send", input),
+    cancel: (slug: string, threadId: string, messageId?: string) => invoke<{ ok: boolean }>("turns.cancel", { slug, threadId, messageId }),
+  },
   templates: {
     sync: (input: { userEmail: string; automatic?: boolean; installIds?: string[] }) => invoke<CoworkerTemplateSync>("templates.sync", input),
     import: () => invoke<CoworkerTemplateSync | null>("templates.import"),
@@ -391,6 +421,11 @@ export const coworkerBridge = {
     deleteRetired: (archiveId: string) => invoke<{ ok: boolean }>("coworkers.retired.delete", { archiveId }),
   },
   groups: {
+    activity: (id: string) => invoke<{ timeline: GroupTimelineEvent[]; executions: ExecutionActivity[] }>("groups.activity", { id }),
+    submit: (id: string, input: { clientMessageId: string; text: string; context?: string; turnId?: string; only?: string; attempt?: number }) => invoke<{ accepted: boolean }>("groups.submit", { id, ...input }),
+    status: (id: string) => invoke<{ active: boolean; turn: CoworkerGroupTurn | null; queue: Array<{ clientMessageId: string; text: string }> }>("groups.status", { id }),
+    cancel: (id: string) => invoke<{ ok: boolean }>("groups.cancel", { id }),
+    removeQueued: (id: string, clientMessageId: string) => invoke<{ ok: boolean }>("groups.removeQueued", { id, clientMessageId }),
     list: () => invoke<CoworkerGroupSummary[]>("groups.list"),
     get: (id: string) => invoke<CoworkerGroupSummary>("groups.get", { id }),
     create: (input: { name: string; participantSlugs: string[] }) => invoke<CoworkerGroupSummary>("groups.create", input),

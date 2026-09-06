@@ -444,29 +444,13 @@ the engine reports (idle, busy, or retrying with its next attempt), the reply
 it holds for that message, and the wait budget. The header status, the rail
 line, Activity's Now card, and the journeys read the same value.
 
-- **Working** is the live turn, the way someone typing reads in Messages
-  (`ui/live-row.tsx`, `ui/thinking-popover.tsx`; the rules in
-  `lib/live-phase.ts`). The phase comes from what is streaming, not from a
-  label: a reasoning part arriving is *thinking*, a text part arriving is
-  *writing*, an unsettled tool call is a *tool*, nothing yet is thinking.
-  While thinking, the row is the avatar and a small typing bubble — three
-  dots rising and falling in turn — and no phrase; tap it and a light popover
-  under the row shows the thinking as it arrives, pinned to the newest line
-  unless you scrolled up, with "thinking for 4 s" in small print. A model
-  that shares no thinking gets the same dots, and the popover says so in one
-  line once words have arrived ("This AI model doesn't share its thinking.").
-  While a tool runs the row is a chip — the tool glyph and the step in plain
-  words ("Reading a web page") — and the same popover shows the step with its
-  technical details behind a fold. The moment the reply's words start, the row
-  goes away and a real bubble fills in as they come (an open code fence is
-  closed for the live render only; the transcript follows only while you are
-  already at the end), then is simply the landed bubble. A landed reply's
-  tooltip says how fast it came: "first words in 1.8 s · 6.3 s in all · 320
-  words of thinking" (`lib/turn-speed.ts`; the first-words moment is kept for
-  the profile so a reload keeps it; "words of thinking" are the reasoning
-  tokens the model reported). Nothing about speed appears in the transcript
-  itself. Escape, a click outside, the words starting, or the turn ending
-  closes the popover.
+- **Working** comes from a correlated native execution, never a personality
+  phrase. Preparing shows the coworker's avatar and three restrained dots;
+  a tool shows its category and observed state. Inspection shows status and
+  recorded duration, not reasoning, prompts, commands, or unrestricted payloads.
+  Reply text replaces the activity indicator as it streams. Escape closes the
+  keyboard-accessible popover and restores focus; outside focus is not stolen.
+  The existing reply-speed tooltip remains outside the main conversation.
 - **Still working** is not a failure. When two minutes pass while the engine
   is still busy, the row keeps its shape (the typing bubble or the chip; under
   the live bubble when words have stalled) and gains the soft phrase "Nova is
@@ -537,14 +521,10 @@ OPENWORK_EVAL_ELECTRON_BINARY="apps/coworker/dist-electron/mac-arm64/Open Cowork
   pnpm evals:e2e open-coworker-turn-recovery --local
 ```
 
-The live turn has its own journey, `open-coworker-live-turn`: a scripted model
-paces its stream and thinks out loud through the openai-compatible reasoning
-field (the engine surfaces it as reasoning parts), so the typing bubble, the
-popover filling with the thinking, the chip for a slow web page with its Doing
-popover, the words streaming into a live bubble, the tooltip's speed line, the
-same dots for a model that shares no thinking, the typing bubble past the wait
-budget with its soft phrase and Stop, and a reload are each read from a trace
-of the live shapes.
+The `open-coworker-live-turn` journey paces a scripted provider through preparing,
+tool execution, streaming, and long work. Reasoning and unknown payload canaries
+must never enter the DOM. It also checks keyboard inspection, recorded duration,
+reply timing, deterministic progress notes, and reload.
 
 ## Models membership and connected apps
 
@@ -1138,20 +1118,17 @@ inside another card.
 **Nothing that has landed in the conversation grows when the person looks
 closer.** A bubble keeps the height it landed with; detail floats in a light
 popover under (or over) its line — the same shell for all of them
-(`ui/details-popover.tsx`) — or is part of the bubble from the start. Thinking
-and tool work are two quiet lines above a reply: provider-returned thinking is
-a "Thought through" line whose popover holds the thinking once the reply is
-complete, and all the tool calls behind one reply become one work receipt
-("Edited index.md", "Worked with your files and Calendar · 3 steps") whose
-popover lists the plain-word steps with the tool name behind Technical details
-(`lib/work-receipt.ts`, `ui/work-popover.tsx`). The same rule holds for a
+(`ui/details-popover.tsx`) — or is part of the bubble from the start. Tool work
+becomes one quiet receipt with bounded, metadata-only inspection
+(`lib/work-receipt.ts`, `ui/work-popover.tsx`). Provider reasoning is never
+shown, including after the reply lands. The same size rule holds for a
 Worker review's updates and for the discussion an assignment carries; a
 failure's raw reason and a workspace problem's raw reason are shown small and
 bounded from the start. The one fold left in the conversation is a long reply's
 *Show the rest*, which exists to keep a wall of text short. Documents and Apps the work produced stay first-class
 as compact attachment chips beneath the receipt. While a turn runs, the live
-turn carries the moving state — a typing bubble while thinking (tap for the
-thinking), a chip while a tool runs, and the words themselves streaming into
+turn carries the moving state — a typing bubble while preparing, an inspectable
+chip while a tool runs, and the words themselves streaming into
 the bubble once they arrive (see *Working* under the turn outcomes above).
 Consecutive messages from the same speaker drop the repeated avatar and name
 and sit closer together.
@@ -1303,3 +1280,49 @@ inference to avoid repeating a billed request after a crash. Interrupted or fail
 replies use the conversation's existing recovery controls. Normal model usage
 applies. Disabling the feature stops future automatic briefings and hides its
 navigation, retaining history, focus, and unsent drafts for re-enabling.
+
+## Durable collaboration
+
+`electron/collaboration.mjs` owns conversation-scoped executions and dependencies
+in one serialized, atomically replaced `.collaboration/state.json`. Coworker
+identity and durable memory are global; transcripts, cancellation, execution IDs,
+and waiting receipts belong to their original conversation and native message.
+`electron/group-execution.mjs` runs group work independently of the window.
+
+`coworker_team_consult` shares only a focused question and explicitly supplied
+context with a teammate in a visible group. An unambiguous pair group or suitable
+originating group is reused. `coworker_worker_spawn` delegates bounded Worker
+work through the same dependency lifecycle. The native plugin supplies session,
+message, and tool-call identity; the model cannot choose its destination.
+
+Both tools return an acknowledgement and ask the coworker to end the current
+execution. Waiting does not hold an execution slot. All requested dependencies
+must resolve before one continuation is queued; failures and cancellations are
+results too. Foreground queued messages run before automatic follow-ups. Saved
+native message IDs reconcile accepted work on restart rather than replaying it.
+Duplicate completions do not enqueue another continuation. Cancelling the parent
+fences late results and automatic resumption. Unknown legacy Worker origins do
+not route to whichever discussion happens to be open.
+
+Defaults: four active collaboration executions, one producer per native session,
+30-second setup, 60-second admission observation, 15-minute execution limits,
+one-hour dependency deadlines, depth two, at most three dependencies per task,
+and at most two explicit follow-ups. Workers retain the existing background
+capacity setting. An admitted but incomplete idle execution requires recovery;
+it is not silently executed again. Group requests needing a permission or answer
+stop with an explanation instead of waiting invisibly.
+
+`src/lib/progress-config.ts` is the progress-budget location: notes after 15 seconds,
+2-second debounce, 30-second minimum model-call interval, 5-second timeout,
+three calls per execution, 2,048 input characters, and 80 output tokens. Only
+changed facts can trigger optional summarization; stale/cancelled results are
+discarded. The optional interface selects existing facts, never invents prose.
+**This build uses deterministic notes and makes no extra inference calls.** The
+native model client cannot enforce a per-request output-token cap, so the optional
+cheap-model transport is not enabled or integrated. No expensive fallback is used.
+
+The extended `open-coworker-team` journey exercises the real packaged plugin,
+consultation and Worker returns, independent conversations, cancellation, and
+process restart with loopback scripted inference. A supplied absolute native
+Electron binary makes the CLI report its actual local placement; explicit
+remote/attached placement is not overridden. Module checks are not journey proof.

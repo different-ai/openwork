@@ -270,27 +270,29 @@ async function beginOutcomeTrace(app: App): Promise<void> {
     const outcomes = new Set();
     const headers = new Set();
     const rails = new Set();
+    const failures = new Set();
     const record = () => {
       for (const node of document.querySelectorAll('[data-outcome]')) outcomes.add(node.getAttribute("data-outcome"));
+      for (const node of document.querySelectorAll('[data-outcome="failed"]')) failures.add((node.getAttribute("data-testid") ?? node.tagName) + ": " + node.textContent.trim().slice(0, 500));
       headers.add(document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() ?? "");
       rails.add(document.querySelector('[data-testid="coworker-rail-line"]')?.textContent?.trim() ?? "");
     };
     const observer = new MutationObserver(record);
     observer.observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true });
-    window.__COWORKER_OUTCOME_TRACE__ = { outcomes, headers, rails, observer };
+    window.__COWORKER_OUTCOME_TRACE__ = { outcomes, headers, rails, failures, observer };
     record();
     return true;
   })()`);
 }
 
-async function endOutcomeTrace(app: App): Promise<{ outcomes: string[]; headers: string[]; rails: string[] }> {
+async function endOutcomeTrace(app: App): Promise<{ outcomes: string[]; headers: string[]; rails: string[]; failures: string[] }> {
   const value = await evalIn(app, `(() => {
     const trace = window.__COWORKER_OUTCOME_TRACE__;
     trace?.observer?.disconnect?.();
-    return { outcomes: [...(trace?.outcomes ?? [])], headers: [...(trace?.headers ?? [])], rails: [...(trace?.rails ?? [])] };
+    return { outcomes: [...(trace?.outcomes ?? [])], headers: [...(trace?.headers ?? [])], rails: [...(trace?.rails ?? [])], failures: [...(trace?.failures ?? [])] };
   })()`);
   if (!isRecord(value) || !Array.isArray(value.outcomes) || !Array.isArray(value.headers) || !Array.isArray(value.rails)) throw new Error("The outcome trace was unavailable.");
-  return { outcomes: value.outcomes.map(String), headers: value.headers.map(String), rails: value.rails.map(String) };
+  return { outcomes: value.outcomes.map(String), headers: value.headers.map(String), rails: value.rails.map(String), failures: Array.isArray(value.failures) ? value.failures.map(String) : [] };
 }
 
 const USER_BUBBLES = `[...document.querySelectorAll('[data-message-role="user"]')].map((node) => node.textContent?.trim() ?? "")`;
@@ -423,7 +425,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   }
   await waitForReply(app, TRANSIENT_REPLY, 180_000);
   const transientTrace = await endOutcomeTrace(app);
-  expect(transientTrace.outcomes).toContain("retrying");
+  expect(transientTrace.outcomes, JSON.stringify(transientTrace)).toContain("retrying");
   expect(transientTrace.outcomes).not.toContain("failed");
   expect(transientTrace.headers).toContain("Retrying");
   expect(transientTrace.headers).not.toContain("Reply failed");

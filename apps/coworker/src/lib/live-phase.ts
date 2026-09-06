@@ -13,7 +13,7 @@ import type { LiveStream } from "./live-stream.ts";
 
 export type LivePhase = "sending" | "retrying" | "tool" | "thinking" | "writing";
 
-type ReplyShape = { text: string; reasoning: string };
+type ReplyShape = { text: string; reasoning?: string };
 type StepShape = { doing: string } | null;
 
 const SETTLED_TOOL = new Set(["completed", "success", "error", "failed"]);

@@ -57,8 +57,11 @@ import { carryVariant, chooseModelForLane, classifyRequest, describeModelChoice,
 import { describeReview, parseWorkerReview, parseWorkerTurn, workerNameFromTitle, type WorkerReview, type WorkerSummary } from "@/lib/workers";
 import { WorkerDecisionCards } from "@/ui/worker-decision";
 import { coworkerToolName } from "@/lib/coworker-tools";
-import { describeWorkLine, describeWorkStep, type WorkStep } from "@/lib/work-receipt";
-import { isUnsettledToolStatus, livePhase, phaseWord, safeLiveMarkdown, writingText, type LivePhase } from "@/lib/live-phase";
+import { EXECUTION_KINDS, executionMetadata, executionState, safeWorkLabel, summarizeWorkerReceipt } from "@/lib/work-receipt";
+import { executionProgress, type ExecutionActivity } from "@/lib/progress-activity";
+import { PROGRESS_LIMITS } from "@/lib/progress-config";
+import type { ProgressObservation } from "@/lib/progress-service";
+import { livePhase, phaseWord, safeLiveMarkdown, writingText, type LivePhase } from "@/lib/live-phase";
 import { describeSpeed, firstWordsFor, rememberFirstWords } from "@/lib/turn-speed";
 import { LiveRow } from "@/ui/live-row";
 import type { CoworkerSummaryLine, SummaryKind } from "@/lib/coworker-summary";
@@ -67,6 +70,7 @@ import {
   beginPending,
   clearPending,
   configureTurnStore,
+  backendOwnsTurns,
   dequeue,
   enqueue,
   loadThreadTurns,
@@ -96,7 +100,7 @@ import { useAutoGrow } from "@/ui/use-auto-grow";
 import { InteractionCard, InteractionCards, LETTERS, OptionRow, typingInField } from "@/ui/interactions";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
 import { InlineLoader } from "@/ui/brand";
-import { Button, Empty, ErrorNote, PlusIcon, StatusDot, ThoughtIcon, ToolIcon } from "@/ui/kit";
+import { Button, Empty, ErrorNote, PlusIcon, StatusDot, ToolIcon } from "@/ui/kit";
 import { Markdown } from "@/ui/markdown";
 import { DocumentCard } from "@/ui/documents";
 import { documentCardsFromCalls, isDocumentTool, shouldFoldReply, splitReplyLead } from "@/lib/documents";
@@ -113,6 +117,8 @@ type TranscriptToolCall = {
   output: unknown;
   error: string | null;
   metadata: Record<string, unknown>;
+  startedAt?: number | null;
+  completedAt?: number | null;
 };
 
 type TranscriptMessage = {
@@ -127,7 +133,6 @@ type TranscriptMessage = {
   completedAt: number | null;
   /** Why a reply ended without an answer; null when it did not fail. */
   error: { name: string; message: string; retryable: boolean | null; providerError: string | null } | null;
-  reasoning: string;
   /** Provider/model the engine attributed this reply to; null for user turns and unbound replies. */
   model: { providerId: string; modelId: string } | null;
   /** What the reply cost in tokens as the engine reported it; null for user turns and until it reports. */
@@ -169,7 +174,7 @@ function endedWithoutWords(message: TranscriptMessage): "stopped" | "failed" | n
 
 /** The optimistic user message for a turn the transcript does not carry yet. */
 function optimisticMessage(turn: { messageId: string; prompt: string }): TranscriptMessage {
-  return { id: turn.messageId, role: "user", parentId: null, text: turn.prompt, createdAt: null, completedAt: null, error: null, reasoning: "", model: null, usage: null, toolCalls: [] };
+  return { id: turn.messageId, role: "user", parentId: null, text: turn.prompt, createdAt: null, completedAt: null, error: null, model: null, usage: null, toolCalls: [] };
 }
 
 const EMPTY_REPLY_MESSAGE = "The model stopped before producing a response.";
@@ -254,11 +259,14 @@ configureDiscussionStore({
   readFile: (slug, path) => coworkerBridge.files.read(slug, path),
   writeFile: (slug, path, content) => coworkerBridge.files.write(slug, path, content),
   listCoworkers: () => coworkerBridge.coworkers.list(),
+  excludedThreads: (slug) => coworkerBridge.collaboration.excludedThreads(slug),
 });
 // The turn in flight and the messages waiting as Next live beside it, written by the main process.
 configureTurnStore({
   readFile: (slug, path) => coworkerBridge.files.read(slug, path),
   writeFile: (slug, path, content) => coworkerBridge.files.write(slug, path, content),
+  readState: (slug, threadId) => coworkerBridge.turns.state(slug, threadId),
+  updateState: (slug, threadId, previous, next) => coworkerBridge.turns.update(slug, threadId, previous, next),
 });
 
 /** Where the one conversation header lets a view place its title line and its actions. */
@@ -433,15 +441,16 @@ export function ThreadsPanel({
   const refresh = useCallback(async () => {
     if (!threads) return;
     try {
-      const [all, pending, workers] = await Promise.all([
+      const [all, pending, workers, excluded] = await Promise.all([
         threads.listAllThreads(),
         threads.listPendingInteractions().catch((): PendingInteractions => ({ permissions: [], questions: [] })),
         coworkerBridge.workers.list(coworker.slug).catch(() => []),
+        coworkerBridge.collaboration.excludedThreads(coworker.slug),
       ]);
       const workerIds = workers.map((worker) => worker.threadId).filter(Boolean);
       setWorkerThreadIds((current) => (current.length === workerIds.length && current.every((id, index) => id === workerIds[index]) ? current : workerIds));
       setWorkerRecords((current) => (current.length === workers.length && current.every((worker, index) => worker.id === workers[index]?.id && worker.updatedAt === workers[index]?.updatedAt) ? current : workers));
-      const split = classifyThreads(all, { discussions: discussionThreadIds, workers: workerIds });
+      const split = classifyThreads(all.filter((thread) => !excluded.includes(thread.id)), { discussions: discussionThreadIds, workers: workerIds });
       setDiscussions(split.discussions);
       const attention: Record<string, string> = {};
       for (const permission of pending.permissions) {
@@ -766,7 +775,7 @@ function DiscussionWelcome({
     <section className="flex h-full min-h-0 flex-col bg-ink" data-testid="coworker-discussion-view">
       <HeaderContent
         slots={headerSlots}
-        title={<span className="truncate">New discussion</span>}
+        title={<span className="whitespace-normal">New discussion</span>}
       />
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-8">
         {problem ? <WorkspaceProblemNote problem={problem} onRetry={onRetry} /> : null}
@@ -853,7 +862,7 @@ function DiscussionSwitcher({
         className="flex max-w-full items-center gap-1 rounded-md px-2 py-0.5 text-left transition-colors hover:bg-panel hover:text-snow"
         onClick={() => setOpen((value) => !value)}
       >
-        <span className="truncate text-xs text-mist">{label}</span>
+        <span className="min-w-0 whitespace-normal text-xs text-mist [overflow-wrap:anywhere]">{label}</span>
         <svg viewBox="0 0 16 16" width="10" height="10" aria-hidden="true" className="shrink-0 text-mist">
           <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
@@ -1012,6 +1021,27 @@ function ThreadView({
   /** The person's own messages in this thread: the engine streams their text parts too, and those are never the reply. */
   const userMessageIdsRef = useRef<Set<string>>(new Set());
   const [turnsLoaded, setTurnsLoaded] = useState(false);
+  const [collaborationReceipts, setCollaborationReceipts] = useState<import("@/lib/bridge").CollaborationReceipt[]>([]);
+  const [nativeActivity, setNativeActivity] = useState<{ scope: string; executions: ExecutionActivity[] }>({ scope: "", executions: [] });
+  const activityScope = `${coworker.slug}:${threadId}`;
+  const executions = nativeActivity.scope === activityScope ? nativeActivity.executions : [];
+  useEffect(() => {
+    let disposed = false;
+    let reading = false;
+    const read = async () => {
+      if (reading) return;
+      reading = true;
+      try {
+        const executions = await coworkerBridge.turns.activity(coworker.slug, threadId);
+        if (!disposed) setNativeActivity({ scope: activityScope, executions });
+      } catch {
+        if (!disposed) setNativeActivity({ scope: activityScope, executions: [] });
+      } finally { reading = false; }
+    };
+    void read();
+    const timer = window.setInterval(() => void read(), PROGRESS_LIMITS.activityPollMs);
+    return () => { disposed = true; window.clearInterval(timer); };
+  }, [activityScope, coworker.slug, threadId]);
   /** The pending turn was read back from disk: a quit or reload happened while it ran. */
   const [recovered, setRecovered] = useState(false);
   /** The turn this view is driving right now; null between turns. */
@@ -1067,23 +1097,29 @@ function ThreadView({
 
   const refresh = useCallback(async () => {
     try {
-      const [transcript, interactions] = await Promise.all([
+      const [transcript, interactions, savedTurns, work] = await Promise.all([
         threads.client.exportTranscript(threadId),
         threads.listThreadInteractions(threadId).catch((): PendingInteractions => ({ permissions: [], questions: [] })),
+        loadThreadTurns(coworker.slug, threadId),
+        coworkerBridge.collaboration.receipts({ slug: coworker.slug, threadId }),
       ]);
+      setCollaborationReceipts(work);
+      // A read begun before admission can return no pending turn after this
+      // view has submitted one. Never let that stale read erase its ownership.
+      if (!activeTurnRef.current) {
+        turnStateRef.current = savedTurns;
+        setTurnState(savedTurns);
+      }
       setPending(interactions);
       const loadedTitle = transcript.title ?? "Work thread";
       titleLoadedRef.current = true;
       setTitle(titleDiscussionAfterFirstMessage(loadedTitle) ?? loadedTitle);
-      // A retry the engine pushed hours away is a stall, not progress: cancel it so the turn ends
-      // now, and tell the person why in the provider's words with a way to choose another model.
+      // A read can report a stalled retry, but only the execution owner or an explicit Stop may cancel it.
       const status = transcript.status;
       const retryStatus = status.type === "retry" ? status : null;
       const stall = retryStatus ? stalledRetry(retryStatus) : null;
       if (stall && retryStatus && stallRef.current?.next !== retryStatus.next) {
         stallRef.current = { next: retryStatus.next, reason: stall };
-        void threads.client.abortThread(threadId).catch(() => undefined);
-        waitControllerRef.current?.abort();
         // A stall found while no turn of this view is in flight (after a reload, say) is still a failure to name.
         if (!activeTurnRef.current) setFailure(stall);
       }
@@ -1098,7 +1134,6 @@ function ThreadView({
           createdAt: message.createdAt,
           completedAt: message.completedAt,
           error: message.error,
-          reasoning: message.reasoning,
           model: message.model,
           usage: message.usage,
           toolCalls: message.toolCalls.map((call) => ({
@@ -1109,6 +1144,8 @@ function ThreadView({
             output: call.output,
             error: call.error,
             metadata: call.metadata,
+            startedAt: call.startedAt,
+            completedAt: call.completedAt,
           })),
         })),
       );
@@ -1183,11 +1220,12 @@ function ThreadView({
 
   /** Change the thread's turn record: the cache updates at once, the file follows through the main process. */
   const commitTurnState = useCallback((update: (state: ThreadTurnState) => ThreadTurnState): ThreadTurnState => {
-    const next = update(turnStateRef.current);
-    if (next === turnStateRef.current) return next;
+    const previous = turnStateRef.current;
+    const next = update(previous);
+    if (next === previous) return next;
     turnStateRef.current = next;
     setTurnState(next);
-    void saveThreadTurns(coworker.slug, threadId, next).catch(() => undefined);
+    void saveThreadTurns(coworker.slug, threadId, next, previous).catch((cause) => setError(`Could not keep this turn: ${cause instanceof Error ? cause.message : String(cause)}`));
     return next;
   }, [coworker.slug, threadId]);
 
@@ -1401,10 +1439,10 @@ function ThreadView({
         }
       }
       // A re-send waits for the engine to let go of the earlier attempt (a stop is still settling, say).
-      if (send.mode === "retry") await threads.client.waitUntilIdle(threadId, { timeoutMs: 15_000, pollIntervalMs: 300 });
-      const acceptance: HeadlessTurnAcceptance = send.mode === "retry"
-        ? await threads.client.retryTurn(threadId, { prompt, messageId, model: turnModel })
-        : await threads.client.sendTurn(threadId, { prompt, messageId, model: turnModel });
+      const acceptance: HeadlessTurnAcceptance = await coworkerBridge.turns.send({ slug: coworker.slug, threadId, kind, prompt, messageId, model: turnModel, retry: send.mode === "retry" });
+      // Keep the selected retry model when admission is confirmed. Its receipt
+      // is displayed only once the correlated reply actually completes.
+      if (send.mode === "retry" && send.switchedTo) setResolution({ messageId, note: `Retried with ${send.switchedTo}` });
       const waiting: ActiveTurn = { messageId, prompt, phase: "waiting" };
       activeTurnRef.current = waiting;
       setActiveTurn(waiting);
@@ -1456,7 +1494,7 @@ function ThreadView({
         await settleFailure(EMPTY_REPLY_MESSAGE, false, true);
       } else if (result.outcome === "settled" || landed) {
         if (send.mode === "retry" && send.switchedTo) setResolution({ messageId, note: `Retried with ${send.switchedTo}` });
-        commitTurnState(clearPending);
+        commitTurnState((state) => state.pending?.messageId === messageId ? clearPending(state) : state);
       } else if (result.outcome === "failed" || (result.outcome === "timeout" && terminalError)) {
         // The same raw text the transcript's failure reads, so the retry decision sees the provider's own error type too.
         const terminal = terminalError ? failureText(terminalError) : "The model stopped before producing a response.";
@@ -1492,7 +1530,6 @@ function ThreadView({
     const active: ActiveTurn = { messageId: turn.messageId, prompt: turn.prompt, phase: "waiting" };
     activeTurnRef.current = active;
     setActiveTurn(active);
-    setRecovered(false);
     let refreshTimer: number | undefined;
     try {
       const controller = new AbortController();
@@ -1504,7 +1541,7 @@ function ThreadView({
         result = await threads.client.waitForThread(threadId, { timeoutMs: TURN_OBSERVER_SLICE_MS, pollIntervalMs: 500, since, signal: controller.signal });
       }
       await refresh();
-      if (result.outcome === "settled") commitTurnState(clearPending);
+      if (result.outcome === "settled") commitTurnState((state) => state.pending?.messageId === turn.messageId ? clearPending(state) : state);
       // Anything else is in the transcript now; the outcome names it (a failure, a stop, a cut-off).
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -1587,6 +1624,7 @@ function ThreadView({
 
   /** Send what is next in line, one at a time, once nothing is in flight and nothing unresolved holds the queue. */
   const drainNext = useCallback(() => {
+    if (backendOwnsTurns()) return;
     if (activeTurnRef.current || turnStateRef.current.pending) return;
     const { state, message } = dequeue(turnStateRef.current);
     if (!message) return;
@@ -1682,6 +1720,7 @@ function ThreadView({
     commitTurnState((state) => markStopped(state, Date.now()));
     waitControllerRef.current?.abort();
     try {
+      await coworkerBridge.turns.cancel(coworker.slug, threadId, stopping?.messageId);
       await threads.client.abortThread(threadId);
       // The message may still be on its way to the engine's run; keep the stop in force until the turn has ended.
       if (stopping && activeTurnRef.current?.phase !== "accepting") await abortUntilQuiet(stopping.messageId);
@@ -1774,42 +1813,51 @@ function ThreadView({
   const turnRunning = outcome?.kind === "working" || outcome?.kind === "slow" || outcome?.kind === "retrying";
   // The engine can be busy on a turn this view never sent (a Worker's review, a scheduled run): still working.
   const working = turnRunning || (outcome === null && !needsYou && engineRunning) || (activeTurn !== null && outcome === null);
+  const timedMessages = messages.map((message) => {
+    const execution = executions.find((entry) => entry.messageId === message.parentId);
+    return { ...message, toolCalls: message.toolCalls.map((call) => {
+      const timing = execution?.tools.find((tool) => tool.partId === call.partId);
+      return timing ? { ...call, startedAt: timing.startedAt, completedAt: timing.completedAt } : call;
+    }) };
+  });
   const visibleMessages = pendingTurn && !messages.some((message) => message.id === pendingTurn.messageId)
-    ? [...messages, optimisticMessage(pendingTurn)]
-    : messages;
+    ? [...timedMessages, optimisticMessage(pendingTurn)]
+    : timedMessages;
   const lastAssistantIndex = visibleMessages.findLastIndex((message) => message.role === "assistant");
   /** A team tile's pills stay open only until the person writes again. */
   const lastPersonIndex = visibleMessages.findLastIndex((message) => message.role === "user");
-  const activeToolLabel = activeToolCallLabel(visibleMessages);
-  // The reply for this turn has started only when the newest message is an
-  // assistant message with words; an older reply must not read as progress.
-  const newestMessage = visibleMessages.at(-1);
-  const activeReply = newestMessage?.role === "assistant" ? newestMessage : null;
-  const activeStep = activeWorkStep(visibleMessages);
-  const activeCall = activeToolCall(visibleMessages);
+  const currentMessageId = activeTurn?.messageId ?? pendingTurn?.messageId ?? executions.find((entry) => entry.state === "running")?.messageId ?? visibleMessages.findLast((message) => message.role === "user")?.id;
+  const currentExecution = executions.find((entry) => entry.messageId === currentMessageId);
+  const currentReplies = visibleMessages.filter((message) => message.role === "assistant" && message.parentId === currentMessageId);
+  const activeReply = currentReplies.at(-1) ?? null;
+  const activeCall = currentReplies.flatMap((message) => message.toolCalls).findLast((call) => ["running", "pending"].includes(executionState(call.status)))
+    ?? currentExecution?.tools.findLast((call) => ["running", "pending"].includes(executionState(call.status))) ?? null;
+  const activeToolLabel = activeCall ? EXECUTION_KINDS[executionMetadata(activeCall).kind] : null;
+  const activeStep = activeToolLabel ? { doing: activeToolLabel } : null;
+  const correlatedStream = liveStream?.type === "text" && (currentReplies.some((reply) => reply.id === liveStream.messageId) || currentExecution?.replies.some((reply) => reply.id === liveStream.messageId && reply.parentId === currentMessageId)) ? liveStream : null;
   // What the coworker is doing this moment comes from what is streaming, not from a label:
   // a reasoning part is thinking, a text part is writing, an unsettled tool call is a tool.
   const phase: LivePhase = livePhase({
     label: activeTurn?.phase === "accepting" ? "Sending" : outcome?.kind === "retrying" ? "Retrying" : "",
-    stream: working ? liveStream : null,
+    stream: working ? correlatedStream : null,
     activeStep,
     landedWords: working ? activeReply?.text ?? "" : "",
   });
   const workingLabel = outcome?.kind === "slow" ? "Still working" : phaseWord(phase);
   /** Words of the reply have arrived this turn — streaming now, or landed by an earlier step of the same turn. */
   const wordsArrived = phase === "writing"
-    || visibleMessages.some((message) => message.role === "assistant" && message.parentId === pendingTurn?.messageId && message.text.trim() !== "");
-  // When the step under way began, for the popover's small print; one moment per tool call, a few remembered.
-  const stepStartsRef = useRef<Map<string, number>>(new Map());
-  let stepSince: number | null = null;
-  if (activeCall) {
-    const known = stepStartsRef.current.get(activeCall.partId);
-    if (known === undefined) {
-      stepStartsRef.current.set(activeCall.partId, Date.now());
-      if (stepStartsRef.current.size > 50) stepStartsRef.current = new Map([...stepStartsRef.current].slice(-25));
-    }
-    stepSince = stepStartsRef.current.get(activeCall.partId) ?? null;
-  }
+    || currentReplies.some((message) => message.text.trim() !== "");
+  const progress: ProgressObservation = currentExecution ? {
+    ...executionProgress(currentExecution, wordsArrived && phase === "writing"),
+    ...(phase === "retrying" ? { status: "retrying" } : {}),
+  } : {
+    executionId: `${activityScope}:${currentMessageId ?? "unobserved"}`,
+    status: !currentMessageId ? "unknown" : phase === "thinking" ? "preparing" : phase === "writing" ? "streaming" : phase,
+    startedAt: pendingTurn?.startedAt ?? visibleMessages.find((message) => message.id === currentMessageId)?.createdAt ?? null,
+    tool: activeCall,
+    completedSteps: currentReplies.flatMap((reply) => reply.toolCalls).filter((call) => executionState(call.status) === "completed").length,
+    failedSteps: currentReplies.flatMap((reply) => reply.toolCalls).filter((call) => executionState(call.status) === "failed").length,
+  };
 
   const readableStatus = outcome && outcome.kind !== "working" && outcome.kind !== "replied"
     ? outcome.label
@@ -1885,7 +1933,7 @@ function ThreadView({
           />
         ) : (
           <>
-            <span className="truncate">{kind === "worker" ? workerNameFromTitle(title) : title}</span>
+             <span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">{kind === "worker" ? workerNameFromTitle(title) : title}</span>
             <span className="shrink-0 rounded-full border border-spark/20 bg-spark/8 px-1.5 py-0.5 text-[8px] font-semibold uppercase tracking-[0.08em] text-spark">{kind === "worker" ? "Worker" : "Assignment"}</span>
           </>
         )}
@@ -1914,7 +1962,7 @@ function ThreadView({
           {freshDiscussion ? <QuietEmptyConversation coworker={coworker} proposerName={team?.coworkers.find((member) => member.slug === coworker.suggestedBy?.slug)?.name ?? ""} /> : null}
           {conversationBlocks(visibleMessages, (message, index) => working && message.role === "assistant" && index === lastAssistantIndex).map((block) => {
             if (block.kind === "actions") {
-              return <ActionLine key={block.id} review={block.review} reasoning={block.reasoning} calls={block.calls} client={mcpClient} />;
+               return <ActionLine key={block.id} review={block.review} calls={block.calls} client={mcpClient} />;
             }
             // A reply that ended without words stays in the transcript as one quiet line; the turn still
             // unresolved is told by the outcome below instead, with its actions.
@@ -1940,13 +1988,14 @@ function ThreadView({
                   conversation={visibleMessages}
                   onSendReply={sendText}
                   onLongReply={block.message.id === visibleMessages[lastAssistantIndex]?.id ? recordLongReply : undefined}
-                  liveStream={block.active && phase === "writing" ? liveStream : null}
+                   liveStream={block.active && block.message.id === correlatedStream?.messageId && phase === "writing" ? correlatedStream : null}
                   sentAt={block.message.role === "assistant" ? visibleMessages.find((entry) => entry.id === block.message.parentId)?.createdAt ?? null : null}
                 />
-                {resolution && block.message.id === resolution.messageId ? <QuietLine outcome="retried" text={resolution.note} /> : null}
+                {resolution && block.message.id === resolution.messageId && replyStateFor(visibleMessages, resolution.messageId).state === "complete" ? <QuietLine outcome="retried" text={resolution.note} /> : null}
               </Fragment>
             );
           })}
+          <CollaborationReceipts receipts={collaborationReceipts} />
           <InteractionCards
             coworker={coworker}
             pending={pending}
@@ -1966,22 +2015,21 @@ function ThreadView({
           {kind === "discussion" ? (
             <WorkerDecisionCards coworker={coworker} workers={workers} onAnswered={() => onWorkersChanged?.()} />
           ) : null}
-          <LiveRowSlot open={working && outcome?.kind !== "retrying"}>
+          <LiveRowSlot open={working && outcome?.kind !== "retrying" && !["completed", "failed", "cancelled"].includes(progress.status)}>
             {phase === "writing" && !activeReply ? (
               // The words are arriving: the bubble is the live view. It renders in the transcript
               // once the engine has the reply; until then the words stand in here, in the same shape.
               <article className="flex flex-col items-start" data-message-role="assistant" data-live="true">
-                <div className="bubble bubble-coworker max-w-[76%]" data-testid="coworker-live-bubble"><Markdown text={safeLiveMarkdown(writingText(liveStream, null))} /></div>
+                 <div className="bubble bubble-coworker max-w-[76%]" data-testid="coworker-live-bubble"><Markdown text={safeLiveMarkdown(writingText(correlatedStream, null))} /></div>
               </article>
             ) : null}
-            <LiveRow
-              coworker={coworker}
-              phase={phase}
-              step={activeStep}
-              stepCall={activeCall}
-              stepSince={stepSince}
-              stream={liveStream}
-              reply={activeReply ? { text: activeReply.text, reasoning: activeReply.reasoning } : null}
+             <LiveRow
+               key={progress.executionId}
+               coworker={coworker}
+               phase={phase}
+               progress={progress}
+               stream={correlatedStream}
+               reply={activeReply ? { text: activeReply.text } : null}
               wordsArrived={wordsArrived}
               sentAt={pendingTurn?.startedAt ?? null}
               stillWorking={outcome?.kind === "slow" ? outcome.line : ""}
@@ -2049,10 +2097,32 @@ function ThreadView({
 }
 
 type ConversationBlock =
-  | { kind: "actions"; id: string; review: WorkerReview | null; reasoning: string; calls: TranscriptToolCall[] }
+  | { kind: "actions"; id: string; review: WorkerReview | null; calls: TranscriptToolCall[] }
   | { kind: "message"; message: TranscriptMessage; previous: TranscriptMessage | undefined; active: boolean; continued: boolean; tail: boolean; calls: TranscriptToolCall[] }
   /** A reply that ended without words — stopped or failed — kept as one quiet line where it happened. */
   | { kind: "ended"; message: TranscriptMessage; ended: "stopped" | "failed" };
+
+/** Safe conversation-scoped facts only; progress inspection is a separate surface. */
+export function CollaborationReceipts({ receipts }: { receipts: import("@/lib/bridge").CollaborationReceipt[] }) {
+  const [error, setError] = useState("");
+  const act = async (action: () => Promise<unknown>) => {
+    setError("");
+    try { await action(); } catch { setError("That request could not be completed. The existing work has been kept."); }
+  };
+  return <div className="space-y-2" data-testid="collaboration-receipts" aria-live="polite">
+    {receipts.slice(-12).map((receipt) => <div key={receipt.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-2 text-[11px] text-mist [overflow-wrap:anywhere]" data-testid="collaboration-receipt" data-work-id={receipt.id} data-state={receipt.state}>
+      <span>{receipt.state === "waiting" || receipt.state === "waiting-person" ? "Waiting for requested work" : receipt.state === "resumption-queued" ? "Results ready; follow-up queued" : receipt.state === "resuming" ? "Following up on the results" : receipt.state === "succeeded" ? "Follow-up completed" : receipt.state === "cancelled" ? "Collaboration stopped" : receipt.state === "running" ? "Requested work is running" : "Collaboration needs attention"}</span>
+      {receipt.dependencies.slice(0, 3).map((dependency) => {
+        const name = safeWorkLabel(dependency.label, dependency.kind === "worker" ? "Worker" : "Coworker");
+        const label = `${name}: ${dependency.state === "succeeded" ? "received" : dependency.state === "failed" ? "failed" : dependency.state === "cancelled" ? "cancelled" : dependency.state === "waiting-person" ? "needs your input" : "pending"}`;
+        return dependency.groupId ? <button key={dependency.id} type="button" className="underline underline-offset-2" onClick={() => window.dispatchEvent(new CustomEvent("coworker:open-group", { detail: dependency.groupId }))}>{label}</button> : <span key={dependency.id}>{label}</span>;
+      })}
+      {!["succeeded", "failed", "cancelled"].includes(receipt.state) ? <button type="button" className="underline underline-offset-2" onClick={() => void act(() => coworkerBridge.collaboration.cancel(receipt.id))}>Stop follow-up</button> : null}
+      {receipt.state === "failed" ? <button type="button" className="underline underline-offset-2" onClick={() => void act(() => coworkerBridge.collaboration.retry(receipt.id))}>Continue with available results</button> : null}
+    </div>)}
+    {error ? <p role="alert" className="text-xs text-mist">{error}</p> : null}
+  </div>;
+}
 
 /** The app's own turn that wakes the coworker with its Workers' updates; never a bubble from the person. */
 function reviewTurn(message: TranscriptMessage): WorkerReview | null {
@@ -2060,10 +2130,10 @@ function reviewTurn(message: TranscriptMessage): WorkerReview | null {
 }
 
 /**
- * Lay a transcript out as bubbles with the coworker's thinking and actions gathered into one
+ * Lay a transcript out as bubbles with observed actions gathered into one
  * small line between them. Consecutive replies that only did work (no words) fold into the
  * line before the next bubble, so two action lines never sit one after the other. A reply
- * still in progress keeps its thinking out of the line until it has finished. The turn that
+ * carries no reasoning into this projection. The turn that
  * hands the coworker its Workers' updates joins the same line as what it then did about them.
  */
 export function conversationBlocks(
@@ -2072,21 +2142,21 @@ export function conversationBlocks(
 ): ConversationBlock[] {
   const blocks: ConversationBlock[] = [];
   let review: WorkerReview | null = null;
-  let reasoning: string[] = [];
   let calls: TranscriptToolCall[] = [];
   let pendingId = "";
   const flush = () => {
-    if (!review && reasoning.length === 0 && calls.length === 0) return;
-    blocks.push({ kind: "actions", id: `actions-${pendingId}`, review, reasoning: reasoning.join("\n\n"), calls });
+    if (!review && calls.length === 0) return;
+    blocks.push({ kind: "actions", id: `actions-${pendingId}`, review, calls });
     review = null;
-    reasoning = [];
     calls = [];
   };
   // Bubbles decide grouping: a reply with no visible words never counts as a neighbour, nor does a review turn.
+  const continuation = (message: TranscriptMessage) => message.role === "user" && message.text.startsWith("Continue the original task using these requested results.");
   const bubbles = messages.filter((message, index) =>
-    message.role === "assistant" ? Boolean(message.text) || isActive(message, index) : !reviewTurn(message),
+    message.role === "assistant" ? Boolean(message.text) || isActive(message, index) : !reviewTurn(message) && !continuation(message),
   );
   messages.forEach((message, index) => {
+    if (continuation(message)) return;
     const active = isActive(message, index);
     const reviewed = reviewTurn(message);
     if (reviewed) {
@@ -2096,11 +2166,9 @@ export function conversationBlocks(
     }
     if (message.role === "assistant") {
       if (!pendingId) pendingId = message.id;
-      // Thinking shows on its line as soon as any has arrived — while the reply is still being
-      // written too — so the line is already in place when the reply lands and nothing below it moves.
-      if (message.reasoning) reasoning.push(message.reasoning);
       if (message.toolCalls.length > 0) calls = [...calls, ...message.toolCalls];
-      const ended = active ? null : endedWithoutWords(message);
+      const superseded = message.parentId !== null && messages.slice(index + 1).some((later) => later.role === "assistant" && later.parentId === message.parentId);
+      const ended = active || superseded ? null : endedWithoutWords(message);
       if (ended) {
         // Whatever it thought or did before it ended stays on its own line; the ending is one more.
         flush();
@@ -2131,13 +2199,12 @@ export function conversationBlocks(
   return blocks;
 }
 
-/** One small centered line between bubbles: what the coworker thought through and did. */
-function ActionLine({ review, reasoning, calls, client }: { review: WorkerReview | null; reasoning: string; calls: TranscriptToolCall[]; client: CoworkerMcpClient }) {
+/** One small centered line between bubbles: observed work and Worker reports. */
+function ActionLine({ review, calls, client }: { review: WorkerReview | null; calls: TranscriptToolCall[]; client: CoworkerMcpClient }) {
   return (
     <div className="flex justify-center py-0.5" data-testid="coworker-action-line">
       <div className="flex max-w-[80%] flex-wrap items-start justify-center gap-x-4 gap-y-1">
         {review ? <ReviewDisclosure review={review} /> : null}
-        {reasoning ? <ThinkingDisclosure text={reasoning} /> : null}
         {calls.length > 0 ? <WorkReceipt calls={calls} client={client} /> : null}
       </div>
     </div>
@@ -2329,7 +2396,7 @@ function MessageBubble({
             />
           ))}
         </div>
-      ) : !active && !message.reasoning && message.toolCalls.length === 0 && teamCards.length === 0 ? (
+      ) : !active && message.toolCalls.length === 0 && teamCards.length === 0 ? (
         <div className={`bubble bubble-coworker ${tail ? "bubble-tail-left" : ""} text-mist`}>…</div>
       ) : null}
       {team && teamCards.length > 0 && !active ? (
@@ -2375,33 +2442,6 @@ function ReplyText({ message, active, turnCalls, onLongReply }: { message: Trans
       </button>
     </div>
   );
-}
-
-/** Provider-returned thinking, folded to one quiet line once the reply is complete. Only what the transcript makes available is shown. */
-function ThinkingDisclosure({ text }: { text: string }) {
-  return (
-    <PopoverDisclosure label="Thought through" title="Thinking" icon={<ThoughtIcon className="size-3.5 shrink-0" />} testId="coworker-thinking" className="text-[11px] text-mist">
-      <p className="whitespace-pre-wrap" data-testid="coworker-thinking-landed-text">{text}</p>
-    </PopoverDisclosure>
-  );
-}
-
-/** The tool call under way right now, or null when the coworker is only thinking or writing. */
-function activeToolCall(messages: TranscriptMessage[]): TranscriptToolCall | null {
-  return messages.flatMap((message) => message.toolCalls).findLast((call) => isUnsettledToolStatus(call.status)) ?? null;
-}
-
-/** The step the coworker is on right now, or null when it is only thinking or writing. */
-function activeWorkStep(messages: TranscriptMessage[]): WorkStep | null {
-  const call = activeToolCall(messages);
-  return call ? describeWorkStep(call) : null;
-}
-
-/** "Editing index.md" for the header and sidebar while a tool runs. */
-function activeToolCallLabel(messages: TranscriptMessage[]): string | null {
-  const step = activeWorkStep(messages);
-  if (!step) return null;
-  return step.doing.charAt(0).toUpperCase() + step.doing.slice(1);
 }
 
 /**
@@ -2560,22 +2600,14 @@ function describeUnavailableModel(model: string, available: EngineModelOption[],
   return `The saved model "${model}" is not available: provider "${providerId}" is not connected on this Mac. Choose another AI model or connect that provider in OpenWork.`;
 }
 
-/**
- * One receipt for all the tool work behind a reply: a single quiet line in the
- * transcript that says what is happening while steps run ("Running a command ·
- * 2 of 3") and sums the work up once they have settled ("Worked with the
- * terminal · 2 steps"). The steps never stack in the chat: the line opens a
- * popover that lists them in plain words with the tool's name behind Technical
- * details, and the person closes it. Documents and Apps the work produced stay
- * first-class as compact attachments beneath.
- */
+/** Only safe categories and observed states appear in either level of the receipt. */
 function WorkReceipt({ calls, client }: { calls: TranscriptToolCall[]; client: CoworkerMcpClient }) {
-  const steps = calls.map((call) => describeWorkStep(call));
-  const unsettled = steps.some((step) => step.state !== "done");
+  const steps = calls.map(executionMetadata);
+  const unsettled = steps.some((step) => step.status === "running" || step.status === "pending");
   const [open, setOpen] = useState<WorkPopoverPlacement | null>(null);
   const lineRef = useRef<HTMLButtonElement | null>(null);
-  const line = describeWorkLine(steps);
-  const tone = steps.some((step) => step.state === "failed") ? "rose" : unsettled ? "spark" : "mint";
+  const line = summarizeWorkerReceipt(calls);
+  const tone = steps.some((step) => step.status === "failed") ? "rose" : unsettled ? "spark" : "mist";
   const toggle = () => {
     if (open) {
       setOpen(null);
@@ -2585,7 +2617,7 @@ function WorkReceipt({ calls, client }: { calls: TranscriptToolCall[]; client: C
     setOpen(rect ? workPopoverPlacement(rect, window.innerHeight) : "below");
   };
   return (
-    <div className="relative min-w-0 text-[11px]" data-testid="coworker-work-receipt" data-state={tone === "rose" ? "failed" : unsettled ? "working" : "done"}>
+    <div className="relative min-w-0 text-[11px]" data-testid="coworker-work-receipt" data-state={tone === "rose" ? "failed" : unsettled ? "working" : steps.every((step) => step.status === "completed") ? "done" : steps.some((step) => step.status === "cancelled") ? "cancelled" : "unknown"}>
       <button
         ref={lineRef}
         type="button"
@@ -2597,11 +2629,11 @@ function WorkReceipt({ calls, client }: { calls: TranscriptToolCall[]; client: C
         data-testid="coworker-work-summary"
       >
         <ToolIcon className={`size-3.5 shrink-0 ${unsettled ? "motion-safe:animate-pulse" : ""}`} />
-        <span className="min-w-0 flex-1 truncate">{line}</span>
+        <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{line}</span>
         <StatusDot tone={tone} />
         <span className={`text-mist/60 transition-transform ${open ? "rotate-90" : ""}`} aria-hidden="true">›</span>
       </button>
-      {open ? <WorkPopover calls={calls} steps={steps} anchor={lineRef.current} placement={open} onClose={() => setOpen(null)} /> : null}
+      {open ? <WorkPopover calls={calls} anchor={lineRef.current} placement={open} onClose={() => setOpen(null)} /> : null}
       <ToolAttachments calls={calls} client={client} />
     </div>
   );
@@ -2630,7 +2662,7 @@ function ToolAttachments({ calls, client }: { calls: TranscriptToolCall[]; clien
                 <span className="max-w-56 truncate text-[11px] font-medium text-snow">{artifact.label}</span>
               </>
             );
-            const title = `${artifactKindLabel(artifact.kind)} · ${artifact.value}`;
+            const title = `${artifactKindLabel(artifact.kind)} · ${artifact.label}`;
             return artifact.openUrl ? (
               <button
                 key={`${artifact.kind}:${artifact.value}`}

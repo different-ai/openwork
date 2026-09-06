@@ -261,7 +261,7 @@ export function planSpeakers(plan: RoutingPlan): NonNullable<GroupTurnPatch["spe
 
 export type GroupTurnDeps = {
   /** Sends the prompt to the coworker's group thread and resolves with its visible reply and the thread it ran on. */
-  ask: (slug: string, prompt: string, signal: AbortSignal) => Promise<{ text: string; threadId: string }>;
+  ask: (slug: string, prompt: string, signal: AbortSignal, step: { turnId: string; part: GroupSpeakerPart }) => Promise<{ text: string; threadId: string }>;
   append: (event: Omit<GroupTimelineEvent, "id" | "at">) => Promise<GroupTimelineEvent>;
   /** Opens the turn record and the person's line; `created` is false when this message already has a turn. */
   begin: (input: { clientMessageId: string; prompt: string }) => Promise<{ turn: CoworkerGroupTurn; created: boolean; userEvent: GroupTimelineEvent | null }>;
@@ -314,7 +314,9 @@ async function runSpeakers(context: RunContext, turn: CoworkerGroupTurn, earlier
     for (const entry of pending) {
       const speaker = context.participants.find((participant) => participant.slug === entry.slug);
       if (!speaker || signal.aborted) continue;
-      asks.set(`${entry.slug}:${entry.part}`, deps.ask(speaker.slug, promptFor(speaker, entry.part, entry.brief, earlier), signal));
+      const pending = deps.ask(speaker.slug, promptFor(speaker, entry.part, entry.brief, earlier), signal, { turnId: current.id, part: entry.part });
+      pending.catch(() => undefined);
+      asks.set(`${entry.slug}:${entry.part}`, pending);
       publish(await deps.record(current.id, { speaker: { slug: entry.slug, part: entry.part, status: "running", startedAt: now() } }));
     }
   }
@@ -331,16 +333,23 @@ async function runSpeakers(context: RunContext, turn: CoworkerGroupTurn, earlier
       continue;
     }
     const key = `${entry.slug}:${entry.part}`;
+    const required = (current.dependsOn ?? []).filter(([later]) => later === entry.slug).map(([, earlier]) => earlier);
+    if (required.some((slug) => !current.speakers.some((speaker) => speaker.slug === slug && speaker.part === "reply" && ["succeeded", "passed"].includes(speaker.status)))) {
+      const error = "A required earlier reply did not finish. Retry that reply before continuing this step.";
+      await deps.append({ kind: "status", slug: entry.slug, part: entry.part, turnId: current.id, status: "failed", text: error });
+      publish(await deps.record(current.id, { speaker: { slug: entry.slug, part: entry.part, status: "failed", error, endedAt: now() } }));
+      continue;
+    }
     const started = asks.get(key);
     if (!started) publish(await deps.record(current.id, { speaker: { slug: entry.slug, part: entry.part, status: "running", startedAt: now(), error: "" } }));
     try {
-      const reply = await (started ?? deps.ask(speaker.slug, promptFor(speaker, entry.part, entry.brief, earlier), signal));
+      const reply = await (started ?? deps.ask(speaker.slug, promptFor(speaker, entry.part, entry.brief, earlier), signal, { turnId: current.id, part: entry.part }));
       if (!reply.text) throw new Error(`${speaker.name} did not reply.`);
       if (isNothingToAdd(reply.text)) {
-        await deps.append({ kind: "status", slug: speaker.slug, turnId: current.id, status: "passed", text: `${speaker.name} had nothing to add.` });
+        await deps.append({ kind: "status", slug: speaker.slug, part: entry.part, turnId: current.id, status: "passed", text: `${speaker.name} had nothing to add.` });
         publish(await deps.record(current.id, { speaker: { slug: entry.slug, part: entry.part, status: "passed", threadId: reply.threadId, endedAt: now() } }));
       } else {
-        await deps.append({ kind: "coworker", slug: speaker.slug, text: reply.text, turnId: current.id, threadId: reply.threadId });
+        await deps.append({ kind: "coworker", slug: speaker.slug, part: entry.part, text: reply.text, turnId: current.id, threadId: reply.threadId });
         earlier.push({ name: speaker.name, text: reply.text });
         publish(await deps.record(current.id, { speaker: { slug: entry.slug, part: entry.part, status: "succeeded", threadId: reply.threadId, endedAt: now() } }));
       }
@@ -383,7 +392,7 @@ export async function runGroupTurn(input: {
     plan = await deps.route({ message, mentions, participants: input.participants, recent: input.recent, signal: input.signal }).catch(() => null);
   }
   if (!plan) plan = fallbackPlan(message, input.participants, input.recent);
-  const routed = await deps.record(begun.turn.id, { speakers: planSpeakers(plan), mode: plan.dependsOn.length > 0 ? "sequential" : plan.mode, routedBy: plan.routedBy });
+  const routed = await deps.record(begun.turn.id, { speakers: planSpeakers(plan), dependsOn: plan.dependsOn, mode: plan.dependsOn.length > 0 ? "sequential" : plan.mode, routedBy: plan.routedBy });
   deps.onTurn?.(routed);
   return runSpeakers({ group: input.group, participants: input.participants, recent: input.recent, message, signal: input.signal, deps }, routed, []);
 }

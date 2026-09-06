@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { createCollaboration } from "./collaboration.mjs";
+import { createGroupExecution, repairGroupSelection } from "./group-execution.mjs";
 import {
   INTERRUPTED_TURN_MESSAGE,
   MAX_TURNS,
@@ -216,5 +218,415 @@ test("an action line names its coworker and what it links to", async () => {
     await assert.rejects(appendGroupEvent(home, group.id, { kind: "action", text: "no owner" }), /names its coworker/);
     // Older readers skip a kind they do not know instead of failing the whole timeline.
     assert.equal(parseTimeline('{"id":"evt_a","kind":"user","text":"a"}\n{"id":"evt_b","kind":"later-kind","text":"b"}\n').length, 1);
+  });
+});
+
+function nativeFixture(onSend = async () => {}) {
+  const histories = new Map();
+  const requests = [];
+  const aborted = [];
+  const held = new Set();
+  let sequence = 0;
+  const snapshot = (threadId) => ({ threadId, title: threadId, status: { type: held.has(threadId) ? "busy" : "idle" }, messages: histories.get(threadId) ?? [], todos: [] });
+  return { requests, aborted, histories, held, clientFor: async (slug) => ({
+    createThread: async () => ({ id: `ses_${++sequence}` }),
+    getThreadSnapshot: async (threadId) => snapshot(threadId),
+    sendTurn: async (threadId, input) => {
+      const messages = histories.get(threadId) ?? [];
+      const present = messages.some((message) => message.id === input.messageId);
+      if (!present) {
+        requests.push({ slug, threadId, ...input });
+        const reply = { id: `assistant_${++sequence}`, role: "assistant", parentId: input.messageId, completedAt: null, error: null, parts: [{ type: "tool", callId: `call_${sequence}` }] };
+        messages.push({ id: input.messageId, role: "user", parentId: null, parts: [{ type: "text", text: input.prompt }] }, reply);
+        histories.set(threadId, messages);
+        await onSend({ slug, threadId, input, reply });
+        reply.completedAt = Date.now();
+        reply.parts.push({ type: "text", text: slug === "editor" ? "CHECKED PUBLIC FACT" : "Original task followed up." });
+      }
+      return { threadId, messageId: input.messageId, messageCountBefore: 0, acceptedAt: Date.now(), alreadyPresent: present };
+    },
+    waitForThread: async (threadId, input) => {
+      if (held.has(threadId)) await new Promise((resolve) => setTimeout(resolve, 5));
+      return { outcome: input.signal?.aborted ? "aborted" : held.has(threadId) ? "timeout" : "settled", snapshot: snapshot(threadId), terminalError: null };
+    },
+    abortThread: async (threadId) => { aborted.push(threadId); held.delete(threadId); return { accepted: true }; },
+  }) };
+}
+
+async function eventually(check) {
+  const deadline = Date.now() + 4000;
+  while (Date.now() < deadline) { if (await check()) return; await new Promise((resolve) => setTimeout(resolve, 10)); }
+  assert.fail("The collaboration did not settle within the module check's deadline.");
+}
+
+test("a focused consultation and a Worker resume the immutable private origin exactly once", async () => {
+  await withHome(async (home) => {
+    let service;
+    let groups;
+    let workerId;
+    const fixture = nativeFixture(async ({ slug, threadId, input, reply }) => {
+      if (slug !== "scout" || input.prompt !== "PRIVATE ORIGIN ONLY") return;
+      const trusted = await service.context(slug, { sessionID: threadId, messageID: reply.id, callID: reply.parts[0].callId });
+      await assert.rejects(service.context(slug, { sessionID: threadId, messageID: reply.id, callID: "made-up-call" }), /admitted parent/);
+      await assert.rejects(service.request(trusted, "consultation", { to: "scout", question: "self" }), /cannot ask itself/);
+      const consultation = { to: "editor", question: "Check the public fact", context: "SHARED FACT", continuation: { objective: "PRIVATE ORIGIN ONLY", completedActions: ["Read the brief"], resumeInstructions: "Use the two results." } };
+      const first = await service.request(trusted, "consultation", consultation);
+      const duplicate = await service.request(trusted, "consultation", consultation);
+      assert.equal(first.structured.collaboration.id, duplicate.structured.collaboration.id);
+      const worker = await service.request({ ...trusted, callId: "second-native-call" }, "worker", { name: "Bounded check", goal: "Check once", continuation: consultation.continuation });
+      workerId = worker.structured.worker.id;
+    });
+    service = createCollaboration({ directory: home, clientFor: fixture.clientFor, pollMs: 5,
+      consult: (task) => groups.consultation(task),
+      spawn: async (slug, input) => {
+        await service.completeWorker({ slug, id: input.id, status: "finished" }, [{ kind: "finding", text: "WORKER RESULT" }]);
+        return { id: input.id, status: "finished" };
+      }, cancelWorker: async () => {},
+      publish: (task) => task.groupId ? appendGroupEvent(home, task.groupId, { id: `answer_${task.id}`, kind: "coworker", slug: task.to, text: task.result }) : undefined,
+    });
+    groups = createGroupExecution({ directory: home, collaboration: service, coworkerFor: async (slug) => ({ slug, name: slug, role: "", mission: "" }), clientFor: fixture.clientFor });
+    try {
+      const owner = { slug: "scout", threadId: "ses_private", conversationId: "ses_private", kind: "private" };
+      await service.registerOwner({ ...owner, threadId: "ses_other", conversationId: "ses_other" });
+      await service.submit({ owner, messageId: "msg_request", prompt: "PRIVATE ORIGIN ONLY", track: true });
+      await eventually(async () => (await service.receipts({ slug: "scout", threadId: "ses_private" }))[0]?.state === "succeeded");
+      await service.completeWorker({ slug: "scout", id: workerId, status: "finished" }, [{ kind: "finding", text: "DUPLICATE" }]);
+      const replies = fixture.requests.filter((request) => request.prompt.startsWith("Continue the original task"));
+      assert.equal(replies.length, 1);
+      assert.equal(replies[0].threadId, "ses_private");
+      assert.match(replies[0].prompt, /CHECKED PUBLIC FACT/);
+      assert.match(replies[0].prompt, /WORKER RESULT/);
+      assert.doesNotMatch(replies[0].prompt, /DUPLICATE/);
+      assert.equal(fixture.requests.some((request) => request.threadId === "ses_other"), false);
+      const question = fixture.requests.find((request) => request.slug === "editor");
+      assert.match(question.prompt, /SHARED FACT/);
+      assert.doesNotMatch(question.prompt, /PRIVATE ORIGIN ONLY|Read the brief/);
+      const group = (await listGroups(home))[0];
+      const events = await readGroupTimeline(home, group.id);
+      assert.equal(events.filter((event) => event.slug === "scout").length, 1);
+      assert.equal(events.filter((event) => event.slug === "editor").length, 1);
+      assert.ok((await service.excludedThreads("editor")).includes(question.threadId));
+      await assert.rejects(service.registerOwner({ slug: "editor", threadId: question.threadId, conversationId: question.threadId, kind: "private" }), /another conversation/);
+    } finally { groups.stop(); await service.stop(); }
+  });
+});
+
+test("completion before yield, restart delivery, and cancellation do not duplicate or resurrect a continuation", async () => {
+  await withHome(async (home) => {
+    const fixture = nativeFixture();
+    const options = { directory: home, clientFor: fixture.clientFor, pollMs: 5, consult: async () => { throw new Error("Not used"); }, spawn: async () => { throw new Error("Not used"); }, cancelWorker: async () => {} };
+    let service = createCollaboration(options);
+    const owner = { slug: "scout", threadId: "ses_origin", conversationId: "ses_origin", kind: "private" };
+    const root = await service.submit({ owner, messageId: "msg_root", prompt: "Finish the original work" });
+    const result = await service.request({ entry: root, callId: "early" }, "worker", { name: "Early result", goal: "Check", continuation: { objective: "Original work", resumeInstructions: "Use the result" } });
+    await service.completeWorker({ id: result.structured.worker.id, slug: "scout", status: "finished" }, [{ kind: "finding", text: "KEPT RESULT" }]);
+    assert.equal((await service.receipts({ slug: "scout", threadId: "ses_origin" }))[0].state, "running");
+    await service.stop();
+    service = createCollaboration(options);
+    try {
+      await service.start();
+      await eventually(async () => (await service.receipts({ slug: "scout", threadId: "ses_origin" }))[0].state === "succeeded");
+      assert.equal(fixture.requests.filter((request) => request.prompt.startsWith("Continue the original task")).length, 1);
+      const next = await service.submit({ owner: { ...owner, threadId: "ses_cancel", conversationId: "ses_cancel" }, messageId: "msg_cancel", prompt: "Cancelled work" });
+      const child = await service.request({ entry: next, callId: "cancel-child" }, "worker", { name: "Cancelled child", goal: "Check" });
+      await service.cancel(next.id);
+      await service.completeWorker({ id: child.structured.worker.id, slug: "scout", status: "finished" }, [{ kind: "finding", text: "LATE RESULT" }]);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      assert.equal((await service.receipts({ slug: "scout", threadId: "ses_cancel" }))[0].state, "cancelled");
+      assert.equal(fixture.requests.some((request) => request.threadId === "ses_cancel" && request.prompt.includes("LATE RESULT")), false);
+    } finally { await service.stop(); }
+  });
+});
+
+test("the backend group runner cancels every parallel native speaker", async () => {
+  await withHome(async (home) => {
+    const fixture = nativeFixture(async ({ slug, threadId, reply }) => {
+      if (slug === ".coordinator") reply.parts.push({ type: "text", text: JSON.stringify({ speakers: [{ slug: "scout" }, { slug: "editor" }], mode: "parallel" }) });
+      else fixture.held.add(threadId);
+    });
+    const service = createCollaboration({ directory: home, clientFor: fixture.clientFor, pollMs: 5, consult: async () => {}, spawn: async () => {}, cancelWorker: async () => {} });
+    const groups = createGroupExecution({ directory: home, collaboration: service, clientFor: fixture.clientFor,
+      coworkerFor: async (slug) => ({ slug, name: slug, role: "", mission: "", model: "test/model" }),
+      coordinator: async () => ({ workspaceId: "coordinator" }),
+      catalogFor: async () => ({ models: [{ id: "test/model", providerId: "test", modelId: "model", variants: [], source: "local", tier: "key", toolCall: true, status: "active", label: "Test", releaseDate: "" }] }),
+    });
+    try {
+      const group = await createGroup(home, { name: "Pair", participantSlugs: ["scout", "editor"] });
+      await groups.start();
+      await groups.submit(group.id, { clientMessageId: "parallel", text: "@everyone Check your part independently." });
+      await eventually(() => fixture.requests.filter((request) => request.slug !== ".coordinator").length === 2);
+      const threads = fixture.requests.filter((request) => request.slug !== ".coordinator").map((request) => request.threadId);
+      await groups.cancel(group.id);
+      await eventually(async () => !(await groups.status(group.id)).active);
+      assert.ok(threads.every((id) => fixture.aborted.includes(id)));
+      assert.deepEqual((await getGroup(home, group.id)).turns[0].speakers.map((speaker) => speaker.status), ["stopped", "stopped"]);
+    } finally { groups.stop(); await service.stop(); }
+  });
+});
+
+test("backend Next drains without a view and results queue behind a foreground reply", async () => {
+  await withHome(async (home) => {
+    const fixture = nativeFixture();
+    const service = createCollaboration({ directory: home, clientFor: fixture.clientFor, pollMs: 5, consult: async () => {}, spawn: async (_slug, input) => ({ id: input.id, status: "running" }), cancelWorker: async () => {} });
+    const owner = { slug: "scout", threadId: "ses_queue", conversationId: "ses_queue", kind: "private" };
+    try {
+      const root = await service.submit({ owner, messageId: "msg_queue", prompt: "Original", track: true });
+      const child = await service.request({ entry: root, callId: "child" }, "worker", { name: "Check", goal: "Check once" });
+      const before = await service.threadState(owner.slug, owner.threadId);
+      await service.updateThread(owner.slug, owner.threadId, before, { ...before, next: [{ id: "next_a", text: "Foreground next", queuedAt: Date.now() }] });
+      await service.completeWorker({ slug: "scout", id: child.structured.worker.id, status: "finished" }, [{ kind: "finding", text: "READY" }]);
+      await eventually(async () => (await service.receipts({ slug: owner.slug, threadId: owner.threadId }))[0]?.state === "succeeded");
+      assert.equal(fixture.requests[1].prompt, "Foreground next");
+      assert.match(fixture.requests[2].prompt, /^Continue the original task/);
+      assert.equal((await service.threadState(owner.slug, owner.threadId)).next.length, 0);
+    } finally { await service.stop(); }
+  });
+});
+
+test("explicit follow-up keeps the prior failure and native history", async () => {
+  await withHome(async (home) => {
+    const fixture = nativeFixture(async ({ input, reply }) => { if (input.prompt === "Original failure") reply.error = { message: "A tool step failed." }; });
+    const service = createCollaboration({ directory: home, clientFor: fixture.clientFor, pollMs: 5 });
+    try {
+      const root = await service.submit({ owner: { slug: "scout", threadId: "ses_retry", conversationId: "ses_retry", kind: "private" }, messageId: "msg_retry", prompt: "Original failure", track: true });
+      await eventually(async () => (await service.read((state) => state.tasks[root.taskId])).state === "failed" && fixture.aborted.includes("ses_retry"));
+      await service.retry(root.taskId);
+      await eventually(async () => (await service.read((state) => state.tasks[root.taskId])).state === "succeeded");
+      const original = await service.read((state) => state.executions[root.id]);
+      assert.equal(original.state, "failed");
+      assert.equal(original.error, "A tool step failed.");
+      assert.equal(fixture.requests.length, 2);
+      assert.notEqual(fixture.requests[1].messageId, root.messageId);
+      assert.match(fixture.requests[1].prompt, /^Continue the original task/);
+      assert.equal(fixture.histories.get("ses_retry").filter((message) => message.role === "user").length, 2);
+    } finally { await service.stop(); }
+  });
+});
+
+test("a nested consultation delivers the final child continuation to its parent once", async () => {
+  await withHome(async (home) => {
+    let service;
+    const published = [];
+    const fixture = nativeFixture(async ({ slug, threadId, input, reply }) => {
+      if (input.prompt === "Private task" || input.prompt === "Focused B question") {
+        const trusted = await service.context(slug, { sessionID: threadId, messageID: reply.id, callID: reply.parts[0].callId });
+        await service.request(trusted, "consultation", { to: slug === "scout" ? "editor" : "ops", question: slug === "scout" ? "Focused B question" : "Focused C question", continuation: { objective: input.prompt, resumeInstructions: "Synthesize the requested answer." } });
+        reply.parts.push({ type: "text", text: "ACKNOWLEDGEMENT ONLY" });
+      } else if (slug === "editor") reply.parts.push({ type: "text", text: "FINAL B SYNTHESIS" });
+    });
+    service = createCollaboration({ directory: home, clientFor: fixture.clientFor, pollMs: 5,
+      consult: async (task) => ({ owner: { slug: task.to, threadId: `ses_${task.to}`, conversationId: "grp_nested", groupId: "grp_nested", kind: "consultation" }, prompt: task.input.question }),
+      publish: async (task) => { published.push({ id: task.id, result: task.result }); },
+    });
+    try {
+      const root = await service.submit({ owner: { slug: "scout", threadId: "ses_private", conversationId: "ses_private", kind: "private" }, messageId: "msg_nested", prompt: "Private task" });
+      await eventually(async () => (await service.read((state) => state.tasks[root.taskId])).state === "succeeded");
+      const final = fixture.requests.filter((request) => request.threadId === "ses_private" && request.prompt.startsWith("Continue the original task"));
+      assert.equal(final.length, 1);
+      assert.match(final[0].prompt, /FINAL B SYNTHESIS/);
+      assert.doesNotMatch(final[0].prompt, /ACKNOWLEDGEMENT ONLY/);
+      assert.equal(fixture.requests.filter((request) => request.slug === "editor" && request.prompt.startsWith("Continue the original task")).length, 1);
+      assert.equal(new Set(published.map((entry) => entry.id)).size, 2);
+      assert.equal(published.length, 2);
+    } finally { await service.stop(); }
+  });
+});
+
+test("cancellation fences a stale pump snapshot and cannot be retried into running", async () => {
+  await withHome(async (home) => {
+    const fixture = nativeFixture();
+    let release;
+    const preparing = new Promise((resolve) => { release = resolve; });
+    const called = [];
+    const service = createCollaboration({ directory: home, clientFor: fixture.clientFor, pollMs: 5, setupTimeoutMs: 500,
+      consult: async (task) => { called.push(task.to); await preparing; return { owner: { slug: task.to, threadId: `ses_${task.to}`, conversationId: "grp_cancel", groupId: "grp_cancel", kind: "consultation" }, prompt: "Must not execute" }; },
+    });
+    try {
+      const root = await service.submit({ owner: { slug: "scout", threadId: "ses_cancel", conversationId: "ses_cancel", kind: "private" }, messageId: "msg_cancel_snapshot", prompt: "Request two answers" });
+      await service.request({ entry: root, callId: "first" }, "consultation", { to: "editor", question: "First" });
+      await service.request({ entry: root, callId: "second" }, "consultation", { to: "ops", question: "Second" });
+      await eventually(() => called.length === 1);
+      await service.cancel(root.taskId);
+      release();
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      assert.deepEqual(called, ["editor"]);
+      assert.equal(fixture.requests.some((request) => request.slug !== "scout"), false);
+      assert.equal((await service.read((state) => state.tasks[root.taskId])).state, "cancelled");
+      await assert.rejects(service.retry(root.taskId), /new request/);
+      await assert.rejects(service.submit({ ...root, retry: true }), /cancelled/);
+    } finally { release(); await service.stop(); }
+  });
+});
+
+test("global admission is finite, queue time is not execution time, and acceptance is bounded", async () => {
+  await withHome(async (home) => {
+    let clock = 1000;
+    const fixture = nativeFixture(async ({ threadId }) => { if (threadId === "ses_first") fixture.held.add(threadId); });
+    const service = createCollaboration({ directory: home, clientFor: fixture.clientFor, pollMs: 5, maxActiveExecutions: 1, stepTimeoutMs: 5000, now: () => clock });
+    const owner = (id) => ({ slug: "scout", threadId: id, conversationId: id, kind: "private" });
+    try {
+      await service.submit({ owner: owner("ses_first"), messageId: "msg_first", prompt: "Hold this reply" });
+      await eventually(() => fixture.held.size === 1);
+      const queued = await service.submit({ owner: owner("ses_second"), messageId: "msg_second", prompt: "Wait for a slot" });
+      clock += 60_000;
+      await assert.rejects(service.acceptance(queued.id, { timeoutMs: 20 }), /recorded|kept/);
+      assert.equal(fixture.requests.length, 1);
+      const waiting = await service.read((state) => state.executions[queued.id]);
+      assert.equal(waiting.deadline, null);
+      assert.equal(waiting.state, "queued");
+      fixture.held.clear();
+      await eventually(async () => (await service.read((state) => state.executions[queued.id])).state === "succeeded");
+      assert.equal((await service.read((state) => state.executions[queued.id])).deadline, clock + 5000);
+      assert.equal(fixture.requests.length, 2);
+      assert.throws(() => createCollaboration({ directory: home, maxActiveExecutions: Infinity }), /between 1 and 16/);
+    } finally { await service.stop(); }
+  });
+});
+
+test("a hung consultation setup fails readably and late preparation cannot execute", async () => {
+  await withHome(async (home) => {
+    const fixture = nativeFixture();
+    let release;
+    const setup = new Promise((resolve) => { release = resolve; });
+    const service = createCollaboration({ directory: home, clientFor: fixture.clientFor, pollMs: 5, setupTimeoutMs: 20, consult: () => setup });
+    try {
+      const root = await service.submit({ owner: { slug: "scout", threadId: "ses_setup", conversationId: "ses_setup", kind: "private" }, messageId: "msg_setup", prompt: "Need a teammate" });
+      const requested = await service.request({ entry: root, callId: "setup" }, "consultation", { to: "editor", question: "A focused question" });
+      await eventually(async () => (await service.read((state) => state.tasks[requested.structured.collaboration.id])).state === "failed");
+      release({ owner: { slug: "editor", threadId: "ses_late", conversationId: "grp_late", kind: "consultation" }, prompt: "Late preparation" });
+      await eventually(async () => (await service.read((state) => state.tasks[root.taskId])).state === "succeeded");
+      assert.match((await service.read((state) => state.tasks[requested.structured.collaboration.id])).error, /prepared in time/);
+      assert.equal(fixture.requests.some((request) => request.threadId === "ses_late"), false);
+      assert.match(fixture.requests.at(-1).prompt, /prepared in time/);
+    } finally { release(); await service.stop(); }
+  });
+});
+
+test("projection failure stops after three attempts and retry restores delivery without replay", async () => {
+  await withHome(async (home) => {
+    const fixture = nativeFixture();
+    let attempts = 0;
+    let available = false;
+    const service = createCollaboration({ directory: home, clientFor: fixture.clientFor, pollMs: 5,
+      consult: async () => ({ owner: { slug: "editor", threadId: "ses_projection", conversationId: "grp_projection", groupId: "grp_projection", kind: "consultation" }, prompt: "Focused question" }),
+      publish: async () => { attempts++; if (!available) throw new Error("Local projection failed"); },
+    });
+    try {
+      const root = await service.submit({ owner: { slug: "scout", threadId: "ses_origin", conversationId: "ses_origin", kind: "private" }, messageId: "msg_projection", prompt: "Original task" });
+      await service.request({ entry: root, callId: "projection" }, "consultation", { to: "editor", question: "Focused question" });
+      await eventually(async () => (await service.receipts({ slug: "scout", threadId: "ses_origin" }))[0].state === "failed");
+      assert.equal(attempts, 3);
+      assert.match((await service.receipts({ slug: "scout", threadId: "ses_origin" }))[0].error, /three attempts|could not be shown/);
+      assert.equal(fixture.requests.filter((request) => request.prompt.startsWith("Continue the original task")).length, 0);
+      available = true;
+      await service.retry(root.taskId);
+      await eventually(async () => (await service.receipts({ slug: "scout", threadId: "ses_origin" }))[0].state === "succeeded");
+      assert.equal(fixture.requests.filter((request) => request.threadId === "ses_projection").length, 1);
+      assert.equal(fixture.requests.filter((request) => request.prompt.startsWith("Continue the original task")).length, 1);
+    } finally { await service.stop(); }
+  });
+});
+
+test("missing group defaults migrate and repeated store failures become a readable service fault", async () => {
+  await withHome(async (home) => {
+    const directory = path.join(home, ".collaboration");
+    await mkdir(directory);
+    const old = { version: 1, executions: {}, tasks: {}, owners: {}, threads: {} };
+    await writeFile(path.join(directory, "state.json"), JSON.stringify(old));
+    const fixture = nativeFixture();
+    const service = createCollaboration({ directory: home, clientFor: fixture.clientFor, pollMs: 10 });
+    try {
+      assert.deepEqual(await service.read((state) => state.groups), {});
+      const root = await service.submit({ owner: { slug: "scout", threadId: "ses_disk", conversationId: "ses_disk", kind: "private" }, messageId: "msg_disk", prompt: "Keep this work" });
+      await mkdir(path.join(directory, "state.json.tmp"));
+      await assert.rejects(service.acceptance(root.id, { timeoutMs: 1000 }), /three local service failures/);
+      assert.equal(fixture.requests.length, 0, "failed admission persistence never starts inference");
+      await assert.rejects(service.receipts({ slug: "scout", threadId: "ses_disk" }), /Existing work has been kept/);
+    } finally { await service.stop(); }
+  });
+});
+
+test("legacy group selections clear only the selection pointer", async () => {
+  const groups = [{ participantThreadIds: { scout: "ses_group" } }];
+  const coworker = { slug: "scout", conversationThreadId: "ses_group", mission: "Keep my work", model: "test/model" };
+  const changes = [];
+  const update = async (slug, patch) => { changes.push({ slug, patch }); return { ...coworker, ...patch }; };
+  assert.deepEqual(await repairGroupSelection(coworker, groups, update), { ...coworker, conversationThreadId: "" });
+  assert.deepEqual(changes, [{ slug: "scout", patch: { conversationThreadId: "" } }]);
+  const privateSelection = { ...coworker, conversationThreadId: "ses_private" };
+  assert.equal(await repairGroupSelection(privateSelection, groups, update), privateSelection);
+  assert.equal(changes.length, 1);
+});
+
+test("group retry sends a new follow-up and retains the accepted tool-bearing attempt", async () => {
+  await withHome(async (home) => {
+    const fixture = nativeFixture(async ({ input, reply }) => {
+      if (!input.prompt.startsWith("Continue the earlier group request")) reply.error = { message: "Interrupted after a tool action" };
+    });
+    const service = createCollaboration({ directory: home, clientFor: fixture.clientFor, pollMs: 5 });
+    const groups = createGroupExecution({ directory: home, collaboration: service, clientFor: fixture.clientFor, pollMs: 5, coworkerFor: async (slug) => ({ slug, name: slug, role: "", mission: "" }) });
+    try {
+      const group = await createGroup(home, { name: "Pair", participantSlugs: ["scout", "editor"] });
+      await groups.start();
+      await groups.submit(group.id, { clientMessageId: "first-tool-attempt", text: "@scout Finish the bounded task" });
+      await eventually(async () => !(await groups.status(group.id)).active);
+      const failed = (await getGroup(home, group.id)).turns[0];
+      assert.equal(failed.status, "failed");
+      const original = await service.read((state) => Object.values(state.executions)[0]);
+      await groups.submit(group.id, { clientMessageId: "explicit-follow-up", text: failed.prompt, turnId: failed.id });
+      await eventually(async () => !(await groups.status(group.id)).active);
+      assert.equal((await getGroup(home, group.id)).turns[0].status, "succeeded");
+      assert.equal(fixture.requests.length, 2);
+      assert.match(fixture.requests[1].prompt, /^Continue the earlier group request/);
+      assert.match(fixture.requests[1].prompt, /not permission to repeat completed tool actions/);
+      assert.equal(fixture.requests[1].threadId, fixture.requests[0].threadId);
+      assert.notEqual(fixture.requests[1].messageId, fixture.requests[0].messageId);
+      assert.equal((await service.read((state) => state.executions[original.id])).state, "failed");
+      assert.equal(fixture.histories.get(original.owner.threadId).filter((message) => message.role === "user").length, 2);
+      assert.equal(fixture.histories.get(original.owner.threadId).filter((message) => message.parentId === original.messageId && message.parts.some((part) => part.type === "tool")).length, 1);
+    } finally { groups.stop(); await service.stop(); }
+  });
+});
+
+test("general group messages stay within the existing speaker budget including extra parts", async () => {
+  await withHome(async (home) => {
+    const fixture = nativeFixture(async ({ slug, reply }) => {
+      if (slug === ".coordinator") reply.parts.push({ type: "text", text: JSON.stringify({ speakers: [{ slug: "scout" }, { slug: "editor" }, { slug: "ops" }], followUp: { slug: "scout", brief: "React" }, synthesizer: "editor" }) });
+    });
+    const service = createCollaboration({ directory: home, clientFor: fixture.clientFor, pollMs: 5 });
+    const groups = createGroupExecution({ directory: home, collaboration: service, clientFor: fixture.clientFor, pollMs: 5,
+      coworkerFor: async (slug) => ({ slug, name: slug, role: "", mission: "", model: "test/model" }),
+      coordinator: async () => ({ workspaceId: "coordinator" }),
+      catalogFor: async () => ({ models: [{ id: "test/model", providerId: "test", modelId: "model", variants: [], source: "local", tier: "key", toolCall: true, status: "active", label: "Test", releaseDate: "" }] }),
+    });
+    try {
+      const group = await createGroup(home, { name: "Team", participantSlugs: ["scout", "editor", "ops"] });
+      await groups.start();
+      await groups.submit(group.id, { clientMessageId: "general-budget", text: "What should we consider?" });
+      await eventually(async () => !(await groups.status(group.id)).active);
+      assert.equal((await getGroup(home, group.id)).turns[0].speakers.length, 3);
+      assert.equal(fixture.requests.filter((request) => request.slug !== ".coordinator").length, 3);
+    } finally { groups.stop(); await service.stop(); }
+  });
+});
+
+test("cancellation during native setup prevents admission after setup returns", async () => {
+  await withHome(async (home) => {
+    const fixture = nativeFixture();
+    let release;
+    let preparing = false;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const service = createCollaboration({ directory: home, pollMs: 5, setupTimeoutMs: 500,
+      clientFor: async (slug) => { preparing = true; await gate; return fixture.clientFor(slug); },
+    });
+    try {
+      const entry = await service.submit({ owner: { slug: "scout", threadId: "ses_cancel_setup", conversationId: "ses_cancel_setup", kind: "private" }, messageId: "msg_cancel_setup", prompt: "Do not start after cancellation" });
+      await eventually(() => preparing);
+      await service.cancel(entry.id);
+      release();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      assert.equal(fixture.requests.length, 0);
+      assert.equal((await service.read((state) => state.executions[entry.id])).state, "cancelled");
+    } finally { release(); await service.stop(); }
   });
 });

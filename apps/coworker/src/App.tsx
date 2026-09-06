@@ -3,7 +3,7 @@ import { AllHandsOverview, allHandsContext } from "@/ui/all-hands";
 import type { AllHandsSettings } from "@/lib/bridge";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { coworkerBridge, type CoworkerGroupSummary, type CoworkerGroupTurn, type CoworkerSummary, type CoworkerTemplateSync, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
-import { subscribeGroupRuns } from "@/lib/group-runs";
+import { publishGroupRun, subscribeGroupRuns } from "@/lib/group-runs";
 import { describeGroupActivity } from "@/lib/groups";
 import {
   createDenAutomationsClient,
@@ -168,6 +168,40 @@ export default function App() {
       }
     });
   }, [coworkers, setGroupLine]);
+
+  useEffect(() => {
+    if (!runtime) return;
+    let cancelled = false;
+    let reading = false;
+    const refresh = async () => {
+      if (reading) return;
+      reading = true;
+      try {
+        const list = await coworkerBridge.groups.list();
+        if (cancelled) return;
+        setGroups((current) => current.length === list.length && current.every((group, index) => group.id === list[index]?.id && group.updatedAt === list[index]?.updatedAt) ? current : list);
+        for (const group of list.filter((group) => !group.archivedAt)) {
+          const status = await coworkerBridge.groups.status(group.id);
+          if (cancelled) return;
+          publishGroupRun({ groupId: group.id, active: status.active, ...(status.turn ? { turn: status.turn } : {}), done: !status.active });
+          const nameFor = (slug: string) => coworkers.find((coworker) => coworker.slug === slug)?.name ?? slug;
+          if (status.active) setGroupLine(group.id, status.turn ? describeGroupActivity([], nameFor, status.turn) : "Choosing who should respond…");
+          else {
+            const last = group.turns.at(-1)?.speakers.filter((speaker) => speaker.status === "succeeded").at(-1);
+            if (last) setGroupLine(group.id, `${nameFor(last.slug)} replied`);
+          }
+        }
+      } finally { reading = false; }
+    };
+    const timer = window.setInterval(() => void refresh().catch(() => undefined), 2000);
+    const open = (event: Event) => {
+      if (event instanceof CustomEvent && typeof event.detail === "string") {
+        void coworkerBridge.groups.get(event.detail).then((group) => { if (!group.archivedAt) { setGroups((current) => current.some((entry) => entry.id === group.id) ? current : [...current, group]); setSelectedGroupId(group.id); } });
+      }
+    };
+    window.addEventListener("coworker:open-group", open);
+    return () => { cancelled = true; window.clearInterval(timer); window.removeEventListener("coworker:open-group", open); };
+  }, [runtime?.serverUrl, coworkers, setGroupLine]);
 
   const openGlobalSettings = useCallback((section: SettingsSection = "general") => {
     const opener = document.activeElement;

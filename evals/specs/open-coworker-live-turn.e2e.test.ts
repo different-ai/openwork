@@ -6,18 +6,16 @@ import { clickButton, coworker, evalIn, fill, needs, test, waitFor } from "@open
 import { expect, onTestFinished } from "vitest";
 
 /**
- * The live turn reads like someone typing. While the model thinks the row is a
- * typing bubble with no phrase, and a tap shows the thinking as it arrives;
- * while a tool runs the row is a chip in plain words; the moment the reply's
- * words start they stream into a real bubble, and once landed the bubble's
- * tooltip says how fast the reply came. A model that shares no thinking gets the
- * same dots and one honest line. A deterministic OpenAI-compatible model plays
- * the coworker's side and paces its stream so every phase can be seen.
+ * The live turn shows observed activity, never reasoning or tool payloads.
+ * Preparing gets dots and inspectable execution time; tools get a safe category,
+ * status and duration. Reply text streams without a duplicate indicator and
+ * lands with its speed tooltip. A deterministic OpenAI-compatible model paces
+ * each phase through the real native boundary, including a long wait.
  */
 
 const enabled = process.env.OPENWORK_EVAL_E2E_TESTS === "1";
 const title = enabled
-  ? "Open Coworker's live turn reads like someone typing: dots while thinking with the thinking one tap away, a chip while a tool runs, words that stream into the bubble, and the speed in the tooltip"
+  ? "Open Coworker's live turn exposes only observed activity: preparing dots, tool status and duration, streaming without duplicate indicators, and landed reply timing"
   : "Open Coworker live-turn journey skipped — needs: set OPENWORK_EVAL_E2E_TESTS=1";
 
 const SCRIPTED_PROVIDER = "eval-scripted";
@@ -28,6 +26,7 @@ const THINK_REASONING = ["First the sources.", "Vendor A is cheapest but slow.",
 const THINK_REPLY = "Keep B. It is the steady one, and C makes a good fallback if B ever slips. A saves money but the delays would cost more than they save. I put the comparison in a short note so you can check the numbers yourself whenever you like.";
 const TOOL_PROMPT = "Fetch our status page and tell me what it says.";
 const TOOL_REPLY = "All clear — the status page says every service is up and nothing is scheduled. I will check it again before the vendor call in case that changes.";
+const TOOL_UNKNOWN_PAYLOAD = "unrecognized-tool-payload-7c9f2a";
 /** How long the scripted status page takes to answer, so the tool step has a window of its own. */
 const SLOW_PAGE_MS = 3_500;
 const PLAIN_PROMPT = "Quick one: what day is the vendor call?";
@@ -118,15 +117,16 @@ function streamToolCall(response: ServerResponse, name: string, args: Record<str
   response.end();
 }
 
-async function startScriptedModel(): Promise<{ baseUrl: string; prompts: string[] }> {
-  const state = { baseUrl: "", prompts: [] as string[] };
+async function startScriptedModel(): Promise<{ baseUrl: string; prompts: string[]; toolInputReceived: boolean; toolOutputReceived: boolean }> {
+  const state = { baseUrl: "", prompts: [] as string[], toolInputReceived: false, toolOutputReceived: false };
   const server = createServer((request, response) => {
     const url = request.url ?? "";
     if (request.method === "GET" && url.startsWith("/status-page")) {
+      state.toolInputReceived = url.includes(TOOL_UNKNOWN_PAYLOAD);
       // A page that takes its time: the tool step in the conversation has a window a person can see.
       setTimeout(() => {
         response.writeHead(200, { "content-type": "text/plain" });
-        response.end("Status: every service is up. Nothing scheduled.");
+        response.end(`Status: every service is up. Nothing scheduled.\n${JSON.stringify({ unrecognizedField: TOOL_UNKNOWN_PAYLOAD })}`);
       }, SLOW_PAGE_MS);
       return;
     }
@@ -145,9 +145,10 @@ async function startScriptedModel(): Promise<{ baseUrl: string; prompts: string[
         if (prompt.includes("Think it through")) return streamPaced(response, { reasoning: THINK_REASONING, text: THINK_REPLY });
         if (prompt.includes("status page")) {
           if (results === 0) {
-            streamToolCall(response, "webfetch", { url: `${state.baseUrl.replace(/\/v1$/, "")}/status-page`, format: "text" });
+            streamToolCall(response, "webfetch", { url: `${state.baseUrl.replace(/\/v1$/, "")}/status-page?unrecognizedField=${TOOL_UNKNOWN_PAYLOAD}`, format: "text" });
             return;
           }
+          state.toolOutputReceived = isRecord(body) && Array.isArray(body.messages) && body.messages.some((message) => isRecord(message) && message.role === "tool" && JSON.stringify(message).includes(TOOL_UNKNOWN_PAYLOAD));
           return streamPaced(response, { text: TOOL_REPLY });
         }
         if (prompt.includes("Quick one")) return streamPaced(response, { text: PLAIN_REPLY });
@@ -199,32 +200,62 @@ async function send(app: App, prompt: string): Promise<void> {
   await clickButton(app, "Send");
 }
 
-/** Open the first landed reply's "Thought through" line, read the thinking from its popover, and close it — measuring that the bubble did not grow. */
-async function readLandedThinking(app: App): Promise<{ text: string; bubbleHeightBefore: number; bubbleHeightWhileOpen: number }> {
+async function pressActivityKey(app: App, key: "Enter" | "Escape"): Promise<void> {
+  for (const type of ["keyDown", "keyUp"]) {
+    await app.client.send("Input.dispatchKeyEvent", { type, key, code: key, windowsVirtualKeyCode: key === "Enter" ? 13 : 27, ...(key === "Enter" && type === "keyDown" ? { text: "\r", unmodifiedText: "\r" } : {}) });
+  }
+}
+
+/** Inspect the landed tool receipt with the keyboard, without growing the reply. */
+async function readLandedWork(app: App): Promise<Record<string, unknown>> {
+  await app.client.send("Page.bringToFront");
   const before = Number(await evalIn(app, `(() => {
-    const line = document.querySelector('[data-testid="coworker-thinking"]');
-    const bubble = line?.closest('[data-message-role="assistant"]');
-    const height = bubble?.getBoundingClientRect().height ?? 0;
-    line?.querySelector("button")?.click();
-    return height;
+    const line = document.querySelector('[data-testid="coworker-work-summary"]');
+    const bubble = [...document.querySelectorAll('[data-testid="coworker-reply-bubble"]')].find((node) => node.textContent?.trim() === ${json(TOOL_REPLY)});
+    line?.focus();
+    return bubble?.getBoundingClientRect().height ?? 0;
   })()`));
+  expect(before).toBeGreaterThan(0);
+  await pressActivityKey(app, "Enter");
   const read = await waitFor(app, `(() => {
-    const popover = document.querySelector('[data-testid="coworker-details-popover"]');
-    if (!popover) return false;
-    const bubble = document.querySelector('[data-testid="coworker-thinking"]')?.closest('[data-message-role="assistant"]');
-    return { text: popover.querySelector('[data-testid="coworker-thinking-landed-text"]')?.textContent?.trim() ?? "", height: bubble?.getBoundingClientRect().height ?? 0 };
-  })()`, { timeoutMs: 10_000, label: "the thinking popover of a landed reply" });
-  await evalIn(app, `document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); true`);
-  await waitFor(app, `!document.querySelector('[data-testid="coworker-details-popover"]')`, { timeoutMs: 5_000, label: "the thinking popover closed" });
-  if (!isRecord(read)) throw new Error("Thinking popover facts were unavailable.");
-  return { text: String(read.text), bubbleHeightBefore: before, bubbleHeightWhileOpen: Number(read.height) };
+    const popover = document.querySelector('[data-testid="coworker-work-steps"][role="dialog"]');
+    if (!popover || document.activeElement !== popover) return false;
+    const bubble = [...document.querySelectorAll('[data-testid="coworker-reply-bubble"]')].find((node) => node.textContent?.trim() === ${json(TOOL_REPLY)});
+    return {
+      text: popover.textContent?.trim() ?? "",
+      steps: [...popover.querySelectorAll('[data-testid="coworker-work-step"]')].map((step) => ({
+        state: step.getAttribute("data-state"),
+        kind: step.firstElementChild?.textContent?.trim() ?? "",
+        details: Object.fromEntries([...step.querySelectorAll("dt")].map((dt) => [dt.textContent, dt.nextElementSibling?.textContent?.trim() ?? ""])),
+      })),
+      expanded: document.querySelector('[data-testid="coworker-work-summary"]')?.getAttribute("aria-expanded"),
+      height: bubble?.getBoundingClientRect().height ?? 0,
+      ...${READ_PRIVACY},
+    };
+  })()`, { timeoutMs: 10_000, label: "keyboard focus in the landed execution popover" });
+  if (!isRecord(read)) throw new Error("Execution popover facts were unavailable.");
+  expect(read).toMatchObject({ expanded: "true", height: before, reasoningInDom: false, toolPayloadInDom: false });
+  for (const thought of THINK_REASONING) expect(String(read.text)).not.toContain(thought);
+  expect(String(read.text)).not.toContain(TOOL_UNKNOWN_PAYLOAD);
+  await pressActivityKey(app, "Escape");
+  await waitFor(app, `!document.querySelector('[data-testid="coworker-work-steps"]')
+    && document.activeElement === document.querySelector('[data-testid="coworker-work-summary"]')
+    && document.activeElement?.getAttribute("aria-expanded") === "false"`, { timeoutMs: 5_000, label: "Escape closes the execution popover and restores receipt focus" });
+  return read;
 }
 
 async function waitForSettled(app: App, reply: string, timeoutMs = 120_000): Promise<void> {
   await waitFor(app, `[...document.querySelectorAll('[data-testid="coworker-reply-bubble"]')].some((bubble) => (bubble.textContent ?? "").includes(${json(reply)}))
     && document.querySelector('[data-testid="coworker-thread-status"]')?.dataset.state === "idle"
     && !document.querySelector('[data-testid="coworker-working"]')`, { timeoutMs, label: `the reply ${json(reply.slice(0, 24))} landed and the turn settled` });
+  expect(await evalIn(app, READ_PRIVACY), "landed DOM contains neither raw reasoning nor unknown tool payloads").toEqual({ reasoningInDom: false, toolPayloadInDom: false });
 }
+
+// Inspect all markup, including hidden nodes and attributes, not just visible text.
+const READ_PRIVACY = `(() => {
+  const dom = document.body?.outerHTML ?? "";
+  return { reasoningInDom: ${json(THINK_REASONING)}.some((thought) => dom.includes(thought)), toolPayloadInDom: dom.includes("unrecognizedField") || dom.includes(${json(TOOL_UNKNOWN_PAYLOAD)}) };
+})()`;
 
 /** What the live turn shows this instant. */
 const READ_LIVE = `(() => {
@@ -236,17 +267,24 @@ const READ_LIVE = `(() => {
     outcome: row?.getAttribute("data-outcome") ?? "",
     typing: Boolean(document.querySelector('[data-testid="coworker-typing"]')),
     chip: document.querySelector('[data-testid="coworker-tool-chip"]')?.textContent?.trim() ?? "",
+    indicators: document.querySelectorAll('[data-testid="coworker-typing"], [data-testid="coworker-tool-chip"], [data-testid="coworker-activity-chip"]').length,
+    rowHidden: row?.getAttribute("aria-hidden") === "true",
     rowText: row ? (row.firstElementChild?.textContent ?? "").trim() : "",
+    note: row?.querySelector('[data-testid="coworker-still-working"]')?.textContent?.trim() ?? "",
     popover: popover ? {
       mode: popover.getAttribute("data-mode"),
-      text: popover.querySelector('[data-testid="coworker-thinking-text"]')?.textContent?.trim() ?? "",
+      text: popover.textContent?.trim() ?? "",
+      status: popover.querySelector("p")?.textContent?.trim() ?? "",
       smallPrint: popover.querySelector('[data-testid="coworker-thinking-small-print"]')?.textContent?.trim() ?? "",
-      technical: Boolean(popover.querySelector('[data-testid="coworker-thinking-technical"]')),
+      details: Object.fromEntries([...popover.querySelectorAll("dt")].map((dt) => [dt.textContent, dt.nextElementSibling?.textContent?.trim() ?? ""])),
+      technical: Boolean(popover.querySelector('pre, code, details, [data-testid="coworker-thinking-technical"]')),
     } : null,
     liveText: live ? (live.textContent ?? "").trim() : "",
+    liveBubbles: document.querySelectorAll('[data-testid="coworker-live-bubble"]').length,
     landed: document.querySelectorAll('[data-testid="coworker-reply-bubble"]').length,
     header: document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() ?? "",
     rail: document.querySelector('[data-testid="coworker-rail-line"]')?.textContent?.trim() ?? "",
+    ...${READ_PRIVACY},
   };
 })()`;
 
@@ -258,9 +296,9 @@ async function beginLiveTrace(app: App, tap: "typing" | "chip"): Promise<void> {
     const record = () => {
       const live = ${READ_LIVE};
       const last = trace[trace.length - 1];
-      const entry = { at: Date.now(), phase: live.phase, typing: live.typing, chip: live.chip, popover: live.popover ? { mode: live.popover.mode, text: live.popover.text, smallPrint: live.popover.smallPrint, technical: live.popover.technical } : null, liveText: live.liveText, landed: live.landed, header: live.header, rowText: live.rowText };
+      const entry = { at: Date.now(), ...live };
       if (!last || JSON.stringify({ ...last, at: 0 }) !== JSON.stringify({ ...entry, at: 0 })) trace.push(entry);
-      const wantPhase = ${json(tap === "typing" ? "thinking" : "tool")};
+      const wantPhase = ${json(tap === "typing" ? "preparing" : "tool")};
       const selector = ${json(tap === "typing" ? '[data-testid="coworker-typing"]' : '[data-testid="coworker-tool-chip"]')};
       if (live.phase !== wantPhase) window.__LIVE_TRACE__.tapped = false;
       if (live.phase === wantPhase && !live.popover && !window.__LIVE_TRACE__.tapped && document.querySelector(selector)) {
@@ -279,7 +317,13 @@ async function beginLiveTrace(app: App, tap: "typing" | "chip"): Promise<void> {
 async function endLiveTrace(app: App): Promise<Record<string, unknown>[]> {
   const value = await evalIn(app, `(() => { const t = window.__LIVE_TRACE__; t?.observer?.disconnect?.(); return t?.trace ?? []; })()`);
   if (!Array.isArray(value)) throw new Error("The live trace was unavailable.");
-  return value.filter(isRecord);
+  const trace = value.filter(isRecord);
+  expect(trace.length).toBeGreaterThan(0);
+  expect(trace.every((entry) => entry.reasoningInDom === false), "THINK_REASONING never appears in the live DOM, popover, or landed transcript").toBe(true);
+  expect(trace.every((entry) => entry.toolPayloadInDom === false), "unknown tool payload never appears in the DOM, including inspection").toBe(true);
+  const streaming = trace.filter((entry) => typeof entry.liveText === "string" && entry.liveText.length > 0);
+  expect(streaming.every((entry) => entry.indicators === 0 && entry.rowText === "" && entry.popover === null && entry.liveBubbles === 1), "streaming has one live bubble and no duplicate activity indicator or popover").toBe(true);
+  return trace;
 }
 
 test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
@@ -339,33 +383,32 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   })()`, { timeoutMs: 180_000, label: "Nova's tools connected", awaitPromise: true });
   expect(toolsConnected).toBe("connected");
 
-  // --- 1. Thinking, then words: dots with no phrase; tap → the thinking arriving; then a live bubble; then the landed bubble with its speed.
+  // --- 1. Preparing, then words: inspectable status, never reasoning; then a live bubble and landed timing.
   // The turn is quick, so what happened is read from a trace of the live shapes, not from separate waits.
   await beginLiveTrace(app, "typing");
   const sentAt = Date.now();
   await send(app, THINK_PROMPT);
   await waitForSettled(app, THINK_REPLY);
   const trace = await endLiveTrace(app);
-  const thinkingEntries = trace.filter((entry) => entry.phase === "thinking");
-  const popoverEntries = trace.filter((entry) => isRecord(entry.popover) && entry.popover.mode === "thinking");
+  const preparingEntries = trace.filter((entry) => entry.phase === "preparing");
+  const popoverEntries = trace.filter((entry) => entry.phase === "preparing" && isRecord(entry.popover));
   const writingEntries = trace.filter((entry) => typeof entry.liveText === "string" && entry.liveText.length > 0);
   const traceText = JSON.stringify(trace.map((entry) => ({ phase: entry.phase, typing: entry.typing, popover: isRecord(entry.popover) ? String(entry.popover.text).slice(0, 40) : null, live: String(entry.liveText).slice(-30), landed: entry.landed, header: entry.header, row: entry.rowText })));
-  // While thinking: the typing bubble, no chip, no words, the header on its one steady word.
-  expect(thinkingEntries.length, traceText).toBeGreaterThan(0);
-  expect(thinkingEntries.every((entry) => entry.typing === true && entry.chip === "" && entry.liveText === "" && entry.rowText === "" && entry.header === "Working"), traceText).toBe(true);
-  // The tap opened the popover on Thinking, and the thinking arrived in it while the model was still thinking.
+  // Preparing keeps the typing bubble, no chip or reply words, and the steady header.
+  expect(preparingEntries.length, traceText).toBeGreaterThan(0);
+  expect(preparingEntries.every((entry) => entry.typing === true && entry.chip === "" && entry.liveText === "" && entry.rowText === "" && entry.header === "Working"), traceText).toBe(true);
   expect(popoverEntries.length, traceText).toBeGreaterThan(0);
   const popoverTexts = popoverEntries.map((entry) => (isRecord(entry.popover) ? String(entry.popover.text) : ""));
-  expect(popoverTexts.some((text) => text.includes("First the sources.")), `popover texts: ${JSON.stringify(popoverTexts)}`).toBe(true);
-  expect(popoverTexts.some((text) => text.includes("Vendor A is cheapest but slow.")), `the thinking grew: ${JSON.stringify(popoverTexts)}`).toBe(true);
-  expect(popoverEntries.some((entry) => isRecord(entry.popover) && /^thinking for \d+ s$/.test(String(entry.popover.smallPrint))), traceText).toBe(true);
-  expect(popoverEntries.every((entry) => entry.phase === "thinking"), "the popover was open only while thinking").toBe(true);
-  // Then the words streamed into a live bubble — a growing prefix of the reply — with the typing bubble and popover gone and nothing landed yet.
+  expect(popoverEntries.every((entry) => isRecord(entry.popover) && entry.popover.mode === "execution" && entry.popover.status === "Preparing a reply" && entry.popover.technical === false), traceText).toBe(true);
+  expect(popoverTexts.every((text) => text.includes("Only execution metadata. Reasoning and tool contents are not shown.")), traceText).toBe(true);
+  for (const thought of THINK_REASONING) expect(popoverTexts.join("\n"), "raw reasoning is absent even with inspection open").not.toContain(thought);
+  expect(popoverEntries.some((entry) => isRecord(entry.popover) && /^Execution: \d+ s elapsed$/.test(String(entry.popover.smallPrint))), traceText).toBe(true);
+  // Words stream as a growing prefix with no typing bubble, popover, or landed reply yet.
   expect(writingEntries.length, traceText).toBeGreaterThan(1);
+  expect(writingEntries.some((entry) => entry.phase === "writing" && entry.rowHidden === true), traceText).toBe(true);
   expect(writingEntries.every((entry) => entry.typing === false && entry.popover === null && entry.landed === 0 && THINK_REPLY.startsWith(String(entry.liveText).replace(/\s+$/, ""))), traceText).toBe(true);
   expect(String(writingEntries[writingEntries.length - 1]?.liveText).length).toBeGreaterThan(String(writingEntries[0]?.liveText).length);
-  // Thinking came before words.
-  expect(trace.findIndex((entry) => isRecord(entry.popover) && String(entry.popover.text).includes("First the sources."))).toBeLessThan(trace.findIndex((entry) => typeof entry.liveText === "string" && entry.liveText.length > 0));
+  expect(trace.findIndex((entry) => isRecord(entry.popover) && entry.popover.status === "Preparing a reply")).toBeLessThan(trace.findIndex((entry) => typeof entry.liveText === "string" && entry.liveText.length > 0));
   const landed = await evalIn(app, `(() => {
     const bubbles = [...document.querySelectorAll('[data-message-role="assistant"]')];
     const reply = document.querySelector('[data-testid="coworker-reply-bubble"]');
@@ -374,17 +417,13 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
       live: document.querySelectorAll('[data-live="true"]').length,
       text: reply?.textContent?.trim() ?? "",
       tooltip: reply?.getAttribute("title") ?? "",
-      thoughtThrough: [...document.querySelectorAll('[data-testid="coworker-thinking"] button')].map((node) => node.textContent?.trim() ?? ""),
+      thinkingDisclosures: document.querySelectorAll('[data-testid="coworker-thinking"], [data-testid="coworker-thinking-landed-text"]').length,
     };
   })()`);
-  expect(landed).toMatchObject({ assistantBubbles: 1, live: 0, text: THINK_REPLY });
-  if (!isRecord(landed) || typeof landed.tooltip !== "string" || !Array.isArray(landed.thoughtThrough)) throw new Error("Landed facts were unavailable.");
+  expect(landed).toMatchObject({ assistantBubbles: 1, live: 0, text: THINK_REPLY, thinkingDisclosures: 0 });
+  if (!isRecord(landed) || typeof landed.tooltip !== "string") throw new Error("Landed facts were unavailable.");
   expect(landed.tooltip).toMatch(/^Answered by eval-scripted\/scripted · first words in (under a second|\d+(\.\d)? s) · \d+(\.\d)? s in all$/);
-  expect(landed.thoughtThrough.map((line) => String(line).replace(/\s*›$/, ""))).toEqual(["Thought through"]);
-  // The thinking waits behind the line and opens over the transcript, not inside it: the bubble keeps the height it landed with.
-  const thinkingRead = await readLandedThinking(app);
-  expect(thinkingRead.text).toContain("Vendor B is steady.");
-  expect(thinkingRead.bubbleHeightBefore).toBe(thinkingRead.bubbleHeightWhileOpen);
+  for (const thought of THINK_REASONING) expect(String(landed.text)).not.toContain(thought);
   const firstWordsMs = Number(/first words in (\d+(?:\.\d)?) s/.exec(landed.tooltip)?.[1] ?? "0") * 1_000;
   const expectedThinkingMs = THINK_REASONING.length * REASONING_CHUNK_MS;
   const speedFacts = await evalIn(app, `(async () => {
@@ -400,13 +439,12 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   expect(firstWordsMs, `tooltip ${json(landed.tooltip)} · facts ${json(speedFacts)} · test sentAt ${sentAt} · ${traceText}`).toBeGreaterThanOrEqual(expectedThinkingMs * 0.8);
   expect(firstWordsMs).toBeLessThan(Date.now() - sentAt + 1_000);
   evidence.recordAssertionEvidence(
-    "While the model thinks the row is a typing bubble with no phrase, a tap shows the thinking arriving, the words then stream into a real bubble, and the landed reply's tooltip says how fast it came",
-    `The trace of the live shapes showed the typing bubble with data-phase thinking, no chip and no words, the header on its one steady word Working; the tap opened the Thinking popover whose text grew from "First the sources" onward with small print "thinking for n s", only while thinking; when the reply's words started the popover was closed, the typing bubble gone, and a live bubble showed a growing prefix of the reply with nothing landed yet; once landed there was one bubble with the full reply, nothing live, "Thought through" holding the thinking, and the tooltip "${landed.tooltip}" — first words after roughly the ${expectedThinkingMs / 1_000} s of scripted thinking.`,
+    "Preparing exposes observed execution time, never reasoning; words stream without duplicate indicators and land with reply timing",
+    `The preparing row had dots, no chip or words, and header Working. Inspection showed Preparing a reply and elapsed execution time, with no technical fold or THINK_REASONING in any observed DOM. Streaming had one live bubble and no activity indicator or popover. The landed reply had no thinking disclosure and tooltip "${landed.tooltip}", with first words after roughly ${expectedThinkingMs / 1_000} s of scripted reasoning.`,
     true,
   );
 
-  // --- 2. A tool: the row is a chip in plain words, never dots; tap → Doing with technical details. The coworker's own
-  // tool answers in a moment, so the chip and its popover are read from a trace.
+  // --- 2. A real webfetch: only category, status and duration are inspectable, not its unknown payload.
   await beginLiveTrace(app, "chip");
   await send(app, TOOL_PROMPT);
   await waitForSettled(app, TOOL_REPLY);
@@ -414,70 +452,99 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   const toolText = JSON.stringify(toolTrace.map((entry) => ({ phase: entry.phase, typing: entry.typing, chip: entry.chip, popover: isRecord(entry.popover) ? { mode: entry.popover.mode, text: String(entry.popover.text).slice(0, 40), technical: entry.popover.technical } : null, live: String(entry.liveText).slice(-20) })));
   const chipEntries = toolTrace.filter((entry) => entry.phase === "tool");
   expect(chipEntries.length, toolText).toBeGreaterThan(0);
-  expect(chipEntries.every((entry) => entry.chip === "Reading a web page" && entry.typing === false && entry.header === "Working"), toolText).toBe(true);
-  const doingEntries = toolTrace.filter((entry) => isRecord(entry.popover) && entry.popover.mode === "doing");
-  // The popover on the chip, when the tap landed before the tool answered.
-  if (doingEntries.length > 0) {
-    expect(doingEntries.every((entry) => isRecord(entry.popover) && String(entry.popover.text).includes("Reading a web page") && entry.popover.technical === true), toolText).toBe(true);
+  expect(chipEntries.every((entry) => /^Web access: (Queued|Running)$/.test(String(entry.chip)) && entry.typing === false && entry.header === "Working"), toolText).toBe(true);
+  expect(chipEntries.some((entry) => entry.chip === "Web access: Running"), toolText).toBe(true);
+  const doingEntries = toolTrace.filter((entry) => entry.phase === "tool" && isRecord(entry.popover));
+  expect(doingEntries.length, `the tool's execution popover: ${toolText}`).toBeGreaterThan(0);
+  for (const entry of doingEntries) {
+    expect(entry.popover).toMatchObject({ mode: "execution", status: "Using a tool", technical: false, text: expect.stringContaining("Web access") });
+    expect(String(isRecord(entry.popover) ? entry.popover.text : "")).not.toContain(TOOL_UNKNOWN_PAYLOAD);
   }
-  expect(doingEntries.length, `the chip's popover on Doing: ${toolText}`).toBeGreaterThan(0);
+  expect(doingEntries.some((entry) => isRecord(entry.popover) && isRecord(entry.popover.details) && entry.popover.details["Observed status"] === "Running" && /^\d+ s elapsed$/.test(String(entry.popover.details.Duration))), toolText).toBe(true);
   expect(toolTrace.some((entry) => entry.phase === "writing" && String(entry.liveText).startsWith("All clear")), toolText).toBe(true);
+  expect(scripted.toolInputReceived, "the real webfetch received the unknown input field").toBe(true);
+  expect(scripted.toolOutputReceived, "the provider received the real tool result containing the unknown field").toBe(true);
   const toolReceipt = await evalIn(app, `[...document.querySelectorAll('[data-testid="coworker-work-summary"]')].map((node) => node.textContent?.trim() ?? "").join(" | ")`);
-  expect(String(toolReceipt)).toContain("Read a web page");
+  expect(String(toolReceipt).replace(/\s*›$/, "")).toBe("Web access: Completed");
+  const landedWork = await readLandedWork(app);
+  expect(landedWork.steps).toEqual([{ state: "completed", kind: "Web access", details: { "Observed status": "Completed", Duration: expect.stringMatching(/^\d+ s recorded$/) } }]);
   evidence.recordAssertionEvidence(
-    "While a tool runs the row is a chip that names the step in plain words, not dots",
-    `The scripted status page took ${SLOW_PAGE_MS / 1_000} s to answer. The trace showed the row as the chip "Reading a web page" with data-phase tool and no typing bubble, the header on Working, the popover on it on Doing with the step and a Technical details fold; the reply then streamed into a live bubble and the receipt read Read a web page.`,
+    "Tool inspection exposes category, observed status and duration without unrestricted payloads, and supports keyboard dismissal",
+    `The real webfetch took ${SLOW_PAGE_MS / 1_000} s and carried an unknown field through input and output. The live chip showed Web access: Running, with no dots; inspection showed Using a tool, Running and elapsed duration. The landed receipt showed Web access: Completed with recorded duration. No observed DOM or popover exposed the unknown payload. Enter opened the landed receipt without growing the reply, and Escape closed it and restored focus.`,
     true,
   );
 
-  // --- 3. A model that shares no thinking: the same dots; once words arrive the popover says so in one line.
+  // --- 3. A model without reasoning gets the same preparing status, not a claim about hidden thinking.
+  await beginLiveTrace(app, "typing");
   await send(app, PLAIN_PROMPT);
   const plainDots = await waitFor(app, `(() => { const live = ${READ_LIVE}; return live.typing || live.liveText ? live : false; })()`, { timeoutMs: 60_000, label: "the plain reply's live shape" });
   if (isRecord(plainDots) && plainDots.typing === true) {
-    await evalIn(app, `document.querySelector('[data-testid="coworker-typing"]')?.click(); true`);
-    const notYet = await evalIn(app, `(() => { const live = ${READ_LIVE}; return live.popover?.text ?? ""; })()`);
-    if (String(notYet)) expect(String(notYet)).toMatch(/^(Nova hasn't started thinking out loud yet\.|This AI model doesn't share its thinking\.)$/);
+    expect(plainDots.phase).toBe("preparing");
+    if (isRecord(plainDots.popover)) expect(plainDots.popover.status).toBe("Preparing a reply");
   }
   await waitForSettled(app, PLAIN_REPLY);
+  const plainTrace = await endLiveTrace(app);
+  for (const entry of plainTrace) {
+    if (isRecord(entry.popover)) {
+      expect(entry.popover).toMatchObject({ mode: "execution", technical: false });
+      expect(String(entry.popover.text)).not.toMatch(/thinking out loud|doesn't share its thinking/);
+    }
+  }
   const plainLanded = await evalIn(app, `(() => ({
-    thoughtThrough: document.querySelectorAll('[data-testid="coworker-thinking"]').length,
+    thinkingDisclosures: document.querySelectorAll('[data-testid="coworker-thinking"]').length,
     tooltip: [...document.querySelectorAll('[data-testid="coworker-reply-bubble"]')].at(-1)?.getAttribute("title") ?? "",
   }))()`);
-  expect(plainLanded).toMatchObject({ thoughtThrough: 1, tooltip: expect.stringMatching(/first words in (under a second|\d+(\.\d)? s) · \d+(\.\d)? s in all$/) });
+  expect(plainLanded).toMatchObject({ thinkingDisclosures: 0, tooltip: expect.stringMatching(/first words in (under a second|\d+(\.\d)? s) · \d+(\.\d)? s in all$/) });
   expect(String(isRecord(plainLanded) ? plainLanded.tooltip : "")).not.toContain("words of thinking");
   evidence.recordAssertionEvidence(
-    "A model that shares no thinking gets the same dots and no thinking fold, and its tooltip carries no thinking clause",
-    `The plain reply showed the typing bubble (or went straight to words when it was quick), landed with only the earlier reply's "Thought through" fold on screen, and its tooltip said first words and total time with no words-of-thinking clause.`,
+    "A model without reasoning keeps the normal preparing and streaming path and lands with timing, not a thinking disclosure",
+    "The plain reply showed preparing dots (or went straight to words) and landed with no thinking disclosure. Any observed streaming had no duplicate indicator. Inspection made no claim about hidden thinking, and the tooltip kept first-words and total time without a words-of-thinking clause.",
     true,
   );
 
-  // --- 4. Slow: nothing arrives past the wait budget — the typing bubble stays, gains the soft phrase and Stop, then the words come.
+  // --- 4. Long preparation shows a deterministic note; the original wait budget still offers Stop.
+  await beginLiveTrace(app, "typing");
   await send(app, SLOW_PROMPT);
-  const slow = await waitFor(app, `(() => { const live = ${READ_LIVE}; return live.outcome === "slow" ? live : false; })()`, { timeoutMs: SLOW_HOLD_MS + 60_000, label: "the row past the wait budget" });
-  expect(slow).toMatchObject({ phase: "thinking", typing: true, outcome: "slow", header: "Still working", rail: "Still working on it" });
-  expect(String(isRecord(slow) ? slow.rowText : "")).toContain("Nova is still working on it…");
+  const long = await waitFor(app, `(() => { const live = ${READ_LIVE}; return live.phase === "preparing" && live.outcome === "slow" ? live : false; })()`, { timeoutMs: SLOW_HOLD_MS + 60_000, label: "the deterministic long-running note" });
+  expect(long).toMatchObject({ phase: "preparing", typing: true, outcome: "slow", note: "Preparing a reply. 0 tool steps completed.", liveText: "", reasoningInDom: false, toolPayloadInDom: false });
+  if (!await evalIn(app, `Boolean(document.querySelector('[data-testid="coworker-thinking-popover"]'))`)) {
+    await evalIn(app, `document.querySelector('[data-testid="coworker-typing"]')?.focus(); true`);
+    await pressActivityKey(app, "Enter");
+  }
+  await waitFor(app, `document.activeElement === document.querySelector('[data-testid="coworker-thinking-popover"][role="dialog"]')
+    && document.querySelector('[data-testid="coworker-typing"]')?.getAttribute("aria-expanded") === "true"`, { timeoutMs: 5_000, label: "focus in live activity inspection" });
+  await pressActivityKey(app, "Escape");
+  await waitFor(app, `!document.querySelector('[data-testid="coworker-thinking-popover"]')
+    && document.activeElement === document.querySelector('[data-testid="coworker-typing"]')
+    && document.activeElement?.getAttribute("aria-expanded") === "false"`, { timeoutMs: 5_000, label: "Escape closes live inspection and restores typing-bubble focus" });
+  const slow = await waitFor(app, `(() => { const live = ${READ_LIVE}; return live.outcome === "slow" && live.header === "Still working" && document.querySelector('[data-testid="coworker-working"] [data-testid="coworker-turn-choice"][data-choice="stop"]') ? live : false; })()`, { timeoutMs: SLOW_HOLD_MS + 60_000, label: "the row past the wait budget" });
+  expect(slow).toMatchObject({ phase: "preparing", typing: true, outcome: "slow", header: "Still working", rail: "Still working on it", note: "Preparing a reply. 0 tool steps completed." });
   expect(await evalIn(app, `Boolean(document.querySelector('[data-testid="coworker-working"] [data-testid="coworker-turn-choice"][data-choice="stop"]'))`)).toBe(true);
   await waitForSettled(app, SLOW_REPLY, 90_000);
+  const slowTrace = await endLiveTrace(app);
+  const longEntries = slowTrace.filter((entry) => entry.phase === "preparing" && entry.outcome === "slow");
+  expect(longEntries.length).toBeGreaterThan(1);
+  expect(longEntries.every((entry) => entry.note === "Preparing a reply. 0 tool steps completed."), "elapsed time alone does not invent or change the progress note").toBe(true);
   expect(await evalIn(app, `document.querySelectorAll('[data-testid="coworker-turn-line"][data-outcome="failed"], [data-testid="coworker-turn-failed"]').length`)).toBe(0);
   evidence.recordAssertionEvidence(
-    "Past the wait budget with nothing arrived, the typing bubble stays and gains the soft phrase and Stop; the reply then lands",
-    `After ${SLOW_HOLD_MS / 1_000} s without words the row still showed the typing bubble with data-outcome slow, the phrase "Nova is still working on it…" and an inline Stop, the header Still working and the rail "Still working on it"; the reply then landed with nothing marked failed.`,
+    "Long preparation keeps a deterministic observed note, keyboard-accessible inspection and the existing wait-budget Stop action",
+    `During the ${SLOW_HOLD_MS / 1_000} s hold, the long-running note stayed "Preparing a reply. 0 tool steps completed." Escape closed live inspection and restored focus. Past the original wait budget the header said Still working, the rail Still working on it, and inline Stop was available. Any observed streaming had no duplicate indicator; the reply landed with nothing marked failed.`,
     true,
   );
 
-  // --- 5. A reload keeps the speed line and the thinking.
+  // --- 5. Reload keeps timing and safe tool inspection, not raw reasoning or payloads.
   await evalIn(app, "location.reload(); true");
   await waitForNovaReady(app);
   const afterReload = await waitFor(app, `(() => {
     const bubbles = [...document.querySelectorAll('[data-testid="coworker-reply-bubble"]')];
     if (bubbles.length < 4) return false;
-    return { tooltip: bubbles[0]?.getAttribute("title") ?? "", thoughtThrough: document.querySelectorAll('[data-testid="coworker-thinking"]').length };
+    return { tooltip: bubbles[0]?.getAttribute("title") ?? "", thinkingDisclosures: document.querySelectorAll('[data-testid="coworker-thinking"], [data-testid="coworker-thinking-landed-text"]').length, ...${READ_PRIVACY} };
   })()`, { timeoutMs: 60_000, label: "the replies after a reload" });
-  expect(afterReload).toMatchObject({ tooltip: landed.tooltip, thoughtThrough: 1 });
-  expect((await readLandedThinking(app)).text).toContain("Vendor B is steady.");
+  expect(afterReload).toMatchObject({ tooltip: landed.tooltip, thinkingDisclosures: 0, reasoningInDom: false, toolPayloadInDom: false });
+  expect((await readLandedWork(app)).steps).toEqual(landedWork.steps);
   evidence.recordAssertionEvidence(
-    "A reload keeps the speed line and the thinking",
-    `After a reload the first reply's tooltip still read "${landed.tooltip}" and its "Thought through" fold still held the thinking.`,
+    "Reload preserves reply timing and metadata-only tool inspection",
+    `After reload the first reply's tooltip still read "${landed.tooltip}", there was no thinking disclosure or raw reasoning/payload in the DOM, and the completed web step retained its status and recorded duration behind keyboard-accessible inspection.`,
     true,
   );
 });

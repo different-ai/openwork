@@ -39,7 +39,7 @@ export function workerTurnTools() {
     ...SELF_TOOL_NAMES.filter((name) => name !== "self_read"),
     ...TEAM_TOOL_NAMES.filter((name) => name !== "team_list"),
   ];
-  return { task: false, ...Object.fromEntries(management.map((name) => [`coworker_${name}`, false])) };
+  return { task: false, coworker_team_consult: false, ...Object.fromEntries(management.map((name) => [`coworker_${name}`, false])) };
 }
 
 export const WORKER_STATUSES = ["starting", "running", "waiting", "paused", "finished", "cancelled", "failed"];
@@ -179,6 +179,7 @@ function normalizeStoredWorker(raw) {
     steerCount: Number.isFinite(raw.steerCount) ? Math.max(0, Math.floor(raw.steerCount)) : 0,
     pendingSteers: Array.isArray(raw.pendingSteers) ? raw.pendingSteers.filter((steer) => steer && typeof steer.text === "string" && SPAWNERS.has(steer.by)) : [],
     pendingTurn: raw.pendingTurn && typeof raw.pendingTurn.messageId === "string" && typeof raw.pendingTurn.prompt === "string" ? raw.pendingTurn : null,
+    pendingSettlement: raw.pendingSettlement ?? null,
     error: typeof raw.error === "string" ? raw.error : "",
   };
 }
@@ -204,13 +205,17 @@ export async function createWorker(coworkersDir, slug, input, { now = Date.now()
   const lifespan = normalizeLifespan(input.lifespan, { now });
   const previous = createQueues.get(slug) ?? Promise.resolve();
   const run = previous.catch(() => undefined).then(async () => {
+    if (input.id) {
+      if (!isWorkerId(input.id)) throw new Error("Invalid Worker id.");
+      try { return await getWorker(coworkersDir, slug, input.id); } catch (error) { if (error.code !== "ENOENT") throw error; }
+    }
     const live = liveWorkers(await listWorkers(coworkersDir, slug));
     if (live.length >= MAX_LIVE_WORKERS) {
       throw new Error(`${MAX_LIVE_WORKERS} Workers are already running. Stop one, or wait for one to finish.`);
     }
     const worker = {
       schemaVersion: WORKER_SCHEMA_VERSION,
-      id: newWorkerId(),
+      id: input.id ?? newWorkerId(),
       slug,
       name,
       goal,
@@ -306,6 +311,7 @@ export async function updateWorker(coworkersDir, slug, id, change = {}, { now = 
     if (patch.steerCount !== undefined) next.steerCount = Math.max(0, Math.floor(Number(patch.steerCount) || 0));
     if (patch.pendingSteers !== undefined) next.pendingSteers = patch.pendingSteers;
     if (patch.pendingTurn !== undefined) next.pendingTurn = patch.pendingTurn;
+    if (patch.pendingSettlement !== undefined) next.pendingSettlement = patch.pendingSettlement;
     if (patch.error !== undefined) next.error = cleanText(patch.error, 2_000);
     return writeMetadata(coworkersDir, next);
   });
@@ -416,6 +422,10 @@ export async function appendWorkerEvent(coworkersDir, slug, id, input, { now = D
     .catch(() => undefined)
     .then(async () => {
       await mkdir(path.dirname(target), { recursive: true });
+      if (input.id) {
+        const existing = (await readWorkerEvents(coworkersDir, slug, id, { limit: Number.MAX_SAFE_INTEGER })).find((entry) => entry.id === input.id);
+        if (existing) return existing;
+      }
       await appendFile(target, `${JSON.stringify(event)}\n`, "utf8");
       return event;
     });

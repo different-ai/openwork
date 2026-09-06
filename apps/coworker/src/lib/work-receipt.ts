@@ -11,6 +11,7 @@ import { parseLocalSchedule } from "./local-schedule.ts";
 import { describeScheduleForPeople, describeScheduleInSentence } from "./responsibility-copy.ts";
 import { describeTeamStep } from "./team.ts";
 import { describeWorkerToolStep, workerToolName } from "./workers.ts";
+import { sinceMoment } from "./live-phase.ts";
 
 export type WorkStepInput = {
   tool: string;
@@ -369,41 +370,130 @@ export function describeWorkProgress(steps: ReadonlyArray<WorkStep>): string {
   return failed ? `${count} · ${failed} didn't finish` : count;
 }
 
-/** One labelled block inside a step's technical details. */
-export type TechnicalSection = { label: "Command" | "Input" | "Result" | "Error"; text: string };
+/** Inspection is an allowlist, not redaction of arbitrary tool payloads. */
+export const EXECUTION_KINDS = {
+  read: "File reading",
+  edit: "File editing",
+  search: "File search",
+  command: "Command execution",
+  web: "Web access",
+  connected: "Connected tool",
+  document: "Document work",
+  memory: "Memory work",
+  assignment: "Assignment management",
+  team: "Team collaboration",
+  worker: "Worker coordination",
+  plan: "Plan update",
+  question: "Request for your input",
+  other: "Tool call",
+};
+export type ExecutionKind = keyof typeof EXECUTION_KINDS;
+export const EXECUTION_STATES = {
+  pending: "Queued",
+  running: "Running",
+  completed: "Completed",
+  failed: "Failed",
+  cancelled: "Cancelled",
+  unknown: "Status unavailable",
+};
+export type ExecutionState = keyof typeof EXECUTION_STATES;
+export type ExecutionMetadataInput = {
+  tool: string;
+  status?: string | null;
+  /** Engine timestamps only; do not substitute receipt/poll time. */
+  startedAt?: number | null;
+  completedAt?: number | null;
+};
+export type ExecutionMetadata = {
+  kind: ExecutionKind;
+  status: ExecutionState;
+  startedAt: number | null;
+  completedAt: number | null;
+};
 
-/** Keep a technical block readable: enough to understand, never a wall. */
-export const TECHNICAL_TEXT_LIMIT = 1200;
-
-function clipText(text: string, limit = TECHNICAL_TEXT_LIMIT): string {
-  const trimmed = text.replace(/\s+$/, "");
-  return trimmed.length > limit ? `${trimmed.slice(0, limit - 1)}…` : trimmed;
-}
-
-function renderValue(value: unknown): string {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "string") return value;
-  try {
-    return JSON.stringify(value, null, 2) ?? "";
-  } catch {
-    return String(value);
+export function executionKind(tool: string): ExecutionKind {
+  if (tool.length > 128) return "other";
+  const name = tool.toLowerCase();
+  if (name === "coworker_team_consult") return "team";
+  if (documentToolName(name)) return "document";
+  if (workerToolName(name)) return "worker";
+  const own = coworkerToolName(name);
+  if (own) return isTeamTool(own) ? "team" : isAssignmentTool(own) ? "assignment" : "memory";
+  switch (name) {
+    case "search": return "search";
+    case "command": return "command";
+    case "web": return "web";
+    case "connected": return "connected";
+    case "document": return "document";
+    case "memory": return "memory";
+    case "assignment": return "assignment";
+    case "team": return "team";
+    case "worker": return "worker";
+    case "plan": return "plan";
+    case "read": return "read";
+    case "edit": case "write": case "multiedit": case "apply_patch": return "edit";
+    case "glob": case "grep": case "list": case "ls": return "search";
+    case "bash": case "shell": return "command";
+    case "webfetch": case "fetch": case "websearch": return "web";
+    case "todowrite": case "todoread": return "plan";
+    case "task": return "worker";
+    case "question": return "question";
+    default: return name.startsWith("openwork-cloud_") ? "connected" : "other";
   }
 }
 
-/**
- * The technical view of one tool call, as labelled blocks: a shell command on its own,
- * any other input as tidy JSON, then the result and the error when there is one.
- * Text is clipped so the block keeps a sane height.
- */
-export function technicalSections(call: { input: Record<string, unknown>; output?: unknown; error?: string | null }): TechnicalSection[] {
-  const sections: TechnicalSection[] = [];
-  const input = call.input ?? {};
-  const command = typeof input.command === "string" ? input.command.trim() : "";
-  if (command) sections.push({ label: "Command", text: clipText(command) });
-  const rest = Object.fromEntries(Object.entries(input).filter(([key, value]) => !(command && key === "command") && value !== undefined && value !== ""));
-  if (Object.keys(rest).length > 0) sections.push({ label: "Input", text: clipText(JSON.stringify(rest, null, 2)) });
-  const result = renderValue(call.output).trim();
-  if (result) sections.push({ label: "Result", text: clipText(result) });
-  if (call.error) sections.push({ label: "Error", text: clipText(call.error) });
-  return sections;
+export function executionState(status: string | null | undefined): ExecutionState {
+  switch (status) {
+    case "pending": case "queued": return "pending";
+    case "running": return "running";
+    case "completed": case "success": case "succeeded": return "completed";
+    case "error": case "failed": return "failed";
+    case "cancelled": case "canceled": case "stopped": case "aborted": return "cancelled";
+    default: return "unknown";
+  }
+}
+
+export function executionTimestamp(value: number | null | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+export function executionMetadata(call: ExecutionMetadataInput): ExecutionMetadata {
+  return {
+    kind: executionKind(call.tool),
+    status: executionState(call.status),
+    startedAt: executionTimestamp(call.startedAt),
+    completedAt: executionTimestamp(call.completedAt),
+  };
+}
+
+export function executionDuration(metadata: Pick<ExecutionMetadata, "status" | "startedAt" | "completedAt">, now: number): string {
+  const start = metadata.startedAt;
+  const end = metadata.completedAt ?? (metadata.status === "running" ? now : null);
+  if (start === null || end === null || end < start || !Number.isFinite(end)) return "Duration unavailable";
+  return `${sinceMoment(start, end)}${metadata.completedAt === null ? " elapsed" : " recorded"}`;
+}
+
+/** The collapsed activity receipt is just as private as the open inspection. */
+export function summarizeExecution(calls: readonly ExecutionMetadataInput[]): string {
+  if (!calls.length) return "";
+  const metadata = calls.map(executionMetadata);
+  const only = metadata.length === 1 ? metadata[0] : null;
+  if (only) return `${EXECUTION_KINDS[only.kind]}: ${EXECUTION_STATES[only.status]}`;
+  const counts = new Map<ExecutionState, number>();
+  for (const step of metadata) counts.set(step.status, (counts.get(step.status) ?? 0) + 1);
+  return `${calls.length} observed steps: ${[...counts].map(([status, count]) => `${count} ${EXECUTION_STATES[status].toLowerCase()}`).join(", ")}`;
+}
+
+/** A bounded display name, never an unrestricted tool result or command. */
+export function safeWorkLabel(value: string, fallback: string): string {
+  const label = value.trim().replace(/[\r\n\t]+/g, " ");
+  if (!label || label.length > 180 || /https?:\/\/|bearer\s|\bsk-[\w-]{12,}|(?:token|password|api[_ -]?key)\s*[:=]/i.test(label)) return fallback;
+  return label;
+}
+
+/** Worker management is app-owned structured data; retain its named receipt. */
+export function summarizeWorkerReceipt(calls: readonly WorkStepInput[]): string {
+  const generic = summarizeExecution(calls);
+  if (!calls.length || !calls.every((call) => workerToolName(call.tool))) return generic;
+  return safeWorkLabel(describeWorkLine(calls.map(describeWorkStep)), generic);
 }

@@ -1,0 +1,21 @@
+/** Hard bounds for optional activity copy. No model is selected by default. */
+export const PROGRESS_LIMITS = Object.freeze({
+  longRunningMs: 15_000,
+  clockMs: 1_000,
+  debounceMs: 2_000,
+  minCallIntervalMs: 30_000,
+  timeoutMs: 5_000,
+  maxCallsPerExecution: 3,
+  maxInputChars: 2_048,
+  maxOutputTokens: 80,
+  maxOutputChars: 240,
+  maxNoteChars: 320,
+  maxFacts: 3,
+  maxVisibleSteps: 50,
+  maxCount: 999,
+  activityPollMs: 1_500,
+  activityReadTimeoutMs: 5_000,
+  maxActivityExecutions: 16,
+  maxReplyChars: 20_000,
+  maxReplyParts: 64,
+});

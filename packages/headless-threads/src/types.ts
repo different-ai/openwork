@@ -51,6 +51,8 @@ export interface HeadlessThreadMessagePart {
   toolOutput?: unknown;
   toolError?: string;
   toolMetadata?: Record<string, unknown>;
+  toolStartedAt?: number;
+  toolCompletedAt?: number;
   synthetic?: boolean;
   ignored?: boolean;
 }
@@ -206,6 +208,8 @@ export interface HeadlessTranscriptToolCall {
   output: unknown;
   error: string | null;
   metadata: Record<string, unknown>;
+  startedAt?: number;
+  completedAt?: number;
 }
 
 export interface HeadlessTranscriptMessage {

@@ -149,6 +149,15 @@ test("automatic placement uses authenticated Daytona and otherwise falls back to
     placement: "local",
     reason: "daytona CLI missing or not authenticated",
   });
+  const native = { OPENWORK_EVAL_ELECTRON_BINARY: "/test/Open Coworker.app/Contents/MacOS/Open Coworker" };
+  assert.deepEqual(resolveRunEnvironment(parseArgs(["open-coworker-team"]), native, () => { throw new Error("native package must not probe remote placement"); }), {
+    env: native,
+    placement: "local",
+    reason: "supplied native Electron binary",
+  });
+  assert.equal(resolveRunEnvironment(parseArgs(["open-coworker-team", "--daytona"]), native, () => true).placement, "daytona");
+  assert.equal(resolveRunEnvironment(parseArgs(["open-coworker-team"]), { ...native, OPENWORK_EVAL_DAYTONA: "1" }, () => true).placement, "daytona");
+  assert.equal(resolveRunEnvironment(parseArgs(["open-coworker-team", "--den", "https://den.example.test"]), native, () => true).placement, "attached");
 });
 
 test("verdict and exit mapping covers failed, incomplete, and passed runs", () => {

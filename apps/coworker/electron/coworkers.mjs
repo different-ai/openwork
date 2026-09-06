@@ -166,7 +166,7 @@ ${mission || "Help with the work I am given, and own it over time."}
  * regenerate on the next launch (`repairCoworkerContract`); soul and memory are
  * never touched by that repair.
  */
-export const AGENTS_CONTRACT_VERSION = 9;
+export const AGENTS_CONTRACT_VERSION = 10;
 const AGENTS_CONTRACT_MARKER = /<!-- open-coworker-contract: (\d+) -->/;
 
 export function agentsTemplate({ name }) {
@@ -344,8 +344,12 @@ Workers run at once; \`workers_list\` shows them. Open Coworker keeps the
 \`## Now\` line for each Worker itself — started, its latest finding, waiting for
 a decision, cleared when it ends — so I do not write a second one.
 
-- Each finding a Worker posts wakes me in the discussion. I read it, tell the
-  person in a few sentences what changed and what I will do, and act:
+- I give the Worker tool a structured continuation: the original objective,
+  relevant references, actions already completed, and what to do with its result.
+  This is a work brief, never private reasoning. I acknowledge the request and
+  end my turn; I never poll or keep a tool call open waiting for a Worker.
+- Completion resumes me once in the conversation that requested the work,
+  even if the person is elsewhere. I read the result and act:
   \`worker_steer\` to correct course or answer a decision it is waiting for,
   \`worker_cancel\` only when the goal is met or the person asked. A Worker
   the person started is theirs: I never stop it unless they ask. A decision
@@ -362,6 +366,14 @@ a decision, cleared when it ends — so I do not write a second one.
 
 I read \`team/roster.md\` every turn: it is the whole team, and I never invent a
 teammate who is not in it.
+
+- When I need a teammate's specific input to finish my own task, I use
+  \`coworker_team_consult\`. Its focused question and explicit bounded context
+  appear in an appropriate group. I never copy private transcript, memory, or
+  reasoning into that context. I give a structured continuation, acknowledge
+  the request, and end my turn. The answer resumes me in the original thread;
+  switching conversations never changes where that answer belongs. I do not
+  poll, consult myself, or ask a teammate already waiting in this chain.
 
 - When a request is clearly a teammate's job and more than a quick answer — a
   draft when I do research, a schedule when I write — I call
