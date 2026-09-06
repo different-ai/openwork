@@ -88,7 +88,8 @@ pnpm --dir evals exec tsc --noEmit --strict --skipLibCheck --module preserve --m
 Worker-list requests respect the API's 50-row maximum. `workspacePath` is nullable
 Den metadata; when present it must match setup, but a null value is not replaced
 with an assumed directory. Workspace/session continuity comes from the browser
-route and fresh engine read. The CLI restart receipt's `runtimeReachable` means
+route and fresh correlated engine read result, not an independent filesystem
+observation. The CLI restart receipt's `runtimeReachable` means
 HTTP liveness only; successful tool execution is the later readiness gate.
 
 ### Explicit CLI-Managed Smoke
@@ -135,9 +136,12 @@ opener), and observes Den's stored worker `healthy -> stopped -> healthy` throug
 GET `/v1/workers`. It never polls `/cloud/instance` or `/gateway/resolve`, which
 can wake/provision workers. Reopening the conversation is the wake action.
 The second response must follow a new read receipt with the original normalized
-read-content hash (the observed line plus LF), without another write. This is not
-a raw-byte hash or a newline-encoding claim. It proves neither arbitrary filesystem recovery nor
-sandbox identity retention: the asserted identities are worker, workspace and
+read-content hash (the observed line plus LF), without another write. The response
+and hash both derive from the correlated tool result; neither independently
+observes runtime file bytes. This covers real-engine read-result and session
+continuity, not filesystem persistence after restart or wake, raw-byte equality,
+or newline encoding. It also does not prove sandbox identity retention:
+the asserted identities are worker, workspace and
 session. Fixture `upstreamCalls:0` covers this fixture only; the parent's provider
 configuration/egress controls own the environment-wide no-paid-calls boundary.
 

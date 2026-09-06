@@ -7,8 +7,8 @@ import { attachedCanary, cliManaged, requirements, workerRows } from "../worlds/
 const test = spec.world(attachedCanary, { needs: requirements, timeout: 90_000 });
 
 test(cliManaged
-  ? "CLI-managed Web signs in, streams a real file read, and preserves the conversation and file after manual runtime restart (automatic provisioning and wake unverified)"
-  : "managed Web signs in, streams a real file read, and preserves the conversation and file after idle wake", { timeout: 900_000 }, async ({ world, user, probe, step, evidence }) => {
+  ? "CLI-managed Web signs in, streams an engine read result, and retains the conversation with a fresh read result after manual runtime restart (automatic provisioning and wake unverified)"
+  : "managed Web signs in, streams an engine read result, and retains the conversation with a fresh read result after idle wake", { timeout: 900_000 }, async ({ world, user, probe, step, evidence }) => {
   const first = `Canary read 1: ${world.marker}`;
   const second = `Canary read 2: ${world.marker}`;
   const expectedHash = createHash("sha256").update(`${world.marker}\n`).digest("hex");
@@ -109,7 +109,7 @@ test(cliManaged
     expect((await world.stats()).verifiedReads).toBe(1);
   });
 
-  await step(cliManaged ? "Reopening the same conversation after manual restart causes a fresh engine read of the preserved file" : "Reopening wakes the same worker and conversation; a fresh engine read proves file persistence", async () => {
+  await step(cliManaged ? "Reopening the same conversation after manual restart yields a fresh correlated engine read result" : "Reopening wakes the same worker and conversation and yields a fresh correlated engine read result", async () => {
     await user.navigate(new URL(route, world.gatewayUrl).href);
     if (!cliManaged) await user.see({ testId: "cloud-workspace-takeover" }, { timeoutMs: 30_000 });
     await user.see("composer", { editable: true, timeoutMs: 180_000 });
@@ -135,9 +135,9 @@ test(cliManaged
       rejectedReadResults: 0, protocolErrors: 0, upstreamCalls: 0 });
     expect(stats.receipts).toEqual([{ sequence: 1, turn: 1, sha256: expectedHash }, { sequence: 2, turn: 2, sha256: expectedHash }]);
     if (cliManaged) expect(await world.providerCalls()).toBe(0);
-    evidence.recordAssertionEvidence(cliManaged ? "UI continuity and fresh engine read after CLI-managed restart" : "UI continuity and fresh engine file read after Den idle stop",
+    evidence.recordAssertionEvidence(cliManaged ? "UI continuity and fresh engine read result after CLI-managed restart" : "UI continuity and fresh engine read result after Den idle stop",
       cliManaged
-        ? "Trusted Chrome completed login, Web handoff, streaming and reload. An explicitly named fixture action used Daytona CLI stop/info/start and relaunched the real runtime. Reopening the same session caused a second distinct engine read receipt with the original normalized hash and no additional write. The model made zero upstream calls and the Den provider tripwire observed zero requests. Automatic provisioning, Den idle-stop and automatic wake remain unverified."
-        : "Trusted Chrome clicks and typing completed login, provisioning, streaming, reload and wake. GET /v1/workers observed healthy -> stopped -> healthy with one unchanged identity. Two distinct engine read receipts matched the normalized read-content hash; the follow-up caused no write. The deterministic fixture made zero upstream calls.", true);
+        ? "Trusted Chrome completed login, Web handoff, streaming and reload. An explicitly named fixture action used Daytona CLI stop/info/start and relaunched the real runtime. Reopening the same session caused a second distinct engine read receipt with the original normalized hash and no additional write. The model made zero upstream calls and the Den provider tripwire observed zero requests. Automatic provisioning, Den idle-stop and automatic wake remain unverified. Read receipts observe correlated tool results, not independent runtime filesystem persistence."
+        : "Trusted Chrome clicks and typing completed login, provisioning, streaming, reload and wake. GET /v1/workers observed healthy -> stopped -> healthy with one unchanged identity. Two distinct engine read receipts matched the normalized read-content hash; the follow-up caused no write. The deterministic fixture made zero upstream calls. Read receipts observe correlated tool results, not independent runtime filesystem persistence.", true);
   });
 });

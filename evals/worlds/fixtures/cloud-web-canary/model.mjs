@@ -138,7 +138,8 @@ export function createCanaryModel(config, { streamDelayMs = 2_000 } = {}) {
       turn.verified = { sequence: ++stats.verifiedReads, turn: turn.number, sha256: digest(observed) };
       stats.readReceipts.push(turn.verified);
     }
-    // The response is derived from THIS result, never from the original prompt/history.
+    // The response and receipt derive from this correlated tool result, not an
+    // independent observation of runtime file bytes or persistence after restart.
     return { content: `Canary read ${turn.verified.sequence}: ${observed.trimEnd()}`, verified: true };
   }
 
