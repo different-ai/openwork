@@ -392,7 +392,7 @@ async function handleAgentCompletion(req, res, entry) {
     return;
   }
   const toolArguments = step.argumentsFrom === "computer-mention" ? computerMentionArguments(messages)
-    : step.argumentsFrom === "capability-search" ? capabilitySearchArguments(scopedMessages) : step.arguments;
+    : step.argumentsFrom === "capability-search" ? { ...step.arguments, ...capabilitySearchArguments(scopedMessages) } : step.arguments;
   const callId = `call_${workload.promptMarker.replace(/[^a-zA-Z0-9_-]/g, "_")}_${completedTools + 1}`;
   entry.agentCompletion = {
     ...baseRequest,

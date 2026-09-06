@@ -327,11 +327,11 @@ export async function connectorBranding(seed: Seed) {
       const found = await tools["openwork-cloud"].search_capabilities(${JSON.stringify(search(name))});
       const result = typeof found === "string" ? JSON.parse(found) : found;
       const catalog = result.matches ? result : JSON.parse(result.content[0].text);
-      return await tools["openwork-cloud"].execute_capability({ name: catalog.matches[0].name });
+      return await tools["openwork-cloud"].execute_capability({ name: catalog.matches[0].name, body: {} });
     ` },
   }] : [
     { tool: "search_capabilities", arguments: search(name) },
-    { tool: "execute_capability", arguments: {}, argumentsFrom: "capability-search" },
+    { tool: "execute_capability", arguments: { body: {} }, argumentsFrom: "capability-search" },
   ];
   const den = await seed.den({
     org: { name: "Connector tool display", admin: { name: "Connector Admin" } },
