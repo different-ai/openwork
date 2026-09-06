@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -17,15 +17,33 @@ const result = { content: [{ type: "text", text: "ok" }] };
 const needsApproval = () => new OpenworkServerError(422, "tool_requires_approval", "Approval required");
 
 describe("App conversation ownership", () => {
-  test("split message origin supplies endpoint, workspace, session and archive state instead of the root workspace", async () => {
+  test.each([false, true])("split message origin survives discovery recovery and archive changes (retry: %j)", async (retry) => {
     GlobalRegistrator.register({ url: "http://localhost/" });
     const previousAct = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
     Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
     const requests: unknown[] = [];
+    const retryCallbacks: (() => void)[] = [];
+    const delays: number[] = [];
+    const setTimer = window.setTimeout.bind(window);
+    const timerSpy = spyOn(window, "setTimeout").mockImplementation((callback, delay, ...args) => {
+      if (typeof callback === "function" && (delay === 1_000 || delay === 3_000)) {
+        retryCallbacks.push(() => callback(...args));
+        delays.push(delay);
+        return setTimer(() => {}, 60_000);
+      }
+      return setTimer(callback, delay, ...args);
+    });
+    let toolCalls = 0;
     const primary = { ...createOpenworkServerClient({ baseUrl: "http://primary.invalid" }),
       resolveMcpApp: async () => { throw new Error("Must not use the primary endpoint"); } };
     const secondary: OpenworkServerClient = { ...createOpenworkServerClient({ baseUrl: "http://secondary.invalid" }),
-      resolveMcpApp: async (workspaceId, name, launch, context) => { requests.push({ workspaceId, name, launch, context }); return { app: null }; } };
+      resolveMcpApp: async (workspaceId, name, launch, context) => {
+        requests.push({ workspaceId, name, launch, context });
+        if (retry && requests.length <= 3) throw new OpenworkServerError(503, "mcp_unreachable", "Starting");
+        return { app: null };
+      },
+      callMcpAppTool: async () => { toolCalls++; return result; },
+    };
     const container = document.createElement("div");
     const root = createRoot(container);
     const render = (readOnly: boolean) => <WorkspaceProvider client={null} openworkServerClient={primary} workspaceId="workspace-a" selectedWorkspaceRoot="/a">
@@ -40,13 +58,30 @@ describe("App conversation ownership", () => {
     </WorkspaceProvider>;
     try {
       await act(async () => { root.render(render(false)); });
+      if (retry) {
+        for (let i = 0; i < 2; i++) {
+          const callback = retryCallbacks.shift();
+          if (!callback) throw new Error("Missing discovery retry");
+          await act(async () => callback());
+        }
+        expect(requests).toHaveLength(3);
+        expect(delays).toEqual([1_000, 3_000]);
+        expect(retryCallbacks).toEqual([]);
+        const button = container.querySelector<HTMLButtonElement>("button");
+        expect(button?.textContent).toBe("Retry");
+        await act(async () => button?.click());
+        expect(requests).toHaveLength(4);
+        expect(container.querySelector("button")).toBeNull();
+      }
       await act(async () => { root.render(render(true)); });
       expect(requests).toEqual([
-        { workspaceId: "workspace-b", name: "fixture_render", launch: undefined, context: { client: secondary, workspaceId: "workspace-b", sessionId: "session-b", readOnly: false } },
+        ...Array.from({ length: retry ? 4 : 1 }, () => ({ workspaceId: "workspace-b", name: "fixture_render", launch: undefined, context: { client: secondary, workspaceId: "workspace-b", sessionId: "session-b", readOnly: false } })),
         { workspaceId: "workspace-b", name: "fixture_render", launch: undefined, context: { client: secondary, workspaceId: "workspace-b", sessionId: "session-b", readOnly: true } },
       ]);
+      expect(toolCalls).toBe(0);
     } finally {
       await act(async () => { root.unmount(); });
+      timerSpy.mockRestore();
       Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", previousAct);
       await GlobalRegistrator.unregister();
     }
