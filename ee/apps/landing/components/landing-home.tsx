@@ -189,7 +189,7 @@ export function LandingHome(props: Props) {
               </div>
 
               <div className="relative z-10 mb-4 flex w-full flex-col items-start justify-between gap-4 px-2 md:flex-row md:items-center">
-                <div className="landing-chip flex w-full flex-wrap gap-2 overflow-x-auto rounded-full p-1.5 md:w-[600px]">
+                <div className="landing-chip flex w-full gap-2 overflow-x-auto rounded-full p-1.5 md:w-[600px] md:flex-wrap md:overflow-visible">
                   {landingDemoFlows.map((flow) => {
                     const isActive = flow.id === activeDemo.id;
 
