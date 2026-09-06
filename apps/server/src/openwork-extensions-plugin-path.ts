@@ -39,3 +39,4 @@ export const openworkAnthropicToolSchemaPluginPath = () => openworkPluginPath("o
 export const openworkOfficeAttachmentsPluginPath = () => openworkPluginPath("openwork-office-attachments");
 export const openworkSpreadsheetsPluginPath = () => openworkPluginPath("openwork-spreadsheets");
 export const openworkPdfAttachmentsPluginPath = () => openworkPluginPath("openwork-pdf-attachments");
+export const openworkTitleRecoveryPluginPath = () => openworkPluginPath("openwork-title-recovery");
