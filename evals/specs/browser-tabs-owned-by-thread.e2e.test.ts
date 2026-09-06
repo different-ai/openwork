@@ -37,7 +37,7 @@ test("a background conversation's agent browses silently and its page is waiting
     expect(state.activeTabId).toBe(readingTab.tabId);
     expect(state.tabs.find((tab) => tab.id === opened.tabId)?.ownerSessionId).toBe(researching.sessionId);
     expect(state.nativeViews.find((view) => view.tabId === opened.tabId)).toMatchObject({
-      attached: true,
+      attached: false,
       aboveApp: false,
       bounds: { x: 0, y: 0, width: 1, height: 1 },
     });
@@ -71,7 +71,7 @@ test("a background conversation's agent browses silently and its page is waiting
       label: "no native browser view covers OpenWork after the panel closes",
     });
     expect(hidden.nativeViews.find((view) => view.tabId === readingTab.tabId)?.attached).toBe(false);
-    expect(hidden.nativeViews.find((view) => view.tabId === researchTab.tabId)).toMatchObject({ attached: true, aboveApp: false });
+    expect(hidden.nativeViews.find((view) => view.tabId === researchTab.tabId)).toMatchObject({ attached: false, aboveApp: false });
     expect(await world.clickAndType(researchTab, "ok")).toEqual({ clicks: 2, value: "okok" });
     const screenshot = await world.screenshotSize(researchTab);
     expect(screenshot.width).toBeGreaterThanOrEqual(BACKGROUND_TAB_VIEWPORT.width);
@@ -99,7 +99,7 @@ test("a background conversation's agent browses silently and its page is waiting
     const native = await world.readBrowserState();
     expect(native.nativeViews.find((view) => view.tabId === researchTab.tabId)).toMatchObject({ attached: true, aboveApp: true });
     expect(native.nativeViews.find((view) => view.tabId === readingTab.tabId)).toMatchObject({
-      attached: true,
+      attached: false,
       aboveApp: false,
       bounds: { x: 0, y: 0, width: 1, height: 1 },
     });

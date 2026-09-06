@@ -260,13 +260,13 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
   function browserNativeViews() {
     const mainWindow = window();
     const children = mainWindow?.contentView.children ?? [];
-    const appIndex = children.indexOf(mainWindow?.webContentsView);
     return [...browserTabs.values()].map(({ tabId, view }) => {
       const index = children.indexOf(view);
       return {
         tabId,
         attached: index !== -1,
-        aboveApp: index !== -1 && index > appIndex,
+        // BrowserWindow's primary renderer is below the entire contentView.
+        aboveApp: index !== -1,
         bounds: view.getBounds(),
       };
     });
@@ -635,11 +635,10 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
 
   // A tab whose conversation is not on screen must still behave like a real
   // page for the agent driving it: lay out at a real viewport, accept typing as
-  // a focused page, and paint so CDP screenshots work. Chromium only paints a
-  // page it considers visible, so the view keeps a one-pixel presence behind
-  // the app renderer while a DevTools session of ours emulates a full viewport
-  // and focus. Never put this presence above the app: emulation must not make
-  // a background page intercept the user's window. Both are undone when the tab
+  // a focused page, and paint so CDP screenshots work. Keep the native view
+  // detached while a DevTools session of ours emulates a full viewport and
+  // focus. Every child of BrowserWindow.contentView paints above the app;
+  // neither child ordering nor one-pixel bounds can isolate it. Both are undone when the tab
   // returns to the screen. This is the headless-browser recipe applied to a
   // headful window.
   function enterBackgroundMode(tab) {
@@ -647,12 +646,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     const webContents = tab.view.webContents;
     if (webContents.isDestroyed()) return;
     tab.background = true;
-    const mainWindow = window();
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      tab.view.setBounds({ ...BACKGROUND_TAB_PRESENCE_BOUNDS });
-      // addChildView also reorders an already attached foreground view.
-      mainWindow.contentView.addChildView(tab.view, 0);
-    }
+    detachBrowserView(tab.view);
+    tab.view.setBounds({ ...BACKGROUND_TAB_PRESENCE_BOUNDS });
     const cdp = webContents.debugger;
     runDetachedTask("emulate background browser tab", async () => {
       if (webContents.isDestroyed() || !tab.background) return;

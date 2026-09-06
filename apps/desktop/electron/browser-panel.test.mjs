@@ -10,8 +10,10 @@ export const app = { on() {} };
 export const clipboard = { writeText() {} };
 export const session = { fromPartition() { return {}; } };
 export const shell = { openExternal() { return Promise.resolve(); } };
+export const createdViews = [];
 export class WebContentsView {
   constructor() {
+    createdViews.push(this);
     const listeners = new Map();
     let attached = false;
     this.bounds = { x: 0, y: 0, width: 0, height: 0 };
@@ -58,6 +60,7 @@ export function load(url, context, next) {
 
 register(`data:text/javascript,${encodeURIComponent(hooks)}`);
 const { createBrowserPanel } = await import("./browser-panel.mjs");
+const { createdViews } = await import("electron");
 
 const PANEL_BOUNDS = { x: 800, y: 40, width: 400, height: 900 };
 const RESET_SEQUENCE = [
@@ -66,11 +69,10 @@ const RESET_SEQUENCE = [
 ];
 
 function createPanel() {
-  const appView = {};
-  const children = [appView];
+  const children = [];
+  const firstView = createdViews.length;
   const sent = [];
   const mainWindow = {
-    webContentsView: appView,
     contentView: {
       children,
       addChildView(view, index) {
@@ -91,12 +93,12 @@ function createPanel() {
   };
   createBrowserPanel({ getWindow: () => mainWindow, remoteDebugPort: 0, onDeepLink: () => {} }).registerIpc(ipcMain);
   const invoke = (channel, ...args) => handlers.get(channel)(null, ...args);
-  // The on-screen tab is the attached view with real panel bounds; background
-  // presences are attached too, but only ever one pixel large.
-  const onScreen = () => children.slice(children.indexOf(appView) + 1).find((view) => view.getBounds().width > 1) ?? null;
+  // Electron paints every child above the BrowserWindow's primary renderer.
+  const onScreen = () => children.find((view) => view.getBounds().width > 1) ?? null;
+  const views = () => createdViews.slice(firstView);
   const commands = (view) => view.webContents.debugger.commands;
   const messages = (channel) => sent.filter((entry) => entry.channel === channel).map((entry) => entry.payload);
-  return { invoke, onScreen, commands, children, messages, appView };
+  return { invoke, onScreen, commands, children, messages, views };
 }
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
@@ -183,7 +185,7 @@ const FOREGROUND_SEQUENCE = [
 ];
 
 test("a tab opened for a background conversation loads silently and leaves the visible conversation's tab on screen", async () => {
-  const { invoke, onScreen, commands, children, messages, appView } = createPanel();
+  const { invoke, onScreen, commands, children, messages, views } = createPanel();
   invoke("openwork:browser:show", PANEL_BOUNDS, "A");
   invoke("openwork:browser:createTab", "https://a.example", "A");
   const visibleView = onScreen();
@@ -195,13 +197,13 @@ test("a tab opened for a background conversation loads silently and leaves the v
 
   const state = invoke("openwork:browser:state");
   const backgroundTab = state.tabs.find((tab) => tab.id === tabId);
-  const backgroundView = children.find((view) => view !== visibleView && view !== appView);
-  assert.deepEqual(children, [backgroundView, appView, visibleView], "background content stays below the app renderer");
+  const backgroundView = views().find((view) => view !== visibleView);
+  assert.deepEqual(children, [visibleView], "background content stays detached from the window");
   assert.equal(onScreen(), visibleView, "the visible conversation keeps its tab on screen");
   assert.equal(state.activeTabId, state.tabs.find((tab) => tab.ownerSessionId === "A").id);
   assert.equal(backgroundTab.ownerSessionId, "B");
   assert.equal(state.activeTabIdByOwner.B, tabId, "the tab is B's active tab, ready for when B is opened");
-  assert.deepEqual(backgroundView.getBounds(), { x: 0, y: 0, width: 1, height: 1 }, "a one-pixel presence keeps the page painting");
+  assert.deepEqual(backgroundView.getBounds(), { x: 0, y: 0, width: 1, height: 1 });
   assert.deepEqual(commands(backgroundView), BACKGROUND_SEQUENCE, "the page lays out and focuses like a visible one");
   assert.equal(backgroundView.webContents.debugger.isAttached(), true, "our emulation session stays open while unseen");
   assert.deepEqual(commands(visibleView), [], "the visible tab is untouched");
@@ -210,18 +212,18 @@ test("a tab opened for a background conversation loads silently and leaves the v
   // Even an unexpectedly large background surface must not intercept the app.
   backgroundView.setBounds({ x: 0, y: 0, width: 1280, height: 800 });
   invoke("openwork:browser:hide");
-  assert.deepEqual(children, [backgroundView, appView]);
+  assert.deepEqual(children, []);
   assert.equal(onScreen(), null);
   assert.ok(invoke("openwork:browser:state").nativeViews.every((view) => !view.aboveApp));
 });
 
 test("navigating a background conversation's tab reports its owner instead of taking the screen", async () => {
-  const { invoke, onScreen, children, messages, appView } = createPanel();
+  const { invoke, onScreen, messages, views } = createPanel();
   invoke("openwork:browser:show", PANEL_BOUNDS, "A");
   invoke("openwork:browser:createTab", "https://a.example", "A");
   const visibleView = onScreen();
   invoke("openwork:browser:createTab", "https://b.example", "B");
-  const backgroundView = children.find((view) => view !== visibleView && view !== appView);
+  const backgroundView = views().find((view) => view !== visibleView);
   await flush();
 
   backgroundView.webContents.emit("did-start-navigation", "https://b.example/next", false, true);
@@ -232,12 +234,12 @@ test("navigating a background conversation's tab reports its owner instead of ta
 });
 
 test("switching to the background conversation swaps its tab on screen and restores a normal viewport", async () => {
-  const { invoke, onScreen, commands, children, appView } = createPanel();
+  const { invoke, onScreen, commands, children, views } = createPanel();
   invoke("openwork:browser:show", PANEL_BOUNDS, "A");
   invoke("openwork:browser:createTab", "https://a.example", "A");
   const aView = onScreen();
   invoke("openwork:browser:createTab", "https://b.example", "B");
-  const bView = children.find((view) => view !== aView && view !== appView);
+  const bView = views().find((view) => view !== aView);
   await flush();
   commands(aView).length = 0;
   commands(bView).length = 0;
@@ -246,7 +248,7 @@ test("switching to the background conversation swaps its tab on screen and resto
   await flush();
 
   assert.equal(onScreen(), bView, "B's tab takes the screen");
-  assert.deepEqual(children, [aView, appView, bView], "the previous foreground view moves below the app renderer");
+  assert.deepEqual(children, [bView], "the previous foreground view detaches from the window");
   assert.deepEqual(bView.getBounds(), PANEL_BOUNDS);
   assert.deepEqual(commands(bView), FOREGROUND_SEQUENCE, "B's emulation is undone before it is shown");
   assert.equal(bView.webContents.debugger.isAttached(), false, "our session is released for the user-driven reset path");

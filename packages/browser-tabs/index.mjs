@@ -15,9 +15,8 @@ export const SHARED_OWNER_KEY = "*";
 export const BACKGROUND_TAB_VIEWPORT = Object.freeze({ width: 1280, height: 800 });
 
 /**
- * Bounds of the on-window presence that keeps a background tab's compositor
- * producing frames. Keep this presence behind the app's native renderer;
- * one-pixel bounds alone are not a visibility or input-isolation boundary.
+ * Parking bounds for detached background tabs. These bounds must never be
+ * used as a visibility boundary: attached native views paint above the app.
  */
 export const BACKGROUND_TAB_PRESENCE_BOUNDS = Object.freeze({ x: 0, y: 0, width: 1, height: 1 });
 
