@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 import { needs, SkipError } from "@openwork/env";
 import type { Place, Seed } from "@openwork/env";
+import { desktop } from "@openwork/hosts";
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -93,6 +94,8 @@ export async function computerUseWorld(_seed: Seed, { place }: { place: Place })
     await helper.request("initialize", { protocolVersion: "2025-11-25", clientInfo: { name: "native-journey", version: "1" }, capabilities: {} });
     await peer.request("initialize", { protocolVersion: "2025-11-25", clientInfo: { name: "peer-journey", version: "1" }, capabilities: {} });
     return {
+      desktop: () => desktop({ name: "computer-use-setup", host: place.host(), env: { OPENWORK_COMPUTER_USE_BINARY: executable } }),
+      workspacePath: join(directory, "workspace"),
       appId: "org.example.openwork.computer-use-fixture",
       appPid: fixture.pid,
       call: (name: string, args: Record<string, unknown> = {}) => helper.request("tools/call", { name, arguments: args }),

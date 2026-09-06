@@ -1,6 +1,7 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { computerUseWorld, toolState } from "../worlds/computer-use.ts";
+import { createAndSelectWorkspace, evalIn, waitFor } from "@openwork/behaviors";
 
 // New journey: a person grants one native window and can revoke it. The helper
 // is a real stdio process; the fixture app has two independent, disposable windows.
@@ -226,4 +227,19 @@ test("Computer Use respects window consent, fresh observations and the person's 
     expect(await world.state()).toEqual({ count: 1, otherCount: 0, draft: "Edited by person" });
   });
 
+});
+
+test("Computer Use enables workspace tools from the desktop setup page", async ({ world, step }) => {
+  await using app = await world.desktop();
+  const { workspaceId } = await createAndSelectWorkspace(app, { path: world.workspacePath });
+  await step("Granted macOS access still requires explicit workspace enablement", async () => {
+    await evalIn(app, `location.hash = ${JSON.stringify(`#/workspace/${workspaceId}/extensions/computer-use`)}`);
+    await waitFor(app, `document.body.innerText.includes("Permissions are ready. Enable Computer Use for this workspace.")`, { timeoutMs: 60_000 });
+    expect(await evalIn(app, `[...document.querySelectorAll("button")].some(b => b.textContent.trim() === "Enable Computer Use" && !b.disabled)`)).toBe(true);
+  });
+  await step("Enable resolves the bundled helper and reaches Ready", async () => {
+    await evalIn(app, `[...document.querySelectorAll("button")].find(b => b.textContent.trim() === "Enable Computer Use").click()`);
+    await waitFor(app, `document.body.innerText.includes("Ready · app access is approved when a session starts")`, { timeoutMs: 60_000 });
+    expect(await evalIn(app, `[...document.querySelectorAll("button")].some(b => /^(Enable|Reconnect) Computer Use$/.test(b.textContent.trim()))`)).toBe(false);
+  });
 });
