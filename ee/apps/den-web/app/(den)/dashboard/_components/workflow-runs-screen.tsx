@@ -30,7 +30,7 @@ function WorkflowRunCard({ run }: { run: WorkflowRun }) {
           ) : run.source === "adhoc" ? "One-off task" : "Workflow run"}
         </h2>
         {run.workflow?.graph ? (
-          <div className="mt-4 max-h-96 overflow-auto rounded-xl border border-gray-100 bg-gray-50/50 px-4 pb-4" role="region" aria-label={`${run.workflow.title} workflow visualization`} tabIndex={0}>
+          <div data-testid={`workflow-run-visualization-${run.id}`} className="mt-4 max-h-96 overflow-auto rounded-xl border border-gray-100 bg-gray-50/50 px-4 pb-4" role="region" aria-label={`${run.workflow.title} workflow visualization`} tabIndex={0}>
             <WorkflowFlowDiagram graph={run.workflow.graph} />
           </div>
         ) : run.workflow ? (

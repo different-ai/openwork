@@ -47,7 +47,7 @@ const test = spec.world(async (seed) => {
     const message = record(JSON.parse(data ? data.slice(5) : text));
     if (message.error || record(message.result).isError) throw new Error("The setup execution failed");
   };
-  const code = "const workers = await tools.den.getWorkers({}); return { topic: input.topic, count: workers.workers.length };";
+  const code = "const workers = await tools.den.getWorkers({}); let count = 0; for (const worker of workers.workers) { count += 1; } if (input.topic) { return { topic: input.topic, count }; } return { count };";
   const inputSchema = { type: "object", properties: { topic: { type: "string" } }, required: ["topic"] };
   await execute(code);
   const saved = await saveWorkflow(den.admin, { name: "Weekly briefing", code, currentInput: { topic: "Weekly overview" }, inputSchema });
@@ -80,12 +80,22 @@ test("workflow activity shows linked version diagrams and keeps one-off and inac
   expect(first).toMatchObject({ workflow: { configObjectId: world.configObjectId, title: "Weekly briefing", graph: world.originalGraph } });
   expect(record(first?.workflow).graph).not.toEqual(world.revisedGraph);
   expect(before.filter((run) => run.source === "adhoc").every((run) => run.workflow === null)).toBe(true);
-  expect(before.some((run) => run.status === "failed" && record(run.workflow).configObjectId === world.configObjectId)).toBe(true);
+  const failed = before.find((run) => run.status === "failed" && isRecord(run.workflow) && run.workflow.configObjectId === world.configObjectId);
+  expect(failed).toMatchObject({ workflow: { graph: world.originalGraph } });
+  const failedReceiptId = field(failed, "id");
 
   await step("read existing diagrams directly in the run list", async () => {
     await user.see({ text: "Workflow Runs" }, { timeoutMs: 90_000 });
     await user.see({ text: "Workflows are repeatable tasks you and your team can save, share, and run again. See their recent activity here." });
-    await user.see({ testId: "den-workflow-flow-diagram", nth: 1 }, { timeoutMs: 30_000 });
+    for (const receiptId of [world.receiptId, failedReceiptId]) {
+      // Scope rendered node text to each receipt; an empty diagram or the latest
+      // version (Revised count) must fail even when another card is correct.
+      await user.see({ testId: `workflow-run-visualization-${receiptId}` }, {
+        text: /^(?![\s\S]*Revised count)(?=[\s\S]*Get workers)(?=[\s\S]*For each item in workers workers)(?=[\s\S]*Topic is set)(?=[\s\S]*Finish with: Topic, Count)[\s\S]*$/,
+      });
+      await user.see({ testId: `workflow-run-link-${receiptId}` }, { text: "Weekly briefing" });
+      await user.see({ testId: `workflow-run-time-${receiptId}` });
+    }
     await user.notSee({ testId: "den-workflow-flow-diagram", nth: 2 });
     await user.see({ testId: `workflow-run-link-${world.receiptId}` }, { text: "Weekly briefing" });
     await user.see({ testId: `workflow-run-time-${world.receiptId}` });
@@ -130,7 +140,16 @@ test("workflow activity shows linked version diagrams and keeps one-off and inac
     expect(visible[0]).toMatchObject({ id: memberRun.receiptId, workflow: { configObjectId: world.configObjectId } });
     const memberNodes = record(record(visible[0].workflow).graph).nodes;
     if (!Array.isArray(memberNodes)) throw new Error("Expected the shared workflow graph");
-    expect(memberNodes.map(record).find((node) => node.kind === "return")?.label).toBe("Result");
+    const originalNodes = record(world.originalGraph).nodes;
+    if (!Array.isArray(originalNodes)) throw new Error("Expected the authored workflow graph");
+    for (const [kind, label] of [["branch", "Condition"], ["loop", "Repeat"], ["return", "Result"]]) {
+      const authored = originalNodes.map(record).filter((node) => node.kind === kind);
+      const shared = memberNodes.map(record).filter((node) => node.kind === kind);
+      expect(authored.length).toBeGreaterThan(0);
+      expect(authored.every((node) => node.label !== label)).toBe(true);
+      expect(shared.map((node) => node.id)).toEqual(authored.map((node) => node.id));
+      expect(shared.map((node) => node.label)).toEqual(authored.map(() => label));
+    }
     const removed = await seed.api(world.den.admin, `/v1/config-objects/${world.configObjectId}/access/${field(record(grant.body).item, "id")}`, { method: "DELETE" });
     expect(removed.response.ok, removed.text).toBe(true);
     const revoked = await readRuns(colleague);
