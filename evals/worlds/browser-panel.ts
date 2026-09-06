@@ -157,7 +157,7 @@ function parsePageProbe(value: unknown): PageProbe {
  * home, plus helpers that play an automation client against its tabs.
  */
 async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string>) {
-  const app = await seed.desktop({ name: "builtin-browser", env: { OPENWORK_EVAL_BROWSER_LOGIN_SYNC: "1", ...env } });
+  const app = await seed.desktop({ name: "builtin-browser", env });
   const workspacePath = seed.tmpPath("builtin-browser");
   const workspace = await seed.workspace(app, workspacePath);
   const session = await seed.session(app);
