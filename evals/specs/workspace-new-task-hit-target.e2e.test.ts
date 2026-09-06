@@ -36,8 +36,24 @@ test("workspace New task opens an editable composer immediately and creates one 
   // TODO(primitive): probe.attribute should read the accessible control's aria-expanded value.
   const expandedBefore = await probe.eval(`document.querySelector('[data-workspace-new-task]')
     ?.closest("[data-workspace-actions]")?.parentElement?.querySelector("[aria-expanded]")?.getAttribute("aria-expanded")`);
+  // TODO(primitive): probe.paintTiming should measure input-to-visible-content in the renderer.
+  await probe.eval(`(() => {
+    const button = document.querySelector('[data-workspace-new-task]');
+    button.addEventListener("click", () => {
+      const started = performance.now();
+      const observer = new MutationObserver(() => {
+        const heading = [...document.querySelectorAll("h2")]
+          .find((node) => node.textContent === "What do you need done?" && node.getClientRects().length);
+        if (!heading) return;
+        window.__newTaskOpenedAfterMs = performance.now() - started;
+        observer.disconnect();
+      });
+      observer.observe(document.body, { subtree: true, childList: true });
+    }, { once: true, capture: true });
+  })()`);
   await user.click({ role: "button", label: `New session · ${workspaceName}` });
   await user.see({ text: "What do you need done?" });
+  expect(await probe.eval(`window.__newTaskOpenedAfterMs`)).toBeLessThan(1000);
   expect(await probe.hash()).not.toContain("/session/ses_");
   expect(await requests()).toEqual([]);
   expect((await agent.list()).map((session) => session.sessionId).sort()).toEqual(before);
