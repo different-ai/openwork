@@ -50,7 +50,7 @@ describe("org onboarding organization choice", () => {
     expect(markup).toContain("Beta Labs");
   });
 
-  test("auto-selects and auto-continues resources for one org", () => {
+  test("auto-selects one org and shows its resources", () => {
     const soloOrg = org("org-solo", "Solo Workspace");
     const initial = initialOrgOnboardingSelectionState();
     const autoSelectStep = resolveOrgOnboardingPostListStep({
@@ -70,11 +70,11 @@ describe("org onboarding organization choice", () => {
       orgs: [soloOrg],
       activeOrgId: soloOrg.id,
       hasSelectedOrganization: true,
-      autoContinueResources: true,
+      autoContinueResources: false,
       autoSelectFailedOrgId: null,
     });
 
-    expect(resourceStep).toEqual({ kind: "resources", autoContinue: true });
+    expect(resourceStep).toEqual({ kind: "resources", autoContinue: false });
   });
 
   test("shows the chooser for two orgs without a handoff", () => {

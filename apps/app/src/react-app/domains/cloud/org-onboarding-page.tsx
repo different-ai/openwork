@@ -5,21 +5,17 @@ import { useNavigate } from "react-router";
 import {
   ArrowRight,
   ArrowUpRightIcon,
-  Check,
   CheckCircle2,
   CircleAlert,
 } from "lucide-react";
 import {
   BuildingOffice2Icon,
-  CloudIcon,
-  Square3Stack3DIcon,
 } from "@heroicons/react/24/solid";
 
 import {
   createDenClient,
   readDenBootstrapConfig,
   readDenSettings,
-  resolveDenBaseUrls,
   setDenBootstrapConfig,
   writeDenSettings,
   type DenDesktopConfig,
@@ -47,7 +43,6 @@ import { writeStoredDefaultModel } from "../../kernel/model-config";
 import { orgOnboardingVisibilityEvent } from "../../shell/reload-coordinator";
 import {
   Page,
-  PageBackground,
   PageContainer,
   PageContent,
   PageDescription,
@@ -59,19 +54,19 @@ import {
   PageTitle,
   PageTitlebarRegion,
 } from "@/components/page";
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Empty,
-  EmptyContent,
   EmptyDescription,
   EmptyHeader,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { cn } from "@/lib/utils";
-import { ScrollArea, ScrollAreaViewport } from "@/components/ui/scroll-area";
+import { OnboardingIntro, OnboardingResourceRow } from "@openwork/ui/react";
+import { listAssignedConnectCapabilities } from "../session/surface/connect-capability-inventory";
+import { resolveOrgMcpConnectionCardState } from "../connections/use-org-mcp-connections";
+import { connectionNeedsReconnect } from "../connections/native-provider-connections";
 import { Field, FieldLabel, FieldTitle } from "@/components/ui/field"
 import {
   RadioGroup,
@@ -254,7 +249,6 @@ function PreparedWorkspacePage({ prepared }: { prepared: PreparedBootstrapSummar
 
   return (
     <Page>
-      <PageBackground />
       <PageTitlebarRegion />
       <PageContainer>
         <PageHeader>
@@ -382,7 +376,7 @@ export function resolveOrgOnboardingPostListStep({
 
   return {
     kind: "resources",
-    autoContinue: autoContinueResources || orgs.length <= 1,
+    autoContinue: autoContinueResources,
   };
 }
 
@@ -476,7 +470,7 @@ export function OrgOnboardingPage() {
           activeOrgSlug: autoSelectOrg.slug,
           activeOrgName: autoSelectOrg.name,
         });
-        setAutoContinueResources(true);
+        setAutoContinueResources(false);
         setHasSelectedOrganization(true);
       })
       .catch(() => {
@@ -500,8 +494,7 @@ export function OrgOnboardingPage() {
   if (isPending) {
     return (
       <Page>
-        <PageBackground />
-        <PageTitlebarRegion />
+          <PageTitlebarRegion />
         <PageContainer>
           <PageHeader>
             <PageTitle>Your organization</PageTitle>
@@ -520,8 +513,7 @@ export function OrgOnboardingPage() {
   if (error) {
     return (
       <Page>
-        <PageBackground />
-        <PageTitlebarRegion />
+          <PageTitlebarRegion />
         <PageContainer>
           <PageHeader>
             <PageTitle>Choose your organization</PageTitle>
@@ -540,8 +532,7 @@ export function OrgOnboardingPage() {
   if (postListStep.kind === "auto-select-single-org") {
     return (
       <Page>
-        <PageBackground />
-        <PageTitlebarRegion />
+          <PageTitlebarRegion />
         <PageContainer>
           <PageHeader>
             <PageTitle>Your organization</PageTitle>
@@ -579,7 +570,6 @@ export function OrgOnboardingPage() {
 
 export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?: boolean }) {
   const navigate = useNavigate();
-  const platform = usePlatform();
   const { markRouteReady } = useBootState();
   const { authToken, denClient, orgId, orgName, settings } = useDenClient();
   const { refreshFresh } = useDesktopConfig();
@@ -606,24 +596,36 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
     }
   }, [authToken, navigate, orgId]);
 
-  const { providers, marketplaces, loading, error } = useQueries({
+  const { providers, marketplaces, capabilities, connections, loading, error } = useQueries({
     queries: [
       {
-        queryKey: ["den-org-onboarding", settings.baseUrl, orgId, "providers"],
+        queryKey: ["den-org-onboarding", settings.baseUrl, authToken, orgId, "providers"],
         enabled: Boolean(authToken && orgId),
         queryFn: () => denClient.listOrgLlmProviders(orgId),
       },
       {
-        queryKey: ["den-org-onboarding", settings.baseUrl, orgId, "marketplaces"],
+        queryKey: ["den-org-onboarding", settings.baseUrl, authToken, orgId, "marketplaces"],
         enabled: Boolean(authToken && orgId),
         queryFn: () => denClient.listOrgMarketplaces(orgId),
       },
+      {
+        queryKey: ["den-org-onboarding", settings.baseUrl, authToken, orgId, "capabilities"],
+        enabled: Boolean(authToken && orgId),
+        queryFn: () => listAssignedConnectCapabilities({ client: denClient, organizationId: orgId }),
+      },
+      {
+        queryKey: ["den-org-onboarding", settings.baseUrl, authToken, orgId, "connections"],
+        enabled: Boolean(authToken && orgId),
+        queryFn: () => denClient.listMcpConnections(orgId, "usable"),
+      },
     ],
-    combine: ([providersQuery, marketplacesQuery]) => ({
+    combine: ([providersQuery, marketplacesQuery, capabilitiesQuery, connectionsQuery]) => ({
       providers: providersQuery.data ?? [],
       marketplaces: marketplacesQuery.data ?? [],
-      loading: providersQuery.isPending || marketplacesQuery.isPending,
-      error: providersQuery.error?.message ?? marketplacesQuery.error?.message ?? null,
+      capabilities: capabilitiesQuery.data,
+      connections: connectionsQuery.data ?? [],
+      loading: providersQuery.isPending || marketplacesQuery.isPending || capabilitiesQuery.isPending || connectionsQuery.isPending,
+      error: providersQuery.error?.message ?? marketplacesQuery.error?.message ?? capabilitiesQuery.error?.message ?? connectionsQuery.error?.message ?? null,
     }),
   });
 
@@ -729,15 +731,14 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
   }, [brandingRestart, finishOnboarding]);
 
   const totalModels = providers.reduce((sum, provider) => sum + provider.models.length, 0);
-  const hasResources = providers.length > 0 || marketplaces.length > 0;
+  const hasResources = providers.length > 0 || marketplaces.length > 0 || Boolean(capabilities?.skills.length) || connections.length > 0;
   const autoContinuePending =
     autoContinue && !loading && !error && !brandingRestart;
 
   if (preparingBranding) {
     return (
       <Page>
-        <PageBackground />
-        <PageTitlebarRegion />
+          <PageTitlebarRegion />
         <PageContainer>
           <PageHeader>
             <PageTitle>Preparing workspace identity</PageTitle>
@@ -759,8 +760,7 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
   if (brandingRestart) {
     return (
       <Page>
-        <PageBackground />
-        <PageTitlebarRegion />
+          <PageTitlebarRegion />
         <PageContainer>
           <PageHeader>
             <PageTitle>Workspace identity is ready</PageTitle>
@@ -807,8 +807,7 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
   if (autoContinuePending) {
     return (
       <Page>
-        <PageBackground />
-        <PageTitlebarRegion />
+          <PageTitlebarRegion />
         <PageContainer>
           <PageHeader>
             <PageTitle>{orgName || "Your organization"}</PageTitle>
@@ -825,13 +824,12 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
   }
 
   return (
-    <Page>
-      <PageBackground />
+    <Page className="overflow-y-auto">
       <PageTitlebarRegion />
 
-      <PageContainer>
+      <div className="mx-auto flex w-full max-w-xl flex-col gap-6 px-6 py-14 sm:py-20">
         {/* Header */}
-        <PageHeader>
+        <PageHeader className="text-left">
           {prepared ? (
             <div
               data-openwork-prepared="true"
@@ -841,9 +839,8 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
               Setup complete — OpenWork prepared this workspace
             </div>
           ) : null}
-          <PageTitle>
-            {orgName || "Your organization"}
-          </PageTitle>
+          <p className="text-sm text-muted-foreground">{orgName || "Your organization"}</p>
+          <OnboardingIntro title="Your team workspace" />
           {loading ? (
             null
           ) : error ? (
@@ -851,105 +848,87 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
               <CircleAlert />
               <AlertDescription>{error}</AlertDescription>
             </Alert>
-          ) : hasResources ? (
-            <PageDescription>
-              You have access to the following resources.
-            </PageDescription>
           ) : null}
         </PageHeader>
 
         {loading ? (
-          <PageContent>
+          <PageContent className="grow-0 overflow-visible">
             <PageLoading>
               <PageLoadingSpinner />
               <PageLoadingDescription>Loading available resources...</PageLoadingDescription>
             </PageLoading>
           </PageContent>
         ) : !hasResources ? (
-          <PageContent>
+          <PageContent className="grow-0 overflow-visible">
             <Empty className="h-fit flex-none">
               <EmptyHeader>
-                <EmptyTitle>No resources have been configured for this organization yet.</EmptyTitle>
+                <EmptyTitle>{error ? "Your shared resources could not be loaded." : "Your team has not shared resources with you yet."}</EmptyTitle>
                 <EmptyDescription>
-                  Add AI providers or marketplaces from the OpenWork Cloud dashboard.
+                  {error ? "Continue to your workspace and check Library again, or ask the person who invited you for help." : "Ask the person who invited you to share a model, skill, or tool. You can continue to your workspace while they prepare your access."}
                 </EmptyDescription>
               </EmptyHeader>
-              <EmptyContent>
-                <Button
-                  variant="outline"
-                  onClick={() => platform.openLink(resolveDenBaseUrls(settings.baseUrl).baseUrl)}
-                >
-                  Open OpenWork Cloud
-                  <ArrowUpRightIcon data-icon="inline-end" />
-                </Button>
-              </EmptyContent>
             </Empty>
           </PageContent>
         ) : (
-          <PageContent>
-            <ScrollArea className="px-2.5">
-              <ScrollAreaViewport>
-                <Accordion
-                  multiple
-                  className="rounded-2xl border border-border bg-transparent shadow-none before:hidden"
-                >
-                  {/* AI Providers */}
-                  {providers.length > 0 ? (
-                    <Section
-                      icon={<CloudIcon className="size-5 text-foreground/60" />}
-                      title="AI Providers"
-                      description="Models you can use in your workspace."
-                      count={`${totalModels} model${totalModels === 1 ? "" : "s"}`}
-                    >
-                      {providers.map((provider) => (
-                        <ProviderCard
-                          key={provider.id}
-                          provider={provider}
-                          selectedDefault={selectedDefault}
-                          onSelectDefault={setSelectedDefault}
-                        />
-                      ))}
-                    </Section>
-                  ) : null}
-
-                  {/* Marketplaces */}
-                  {marketplaces.length > 0 ? (
-                    <Section
-                      icon={<Square3Stack3DIcon className="size-5 text-foreground/60" />}
-                      title="Collections"
-                      description="App stores with extensions and plugins for your workspace."
-                      count={`${marketplaces.length} marketplace${marketplaces.length === 1 ? "" : "s"}`}
-                    >
-                      {marketplaces.map((mp) => (
-                        <MarketplaceCard key={mp.id} marketplace={mp} />
-                      ))}
-                    </Section>
-                  ) : null}
-
-                </Accordion>
-              </ScrollAreaViewport>
-            </ScrollArea>
+          <PageContent className="grow-0 overflow-visible">
+            <div className="space-y-5" data-testid="onboarding-member-capabilities">
+              {capabilities?.skills.length ? (
+                <section aria-label="Skills shared with you">
+                  <h2 className="text-xs font-medium text-muted-foreground">Skills</h2>
+                  {capabilities.skills.map((skill) => (
+                    <OnboardingResourceRow key={skill.path} title={skill.name} description={skill.description} />
+                  ))}
+                </section>
+              ) : null}
+              {connections.length > 0 ? (
+                <section aria-label="Tools shared with you">
+                  <h2 className="text-xs font-medium text-muted-foreground">Tools</h2>
+                  {connections.map((connection) => {
+                    const state = resolveOrgMcpConnectionCardState(connection);
+                    const ready = state.connected && !connectionNeedsReconnect(connection) && !connection.issuerReviewRequired && !connection.setupRequired;
+                    const adminSetup = connection.setupRequired || connection.issuerReviewRequired || connection.credentialMode === "shared" || connection.reconnectActionOwner === "organization_admin";
+                    return (
+                      <OnboardingResourceRow
+                        key={connection.id}
+                        title={connection.name}
+                        description={ready
+                          ? connection.credentialMode === "shared" ? "Managed by your team" : "Your account is connected"
+                          : adminSetup ? "Ask your workspace admin to finish connecting this tool." : "Sign in with your own account in Library."}
+                        status={ready ? "Ready" : adminSetup ? "Admin setup needed" : "Connect your account"}
+                      />
+                    );
+                  })}
+                </section>
+              ) : null}
+              {totalModels === 0 && !error ? (
+                <p className="mt-4 rounded-xl border border-border p-3 text-sm text-muted-foreground">No team model is available to you yet. Ask the person who invited you about model access before starting a task.</p>
+              ) : null}
+            </div>
+            {providers.length > 0 ? (
+              <section aria-label="Team models" className="mt-3">
+                <h2 className="text-xs font-medium text-muted-foreground">Models</h2>
+                {providers.map((provider) => (
+                  <ProviderCard key={provider.id} provider={provider} selectedDefault={selectedDefault} onSelectDefault={setSelectedDefault} />
+                ))}
+              </section>
+            ) : null}
+            {marketplaces.length > 0 ? (
+              <details className="mt-3 text-sm">
+                <summary className="cursor-pointer py-2 text-muted-foreground">Collections · {marketplaces.length}</summary>
+                {marketplaces.map((marketplace) => <MarketplaceCard key={marketplace.id} marketplace={marketplace} />)}
+              </details>
+            ) : null}
             {/* Selected default indicator */}
             {selectedDefault ? (
-              <div className="rounded-xl border border-green-6/30 bg-green-2/30 px-4 py-3 text-center text-sm text-green-11">
-                <Check size={14} className="mr-1 inline" />
-                {selectedDefault.label} will be set as your default model.
-              </div>
+              <p className="mt-2 text-xs text-muted-foreground">Default model: {selectedDefault.label}</p>
             ) : null}
           </PageContent>
         )}
 
-        <PageFooter>
-          {/* Footer hint */}
-          {!loading && hasResources ? (
-            <p className="text-center text-xs text-muted-foreground text-balance leading-relaxed tracking-wide">
-              Providers are added to your workspace automatically. Collections are available from Cloud settings.
-            </p>
-          ) : null}
+        <PageFooter className="items-start border-t border-border pt-5">
           <Button
             className="w-fit"
             type="button"
-            size="lg"
             onClick={() => void handleContinue()}
             disabled={loading || preparingBranding}
           >
@@ -961,7 +940,7 @@ export function ResourceSelectionPage({ autoContinue = false }: { autoContinue?:
             <ArrowRight data-icon="inline-end" />
           </Button>
         </PageFooter>
-      </PageContainer>
+      </div>
     </Page>
   );
 }
@@ -971,56 +950,7 @@ interface MarketplaceCardProps {
 }
 
 function MarketplaceCard({ marketplace }: MarketplaceCardProps) {
-  return (
-    <div className="flex items-center gap-3 rounded-xl border border-border px-3 py-3 -mx-2">
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium text-foreground">{marketplace.name}</div>
-        {marketplace.description ? (
-          <div className="mt-0.5 truncate text-xs text-muted-foreground">
-            {marketplace.description}
-          </div>
-        ) : null}
-      </div>
-        <span className="shrink-0 text-xs text-muted-foreground">
-        {marketplace.pluginCount} plugin{marketplace.pluginCount === 1 ? "" : "s"}
-      </span>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Section wrapper                                                    */
-/* ------------------------------------------------------------------ */
-
-interface SectionProps {
-  icon: React.ReactNode;
-  title: string;
-  description: string;
-  count: string;
-  children: React.ReactNode;
-}
-
-function Section({ icon, title, description, count, children }: SectionProps) {
-  return (
-    <AccordionItem value={title}>
-      <AccordionTrigger className="items-center px-5 py-4 gap-4.75 hover:no-underline">
-        {icon}
-
-        <div className="min-w-0 flex-1 flex flex-col gap-1">
-          <h3 className="flex items-center gap-2 font-medium tracking-wide">
-            {title}
-            <span className="text-muted-foreground text-xs uppercase">{count}</span>
-          </h3>
-          <p className="text-sm font-normal normal-case tracking-normal text-muted-foreground">
-            {description}
-          </p>
-        </div>
-      </AccordionTrigger>
-      <AccordionContent className="space-y-2 pb-2">
-        {children}
-      </AccordionContent>
-    </AccordionItem>
-  );
+  return <OnboardingResourceRow title={marketplace.name} description={marketplace.description} status={`${marketplace.pluginCount} plugin${marketplace.pluginCount === 1 ? "" : "s"}`} />;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1057,64 +987,16 @@ function ProviderCard({ provider, selectedDefault, onSelectDefault }: ProviderCa
   };
 
   return (
-    <div
-      className={cn(
-        "rounded-xl border px-3 py-3 transition-colors -mx-2",
-        isSelected ? "border-green-6" : "border-border",
-      )}
-    >
-      <div className="flex items-center gap-4.5">
-        <ProviderIcon
-          providerId={provider.providerId}
-          providerName={provider.name}
-          size={20}
-          className="text-foreground"
-        />
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-foreground">
-            {resolveProviderDisplayName(provider.name || provider.providerId)}
-          </div>
-          <div className="mt-0.5 text-xs text-muted-foreground">
-            {provider.models.length === 1
-              ? "1 model"
-              : `${provider.models.length} models`}
-          </div>
-        </div>
-        {firstModel ? (
-          <button
-            type="button"
-            className={cn(
-              "shrink-0 rounded-full px-3 py-1 text-xs font-medium transition-colors",
-              isSelected
-                ? "bg-green-3 text-green-11"
-                : "border border-border text-muted-foreground hover:bg-hover hover:text-foreground",
-            )}
-            onClick={handleUseAsDefault}
-          >
-            {isSelected ? "Default" : "Use as default"}
-          </button>
-        ) : (
-          <Check size={16} className="shrink-0 text-green-11" />
-        )}
-      </div>
-      {provider.models.length > 0 ? (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {provider.models.slice(0, 5).map((model) => (
-            <span
-              key={model.id}
-              className="inline-flex items-center rounded-md border border-border bg-hover px-2 py-0.5 font-mono text-xs text-muted-foreground"
-            >
-              {model.name || resolveModelDisplayName(model.id)}
-            </span>
-          ))}
-          {provider.models.length > 5 ? (
-            <span className="inline-flex items-center rounded-md px-2 py-0.5 text-xs text-muted-foreground">
-              +{provider.models.length - 5} more
-            </span>
-          ) : null}
-        </div>
+    <OnboardingResourceRow
+      title={resolveProviderDisplayName(provider.name || provider.providerId)}
+      icon={<ProviderIcon providerId={provider.providerId} providerName={provider.name} size={18} />}
+      description={provider.models.slice(0, 5).map((model) => model.name || resolveModelDisplayName(model.id)).join(" · ")}
+      action={firstModel ? (
+        <Button type="button" variant="ghost" size="sm" onClick={handleUseAsDefault}>
+          {isSelected ? "Default" : "Use as default"}
+        </Button>
       ) : null}
-    </div>
+    />
   );
 }
 
@@ -1152,7 +1034,6 @@ function OrganizationSelectionPage({
 
   return (
     <Page>
-      <PageBackground />
       <PageTitlebarRegion />
       <PageContainer>
         <PageHeader>

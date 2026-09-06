@@ -1,4 +1,5 @@
 import { expect } from "vitest";
+import { setViewport, typeText } from "@openwork/cdp";
 import { readAvailableModels, selectModel } from "@openwork/behaviors";
 import { observeTranscript, spec } from "@openwork/testkit";
 import {
@@ -21,7 +22,49 @@ test("bundled engine connects to preseeded organization skills and connections",
   expect(signedOut).not.toMatchObject({ status: "available" });
   await user.screenshot();
 
-  await seed.signIn(world.app, world.member, "admin");
+  const handoff = await seed.api(world.member, "/v1/auth/desktop-handoff", {
+    method: "POST",
+    body: JSON.stringify({ desktopScheme: "openwork" }),
+  });
+  if (!handoff.response.ok || !isRecord(handoff.body) || typeof handoff.body.grant !== "string") throw new Error("Could not prepare the member sign-in link.");
+  const signInLink = new URL("openwork://den-auth");
+  signInLink.searchParams.set("grant", handoff.body.grant);
+  signInLink.searchParams.set("denBaseUrl", world.den.ref.webUrl);
+  await user.click({ role: "button", label: "Back to app" });
+  await user.click({ testId: "account-status-menu" });
+  await user.click({ role: "button", label: "Paste sign-in code" });
+  await user.click({ role: "textbox", label: "Sign-in link or one-time code" });
+  // The sign-in field is unmasked; avoid recording its one-time grant in the user trace.
+  await typeText(world.app, signInLink.toString());
+  await user.click({ role: "button", label: "Finish sign-in" });
+  await step("the invited member discovers only their shared capabilities", async () => {
+    await user.see({ text: "Your team workspace" }, { timeoutMs: 90_000 });
+    await user.see({ text: world.skillName });
+    await user.see({ text: world.connectionName });
+    await user.see({ text: "Connect your account" });
+    await user.notSee({ text: world.privateSkillName });
+    await user.notSee({ text: "Open OpenWork Cloud" });
+    const welcome = await probe.text();
+    expect(welcome).toContain("Skills");
+    expect(welcome).toContain("Sign in with your own account in Library.");
+    expect(welcome).not.toContain("Your account is connected");
+    evidence.recordAssertionEvidence("Invited member sees assigned skills and personal connection setup without unassigned admin content", welcome, true);
+    await user.screenshot();
+    await user.looks(["The team workspace welcome has a compact heading, readable skill and tool rows, and a clear Continue to workspace action on a plain background"]);
+    const viewport = await probe.eval("({ width: innerWidth, height: innerHeight, deviceScaleFactor: devicePixelRatio })");
+    if (!isRecord(viewport) || typeof viewport.width !== "number" || typeof viewport.height !== "number" || typeof viewport.deviceScaleFactor !== "number") throw new Error("Could not read viewport dimensions.");
+    await setViewport(world.app, { width: 390, height: 844, deviceScaleFactor: 1 });
+    await user.see({ text: "Your team workspace" });
+    await user.looks(["The narrow team workspace welcome keeps skill and tool labels readable, wraps long names without horizontal overflow, and uses a plain background"]);
+    await setViewport(world.app, { width: viewport.width, height: viewport.height, deviceScaleFactor: viewport.deviceScaleFactor });
+    await user.click({ role: "button", label: "Continue to workspace" });
+    await user.see("composer", { editable: true });
+    await user.notSee({ text: "Your team workspace" });
+    await user.reload();
+    await user.see("composer", { editable: true });
+    await user.notSee({ text: "Your team workspace" });
+    evidence.recordAssertionEvidence("Completing team welcome stays completed after a reload", await probe.hash(), true);
+  });
   const signedIn = await probe.eventually(
     () => probe.connectState(world.app),
     {
