@@ -57,7 +57,7 @@ const test = spec.world(async (seed) => {
   const configObjectVersionId = field(saved.body, "configObjectVersionId");
   const firstRun = await runWorkflow(den.admin, configObjectId, { pluginId, configObjectVersionId, input: { topic: "Weekly overview" } });
   // Save another version without running it. History must retain the first graph.
-  const nextCode = "const workers = await tools.den.getWorkers({}); return { revisedCount: workers.workers.length };";
+  const nextCode = "const workers = await tools.den.getWorkers({}); return { topic: input.topic, revisedCount: workers.workers.length };";
   await execute(nextCode);
   const revised = await saveWorkflow(den.admin, { name: "Weekly briefing", code: nextCode, inputSchema, currentInput: { topic: "Next week" } });
   if (revised.status !== 201) throw new Error(`Revising the setup workflow failed (${revised.status})`);
@@ -166,4 +166,31 @@ test("workflow activity shows linked version diagrams and keeps one-off and inac
     expect((await probe.api(colleague, `/v1/workflows/${world.configObjectId}`)).response.status).toBe(403);
   });
   evidence.recordAssertionEvidence("Run previews follow workflow access without widening run visibility", "A member sees none of the admin's runs, then sees a redacted preview of their own shared workflow run. Revoking the workflow grant preserves their receipt but removes its preview and library metadata.", true);
+
+  await step("run the saved workflow from its simple form", async () => {
+    await user.navigate(`${world.den.ref.webUrl}/dashboard/library/workflows/${world.configObjectId}`);
+    await user.see({ testId: "workflow-overview" }, { text: /Run workflow[\s\S]*Latest result[\s\S]*How it works/, timeoutMs: 60_000 });
+    await user.see({ testId: "den-workflow-input-form" });
+    await user.notSee({ label: "Run input details" });
+    await user.notSee({ text: /No custom display yet/ });
+    const beforeRun = await readRuns();
+    await user.type({ label: /^Topic/ }, "A fresh briefing", { replace: true });
+    await user.click({ text: "Advanced input" });
+    await user.see({ label: "Run input details" }, { value: JSON.stringify({ topic: "A fresh briefing" }, null, 2) });
+    await user.click({ text: "Advanced input" });
+    await user.notSee({ label: "Run input details" });
+    expect(await readRuns()).toEqual(beforeRun);
+    await user.click({ role: "button", label: "Run workflow" });
+    await user.see({ testId: "den-workflow-artifact-result" }, { text: /A fresh briefing/, timeoutMs: 60_000 });
+    const afterRun = await readRuns();
+    expect(afterRun).toHaveLength(beforeRun.length + 1);
+    const added = afterRun.filter((run) => !beforeRun.some((previous) => previous.id === run.id));
+    expect(added).toHaveLength(1);
+    expect(added[0]).toMatchObject({ status: "succeeded", workflow: { configObjectId: world.configObjectId, graph: world.revisedGraph } });
+    await user.see({ role: "button", label: "Run workflow" });
+    await user.see({ testId: "den-workflow-flow-diagram" });
+    await user.screenshot();
+  });
+  evidence.recordAssertionEvidence("The workflow opens with a simple run form and shows the submitted result", "The form precedes the latest result and existing diagram. Advanced input starts hidden and stays synchronized with the named field; editing and inspecting it create no runs. Submitting creates exactly one successful run of the current saved version and displays the entered topic in its result.", true);
+
 });
