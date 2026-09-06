@@ -160,12 +160,26 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
   });
 
   await step("finish opens the dashboard without requiring an installation or provider", async () => {
-    await user.see({ text: "Your workspace is ready" });
-    await user.notSee({ testId: "den-org-sidebar" });
-    await user.click({ role: "link", label: "Finish setup" });
-    await user.see({ testId: "den-org-sidebar" }, { timeoutMs: 30_000 });
-    await user.notSee({ testId: "den-onboarding-shell" });
-    expect(await world.pathname()).toBe("/dashboard");
+    for (const shortcut of ["Control+k", "Meta+k"]) {
+      if (shortcut === "Meta+k") {
+        await user.navigate(new URL("/dashboard/onboarding", world.den.ref.webUrl).toString());
+      }
+      await user.see({ text: "Your workspace is ready" });
+      await user.notSee({ testId: "den-org-sidebar" });
+      await user.press(shortcut);
+      await user.notSee({ testId: "den-command-palette" });
+      await user.click({ role: "link", label: "Finish setup" });
+      await user.see({ testId: "den-org-sidebar" }, { timeoutMs: 30_000 });
+      await user.notSee({ testId: "den-onboarding-shell" });
+      expect(await world.pathname()).toBe("/dashboard");
+      // Assert before reload: navigation must not reveal a queued shortcut.
+      await user.notSee({ testId: "den-command-palette" });
+      await user.press(shortcut);
+      await user.see({ testId: "den-command-palette" });
+      await user.press("Escape");
+      await user.notSee({ testId: "den-command-palette" });
+      evidence.recordAssertionEvidence(`${shortcut} is suppressed during onboarding and restored on the dashboard`, "Pressing the shortcut during setup leaves the palette closed both before and after Finish setup, without reloading; pressing it on the dashboard opens the palette, and Escape closes it.", true);
+    }
     await user.reload();
     await user.see({ testId: "den-org-sidebar" }, { timeoutMs: 30_000 });
     expect(await connectionsFor(personalId)).toEqual([]);
