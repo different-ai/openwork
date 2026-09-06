@@ -2331,7 +2331,9 @@ const desktopCommandHandlers = {
         status: response.status,
         statusText: response.statusText,
         headers: Array.from(response.headers.entries()),
-        body: await response.text(),
+        // Opt-in keeps legacy fetch callers and multipart upload responses textual.
+        body: init.responseType === "arraybuffer" ? "" : await response.text(),
+        ...(init.responseType === "arraybuffer" ? { bodyBytes: await response.arrayBuffer() } : {}),
       };
   },
   "__uploadMultipart": async (event, ...args) => {

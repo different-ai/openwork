@@ -422,6 +422,7 @@ async function desktopFetchThroughMain(
     method,
     headers,
     body,
+    responseType: "arraybuffer",
     timeoutMs: options.timeoutMs,
     agentContextDiagnostics: diagnosticsDeadlineAtMs === undefined
       ? undefined
@@ -431,7 +432,7 @@ async function desktopFetchThroughMain(
   // Response constructor rejects bodies for null-body status codes, so we
   // must pass null instead of an empty string for those.
   const NULL_BODY_STATUSES = new Set([101, 204, 205, 304]);
-  const responseBody = NULL_BODY_STATUSES.has(result.status) ? null : result.body;
+  const responseBody = NULL_BODY_STATUSES.has(result.status) ? null : result.bodyBytes ?? result.body;
 
   return new Response(responseBody, {
     status: result.status,

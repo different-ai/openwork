@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { isSupportedWorkspaceTextFilePath, normalizeWorkspaceRelativePath } from "./server.js";
+import { resolveWorkspaceArtifactTargets } from "./routes/files.js";
 
 describe("normalizeWorkspaceRelativePath", () => {
   test("accepts a plain workspace-relative path", () => {
@@ -89,6 +90,18 @@ describe("normalizeWorkspaceRelativePath", () => {
 });
 
 describe("isSupportedWorkspaceTextFilePath", () => {
+  test("identifies native video MIME types without treating videos as text", async () => {
+    const types = [
+      ["clip.mp4", "video/mp4"], ["clip.m4v", "video/mp4"], ["clip.webm", "video/webm"],
+      ["clip.MOV", "video/quicktime"], ["clip.ogv", "video/ogg"], ["clip.bin", "application/octet-stream"],
+    ];
+    for (const [value, contentType] of types) {
+      const items = await resolveWorkspaceArtifactTargets(import.meta.dir, [{ kind: "file", value }]);
+      expect(items[0]).toMatchObject({ value, contentType });
+      expect(isSupportedWorkspaceTextFilePath(value)).toBe(false);
+    }
+  });
+
   test("accepts workspace text artifact extensions", () => {
     expect(isSupportedWorkspaceTextFilePath("reports/revenue.csv")).toBe(true);
     expect(isSupportedWorkspaceTextFilePath("reports/revenue.tsv")).toBe(true);

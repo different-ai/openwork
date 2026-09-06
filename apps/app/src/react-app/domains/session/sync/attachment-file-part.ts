@@ -66,6 +66,9 @@ const EXTENSION_MIME_TYPES: Record<string, string> = {
   m4v: "video/x-m4v",
   avi: "video/x-msvideo",
   mkv: "video/x-matroska",
+  mpeg: "video/mpeg",
+  mpg: "video/mpeg",
+  ogv: "video/ogg",
   pdf: "application/pdf",
   docx: DOCX_MIME,
   pptx: PPTX_MIME,
@@ -168,21 +171,18 @@ function isTextLikeAttachmentMime(mime: string) {
 }
 
 /**
- * AI SDK provider adapters only accept `image/*`, `application/pdf`, and
- * `text/plain` file parts; anything else throws UnsupportedFunctionalityError
- * server-side and poisons the session history. So model-facing file parts are
- * routed by one rule:
+ * Only emit file parts the send path has qualified for its provider transport:
  * - text-like mimes are re-mimed to `text/plain` so opencode inlines their
  *   content via the Read tool (the proven `@file` mention mechanism);
  * - images, PDFs, and Office mimes pass through (Office parts are rewritten
  *   to text by the OpenWorkOfficeAttachments plugin before the provider);
- * - everything else returns `null`: workspace (`file://`) attachments fall
- *   back to a `text/plain` part that opencode mediates through the Read tool,
- *   while data-URL attachments are dropped (inlining binary bytes as text is
- *   garbage); the synthetic workspace-path note gives tools the bytes.
+ * - video requires an explicit send-time capability/transport check;
+ * - everything else returns `null`; the synthetic workspace-path note gives
+ *   tools the bytes without asking the engine to read binary data as text.
  */
-export function modelFacingAttachmentMime(mimeType: string): string | null {
+export function modelFacingAttachmentMime(mimeType: string, video = false): string | null {
   const mime = normalizedMime(mimeType);
+  if (video && mime.startsWith("video/")) return mime === "video/x-m4v" ? "video/mp4" : mime;
   if (isTextLikeAttachmentMime(mime)) return "text/plain";
   if (mime.startsWith("image/") || mime === "application/pdf" || isOfficeMime(mime)) return mime;
   return null;
@@ -298,7 +298,7 @@ function uploadErrorMessage(filename: string, error: unknown) {
   return `Failed to copy attachment "${filename}" into this worker workspace: ${detail}`;
 }
 
-function attachmentPathNotePart(uploaded: UploadedChatAttachment[]): TextPartInput {
+function attachmentPathNotePart(uploaded: UploadedChatAttachment[], video: boolean): TextPartInput {
   // Synthetic: model/tools still see workspace paths, but the chat UI renders
   // file parts as compact badges instead of this wall of path text.
   return {
@@ -306,7 +306,7 @@ function attachmentPathNotePart(uploaded: UploadedChatAttachment[]): TextPartInp
     synthetic: true,
     metadata: {
       openworkAttachments: uploaded
-        .filter((item) => modelFacingAttachmentMime(item.mime) === null)
+        .filter((item) => modelFacingAttachmentMime(item.mime, video) === null)
         .map((item) => ({ filename: item.filename, mime: item.mime, url: item.url })),
     },
     text: [
@@ -317,12 +317,12 @@ function attachmentPathNotePart(uploaded: UploadedChatAttachment[]): TextPartInp
   };
 }
 
-async function uploadedAttachmentFilePart(item: UploadedChatAttachment): Promise<FilePartInput | null> {
+async function uploadedAttachmentFilePart(item: UploadedChatAttachment, video: boolean): Promise<FilePartInput | null> {
   // Binary/unknown mimes get no model-facing file part. A `text/plain`
   // `file://` part would make opencode run the Read tool on the bytes, which
   // refuses with "Cannot read binary file" as a session error and drops the
   // part anyway; the synthetic workspace-path note already gives tools the file.
-  const modelMime = modelFacingAttachmentMime(item.mime);
+  const modelMime = modelFacingAttachmentMime(item.mime, video);
   if (!modelMime) return null;
 
   // Images need a browser-displayable URL so the transcript can show the same
@@ -358,6 +358,8 @@ export async function composerAttachmentsToWorkspaceFileParts(input: {
   sessionId: string;
   workspaceRoot: string;
   createId?: () => string;
+  /** Granted only after validating the exact send model and runtime. */
+  video?: boolean;
 }): Promise<WorkspaceAttachmentParts | null> {
   if (input.attachments.length === 0) return null;
 
@@ -419,8 +421,8 @@ export async function composerAttachmentsToWorkspaceFileParts(input: {
   }
 
   return {
-    note: attachmentPathNotePart(uploaded),
-    files: await Promise.all(uploaded.map(uploadedAttachmentFilePart)),
+    note: attachmentPathNotePart(uploaded, input.video === true),
+    files: await Promise.all(uploaded.map((item) => uploadedAttachmentFilePart(item, input.video === true))),
   };
 }
 

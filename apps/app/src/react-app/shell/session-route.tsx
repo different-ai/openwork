@@ -120,7 +120,7 @@ import {
   applySessionUnrevert,
   permissionKey,
 } from "@/react-app/domains/session/sync/session-sync";
-import { draftToParts } from "@/react-app/domains/session/sync/draft-parts";
+import { draftToParts, validateVideoDraft } from "@/react-app/domains/session/sync/draft-parts";
 import { useSessionInteractions } from "@/react-app/domains/session/sync/use-session-interactions";
 import { useModelBehavior } from "@/react-app/domains/session/surface/use-model-behavior";
 import { getModelBehaviorSummary, nextModelBehaviorValue, previousModelBehaviorValue } from "@/app/lib/model-behavior";
@@ -1314,6 +1314,7 @@ export function SessionRoute() {
         if (resolveModelAvailability(sendModel ?? null).status === "unavailable") {
           throw new Error("Selected model is unavailable. Choose another model before sending.");
         }
+        const video = await validateVideoDraft(draft, { client: opencodeClient, model: sendModel, baseUrl: opencodeBaseUrl });
 
         return submitWithCloudMcpReadiness({
           // Temporarily bypass the pre-send Cloud MCP gate: it blocks every
@@ -1383,7 +1384,7 @@ export function SessionRoute() {
                   return;
                 }
 
-                const parts = await draftToParts(draft, selectedWorkspaceRoot, targetSessionId, selectedWorkspaceEndpoint);
+                const parts = await draftToParts(draft, selectedWorkspaceRoot, targetSessionId, selectedWorkspaceEndpoint, video);
                 const system = await buildOpenworkSessionSystemContext(client, {
                   workspaceId: selectedWorkspaceId,
                   cacheKey: targetSessionId,
@@ -1652,6 +1653,7 @@ export function SessionRoute() {
         const sessionModelSelection = getSessionModelSelection(targetSessionId);
         const sendModel = sessionModelSelection?.model ?? local.prefs.defaultModel;
         const sendVariant = sessionModelSelection ? sessionModelSelection.variant : modelVariantValue;
+        const video = await validateVideoDraft(draft, { client: workspaceOpencodeClient, model: sendModel, baseUrl: endpoint.opencodeBaseUrl });
         return submitWithCloudMcpReadiness({
           skipGate: true,
           send: async () => {
@@ -1703,7 +1705,7 @@ export function SessionRoute() {
                   if (result.error) throw new Error(serializeSDKError(result.error));
                   return;
                 }
-                const parts = await draftToParts(draft, workspaceRoot, targetSessionId, endpoint);
+                const parts = await draftToParts(draft, workspaceRoot, targetSessionId, endpoint, video);
                 const system = await buildOpenworkSessionSystemContext(endpoint.client, {
                   workspaceId: workspace.id,
                   cacheKey: targetSessionId,

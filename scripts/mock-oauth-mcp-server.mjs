@@ -373,6 +373,60 @@ async function handleAgentResponse(req, res, entry) {
   res.end();
 }
 
+// Google native media stays in the witness exactly as received; no fixture bytes are substituted.
+async function handleGoogleContent(req, res, entry, model, streaming) {
+  const body = await readJson(req);
+  if (!Array.isArray(body?.contents)) {
+    json(res, 400, { error: { message: "Google generation requires contents" } });
+    return;
+  }
+  const contents = body.contents;
+  const conversationText = contents.map(content => agentContentText(content.parts)).join("\n");
+  const latestUserText = agentContentText(contents.findLast(content => content.role === "user")?.parts);
+  const matched = agentWorkloads.filter(workload =>
+    (workload.latestUserTurn ? latestUserText : conversationText).includes(workload.promptMarker));
+  const workload = matched[0];
+  entry.agentCompletion = {
+    model,
+    matchedMarkers: matched.map(item => item.promptMarker),
+    promptMarker: workload?.promptMarker ?? null,
+    completedTools: 0,
+    kind: "error",
+    toolName: null,
+    arguments: {},
+    inlineMedia: contents.flatMap(content => (Array.isArray(content.parts) ? content.parts : [])
+      .flatMap(part => typeof part.inlineData?.mimeType === "string" && typeof part.inlineData?.data === "string"
+        ? [{ mimeType: part.inlineData.mimeType, data: part.inlineData.data }] : [])),
+  };
+  if (agentRequiredHeader && req.headers[agentRequiredHeader.name.toLowerCase()] !== agentRequiredHeader.value) {
+    json(res, 401, { error: { message: "provider authentication handler was bypassed" } });
+    return;
+  }
+  if (matched.length > 1 || (workload && (workload.steps.length > 0 || workload.finalReplyFrom))) {
+    json(res, 400, { error: { message: "Google witness requires one workload with empty steps and a literal final reply" } });
+    return;
+  }
+  entry.agentCompletion.kind = workload ? "final" : "utility";
+  if (workload?.finalReplyDelayMs) await new Promise(resolve => setTimeout(resolve, workload.finalReplyDelayMs));
+  const reply = workload?.finalReply ?? "Active session workload";
+  const response = text => ({
+    candidates: [{ index: 0, content: { role: "model", parts: [{ text }] }, finishReason: "STOP" }],
+    modelVersion: model,
+    usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1, totalTokenCount: 2 },
+  });
+  if (!streaming) {
+    json(res, 200, response(reply));
+    return;
+  }
+  res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", "access-control-allow-origin": "*" });
+  const chunks = workload ? finalReplyChunks(workload) : [reply];
+  for (const text of chunks) {
+    res.write(`data: ${JSON.stringify({ candidates: [{ index: 0, content: { role: "model", parts: [{ text }] } }] })}\n\n`);
+    await new Promise(resolve => setTimeout(resolve, 80));
+  }
+  res.end(`data: ${JSON.stringify(response(""))}\n\n`);
+}
+
 async function handleAgentCompletion(req, res, entry) {
   const body = await readJson(req);
   if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -1062,6 +1116,12 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && (url.pathname === "/v1/responses" || url.pathname === "/responses")) {
       await handleAgentResponse(req, res, entry);
+      return;
+    }
+
+    const googleGeneration = url.pathname.match(/^\/v1(?:beta)?\/models\/([^/]+):(generateContent|streamGenerateContent)$/);
+    if (req.method === "POST" && googleGeneration) {
+      await handleGoogleContent(req, res, entry, decodeURIComponent(googleGeneration[1]), googleGeneration[2] === "streamGenerateContent");
       return;
     }
 

@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 
 import { attachmentNoteToUIParts } from "../src/react-app/domains/session/sync/usechat-adapter";
-import type { ComposerAttachment } from "../src/app/types";
+import { draftToParts, validateVideoDraft } from "../src/react-app/domains/session/sync/draft-parts";
+import type { ComposerAttachment, ComposerDraft } from "../src/app/types";
 import {
   buildChatAttachmentInboxPath,
   composerAttachmentsToWorkspaceFileParts,
@@ -527,4 +529,75 @@ test("video upload preserves a display card without a model-facing binary part",
   expect(attachmentNoteToUIParts({ ...note, ignored: true })).toEqual([]);
   expect(attachmentNoteToUIParts({ ...note, synthetic: false })).toEqual([]);
   expect(attachmentNoteToUIParts({ ...note, metadata: { openworkAttachments: [{ url: "javascript:alert(1)" }] } })).toEqual([]);
+});
+
+describe("video input qualification", () => {
+  const videoModel = (npm: string, video: boolean) => ({ api: { npm }, capabilities: { input: { video } } });
+  const models = {
+    google: videoModel("@ai-sdk/google", true),
+    vertex: videoModel("@ai-sdk/google-vertex", true),
+    imageOnly: videoModel("@ai-sdk/google", false),
+    incompatible: videoModel("@ai-sdk/openai-compatible", true),
+  };
+  const draftFor = (file = new File([new Uint8Array([0, 1, 255, 128])], "clip.mp4")): ComposerDraft => ({
+    text: "Describe [attachment attachment-1]",
+    parts: [{ type: "text", text: "Describe " }],
+    attachments: [attachmentFor(file)],
+    mode: "prompt",
+  });
+  function runtime(modelID = "google", connected = true) {
+    let requests = 0;
+    const baseUrl = "http://runtime.test/workspace/a/opencode";
+    const client = createOpencodeClient({
+      baseUrl,
+      fetch: async () => {
+        requests += 1;
+        return Response.json({ all: [{ id: "custom", models }], connected: connected ? ["custom"] : [], default: {} });
+      },
+    });
+    return { client, baseUrl, model: { providerID: "custom", modelID }, requests: () => requests };
+  }
+
+  test("checks the exact connected model and adapter, not its name or generic attachments flag", async () => {
+    for (const id of ["google", "vertex"]) expect(await validateVideoDraft(draftFor(), runtime(id))).toBe(true);
+    for (const id of ["imageOnly", "incompatible", "missing"]) {
+      await expect(validateVideoDraft(draftFor(), runtime(id))).rejects.toThrow("does not support video input");
+    }
+    await expect(validateVideoDraft(draftFor(), runtime("google", false))).rejects.toThrow("does not support video input");
+    await expect(validateVideoDraft(draftFor(), { ...runtime(), model: null })).rejects.toThrow("Choose a video-capable model");
+  });
+
+  test("revalidates after model switches and emits one native video with original uploaded bytes", async () => {
+    const context = runtime();
+    const draft = draftFor();
+    const { endpoint, calls } = uploadRecorder("workspace-a");
+    const allowed = await validateVideoDraft(draft, context);
+    const parts = await draftToParts(draft, "/workspace", "ses_video", endpoint, allowed);
+    expect(calls[0]?.bytes).toEqual([0, 1, 255, 128]);
+    expect(parts.filter((part) => part.type === "file")).toEqual([
+      { type: "file", filename: "clip.mp4", mime: "video/mp4", url: expect.stringContaining("file:///workspace/.opencode/openwork/inbox/") },
+    ]);
+    expect(parts[0]).toMatchObject({ type: "text", synthetic: true, metadata: { openworkAttachments: [] } });
+    context.model.modelID = "imageOnly";
+    await expect(validateVideoDraft(draft, context)).rejects.toThrow("does not support video input");
+    expect(context.requests()).toBe(2);
+    expect(calls).toHaveLength(1);
+    expect(draft.attachments).toHaveLength(1);
+  });
+
+  test("rejects unsupported formats and empty clips without uploading", async () => {
+    await expect(validateVideoDraft(draftFor(new File(["bytes"], "clip.mkv")), runtime())).rejects.toThrow("Convert it to MP4 or WebM");
+    await expect(validateVideoDraft(draftFor(new File([], "clip.mp4")), runtime())).rejects.toThrow("is empty");
+    expect(modelFacingAttachmentMime("video/x-m4v", true)).toBe("video/mp4");
+    expect(modelFacingAttachmentMime("video/mp4")).toBeNull();
+  });
+
+  test("rejects commands and v2 before requesting a catalog; ordinary drafts do not request one", async () => {
+    const context = runtime();
+    await expect(validateVideoDraft({ ...draftFor(), mode: "shell" }, context)).rejects.toThrow("not a shell or slash command");
+    await expect(validateVideoDraft({ ...draftFor(), command: { name: "review", arguments: "" } }, context)).rejects.toThrow("not a shell or slash command");
+    await expect(validateVideoDraft(draftFor(), { ...context, baseUrl: "http://runtime.test/workspace/a/opencode2" })).rejects.toThrow("experimental engine");
+    expect(await validateVideoDraft({ ...draftFor(), attachments: [] }, context)).toBe(false);
+    expect(context.requests()).toBe(0);
+  });
 });

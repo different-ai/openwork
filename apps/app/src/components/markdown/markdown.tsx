@@ -9,6 +9,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useOpenTargets } from "@/lib/target-provider";
 import { useOpenArtifactPath } from "@/lib/artifacts";
+import { attachVideoSource } from "@/lib/video-source";
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 
 import { applyTextHighlights } from "./text-highlights";
@@ -255,41 +256,12 @@ function MarkdownBlockInner({
     for (const video of root.querySelectorAll("video[data-openwork-video-path]")) {
       if (!(video instanceof HTMLVideoElement)) continue;
       if (videoCleanups.current.has(video)) continue;
-      let cancelled = false;
-      let objectUrl: string | null = null;
       const href = video.dataset.openworkVideoPath ?? "";
-      const showError = () => {
-        const notice = video.parentElement?.querySelector("[data-openwork-video-error]");
-        if (notice instanceof HTMLElement) notice.hidden = false;
-      };
-      video.addEventListener("error", showError);
-      videoCleanups.current.set(video, () => {
-        cancelled = true;
-        video.removeEventListener("error", showError);
-        if (objectUrl) URL.revokeObjectURL(objectUrl);
-      });
-      if (/^https?:/i.test(href)) continue;
-      let path = localPathFromHref(href);
-      try { if (!/^file:/i.test(href)) path = decodeURIComponent(path); } catch { /* Keep literal percent signs in filenames. */ }
-      const rootPath = workspaceRoot?.replace(/\\/g, "/").replace(/\/+$/, "");
-      path = path.replace(/\\/g, "/");
-      if (rootPath && path.startsWith(`${rootPath}/`)) path = path.slice(rootPath.length + 1);
-      if (!client || !workspaceId || !path) {
-        showError();
-        continue;
-      }
-      const target = openTargetForHref(href, openTargets);
-      void client.downloadWorkspaceFile(workspaceId, target?.value ?? path).then((result) => {
-        if (cancelled) return;
-        const extension = path.split(".").pop()?.toLowerCase();
-        const fallbackType = extension === "webm" ? "video/webm" : extension === "ogv" ? "video/ogg" : extension === "mov" ? "video/quicktime" : "video/mp4";
-        const contentType = result.contentType && result.contentType !== "application/octet-stream" ? result.contentType : fallbackType;
-        const url = URL.createObjectURL(new Blob([result.data], { type: contentType }));
-        objectUrl = url;
-        video.src = url;
-      }).catch(() => { if (!cancelled) showError(); });
+      const notice = video.parentElement?.querySelector("[data-openwork-video-error]");
+      if (!(notice instanceof HTMLElement)) continue;
+      videoCleanups.current.set(video, attachVideoSource(video, notice, { href, client, workspaceId, workspaceRoot }));
     }
-  }, [client, workspaceId, workspaceRoot, openTargets, rendered]);
+  }, [client, workspaceId, workspaceRoot, rendered]);
 
   useEffect(() => {
     const root = rootRef.current;
