@@ -15,14 +15,19 @@ Import `OnboardingIntro` and `OnboardingResourceRow` from `@openwork/ui/react`.
 Both use the consuming application's existing theme tokens. Tailwind consumers
 must include `packages/ui/src` in their source scanning.
 
-- `OnboardingIntro` provides the eyebrow, heading, description, and optional
+- `OnboardingIntro` provides an optional eyebrow, heading, optional description, and
   supporting content. Set `headingLevel={2}` when the surrounding screen
   already has its primary heading, and use `size="compact"` for a supporting
   preview or section introduction. Keep actions in the owning surface.
+  Use one short heading and one supporting sentence; omit the description
+  when the action or resource list already explains the step.
 - `OnboardingResourceRow` presents an icon, title, description, status, and
   action. Pass the existing application `Button` or `Badge` into its slots.
   Icons are decorative; put the resource's accessible name in `title`.
-  Use an enclosing list when the content is a list of resources.
+  Use an enclosing list when the content is a list of resources. Keep statuses
+  brief, and explain shared authorization requirements once above the list.
+  Avoid wrapping every section in its own card or repeating the same copy
+  in a story panel, resource list, and action panel.
 
 These components deliberately do not fetch data, decide access, trigger task
 execution, store onboarding progress, or provide another navigation shell.

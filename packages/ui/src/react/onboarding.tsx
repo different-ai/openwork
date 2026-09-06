@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 
 export type OnboardingIntroProps = {
   title: string;
-  description: ReactNode;
+  description?: ReactNode;
   eyebrow?: ReactNode;
   children?: ReactNode;
   className?: string;
@@ -23,22 +23,22 @@ export function OnboardingIntro({
   const Heading = headingLevel === 1 ? "h1" : "h2";
 
   return (
-    <div className={`flex min-w-0 flex-col gap-2.5 ${className}`}>
+    <div className={`flex min-w-0 flex-col gap-2 ${className}`}>
       {eyebrow ? (
-        <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+        <p className="text-xs font-medium text-muted-foreground">
           {eyebrow}
         </p>
       ) : null}
       <Heading className={size === "compact"
-        ? "text-lg font-semibold leading-7 tracking-tight text-foreground"
-        : "text-[30px] font-semibold leading-[38px] tracking-[-0.03em] text-foreground sm:text-[38px] sm:leading-[46px]"}>
+        ? "text-base font-semibold leading-6 tracking-tight text-foreground"
+        : "text-[28px] font-semibold leading-9 tracking-tight text-foreground sm:text-[32px] sm:leading-10"}>
         {title}
       </Heading>
-      <p className={size === "compact"
-        ? "text-sm leading-relaxed text-muted-foreground"
+      {description ? <p className={size === "compact"
+        ? "text-[13px] leading-5 text-muted-foreground"
         : "text-[15px] leading-[23px] text-muted-foreground"}>
         {description}
-      </p>
+      </p> : null}
       {children}
     </div>
   );
@@ -63,7 +63,7 @@ export function OnboardingResourceRow({
   className = "",
 }: OnboardingResourceRowProps) {
   return (
-    <div className={`flex min-w-0 flex-wrap items-center gap-x-4 gap-y-3 border-b border-border py-4 ${className}`}>
+    <div className={`flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-border py-3 last:border-b-0 ${className}`}>
       <div className="flex min-w-0 flex-[1_1_12rem] items-start gap-3">
         {icon ? (
           <span aria-hidden="true" className="mt-0.5 shrink-0 text-muted-foreground">
@@ -73,7 +73,7 @@ export function OnboardingResourceRow({
         <div className="min-w-0 break-words">
           <p className="text-sm font-medium text-foreground">{title}</p>
           {description ? (
-            <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+            <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">
               {description}
             </p>
           ) : null}
