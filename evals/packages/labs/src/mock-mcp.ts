@@ -82,7 +82,9 @@ export interface MockMcpTool {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  result: { content: { type: "text"; text: string }[] };
+  /** Hold the response while the real engine exposes its running tool state. */
+  delayMs?: number;
+  result: { content: { type: "text"; text: string }[]; isError?: boolean };
 }
 
 export interface StartMockMcpOptions {

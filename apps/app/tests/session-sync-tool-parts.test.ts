@@ -16,6 +16,7 @@ import {
   parseStructuredOutputUIPart,
 } from "../src/react-app/domains/session/sync/parse-tool-parts";
 import { parseOpenWorkSessionCreateResult } from "../src/components/tools/openwork-session-create";
+import { codeModeToolCalls } from "../src/lib/code-mode-tools";
 
 afterEach(() => {
   getReactQueryClient().clear();
@@ -88,6 +89,52 @@ function writeToolPart(
 }
 
 describe("tool part mapper", () => {
+  test("v1 execute tools keep their existing representation even with code or toolCalls metadata", () => {
+    const part = writeToolPart("completed", { code: 'tools["openwork-cloud"].search_capabilities({})' }, { tool: "execute" });
+    if (part.state.status !== "completed") throw new Error("Expected completed fixture");
+    part.state.metadata = { toolCalls: [{ tool: "openwork-cloud.search_capabilities", status: "completed" }] };
+    const mapped = parseDynamicToolUIPart(part);
+    if (!mapped) throw new Error("Missing v1 tool");
+    expect(codeModeToolCalls(mapped)).toBeNull();
+    expect(mapped).toMatchObject({ toolName: "execute", state: "output-available", output: "ok" });
+  });
+
+  test("Code Mode uses recorded invocation positions for repeated calls and preserves partial failures", () => {
+    const part = writeToolPart("completed", { code: "recorded code" }, { tool: "execute" });
+    if (part.state.status !== "completed") throw new Error("Expected completed fixture");
+    part.metadata = { openworkV2CodeMode: true };
+    part.state.metadata = { toolCalls: [
+      { tool: "openwork-cloud.search_capabilities", status: "completed", input: { query: "Slack" } },
+      null,
+      { tool: "openwork-cloud.search_capabilities", status: "running", input: { query: "Calendar" } },
+      { tool: "openwork-cloud.execute_capability", status: "error", input: { name: "mcp:connection:list_channels" } },
+      { tool: "unexpected", status: "unrecognized" },
+    ] };
+    const mapped = parseDynamicToolUIPart(part);
+    if (!mapped) throw new Error("Missing Code Mode tool");
+    const calls = codeModeToolCalls(mapped);
+    expect(calls?.map(call => [call.toolCallId, call.toolName, call.state])).toEqual([
+      ["call-write:call:0", "openwork-cloud_search_capabilities", "output-available"],
+      ["call-write:call:2", "openwork-cloud_search_capabilities", "input-streaming"],
+      ["call-write:call:3", "openwork-cloud_execute_capability", "output-error"],
+    ]);
+    expect(calls?.[0]?.input).toEqual({ query: "Slack" });
+    expect(calls?.[0]).toHaveProperty("output", undefined);
+    expect(codeModeToolCalls({ ...mapped, toolCallId: "other-parent" })?.[0]?.toolCallId).toBe("other-parent:call:0");
+    expect(mapped).toMatchObject({ state: "output-available", output: "ok" });
+  });
+
+  test("a v2 completed wrapper with an error retains the actual execution error", () => {
+    const part = writeToolPart("completed", { code: "throw new Error()" }, { tool: "execute" });
+    if (part.state.status !== "completed") throw new Error("Expected completed fixture");
+    part.metadata = { openworkV2CodeMode: true };
+    part.state.metadata = { error: true, toolCalls: [] };
+    part.state.output = "History lookup failed.";
+    const mapped = parseDynamicToolUIPart(part);
+    expect(mapped).toMatchObject({ state: "output-error", errorText: "History lookup failed." });
+    if (!mapped) throw new Error("Missing Code Mode tool");
+    expect(codeModeToolCalls(mapped)).toEqual([]);
+  });
   test("defers in-progress tools with empty input", () => {
     // shouldDeferInProgressTool left with the legacy message list (#2016);
     // the deferral behavior itself is still pinned here via the parser and

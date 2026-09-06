@@ -237,6 +237,11 @@ function compatibleToolName(tool: string): string {
   return tool === "shell" ? "bash" : tool;
 }
 
+function toolPartMetadata(tool: string): Pick<ToolPart, "metadata"> {
+  // Adapter provenance stays separate from metadata returned by the tool.
+  return tool === "execute" ? { metadata: { openworkV2CodeMode: true } } : {};
+}
+
 function toolOutput(value: unknown, result?: unknown): string {
   if (Array.isArray(value)) {
     const text = value.flatMap((item) => {
@@ -281,6 +286,7 @@ function mapV2ToolPart(
     type: "tool",
     callID,
     tool,
+    ...toolPartMetadata(sourceTool),
   };
 
   if (status === "pending") {
@@ -595,6 +601,7 @@ function pendingToolPart(stream: ToolStream): ToolPart {
     type: "tool",
     callID: stream.callID,
     tool: stream.tool,
+    ...toolPartMetadata(stream.tool),
     state: {
       status: "pending",
       input: stream.input,
@@ -611,6 +618,7 @@ function runningToolPart(stream: ToolStream, start: number): ToolPart {
     type: "tool",
     callID: stream.callID,
     tool: stream.tool,
+    ...toolPartMetadata(stream.tool),
     state: {
       status: "running",
       input: stream.input,
@@ -633,6 +641,7 @@ function completedToolPart(
     type: "tool",
     callID: stream.callID,
     tool: stream.tool,
+    ...toolPartMetadata(stream.tool),
     state: {
       status: "completed",
       input: stream.input,
@@ -656,6 +665,7 @@ function failedToolPart(
     type: "tool",
     callID: stream.callID,
     tool: stream.tool,
+    ...toolPartMetadata(stream.tool),
     state: {
       status: "error",
       input: stream.input,

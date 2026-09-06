@@ -166,7 +166,7 @@ test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeo
     body: JSON.stringify({ workloads: [{ promptMarker: "Find the assigned skill", finalReply: "unused fixture reply",
       finalReplyFrom: "last-tool-text", steps: [
         { tool: "search_capabilities", arguments: { query: "Assigned skill" } },
-        { tool: "execute_capability", arguments: {}, argumentsFrom: "capability-search" },
+        { tool: "execute_capability", arguments: { body: { limit: 3 } }, argumentsFrom: "capability-search" },
       ],
     }] }),
   });
@@ -186,7 +186,7 @@ test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeo
     const result = await modelRequest([JSON.stringify({ matches: [{ name }] })]);
     assert.equal(result.status, 200);
     const call = result.frames.flatMap(frame => frame.choices[0].delta.tool_calls ?? [])[0];
-    assert.deepEqual(JSON.parse(call.function.arguments), { name });
+    assert.deepEqual(JSON.parse(call.function.arguments), { name, body: { limit: 3 } });
   }
   const missing = await modelRequest([JSON.stringify({ matches: [] })]);
   assert.equal(missing.status, 500);

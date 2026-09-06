@@ -392,7 +392,7 @@ async function handleAgentCompletion(req, res, entry) {
     return;
   }
   const toolArguments = step.argumentsFrom === "computer-mention" ? computerMentionArguments(messages)
-    : step.argumentsFrom === "capability-search" ? capabilitySearchArguments(scopedMessages) : step.arguments;
+    : step.argumentsFrom === "capability-search" ? { ...step.arguments, ...capabilitySearchArguments(scopedMessages) } : step.arguments;
   const callId = `call_${workload.promptMarker.replace(/[^a-zA-Z0-9_-]/g, "_")}_${completedTools + 1}`;
   entry.agentCompletion = {
     ...baseRequest,
@@ -705,7 +705,7 @@ function tokenFingerprint(req) {
 
 function mcpResult(message) {
   if (configuredTools.length && message.method === "tools/list") {
-    return { tools: configuredTools.map(({ result, ...tool }) => tool) };
+    return { tools: configuredTools.map(({ result, delayMs, ...tool }) => tool) };
   }
   if (message.method === "tools/call") {
     const tool = configuredTools.find((candidate) => candidate.name === message.params?.name);
@@ -916,6 +916,9 @@ async function handleMcp(req, res, entry) {
       args: message.params.arguments ?? message.params.args ?? {},
       tokenId: entry.tokenId,
     }));
+  const responseDelay = Math.max(0, ...entry.toolNames.map((name) =>
+    configuredTools.find((tool) => tool.name === name)?.delayMs ?? 0));
+  if (responseDelay > 0) await new Promise((resolve) => setTimeout(resolve, responseDelay));
   const responses = messages.flatMap((message) => {
     if (!message || typeof message !== "object" || message.id === undefined) return [];
     return [mcpResponse(message)];
@@ -952,7 +955,8 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === "/admin/tools" && req.method === "POST") {
       const body = await readJson(req);
-      if (!Array.isArray(body?.tools) || body.tools.some((tool) => !tool || typeof tool.name !== "string" || !tool.inputSchema || !tool.result)) {
+      if (!Array.isArray(body?.tools) || body.tools.some((tool) => !tool || typeof tool.name !== "string" || !tool.inputSchema || !tool.result
+        || (tool.delayMs !== undefined && (!Number.isFinite(tool.delayMs) || tool.delayMs < 0 || tool.delayMs > 30_000)))) {
         json(res, 400, { error: "tools must have a name, inputSchema, and result" });
         return;
       }
