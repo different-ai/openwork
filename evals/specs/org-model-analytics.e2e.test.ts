@@ -82,7 +82,7 @@ test("organization model analytics aggregate session dimensions without cross-or
     body: JSON.stringify({ events }),
     signal: AbortSignal.timeout(10_000),
   });
-  expect(ingested.response.status).toBe(204);
+  expect(ingested.response.status, `Telemetry ingestion: ${ingested.text.slice(0, 500)}`).toBe(204);
 
   const primaryModels = await readAnalytics(den.admin, primaryOrgId);
   const usage30d = Array.isArray(primaryModels.usage30d) ? primaryModels.usage30d : [];
