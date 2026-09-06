@@ -67,6 +67,7 @@ export function ReauthDialog({
 }) {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const [waitingForPopup, setWaitingForPopup] = useState(false);
   const [loadingMethods, setLoadingMethods] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [providers, setProviders] = useState<string[]>([]);
@@ -98,11 +99,13 @@ export function ReauthDialog({
       popupClosedIntervalRef.current = null;
     }
     popupRef.current = null;
+    setWaitingForPopup(false);
   }
 
   function startPopupWatcher(popup: Window) {
     stopPopupWatcher();
     popupRef.current = popup;
+    setWaitingForPopup(true);
     popupClosedIntervalRef.current = window.setInterval(() => {
       if (!popup.closed) {
         return;
@@ -113,6 +116,12 @@ export function ReauthDialog({
     }, 500);
   }
 
+  function cancelSignIn() {
+    popupRef.current?.close();
+    stopPopupWatcher();
+    onCancel();
+  }
+
   useEffect(() => {
     onVerifiedRef.current = onVerified;
   }, [onVerified]);
@@ -120,6 +129,7 @@ export function ReauthDialog({
   useEffect(() => {
     if (!open) {
       wasOpenRef.current = false;
+      popupRef.current?.close();
       stopPopupWatcher();
       setPassword("");
       setError(null);
@@ -179,6 +189,7 @@ export function ReauthDialog({
       }
 
       const popup = popupRef.current;
+      if (!popup) return;
       stopPopupWatcher();
       popup?.close();
 
@@ -205,6 +216,7 @@ export function ReauthDialog({
     window.addEventListener("message", handleMessage);
     return () => {
       window.removeEventListener("message", handleMessage);
+      popupRef.current?.close();
       stopPopupWatcher();
     };
   }, [open, nonce]);
@@ -247,6 +259,7 @@ export function ReauthDialog({
 
     setBusy(true);
     setError(null);
+    startPopupWatcher(popup);
     try {
       const callbackURL = getReauthCompleteUrl(nonce);
       const errorCallbackURL = getReauthCompleteUrl(nonce, true);
@@ -254,8 +267,12 @@ export function ReauthDialog({
         method: "POST",
         body: JSON.stringify({ provider, callbackURL, errorCallbackURL }),
       });
+      if (popupRef.current !== popup) {
+        return;
+      }
       if (!response.ok) {
-        popup?.close();
+        stopPopupWatcher();
+        popup.close();
         setError(getErrorMessage(payload, `${getSocialLabel(provider)} sign-in failed (${response.status}).`));
         setBusy(false);
         return;
@@ -263,16 +280,18 @@ export function ReauthDialog({
 
       const redirectUrl = getRedirectUrl(response, payload);
       if (!redirectUrl) {
-        popup?.close();
+        stopPopupWatcher();
+        popup.close();
         setError(`${getSocialLabel(provider)} sign-in did not return a redirect URL.`);
         setBusy(false);
         return;
       }
 
       popup.location.href = redirectUrl;
-      startPopupWatcher(popup);
     } catch (nextError) {
-      popup?.close();
+      if (popupRef.current !== popup) return;
+      stopPopupWatcher();
+      popup.close();
       setError(nextError instanceof Error ? nextError.message : `${getSocialLabel(provider)} sign-in failed.`);
       setBusy(false);
     }
@@ -325,8 +344,8 @@ export function ReauthDialog({
             type="button"
             aria-label="Close security check"
             className="absolute right-4 top-4 flex size-8 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-white hover:text-slate-700"
-            disabled={busy}
-            onClick={onCancel}
+            disabled={busy && !waitingForPopup}
+            onClick={cancelSignIn}
           >
             <X size={17} aria-hidden="true" />
           </button>
@@ -336,10 +355,12 @@ export function ReauthDialog({
           <div className="grid gap-2 pr-8">
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Security check</p>
             <h2 id="reauth-dialog-title" className="text-[22px] font-semibold tracking-[-0.03em] text-slate-950">
-              {WORKSPACE_REAUTH_SECURITY_MESSAGE}
+              {waitingForPopup ? "Complete sign-in in the other window" : "Confirm your identity to change workspace settings"}
             </h2>
             <p className="text-[14px] leading-6 text-slate-600">
-              OpenWork retries the pending action automatically after you confirm.
+              {waitingForPopup
+                ? "Return here after signing in. Your change will finish automatically."
+                : "Your change will finish automatically after you confirm."}
             </p>
           </div>
         </div>
@@ -361,59 +382,68 @@ export function ReauthDialog({
             <DenNotice message={error} tone="error" className="mb-5" />
           ) : null}
 
-          <div className="grid gap-4">
-            {loadingMethods ? (
-              <div className="rounded-[18px] border border-gray-200 bg-gray-50 px-4 py-3 text-[14px] text-gray-500">
-                Checking available sign-in methods...
-              </div>
-            ) : null}
-
-            {hasManagedOrgSignIn ? (
-              <DenButton className="w-full" onClick={continueSso} loading={busy || loadingMethods} disabled={!ssoUrl || busy || loadingMethods}>
-                Continue with organization SSO
+          {waitingForPopup ? (
+            <div className="grid gap-4" role="status">
+              <p className="text-sm text-slate-600">Waiting for confirmation…</p>
+              <DenButton className="w-full" onClick={() => popupRef.current?.focus()}>
+                Reopen sign-in
               </DenButton>
-            ) : null}
+            </div>
+          ) : (
+            <div className="grid gap-4">
+              {loadingMethods ? (
+                <div className="rounded-[18px] border border-gray-200 bg-gray-50 px-4 py-3 text-[14px] text-gray-500">
+                  Checking available sign-in methods...
+                </div>
+              ) : null}
 
-            {socialProviders.map((provider) => {
-              const primarySocial = !hasManagedOrgSignIn && (provider === "google" || socialProviders.length === 1);
-              return (
-                <button
-                  key={provider}
-                  type="button"
-                  className={buttonVariants({ variant: primarySocial ? "primary" : "secondary", className: "w-full" })}
-                  disabled={busy}
-                  onClick={() => void continueSocial(provider)}
-                >
-                  Continue with {getSocialLabel(provider)}
-                </button>
-              );
-            })}
-
-            {hasPassword ? (
-              <form className="grid gap-3" onSubmit={submitPassword}>
-                <label className="grid gap-2">
-                  <span className="text-[13px] font-medium text-gray-700">Password</span>
-                  <DenInput
-                    type="password"
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                    autoComplete="current-password"
-                    disabled={busy}
-                    required
-                  />
-                </label>
-                <DenButton className="w-full" type="submit" loading={busy} disabled={!password.trim()}>
-                  Verify password
+              {hasManagedOrgSignIn ? (
+                <DenButton className="w-full" onClick={continueSso} loading={busy || loadingMethods} disabled={!ssoUrl || busy || loadingMethods}>
+                  Continue with SSO
                 </DenButton>
-              </form>
-            ) : null}
-          </div>
+              ) : null}
+
+              {!ssoUrl && socialProviders.map((provider) => {
+                const primarySocial = !hasManagedOrgSignIn && (provider === "google" || socialProviders.length === 1);
+                return (
+                  <button
+                    key={provider}
+                    type="button"
+                    className={buttonVariants({ variant: primarySocial ? "primary" : "secondary", className: "w-full" })}
+                    disabled={busy}
+                    onClick={() => void continueSocial(provider)}
+                  >
+                    Continue with {getSocialLabel(provider)}
+                  </button>
+                );
+              })}
+
+              {hasPassword && !ssoUrl ? (
+                <form className="grid gap-3" onSubmit={submitPassword}>
+                  <label className="grid gap-2">
+                    <span className="text-[13px] font-medium text-gray-700">Password</span>
+                    <DenInput
+                      type="password"
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
+                      autoComplete="current-password"
+                      disabled={busy}
+                      required
+                    />
+                  </label>
+                  <DenButton className="w-full" type="submit" loading={busy} disabled={!password.trim()}>
+                    Verify password
+                  </DenButton>
+                </form>
+              ) : null}
+            </div>
+          )}
 
           <button
             type="button"
             className="mt-5 w-full rounded-lg py-2 text-[13px] font-medium text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-800 disabled:opacity-60"
-            onClick={onCancel}
-            disabled={busy}
+            onClick={cancelSignIn}
+            disabled={busy && !waitingForPopup}
           >
             Cancel
           </button>
