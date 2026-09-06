@@ -60,7 +60,8 @@ PY`);
   const separator = cookie.indexOf("=");
   const cookieDomain = sessionCookie.match(/;\s*Domain=([^;]+)/i)?.[1];
   if (!cookieDomain) throw new Error("The fixture requires the same shared-domain cookie topology as production");
-  await web.client.send("Network.setCookie", { name: cookie.slice(0, separator), value: cookie.slice(separator + 1), domain: cookieDomain, path: "/", url: den.ref.webUrl, httpOnly: true, secure: true });
+  const appliedCookie = await web.client.send("Network.setCookie", { name: cookie.slice(0, separator), value: cookie.slice(separator + 1), domain: `.${cookieDomain.replace(/^\./, "")}`, path: "/", url: den.ref.webUrl, httpOnly: true, secure: true });
+  if (record(appliedCookie).success !== true) throw new Error("Could not apply the fixture session cookie");
   return {
     den, web, originalName, testUrl, issuer, organizationId, otherEmail: `other@${domain}`,
     async [Symbol.asyncDispose]() {
