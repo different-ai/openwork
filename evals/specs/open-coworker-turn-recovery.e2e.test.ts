@@ -339,7 +339,7 @@ async function describeThread(app: App, serverUrl: string, token: string, worksp
   const [messages, status, turns] = await Promise.all([
     fetch(`${base}/session/${encodeURIComponent(threadId)}/message`, { headers }).then((response) => response.json()).catch((error: unknown) => String(error)),
     fetch(`${base}/session/status`, { headers }).then((response) => response.json()).catch((error: unknown) => String(error)),
-    invokeCoworker(app, "coworkers.files.read", { slug: "nova", path: "turns.json" }).catch((error: unknown) => String(error)),
+    invokeCoworker(app, "turns.state", { slug: "nova", threadId }).catch((error: unknown) => String(error)),
   ]);
   const summary = Array.isArray(messages)
     ? messages.map((message) => {
@@ -706,12 +706,12 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(await evalIn(app, `document.activeElement?.getAttribute("data-testid")`)).toBe("coworker-next-send-now");
   await evalIn(app, `document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); true`);
   await waitFor(app, `document.activeElement?.getAttribute("aria-haspopup") === "menu" && !document.querySelector('[data-testid="coworker-next"] [role="menu"]')`, { label: "Escape returns focus to the queue action control" });
-  // The record beside the coworker carries both: the turn in flight and what waits as Next.
-  const turnsFile = await waitFor(app, `window.__COWORKER__.invoke("coworkers.files.read", { slug: "nova", path: "turns.json" })
-    .then((response) => response.ok && response.result.content.includes("Next two") ? JSON.parse(response.result.content) : false)
-    .catch(() => false)`, { timeoutMs: 30_000, label: "turns.json carries the pending turn and Next", awaitPromise: true });
-  if (!isRecord(turnsFile) || !isRecord(turnsFile.threads) || !isRecord(turnsFile.threads[threadId])) throw new Error("turns.json did not name the thread.");
-  const recorded = turnsFile.threads[threadId];
+  // The main-process lifecycle record owns both the admitted turn and Next;
+  // turns.json is an import source, no longer a second writable authority.
+  const recorded = await waitFor(app, `window.__COWORKER__.invoke("turns.state", { slug: "nova", threadId: ${json(threadId)} })
+    .then((response) => response.ok && response.result.next.some((item) => item.text === "Next two") ? response.result : false)
+    .catch(() => false)`, { timeoutMs: 30_000, label: "the backend record carries the pending turn and Next", awaitPromise: true });
+  if (!isRecord(recorded)) throw new Error("The backend did not return the thread's turn record.");
   expect(isRecord(recorded.pending) ? recorded.pending.prompt : null).toBe(HOLD_PROMPT);
   expect(Array.isArray(recorded.next) ? recorded.next.map((item) => (isRecord(item) ? item.text : null)) : null).toEqual(["Next one", "Next two"]);
   await evalIn(app, `[...document.querySelectorAll('[data-testid="coworker-next-row"]')][1].querySelector('[aria-haspopup="menu"]').click(); true`);
@@ -755,7 +755,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(scripted.countFor("Drain B")).toBe(1);
   evidence.recordAssertionEvidence(
     "Messages typed while the coworker works wait as Next, can be edited, removed, or sent now, and drain in order",
-    "With a reply held, two messages became two numbered rows under one Up next label, each with a single action menu; ArrowDown moved between actions and Escape closed the menu and restored focus, recorded in turns.json beside the pending turn; Edit returned the second to the field, a new one took its place, Remove dropped it, and Send now stopped the held reply (one quiet Stopped. line stayed in the transcript) and sent the waiting message at once. Two more messages then drained one at a time after the held reply landed, in order, each once.",
+    "With a reply held, two messages became two numbered rows under one Up next label, each with a single action menu; ArrowDown moved between actions and Escape closed the menu and restored focus. The backend record held them beside the pending turn. Edit returned the second to the field, a new one took its place, Remove dropped it, and Send now stopped the held reply (one quiet Stopped. line stayed in the transcript) and sent the waiting message at once. Two more messages then drained one at a time after the held reply landed, in order, each once.",
     true,
   );
 
