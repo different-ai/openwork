@@ -100,6 +100,9 @@ import {
 import { useWorkbenchStore, type WorkbenchSessionTab } from "./workbench-store";
 import { isSameWorkbenchSession } from "./workbench-store";
 import { ReactSessionRuntime } from "../sync/runtime-sync";
+import { useSessionInteractions } from "../sync/use-session-interactions";
+import { createClient } from "@/app/lib/opencode";
+import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
 import {
   availableNarrowPane,
   NarrowPaneSwitcher,
@@ -308,32 +311,40 @@ function WorkbenchPaneHeader(props: {
   const title = props.session.title?.trim() || t("session.default_title");
   return (
     <div
-      className={cn("shrink-0 border-b border-border px-4 py-3", props.focused && "bg-muted/40")}
+      className={cn("flex h-10 shrink-0 items-center gap-1 border-b border-border px-3", props.focused && "bg-muted/40")}
       data-workbench-pane-header={props.pane}
       data-workbench-pane-workspace-name={props.workspaceTitle}
     >
-      <button type="button" className="flex w-full min-w-0 items-start gap-2 text-left" onClick={props.onFocus}>
-        <span className="min-w-0 flex-1">
-          <span className="block text-xs font-semibold">{t(props.pane === "primary" ? "session_management.main_chat" : "session_management.split_view")}</span>
-          <span className="block truncate text-sm text-muted-foreground" title={title}>{title}</span>
-          {props.showWorkspace ? <span className="block truncate text-xs text-muted-foreground">{props.workspaceTitle}</span> : null}
-        </span>
-        {props.focused ? <span className="rounded-full bg-background px-2 py-0.5 text-[10px] text-muted-foreground">{t("session_management.selected_chat")}</span> : null}
+      <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left text-xs" onClick={props.onFocus}>
+        <span className="truncate" title={title}>{title}</span>
+        {props.showWorkspace ? <span className="truncate text-muted-foreground">{props.workspaceTitle}</span> : null}
       </button>
-      {props.pane === "secondary" ? (
-        <div className="mt-2 flex flex-wrap gap-1">
-          <Button variant="outline" size="sm" aria-label={t("session_management.close_split_view")} onClick={props.onClose}>
-            <ArrowLeft data-icon="inline-start" />
-            {t("session_management.close_split_view")}
-          </Button>
-          <Button variant="ghost" size="sm" aria-label={t("session_management.expand_side_chat")} onClick={props.onExpand}>
-            <Maximize2 data-icon="inline-start" />
-            {t("session_management.expand_side_chat")}
-          </Button>
-        </div>
-      ) : null}
+      {props.pane === "secondary" ? <>
+        <Button variant="ghost" size="icon-xs" aria-label={t("session_management.expand_side_chat")} title={t("session_management.expand_side_chat")} onClick={props.onExpand}>
+          <Maximize2 />
+        </Button>
+        <Button variant="ghost" size="icon-xs" aria-label={t("session_management.close_split_view")} title={t("session_management.close_split_view")} onClick={props.onClose}>
+          <X />
+        </Button>
+      </> : null}
     </div>
   );
+}
+
+/** Every visible conversation owns its pending interactions, including the side pane. */
+function SplitSessionSurface(props: SessionSurfaceProps) {
+  const client = useMemo(() => isOpencodeV2BaseUrl(props.opencodeBaseUrl)
+    ? createClientV2(props.opencodeBaseUrl, props.workspaceRoot, { token: props.openworkToken })
+    : createClient(props.opencodeBaseUrl, props.workspaceRoot, { token: props.openworkToken, mode: "openwork" }),
+  [props.opencodeBaseUrl, props.openworkToken, props.workspaceRoot]);
+  const interactions = useSessionInteractions({
+    client, workspaceId: props.workspaceId, sessionId: props.sessionId, workspaceRoot: props.workspaceRoot ?? "",
+  });
+  return <>
+    <ReactSessionRuntime workspaceId={props.workspaceId} sessionId={props.sessionId}
+      opencodeBaseUrl={props.opencodeBaseUrl} openworkToken={props.openworkToken} />
+    <SessionSurface {...props} {...interactions} />
+  </>;
 }
 
 function UnavailableWorkbenchPane(props: {
@@ -1834,13 +1845,7 @@ export function SessionPage(props: SessionPageProps) {
                             />
                             {splitPaneRuntime.status === "ready" ? (
                               <div className="min-h-0 flex-1">
-                                <ReactSessionRuntime
-                                  workspaceId={splitPaneRuntime.runtimeWorkspaceId}
-                                  sessionId={splitSession.sessionId}
-                                  opencodeBaseUrl={splitPaneRuntime.opencodeBaseUrl}
-                                  openworkToken={splitPaneRuntime.openworkToken}
-                                />
-                                <SessionSurface
+                                <SplitSessionSurface
                                   {...splitPaneRuntime.surface}
                                   client={splitPaneRuntime.client}
                                   environmentClient={splitPaneRuntime.environmentClient}
@@ -1851,7 +1856,6 @@ export function SessionPage(props: SessionPageProps) {
                                   chatPane="secondary"
                                   opencodeBaseUrl={splitPaneRuntime.opencodeBaseUrl}
                                   openworkToken={splitPaneRuntime.openworkToken}
-                                  todos={[]}
                                   onOpenTarget={(target, options, sourceSessionId) => openTargetForRuntime({
                                     client: splitPaneRuntime.client,
                                     runtimeWorkspaceId: splitPaneRuntime.runtimeWorkspaceId,

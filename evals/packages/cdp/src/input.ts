@@ -194,7 +194,7 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
         : 'button, a[href], input, textarea, [contenteditable="true"], [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="menuitem"], [role="tab"], [role="option"], [data-testid]';
     const candidates = [...document.querySelectorAll(selector)].filter((element) => {
       if (target.role && implicitRole(element) !== target.role) return false;
-      if (target.placeholder !== undefined && element.getAttribute("placeholder") !== target.placeholder) return false;
+      if (target.placeholder !== undefined && (element.getAttribute("placeholder") ?? element.getAttribute("aria-placeholder")) !== target.placeholder) return false;
       if (target.testId !== undefined && element.getAttribute("data-testid") !== target.testId) return false;
       if (!matcher(target.label, accessibleName(element))) return false;
       return true;
@@ -251,7 +251,7 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
       visible: styleVisible && rect.width > 0 && rect.height > 0 && inViewport,
       hitTestOk,
       editable: element.isContentEditable || !element.readOnly && (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement),
-      value: typeof element.value === "string" ? element.value : "",
+      value: typeof element.value === "string" ? element.value : element.isContentEditable ? element.innerText : "",
       text: (element.isContentEditable ? element.innerText : element.innerText ?? element.value ?? element.textContent ?? "").trim(),
       covering: hit && !hitTestOk ? {
         tag: hit.tagName.toLowerCase(),

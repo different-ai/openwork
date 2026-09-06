@@ -1,5 +1,6 @@
 import type { OpenworkSessionRef } from "@openwork/types/openwork-context";
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 
 export type WorkbenchPane = "primary" | "secondary";
 export type WorkbenchSessionTab = OpenworkSessionRef & {
@@ -96,12 +97,17 @@ export function syncWorkbenchSnapshot(
 ): WorkbenchSnapshot {
   const workspaceTitle = input.workspaceTitle?.trim() || input.workspaceId;
   const available = input.sessions.map((session) => ({ ...session, workspaceTitle }));
+  // The index can be partial, or briefly show the previous engine during boot.
+  // Saved pairs are durable navigation state; only an explicit close removes them.
+  const pairedSessions = new Set(Object.entries(current.sideChats).flatMap(([owner, chat]) =>
+    [owner, workbenchSessionKey(chat)]));
   let tabs = current.tabs
     .filter((tab) => (
       tab.workspaceId !== input.workspaceId
       || !input.sessionsKnown
       || available.some((session) => isSameWorkbenchSession(session, tab))
       || tab.sessionId === input.primarySessionId
+      || pairedSessions.has(workbenchSessionKey(tab))
     ))
     .map((tab) => {
       const fresh = available.find((session) => isSameWorkbenchSession(session, tab));
@@ -222,7 +228,7 @@ type WorkbenchStore = WorkbenchSnapshot & {
   focusPane: (pane: WorkbenchPane) => void;
 };
 
-export const useWorkbenchStore = create<WorkbenchStore>((set) => ({
+export const useWorkbenchStore = create<WorkbenchStore>()(persist((set) => ({
   ...initialWorkbenchSnapshot,
   sync: (input) => set((state) => syncWorkbenchSnapshot(state, input)),
   openTab: (tab) => set((state) => openWorkbenchTab(state, tab)),
@@ -230,4 +236,7 @@ export const useWorkbenchStore = create<WorkbenchStore>((set) => ({
   setSplit: (session) => set((state) => setWorkbenchSplit(state, session)),
   setSideChat: (owner, session) => set((state) => setWorkbenchSideChat(state, owner, session)),
   focusPane: (pane) => set((state) => focusWorkbenchPane(state, pane)),
+}), {
+  name: "openwork.session-splits.v1",
+  partialize: (state) => ({ tabs: state.tabs, sideChats: state.sideChats }),
 }));

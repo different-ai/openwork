@@ -194,6 +194,24 @@ test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeo
   assert.equal(final.status, 200);
   assert.equal(final.frames.map(frame => frame.choices[0].delta.content ?? "").join(""), "unique text returned by the real tool");
 
+  const contextWorkload = await fetch(`${origin}/admin/agent-workloads`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workloads: [{ promptMarker: "Inspect context", finalReply: "unused fixture reply",
+      finalReplyFrom: "system-text", latestUserTurn: true, steps: [],
+    }] }),
+  });
+  assert.equal(contextWorkload.status, 200);
+  const contextResponse = await fetch(`${origin}/v1/chat/completions`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: "context-model", messages: [
+      { role: "system", content: "system witness" }, { role: "developer", content: "developer witness" },
+      { role: "user", content: "Inspect context; user text must not be echoed" },
+    ], tools: [{ type: "function", function: { name: "question" } }] }),
+  });
+  assert.equal(contextResponse.status, 200);
+  const contextFrames = (await contextResponse.text()).split("\n").filter(line => line.startsWith("data: {")).map(line => JSON.parse(line.slice(6)));
+  assert.equal(contextFrames.map(frame => frame.choices[0].delta.content ?? "").join(""), "system witness\ndeveloper witness");
+
   const failedResponse = await fetch(`${origin}/admin/agent-workloads`, {
     method: "POST",
     headers: { "content-type": "application/json" },
