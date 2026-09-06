@@ -158,7 +158,7 @@ export function MarketplaceOnboardingScreen({
         </section>
         <section aria-labelledby="setup-models-heading" className="border-t border-neutral-200 pt-5">
           <h2 id="setup-models-heading" className="text-sm font-medium text-neutral-900">Model access</h2>
-          <p className="mt-2 text-sm leading-6 text-neutral-500" role="status">
+          <p className="mt-2 min-h-12 text-sm leading-6 text-neutral-500 sm:min-h-6" role="status">
             {modelsLoading ? "Checking OpenWork Models…" : modelsError ? "Couldn’t check OpenWork Models." : modelsEnabled ? "OpenWork Models are on for this workspace." : "OpenWork Models are off. You can set up models later."}
           </p>
           <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-xs">
