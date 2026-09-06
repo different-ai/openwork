@@ -242,11 +242,23 @@ export async function connectStateProvenance(seed: Seed) {
 export async function preseededConnect(seed: Seed) {
   const stamp = Date.now();
   const skillName = `preseeded-connect-proof-${stamp}`;
-  const connectionName = `PR3806 conn ${String(stamp).slice(-6)}`;
-  const rawSourceText = `---\nname: ${skillName}\ndescription: Proves preseeded Connect skill discovery.\n---\n\nReturn the preseeded Connect proof phrase.`;
+  const connectionName = `Preseeded connection ${String(stamp).slice(-6)}`;
+  const proofPhrase = `Connect skill proof ${crypto.randomUUID()}`;
+  const prompt = `Find and read the organization skill named ${skillName}.`;
+  const providerName = "Connect discovery model";
+  const modelId = "connect-discovery-model";
+  const rawSourceText = `---\nname: ${skillName}\ndescription: Proves preseeded Connect skill discovery.\n---\n\nReturn this exact phrase: ${proofPhrase}.`;
   const den = await seed.den({
     org: { name: `Preseeded Connect ${stamp}`, admin: { name: "Connect Admin" } },
-    mocks: { connector: seed.mock() },
+    mocks: { connector: seed.mock({ agentWorkloads: [{
+      promptMarker: prompt,
+      finalReply: "The skill was read.",
+      finalReplyFrom: "last-tool-text",
+      steps: [
+        { tool: "search_capabilities", arguments: { query: skillName, limit: 1, type: "skills" } },
+        { tool: "execute_capability", arguments: {}, argumentsFrom: "capability-search" },
+      ],
+    }] }) },
   });
   const organizationId = await activeOrganizationId(seed, den.admin);
   const createdSkill = await seed.api(den.admin, "/v1/plugins", {
@@ -267,6 +279,19 @@ export async function preseededConnect(seed: Seed) {
     credentialMode: "per_member",
     access: { orgWide: true },
   });
+  const provider = await seed.api(den.admin, "/v1/llm-providers", {
+    method: "POST",
+    headers: { "x-openwork-org-id": organizationId },
+    body: JSON.stringify({
+      name: providerName, source: "custom", allMembers: true, memberIds: [], teamIds: [],
+      apiKey: "sk-openwork-connect-eval-only",
+      customConfig: { id: "connect-discovery", name: providerName, npm: "@ai-sdk/openai-compatible",
+        options: { baseURL: `${den.mocks.connector.url}/v1` }, env: ["CONNECT_EVAL_API_KEY"],
+        models: [{ id: modelId, name: modelId, tool_call: true, limit: { context: 128000, output: 8192 } }],
+      },
+    }),
+  });
+  if (provider.response.status !== 201) throw new Error(`Could not publish the Connect fixture model: HTTP ${provider.response.status}`);
   const mcpSession = await mintMcpSession(seed, den, organizationId);
   const app = await seed.desktop({ den, signIn: false });
   const workspace = await seed.workspace(app, seed.tmpPath("preseeded-connect"));
@@ -275,7 +300,7 @@ export async function preseededConnect(seed: Seed) {
     args: [workspace.workspaceId],
   });
   return {
-    app,
+    app, den, prompt, proofPhrase, providerName, modelId,
     admin: den.admin,
     member: den.admin,
     mcpSession,
