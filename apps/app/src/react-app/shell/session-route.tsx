@@ -1382,6 +1382,7 @@ export function SessionRoute() {
 
                 const parts = await draftToParts(draft, selectedWorkspaceRoot, targetSessionId, selectedWorkspaceEndpoint);
                 const system = await buildOpenworkSessionSystemContext(client, {
+                  workspaceId: selectedWorkspaceId,
                   cacheKey: targetSessionId,
                   runtimeKey: environmentRuntimeKey,
                 });
@@ -1701,6 +1702,7 @@ export function SessionRoute() {
                 }
                 const parts = await draftToParts(draft, workspaceRoot, targetSessionId, endpoint);
                 const system = await buildOpenworkSessionSystemContext(endpoint.client, {
+                  workspaceId: workspace.id,
                   cacheKey: targetSessionId,
                   runtimeKey: workspace.workspaceType === "remote" ? null : environmentRuntimeKey,
                 });
@@ -2071,6 +2073,8 @@ export function SessionRoute() {
     openAs: "primary" | "split",
     source: "new_task" | "new_split" = openAs === "split" ? "new_split" : "new_task",
   ): Promise<string | null> => {
+    const sideChatOwner = openAs === "split" ? useWorkbenchStore.getState().primary : null;
+    if (openAs === "split" && !sideChatOwner) return null;
     const workspace = workspaces.find((item) => item.id === workspaceId);
     if (
       !workspace ||
@@ -2148,8 +2152,9 @@ export function SessionRoute() {
         };
         const workbench = useWorkbenchStore.getState();
         workbench.openTab(tab);
-        workbench.setSplit(tab);
-        workbench.focusPane("secondary");
+        if (sideChatOwner) {
+          workbench.setSideChat(sideChatOwner, tab);
+        }
       }
       void refreshRouteState();
       return session.id;

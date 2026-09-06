@@ -418,7 +418,7 @@ export function DownloadOpenWorkCard({
       data-detection-source={detected?.source}
       className="overflow-hidden rounded-[18px] border border-[#E3E7EE] bg-white shadow-[0_24px_60px_-32px_rgba(7,25,44,0.22)]"
     >
-      <div className="bg-gradient-to-b from-[#FAFBFE] to-white px-6 py-5">
+      <div className="bg-linear-to-b/srgb from-[#FAFBFE] to-white px-6 py-5">
         <div className="flex items-center gap-2.5">
           <DownloadIcon className="h-5 w-5 text-[#07192C]/70" />
           <span className="text-[16px] font-semibold text-[#07192C]">Download OpenWork</span>

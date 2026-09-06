@@ -506,7 +506,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                 value={switcherQuery}
                 onChange={(event) => setSwitcherQuery(event.target.value)}
                 placeholder="Search workspaces"
-                className="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[12px] text-gray-900 outline-none transition focus:border-gray-400"
+                className="w-full rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[12px] text-gray-900 outline-hidden transition focus:border-gray-400"
               />
             </div>
           ) : null}

@@ -202,7 +202,10 @@ function validateAgentWorkloads(value) {
       }
       return { tool: step.tool.trim(), arguments: structuredClone(step.arguments), argumentsFrom: step.argumentsFrom };
     });
-    return { promptMarker, finalReply, finalReplyChunkSize, steps, latestUserTurn: workload.latestUserTurn === true };
+    const finalReplyDelayMs = workload.finalReplyDelayMs ?? 0;
+    if (!Number.isInteger(finalReplyDelayMs) || finalReplyDelayMs < 0 || finalReplyDelayMs > 10000)
+      throw new Error("finalReplyDelayMs must be between 0 and 10000");
+    return { promptMarker, finalReply, finalReplyChunkSize, finalReplyDelayMs, steps, latestUserTurn: workload.latestUserTurn === true };
   });
 }
 
@@ -350,6 +353,7 @@ async function handleAgentCompletion(req, res, entry) {
   }
   if (!workload) throw new Error("matched agent workload disappeared");
   if (completedTools >= workload.steps.length) {
+    if (workload.finalReplyDelayMs) await new Promise(resolve => setTimeout(resolve, workload.finalReplyDelayMs));
     entry.agentCompletion = { ...baseRequest, kind: "final", promptMarker: workload.promptMarker, toolName: null, arguments: {} };
     agentStream(res, model, [
       agentChunk(model, { role: "assistant" }),
@@ -424,6 +428,7 @@ function protectedResourceMetadata() {
 function authorizationServerMetadata() {
   return {
     issuer,
+    ...(process.env.MOCK_AUTHORIZATION_RESPONSE_ISSUER === undefined ? {} : { authorization_response_iss_parameter_supported: process.env.MOCK_AUTHORIZATION_RESPONSE_ISSUER === "1" }),
     authorization_endpoint: `${issuer}/authorize`,
     token_endpoint: `${issuer}/token`,
     ...(disableDcr ? {} : { registration_endpoint: `${issuer}/register` }),
@@ -519,6 +524,7 @@ function redirectWithCode(res, params) {
 
   const callback = new URL(redirectUri);
   callback.searchParams.set("code", code);
+  if (process.env.MOCK_AUTHORIZATION_RESPONSE_ISSUER === "1") callback.searchParams.set("iss", issuer);
   const state = params.get("state");
   if (state) callback.searchParams.set("state", state);
 

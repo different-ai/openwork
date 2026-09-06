@@ -2819,6 +2819,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
             ) : (
               <DevProfiler id="MessageList">
                 <OpenTargetProvider
+                  client={props.client}
+                  workspaceId={props.workspaceId}
+                  workspaceRoot={props.workspaceRoot}
                   openTargets={verifiedOpenTargets}
                   onOpenTarget={handleOpenTarget}
                 >

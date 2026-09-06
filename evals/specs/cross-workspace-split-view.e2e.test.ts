@@ -110,11 +110,11 @@ async function splitMenuVisible(app: Surface): Promise<boolean> {
 }
 
 async function clickOpenSplit(user: User): Promise<void> {
-  await user.click({ role: "menuitem", label: /Open in split view/ });
+  await user.click({ role: "menuitem", label: "Open as side chat" });
 }
 
 async function closeSecondaryPane(app: Surface, user: User): Promise<void> {
-  await user.click({ role: "button", label: "Close secondary split pane" });
+  await user.click({ role: "button", label: "Close side chat" });
   await waitFor(app, `!document.querySelector('[data-workbench-pane="secondary"]')`, {
     timeoutMs: 15000, label: "secondary split pane closes",
   });
@@ -124,8 +124,8 @@ async function openCrossWorkspaceSplitFromPalette(app: Surface, user: User, cand
   await user.press("Escape");
   const mac = app.handle.hostKind !== "daytona" && process.platform === "darwin";
   await user.press(mac ? "Meta+K" : "Control+K");
-  await user.click({ role: "option", label: /Open in split view/ });
-  await user.click({ text: candidate.title });
+  await user.click({ role: "option", label: /Open as side chat/ });
+  await user.click({ role: "option", label: candidate.title });
 }
 
 async function readSplitFacts(app: Surface, primary: SplitCandidate, secondary: SplitCandidate): Promise<SplitFacts> {

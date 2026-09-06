@@ -36,6 +36,8 @@ export interface MockAgentWorkload {
   finalReply: string;
   /** Stream the final reply as consecutive content deltas of this many characters instead of one. */
   finalReplyChunkSize?: number;
+  /** Hold the final response before sending headers, to exercise loading transitions. */
+  finalReplyDelayMs?: number;
   /** Tool calls the agent makes before its final reply; empty answers directly. */
   steps: MockAgentToolStep[];
 }
@@ -89,6 +91,8 @@ export interface StartMockMcpOptions {
   publicUrl?: string;
   /** Advertised OAuth/resource origin when the mock sits behind a proxy; defaults to the mock's own URL. */
   issuer?: string;
+  /** Set RFC 9207 metadata explicitly; undefined omits it. Only true includes response iss. */
+  authorizationResponseIssuerSupported?: boolean;
   profileId?: EnterpriseMcpProfileId;
   fault?: string;
   oauthClientSecret?: string;
@@ -318,6 +322,7 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
         PORT: String(port),
         ISSUER: options.issuer ?? url,
         AUTO_APPROVE: "1",
+        ...(options.authorizationResponseIssuerSupported === undefined ? {} : { MOCK_AUTHORIZATION_RESPONSE_ISSUER: options.authorizationResponseIssuerSupported ? "1" : "0" }),
         ...(options.allowUnauthenticatedMcp ? { MOCK_ALLOW_UNAUTHENTICATED_MCP: "1" } : {}),
         ...(options.extraToolCount ? { MOCK_EXTRA_TOOL_COUNT: String(options.extraToolCount) } : {}),
         ...(options.appToolName ? { MOCK_APP_TOOL_NAME: options.appToolName } : {}),

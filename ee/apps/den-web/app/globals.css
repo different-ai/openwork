@@ -1,6 +1,34 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss" source(none);
+@import "./tailwind-theme.css";
+
+@source "./**/*.{ts,tsx}";
+@source "../components/**/*.{ts,tsx}";
+@source "../../../../packages/ui/src/**/*.{ts,tsx}";
+
+/* Keep the v3 base defaults; unlayered Den styles below still win over utilities. */
+@layer base {
+    *,
+    ::before,
+    ::after,
+    ::backdrop,
+    ::file-selector-button {
+        border-color: var(--color-gray-200);
+    }
+
+    input::placeholder,
+    textarea::placeholder {
+        color: var(--color-gray-400);
+    }
+
+    button,
+    [role="button"] {
+        cursor: pointer;
+    }
+
+    :disabled {
+        cursor: default;
+    }
+}
 
 :root {
     color-scheme: light;

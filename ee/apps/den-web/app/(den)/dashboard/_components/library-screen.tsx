@@ -526,7 +526,7 @@ export function LibraryScreen() {
                   : event.target.value === "everyone"
                     ? "everyone"
                     : "anyone")}
-            className="h-[24px] max-w-[116px] appearance-none bg-transparent pl-1 pr-0 text-[12px] font-medium text-gray-500 outline-none"
+            className="h-[24px] max-w-[116px] appearance-none bg-transparent pl-1 pr-0 text-[12px] font-medium text-gray-500 outline-hidden"
           >
             {FROM_FILTERS.map((filter) => <option key={filter.value} value={filter.value}>{filter.label}</option>)}
           </select>

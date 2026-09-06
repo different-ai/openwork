@@ -322,7 +322,7 @@ export default function McpSelectOrganizationPage() {
                     value={orgQuery}
                     onChange={(event) => setOrgQuery(event.target.value)}
                     placeholder="Search organizations"
-                    className="rounded-2xl border border-[var(--dls-border)] px-4 py-3 text-[14px] text-[var(--dls-text-primary)] outline-none transition focus:border-[var(--dls-accent)]"
+                    className="rounded-2xl border border-[var(--dls-border)] px-4 py-3 text-[14px] text-[var(--dls-text-primary)] outline-hidden transition focus:border-[var(--dls-accent)]"
                   />
                 ) : null}
 

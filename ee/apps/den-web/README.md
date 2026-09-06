@@ -28,6 +28,30 @@ Frontend for `app.openworklabs.com`.
 3. Open:
    `http://localhost:3005`
 
+### Styling
+
+Den and desktop use Tailwind 4.3.3. Den uses `@tailwindcss/postcss` with Next.js;
+desktop uses `@tailwindcss/vite`. Do not add the old Tailwind PostCSS plugin or
+autoprefixer alongside it.
+
+`app/globals.css` explicitly scans Den's app/components and `packages/ui/src`,
+independent of the build's working directory. Add an `@source` entry when Den
+starts consuming another package that contains utility classes. Theme tokens
+live in `app/tailwind-theme.css`: the existing sRGB palette is retained to avoid
+a visual redesign. The unlayered Den CSS and light-only color scheme are
+intentional. Base overrides retain the previous border, placeholder and cursor
+defaults; gradients use `/srgb` to preserve interpolation.
+
+When bringing older UI work onto this branch, use `shadow-xs` for the old
+`shadow-sm`, `rounded-sm` for the old bare `rounded`, and `outline-hidden` for
+the old `outline-none` (including focus variants). Review `space-*` and `divide-*`
+on lists: Tailwind 4 applies spacing/borders to preceding children instead of
+following siblings. Native v4 utilities in shared packages are scanned too;
+sharing theme semantics with desktop is a separate change.
+
+Tailwind 4 requires Safari 16.4+, Chrome 111+, or Firefox 128+; see the
+[Tailwind upgrade guide](https://tailwindcss.com/docs/upgrade-guide).
+
 ### Optional env vars
 
 - `DEN_API_BASE` (server-only): upstream API base used by server-side health/readiness and compatibility auth proxy routes. Required outside local dev wrappers.

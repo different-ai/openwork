@@ -330,7 +330,7 @@ export function ReauthDialog({
           >
             <X size={17} aria-hidden="true" />
           </button>
-          <div className="mb-4 flex size-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm">
+          <div className="mb-4 flex size-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-xs">
             <ShieldCheck size={20} strokeWidth={1.8} aria-hidden="true" />
           </div>
           <div className="grid gap-2 pr-8">

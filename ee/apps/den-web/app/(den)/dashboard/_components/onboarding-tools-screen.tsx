@@ -14,7 +14,7 @@ import { useCreateMcpConnection, useMcpConnectionPresets, useMcpConnections } fr
 
 type ToolState = { status: "adding" | "added" | "error"; error?: string };
 const description = "Start with the tools your team already uses. Choose a few now, or add them whenever you need them.";
-const buttonClass = "inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl px-5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-900 focus-visible:ring-offset-4 disabled:cursor-not-allowed disabled:opacity-40";
+const buttonClass = "inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl px-5 text-sm font-medium transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-neutral-900 focus-visible:ring-offset-4 disabled:cursor-not-allowed disabled:opacity-40";
 
 export function OnboardingToolsScreen() {
   const { orgId, orgContext, orgError } = useOrgDashboard();

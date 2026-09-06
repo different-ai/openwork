@@ -183,7 +183,7 @@ function ConnectionRow({
         onClick={() => setConfirmOpen(true)}
         aria-label={`Disconnect ${accountLogin}`}
         disabled={busy}
-        className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-400 opacity-0 transition-all duration-150 hover:bg-red-50 hover:text-red-600 focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-red-500/30 group-hover:opacity-100 disabled:cursor-not-allowed"
+        className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-full text-gray-400 opacity-0 transition-all duration-150 hover:bg-red-50 hover:text-red-600 focus:opacity-100 focus:outline-hidden focus:ring-2 focus:ring-red-500/30 group-hover:opacity-100 disabled:cursor-not-allowed"
       >
         {busy ? (
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
