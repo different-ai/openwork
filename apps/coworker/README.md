@@ -1091,11 +1091,11 @@ about 2.3 seconds and never loops. Afterwards only the front card's existing
 pointer gaze remains, within the icon's restraint (pupils ≈2 px, turn ≤0.8°,
 travel ≤1 px). The box never changes size, the stack takes no pointer events,
 and reduced motion renders the icon composition at once. The new-coworker
-preview reuses the component with the coworker being created in front. The app
-icon on macOS uses the blue porcelain tile and white coworker in
-`resources/icons/icon-macos.png`, a transparent 1024-pixel master shared by the
-Dock and packaged `.icns` icon. Windows and Linux use the vector artwork in
-`resources/icons/open-coworker-app-icon.svg`. Regenerate the platform icon sets
+preview reuses the component with the coworker being created in front. The desktop app icon uses one canonical raster artwork in
+`resources/icons/open-coworker-app-icon.png` (1254×1254). The generator derives
+identical 1024-pixel `icon.png` and `icon-macos.png` files from this source,
+then renders the packaged ICNS, ICO, and Linux sizes. The macOS Dock uses
+`icon-macos.png`; the packaged app uses `icon.icns`. Regenerate all outputs
 with `pnpm --filter @openwork/coworker icons:render`.
 
 The avatars' always-on idle motion (an 8.8 s float of 0.8 px and turns of about

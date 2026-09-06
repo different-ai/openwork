@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,7 +9,7 @@ const execFileAsync = promisify(execFile);
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const coworkerRoot = path.resolve(scriptDir, "..");
 const iconsRoot = path.join(coworkerRoot, "resources", "icons");
-const source = path.join(iconsRoot, "open-coworker-app-icon.svg");
+const source = path.join(iconsRoot, "open-coworker-app-icon.png");
 const masterPng = path.join(iconsRoot, "icon.png");
 const macMasterPng = path.join(iconsRoot, "icon-macos.png");
 const linuxRoot = path.join(iconsRoot, "linux");
@@ -69,9 +69,15 @@ const createIco = async (entries, output) => {
 const temporaryRoot = await mkdtemp(path.join(tmpdir(), "open-coworker-icons-"));
 
 try {
-  assertPngSize(await readFile(macMasterPng), 1024, path.basename(macMasterPng));
+  const artwork = await readFile(source);
+  const sourceSize = artwork.readUInt32BE(16);
+  assertPngSize(artwork, sourceSize, path.basename(source));
+  if (sourceSize < 1024) {
+    throw new Error("The canonical icon artwork must be at least 1024x1024.");
+  }
   await mkdir(linuxRoot, { recursive: true });
-  await execFileAsync("sips", ["-s", "format", "png", source, "--out", masterPng]);
+  await renderSize(source, 1024, masterPng);
+  await copyFile(masterPng, macMasterPng);
   assertPngSize(await readFile(masterPng), 1024, path.basename(masterPng));
 
   await Promise.all(linuxSizes.map((size) => (

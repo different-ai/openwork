@@ -64,7 +64,6 @@ test("Open Coworker mirrors every embedded-server runtime dependency for electro
 test("Open Coworker owns a branded boot surface and cross-platform icon set", async () => {
   const indexHtml = await readFile(path.join(coworkerRoot, "index.html"), "utf8");
   const logoSvg = await readFile(path.join(coworkerRoot, "public", "open-coworker.svg"), "utf8");
-  const appIconSvg = await readFile(path.join(coworkerRoot, "resources", "icons", "open-coworker-app-icon.svg"), "utf8");
   assert.match(indexHtml, /class="boot-splash"/);
   assert.match(indexHtml, /href="\/open-coworker\.svg"/);
   assert.match(logoSvg, /fill="#f7f8fa"/);
@@ -72,17 +71,10 @@ test("Open Coworker owns a branded boot surface and cross-platform icon set", as
   assert.match(logoSvg, /fill="#d9dde4" stroke="#aeb5c0"/);
   assert.match(logoSvg, /stroke="#aeb5c0"/);
   assert.doesNotMatch(logoSvg, /fill="#5b8dff"/);
-  assert.match(appIconSvg, /fill="#5b8dff"/);
-  assert.doesNotMatch(appIconSvg, /rear-coworker|rear-glasses|mint-surface|lavender-surface/);
-  assert.match(appIconSvg, /data-layer="front-coworker"/);
-  assert.equal(appIconSvg.match(/data-layer="glasses"/g)?.length, 1);
-  assert.equal(appIconSvg.match(/data-layer="pupils"/g)?.length, 1);
-  assert.match(appIconSvg, /linearGradient id="avatar-surface"/);
-  assert.match(appIconSvg, /fill="url\(#avatar-surface\)"/);
-  assert.match(appIconSvg, /stop-color="#edf0f4"/);
-  assert.doesNotMatch(appIconSvg, /radialGradient/);
-  const [iconPng, iconIcns, iconIco, linuxIcon] = await Promise.all([
+  const [iconPng, macIconPng, artwork, iconIcns, iconIco, linuxIcon] = await Promise.all([
     "resources/icons/icon.png",
+    "resources/icons/icon-macos.png",
+    "resources/icons/open-coworker-app-icon.png",
     "resources/icons/icon.icns",
     "resources/icons/icon.ico",
     "resources/icons/linux/512x512.png",
@@ -90,6 +82,10 @@ test("Open Coworker owns a branded boot surface and cross-platform icon set", as
   assert.equal(iconPng.subarray(1, 4).toString("ascii"), "PNG");
   assert.equal(iconPng.readUInt32BE(16), 1024);
   assert.equal(iconPng.readUInt32BE(20), 1024);
+  assert.deepEqual(macIconPng, iconPng, "Dock and cross-platform icons must share the same artwork");
+  assert.equal(artwork.subarray(1, 4).toString("ascii"), "PNG");
+  assert.ok(artwork.readUInt32BE(16) >= 1024);
+  assert.equal(artwork.readUInt32BE(16), artwork.readUInt32BE(20));
   assert.equal(iconIcns.subarray(0, 4).toString("ascii"), "icns");
   assert.equal(iconIco.readUInt16LE(2), 1);
   assert.equal(iconIco.readUInt16LE(4), 7);
