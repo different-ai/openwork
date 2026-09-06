@@ -5,6 +5,8 @@ import {
   createV2EventTranslationState,
   translateV2Event,
 } from "../src/app/lib/opencode-v2-adapter";
+import { parseDynamicToolUIPart } from "../src/react-app/domains/session/sync/parse-tool-parts";
+import { codeModeToolCalls } from "../src/lib/code-mode-tools";
 
 const capturedPermissionAsked = {
   id: "evt_permission_asked",
@@ -540,6 +542,50 @@ describe("OpenCode v2 event translation", () => {
 });
 
 describe("OpenCode v2 client compatibility", () => {
+  test("Code Mode keeps the same child identities through progress, replay, and saved history", async () => {
+    const state = createV2EventTranslationState();
+    const data = { sessionID: "ses_code", assistantMessageID: "msg_code", id: "execute-code" };
+    const toolCalls = [
+      { tool: "openwork-cloud.search_capabilities", status: "completed", input: { query: "Slack" } },
+      { tool: "openwork-cloud.execute_capability", status: "running", input: { name: "mcp:connection:list_channels" } },
+    ];
+    translateV2Event({ type: "session.tool.input.started", data: { ...data, name: "execute" } }, state);
+    translateV2Event({ type: "session.tool.called", data: { ...data, input: { code: "recorded code" } } }, state);
+    const progress = { type: "session.tool.progress", data: { ...data, metadata: { toolCalls } } };
+    const expected = [{ type: "message.part.updated", properties: { part: {
+      id: "execute-code", callID: "execute-code", tool: "execute", metadata: { openworkV2CodeMode: true },
+      state: { status: "running", metadata: { toolCalls } },
+    } } }];
+    expect(translateV2Event(progress, state)).toMatchObject(expected);
+    expect(translateV2Event(progress, state)).toMatchObject(expected);
+    const completedCalls = toolCalls.map(call => ({ ...call, status: "completed" }));
+    expect(translateV2Event({ type: "session.tool.success", data: {
+      ...data, metadata: { toolCalls: completedCalls }, content: [{ type: "text", text: "Combined result" }],
+    } }, state)).toMatchObject([{ properties: { part: { id: "execute-code", state: {
+      output: "Combined result", metadata: { toolCalls: completedCalls },
+    } } } }]);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => jsonResponse({ data: [{
+      id: "msg_code", type: "assistant", time: { created: 1, completed: 2 },
+      content: [{ id: "execute-code", type: "tool", name: "execute", time: { created: 1, completed: 2 }, state: {
+        status: "completed", input: { code: "recorded code" }, metadata: { toolCalls: completedCalls },
+        content: [{ type: "text", text: "Combined result" }],
+      } }],
+    }] });
+    try {
+      const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
+      const result = await client.session.messages({ sessionID: "ses_code" });
+      const saved = result.data?.[0]?.parts[0];
+      if (saved?.type !== "tool") throw new Error("Missing saved execute part");
+      const ui = parseDynamicToolUIPart(saved);
+      if (!ui) throw new Error("Missing execute UI part");
+      expect(codeModeToolCalls(ui)?.map(call => [call.toolCallId, call.toolName, call.state])).toEqual([
+        ["execute-code:call:0", "openwork-cloud_search_capabilities", "output-available"],
+        ["execute-code:call:1", "openwork-cloud_execute_capability", "output-available"],
+      ]);
+      expect(ui).toMatchObject({ output: "Combined result" });
+    } finally { globalThis.fetch = originalFetch; }
+  });
   test("maps only missing and empty native titles to stable read-time placeholders", async () => {
     const originalFetch = globalThis.fetch;
     const created = 1_788_548_737_221;

@@ -26,6 +26,8 @@ type CapabilityCallLineProps = ChatToolReconnectCallbacks & {
   part: DynamicToolUIPart
   className?: string
   connector?: ConnectorToolIdentity | null
+  resultUnavailable?: boolean
+  statusUnknown?: boolean
 }
 
 function ConnectorMark({ connector }: { connector: ConnectorToolIdentity }) {
@@ -102,7 +104,7 @@ function failureInstruction(part: DynamicToolUIPart, reconnectName: string | nul
   return "The call failed. Full error is under Technical details."
 }
 
-function TechnicalDetailsPanel({ part }: { part: DynamicToolUIPart }) {
+export function TechnicalDetailsPanel({ part, resultUnavailable = false }: { part: DynamicToolUIPart; resultUnavailable?: boolean }) {
   return (
     <div className="mt-2 flex flex-col gap-2 rounded-lg bg-muted p-2 text-xs">
       <div className="font-mono text-[11px] text-muted-foreground">
@@ -117,6 +119,9 @@ function TechnicalDetailsPanel({ part }: { part: DynamicToolUIPart }) {
         <pre className="max-h-60 overflow-auto whitespace-pre-wrap wrap-break-word opacity-80">
           {formatTechnicalValue(part.output)}
         </pre>
+      ) : null}
+      {resultUnavailable ? (
+        <p>The engine did not provide an individual result for this action. See the execution details.</p>
       ) : null}
       {part.state === "output-error" && part.errorText ? (
         <pre className="max-h-60 overflow-auto whitespace-pre-wrap wrap-break-word opacity-80">
@@ -141,15 +146,17 @@ export function CapabilityCallLine({
   part,
   className,
   connector,
+  resultUnavailable = false,
+  statusUnknown = false,
   onReconnect,
   onReopenAuthorization,
   onRetry,
 }: CapabilityCallLineProps) {
   const [open, setOpen] = useState(false)
   const [detailsOpen, setDetailsOpen] = useState(false)
-  const inFlight = isToolPartInFlight(part)
+  const inFlight = !statusUnknown && isToolPartInFlight(part)
   const isFailed = part.state === "output-error"
-  const duration = trackToolCallDuration(part)
+  const duration = statusUnknown ? null : trackToolCallDuration(part)
   const { reconnectAction, reconnectState, reconnectError, reconnectPresentation, handleReconnect } =
     useChatToolReconnect(part, { onReconnect, onReopenAuthorization, onRetry })
   const ReconnectIcon = reconnectState === "opening"
@@ -260,7 +267,7 @@ export function CapabilityCallLine({
   }
 
   const sentence = getCapabilityCallSentence(part)
-  const line = inFlight ? sentence.present : sentence.past
+  const line = statusUnknown ? `${sentence.present} — status unavailable` : inFlight ? sentence.present : sentence.past
   return (
     <Collapsible data-capability-call={part.toolName} open={open} onOpenChange={setOpen} className={className}>
       <div className="flex min-w-0 items-center gap-2">
@@ -282,7 +289,7 @@ export function CapabilityCallLine({
         </CollapsibleTrigger>
       </div>
       <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
-        <TechnicalDetailsPanel part={part} />
+        <TechnicalDetailsPanel part={part} resultUnavailable={resultUnavailable} />
       </CollapsibleContent>
     </Collapsible>
   )
