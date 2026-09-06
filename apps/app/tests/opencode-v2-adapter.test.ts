@@ -623,6 +623,32 @@ describe("OpenCode v2 event translation", () => {
 });
 
 describe("OpenCode v2 client compatibility", () => {
+  test.each([0, 1_788_548_737_221])("rejects archived=%i without reading, renaming, or deleting the session", async (archived) => {
+    const originalFetch = globalThis.fetch;
+    const requests: Request[] = [];
+    globalThis.fetch = async (input, init) => {
+      requests.push(input instanceof Request ? input : new Request(input, init));
+      return jsonResponse({ data: { id: "ses_archive", title: "Keep this session", time: { created: 1 } } });
+    };
+    try {
+      const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
+      for (const title of [undefined, "Do not partially rename"]) {
+        const parameters = { sessionID: "ses_archive", title, time: { archived } };
+        const result = await client.session.update(parameters);
+        expect(result.response.status).toBe(501);
+        expect(result.data).toBeUndefined();
+        expect(result.error).toMatchObject({
+          name: "UnsupportedInV2Preview", operation: "session.archive",
+          message: "Archiving and unarchiving are not available in the OpenCode v2 preview.",
+        });
+        await expect(client.session.update(parameters, { throwOnError: true })).rejects.toThrow("Archiving and unarchiving are not available");
+      }
+      expect(requests).toEqual([]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("saved native instruction updates stay out of the visible conversation", async () => {
     const originalFetch = globalThis.fetch;
     const notice = "New skills are available in addition to those previously listed.";
