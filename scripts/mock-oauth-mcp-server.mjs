@@ -188,6 +188,9 @@ function validateAgentWorkloads(value) {
     if (finalReplyChunkSize !== null && (!Number.isInteger(finalReplyChunkSize) || finalReplyChunkSize < 1)) {
       throw new Error(`agent workload ${promptMarker} finalReplyChunkSize must be a positive integer`);
     }
+    if (workload.finalReasoning !== undefined && typeof workload.finalReasoning !== "string") {
+      throw new Error(`agent workload ${promptMarker} finalReasoning must be a string`);
+    }
     if (workload.latestUserTurn !== undefined && typeof workload.latestUserTurn !== "boolean") {
       throw new Error(`agent workload ${promptMarker} latestUserTurn must be a boolean`);
     }
@@ -213,7 +216,7 @@ function validateAgentWorkloads(value) {
     const finalReplyDelayMs = workload.finalReplyDelayMs ?? 0;
     if (!Number.isInteger(finalReplyDelayMs) || finalReplyDelayMs < 0 || finalReplyDelayMs > 10000)
       throw new Error("finalReplyDelayMs must be between 0 and 10000");
-    return { promptMarker, finalReply, finalReplyFrom: workload.finalReplyFrom, finalReplyChunkSize, finalReplyDelayMs, steps, latestUserTurn: workload.latestUserTurn === true };
+    return { promptMarker, finalReply, finalReplyFrom: workload.finalReplyFrom, finalReplyChunkSize, finalReplyDelayMs, finalReasoning: workload.finalReasoning, steps, latestUserTurn: workload.latestUserTurn === true };
   });
 }
 
@@ -417,6 +420,7 @@ async function handleAgentCompletion(req, res, entry) {
       : workload.finalReply;
     agentStream(res, model, [
       agentChunk(model, { role: "assistant" }),
+      ...(workload.finalReasoning ? [agentChunk(model, { reasoning_content: workload.finalReasoning })] : []),
       ...finalReplyChunks({ ...workload, finalReply }).map((content) => agentChunk(model, { content })),
       agentChunk(model, {}, "stop"),
     ]);

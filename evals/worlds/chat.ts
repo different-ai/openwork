@@ -622,6 +622,7 @@ export async function renderCycle(seed: Seed) {
 }
 
 export const streamedMarkdownMarker = "STREAM_MARKDOWN_ANSWER";
+export const streamedMarkdownReasoning = "Preparing the formatted response.";
 /** A multi-block answer: heading, prose, list, table, fenced code, closing prose. */
 export const streamedMarkdownAnswer = [
   "## Streamed answer heading",
@@ -655,7 +656,9 @@ export async function streamedMarkdown(seed: Seed) {
     agentWorkloads: [{
       promptMarker: streamedMarkdownMarker,
       finalReply: streamedMarkdownAnswer,
-      finalReplyChunkSize: 8,
+      finalReasoning: streamedMarkdownReasoning,
+      // Allow live reasoning inspection over remote CDP before the mid-turn reload.
+      finalReplyChunkSize: 1,
       finalReplyDelayMs: 1500,
       steps: [],
     }],
@@ -669,7 +672,7 @@ export async function streamedMarkdown(seed: Seed) {
         npm: "@ai-sdk/openai-compatible",
         name: "Streamed markdown mock",
         options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-streamed-markdown" },
-        models: { [modelId]: { name: "Streamed markdown model" } },
+        models: { [modelId]: { name: "Streamed markdown model", reasoning: true } },
       },
     },
   });

@@ -172,6 +172,7 @@ test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeo
     body: JSON.stringify({ workloads: [{
       promptMarker: "[The user selected @",
       finalReply: "Handoff received",
+      finalReasoning: "Checking the handoff result.",
       steps: [{ tool: "execute_capability", arguments: { ignored: true }, argumentsFrom: "computer-mention" }],
     }] }),
   });
@@ -195,6 +196,26 @@ test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeo
     const call = frames.flatMap((frame) => frame.choices[0].delta.tool_calls ?? [])[0];
     assert.deepEqual(JSON.parse(call.function.arguments), { name: "remote-session:create", body: { target, prompt: task } });
   }
+
+  const finalCompletion = await fetch(`${origin}/v1/chat/completions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      model: "handoff-model",
+      messages: [
+        { role: "user", content: "[The user selected @cloud: complete the handoff.]" },
+        { role: "tool", content: "queued", tool_call_id: "call_handoff" },
+      ],
+      tools: [{ type: "function", function: { name: "execute_capability" } }],
+    }),
+  });
+  assert.equal(finalCompletion.status, 200);
+  const finalFrames = (await finalCompletion.text()).split("\n")
+    .filter((line) => line.startsWith("data: {")).map((line) => JSON.parse(line.slice(6)));
+  const deltas = finalFrames.map((frame) => frame.choices[0].delta);
+  assert.deepEqual(deltas.filter((delta) => delta.reasoning_content), [{ reasoning_content: "Checking the handoff result." }]);
+  assert.deepEqual(deltas.filter((delta) => delta.content), [{ content: "Handoff received" }]);
+  assert.ok(deltas.findIndex((delta) => delta.reasoning_content) < deltas.findIndex((delta) => delta.content));
 
   const discoveryWorkload = await fetch(`${origin}/admin/agent-workloads`, {
     method: "POST", headers: { "content-type": "application/json" },

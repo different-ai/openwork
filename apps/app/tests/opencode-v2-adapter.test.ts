@@ -490,6 +490,87 @@ describe("OpenCode v2 event translation", () => {
     ]);
   });
 
+  test.each(["text", "reasoning"])("isolates %s streams by session, message, kind, and ordinal", (kind) => {
+    const state = createV2EventTranslationState();
+    for (const sessionID of ["ses_one", "ses_two"]) {
+      for (const assistantMessageID of ["msg_one", "msg_two"]) {
+        for (const streamKind of ["text", "reasoning"]) {
+          translateV2Event({
+            type: `session.${streamKind}.started`, created: 10,
+            data: { sessionID, assistantMessageID, ordinal: 0 },
+          }, state);
+        }
+      }
+    }
+    const identity = { sessionID: "ses_one", assistantMessageID: "msg_one", ordinal: 0 };
+    const id = kind === "text" ? "msg_one:0" : "msg_one:reasoning:0";
+    expect(translateV2Event({
+      type: `session.${kind}.delta`, data: { ...identity, delta: "only this part" },
+    }, state)).toEqual([{
+      type: "message.part.delta",
+      properties: { sessionID: "ses_one", messageID: "msg_one", partID: id, field: "text", delta: "only this part" },
+    }]);
+    for (const unmatched of [
+      { ...identity, assistantMessageID: "msg_missing" },
+      { ...identity, ordinal: 9 },
+      { ...identity, sessionID: "ses_missing" },
+      { sessionID: "ses_one", [`${kind}ID`]: "missing" },
+      { sessionID: "ses_one", [`${kind}Id`]: "missing" },
+      { sessionID: "ses_one", assistantMessageID: "msg_one" },
+      { sessionID: "ses_one", assistantMessageID: "" },
+      { sessionID: "ses_one", messageID: null },
+    ]) {
+      expect(translateV2Event({ type: `session.${kind}.delta`, data: { ...unmatched, delta: "WRONG" } }, state)).toBeNull();
+      expect(translateV2Event({ type: `session.${kind}.ended`, data: { ...unmatched, text: "WRONG" } }, state)).toBeNull();
+    }
+    for (const sessionID of ["ses_one", "ses_two"]) {
+      for (const assistantMessageID of ["msg_one", "msg_two"]) {
+        for (const streamKind of ["text", "reasoning"]) {
+          expect(translateV2Event({
+            type: `session.${streamKind}.ended`, created: 20,
+            data: { sessionID, assistantMessageID, ordinal: 0 },
+          }, state)).toMatchObject([{
+            properties: { part: {
+              sessionID, messageID: assistantMessageID, type: streamKind,
+              text: sessionID === "ses_one" && assistantMessageID === "msg_one" && streamKind === kind ? "only this part" : "",
+            } },
+          }]);
+        }
+      }
+    }
+  });
+
+  test("keeps legacy aliases and kind-local counters without letting tools consume text ordinals", () => {
+    const state = createV2EventTranslationState();
+    const identity = { sessionID: "ses_legacy", assistantMessageID: "msg_legacy" };
+    translateV2Event({ type: "session.tool.input.started", data: { ...identity, id: "call_first", name: "shell" } }, state);
+    for (const ordinal of [0, 1]) {
+      for (const kind of ["reasoning", "text"]) {
+        const id = `msg_legacy:${kind === "reasoning" ? "reasoning:" : ""}${ordinal}`;
+        const started = {
+          type: `session.next.${kind}.started`, created: 10,
+          data: { ...identity, [`${kind}ID`]: `shared_${ordinal}` },
+        };
+        expect(translateV2Event(started, state)?.[1]).toMatchObject({ properties: { part: { id, text: "" } } });
+        translateV2Event({ type: `session.next.${kind}.delta`, data: { sessionID: identity.sessionID, delta: "legacy" } }, state);
+        // Replayed starts must not reset accumulated text or advance the counter.
+        expect(translateV2Event(started, state)?.[1]).toMatchObject({ properties: { part: { id, text: "legacy" } } });
+        expect(translateV2Event({
+          type: `session.next.${kind}.ended`, created: 20,
+          data: { sessionID: identity.sessionID, [`${kind}ID`]: `shared_${ordinal}` },
+        }, state)).toMatchObject([{ properties: { part: { id, text: "legacy" } } }]);
+        expect(translateV2Event({
+          type: `session.next.${kind}.delta`,
+          data: { ...identity, assistantMessageID: "msg_other", [`${kind}ID`]: `shared_${ordinal}`, delta: "WRONG" },
+        }, state)).toBeNull();
+        expect(translateV2Event({
+          type: `session.next.${kind}.delta`,
+          data: { ...identity, ordinal: 9, [`${kind}ID`]: `shared_${ordinal}`, delta: "WRONG" },
+        }, state)).toBeNull();
+      }
+    }
+  });
+
   test("emits an error before terminal idle events for failed execution", () => {
     const state = createV2EventTranslationState();
     expect(translateV2Event({
@@ -603,6 +684,174 @@ describe("OpenCode v2 client compatibility", () => {
       expect(ui).toMatchObject({ output: "Combined result" });
     } finally { globalThis.fetch = originalFetch; }
   });
+  test("hydrates mixed native content with the same text and reasoning IDs as streaming", async () => {
+    const originalFetch = globalThis.fetch;
+    // beta19086 schema: each kind has its own ordinal; reasoning time is optional.
+    const message = {
+      id: "msg_mixed", type: "assistant", time: { created: 5, completed: 90 },
+      error: { type: "unknown", message: "partial turn failed" },
+      content: [
+        { type: "reasoning", text: "First thought", time: { created: 10, completed: 20 } },
+        { ...capturedV2ToolMessage.content[1] },
+        { type: "text", text: "First answer" },
+        { type: "reasoning", text: "Second thought", time: { created: 40, completed: 50 } },
+        { type: "text", text: "Second answer" },
+        { type: "reasoning", text: "Unfinished thought" },
+      ],
+    };
+    globalThis.fetch = async () => jsonResponse({ data: [message] });
+    try {
+      const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
+      const result = await client.session.messages({ sessionID: "ses_mixed" });
+      const parts = result.data?.[0]?.parts;
+      expect(parts?.map((part) => part.id)).toEqual([
+        "msg_mixed:reasoning:0", "call_captured_shell", "msg_mixed:0",
+        "msg_mixed:reasoning:1", "msg_mixed:1", "msg_mixed:reasoning:2",
+      ]);
+      expect(result.data?.[0]?.info.error).toEqual({ name: "UnknownError", data: { message: "partial turn failed" } });
+      expect(parts?.[5]).toEqual({
+        id: "msg_mixed:reasoning:2", sessionID: "ses_mixed", messageID: "msg_mixed",
+        type: "reasoning", text: "Unfinished thought", time: { start: 5 },
+      });
+      const state = createV2EventTranslationState();
+      const identity = { sessionID: "ses_mixed", assistantMessageID: "msg_mixed" };
+      translateV2Event({ type: "session.tool.input.started", data: { ...identity, id: "call_captured_shell", name: "shell" } }, state);
+      for (const [kind, ordinal, text, start, end, index] of [
+        ["reasoning", 0, "First thought", 10, 20, 0],
+        ["text", 0, "First answer", 30, 35, 2],
+        ["reasoning", 1, "Second thought", 40, 50, 3],
+        ["text", 1, "Second answer", 60, 70, 4],
+      ] as const) {
+        const data = { ...identity, ordinal };
+        const started = translateV2Event({ type: `session.${kind}.started`, created: start, data }, state);
+        expect(started?.[0]).toMatchObject({ properties: { info: { time: { created: start } } } });
+        expect(started?.[1]).toMatchObject({ properties: { part: { id: parts?.[index]?.id, type: kind, text: "" } } });
+        translateV2Event({ type: `session.${kind}.delta`, data: { ...data, delta: "partial" } }, state);
+        const ended = { type: `session.${kind}.ended`, created: end, data: { ...data, text } };
+        expect(translateV2Event(ended, state)).toEqual([{ type: "message.part.updated", properties: { part: parts?.[index] } }]);
+        expect(translateV2Event(ended, state)).toEqual([{ type: "message.part.updated", properties: { part: parts?.[index] } }]);
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("maps native file results to stable per-call attachments in live and hydrated completed tools", async () => {
+    const originalFetch = globalThis.fetch;
+    const content = [
+      { type: "text", text: "Created files" },
+      { type: "file", uri: "file:///workspace/report.pdf", mime: "application/pdf", name: "report.pdf" },
+      { type: "text", text: "Two outputs" },
+      { type: "file", uri: "data:image/png;base64,AA==", mime: "image/png" },
+    ];
+    const tools = ["call_one", "call_two"].map((id) => ({
+      type: "tool", id, name: "export_report",
+      state: { status: "completed", input: {}, content, metadata: { files: 2 } },
+      time: { created: 10, ran: 20, completed: 30 },
+    }));
+    globalThis.fetch = async () => jsonResponse({ data: [{ id: "msg_files", type: "assistant", time: { created: 5 }, content: tools }] });
+    try {
+      const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
+      const result = await client.session.messages({ sessionID: "ses_files" });
+      const state = createV2EventTranslationState();
+      for (const [index, tool] of tools.entries()) {
+        const identity = { sessionID: "ses_files", assistantMessageID: "msg_files", id: tool.id };
+        translateV2Event({ type: "session.tool.input.started", created: 10, data: { ...identity, name: tool.name } }, state);
+        translateV2Event({ type: "session.tool.called", created: 20, data: { ...identity, input: {}, executed: false } }, state);
+        const completed = translateV2Event({
+          type: "session.tool.success", created: 30, data: { ...identity, content, metadata: { files: 2 }, executed: false },
+        }, state);
+        expect(completed).toEqual([{ type: "message.part.updated", properties: { part: result.data?.[0]?.parts[index] } }]);
+        expect(result.data?.[0]?.parts[index]).toMatchObject({ state: {
+          output: "Created files\nTwo outputs",
+          attachments: [
+            { id: `${tool.id}:file:0`, sessionID: "ses_files", messageID: "msg_files", type: "file", url: content[1]?.uri, mime: "application/pdf", filename: "report.pdf" },
+            { id: `${tool.id}:file:1`, sessionID: "ses_files", messageID: "msg_files", type: "file", url: content[3]?.uri, mime: "image/png" },
+          ],
+        } });
+        // Repeated completion retains IDs, including identical URIs on distinct calls.
+        expect(translateV2Event({
+          type: "session.tool.success", created: 30, data: { ...identity, content },
+        }, state)).toEqual(completed);
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test.each(["subagent", "task", "custom_subagent"])("normalizes only native subagent fields, not %s lookalikes", async (name) => {
+    const originalFetch = globalThis.fetch;
+    const input = { agent: "explore", prompt: "Inspect workspace", description: "Workspace inspection", extra: { keep: true } };
+    const metadata = { sessionID: "ses_child", status: "working", extra: ["keep"] };
+    const expectedInput = name === "subagent" ? { ...input, subagent_type: "explore" } : input;
+    const expectedMetadata = name === "subagent" ? { ...metadata, sessionId: "ses_child" } : metadata;
+    const expectedTool = name === "subagent" ? "task" : name;
+    const error = { type: "unknown", message: "child failed" };
+    const content = [{ type: "text", text: "Child result" }];
+    const states = [
+      { status: "streaming", input: JSON.stringify(input) },
+      { status: "running", input, metadata },
+      { status: "completed", input, metadata, content },
+      { status: "error", input, metadata, error },
+    ];
+    globalThis.fetch = async () => jsonResponse({ data: states.map((state) => ({
+      id: "msg_parent", type: "assistant", time: { created: 5 },
+      content: [{ type: "tool", id: "call_child", name, state, time: { created: 10, ran: 20, completed: 30 } }],
+    })) });
+    try {
+      const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
+      const result = await client.session.messages({ sessionID: "ses_parent" });
+      for (const [index, message] of (result.data ?? []).entries()) {
+        expect(message.parts[0]).toMatchObject({
+          tool: expectedTool, state: { input: expectedInput, ...(index > 0 ? { metadata: expectedMetadata } : {}) },
+        });
+      }
+      const state = createV2EventTranslationState();
+      const identity = { sessionID: "ses_parent", assistantMessageID: "msg_parent", id: "call_child" };
+      translateV2Event({ type: "session.tool.input.started", created: 10, data: { ...identity, name } }, state);
+      for (const type of ["session.tool.input.delta", "session.tool.input.ended"]) {
+        expect(translateV2Event({ type, data: { ...identity, delta: JSON.stringify(input), text: JSON.stringify(input) } }, state))
+          .toEqual([{ type: "message.part.updated", properties: { part: result.data?.[0]?.parts[0] } }]);
+      }
+      expect(translateV2Event({ type: "session.tool.called", created: 20, data: { ...identity, input, executed: false } }, state))
+        .toMatchObject([{ properties: { part: { tool: expectedTool, state: { input: expectedInput, status: "running" } } } }]);
+      expect(translateV2Event({ type: "session.tool.progress", created: 25, data: { ...identity, metadata } }, state))
+        .toEqual([{ type: "message.part.updated", properties: { part: result.data?.[1]?.parts[0] } }]);
+      expect(translateV2Event({ type: "session.tool.success", created: 30, data: { ...identity, metadata, content, executed: false } }, state))
+        .toEqual([{ type: "message.part.updated", properties: { part: result.data?.[2]?.parts[0] } }]);
+      expect(translateV2Event({ type: "session.tool.failed", created: 30, data: { ...identity, metadata, error, executed: false } }, state))
+        .toEqual([{ type: "message.part.updated", properties: { part: result.data?.[3]?.parts[0] } }]);
+      expect(result.data?.[3]?.parts[0]).toMatchObject({ state: { error: "child failed" } });
+      expect(input).not.toHaveProperty("subagent_type");
+      expect(metadata).not.toHaveProperty("sessionId");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("preserves existing compatibility fields on native subagent inputs and metadata", async () => {
+    const originalFetch = globalThis.fetch;
+    const input = { agent: "explore", subagent_type: "manual", custom: { agent: "unchanged" } };
+    const metadata = { sessionID: "ses_native", sessionId: "ses_manual", custom: { sessionID: "unchanged" } };
+    globalThis.fetch = async () => jsonResponse({ data: [{
+      id: "msg_parent", type: "assistant", time: { created: 10 },
+      content: [{ type: "tool", id: "call_child", name: "subagent", time: { created: 10, ran: 20 }, state: { status: "running", input, metadata } }],
+    }] });
+    try {
+      const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
+      const result = await client.session.messages({ sessionID: "ses_parent" });
+      expect(result.data?.[0]?.parts[0]).toMatchObject({ tool: "task", state: { input, metadata } });
+      const state = createV2EventTranslationState();
+      const identity = { sessionID: "ses_parent", assistantMessageID: "msg_parent", id: "call_child" };
+      translateV2Event({ type: "session.tool.input.started", created: 10, data: { ...identity, name: "subagent" } }, state);
+      translateV2Event({ type: "session.tool.called", created: 20, data: { ...identity, input, executed: false } }, state);
+      expect(translateV2Event({ type: "session.tool.progress", data: { ...identity, metadata } }, state))
+        .toEqual([{ type: "message.part.updated", properties: { part: result.data?.[0]?.parts[0] } }]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("maps only missing and empty native titles to stable read-time placeholders", async () => {
     const originalFetch = globalThis.fetch;
     const created = 1_788_548_737_221;
@@ -778,33 +1027,41 @@ describe("OpenCode v2 client compatibility", () => {
     }
   });
 
-  test("returns from promptAsync before a delayed prompt response", async () => {
+  test("waits for native prompt admission and returns its actual response without waiting for execution", async () => {
     const originalFetch = globalThis.fetch;
-    let promptSettled: Promise<void> = Promise.resolve();
+    const admission = Promise.withResolvers<Response>();
+    const dispatched = Promise.withResolvers<Request>();
+    const response = new Response(null, { status: 204, headers: { "X-Admission": "accepted" } });
     globalThis.fetch = async (input, init) => {
       const request = input instanceof Request ? input : new Request(input, init);
       if (request.url.endsWith("/model")) return jsonResponse({ data: {} });
       if (request.url.endsWith("/prompt")) {
-        promptSettled = delay(2_000);
-        await promptSettled;
-        return jsonResponse({ data: {} });
+        dispatched.resolve(request);
+        return admission.promise;
       }
       throw new Error(`Unexpected request: ${request.method} ${request.url}`);
     };
 
     try {
       const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
-      const startedAt = performance.now();
-      const result = await client.session.promptAsync({
+      let settled = false;
+      const pending = client.session.promptAsync({
         sessionID: "ses_prompt",
         model: { providerID: "witness", modelID: "model" },
         parts: [{ type: "text", text: "hello" }],
-      });
-
-      expect(performance.now() - startedAt).toBeLessThan(100);
-      expect(result.response.status).toBe(202);
-      await promptSettled;
+      }).finally(() => { settled = true; });
+      const request = await dispatched.promise;
+      await delay(10);
+      expect(settled).toBe(false);
+      expect(await request.clone().json()).toEqual({ text: "hello" });
+      admission.resolve(response);
+      const result = await pending;
+      expect(result.error).toBeUndefined();
+      expect(result.response).toBe(response);
+      expect(result.response.status).toBe(204);
+      expect(result.request.url).toBe(request.url);
     } finally {
+      admission.resolve(response);
       globalThis.fetch = originalFetch;
     }
   });
@@ -831,50 +1088,119 @@ describe("OpenCode v2 client compatibility", () => {
     }
   });
 
-  test("emits session.error when the dispatched prompt fails", async () => {
+  test.each([400, 409, 500])("returns native prompt admission failure %i to a separate send client", async (status) => {
     const originalFetch = globalThis.fetch;
-    let eventController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const error = { name: "SessionPromptFailed", error: { message: "admission rejected", detail: { retryable: false } } };
+    const response = jsonResponse(error, status);
     globalThis.fetch = async (input, init) => {
       const request = input instanceof Request ? input : new Request(input, init);
       if (request.url.endsWith("/api/event")) {
-        return new Response(new ReadableStream<Uint8Array>({
-          start: (controller) => {
-            eventController = controller;
-          },
-        }), { headers: { "Content-Type": "text/event-stream" } });
+        return new Response("", { headers: { "Content-Type": "text/event-stream" } });
       }
       if (request.url.endsWith("/model")) return jsonResponse({ data: {} });
       if (request.url.endsWith("/prompt")) {
-        await delay(10);
-        return jsonResponse({ error: { message: "provider unavailable" } }, 500);
+        return response;
       }
       throw new Error(`Unexpected request: ${request.method} ${request.url}`);
     };
 
     try {
+      const eventClient = createClientV2("http://opencode.test/opencode2", "/workspace", {});
+      const subscription = await eventClient.event.subscribe();
       const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
-      const subscription = await client.event.subscribe();
-      const nextEvent = subscription.stream.next();
       const result = await client.session.promptAsync({
         sessionID: "ses_failure",
         model: { providerID: "witness", modelID: "model" },
         parts: [{ type: "text", text: "hello" }],
       });
-      expect(result.response.status).toBe(202);
-
-      expect(await nextEvent).toEqual({
-        done: false,
-        value: {
-          type: "session.error",
-          properties: {
-            sessionID: "ses_failure",
-            error: { name: "UnknownError", data: { message: "provider unavailable" } },
-          },
-        },
-      });
-      eventController?.close();
-      await subscription.stream.return(undefined);
+      expect(result.response).toBe(response);
+      expect(result.error).toEqual(error);
+      expect(result.data).toBeUndefined();
+      expect(result.request.url).toEndWith("/api/session/ses_failure/prompt");
+      expect(await subscription.stream.next()).toEqual({ done: true, value: undefined });
     } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test.each(["model", "prompt"])("propagates network rejection from %s without fabricating success", async (endpoint) => {
+    const originalFetch = globalThis.fetch;
+    const failure = new TypeError("network unavailable");
+    const paths: string[] = [];
+    globalThis.fetch = async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      paths.push(new URL(request.url).pathname);
+      if (request.url.endsWith(`/${endpoint}`)) throw failure;
+      return jsonResponse({ data: {} });
+    };
+    try {
+      const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
+      await expect(client.session.promptAsync({
+        sessionID: "ses_failure",
+        model: { providerID: "witness", modelID: "model" },
+        parts: [{ type: "text", text: "hello" }],
+      })).rejects.toBe(failure);
+      expect(paths).toHaveLength(endpoint === "model" ? 1 : 2);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("preserves model admission failure and does not dispatch a prompt", async () => {
+    const originalFetch = globalThis.fetch;
+    const error = { name: "ModelNotFound", data: { modelID: "missing" } };
+    const response = jsonResponse(error, 404);
+    const paths: string[] = [];
+    globalThis.fetch = async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      paths.push(new URL(request.url).pathname);
+      return response;
+    };
+    try {
+      const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
+      const result = await client.session.promptAsync({
+        sessionID: "ses_failure",
+        model: { providerID: "witness", modelID: "missing" },
+        parts: [{ type: "text", text: "hello" }],
+      });
+      expect(result.response).toBe(response);
+      expect(result.error).toEqual(error);
+      expect(result.data).toBeUndefined();
+      expect(paths).toEqual(["/opencode2/api/session/ses_failure/model"]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test.each(["model", "prompt"])("propagates abort while waiting for %s admission", async (endpoint) => {
+    const originalFetch = globalThis.fetch;
+    const controller = new AbortController();
+    const dispatched = Promise.withResolvers<Request>();
+    const paths: string[] = [];
+    globalThis.fetch = async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      paths.push(new URL(request.url).pathname);
+      if (!request.url.endsWith(`/${endpoint}`)) return jsonResponse({ data: {} });
+      dispatched.resolve(request);
+      return new Promise<Response>((_resolve, reject) => {
+        request.signal.addEventListener("abort", () => reject(request.signal.reason), { once: true });
+      });
+    };
+    try {
+      const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
+      const pending = client.session.promptAsync({
+        sessionID: "ses_abort",
+        model: { providerID: "witness", modelID: "model" },
+        parts: [{ type: "text", text: "hello" }],
+      }, { signal: controller.signal });
+      const request = await dispatched.promise;
+      const failure = new DOMException("Cancelled admission", "AbortError");
+      controller.abort(failure);
+      await expect(pending).rejects.toBe(failure);
+      expect(request.signal.aborted).toBe(true);
+      expect(paths).toHaveLength(endpoint === "model" ? 1 : 2);
+    } finally {
+      controller.abort();
       globalThis.fetch = originalFetch;
     }
   });
@@ -1051,7 +1377,7 @@ describe("v2 question forms", () => {
       const client = createClientV2("http://owner.test/opencode2", "/workspace", {});
       const parameters = { sessionID: "ses_side", model: { providerID: "mock", modelID: "model" },
         system: "Main conversation reference: ses_main", parts: [{ type: "text", text: "What is happening?" }] };
-      expect((await client.session.promptAsync(parameters)).response.status).toBe(202);
+      expect((await client.session.promptAsync(parameters)).response.status).toBe(204);
       expect(requests.map((item) => item.method)).toEqual(["POST", "PUT", "POST"]);
       expect(requests[1]).toMatchObject({ path: "/opencode2/api/session/ses_side/instructions/entries/openwork-context", body: { value: parameters.system } });
       expect(requests[2]?.body).toEqual({ text: "What is happening?" });

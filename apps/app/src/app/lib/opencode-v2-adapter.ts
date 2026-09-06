@@ -1,4 +1,5 @@
 import type {
+  FilePart,
   Model,
   Part,
   PermissionRequest,
@@ -6,6 +7,7 @@ import type {
   Provider,
   ProviderListResponse,
   QuestionRequest,
+  ReasoningPart,
   Session,
   SessionStatus,
   TextPart,
@@ -146,6 +148,7 @@ type TextStream = {
   partID: string;
   ordinal: number;
   text: string;
+  start: number;
 };
 
 type ToolStream = {
@@ -220,10 +223,6 @@ function readMessageID(value: Record<string, unknown>): string {
   return readString(value, "assistantMessageID") ?? readString(value, "messageID") ?? readString(value, "messageId") ?? "";
 }
 
-function readTimestamp(value: Record<string, unknown>): number {
-  return readNumber(value, "timestamp") ?? Date.now();
-}
-
 function mapV2Session(value: unknown, directory: string | undefined, eventCreated?: number): Session | null {
   const data = responseData(value);
   if (!isRecord(data)) return null;
@@ -261,19 +260,56 @@ function messageRole(value: Record<string, unknown>): V2MessageRole {
   return "assistant";
 }
 
-function parseToolInput(value: unknown): Record<string, unknown> {
-  if (isRecord(value)) return value;
+function parseToolInput(value: unknown, tool?: string): Record<string, unknown> {
+  if (isRecord(value)) {
+    return tool === "subagent" && typeof value.agent === "string"
+      ? { subagent_type: value.agent, ...value }
+      : value;
+  }
   if (typeof value !== "string" || value === "") return {};
   try {
     const parsed: unknown = JSON.parse(value);
-    return isRecord(parsed) ? parsed : {};
+    return isRecord(parsed) ? parseToolInput(parsed, tool) : {};
   } catch {
     return {};
   }
 }
 
 function compatibleToolName(tool: string): string {
-  return tool === "shell" ? "bash" : tool;
+  return tool === "shell" ? "bash" : tool === "subagent" ? "task" : tool;
+}
+
+function toolMetadata(tool: string, metadata: Record<string, unknown>): Record<string, unknown> {
+  return tool === "subagent" && typeof metadata.sessionID === "string"
+    ? { sessionId: metadata.sessionID, ...metadata }
+    : metadata;
+}
+
+function toolAttachments(
+  content: unknown,
+  callID: string,
+  messageID: string,
+  sessionID: string,
+): { attachments?: FilePart[] } {
+  if (!Array.isArray(content)) return {};
+  const attachments: FilePart[] = [];
+  for (const item of content) {
+    if (!isRecord(item) || item.type !== "file") continue;
+    const url = readString(item, "uri");
+    const mime = readString(item, "mime");
+    if (url === undefined || mime === undefined) continue;
+    const filename = readString(item, "name");
+    attachments.push({
+      id: `${callID}:file:${attachments.length}`,
+      messageID,
+      sessionID,
+      type: "file",
+      url,
+      mime,
+      ...(filename === undefined ? {} : { filename }),
+    });
+  }
+  return attachments.length > 0 ? { attachments } : {};
 }
 
 function toolPartMetadata(tool: string): Pick<ToolPart, "metadata"> {
@@ -311,13 +347,13 @@ function mapV2ToolPart(
   const status = readString(state, "status");
   if (!callID || !sourceTool || !state) return null;
   const tool = compatibleToolName(sourceTool);
-  const input = parseToolInput(state.input);
+  const input = parseToolInput(state.input, sourceTool);
   const time = readRecord(value, "time");
   const created = readNumber(time, "created") ?? messageCreated;
   const start = readNumber(time, "ran") ?? created;
   const end = readNumber(time, "completed") ?? start;
   const title = readString(state, "title") ?? tool;
-  const metadata = readRecord(state, "metadata") ?? {};
+  const metadata = toolMetadata(sourceTool, readRecord(state, "metadata") ?? {});
   const base: Omit<ToolPart, "state"> = {
     id: callID,
     messageID,
@@ -328,9 +364,9 @@ function mapV2ToolPart(
     ...toolPartMetadata(sourceTool),
   };
 
-  if (status === "pending") {
+  if (status === "pending" || status === "streaming") {
     const raw = typeof state.input === "string" ? state.input : "";
-    return { ...base, state: { status, input, raw } };
+    return { ...base, state: { status: "pending", input, raw } };
   }
   if (status === "running") {
     return { ...base, state: { status, input, title, metadata, time: { start } } };
@@ -342,6 +378,7 @@ function mapV2ToolPart(
         status,
         input,
         output: toolOutput(state.content, state.result),
+        ...toolAttachments(state.content, callID, messageID, sessionID),
         title,
         metadata,
         time: { start, end },
@@ -370,16 +407,27 @@ function mapV2MessageParts(
   messageCreated: number,
 ): Part[] {
   if (Array.isArray(value.content)) {
-    return value.content.flatMap<Part>((entry, ordinal) => {
+    const ordinals = { text: 0, reasoning: 0 };
+    return value.content.flatMap<Part>((entry) => {
       if (!isRecord(entry)) return [];
-      if (readString(entry, "type") === "text") {
+      const kind = readString(entry, "type");
+      if (kind === "text" || kind === "reasoning") {
+        const ordinal = ordinals[kind]++;
         const text = readString(entry, "text");
+        const time = readRecord(entry, "time");
+        const end = readNumber(time, "completed");
         return text === undefined ? [] : [{
-          id: `${messageID}:${ordinal}`,
+          id: textPartID(messageID, kind, ordinal),
           messageID,
           sessionID,
-          type: "text" as const,
           text,
+          ...(kind === "reasoning" ? {
+            type: kind,
+            time: {
+              start: readNumber(time, "created") ?? messageCreated,
+              ...(end === undefined ? {} : { end }),
+            },
+          } : { type: kind }),
         }];
       }
       if (readString(entry, "type") === "tool") {
@@ -590,25 +638,40 @@ function errorMessage(value: unknown): string {
   }
 }
 
-function streamKey(properties: Record<string, unknown>, sessionID: string, messageID: string): string {
-  const explicit = readString(properties, "textID") ?? readString(properties, "textId");
-  if (explicit) return explicit;
+function textPartID(messageID: string, kind: "text" | "reasoning", ordinal: number): string {
+  return kind === "text" ? `${messageID}:${ordinal}` : `${messageID}:reasoning:${ordinal}`;
+}
+
+function streamKey(
+  properties: Record<string, unknown>,
+  sessionID: string,
+  messageID: string,
+  kind: "text" | "reasoning",
+): string {
+  const explicit = readString(properties, `${kind}ID`) ?? readString(properties, `${kind}Id`);
+  if (explicit !== undefined) return JSON.stringify([sessionID, kind, "id", explicit]);
   const ordinal = readNumber(properties, "ordinal");
-  // v2 emits one text stream per (assistantMessageID, ordinal); keying on the
-  // event-provided ordinal keeps multi-part messages from merging into one part.
-  return ordinal === undefined ? `${sessionID}:${messageID}` : `${messageID}:${ordinal}`;
+  return JSON.stringify([sessionID, kind, messageID, ordinal]);
 }
 
 function resolveTextStream(
   properties: Record<string, unknown>,
   state: V2EventTranslationState,
+  kind: "text" | "reasoning",
 ): TextStream | null {
   const sessionID = readSessionID(properties);
   const messageID = readMessageID(properties);
-  const explicitKey = streamKey(properties, sessionID, messageID);
+  const hasMessageID = "assistantMessageID" in properties || "messageID" in properties || "messageId" in properties;
+  const explicitKey = streamKey(properties, sessionID, messageID, kind);
   const byExplicitKey = state.streams.get(explicitKey);
-  if (byExplicitKey) return byExplicitKey;
-  const latestKey = sessionID ? state.latestStreamKeyBySession.get(sessionID) : undefined;
+  if (byExplicitKey) {
+    if (hasMessageID && byExplicitKey.messageID !== messageID) return null;
+    if ("ordinal" in properties && byExplicitKey.ordinal !== properties.ordinal) return null;
+    return byExplicitKey;
+  }
+  // Only identity-free legacy fragments may use the latest stream of this kind.
+  if (hasMessageID || "ordinal" in properties || `${kind}ID` in properties || `${kind}Id` in properties) return null;
+  const latestKey = sessionID ? state.latestStreamKeyBySession.get(JSON.stringify([sessionID, kind])) : undefined;
   if (latestKey) return state.streams.get(latestKey) ?? null;
   return null;
 }
@@ -642,7 +705,7 @@ function pendingToolPart(stream: ToolStream): ToolPart {
     sessionID: stream.sessionID,
     type: "tool",
     callID: stream.callID,
-    tool: stream.tool,
+    tool: compatibleToolName(stream.tool),
     ...toolPartMetadata(stream.tool),
     state: {
       status: "pending",
@@ -659,13 +722,13 @@ function runningToolPart(stream: ToolStream, start: number): ToolPart {
     sessionID: stream.sessionID,
     type: "tool",
     callID: stream.callID,
-    tool: stream.tool,
+    tool: compatibleToolName(stream.tool),
     ...toolPartMetadata(stream.tool),
     state: {
       status: "running",
       input: stream.input,
-      title: stream.tool,
-      metadata: stream.metadata,
+      title: compatibleToolName(stream.tool),
+      metadata: toolMetadata(stream.tool, stream.metadata),
       time: { start },
     },
   };
@@ -682,14 +745,15 @@ function completedToolPart(
     sessionID: stream.sessionID,
     type: "tool",
     callID: stream.callID,
-    tool: stream.tool,
+    tool: compatibleToolName(stream.tool),
     ...toolPartMetadata(stream.tool),
     state: {
       status: "completed",
       input: stream.input,
       output: toolOutput(properties.content, properties.result),
-      title: stream.tool,
-      metadata: stream.metadata,
+      ...toolAttachments(properties.content, stream.callID, stream.messageID, stream.sessionID),
+      title: compatibleToolName(stream.tool),
+      metadata: toolMetadata(stream.tool, stream.metadata),
       time: { start: stream.start ?? end, end },
     },
   };
@@ -706,13 +770,13 @@ function failedToolPart(
     sessionID: stream.sessionID,
     type: "tool",
     callID: stream.callID,
-    tool: stream.tool,
+    tool: compatibleToolName(stream.tool),
     ...toolPartMetadata(stream.tool),
     state: {
       status: "error",
       input: stream.input,
       error: errorMessage(properties.error ?? properties.result),
-      metadata: stream.metadata,
+      metadata: toolMetadata(stream.tool, stream.metadata),
       time: { start: stream.start ?? end, end },
     },
   };
@@ -768,7 +832,7 @@ export function translateV2Event(
       ...payload,
       id: messageID,
       type: "user",
-      time: { created: readNumber(value, "created") ?? readTimestamp(properties) },
+      time: { created: readNumber(value, "created") ?? readNumber(properties, "timestamp") ?? Date.now() },
     }, sessionID);
     if (!message) return null;
     return [
@@ -789,31 +853,37 @@ export function translateV2Event(
     return [{ type: "session.status", properties: { sessionID, status: { type: "busy" } } }];
   }
 
-  if (type === "session.text.started" || type === "session.next.text.started") {
+  const kind = type.startsWith("session.reasoning.") || type.startsWith("session.next.reasoning.") ? "reasoning" : "text";
+  if (type === `session.${kind}.started` || type === `session.next.${kind}.started`) {
     const messageID = readMessageID(properties);
     if (!sessionID || !messageID) return null;
-    const key = streamKey(properties, sessionID, messageID);
-    const existing = state.streams.get(key);
+    const key = streamKey(properties, sessionID, messageID, kind);
+    const counterKey = JSON.stringify([sessionID, messageID, kind]);
+    const candidate = state.streams.get(key);
+    const existing = candidate?.messageID === messageID ? candidate : undefined;
     const ordinal = readNumber(properties, "ordinal")
       ?? existing?.ordinal
-      ?? state.nextOrdinalByMessage.get(messageID)
+      ?? state.nextOrdinalByMessage.get(counterKey)
       ?? 0;
     const stream = existing ?? {
       sessionID,
       messageID,
-      partID: `${messageID}:${ordinal}`,
+      partID: textPartID(messageID, kind, ordinal),
       ordinal,
       text: "",
+      start: toolEventTimestamp(value, properties),
     };
     state.streams.set(key, stream);
-    state.latestStreamKeyBySession.set(sessionID, key);
-    if (!existing) state.nextOrdinalByMessage.set(messageID, ordinal + 1);
-    const part: TextPart = {
+    state.latestStreamKeyBySession.set(JSON.stringify([sessionID, kind]), key);
+    if (!existing) {
+      state.nextOrdinalByMessage.set(counterKey, Math.max(state.nextOrdinalByMessage.get(counterKey) ?? 0, ordinal + 1));
+    }
+    const part: TextPart | ReasoningPart = {
       id: stream.partID,
       messageID,
       sessionID,
-      type: "text",
-      text: "",
+      text: stream.text,
+      ...(kind === "reasoning" ? { type: kind, time: { start: stream.start } } : { type: kind }),
     };
     return [
       {
@@ -823,7 +893,7 @@ export function translateV2Event(
             id: messageID,
             sessionID,
             role: "assistant",
-            time: { created: readTimestamp(properties) },
+            time: { created: stream.start },
           },
         },
       },
@@ -831,8 +901,8 @@ export function translateV2Event(
     ];
   }
 
-  if (type === "session.text.delta" || type === "session.next.text.delta") {
-    const stream = resolveTextStream(properties, state);
+  if (type === `session.${kind}.delta` || type === `session.next.${kind}.delta`) {
+    const stream = resolveTextStream(properties, state, kind);
     const delta = readString(properties, "delta");
     if (!stream || delta === undefined) return null;
     stream.text += delta;
@@ -848,17 +918,20 @@ export function translateV2Event(
     }];
   }
 
-  if (type === "session.text.ended" || type === "session.next.text.ended") {
-    const stream = resolveTextStream(properties, state);
+  if (type === `session.${kind}.ended` || type === `session.next.${kind}.ended`) {
+    const stream = resolveTextStream(properties, state, kind);
     if (!stream) return null;
     const fullText = readString(properties, "text");
     if (fullText !== undefined) stream.text = fullText;
-    const part: TextPart = {
+    const part: TextPart | ReasoningPart = {
       id: stream.partID,
       messageID: stream.messageID,
       sessionID: stream.sessionID,
-      type: "text",
       text: stream.text,
+      ...(kind === "reasoning" ? {
+        type: kind,
+        time: { start: stream.start, end: toolEventTimestamp(value, properties) },
+      } : { type: kind }),
     };
     return [{ type: "message.part.updated", properties: { part } }];
   }
@@ -868,7 +941,6 @@ export function translateV2Event(
     const callID = readToolCallID(properties);
     const sourceTool = readString(properties, "name") ?? readString(properties, "tool");
     if (!sessionID || !messageID || !callID || !sourceTool) return null;
-    const tool = compatibleToolName(sourceTool);
     const key = toolStreamKey(sessionID, callID);
     const existing = state.tools.get(key);
     const stream = existing ?? {
@@ -876,16 +948,12 @@ export function translateV2Event(
       messageID,
       partID: callID,
       callID,
-      tool,
+      tool: sourceTool,
       raw: "",
       input: {},
       metadata: {},
     };
     state.tools.set(key, stream);
-    if (!existing) {
-      const ordinal = state.nextOrdinalByMessage.get(messageID) ?? 0;
-      state.nextOrdinalByMessage.set(messageID, ordinal + 1);
-    }
     return [
       {
         type: "message.updated",
@@ -907,7 +975,7 @@ export function translateV2Event(
     const delta = readString(properties, "delta");
     if (!stream || delta === undefined) return null;
     stream.raw += delta;
-    stream.input = parseToolInput(stream.raw);
+    stream.input = parseToolInput(stream.raw, stream.tool);
     return [{ type: "message.part.updated", properties: { part: pendingToolPart(stream) } }];
   }
 
@@ -916,14 +984,14 @@ export function translateV2Event(
     const text = readString(properties, "text");
     if (!stream || text === undefined) return null;
     stream.raw = text;
-    stream.input = parseToolInput(text);
+    stream.input = parseToolInput(text, stream.tool);
     return [{ type: "message.part.updated", properties: { part: pendingToolPart(stream) } }];
   }
 
   if (type === "session.tool.called" || type === "session.next.tool.called") {
     const stream = resolveToolStream(properties, state);
     if (!stream) return null;
-    stream.input = parseToolInput(properties.input);
+    stream.input = parseToolInput(properties.input, stream.tool);
     stream.start = toolEventTimestamp(value, properties);
     return [{
       type: "message.part.updated",
@@ -1078,85 +1146,6 @@ async function* translateV2Events(
   }
 }
 
-type InjectedEventQueue = {
-  events: OpencodeEvent[];
-  push: (event: OpencodeEvent) => void;
-  wait: () => Promise<void>;
-  close: () => void;
-};
-
-function createInjectedEventQueue(): InjectedEventQueue {
-  const events: OpencodeEvent[] = [];
-  let wake: (() => void) | undefined;
-  let closed = false;
-  return {
-    events,
-    push: (event) => {
-      if (closed) return;
-      events.push(event);
-      wake?.();
-      wake = undefined;
-    },
-    wait: () => {
-      if (events.length > 0 || closed) return Promise.resolve();
-      return new Promise<void>((resolve) => {
-        wake = resolve;
-      });
-    },
-    close: () => {
-      closed = true;
-      wake?.();
-      wake = undefined;
-    },
-  };
-}
-
-type MergedEventResult =
-  | { source: IteratorResult<OpencodeEvent> }
-  | { injected: true };
-
-async function waitForSource(
-  source: Promise<IteratorResult<OpencodeEvent>>,
-): Promise<MergedEventResult> {
-  return { source: await source };
-}
-
-async function waitForInjected(queue: InjectedEventQueue): Promise<MergedEventResult> {
-  await queue.wait();
-  return { injected: true };
-}
-
-async function* mergeV2Events(
-  response: Response,
-  signal: AbortSignal | undefined,
-  queue: InjectedEventQueue,
-  close: () => void,
-  directory?: string,
-): AsyncGenerator<OpencodeEvent> {
-  const source = translateV2Events(response, signal, directory);
-  let sourceNext = source.next();
-  try {
-    while (!signal?.aborted) {
-      const injected = queue.events.shift();
-      if (injected) {
-        yield injected;
-        continue;
-      }
-      const result = await Promise.race([
-        waitForSource(sourceNext),
-        waitForInjected(queue),
-      ]);
-      if ("injected" in result) continue;
-      if (result.source.done) return;
-      yield result.source.value;
-      sourceNext = source.next();
-    }
-  } finally {
-    close();
-    void source.return(undefined);
-  }
-}
-
 function createWebFetch(auth: { token?: string }): typeof globalThis.fetch {
   return (input, init) => {
     const headers = new Headers(input instanceof Request ? input.headers : init?.headers);
@@ -1231,13 +1220,8 @@ export function createClientV2(
   const baseUrl = opencode2BaseUrl.replace(/\/+$/, "");
   const fetchImpl = createV2Fetch(auth);
   const compatibilityClient = createClient(baseUrl, directory, { mode: "openwork", token: auth.token });
-  const injectedEventListeners = new Set<(event: OpencodeEvent) => void>();
   const permissionSessionByRequestID = new Map<string, string>();
   const questionFormsByID = new Map<string, NonNullable<ReturnType<typeof mapV2Question>>>();
-
-  const emitInjectedEvent = (event: OpencodeEvent) => {
-    for (const listener of injectedEventListeners) listener(event);
-  };
 
   const request = async (
     method: string,
@@ -1515,34 +1499,13 @@ export function createClientV2(
         .filter((part) => part.type === "text" && typeof part.text === "string")
         .map((part) => typeof part.text === "string" ? part.text : "")
         .join("");
-      const promptPath = `/api/session/${encodeURIComponent(parameters.sessionID)}/prompt`;
-      const promptBody = { text };
-      const promptResult = request(
+      const promptResult = await request(
         "POST",
-        promptPath,
-        promptBody,
+        `/api/session/${encodeURIComponent(parameters.sessionID)}/prompt`,
+        { text },
         options?.signal,
       );
-      void promptResult.then(
-        (result) => {
-          if (result.response.ok) return;
-          emitInjectedEvent(sessionErrorEvent(parameters.sessionID, result.payload));
-        },
-        (error: unknown) => {
-          emitInjectedEvent(sessionErrorEvent(parameters.sessionID, error));
-        },
-      );
-      const headers = new Headers({ "Content-Type": "application/json" });
-      if (auth.token) headers.set("Authorization", `Bearer ${auth.token}`);
-      return successfulResult({
-        payload: null,
-        request: new Request(`${baseUrl}${promptPath}`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify(promptBody),
-        }),
-        response: new Response(null, { status: 202 }),
-      }, {});
+      return promptResult.response.ok ? successfulResult(promptResult, {}) : failedResult(promptResult);
     },
     abort: async (
       parameters: SessionParameters,
@@ -1702,14 +1665,8 @@ export function createClientV2(
           Object.assign(error, { status: response.status, response });
           throw error;
         }
-        const queue = createInjectedEventQueue();
-        const listener = (event: OpencodeEvent) => queue.push(event);
-        injectedEventListeners.add(listener);
         return {
-          stream: mergeV2Events(response, options?.signal, queue, () => {
-            injectedEventListeners.delete(listener);
-            queue.close();
-          }, directory),
+          stream: translateV2Events(response, options?.signal, directory),
         };
       },
     },
