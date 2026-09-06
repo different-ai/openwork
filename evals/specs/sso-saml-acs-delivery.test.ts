@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 import { denFetch } from "@openwork/behaviors";
-import type { DenSession } from "@openwork/behaviors";
+import type { DenRef, DenSession } from "@openwork/behaviors";
 import { server, test } from "@openwork/testkit";
 
 const title = "a Google-style SAML response posted to the SP-advertised ACS URL is not rejected as invalid_destination";
@@ -56,7 +56,7 @@ function googleSamlResponse(input: { destination: string; recipient: string; aud
   return Buffer.from(xml, "utf8").toString("base64");
 }
 
-async function postToAcs(den: DenSession, acsPath: string, samlResponse: string) {
+async function postToAcs(den: DenRef, acsPath: string, samlResponse: string) {
   return denFetch(den, acsPath, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
