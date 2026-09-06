@@ -83,6 +83,8 @@ test(
     const witnessedByTool = new Map(calls.map((call) => [call.name, call.args]));
     expect(witnessedByTool.get("getConfluencePage")).toEqual({ pageId: "1122334455" });
     expect(witnessedByTool.get("searchJiraIssuesUsingJql")).toEqual({ jql: expectedJql });
+    expect(world.receivedCalls.filter((call) => call.name === "getConfluencePage")).toHaveLength(1);
+    expect(world.receivedCalls.filter((call) => call.name === "searchJiraIssuesUsingJql")).toHaveLength(1);
 
     evidence.recordAssertionEvidence(
       "The dashboard tile names the missing required argument instead of a generic server error",

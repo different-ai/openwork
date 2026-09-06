@@ -12,6 +12,7 @@ import { ConnectionCard } from "./connection-card"
 import { reconnectActionFromChatToolResult } from "@/components/tools/error-attribution"
 import { AppChatArtifact } from "@/react-app/domains/apps/app-chat-artifact"
 import { openDesktopUrl } from "@/app/lib/desktop"
+import { mcpAppResolutionRetryDelayMs } from "@/app/lib/mcp-app-resolution"
 import {
   OpenworkServerError,
   type OpenworkMcpAppLaunchReference,
@@ -43,6 +44,7 @@ const ACTIONABLE_MCP_APP_RESOLUTION_CODES = new Set([
   "invalid_resource_mime",
   "invalid_resource_uri",
   "invalid_launch_reference",
+  "mcp_unreachable",
   "resource_read_failed",
   "resource_too_large",
   "server_unavailable",
@@ -217,12 +219,18 @@ export function isActionableMcpAppResolutionError(cause: unknown): boolean {
 
 const CHAT_MCP_APP_UNAVAILABLE_NOTICE = "Interactive view unavailable. The normal tool result is still available."
 
-export function McpAppDiagnosticNotice({ error, notice }: { error: McpAppDiagnostic; notice: string }) {
+export function McpAppDiagnosticNotice({ error, notice, onRetry }: { error: McpAppDiagnostic; notice: string; onRetry?: () => void }) {
   const [detailsCopied, setDetailsCopied] = useState(false)
   const details = formatMcpAppDiagnostic(error)
   return (
     <div className="mt-2 text-xs text-muted-foreground" role="status">
       <p>{notice} {error.message}</p>
+      {error.causeCode === "server_unavailable" || error.causeCode === "mcp_unreachable" ? (
+        <p className="mt-1">The connection was not ready. Retry, or check the connection under Settings &gt; Library.</p>
+      ) : null}
+      {onRetry ? (
+        <button type="button" className="mt-1 underline underline-offset-2" onClick={onRetry}>Retry</button>
+      ) : null}
       <details className="mt-1">
         <summary className="cursor-pointer select-none">Technical details ({error.code})</summary>
         <p className="mt-1">Copy these details when reporting the rendering problem.</p>
@@ -607,6 +615,7 @@ function EmbeddedMcpAppFrame({ part }: { part: DynamicToolUIPart }) {
   const launch = useMemo(() => gatewayMcpAppLaunch(result?._meta), [result])
   const [app, setApp] = useState<OpenworkMcpAppResource | null>(null)
   const [error, setError] = useState<McpAppDiagnostic | null>(null)
+  const [resolveToken, setResolveToken] = useState(0)
   // The sandbox view unmounts on every preserved-result change; keep the last
   // measured height here so the rebuilt iframe does not snap back to default.
   const heightRef = useRef(DEFAULT_HEIGHT)
@@ -617,36 +626,51 @@ function EmbeddedMcpAppFrame({ part }: { part: DynamicToolUIPart }) {
 
   useEffect(() => {
     let cancelled = false
+    let retryTimer: number | undefined
     setApp(null)
     setError(null)
     if (draft || !result || !openworkServerClient || !workspaceId) return () => { cancelled = true }
     const startedAt = performance.now()
-    void openworkServerClient.resolveMcpApp(workspaceId, part.toolName, launch ?? undefined)
-      .then(({ app: resolved }) => {
-        if (cancelled) return
-        // A preserved MCP result is neutral transport data. A null resolution
-        // means the current tool definition does not advertise an MCP App, so
-        // ordinary tools such as save_artifact_view render only their normal
-        // result without claiming an unavailable interactive view.
-        setApp(resolved)
-      })
-      .catch((cause) => {
-        if (!cancelled && isActionableMcpAppResolutionError(cause)) {
-          const diagnostic: McpAppDiagnostic = {
-            code: "MCP_APP_RESOURCE_RESOLUTION_FAILED",
-            ...(cause instanceof OpenworkServerError ? { causeCode: cause.code } : {}),
-            stage: "resource-resolution",
-            message: safeMcpAppDiagnosticMessage(cause, "The interactive view resource could not be resolved."),
-            toolName: part.toolName,
-            elapsedMs: Math.round(performance.now() - startedAt),
-            checkpoints: ["resolve-started"],
+    const checkpoints = ["resolve-started"]
+    const attempt = (attemptIndex: number) => {
+      void openworkServerClient.resolveMcpApp(workspaceId, part.toolName, launch ?? undefined)
+        .then(({ app: resolved }) => {
+          if (cancelled) return
+          // A preserved MCP result is neutral transport data. A null resolution
+          // means the current tool definition does not advertise an MCP App, so
+          // ordinary tools such as save_artifact_view render only their normal
+          // result without claiming an unavailable interactive view.
+          setApp(resolved)
+        })
+        .catch((cause) => {
+          if (cancelled) return
+          checkpoints.push(`resolve-failed-${attemptIndex + 1}+${Math.round(performance.now() - startedAt)}ms`)
+          const retryDelayMs = mcpAppResolutionRetryDelayMs(cause, attemptIndex)
+          if (retryDelayMs !== null) {
+            retryTimer = window.setTimeout(() => attempt(attemptIndex + 1), retryDelayMs)
+            return
           }
-          console.error(`[OpenWork MCP App] ${diagnostic.code}`, diagnostic)
-          setError(diagnostic)
-        }
-      })
-    return () => { cancelled = true }
-  }, [draft, launch, openworkServerClient, part.toolName, result, workspaceId])
+          if (isActionableMcpAppResolutionError(cause)) {
+            const diagnostic: McpAppDiagnostic = {
+              code: "MCP_APP_RESOURCE_RESOLUTION_FAILED",
+              ...(cause instanceof OpenworkServerError ? { causeCode: cause.code } : {}),
+              stage: "resource-resolution",
+              message: safeMcpAppDiagnosticMessage(cause, "The interactive view resource could not be resolved."),
+              toolName: part.toolName,
+              elapsedMs: Math.round(performance.now() - startedAt),
+              checkpoints: [...checkpoints],
+            }
+            console.error(`[OpenWork MCP App] ${diagnostic.code}`, diagnostic)
+            setError(diagnostic)
+          }
+        })
+    }
+    attempt(0)
+    return () => {
+      cancelled = true
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer)
+    }
+  }, [draft, launch, openworkServerClient, part.toolName, resolveToken, result, workspaceId])
 
   // A completed build opens a native artifact tab. Rendering still goes
   // through the authorized Apps API and the shared sandbox inside that tab.
@@ -660,7 +684,7 @@ function EmbeddedMcpAppFrame({ part }: { part: DynamicToolUIPart }) {
     return <AppChatArtifact key={`${viewId}:${revisionId}:${receiptId}`} appId={viewId} revisionId={revisionId} title={title} receiptId={receiptId} />
   }
   if (!result || (!app && !error)) return null
-  if (error) return <McpAppDiagnosticNotice error={error} notice={CHAT_MCP_APP_UNAVAILABLE_NOTICE} />
+  if (error) return <McpAppDiagnosticNotice error={error} notice={CHAT_MCP_APP_UNAVAILABLE_NOTICE} onRetry={() => setResolveToken((token) => token + 1)} />
   if (!app) return null
   return (
     <McpAppSandboxView
