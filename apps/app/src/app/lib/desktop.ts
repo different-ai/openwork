@@ -120,6 +120,8 @@ export type BrowserLoginSyncBridge = {
   forgetAll: () => Promise<{ ok: boolean }>;
   /** Eval seam (unpackaged builds only): write a Firefox-shaped store and list it as a source. */
   writeTestStore?: (request: { path: string; cookies: unknown[] }) => Promise<BrowserLoginSource>;
+  /** Eval seam (unpackaged builds only): value-free login witness on Electron's host. */
+  testWitnessUrl?: () => Promise<string>;
 };
 
 export type { BrowserStatePayload } from "@openwork/browser-tabs";

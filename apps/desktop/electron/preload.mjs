@@ -215,6 +215,7 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     forgetAll() { return ipcRenderer.invoke("openwork:browser-logins:forgetAll"); },
     ...(process.env.OPENWORK_EVAL_BROWSER_LOGIN_SYNC === "1" ? {
       writeTestStore(request) { return ipcRenderer.invoke("openwork:browser-logins:writeTestStore", request); },
+      testWitnessUrl() { return ipcRenderer.invoke("openwork:browser-logins:testWitnessUrl"); },
     } : {}),
   },
   terminal: {

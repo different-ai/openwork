@@ -8,6 +8,7 @@ import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { watch as watchFileSystem } from "node:fs";
 import { copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
@@ -225,6 +226,8 @@ export function createBrowserLoginSync({
   let watchHandle = null;
   let watchTimer = null;
   let lifecycleGeneration = 0;
+  let testWitnessServer = null;
+  let testWitnessUrl = null;
   const previews = new Map();
   const testSources = [];
   const chromiumKeys = new Map();
@@ -849,8 +852,37 @@ export function createBrowserLoginSync({
     return publicSource(source);
   }
 
+  async function startTestWitness() {
+    if (testWitnessUrl) return testWitnessUrl;
+    const server = createServer((request, response) => {
+      const cookies = String(request.headers.cookie ?? "");
+      const witnessState = cookies.includes("sid=login-v2-fixture")
+        ? "signed-in-v2"
+        : cookies.split(";").some((entry) => entry.trim().startsWith("sid="))
+          ? "signed-in-v1"
+          : "signed-out";
+      response.writeHead(200, { "cache-control": "no-store", "content-type": "text/html; charset=utf-8" });
+      response.end(`<!doctype html><title>login witness</title><body data-login-state="${witnessState}">${witnessState === "signed-out" ? "Signed out" : witnessState === "signed-in-v2" ? "Signed in · refreshed" : "Signed in"}</body>`);
+    });
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      server.close();
+      throw new Error("The browser login witness did not bind a port.");
+    }
+    testWitnessServer = server;
+    testWitnessUrl = `http://127.0.0.1:${address.port}`;
+    return testWitnessUrl;
+  }
+
   function registerIpc(ipcMain, { evalSeam = false } = {}) {
-    if (evalSeam) ipcMain.handle("openwork:browser-logins:writeTestStore", (_event, request) => writeTestStore(request && typeof request === "object" ? request : {}));
+    if (evalSeam) {
+      ipcMain.handle("openwork:browser-logins:writeTestStore", (_event, request) => writeTestStore(request && typeof request === "object" ? request : {}));
+      ipcMain.handle("openwork:browser-logins:testWitnessUrl", () => startTestWitness());
+    }
     ipcMain.handle("openwork:browser-logins:setPolicyAllowed", (_event, value) => setPolicyAllowed(value));
     ipcMain.handle("openwork:browser-logins:sources", () => listSources());
     ipcMain.handle("openwork:browser-logins:preview", (_event, request) => preview(request && typeof request === "object" ? request : {}));
@@ -871,6 +903,9 @@ export function createBrowserLoginSync({
     stopWorker();
     previews.clear();
     chromiumKeys.clear();
+    testWitnessServer?.close();
+    testWitnessServer = null;
+    testWitnessUrl = null;
   }
 
   return {

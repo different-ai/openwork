@@ -2,8 +2,6 @@ import { control } from "@openwork/behaviors";
 import { captureScreenshot, connect, debuggerUrlFor, evaluate, listTargets, navigate } from "@openwork/cdp";
 import type { CdpClient, Surface } from "@openwork/cdp";
 import type { Seed } from "@openwork/env";
-import { createServer } from "node:http";
-import type { Server } from "node:http";
 
 export interface BuiltinBrowserTab {
   tabId: string;
@@ -100,23 +98,6 @@ function stringField(value: unknown): string {
   return value;
 }
 
-async function listen(server: Server): Promise<string> {
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
-  });
-  const address = server.address();
-  if (!address || typeof address === "string") throw new Error("The browser login witness did not bind a port.");
-  return `http://127.0.0.1:${address.port}`;
-}
-
-async function closeServer(server: Server): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-    server.closeAllConnections();
-  });
-}
-
 /**
  * A page origin the app can always reach from its own host: the embedded
  * OpenWork server. Any HTTP response renders as a page in the built-in
@@ -163,19 +144,13 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
   const workspace = await seed.workspace(app, seed.tmpPath("builtin-browser"));
   const session = await seed.session(app);
   const origin = await embeddedServerUrl(seed, app);
-  const loginWitness = createServer((request, response) => {
-    const cookies = String(request.headers.cookie ?? "");
-    const state = cookies.includes("sid=login-v2-fixture")
-      ? "signed-in-v2"
-      : cookies.split(";").some((entry) => entry.trim().startsWith("sid="))
-        ? "signed-in-v1"
-        : "signed-out";
-    response.writeHead(200, { "cache-control": "no-store", "content-type": "text/html; charset=utf-8" });
-    response.end(`<!doctype html><title>login witness</title><body data-login-state="${state}">${state === "signed-out" ? "Signed out" : state === "signed-in-v2" ? "Signed in · refreshed" : "Signed in"}</body>`);
-  });
-  const loginWitnessOrigin = await listen(loginWitness);
+  const loginWitnessOrigin = stringField(await seed.evalIn(
+    app,
+    "window.__OPENWORK_ELECTRON__.browserLogins.testWitnessUrl()",
+    { awaitPromise: true },
+  ));
 
-  return Object.assign({
+  return {
     app,
     workspace,
     session,
@@ -473,7 +448,7 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
         await evaluate(client, "({ width: window.innerWidth, height: window.innerHeight })"),
       ));
     },
-  }, { [Symbol.asyncDispose]: () => closeServer(loginWitness) });
+  };
 }
 
 export function builtinBrowserWorld(seed: Seed) {
