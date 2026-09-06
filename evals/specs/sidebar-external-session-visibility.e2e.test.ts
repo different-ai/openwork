@@ -152,4 +152,39 @@ test("sessions created outside the window appear in a non-selected workspace's s
     `Session ${selectedId} was absent for ${STALE_OBSERVATION_MS}ms while ${homeName} was selected, then appeared under ${otherName} once it was selected; the earlier session ${reloadedId} stayed listed and ${homeName}'s list was unchanged.`,
     true,
   );
+
+  if (world.engine === "v2") {
+    await step("an external native fork appears live without refetching or changing its source", async () => {
+      await sleep(EMPTY_LIST_RETRY_SETTLE_MS);
+      await using events = await world.observeWorkspaceEvents(otherId);
+      const fork = await world.forkSessionOutsideWindow(otherId, selectedId);
+      expect(fork.title).toBe(`${selectedTitle} (fork #1)`);
+      expect(fork.sourceAfter).toEqual(fork.sourceBefore);
+      const afterFork = await probe.eventually(() => world.route(), {
+        within: 30_000, intervalMs: 250, label: "external fork discovered by the selected workspace stream",
+        until: (route) => sessionIds(route, otherId).includes(fork.id),
+      });
+      expect(sessionIds(afterFork, otherId).filter((id) => id === fork.id)).toHaveLength(1);
+      expect(sessionTitle(afterFork, otherId, fork.id)).toBe(fork.title);
+      expect(sessionTitle(afterFork, otherId, selectedId)).toBe(selectedTitle);
+      expect(sessionIds(afterFork, homeId)).toEqual(homeSessionsBefore);
+      expect(afterFork.selectedWorkspaceId).toBe(otherId);
+      await user.see({ text: fork.title });
+      await user.see({ text: selectedTitle });
+      const nativeEvents = await probe.eventually(() => events.snapshot(), {
+        within: 15_000, intervalMs: 250, label: "native fork event observed",
+        until: (text) => text.includes(fork.id),
+      });
+      const payloads = nativeEvents.split(/\r?\n/).filter((line) => line.startsWith("data:")).map((line) => JSON.parse(line.slice(5)));
+      expect(payloads).toEqual(expect.arrayContaining([expect.objectContaining({
+        type: "session.forked", data: expect.objectContaining({ sessionID: fork.id, parentID: selectedId }),
+      })]));
+      expect(payloads).not.toEqual(expect.arrayContaining([expect.objectContaining({ type: "session.created" })]));
+      evidence.recordAssertionEvidence(
+        "external v2 forks appear once with the authoritative title, without refetching or changing the source or another workspace",
+        "The native stream emitted session.forked, not session.created. Its new identity appeared as a visible root conversation while the source metadata, exported history, source title, workspace selection, and other workspace list remained unchanged.",
+        true,
+      );
+    });
+  }
 });

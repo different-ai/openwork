@@ -33,6 +33,14 @@ const capturedPermissionReplied = {
   data: { sessionID: "ses_child", requestID: "per_child", reply: "once" },
 };
 
+// Native beta-19086 fork schema: ancestry is not the new session's parentID.
+const nativeForkEvent = {
+  type: "session.forked",
+  created: 1_788_548_737_221,
+  location: { directory: "/workspace" },
+  data: { sessionID: "ses_fork", parentID: "ses_source", boundary: { type: "through", messageID: "msg_source" } },
+};
+
 // Captured from 0.0.0-beta-19086 after approving one shell call with `once`.
 const capturedV2ToolMessage = {
   id: "msg_06e0e76b900178zSuF55n4XEPY",
@@ -1086,6 +1094,109 @@ describe("OpenCode v2 client compatibility", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  test("discovers external forks from authoritative sessions once, without fetching foreign events or the source", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Request[] = [];
+    const info = {
+      id: "ses_fork", title: "Source (fork #1)", slug: "fork-slug", projectID: "project",
+      location: { directory: "/workspace/" }, version: "native",
+      time: { created: 100, updated: 200 },
+      fork: { sessionID: "ses_source", boundary: nativeForkEvent.data.boundary },
+    };
+    const events = [
+      { ...nativeForkEvent, location: undefined, data: { ...nativeForkEvent.data, sessionID: "ses_unscoped" } },
+      { ...nativeForkEvent, location: { directory: "/other" }, data: { ...nativeForkEvent.data, sessionID: "ses_foreign" } },
+      nativeForkEvent, nativeForkEvent, capturedPermissionAsked,
+    ];
+    globalThis.fetch = async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      requests.push(request);
+      return request.url.endsWith("/api/event")
+        ? new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""))
+        : jsonResponse({ data: info });
+    };
+    try {
+      const client = createClientV2("http://opencode.test/workspace/owned/opencode2", "/workspace", { token: "fixture-token" });
+      const subscription = await client.event.subscribe();
+      const received = [];
+      for await (const event of subscription.stream) received.push(event);
+      expect(received).toHaveLength(2);
+      expect(received[0]).toEqual({ type: "session.created", properties: { info: {
+        id: info.id, title: info.title, slug: info.slug, projectID: info.projectID,
+        directory: info.location.directory, version: info.version, time: info.time,
+      } } });
+      expect(received[1]?.type).toBe("permission.asked");
+      expect(requests.map((request) => [request.method, new URL(request.url).pathname])).toEqual([
+        ["GET", "/workspace/owned/opencode2/api/event"], ["GET", "/workspace/owned/opencode2/api/session/ses_fork"],
+      ]);
+      expect(requests.every((request) => request.headers.get("Authorization") === "Bearer fixture-token")).toBe(true);
+      expect((await client.session.fork({ sessionID: "ses_source" })).response.status).toBe(501);
+      expect(requests).toHaveLength(2);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test.each(["deleted", "unavailable", "network", "missing", "wrong-id", "foreign", "unscoped", "timeout"])(
+    "skips a %s fork lookup, continues the stream, and allows recovery on replay", async (failure) => {
+      const originalFetch = globalThis.fetch;
+      let lookups = 0;
+      let lookupSignal: AbortSignal | undefined;
+      const info = { id: "ses_fork", title: "Recovered fork", location: { directory: "/workspace" }, time: { created: 100, updated: 200 } };
+      globalThis.fetch = async (input, init) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        if (request.url.endsWith("/api/event")) return new Response(
+          [nativeForkEvent, capturedPermissionAsked, nativeForkEvent].map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+        );
+        lookups += 1;
+        if (lookups > 1) return jsonResponse({ data: info });
+        lookupSignal = request.signal;
+        if (failure === "deleted") return jsonResponse({}, 404);
+        if (failure === "unavailable") return jsonResponse({}, 503);
+        if (failure === "network") throw new TypeError("Network unavailable");
+        if (failure === "missing") return jsonResponse({ data: null });
+        if (failure === "wrong-id") return jsonResponse({ data: { ...info, id: "ses_source" } });
+        if (failure === "foreign") return jsonResponse({ data: { ...info, location: { directory: "/other" } } });
+        if (failure === "unscoped") return jsonResponse({ data: { ...info, location: undefined } });
+        // An IPC transport may ignore cancellation entirely.
+        return new Promise<Response>(() => {});
+      };
+      try {
+        const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
+        const subscription = await client.event.subscribe();
+        const started = Date.now();
+        expect((await subscription.stream.next()).value?.type).toBe("permission.asked");
+        expect(Date.now() - started).toBeLessThan(3_000);
+        if (failure === "timeout") expect(lookupSignal?.aborted).toBe(true);
+        expect((await subscription.stream.next()).value).toMatchObject({
+          type: "session.created", properties: { info: { id: info.id, title: info.title } },
+        });
+        expect(await subscription.stream.next()).toEqual({ done: true, value: undefined });
+        expect(lookups).toBe(2);
+      } finally { globalThis.fetch = originalFetch; }
+    },
+  );
+
+  test("aborting a subscription cancels its fork lookup without emitting a session", async () => {
+    const originalFetch = globalThis.fetch;
+    const controller = new AbortController();
+    const dispatched = Promise.withResolvers<Request>();
+    globalThis.fetch = async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.url.endsWith("/api/event")) return new Response(`data: ${JSON.stringify(nativeForkEvent)}\n\n`);
+      dispatched.resolve(request);
+      return new Promise<Response>((_resolve, reject) => {
+        request.signal.addEventListener("abort", () => reject(request.signal.reason), { once: true });
+      });
+    };
+    try {
+      const subscription = await createClientV2("http://opencode.test/opencode2", "/workspace", {}).event.subscribe({}, { signal: controller.signal });
+      const pending = subscription.stream.next();
+      const request = await dispatched.promise;
+      controller.abort();
+      expect(await pending).toEqual({ done: true, value: undefined });
+      expect(request.signal.aborted).toBe(true);
+    } finally { controller.abort(); globalThis.fetch = originalFetch; }
   });
 
   test.each([400, 409, 500])("returns native prompt admission failure %i to a separate send client", async (status) => {

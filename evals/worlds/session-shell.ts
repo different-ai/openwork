@@ -541,6 +541,32 @@ export async function externalSessionVisibility(seed: Seed) {
       if (!response.ok) throw new Error(`Session list returned HTTP ${response.status}`);
       return response.data.map((session) => session.id);
     },
+    async forkSessionOutsideWindow(workspaceId: string, sessionId: string) {
+      const base = `${externalServerUrl}/workspace/${encodeURIComponent(workspaceId)}/opencode2/api/session/${encodeURIComponent(sessionId)}`;
+      const request = async (path: string, body?: unknown): Promise<unknown> => {
+        const response = await fetch(`${base}${path}`, {
+          method: body === undefined ? "GET" : "POST",
+          headers: { Authorization: `Bearer ${serverToken}`, "Content-Type": "application/json" },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+          signal: AbortSignal.timeout(30_000),
+        });
+        if (!response.ok) throw new Error(`External fork setup ${path} returned HTTP ${response.status}`);
+        return response.status === 204 ? null : response.json();
+      };
+      // A settled native shell message supplies a fork boundary without a model.
+      await request("/shell", { command: "printf 'External fork history\\n'" });
+      const sourceBefore = { info: await request(""), history: await request("/export") };
+      const response = await request("/fork", { boundary: { type: "through" } });
+      if (!isRecord(response) || !isRecord(response.data) || typeof response.data.id !== "string" || typeof response.data.title !== "string") {
+        throw new Error("Native fork did not return a complete session identity and title");
+      }
+      return {
+        id: response.data.id,
+        title: response.data.title,
+        sourceBefore,
+        sourceAfter: { info: await request(""), history: await request("/export") },
+      };
+    },
     /** The sidebar's own per-workspace session lists and load state. */
     // TODO(primitive): probe.route should expose the sidebar's per-workspace session lists.
     async route(): Promise<SidebarRouteFacts> {
