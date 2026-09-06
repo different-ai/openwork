@@ -1,4 +1,4 @@
-import { eq, inArray } from "@openwork-ee/den-db/drizzle"
+import { and, eq, inArray, notInArray } from "@openwork-ee/den-db/drizzle"
 import {
   AuthApiKeyTable,
   AuthSessionTable,
@@ -330,6 +330,7 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         200: jsonResponse("Organization deleted successfully.", deleteOrganizationResponseSchema),
         401: jsonResponse("The caller must be signed in to delete an organization.", unauthorizedSchema),
         403: jsonResponse("Only workspace owners with a fresh privileged session can delete organizations.", forbiddenSchema),
+        409: jsonResponse("Resolve organization subscriptions before deletion.", z.object({ error: z.literal("organization_has_subscriptions"), message: z.string() })),
         404: jsonResponse("The organization could not be found.", notFoundSchema),
       },
     }),
@@ -342,6 +343,21 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
       const payload = c.get("organizationContext")
       const organization = payload.organization
       const organizationId = organization.id
+      // Preserve billing records and paid access until billing is resolved explicitly.
+      // A scheduled cancellation still has an active subscription and must also block deletion.
+      const subscriptions = await db.select({ id: OrgSubscriptionTable.id })
+        .from(OrgSubscriptionTable)
+        .where(and(
+          eq(OrgSubscriptionTable.organization_id, organizationId),
+          notInArray(OrgSubscriptionTable.status, ["canceled", "incomplete_expired", "expired"]),
+        ))
+      if (subscriptions.length > 0) {
+        return c.json({
+          error: "organization_has_subscriptions",
+          message: `Subscriptions belong to ${organization.name}. Open this organization's Billing page to manage them. Wait until subscriptions have ended before deleting the organization. Switching organizations does not move paid access.`,
+        }, 409)
+      }
+
       const user = c.get("user")
       const accountDeletionIssue = await createAccountDeletionIssue({
         request: c.req.raw,

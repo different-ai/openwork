@@ -325,6 +325,7 @@ export type CurrentUserOrganizationsResponse = {
      */
     id: string;
     isActive: boolean;
+    hasSubscriptions: boolean;
     [key: string]: unknown | string | boolean;
   }>;
   activeOrgId: string | null;
@@ -7595,6 +7596,13 @@ export type DeleteV1OrgErrors = {
    * The organization could not be found.
    */
   404: NotFoundError;
+  /**
+   * Resolve organization subscriptions before deletion.
+   */
+  409: {
+    error: "organization_has_subscriptions";
+    message: string;
+  };
 };
 
 export type DeleteV1OrgError = DeleteV1OrgErrors[keyof DeleteV1OrgErrors];

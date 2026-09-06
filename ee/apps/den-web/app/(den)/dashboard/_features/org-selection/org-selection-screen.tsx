@@ -65,7 +65,7 @@ function OrgRow({ org, pending, onPick }: { org: DenOrgSummary; pending: boolean
         <Building2 className="h-4 w-4" strokeWidth={1.8} />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[15px] font-medium text-[var(--dls-text-primary)]">{org.name}</span>
+        <span className="block truncate text-[15px] font-medium text-[var(--dls-text-primary)]">{org.name}{org.hasSubscriptions ? " · Subscriptions" : ""}</span>
         <span className="block truncate text-[13px] text-[var(--dls-text-secondary)]">{memberSummary}</span>
       </span>
       <ChevronRight className="h-4 w-4 shrink-0 text-[var(--dls-text-secondary)]" strokeWidth={2} />

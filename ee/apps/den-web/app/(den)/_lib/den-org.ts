@@ -11,6 +11,7 @@ export type DenOrgSummary = {
   createdAt: string | null;
   updatedAt: string | null;
   isActive: boolean;
+  hasSubscriptions?: boolean;
 };
 
 export type DenOrgMember = {
@@ -705,7 +706,7 @@ export function parseOrgListPayload(payload: unknown): {
   }
 
   const orgs = payload.orgs
-    .map((entry) => {
+    .map((entry): DenOrgSummary | null => {
       if (!isRecord(entry)) {
         return null;
       }
@@ -733,6 +734,7 @@ export function parseOrgListPayload(payload: unknown): {
         createdAt: asIsoString(entry.createdAt),
         updatedAt: asIsoString(entry.updatedAt),
         isActive: asBoolean(entry.isActive),
+        hasSubscriptions: asBoolean(entry.hasSubscriptions),
       } satisfies DenOrgSummary;
     })
     .filter((entry): entry is DenOrgSummary => entry !== null);

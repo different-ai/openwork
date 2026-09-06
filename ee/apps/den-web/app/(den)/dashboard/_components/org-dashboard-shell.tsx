@@ -528,7 +528,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
               >
                 <div className="flex min-w-0 items-center gap-2.5">
                   <div className="min-w-0">
-                    <span className="block truncate text-[13px] font-medium tracking-[-0.1px]">{org.name}</span>
+                    <span className="block truncate text-[13px] font-medium tracking-[-0.1px]">{org.name}{org.hasSubscriptions ? " · Subscriptions" : ""}</span>
                     <span className="block truncate text-[12px] text-gray-500">
                       {org.role === "owner" ? "Creator plan" : "Free plan"} • {org.memberCount} {org.memberCount === 1 ? "member" : "members"}
                     </span>
