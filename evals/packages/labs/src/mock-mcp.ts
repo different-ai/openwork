@@ -35,7 +35,7 @@ export interface MockAgentWorkload {
   promptMarker: string;
   finalReply: string;
   /** Return text actually delivered by the engine after its last tool invocation. */
-  finalReplyFrom?: "last-tool-text";
+  finalReplyFrom?: "last-tool-text" | "system-text";
   /** Stream the final reply as consecutive content deltas of this many characters instead of one. */
   finalReplyChunkSize?: number;
   /** Hold the final response before sending headers, to exercise loading transitions. */

@@ -214,10 +214,22 @@ export async function newSplitPrimary(seed: Seed) {
   const primaryPrompt = "Reply to the primary split message";
   const secondaryPrompt = "Reply to the secondary split message";
   const switchPrompt = "Reply after switching the primary session";
+  const primaryQuestionPrompt = "Help me choose the main task format";
+  const secondaryQuestionPrompt = "Help me choose the side task format";
+  const contextPrompt = "Describe your conversation context";
   const mock = seed.mock({ agentWorkloads: [
-    { promptMarker: primaryPrompt, finalReply: "Primary split received", steps: [] },
-    { promptMarker: secondaryPrompt, finalReply: "Secondary split received", steps: [] },
-    { promptMarker: switchPrompt, finalReply: "Switched session received", steps: [] },
+    ...["Main", "Side"].map((pane): MockAgentWorkload => ({
+      promptMarker: pane === "Main" ? primaryQuestionPrompt : secondaryQuestionPrompt,
+      latestUserTurn: true, finalReply: "Answered the format question.", finalReplyFrom: "last-tool-text",
+      steps: [{ tool: "question", arguments: { questions: [{
+        header: `${pane} format`, question: `Which format should the ${pane.toLowerCase()} task use?`,
+        options: [{ label: `${pane} outline`, description: "A brief overview" }, { label: `${pane} checklist`, description: "A sequence of steps" }],
+      }] } }],
+    })),
+    { promptMarker: contextPrompt, latestUserTurn: true, finalReply: "Conversation context.", finalReplyFrom: "system-text", steps: [] },
+    { latestUserTurn: true, promptMarker: primaryPrompt, finalReply: "Primary split received", steps: [] },
+    { latestUserTurn: true, promptMarker: secondaryPrompt, finalReply: "Secondary split received", steps: [] },
+    { latestUserTurn: true, promptMarker: switchPrompt, finalReply: "Switched session received", steps: [] },
   ] });
   const den = await seed.den({ mocks: { agent: mock } });
   const app = await seed.desktop({ name: "new-split-session", den, as: "admin", model: `${providerId}/${modelId}` });
@@ -270,7 +282,7 @@ export async function newSplitPrimary(seed: Seed) {
     });
     return response.json();
   })()`, { awaitPromise: true, timeoutMs: 15_000 });
-  return { app, workspace, session, splitFacts, agentContextViaServer, primaryPrompt, secondaryPrompt, switchSession, switchPrompt };
+  return { app, workspace, session, splitFacts, agentContextViaServer, primaryPrompt, secondaryPrompt, switchSession, switchPrompt, primaryQuestionPrompt, secondaryQuestionPrompt, contextPrompt };
 }
 
 export async function shimmerChat(seed: Seed) {
