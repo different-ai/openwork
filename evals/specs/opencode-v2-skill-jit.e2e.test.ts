@@ -17,6 +17,7 @@ test("workspace skills change during an ongoing conversation", async ({ world, u
   const skillRoute = `/workspace/${world.workspace.workspaceId}/skills`;
   const previousCodes: string[] = [];
   let turnNumber = 0;
+  const submitted: string[] = [];
   const answer = async () => {
     const messages = await readTranscriptMessages(probe, "assistant");
     return { count: messages.length, text: messages.at(-1) ?? "" };
@@ -40,6 +41,12 @@ test("workspace skills change during an ongoing conversation", async ({ world, u
         && typeof value.text === "string" && value.text.includes(expected ?? "UNAVAILABLE"),
     });
     await user.see("Run task", { timeoutMs: 60_000 });
+    submitted.push(prompt);
+    const visibleUserMessages = await readTranscriptMessages(probe, "user");
+    expect(visibleUserMessages).toHaveLength(submitted.length);
+    visibleUserMessages.forEach((text, index) => expect(text).toContain(submitted[index]));
+    expect(await readTranscriptMessages(probe, "system")).toEqual([]);
+    if (world.live) expect(await world.usedConfiguredModel()).toBe(true);
     if (!record(response) || typeof response.text !== "string") throw new Error("Missing visible answer");
     for (const code of previousCodes) expect(response.text).not.toContain(code);
     expect(await transcript.finish()).toMatchObject({ seen: [true], violations: [], stopped: false });

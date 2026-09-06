@@ -542,6 +542,23 @@ describe("OpenCode v2 event translation", () => {
 });
 
 describe("OpenCode v2 client compatibility", () => {
+  test("saved native instruction updates stay out of the visible conversation", async () => {
+    const originalFetch = globalThis.fetch;
+    const notice = "New skills are available in addition to those previously listed.";
+    globalThis.fetch = async () => jsonResponse({ data: [
+      { id: "msg_system", type: "system", text: notice, time: { created: 1 } },
+      { id: "msg_synthetic", type: "synthetic", text: "Internal context", time: { created: 2 } },
+      { id: "msg_user", type: "user", text: notice, time: { created: 3 } },
+      { id: "msg_answer", type: "assistant", content: [{ type: "text", text: "The current report code." }], time: { created: 4 } },
+    ] });
+    try {
+      const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
+      const result = await client.session.messages({ sessionID: "ses_skills" });
+      expect(result.data?.map(message => message.info.id)).toEqual(["msg_user", "msg_answer"]);
+      expect(result.data?.[0]?.parts).toMatchObject([{ type: "text", text: notice }]);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
   test("Code Mode keeps the same child identities through progress, replay, and saved history", async () => {
     const state = createV2EventTranslationState();
     const data = { sessionID: "ses_code", assistantMessageID: "msg_code", id: "execute-code" };

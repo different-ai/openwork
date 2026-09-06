@@ -1497,6 +1497,14 @@ export async function skillLifecycle(seed: Seed) {
         });
         if (!result.ok) throw new Error("Could not arrange model response");
       },
+      async usedConfiguredModel() {
+        const result = await request(`/workspace/${workspace.workspaceId}/opencode2/api/session/${session.sessionId}/message`);
+        const messages = isRecord(result.json) && Array.isArray(result.json.data) ? result.json.data.filter(isRecord) : [];
+        const replies = messages.filter(message => message.type === "assistant" && message.finish === "stop");
+        return replies.length > 0 && replies.every(message => isRecord(message.model)
+          && message.model.id === modelId && message.model.providerID === providerId
+          && isRecord(message.tokens) && typeof message.tokens.output === "number" && message.tokens.output > 0);
+      },
       async runtimeIdentity() {
         const result = await request("/experimental/engine-v2-preview/status");
         if (!isRecord(result.json) || result.json.running !== true || result.json.chatRouting !== true

@@ -47,7 +47,7 @@ export async function observeTranscript(probe: Probe, entries: readonly { role: 
 }
 
 /** Read visible messages in display order without depending on engine payloads. */
-export async function readTranscriptMessages(probe: Probe, role: "user" | "assistant"): Promise<string[]> {
+export async function readTranscriptMessages(probe: Probe, role: "user" | "assistant" | "system"): Promise<string[]> {
   const result = await probe.eval(`(role) => [...document.querySelectorAll('[data-message-role="' + role + '"]')]
     .filter(node => node.getClientRects().length && getComputedStyle(node).visibility !== "hidden")
     .map(node => node.innerText ?? "")`, { args: [role] });
