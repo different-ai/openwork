@@ -401,6 +401,9 @@ function mapV2MessageParts(
 
 function mapV2Message(value: unknown, sessionID: string): V2MappedMessage | null {
   if (!isRecord(value)) return null;
+  // Native instruction/catalog updates belong to the model context, not the
+  // visible conversation. Filter by role so identical user text is preserved.
+  if (messageRole(value) === "system") return null;
   const id = readString(value, "id") ?? readString(value, "messageID");
   if (!id) return null;
   const time = readRecord(value, "time");

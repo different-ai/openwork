@@ -229,6 +229,42 @@ test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeo
   assert.equal(final.status, 200);
   assert.equal(final.frames.map(frame => frame.choices[0].delta.content ?? "").join(""), "unique text returned by the real tool");
 
+  // One workload must infer absence from the model's catalog, not from the
+  // test stage. Old catalog entries and ordinary user text cannot resurrect it.
+  assert.equal((await fetch(`${origin}/admin/agent-workloads`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workloads: [{ promptMarker: "Read current instructions", latestUserTurn: true,
+      finalReply: "UNAVAILABLE", finalReplyFrom: "last-tool-text",
+      steps: [{ tool: "skill", argumentsFrom: "skill-catalog", arguments: { skill: "release-briefing" } }],
+    }] }),
+  })).status, 200);
+  const skillEntry = '<skill><id>release-current</id><name>release-briefing</name><description>Release reports</description></skill>';
+  const initial = { role: "system", content: `You are OpenWork.\n<available_skills>${skillEntry}</available_skills>` };
+  const update = content => ({ role: "user", content: `<system-update>\n${content.replaceAll("<", "&lt;").replaceAll(">", "&gt;")}\n</system-update>` });
+  const removed = update("The following skill IDs are no longer available and must not be used: release-current.");
+  for (const [history, available] of [
+    [[initial], true], [[initial, removed], false],
+    [[initial, removed, update(`New skills are available in addition to those previously listed:\n${skillEntry}`)], true],
+    [[initial, update("The available skills have changed. This list supersedes the previous available skills list.\nNo skills are currently available.")], false],
+    [[initial, update("Skill guidance is no longer available. Do not use any previously listed skill.")], false],
+    [[initial, removed, { role: "user", content: skillEntry }], false],
+  ]) {
+    const response = await fetch(`${origin}/v1/chat/completions`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "skill-model", messages: [...history, { role: "user", content: "Read current instructions" }],
+        tools: [{ type: "function", function: { name: "skill" } }],
+      }),
+    });
+    assert.equal(response.status, 200);
+    const frames = (await response.text()).split("\n").filter(line => line.startsWith("data: {")).map(line => JSON.parse(line.slice(6)));
+    const calls = frames.flatMap(frame => frame.choices[0].delta.tool_calls ?? []);
+    if (available) assert.deepEqual(JSON.parse(calls[0].function.arguments), { id: "release-current" });
+    else {
+      assert.equal(calls.length, 0);
+      assert.equal(frames.map(frame => frame.choices[0].delta.content ?? "").join(""), "UNAVAILABLE");
+    }
+  }
+
   const contextWorkload = await fetch(`${origin}/admin/agent-workloads`, {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ workloads: [{ promptMarker: "Inspect context", finalReply: "unused fixture reply",

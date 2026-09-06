@@ -33,6 +33,7 @@ import { buildEngineAuthProbeHeader } from "./engine-registry.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
 import { sanitizePortableOpencodeConfig } from "./portable-opencode.js";
 import { addMcp, listMcp, removeMcp, setMcpEnabled } from "./mcp.js";
+import { buildOpenWorkV2Instructions, waitForOpenWorkV2Skills, OPENWORK_V2_INSTRUCTION_KEY } from "./opencode-v2-instructions.js";
 import {
   callMcpAppTool,
   listMcpAppCatalog,
@@ -1427,6 +1428,37 @@ async function proxyOpencodeV2Request(input: {
     if (!actual || actual !== expected) {
       throw new ApiError(404, "session_not_found", "Session not found");
     }
+  }
+
+  if (method !== "GET" && method !== "HEAD"
+    && decodeURIComponent(forwardedPath).endsWith(`/instructions/entries/${OPENWORK_V2_INSTRUCTION_KEY}`)) {
+    throw new ApiError(403, "engine_instructions_managed", "OpenWork instructions are managed by the server");
+  }
+
+  if (method === "POST" && sessionId && /^\/api\/session\/[^/]+\/(?:prompt|command|generate)$/.test(forwardedPath)) {
+    // Session ownership was verified above. Replace one native instruction
+    // entry immediately before admission; never append to conversation text.
+    const mcpUrl = new URL(target);
+    mcpUrl.pathname = "/api/mcp";
+    const internalHeaders = new Headers({ authorization: headers.get("authorization") ?? "", "content-type": "application/json" });
+    const mcpResponse = await loopbackFetch(mcpUrl.toString(), { headers: internalHeaders, signal: AbortSignal.timeout(10_000) });
+    const mcpPayload: unknown = mcpResponse.ok ? await mcpResponse.json() : null;
+    const connectReady = isRecord(mcpPayload) && Array.isArray(mcpPayload.data) && mcpPayload.data.some((entry) =>
+      isRecord(entry) && entry.name === "openwork-cloud" && isRecord(entry.status) && entry.status.status === "connected");
+    const skillUrl = new URL(target);
+    skillUrl.pathname = "/api/skill";
+    await waitForOpenWorkV2Skills(input.workspace.path, async () => {
+      const response = await loopbackFetch(skillUrl.toString(), { headers: internalHeaders, signal: AbortSignal.timeout(5_000) });
+      if (!response.ok) throw new ApiError(502, "engine_skill_sync_failed", "Native skills are unavailable");
+      return response.json();
+    });
+    const value = buildOpenWorkV2Instructions(connectReady);
+    const instructionUrl = new URL(target);
+    instructionUrl.pathname = `/api/session/${encodeURIComponent(sessionId)}/instructions/entries/${OPENWORK_V2_INSTRUCTION_KEY}`;
+    const synced = await loopbackFetch(instructionUrl.toString(), {
+      method: "PUT", headers: internalHeaders, body: JSON.stringify({ value }), signal: AbortSignal.timeout(15_000),
+    });
+    if (!synced.ok) throw new ApiError(502, "engine_instruction_sync_failed", "OpenWork instructions could not be updated");
   }
 
   const requestBody = method === "GET" || method === "HEAD"

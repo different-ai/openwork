@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join, resolve } from "node:path";
-import { evalIn } from "@openwork/behaviors";
+import { evalIn, assertNoLiveSecret, liveOpenAiEnabled, liveOpenAiModel, liveProviderId, provisionLiveOpenAi } from "@openwork/behaviors";
 import { resolveEvalEngine, type Seed } from "@openwork/env";
 import type { MockAgentWorkload } from "@openwork/labs";
 
@@ -85,6 +85,7 @@ export async function configureProvider(
   providerId: string,
   modelId: string,
   opencode: Record<string, unknown>,
+  engine = resolveEvalEngine(),
 ): Promise<void> {
   // TODO(primitive): configure a workspace provider and select its model.
   const result = await seed.evalIn(app, `async (workspaceId, providerId, modelId, defaultModel, opencodeJson) => {
@@ -130,7 +131,6 @@ export async function configureProvider(
   });
   if (result !== "ok") throw new Error(`Provider configuration failed: ${String(result)}`);
   await seed.evalIn(app, "location.reload(); true");
-  const engine = resolveEvalEngine();
   const ready = await seed.evalIn(app, `async (workspaceId, engine, providerId, modelId) => {
     const deadline = Date.now() + 60000;
     while (Date.now() < deadline) {
@@ -1439,4 +1439,82 @@ export async function workspaceEngineUpgrade(seed: Seed) {
   return { app, den, primary, other, original, otherOriginal, providerId, modelId,
     otherName: otherPath.split("/").at(-1),
   };
+}
+
+/** A running conversation whose workspace skills can change through OpenWork. */
+export async function skillLifecycle(seed: Seed) {
+  const live = liveOpenAiEnabled();
+  const orgName = "Skill lifecycle";
+  const den = await seed.den({ org: { name: orgName }, mocks: { model: seed.mock({}) } });
+  const managed = await provisionLiveOpenAi(den.admin, orgName);
+  try {
+    const app = await seed.desktop({ den, as: "admin" });
+    const workspace = await seed.workspace(app, seed.tmpPath("skill-lifecycle"));
+    const request = async (path: string) => {
+      const response = await seed.evalIn(app, `async (path) => {
+        const response = await fetch("http://127.0.0.1:" + localStorage.getItem("openwork.server.port") + path, {
+          headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") },
+          signal: AbortSignal.timeout(10000),
+        });
+        return { status: response.status, json: await response.json() };
+      }`, { args: [path], awaitPromise: true });
+      if (!isRecord(response) || typeof response.status !== "number") throw new Error("Missing desktop response");
+      assertNoLiveSecret(response);
+      return { status: response.status, json: response.json };
+    };
+    const providerId = live ? await liveProviderId(request, managed.id) : "skill-lifecycle";
+    const modelId = live ? liveOpenAiModel() : "skill-lifecycle-model";
+    // This world arranges an opted-in native v2 conversation, including when
+    // invoked by the standard E2E command without an engine override.
+    await seed.evalIn(app, `async () => {
+      const response = await fetch("http://127.0.0.1:" + localStorage.getItem("openwork.server.port") + "/experimental/engine-v2-preview", {
+        method: "PUT", headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token"), "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: true, chatRouting: true }), signal: AbortSignal.timeout(180000),
+      });
+      if (!response.ok) throw new Error("Could not enable the native engine");
+      return true;
+    }`, { awaitPromise: true, timeoutMs: 185_000 });
+    await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+      permission: { skill: "allow" },
+      ...(!live ? { provider: { [providerId]: {
+        npm: "@ai-sdk/openai-compatible", name: "Skill lifecycle model",
+        options: { baseURL: `${den.mocks.model.url}/v1`, apiKey: "eval-only-key" },
+        models: { [modelId]: { name: "Skill lifecycle model", tool_call: true } },
+      } } } : {}),
+    }, "v2");
+    const session = await seedSessionRetry(seed, app, { title: "Release report" });
+    const skillName = "release-briefing";
+    return {
+      app, den, workspace, session, skillName, live, modelId,
+      async prepareTurn(prompt: string) {
+        if (live) return;
+        const result = await fetch(`${den.mocks.model.url}/admin/agent-workloads`, {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ workloads: [{ latestUserTurn: true, promptMarker: prompt,
+            finalReply: "OpenWork: UNAVAILABLE", finalReplyFrom: "last-tool-text",
+            steps: [{ tool: "skill", argumentsFrom: "skill-catalog", arguments: { skill: skillName } }],
+          }] }),
+        });
+        if (!result.ok) throw new Error("Could not arrange model response");
+      },
+      async usedConfiguredModel() {
+        const result = await request(`/workspace/${workspace.workspaceId}/opencode2/api/session/${session.sessionId}/message`);
+        const messages = isRecord(result.json) && Array.isArray(result.json.data) ? result.json.data.filter(isRecord) : [];
+        const replies = messages.filter(message => message.type === "assistant" && message.finish === "stop");
+        return replies.length > 0 && replies.every(message => isRecord(message.model)
+          && message.model.id === modelId && message.model.providerID === providerId
+          && isRecord(message.tokens) && typeof message.tokens.output === "number" && message.tokens.output > 0);
+      },
+      async runtimeIdentity() {
+        const result = await request("/experimental/engine-v2-preview/status");
+        if (!isRecord(result.json) || result.json.running !== true || result.json.chatRouting !== true
+          || typeof result.json.pid !== "number") throw new Error("The v2 conversation runtime is not running");
+        return result.json.pid;
+      },
+      async [Symbol.asyncDispose]() { await managed[Symbol.asyncDispose](); },
+    };
+  } catch (error) {
+    await managed[Symbol.asyncDispose]();
+    throw error;
+  }
 }
