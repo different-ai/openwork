@@ -235,6 +235,8 @@ export async function newSplitPrimary(seed: Seed) {
   const app = await seed.desktop({ name: "new-split-session", den, as: "admin", model: `${providerId}/${modelId}` });
   const workspace = await seed.workspace(app, seed.tmpPath("new-split-session"));
   await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    // The journey requires the native question tool regardless of the selected agent's defaults.
+    permission: { question: "allow" },
     provider: {
       [providerId]: {
         npm: "@ai-sdk/openai-compatible",
