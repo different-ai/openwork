@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useEffect } from "react";
-import { Dithering } from "@paper-design/shaders-react";
+import { FileTextIcon, LayersIcon, PlugIcon } from "lucide-react";
 import { OnboardingIntro } from "@openwork/ui/react";
 
 import { t } from "../../../i18n";
@@ -56,116 +56,99 @@ export function WelcomePage({
 
       <ScrollArea className="relative z-10">
         <ScrollAreaViewport>
-          <div className="relative flex min-h-dvh items-center justify-center px-6 py-16">
-            {/* Paper first-load spec: subtle black pixel-dither mosaic over a
-                near-white ground. `dark:invert` flips the pixels to white so
-                the texture survives dark mode. */}
-            <div className="pointer-events-none absolute inset-0 overflow-hidden opacity-[0.1] dark:invert">
-              <Dithering
-                className="size-full"
-                speed={0.01}
-                shape="warp"
-                type="2x2"
-                size={20.3}
-                scale={1.19}
-                frame={264559.21}
-                colorBack="#00000000"
-                colorFront="#000000"
+          <div className="mx-auto flex min-h-dvh w-full max-w-xl flex-col justify-center px-6 py-16 sm:px-10">
+            <div className="mb-9 flex items-center gap-2.5">
+              <img
+                src={resolveExtensionIconSrc("/openwork-mark.svg")}
+                alt=""
+                width={24}
+                height={24}
+                className="shrink-0 dark:invert"
+                aria-hidden="true"
               />
+              <span className="text-sm font-semibold tracking-tight">{appName}</span>
             </div>
 
-            <div className="relative z-10 w-full max-w-[720px] rounded-3xl border border-border bg-background px-8 pb-12 pt-10 sm:px-16 sm:pb-16 sm:pt-14">
-              <div className="flex items-center gap-2.5">
-                <img
-                  src={resolveExtensionIconSrc("/openwork-mark.svg")}
-                  alt=""
-                  width={26}
-                  height={26}
-                  className="shrink-0 dark:invert"
-                  aria-hidden="true"
-                />
-                <span className="text-[15px] font-semibold tracking-tight text-foreground">
-                  {appName}
-                </span>
-              </div>
+            <OnboardingIntro
+              title={t("welcome.title")}
+              description="Ask AI to work on your files. Review and refine the result."
+            />
 
-              <OnboardingIntro
-                className="mt-10 sm:mt-14"
-                title={t("welcome.title")}
-                description={t("welcome.subtitle")}
-              />
+            <div className="mt-7 flex flex-wrap items-center gap-x-5 gap-y-3 text-[13px] text-muted-foreground" aria-label="What you can do">
+              <span className="inline-flex items-center gap-2"><FileTextIcon className="size-4" aria-hidden="true" />Draft with files</span>
+              <span className="inline-flex items-center gap-2"><LayersIcon className="size-4" aria-hidden="true" />Reuse skills</span>
+              <span className="inline-flex items-center gap-2"><PlugIcon className="size-4" aria-hidden="true" />Connect tools via MCP</span>
+            </div>
 
-              <div className="mt-11 flex flex-col gap-3">
-                {onTeamSignIn ? (
-                  <Button
-                    type="button"
-                    size="lg"
-                    className="h-12 w-full text-[15px] font-semibold"
-                    onClick={onTeamSignIn}
-                    disabled={busy}
-                    data-testid="welcome-team-signin"
-                  >
-                    {t("welcome.sign_in_cloud")}
-                  </Button>
-                ) : null}
+            <div className="mt-9">
+              <Button
+                type="button"
+                size="lg"
+                className="h-11 w-full text-sm font-medium"
+                onClick={onGetStarted}
+                disabled={busy}
+                data-testid="welcome-use-without-cloud"
+              >
+                {busy
+                  ? t("welcome.creating_workspace")
+                  : (getStartedLabel || t("welcome.use_without_cloud"))}
+              </Button>
+              <p className="mt-3 text-center text-xs text-muted-foreground">
+                Choose a folder, then a model. No OpenWork account needed.
+              </p>
+            </div>
 
+            <div className="mt-7 flex flex-wrap items-center justify-center gap-x-5 gap-y-2">
+              {onTeamSignIn ? (
                 <Button
                   type="button"
-                  size="lg"
-                  variant={onTeamSignIn ? "outline" : "default"}
-                  className="h-12 w-full text-[15px] font-medium"
-                  onClick={onGetStarted}
+                  variant="link"
+                  className="h-auto p-0 text-[13px] text-muted-foreground"
+                  onClick={onTeamSignIn}
                   disabled={busy}
-                  data-testid="welcome-use-without-cloud"
+                  data-testid="welcome-team-signin"
+                  aria-label={t("welcome.sign_in_cloud")}
                 >
-                  {busy
-                    ? t("welcome.creating_workspace")
-                    : (getStartedLabel || t("welcome.use_without_cloud"))}
+                  Sign in
                 </Button>
-
-                <div className="pt-2">
-                  <button
-                    type="button"
-                    className="w-full rounded-lg px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
-                    onClick={onJoinOrganization}
-                    data-testid="welcome-join-org"
-                  >
-                    <span className="font-medium text-foreground/90">
-                      {t("welcome.join_org")}
-                    </span>
-                    <span className="mt-0.5 block text-xs text-muted-foreground">
-                      {t("welcome.join_org_subtitle")}
-                    </span>
-                  </button>
-                </div>
-
-                {error ? (
-                  <p className="text-center text-xs text-destructive">{error}</p>
-                ) : null}
-
-                {showManualFolder ? (
-                  <div className="rounded-xl border border-dashed border-border p-3">
-                    <label className="grid gap-2 text-xs font-medium text-muted-foreground">
-                      Daytona folder path
-                      <input
-                        className="h-9 rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground outline-none focus:border-ring"
-                        value={manualFolder ?? ""}
-                        onChange={(event) => onManualFolderChange?.(event.target.value)}
-                        placeholder="/workspace/my-project"
-                      />
-                    </label>
-                    <Button
-                      className="mt-2 w-full"
-                      variant="outline"
-                      onClick={onUseManualFolder}
-                      disabled={busy || !manualFolder?.trim()}
-                    >
-                      Use this folder
-                    </Button>
-                  </div>
-                ) : null}
-              </div>
+              ) : null}
+              <Button
+                type="button"
+                variant="link"
+                className="h-auto p-0 text-[13px] text-muted-foreground"
+                onClick={onJoinOrganization}
+                disabled={busy}
+                data-testid="welcome-join-org"
+              >
+                {t("welcome.join_org")}
+              </Button>
             </div>
+
+            {error ? (
+              <p className="text-center text-xs text-destructive">{error}</p>
+            ) : null}
+
+            {showManualFolder ? (
+              <div className="mt-6 rounded-xl border border-dashed border-border p-3">
+                <label className="grid gap-2 text-xs font-medium text-muted-foreground">
+                  Daytona folder path
+                  <input
+                    className="h-9 rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground outline-none focus:border-ring"
+                    value={manualFolder ?? ""}
+                    onChange={(event) => onManualFolderChange?.(event.target.value)}
+                    placeholder="/workspace/my-project"
+                  />
+                </label>
+                <Button
+                  className="mt-2 w-full"
+                  variant="outline"
+                  onClick={onUseManualFolder}
+                  disabled={busy || !manualFolder?.trim()}
+                >
+                  Use this folder
+                </Button>
+              </div>
+            ) : null}
           </div>
         </ScrollAreaViewport>
       </ScrollArea>
