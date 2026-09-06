@@ -4,7 +4,7 @@ import { observeTranscript, spec, type Probe, type User } from "@openwork/testki
 import { workspaceEngineUpgrade } from "../worlds/chat.ts";
 
 // Fresh-engine chat journeys cannot witness ownership after an upgrade.
-const test = spec.world(workspaceEngineUpgrade, { timeout: 420_000 });
+const test = spec.world(workspaceEngineUpgrade, { timeout: 600_000 });
 const reply = "Hello. Your upgrade conversation is working.";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -32,6 +32,25 @@ async function greet(user: User, probe: Probe) {
 }
 
 test("existing workspaces create usable sessions after changing chat engines", async ({ world, user, probe, step }) => {
+  const macPlatform = await probe.eval(`/Mac|iPhone|iPad|iPod/.test(navigator.platform)`);
+  const paletteShortcut = macPlatform ? "Meta+K" : "Control+K";
+  const createPaletteChat = async () => {
+    const previousRoute = await probe.hash();
+    const paletteInput = { placeholder: "Search actions, settings, and sessions…" };
+    await user.press(paletteShortcut);
+    await user.see(paletteInput);
+    await user.type(paletteInput, "New session", { replace: true });
+    await user.click({ role: "option", label: /^New session\b/ });
+    await probe.eventually(() => probe.hash(), {
+      within: 30_000, label: "palette opens a new chat in the selected workspace",
+      until: (hash) => hash !== previousRoute && hash.includes(`/workspace/${world.primary.workspaceId}/session/ses_`),
+    });
+    await user.notSee(paletteInput);
+    await user.see("Run task", { timeoutMs: 30_000 });
+    await user.notSee({ text: /SessionNotFoundError|Session not found|Session could not be loaded/ });
+    await greet(user, probe);
+  };
+
   expect((await probe.desktopApi("/experimental/engine-v2-preview/status")).body).toMatchObject({ chatRouting: false });
   await go(world.app, `/workspace/${world.primary.workspaceId}/settings/advanced`);
   await user.see({ text: "OpenCode v2 (preview)" }, { timeoutMs: 30_000 });
@@ -40,6 +59,7 @@ test("existing workspaces create usable sessions after changing chat engines", a
     within: 120_000, label: "v2 configured and running",
     until: (response) => isRecord(response.body) && response.body.running === true && response.body.chatRouting === true,
   });
+  await step("the Settings command palette creates a usable chat after enabling v2", createPaletteChat);
   await go(world.app, `/workspace/${world.primary.workspaceId}/session`);
   await user.reload();
   await user.see("composer", { timeoutMs: 60_000 });
@@ -51,6 +71,8 @@ test("existing workspaces create usable sessions after changing chat engines", a
     await user.see("composer", { timeoutMs: 30_000 });
     await greet(user, probe);
   });
+
+  await step("the chat command palette creates another usable v2 chat", createPaletteChat);
 
   await step("a sidebar new session opens and runs in the configured engine", async () => {
     if (!world.otherName) throw new Error("Existing workspace name missing");
@@ -87,4 +109,9 @@ test("existing workspaces create usable sessions after changing chat engines", a
     });
     await greet(user, probe);
   });
+
+  await step("the chat command palette still creates a usable chat after returning to v1", createPaletteChat);
+  await go(world.app, `/workspace/${world.primary.workspaceId}/settings/advanced`);
+  await user.see({ text: "OpenCode v1 (default)" }, { timeoutMs: 30_000 });
+  await step("the Settings command palette still creates a usable v1 chat", createPaletteChat);
 });
