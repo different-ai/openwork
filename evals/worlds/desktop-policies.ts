@@ -67,7 +67,7 @@ export async function teamAccess(seed: Seed) {
   }));
   const den = await seed.den({
     mocks: { witness: mcpMock({ allowUnauthenticatedMcp: true, agentWorkloads: commandProofs.map((proof) => ({
-      promptMarker: proof.marker, finalReply: proof.reply, steps: [{ tool: shellTool, arguments: { command: proof.command, description: "Write a policy test witness" } }],
+      promptMarker: proof.marker, finalReply: proof.reply, steps: [{ tool: shellTool, allowUnadvertisedTool: true, arguments: { command: proof.command, description: "Write a policy test witness" } }],
     })) }) },
     org: {
       name: `Team Access ${Date.now()}`,

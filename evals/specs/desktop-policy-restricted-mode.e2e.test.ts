@@ -709,7 +709,11 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
       try {
         await desktop.probe.eventually(async () => {
           if (await desktop.probe.has("Allow once")) await desktop.user.click("Allow once");
-          return desktop.probe.has(proof.reply);
+          if (await desktop.probe.has(proof.reply)) return true;
+          // A rejected unadvertised call can end the turn without another
+          // model response. Require the attempted call and file witnesses
+          // below in either case; the control must finish and write its file.
+          return index === 0 && desktop.probe.has(/denied|blocked|no such tool|unknown tool|invalid tool|unavailable tool|tool.*(?:not found|not available|invalid)/i);
         }, { within: 120_000, label: "real engine finishes the command attempt", until: Boolean });
       } catch (error) {
         const screen = await desktop.probe.text();
