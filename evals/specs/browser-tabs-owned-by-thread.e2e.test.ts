@@ -278,7 +278,7 @@ test("a transcript link replaces the selected artifact with its own live sidebar
   await user.see(tabButton(otherTab.name), { timeoutMs: 30_000 });
   await user.click(conversation(reading.title));
   await user.see({ role: "link", text: link.url }, { timeoutMs: 30_000 });
-  await user.click({ role: "button", text: link.artifactName });
+  await user.click({ role: "button", label: /^browser-handoff\.md\b/ });
   await user.see({ role: "button", label: `Select tab: ${link.artifactName}` }, { timeoutMs: 30_000 });
   await user.see({ text: link.artifactText }, { timeoutMs: 30_000 });
   const before = await world.readBrowserState();
