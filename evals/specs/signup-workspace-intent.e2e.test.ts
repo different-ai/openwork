@@ -14,11 +14,18 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await user.notSee({ role: "button", label: "Open menu" });
     expect(await probe.eval(`(() => {
       const frame = document.querySelector('[data-testid="setup-frame"]');
+      const frameBounds = frame?.getBoundingClientRect();
+      const footer = frame?.querySelector('footer')?.getBoundingClientRect();
       const story = frame?.querySelector('aside')?.getBoundingClientRect();
       const panel = frame?.querySelector('aside')?.nextElementSibling?.getBoundingClientRect();
       const brand = frame?.querySelector('header > div')?.getBoundingClientRect();
       const progress = frame?.querySelector('nav[aria-label="Setup progress"]')?.getBoundingClientRect();
-      return Boolean(story && panel && brand && progress
+      return Boolean(frameBounds && footer && story && panel && brand && progress
+        && Math.abs(frameBounds.left) < 2
+        && Math.abs(frameBounds.right - document.documentElement.clientWidth) < 2
+        && Math.abs(panel.right - story.left - 1130) < 2
+        && Math.abs(footer.left - story.left) < 2
+        && Math.abs(footer.right - panel.right) < 2
         && story.right <= panel.left && Math.abs(story.top - panel.top) < 2
         && Math.abs(brand.left - story.left) < 2
         && Math.abs(progress.left - panel.left) < 2
@@ -184,7 +191,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await user.see({ testId: "den-org-sidebar" }, { timeoutMs: 30_000 });
     expect(await connectionsFor(personalId)).toEqual([]);
     expect(await invitationsFor(personalId)).toEqual([]);
-    evidence.recordAssertionEvidence("Setup keeps two panes and hides dashboard navigation until Finish setup", "People, Tools and Ready have separate desktop panes with the logo aligned to the story and the stepper aligned to both panel edges, without the sidebar or menu; Finish setup opens /dashboard and restores navigation, including after reload, with no tools or invitations required.", true);
+    evidence.recordAssertionEvidence("Setup keeps two panes and hides dashboard navigation until Finish setup", "People, Tools and Ready fill the viewport with a 1130px desktop content area and matching footer edges, with the logo aligned to the story and the stepper aligned to both panel edges, without the sidebar or menu; Finish setup opens /dashboard and restores navigation, including after reload, with no tools or invitations required.", true);
   });
 
   let flexibleId = "";
