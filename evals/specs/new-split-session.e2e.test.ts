@@ -35,8 +35,15 @@ test("side chats keep questions, replies, and saved splits attached to their own
     throw new Error(`${String(error)}; saved split: ${JSON.stringify(persisted)}`);
   });
   const send = async (pane: "primary" | "secondary", text: string) => {
-    await user.type({ placeholder: "Describe your task...", nth: pane === "primary" ? 0 : 1 }, text);
+    await user.type({ placeholder: "Describe your task...", nth: pane === "primary" ? 0 : 1 }, text, { verify: true });
     await user.press("Enter");
+    await probe.eventually(() => probe.eval(`(which, text) => {
+      const root = document.querySelector('[data-workbench-pane="' + which + '"]');
+      return [...(root?.querySelectorAll('[data-message-role="user"]') ?? [])]
+        .some((node) => node.getClientRects().length && node.innerText.includes(text));
+    }`, { args: [pane, text] }), {
+      within: 10_000, label: `${pane} displays the submitted message`, until: (value) => value === true,
+    });
   };
   const pane = (which: "primary" | "secondary") => probe.eval(`(which) => {
     const root = document.querySelector('[data-workbench-pane="' + which + '"]');
