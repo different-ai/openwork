@@ -1,4 +1,5 @@
 import { expect } from "vitest";
+import { selectModel } from "@openwork/behaviors";
 import { spec } from "@openwork/testkit";
 import { defaultPolicyEditorAndMemberDesktop, readDefaultDesktopPolicy, teamAccess } from "../worlds/desktop-policies.ts";
 
@@ -687,6 +688,7 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
       const filePath = `/workspace/${surface.workspaceId}/files/content?path=${encodeURIComponent(proof.file)}`;
       expect((await desktop.probe.desktopApi(filePath)).status).toBe(404);
       await desktop.agent.createSession(`Team policy ${index === 0 ? "restricted" : "control"}`);
+      await selectModel(surface, "mock-agent-workload-model", { provider: "Team access model" });
       await desktop.agent.send(`Write the policy test witness by running this OS command: ${proof.command}. Request ${proof.marker}.`);
       try {
         await desktop.probe.eventually(async () => {
