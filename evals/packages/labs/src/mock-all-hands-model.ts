@@ -12,7 +12,10 @@ export async function allHandsModel() {
     let raw = "";
     for await (const chunk of request) raw += chunk;
     prompts.push(raw);
-    const text = "The team is ready to review the launch. I recommend checking the remaining customer blockers first; I have not taken any external action.";
+    const routing = raw.includes("You are the facilitator of the group chat") || raw.includes("Your last answer was not accepted");
+    const text = routing
+      ? JSON.stringify({ speakers: [{ slug: "scout", brief: "Check the current evidence." }, { slug: "editor", brief: "Summarize the evidence for the person." }], mode: "sequential", dependsOn: [["editor", "scout"]], followUp: null, synthesizer: null })
+      : "The team is ready to review the launch. I recommend checking the remaining customer blockers first; I have not taken any external action.";
     response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
     const packet = (delta: object, finish: string | null = null) => `data: ${JSON.stringify({ id: "all-hands-reply", object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model: "team", choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
     response.write(packet({ role: "assistant", content: text }));

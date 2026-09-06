@@ -27,7 +27,10 @@ test.skipIf(!enabled)("All Hands is optional, chats with coworkers, remembers fo
   // the checkout inherits development plugins rather than a person's setup.
   const profileDir = await mkdtemp(path.join(os.tmpdir(), "open-coworker-all-hands-profile-"));
   onTestFinished(() => rm(profileDir, { recursive: true, force: true }));
-  await using app = await coworker({ name: "all-hands", profileDir });
+  const provider = { "eval-team": { npm: "@ai-sdk/openai-compatible", name: "Team fixture", options: { baseURL: model.baseUrl, apiKey: "eval-key" }, models: { team: { name: "Team", tool_call: true } } } };
+  // Seed the native allowlist before the engine's first config read. Runtime
+  // workspace patches cannot stand in for engine-global provider restrictions.
+  await using app = await coworker({ name: "all-hands", profileDir, env: { OPENCODE_CONFIG_CONTENT: JSON.stringify({ enabled_providers: ["eval-team"], provider }) } });
   await waitFor(app, `(document.body?.innerText ?? "").toLowerCase().includes("welcome to open coworker")`, { timeoutMs: 120_000, label: "welcome" });
   for (const name of ["Scout", "Editor"]) await invoke(app, "coworkers.create", { name, role: name === "Scout" ? "Research partner" : "Writing partner", mission: "Help the team review the launch.", avatarColor: "blue", avatarGlasses: "round" });
   const runtime = await invoke(app, "runtime.info");
@@ -37,8 +40,8 @@ test.skipIf(!enabled)("All Hands is optional, chats with coworkers, remembers fo
     if (typeof workspace !== "object" || workspace === null || !("workspaceId" in workspace)) throw new Error("Workspace unavailable");
     const base = `${runtime.serverUrl}/workspace/${workspace.workspaceId}`;
     const headers = { "Content-Type": "application/json", Authorization: `Bearer ${runtime.ownerToken}` };
-    expect((await fetch(`${base}/config`, { method: "PATCH", headers, body: JSON.stringify({ opencode: { enabled_providers: ["eval-team"], provider: { "eval-team": { npm: "@ai-sdk/openai-compatible", name: "Team fixture", options: { baseURL: model.baseUrl, apiKey: "eval-key" }, models: { team: { name: "Team", tool_call: true } } } } } }) })).status).toBe(200);
-    expect((await fetch(`${base}/engine/reload`, { method: "POST", headers })).status).toBe(200);
+    const connected: unknown = await (await fetch(`${base}/opencode/provider`, { headers })).json();
+    expect(connected).toMatchObject({ connected: ["eval-team"] });
     if (slug !== "coordinator") await invoke(app, "coworkers.update", { slug, patch: { model: "eval-team/team" } });
   }
   await evalIn(app, "location.reload(); true");
@@ -55,6 +58,7 @@ test.skipIf(!enabled)("All Hands is optional, chats with coworkers, remembers fo
   await waitFor(app, `Boolean(document.querySelector('[data-testid="group-rail-row"][aria-label="All Hands"]'))`, { label: "All Hands navigation" });
   await evalIn(app, `document.querySelector('[data-testid="group-rail-row"][aria-label="All Hands"]').click(); true`);
   await waitFor(app, `document.querySelector('[data-testid="all-hands-space"]')?.getAttribute("data-active") === "true"`, { label: "team space" });
+  await invoke(app, "groups.update", { id: await setting(app, "groupId"), patch: { facilitatorModel: "eval-team/team" } });
   expect(await evalIn(app, `document.querySelector('[data-testid="all-hands-current-focus"]')?.textContent`)).toBe("Launch readiness");
   await fill(app, '[data-testid="group-composer"]', "@Scout What should we review first?");
   await evalIn(app, `document.querySelector('[data-testid="group-send"]').click(); true`);
@@ -98,6 +102,7 @@ test.skipIf(!enabled)("All Hands is optional, chats with coworkers, remembers fo
   await waitFor(app, `Boolean(document.querySelector('[data-testid="group-rail-row"][aria-label="All Hands"]'))`, { timeoutMs: 120_000, label: "reopened after scheduled briefing" });
   expect(await invoke(app, "allHands.claim")).toBe(null);
   expect(await setting(app, "lastOccurrence")).toBe(occurrence);
+  expect(model.prompts.some((prompt) => prompt.includes("You are the facilitator of the group chat"))).toBe(true);
   await invoke(app, "allHands.update", { frequency: "manual" });
   expect(await invoke(app, "allHands.claim")).toBe(null);
   evidence.recordAssertionEvidence("Manual and automatic briefings share one conversation", "Gather the team produced a saved turn. A real future local-time slot completed while the person was in another conversation without stealing navigation, and reopening did not claim that slot again. Manual mode returned no scheduled work.", true);

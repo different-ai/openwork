@@ -836,10 +836,12 @@ const groupExecution = createGroupExecution({
   coordinator: () => ensureCoordinatorWorkspace(),
   catalogFor: async (workspace, signal) => {
     const handle = await ensurePlatformServer();
-    const response = await fetch(`${handle.url}/workspace/${encodeURIComponent(workspace.workspaceId)}/opencode/config/providers`, { headers: { Authorization: `Bearer ${ownerToken}` }, signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]) });
+    const response = await fetch(`${handle.url}/workspace/${encodeURIComponent(workspace.workspaceId)}/opencode/provider`, { headers: { Authorization: `Bearer ${ownerToken}` }, signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]) });
     if (!response.ok) throw new Error("The group's AI models could not be read.");
     const result = await response.json();
-    return connectedModelCatalog({ all: result.providers, connected: result.providers.map((provider) => provider.id), default: result.default });
+    // A model catalog is not a connection inventory. Retain the native
+    // connected-provider set so routing cannot select an unavailable provider.
+    return connectedModelCatalog(result);
   },
   clientFor: collaborationClient,
 });
