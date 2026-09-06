@@ -1,4 +1,5 @@
 import { signIn } from "@openwork/behaviors";
+import { captureBrowserFilm } from "@openwork/cdp";
 import type { Seed } from "@openwork/env";
 
 export async function signupWorkspace(seed: Seed) {
@@ -13,9 +14,11 @@ export async function signupWorkspace(seed: Seed) {
     email: `workspace-owner-${Date.now()}@openwork.test`,
     password: "OpenWork-proof-9274!suitable",
   };
-  const web = await seed.web({ den, startPath: "/", headless: true, viewport: { width: 1280, height: 1200 } });
+  const web = await seed.web({ den, startPath: "/", headless: true, viewport: { width: 1600, height: 1000 } });
+  const film = process.env.OPENWORK_EVAL_FILM_DIR ? await captureBrowserFilm(web, process.env.OPENWORK_EVAL_FILM_DIR) : null;
   return {
-    den, web, owner,
+    den, web, owner, film,
+    async [Symbol.asyncDispose]() { await film?.stop(); },
     invitees: ["casey@openwork.test", "jordan@openwork.test"],
     rejectedEmail: "jordan@outside.test",
     async adoptSignedInOwner() {

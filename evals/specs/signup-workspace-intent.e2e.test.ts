@@ -131,6 +131,20 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     expect(await probe.eval("document.querySelectorAll('[data-testid=download-openwork-card] details a[href]').length")).toBe(8);
     await user.click({ text: "Other platforms and versions" });
     await user.looks(["The final setup screen shows a clear desktop download and model setup path in the same restrained black-and-white design"]);
+    if (world.film) {
+      await step("the real Linux desktop download completes", async () => {
+        await user.click({ role: "link", text: "Download for Linux" });
+        const completed = await probe.eventually(() => world.film?.downloads.find((item) => item.state === "completed"), {
+          within: 180_000, label: "Chromium completed the installer download", until: (item) => Boolean(item),
+        });
+        expect(completed?.receivedBytes).toBeGreaterThan(1_000_000);
+        expect(completed?.receivedBytes).toBe(completed?.totalBytes);
+        expect(world.film.downloads.some((item) => item.state === "canceled")).toBe(false);
+        evidence.recordAssertionEvidence("The real browser completed the Linux desktop installer download", JSON.stringify(completed), true);
+        await user.screenshot();
+        await world.film.stop();
+      });
+    }
     expect(await invitationsFor(personalId)).toEqual([]);
     expect(await inviteEmails()).toEqual(outboxBeforeSkip);
     evidence.recordAssertionEvidence("Personal setup preserves desktop defaults and explicit skip never submits a typed invitation", JSON.stringify({ memberships: memberships.length, personalPolicy, invitations: [], emailsUnchanged: true }), true);

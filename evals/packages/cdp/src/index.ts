@@ -6,3 +6,5 @@ export * from "./screen.ts";
 export * from "./screen-state.ts";
 export * from "./surface.ts";
 export * from "./targets.ts";
+
+export { captureBrowserFilm } from "./browser-film.ts";

@@ -65,6 +65,7 @@ export interface TraceEntry {
   ok: boolean;
   ms?: number;
   error?: string;
+  target?: { x: number; y: number; width: number; height: number };
 }
 
 export type TraceEntryInput = Omit<TraceEntry, "seq" | "at"> & Partial<Pick<TraceEntry, "at">>;
@@ -372,6 +373,9 @@ function parseTraceEntry(value: unknown): TraceEntry | null {
     ok: value.ok,
     ms: value.ms,
     error: value.error,
+    target: isRecord(value.target) && typeof value.target.x === "number" && typeof value.target.y === "number" && typeof value.target.width === "number" && typeof value.target.height === "number"
+      ? { x: value.target.x, y: value.target.y, width: value.target.width, height: value.target.height }
+      : undefined,
   };
 }
 
