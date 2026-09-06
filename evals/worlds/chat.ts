@@ -1372,3 +1372,35 @@ export async function visualization(seed: Seed) {
     },
   };
 }
+
+
+/** A persisted workspace and conversation created before opting into the other engine. */
+export async function workspaceEngineUpgrade(seed: Seed) {
+  const providerId = "workspace-upgrade-mock";
+  const modelId = "workspace-upgrade-model";
+  const mock = seed.mock({ agentWorkloads: [{
+    promptMarker: "hi",
+    finalReply: "Hello. Your upgrade conversation is working.",
+    finalReplyChunkSize: 3,
+    finalReplyDelayMs: 750,
+    steps: [],
+  }] });
+  const den = await seed.den({ mocks: { agent: mock } });
+  const primaryPath = seed.tmpPath("upgrade-primary");
+  const otherPath = seed.tmpPath("upgrade-existing");
+  const app = await seed.desktop({ den, as: "admin", workspacePath: primaryPath, model: `${providerId}/${modelId}` });
+  const primary = await seed.workspace(app, primaryPath);
+  const provider = { provider: { [providerId]: {
+    npm: "@ai-sdk/openai-compatible", name: "Upgrade mock",
+    options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-upgrade-fixture" },
+    models: { [modelId]: { name: "Upgrade model" } },
+  } } };
+  await configureProvider(seed, app, primary.workspaceId, providerId, modelId, provider);
+  const original = await seedSessionRetry(seed, app, { title: "Before engine upgrade" });
+  const other = await seed.workspace(app, otherPath, { create: true });
+  await configureProvider(seed, app, other.workspaceId, providerId, modelId, provider);
+  const otherOriginal = await seedSessionRetry(seed, app, { title: "Existing workspace history" });
+  return { app, den, primary, other, original, otherOriginal, providerId, modelId,
+    otherName: otherPath.split("/").at(-1),
+  };
+}
