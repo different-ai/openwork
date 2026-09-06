@@ -1,6 +1,16 @@
 import AppKit
 import ApplicationServices
 
+@MainActor
+final class DragSurface: NSView {
+    var downs = 0
+    var moves = 0
+    var ups = 0
+    override func mouseDown(with event: NSEvent) { downs += 1 }
+    override func mouseDragged(with event: NSEvent) { moves += 1 }
+    override func mouseUp(with event: NSEvent) { ups += 1 }
+}
+
 // Disposable, in-memory application and person-input driver for the native
 // journey. This is never included in the product helper or its package.
 @MainActor
@@ -9,8 +19,11 @@ final class Fixture: NSObject, NSApplicationDelegate {
     var draft = NSTextField(string: "Initial draft")
     var count = 0
     var otherCount = 0
+    let dragSurface = DragSurface(frame: NSRect(x: 20, y: 5, width: 360, height: 25))
     let counter = NSTextField(labelWithString: "Count: 0")
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Window IDs sort by creation: require choosing the nondefault window.
+        let second = makeWindow("Other window", x: 600)
         let first = makeWindow("Workspace window", x: 80)
         let increment = NSButton(title: "Increment", target: self, action: #selector(increment))
         draft.setAccessibilityLabel("Draft text")
@@ -20,7 +33,10 @@ final class Fixture: NSObject, NSApplicationDelegate {
         stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 16
         stack.frame = NSRect(x: 24, y: 35, width: 340, height: 250)
         first.contentView?.addSubview(stack)
-        let second = makeWindow("Other window", x: 600)
+        dragSurface.setAccessibilityElement(true)
+        dragSurface.setAccessibilityRole(.group)
+        dragSurface.setAccessibilityLabel("Drag surface")
+        first.contentView?.addSubview(dragSurface)
         let other = NSButton(title: "Other increment", target: self, action: #selector(incrementOther))
         other.frame = NSRect(x: 20, y: 100, width: 200, height: 40)
         second.contentView?.addSubview(other)
@@ -48,18 +64,35 @@ final class Fixture: NSObject, NSApplicationDelegate {
         var result: [String: Any] = [:]
         switch method {
         case "state": result = ["count": count, "otherCount": otherCount, "draft": draft.stringValue]
+        case "drag_state": result = ["downs": dragSurface.downs, "moves": dragSurface.moves, "ups": dragSurface.ups]
+        case "human_edit":
+            windows[0].makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            windows[0].makeFirstResponder(draft)
+            if let editor = draft.currentEditor() { editor.selectAll(nil) }
+            let units = Array("Edited by person".utf16)
+            for down in [true, false] {
+                if let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down) {
+                    units.withUnsafeBufferPointer { buffer in
+                        if let base = buffer.baseAddress { event.keyboardSetUnicodeString(stringLength: units.count, unicodeString: base) }
+                    }
+                    event.postToPid(ProcessInfo.processInfo.processIdentifier)
+                }
+            }
+            result = ["ok": true]
         case "permissions": result = ["accessibility": AXIsProcessTrusted()]
         case "resize":
             windows[0].setContentSize(NSSize(width: 440, height: 350)); result = ["ok": true]
         case "front": windows[0].makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); result = ["ok": true]
-        case "press_helper_button":
+        case "press_helper_button", "select_helper_window":
             let buttons: Set<String> = ["Allow this session", "Cancel", "Pause", "Resume", "Stop"]
             if let params = request["params"] as? [String: Any], let pid = params["pid"] as? Int32,
-               let name = params["name"] as? String, buttons.contains(name),
+               let name = params["name"] as? String,
+               (method == "select_helper_window" ? name == "Workspace window" : buttons.contains(name)),
                let expected = params["executable"] as? String,
                let process = NSRunningApplication(processIdentifier: pid),
                process.executableURL?.resolvingSymlinksInPath().path == URL(fileURLWithPath: expected).resolvingSymlinksInPath().path {
-                result = ["ok": pressButton(pid: pid, title: name)]
+                result = method == "select_helper_window" ? selectWindow(pid: pid, title: name) : ["ok": pressButton(pid: pid, title: name)]
             } else { result = ["ok": false] }
         default: result = ["error": "Unknown fixture operation"]
         }
@@ -67,7 +100,7 @@ final class Fixture: NSObject, NSApplicationDelegate {
             FileHandle.standardOutput.write(data + Data([10]))
         }
     }
-    func pressButton(pid: pid_t, title: String) -> Bool {
+    func findControl(pid: pid_t, title: String?, role expectedRole: String) -> AXUIElement? {
         let root = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(root, 0.2)
         var visited = 0
@@ -78,7 +111,7 @@ final class Fixture: NSObject, NSApplicationDelegate {
             AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &value)
             var role: CFTypeRef?
             AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role)
-            if value as? String == title && role as? String == kAXButtonRole { return element }
+            if (title == nil || value as? String == title) && role as? String == expectedRole { return element }
             var children: CFTypeRef?
             AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &children)
             for child in children as? [AXUIElement] ?? [] {
@@ -86,7 +119,21 @@ final class Fixture: NSObject, NSApplicationDelegate {
             }
             return nil
         }
-        guard let button = find(root, depth: 0) else { return false }
+        return find(root, depth: 0)
+    }
+    func selectWindow(pid: pid_t, title: String) -> [String: Any] {
+        guard let picker = findControl(pid: pid, title: nil, role: kAXPopUpButtonRole) else { return ["ok": false] }
+        var previous: CFTypeRef?
+        AXUIElementCopyAttributeValue(picker, kAXValueAttribute as CFString, &previous)
+        guard AXUIElementPerformAction(picker, kAXPressAction as CFString) == .success,
+              let item = findControl(pid: pid, title: title, role: kAXMenuItemRole),
+              AXUIElementPerformAction(item, kAXPressAction as CFString) == .success else { return ["ok": false] }
+        var selected: CFTypeRef?
+        AXUIElementCopyAttributeValue(picker, kAXValueAttribute as CFString, &selected)
+        return ["ok": true, "previous": previous as? String ?? "", "selected": selected as? String ?? ""]
+    }
+    func pressButton(pid: pid_t, title: String) -> Bool {
+        guard let button = findControl(pid: pid, title: title, role: kAXButtonRole) else { return false }
         return AXUIElementPerformAction(button, kAXPressAction as CFString) == .success
     }
 }

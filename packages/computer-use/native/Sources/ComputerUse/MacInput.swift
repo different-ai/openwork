@@ -78,14 +78,12 @@ final class MacInput {
             for point in path { try access.checkHit(point, target: target, app: app) }
             guard let first = path.first else { throw UseError("invalid_arguments", "Drag path is empty.") }
             try mouse(.leftMouseDown, first, app.pid, 1)
-            var last = first
-            defer { try? mouse(.leftMouseUp, last, app.pid, 1) }
+            defer { releaseAll() }
             for point in path.dropFirst() {
                 try await Task.sleep(nanoseconds: 20_000_000)
                 try check()
                 try access.checkHit(point, target: target, app: app)
                 try mouse(.leftMouseDragged, point, app.pid, 1)
-                last = point
             }
         }
         return "targeted_input"

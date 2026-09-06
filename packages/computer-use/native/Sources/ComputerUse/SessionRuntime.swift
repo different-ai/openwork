@@ -19,6 +19,7 @@ final class SessionRuntime {
         var lastUsed: TimeInterval
         var generation = 0
         var paused = false
+        var pauseReason: String?
         var observation: ObservationLease?
         var records: [ElementRecord] = []
         var actionCount = 0
@@ -90,9 +91,12 @@ final class SessionRuntime {
         case "computer_session_status":
             try a.only(["session_id"])
             let current = try current(try a.string("session_id"), allowPaused: true)
-            return text(["ok": true, "session_id": current.id, "mode": current.mode.rawValue,
+            var status: [String: Any] = ["ok": true, "session_id": current.id, "mode": current.mode.rawValue,
                 "state": current.paused ? "paused" : "active", "actions": current.actionCount,
-                "expires_in_seconds": max(0, Int(900 - (now - current.started)))])
+                "expires_in_seconds": max(0, Int(900 - (now - current.started))),
+                "next": current.paused ? "human_takeover" : "observe"]
+            if let reason = current.pauseReason { status["pause_reason"] = reason }
+            return text(status)
         default: throw UseError("unknown_tool", "Unknown tool. Refresh the Computer Use tool list.", next: "discover")
         }
     }
@@ -216,7 +220,9 @@ final class SessionRuntime {
         }
     }
     func pause(_ reason: String) {
-        guard session != nil else { return }
+        guard let current = session, !current.paused else { return }
+        input.releaseAll()
+        session?.pauseReason = reason
         session?.paused = true; session?.generation += 1; session?.observation = nil; session?.records = []
         controls.update(reason, paused: true)
     }
@@ -225,6 +231,7 @@ final class SessionRuntime {
         do {
             _ = try access.validate(current.target, app: current.app, requireFrontmost: current.mode == .control)
             expire(); guard session != nil else { return }
+            session?.pauseReason = nil
             session?.paused = false; session?.generation += 1; session?.observation = nil; session?.lastUsed = now
             controls.update("Active · observe again before continuing", paused: false)
         } catch { controls.update(error.localizedDescription, paused: true) }

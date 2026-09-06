@@ -97,7 +97,18 @@ export async function computerUseWorld(_seed: Seed, { place }: { place: Place })
       list: () => helper.request("tools/list"),
       state: () => fixture.request("state"),
       resize: () => fixture.request("resize"),
+      humanEdit: () => fixture.request("human_edit"),
+      dragState: () => fixture.request("drag_state"),
       front: () => fixture.request("front"),
+      async selectWindow() {
+        const deadline = Date.now() + 10_000;
+        while (Date.now() < deadline) {
+          const result = await fixture.request("select_helper_window", { name: "Workspace window", pid: helper.pid, executable });
+          if (record(result) && result.ok === true) return result;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        throw new Error("The native window picker did not become available.");
+      },
       async pressControl(name: "Allow this session" | "Cancel" | "Pause" | "Resume" | "Stop") {
         const deadline = Date.now() + 10_000;
         while (Date.now() < deadline) {
