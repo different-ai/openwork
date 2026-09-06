@@ -304,6 +304,28 @@ export async function delegatedQuestionHandoff(seed: Seed) {
   return { ...base, engine, delegationTool, root: { ...root, prompt: rootPrompt }, child, unrelated: { ...other, ...unrelated } };
 }
 
+/** Real native permissions and a provider retry, without synthetic UI events. */
+export async function permissionStopRecovery(seed: Seed) {
+  const engine = resolveEvalEngine();
+  const retry = { prompt: "Prepare the retry reliability summary", reply: "Retry recovery finished." };
+  const stopped = { prompt: "Inspect the stopped permission workspace", command: "printf STOP_PERMISSION_WITNESS" };
+  const other = { prompt: "Inspect the other permission workspace", command: "printf OTHER_PERMISSION_WITNESS" };
+  const followup = { prompt: "Continue with a fresh summary instead", reply: "Fresh work finished after stop." };
+  const base = await splitPaneQuestions(seed, "permission-stop-recovery", [
+    { promptMarker: retry.prompt, latestUserTurn: true, rateLimitAttempts: 1, finalReply: retry.reply, steps: [] },
+    ...[stopped, other].map((item): MockAgentWorkload => ({
+      promptMarker: item.prompt, latestUserTurn: true, finalReply: "Permission work finished.",
+      steps: [{ tool: engine === "v2" ? "shell" : "bash", arguments: {
+        command: item.command, description: "Inspect the permission workspace", timeout: 30_000,
+      } }],
+    })),
+    { promptMarker: followup.prompt, latestUserTurn: true, finalReply: followup.reply, steps: [] },
+  ], { permission: { bash: "ask" } });
+  const stoppedSession = await seedSessionRetry(seed, base.app, { title: "Stop permission task" });
+  const otherSession = await seedSessionRetry(seed, base.app, { title: "Keep permission task" });
+  return { ...base, engine, retry, followup, stopped: { ...stopped, ...stoppedSession }, other: { ...other, ...otherSession } };
+}
+
 export async function newSplitPrimary(seed: Seed) {
   const primaryPrompt = "Reply to the primary split message";
   const secondaryPrompt = "Reply to the secondary split message";

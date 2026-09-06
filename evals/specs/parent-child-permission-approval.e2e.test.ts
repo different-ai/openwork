@@ -1,7 +1,7 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
 import { parentChildPermissionWorld } from "../worlds/first-run.ts";
-import { delegatedQuestionHandoff } from "../worlds/chat.ts";
+import { delegatedQuestionHandoff, permissionStopRecovery } from "../worlds/chat.ts";
 
 const test = spec.world(parentChildPermissionWorld);
 
@@ -61,6 +61,86 @@ function text(value: unknown): string {
 }
 
 const questionTest = spec.world(delegatedQuestionHandoff, { timeout: 600_000 });
+
+const stopTest = spec.world(permissionStopRecovery, { timeout: 600_000 });
+
+stopTest("retry recovery and stopping a permission leave other requests and fresh work intact", async ({ world, user, probe, step }) => {
+  const v2 = world.engine === "v2";
+  const mount = `/workspace/${encodeURIComponent(world.workspace.workspaceId)}/${v2 ? "opencode2/api" : "opencode"}`;
+  const read = async (path: string): Promise<unknown> => {
+    const result = await probe.desktopApi(`${mount}${path}`);
+    expect(result.status, path).toBe(200);
+    return v2 ? record(result.body).data : result.body;
+  };
+  const pending = async (id: string) => records(await read(v2 ? `/session/${id}/permission` : "/permission"))
+    .filter((item) => item.sessionID === id);
+  const send = async (prompt: string) => { await user.type("composer", prompt, { verify: true }); await user.press("Enter"); };
+  const open = async (session: { title: string; sessionId: string }) => {
+    await user.click({ text: session.title });
+    await probe.eventually(() => probe.hash(), { within: 30_000, label: "the intended conversation is selected",
+      until: (hash) => hash.includes(`/session/${session.sessionId}`) });
+  };
+
+  await step("a native retry survives active polling and then recovers", async () => {
+    await send(world.retry.prompt);
+    await user.see({ text: /Rate limited for lifecycle verification/ }, { timeoutMs: 45_000 });
+    // Several authoritative reads span the sync poll cadence while the native
+    // engine still owns the retry. None is evidence of completion.
+    const observingUntil = Date.now() + 1_000;
+    do {
+      const active = record(await read(v2 ? "/session/active" : "/session/status"));
+      expect(active[world.other.sessionId]).toBeDefined();
+      await user.see({ text: /Rate limited for lifecycle verification/ });
+    } while (Date.now() < observingUntil);
+    await user.see({ text: world.retry.reply }, { timeoutMs: 45_000 });
+    await user.notSee({ text: /Rate limited for lifecycle verification/ });
+    const calls = await world.mock.agentRequests({ promptMarker: world.retry.prompt });
+    expect(calls.filter((call) => call.kind === "error")).toHaveLength(1);
+    expect(calls.filter((call) => call.kind === "final")).toHaveLength(1);
+  });
+
+  const unrelated = await step("two conversations own separate real approvals", async () => {
+    await send(world.other.prompt);
+    await user.see({ text: world.other.command }, { timeoutMs: 45_000 });
+    const other = await probe.eventually(() => pending(world.other.sessionId), { within: 30_000,
+      label: "the unrelated approval is pending", until: (items) => items.length === 1 });
+    await open(world.stopped);
+    await send(world.stopped.prompt);
+    await user.see({ text: world.stopped.command }, { timeoutMs: 45_000 });
+    expect(await pending(world.stopped.sessionId)).toHaveLength(1);
+    expect(await pending(world.other.sessionId)).toEqual(other);
+    return other;
+  });
+
+  await step("Stop removes its cancelled approval without a permission reply and preserves the other session", async () => {
+    await user.click({ role: "button", label: "Stop" });
+    await probe.eventually(() => pending(world.stopped.sessionId), { within: 30_000,
+      label: "native interruption cleanup removes the pending permission", until: (items) => items.length === 0 });
+    await user.notSee("Allow once", { timeoutMs: 15_000 });
+    await user.notSee({ role: "button", label: "Stop" });
+    if (v2) expect(record(await read(`/session/${world.stopped.sessionId}`)).outcome).toBe("interrupted");
+    expect(await pending(world.other.sessionId)).toEqual(unrelated);
+    expect((await world.mock.agentRequests({ promptMarker: world.stopped.prompt })).some((call) => call.kind === "final")).toBe(false);
+    await user.reload();
+    await user.see("composer", { editable: true, timeoutMs: 45_000 });
+    await user.notSee("Allow once");
+    expect(await pending(world.other.sessionId)).toEqual(unrelated);
+  });
+
+  await step("fresh work completes once and the unrelated approval remains answerable", async () => {
+    await send(world.followup.prompt);
+    await user.see({ text: world.followup.reply }, { timeoutMs: 45_000 });
+    expect((await world.mock.agentRequests({ promptMarker: world.followup.prompt })).filter((call) => call.kind === "final")).toHaveLength(1);
+    await open(world.other);
+    await user.see("Allow once");
+    expect(await pending(world.other.sessionId)).toEqual(unrelated);
+    await user.click("Allow once");
+    await user.see({ text: "Permission work finished." }, { timeoutMs: 45_000 });
+    await user.notSee("Allow once");
+    expect(await pending(world.stopped.sessionId)).toEqual([]);
+    await user.screenshot();
+  });
+});
 
 questionTest("a parent answers its real child question without settling an unrelated root question", async ({ world, user, probe, step }) => {
   const v2 = world.engine === "v2";

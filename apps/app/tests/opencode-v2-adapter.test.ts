@@ -153,6 +153,22 @@ function jsonResponse(value: unknown, status = 200): Response {
 }
 
 describe("OpenCode v2 event translation", () => {
+  test("preserves native retry detail and sequenced interruption reasons without claiming success", () => {
+    const state = createV2EventTranslationState();
+    expect(translateV2Event({ type: "session.retry.scheduled", durable: { seq: 12 }, data: {
+      sessionID: "s", assistantMessageID: "m", attempt: 3, at: 10_000, error: { message: "Rate limited" },
+    } }, state)).toEqual([{ type: "session.status", properties: {
+      sessionID: "s", sequence: 12, status: { type: "retry", attempt: 3, message: "Rate limited", next: 10_000 },
+    } }]);
+    for (const reason of ["user", "shutdown", "superseded", "future-reason"]) {
+      expect(translateV2Event({ type: "session.execution.interrupted", durable: { seq: 13 },
+        data: { sessionID: "s", reason } }, state)).toEqual([{
+        type: "session.execution.interrupted", properties: { sessionID: "s", reason, sequence: 13 },
+      }]);
+    }
+    expect(translateV2Event({ type: "session.step.started", durable: { seq: 14 }, data: { sessionID: "s" } }, state))
+      .toEqual([{ type: "session.execution.progress", properties: { sessionID: "s", sequence: 14 } }]);
+  });
   test("renders an admitted user message before execution using its persisted identity", () => {
     const state = createV2EventTranslationState();
     const admitted = {
@@ -343,7 +359,7 @@ describe("OpenCode v2 event translation", () => {
     ]));
   });
 
-  test("translates captured v2 text lifecycle events through terminal idle", () => {
+  test("translates captured v2 text lifecycle events through explicit execution success", () => {
     const state = createV2EventTranslationState();
     const captured = [
       { type: "session.text.started", data: { sessionID: "s", assistantMessageID: "m", ordinal: 0 } },
@@ -387,8 +403,7 @@ describe("OpenCode v2 event translation", () => {
           part: { id: "m:0", messageID: "m", sessionID: "s", type: "text", text: "hello world" },
         },
       },
-      { type: "session.status", properties: { sessionID: "s", status: { type: "idle" } } },
-      { type: "session.idle", properties: { sessionID: "s" } },
+      { type: "session.execution.succeeded", properties: { sessionID: "s", sequence: undefined } },
     ]);
   });
 
@@ -571,21 +586,20 @@ describe("OpenCode v2 event translation", () => {
     }
   });
 
-  test("emits an error before terminal idle events for failed execution", () => {
+  test("preserves execution failure for sequenced terminal handling", () => {
     const state = createV2EventTranslationState();
     expect(translateV2Event({
       type: "session.execution.failed",
       properties: { sessionID: "ses_2", error: { message: "provider failed" } },
     }, state)).toEqual([
       {
-        type: "session.error",
+        type: "session.execution.failed",
         properties: {
           sessionID: "ses_2",
+          sequence: undefined,
           error: { name: "UnknownError", data: { message: "provider failed" } },
         },
       },
-      { type: "session.status", properties: { sessionID: "ses_2", status: { type: "idle" } } },
-      { type: "session.idle", properties: { sessionID: "ses_2" } },
     ]);
   });
 
@@ -599,7 +613,7 @@ describe("OpenCode v2 event translation", () => {
     ].flatMap((event) => translateV2Event(event, state) ?? []);
 
     expect(translated).toEqual([
-      { type: "session.status", properties: { sessionID: "ses_child", status: { type: "busy" } } },
+      { type: "session.execution.started", properties: { sessionID: "ses_child", sequence: undefined } },
       {
         type: "permission.asked",
         properties: {
@@ -616,8 +630,7 @@ describe("OpenCode v2 event translation", () => {
         type: "permission.replied",
         properties: { sessionID: "ses_child", requestID: "per_child", reply: "once" },
       },
-      { type: "session.status", properties: { sessionID: "ses_child", status: { type: "idle" } } },
-      { type: "session.idle", properties: { sessionID: "ses_child" } },
+      { type: "session.execution.succeeded", properties: { sessionID: "ses_child", sequence: undefined } },
     ]);
   });
 });
@@ -647,6 +660,28 @@ describe("OpenCode v2 client compatibility", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  test.each([true, false])("returns the actual native interrupt acknowledgement %s", async (interrupted) => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (input) => {
+      expect(input instanceof Request && input.url.endsWith("/api/session/s/interrupt")).toBe(true);
+      return jsonResponse({ data: { interrupted } });
+    };
+    try {
+      expect((await createClientV2("http://opencode.test/opencode2", undefined, {}).session.abort({ sessionID: "s" })).data)
+        .toBe(interrupted);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test("rejects a malformed native interrupt acknowledgement", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => jsonResponse({ data: {} });
+    try {
+      const result = await createClientV2("http://opencode.test/opencode2", undefined, {}).session.abort({ sessionID: "s" });
+      expect(result.data).toBeUndefined();
+      expect(result.error).toEqual({ name: "InvalidV2InterruptResponse" });
+    } finally { globalThis.fetch = originalFetch; }
   });
 
   test("saved native instruction updates stay out of the visible conversation", async () => {

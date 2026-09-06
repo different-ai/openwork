@@ -784,25 +784,6 @@ function failedToolPart(
   };
 }
 
-function sessionErrorEvent(sessionID: string, error: unknown): OpencodeEvent {
-  return {
-    type: "session.error",
-    properties: {
-      sessionID,
-      error: { name: "UnknownError", data: { message: errorMessage(error) } },
-    },
-  };
-}
-
-function terminalEvents(sessionID: string, error?: unknown): OpencodeEvent[] {
-  const events: OpencodeEvent[] = error === undefined ? [] : [sessionErrorEvent(sessionID, error)];
-  events.push(
-    { type: "session.status", properties: { sessionID, status: { type: "idle" } } },
-    { type: "session.idle", properties: { sessionID } },
-  );
-  return events;
-}
-
 export function createV2EventTranslationState(): V2EventTranslationState {
   return {
     streams: new Map(),
@@ -850,9 +831,31 @@ export function translateV2Event(
       : null;
   }
 
-  if (type === "session.execution.started") {
+  if (type.startsWith("session.execution.")) {
     if (!sessionID) return null;
-    return [{ type: "session.status", properties: { sessionID, status: { type: "busy" } } }];
+    return [{ type, properties: {
+      ...properties, sequence: readNumber(value.durable, "seq"),
+      ...(type === "session.execution.failed" ? {
+        error: { name: "UnknownError", data: { message: errorMessage(properties.error) } },
+      } : {}),
+    } }];
+  }
+
+  if (type === "session.retry.scheduled") {
+    const attempt = readNumber(properties, "attempt");
+    const next = readNumber(properties, "at");
+    if (!sessionID || attempt === undefined || next === undefined) return null;
+    return [{ type: "session.status", properties: {
+      sessionID,
+      sequence: readNumber(value.durable, "seq"),
+      status: { type: "retry", attempt, message: errorMessage(properties.error), next },
+    } }];
+  }
+
+  if (type === "session.step.started") {
+    return sessionID ? [{ type: "session.execution.progress", properties: {
+      sessionID, sequence: readNumber(value.durable, "seq"),
+    } }] : null;
   }
 
   const kind = type.startsWith("session.reasoning.") || type.startsWith("session.next.reasoning.") ? "reasoning" : "text";
@@ -1027,17 +1030,6 @@ export function translateV2Event(
     stream.metadata = readRecord(properties, "metadata") ?? stream.metadata;
     const part = failedToolPart(stream, properties, toolEventTimestamp(value, properties));
     return [{ type: "message.part.updated", properties: { part } }];
-  }
-
-  if (
-    type === "session.execution.succeeded" ||
-    type === "session.execution.interrupted"
-  ) {
-    return sessionID ? terminalEvents(sessionID) : null;
-  }
-
-  if (type === "session.execution.failed") {
-    return sessionID ? terminalEvents(sessionID, properties.error ?? properties) : null;
   }
 
   if (type === "permission.asked" || type === "permission.v2.asked") {
@@ -1519,7 +1511,12 @@ export function createClientV2(
         {},
         options?.signal,
       );
-      return result.response.ok ? successfulResult(result, true) : failedResult(result);
+      if (!result.response.ok) return failedResult(result);
+      const data = responseData(result.payload);
+      if (!isRecord(data) || typeof data.interrupted !== "boolean") {
+        return failedResult({ ...result, payload: { name: "InvalidV2InterruptResponse" } });
+      }
+      return successfulResult(result, data.interrupted);
     },
     update: async (
       parameters: SessionUpdateParameters,
