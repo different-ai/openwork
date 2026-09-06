@@ -79,6 +79,10 @@ test("gateway discovery stays quiet until connection setup is explicitly request
   expect(catalog.selectedIds).toEqual(["slack"]);
   expect(slack.payload.connectionAction).toBeUndefined();
   const entries = rows(catalog.entries);
+  expect(entries.find(entry => entry.id === "slack")?.description).toContain("Agents settings");
+  expect(entries.find(entry => entry.id === "slack")?.description).toContain("OAuth authorization alone does not make MCP ready");
+  expect(entries.find(entry => entry.id === "linear")?.description).not.toContain("Agents settings");
+  evidence.recordAssertionEvidence("Slack catalog setup distinguishes authorization from MCP readiness", "Slack describes the Agents prerequisite and OAuth distinction; Linear does not receive Slack guidance.", true);
   const ids = entries.map(entry => entry.id);
   expect(ids).toHaveLength(12);
   expect(new Set(ids).size).toBe(12);
