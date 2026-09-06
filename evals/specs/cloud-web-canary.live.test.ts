@@ -51,7 +51,7 @@ test(cliManaged
   if (typeof token !== "string" || !token) throw new Error("Web handoff did not establish a session");
   const session = { ...world.den.ref, token, email: world.email, password: world.password };
   const workers = async () => {
-    const result = await probe.api(session, "/v1/workers?limit=100", { headers: { "x-openwork-org-id": world.orgId }, redirect: "error", signal: AbortSignal.timeout(10_000) });
+    const result = await probe.api(session, "/v1/workers?limit=50", { headers: { "x-openwork-org-id": world.orgId }, redirect: "error", signal: AbortSignal.timeout(10_000) });
     if (result.response.status !== 200) throw new Error(`Worker list returned HTTP ${result.response.status}`);
     return workerRows(result.body);
   };
@@ -59,21 +59,23 @@ test(cliManaged
   expect(initialWorkers).toHaveLength(1);
   const worker = initialWorkers[0];
   expect(worker.orgId === world.orgId && worker.userId === world.userId).toBe(true);
-  expect(worker.workspacePath === world.workspace).toBe(true);
+  // This optional Den metadata is not the browser's workspace identity. The
+  // route and fresh engine read below prove continuity without inventing a path.
+  if (worker.workspacePath !== null) expect(worker.workspacePath === world.workspace).toBe(true);
   expect(worker.backend).toBe("cloud-instance");
   expect(worker.status).toBe("healthy");
   if (world.expectedWorkerId) expect(worker.id === world.expectedWorkerId).toBe(true);
 
   await step("A UI prompt causes engine write then read, with a visibly streamed assistant answer", async () => {
     await user.click({ role: "button", label: "Change model" });
-    await user.click({ role: "button", text: /^Model\b/ });
-    await user.click({ role: "option", text: /^Canary\b/ });
+    await user.click({ role: "button", label: /^Model\b/ });
+    await user.click({ role: "option", label: /^Canary\b/ });
     await user.see({ role: "button", label: "Change model" }, { text: /Canary/ });
     await user.type("composer", `Create ${world.filename} in the current workspace containing exactly this line: ${world.marker}\nThen read the file back and report its contents.`);
     await user.press("Enter");
-    await user.see({ text: /^Canary read 1:$/ }, { timeoutMs: 120_000 });
-    const partial = (await world.page()).assistant;
-    expect(partial.includes("Canary read 1:") && !partial.includes(first)).toBe(true);
+    await probe.eventually(() => world.partialReply("Canary read 1:", first), {
+      within: 120_000, label: "visible incomplete first assistant answer",
+    });
     await user.see({ text: first }, { timeoutMs: 60_000 });
     expect((await world.page()).assistant.includes(first)).toBe(true);
     await user.see({ role: "button", label: "Run task" });
@@ -96,7 +98,7 @@ test(cliManaged
   await step(cliManaged ? "Fixture action: CLI stops and restarts the owned real runtime with the Web tab away" : "With the Web tab away, Den actually idle-stops the same worker", async () => {
     await user.navigate("about:blank");
     if (cliManaged) {
-      expect(await world.manualRestart()).toEqual({ stopped: true, started: true, runtimeHealthy: true, sameSandbox: true });
+      expect(await world.manualRestart()).toEqual({ stopped: true, started: true, runtimeReachable: true, sameSandbox: true });
       expect(await world.providerCalls()).toBe(0);
     } else {
       await probe.eventually(async () => {
@@ -120,9 +122,9 @@ test(cliManaged
     expect(resumed[0]).toEqual(worker);
     await user.type("composer", `Read ${world.filename} again from disk and report its current contents. Do not modify the file.`);
     await user.press("Enter");
-    await user.see({ text: /^Canary read 2:$/ }, { timeoutMs: 120_000 });
-    const partial = (await world.page()).assistant;
-    expect(partial.includes("Canary read 2:") && !partial.includes(second)).toBe(true);
+    await probe.eventually(() => world.partialReply("Canary read 2:", second), {
+      within: 120_000, label: "visible incomplete second assistant answer",
+    });
     await user.see({ text: second }, { timeoutMs: 60_000 });
     expect((await world.page()).assistant.includes(second)).toBe(true);
     await user.see({ role: "button", label: "Run task" });

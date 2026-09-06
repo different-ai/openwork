@@ -118,7 +118,8 @@ export async function attachedCanary(seed: Seed, { place }: { place: Place }) {
           if (response.ok) {
             const started = await owned("runtime");
             if (started.state !== "started") throw new Error("CLI runtime not started");
-            return { stopped: true, started: true, runtimeHealthy: true, sameSandbox: stopped.id === started.id };
+            // HTTP liveness only; the subsequent fresh UI-driven read proves engine readiness.
+            return { stopped: true, started: true, runtimeReachable: true, sameSandbox: stopped.id === started.id };
           }
         } catch { /* A stopped runtime needs time to relaunch its real engine. */ }
         await delay(2_000);
@@ -158,6 +159,19 @@ export async function attachedCanary(seed: Seed, { place }: { place: Place }) {
         || !(value.takeover === null || typeof value.takeover === "string")) throw new Error("Invalid canary page observation");
       return { atGateway: value.atGateway, atDen: value.atDen, route: value.route, takeover: value.takeover, assistant: value.assistant };
     },
+    async partialReply(prefix: string, complete: string) {
+      // Observe visibility and incompleteness together, before the next SSE chunk.
+      const value = await callFunctionOnSurface(web, `(prefix, complete) =>
+        [...document.querySelectorAll('[data-message-role="assistant"]')].some(node => {
+          const rect = node.getBoundingClientRect();
+          const text = node.textContent ?? '';
+          return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < innerHeight
+            && getComputedStyle(node).visibility !== 'hidden'
+            && text.includes(prefix) && !text.includes(complete);
+        })`, [prefix, complete]);
+      if (typeof value !== "boolean") throw new Error("Invalid partial-answer observation");
+      return value;
+    },
     async stats() {
       // No redirect forwarding, no raw provider body in errors/evidence.
       const response = await fetch(`${modelUrl}/stats`, { headers: { authorization: `Bearer ${modelKey}` }, redirect: "error", signal: AbortSignal.timeout(10_000) });
@@ -187,7 +201,8 @@ export function workerRows(value: unknown) {
   return value.workers.map((worker: unknown) => {
     if (!record(worker) || typeof worker.id !== "string" || typeof worker.orgId !== "string"
       || typeof worker.createdByUserId !== "string" || typeof worker.status !== "string"
-      || typeof worker.workspacePath !== "string" || typeof worker.sandboxBackend !== "string") throw new Error("Invalid worker identity");
+      || (worker.workspacePath !== null && typeof worker.workspacePath !== "string")
+      || typeof worker.sandboxBackend !== "string") throw new Error("Invalid worker identity");
     return { id: worker.id, orgId: worker.orgId, userId: worker.createdByUserId, status: worker.status,
       workspacePath: worker.workspacePath, backend: worker.sandboxBackend };
   });

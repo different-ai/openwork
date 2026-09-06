@@ -85,6 +85,12 @@ pnpm --dir evals exec tsc --noEmit --strict --skipLibCheck --module preserve --m
 
 ## Proof Boundary
 
+Worker-list requests respect the API's 50-row maximum. `workspacePath` is nullable
+Den metadata; when present it must match setup, but a null value is not replaced
+with an assumed directory. Workspace/session continuity comes from the browser
+route and fresh engine read. The CLI restart receipt's `runtimeReachable` means
+HTTP liveness only; successful tool execution is the later readiness gate.
+
 ### Explicit CLI-Managed Smoke
 
 `CANARY_MODE=cli-managed` selects the separately named manual-restart journey in
