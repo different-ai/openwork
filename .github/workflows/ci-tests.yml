@@ -1,9 +1,12 @@
 name: OpenWork Tests
 
 on:
+  # No base-branch filter: stacked PRs (base = another feature branch) must run
+  # the same lane as dev-based PRs. With `branches: [dev]` here, every
+  # intermediate PR in a stack skipped this workflow entirely — including the
+  # `openwork-tests-required` context that branch rulesets require — so stacked
+  # changes only met the unit/e2e lane when the final PR was retargeted to dev.
   pull_request:
-    branches:
-      - dev
   push:
     branches:
       - dev
