@@ -123,16 +123,20 @@ export async function teamAccess(seed: Seed) {
   const org = await seed.api(den.members.jordan, "/v1/org");
   const currentMember = isRecord(org.body) && isRecord(org.body.currentMember) ? org.body.currentMember : null;
   if (!org.response.ok || typeof currentMember?.id !== "string") throw new Error("Missing target member ID");
-  async function createTeam(name: string) {
+  const controlOrg = await seed.api(den.members.casey, "/v1/org");
+  const controlMember = isRecord(controlOrg.body) && isRecord(controlOrg.body.currentMember) ? controlOrg.body.currentMember : null;
+  if (!controlOrg.response.ok || typeof controlMember?.id !== "string") throw new Error("Missing control member ID");
+  async function createTeam(name: string, memberId: string) {
     const result = await seed.api(den.admin, "/v1/teams", {
-      method: "POST", body: JSON.stringify({ name, memberIds: [currentMember?.id] }),
+      method: "POST", body: JSON.stringify({ name, memberIds: [memberId] }),
     });
     const team = isRecord(result.body) && isRecord(result.body.team) ? result.body.team : null;
     if (!result.response.ok || typeof team?.id !== "string") throw new Error(`Team setup failed: ${result.text}`);
     return team.id;
   }
-  const teamId = await createTeam("Focused work");
-  const grantTeamId = await createTeam("Additional tools");
+  const teamId = await createTeam("Focused work", currentMember.id);
+  const grantTeamId = await createTeam("Additional tools", currentMember.id);
+  const controlTeamId = await createTeam("Everyday work", controlMember.id);
   const grant = await seed.api(den.admin, "/v1/desktop-policies", {
     method: "POST", body: JSON.stringify({ policyName: "Additional team grants", policy: flags, teamIds: [grantTeamId] }),
   });
@@ -153,5 +157,6 @@ export async function teamAccess(seed: Seed) {
   const member = await seed.desktop({ den, as: "jordan", model: `${llmProvider.id}/mock-agent-workload-model` });
   const control = await seed.desktop({ den, as: "casey", model: `${llmProvider.id}/mock-agent-workload-model` });
   const admin = await seed.web({ den, signedInAs: den.admin, startPath: editorPath, headless: true, viewport: { width: 1440, height: 2100 } });
-  return { den, member, control, admin, commandProofs, nonce, providerId: llmProvider.id, teamId, grantTeamId, editorPath, pluginId, pluginName, rawSourceText };
+  return { den, member, control, admin, commandProofs, nonce, providerId: llmProvider.id, teamId, grantTeamId, controlTeamId,
+    memberId: currentMember.id, controlMemberId: controlMember.id, editorPath, pluginId, pluginName, rawSourceText };
 }

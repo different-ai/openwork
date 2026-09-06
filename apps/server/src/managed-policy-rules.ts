@@ -35,12 +35,21 @@ export function executionRules(policy: DesktopExecutionPolicy | undefined): Engi
   }
   return rules;
 }
-export function legacyExecutionPermissions(policy: DesktopExecutionPolicy | undefined): Record<string, Record<string, "allow" | "deny">> {
-  const permissions: Record<string, Record<string, "allow" | "deny">> = {};
+type LegacyExecutionPermissions = {
+  bash?: Record<string, "allow" | "deny">;
+  webfetch?: "allow" | "deny";
+  websearch?: "allow" | "deny";
+};
+export function legacyExecutionPermissions(policy: DesktopExecutionPolicy | undefined): LegacyExecutionPermissions {
+  const permissions: LegacyExecutionPermissions = {};
   for (const rule of executionRules(policy)) {
-    const key = rule.action === "shell" ? "bash" : rule.action;
-    permissions[key] ??= {};
-    permissions[key][rule.resource] = rule.effect;
+    if (rule.action === "shell") {
+      permissions.bash ??= {};
+      permissions.bash[rule.resource] = rule.effect;
+    } else if (rule.action === "webfetch" || rule.action === "websearch") {
+      // The pinned engine accepts only scalar actions for these two tools.
+      permissions[rule.action] = rule.effect;
+    }
   }
   return permissions;
 }

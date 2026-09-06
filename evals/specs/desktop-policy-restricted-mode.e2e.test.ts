@@ -366,6 +366,15 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
 
   const targetBaseline = await effective(world.den.members.jordan);
   const controlBaseline = await effective(world.den.members.casey);
+  const memberships = [];
+  for (const [teamId, memberId] of [[world.teamId, world.memberId], [world.controlTeamId, world.controlMemberId]]) {
+    const result = await probe.api(world.den.admin, `/v1/teams/${teamId}`);
+    expect(result.response.status).toBe(200);
+    if (!isRecord(result.body) || !isRecord(result.body.team)) throw new Error("Expected team membership");
+    expect(result.body.team.memberIds).toEqual([memberId]);
+    memberships.push(result.body.team);
+  }
+  evidence.recordAssertionEvidence("The two ordinary members belong to different teams", JSON.stringify(memberships), memberships.length === 2 && world.teamId !== world.controlTeamId);
   const defaultPolicy = await readDefaultDesktopPolicy(probe, world.den.admin);
   if (!isRecord(defaultPolicy.policy)) throw new Error("Expected default policy capabilities");
   expect(defaultPolicy.policy.allowAlphaUpdates).toBe(false);
