@@ -1,13 +1,14 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { app as startApp, faultProxy as startFaultProxy, SkipError } from "@openwork/env";
+import { app as startApp, faultProxy as startFaultProxy, resolveEvalEngine, SkipError } from "@openwork/env";
 import type { Den, MockHandle, Seed } from "@openwork/env";
 import { denFetch, evalIn as rawEvalIn } from "@openwork/behaviors";
 import type { DenFetchResult, DenSession } from "@openwork/behaviors";
 import { allocateFreePort } from "@openwork/cdp";
 import { startMockMcp } from "@openwork/labs";
 import { captureExternalBrowserUrls, electronProfilePaths } from "@openwork/hosts";
+import { configureProvider } from "./chat.ts";
 
 export const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -315,15 +316,59 @@ export async function preseededConnect(seed: Seed) {
 }
 
 export async function connectorBranding(seed: Seed) {
-  const app = await seed.desktop({ name: "connector-tool-call-branding" });
-  await seed.workspace(app, seed.tmpPath("connector-tool-call-branding"));
-  await seed.session(app);
-  // TODO(primitive): seed.connectorToolCall
-  await seed.evalIn(app, `window.__openworkControl.execute("eval.connector_tool_call.seed")`, {
-    awaitPromise: true,
-    timeoutMs: 60_000,
+  const engine = resolveEvalEngine();
+  const proof = `Channel list ${crypto.randomUUID()}`;
+  const prompt = "List my Slack channels.";
+  const failurePrompt = "Read my Slack history.";
+  const search = (name: string) => ({ query: `Slack ${name}`, type: "mcp", limit: 1 });
+  const steps = (name: string) => engine === "v2" ? [{
+    tool: "execute",
+    arguments: { code: `
+      const found = await tools["openwork-cloud"].search_capabilities(${JSON.stringify(search(name))});
+      const result = typeof found === "string" ? JSON.parse(found) : found;
+      const catalog = result.matches ? result : JSON.parse(result.content[0].text);
+      return await tools["openwork-cloud"].execute_capability({ name: catalog.matches[0].name });
+    ` },
+  }] : [
+    { tool: "search_capabilities", arguments: search(name) },
+    { tool: "execute_capability", arguments: {}, argumentsFrom: "capability-search" },
+  ];
+  const den = await seed.den({
+    org: { name: "Connector tool display", admin: { name: "Connector Admin" } },
+    mocks: { connector: seed.mock({
+      allowUnauthenticatedMcp: true,
+      tools: [
+        { name: "list_channels", description: "List Slack channels", inputSchema: { type: "object", properties: {} },
+          delayMs: 4_000, result: { content: [{ type: "text", text: proof }] } },
+        { name: "read_history", description: "Read Slack history", inputSchema: { type: "object", properties: {} },
+          delayMs: 4_000, result: { isError: true, content: [{ type: "text", text: "History lookup failed." }] } },
+      ],
+    }) },
   });
-  return { app };
+  await seed.orgConnection(den.admin, {
+    name: "Slack", url: den.mocks.connector.mcpUrl, authType: "none", credentialMode: "shared", access: { orgWide: true },
+  });
+  const workloads = await fetch(`${den.mocks.connector.url}/admin/agent-workloads`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workloads: [
+      { promptMarker: prompt, latestUserTurn: true, finalReply: "Listed the channels.", finalReplyFrom: "last-tool-text", steps: steps("list_channels") },
+      { promptMarker: failurePrompt, latestUserTurn: true, finalReply: "The history lookup failed.", steps: steps("read_history") },
+    ] }),
+  });
+  if (!workloads.ok) throw new Error("Could not arrange connector model turns.");
+  const providerId = "connector-display";
+  const modelId = "connector-display-model";
+  const app = await seed.desktop({ den, as: "admin", model: `${providerId}/${modelId}` });
+  const workspace = await seed.workspace(app, seed.tmpPath("connector-tool-call-branding"));
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    provider: { [providerId]: {
+      npm: "@ai-sdk/openai-compatible", name: "Connector display model",
+      options: { baseURL: `${den.mocks.connector.url}/v1`, apiKey: "sk-connector-display-fixture" },
+      models: { [modelId]: { name: "Connector display model" } },
+    } },
+  });
+  await seed.session(app);
+  return { app, den, prompt, failurePrompt, proof };
 }
 
 export async function connectorsQuickAdd(seed: Seed) {
