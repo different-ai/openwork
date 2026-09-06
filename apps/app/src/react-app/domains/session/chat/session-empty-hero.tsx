@@ -175,7 +175,7 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
           <button
             key={suggestion.title}
             type="button"
-            className="rounded-xl border border-border bg-background p-3.5 text-left transition-colors hover:bg-accent"
+            className="flex flex-col rounded-xl border border-border bg-background p-3.5 text-left transition-colors hover:bg-accent"
             onClick={() => fillPrompt(suggestion.prompt)}
           >
             <div className="truncate text-[13px] font-medium text-foreground">{suggestion.title}</div>
