@@ -412,7 +412,7 @@ export function InferenceScreen() {
 
   return (
     <div className={analyticsPageClass}>
-      <AnalyticsPageHeader orgName={activeOrg?.name ?? "OpenWork Cloud"} orgSlug={activeOrgSlug} active="models"
+      <AnalyticsPageHeader orgSlug={activeOrgSlug} active="models"
         title="OpenWork Models"
         description={subscribed ? "Your team’s model activity, consumption, and shared limits in one place." : "Reliable, hand-picked models for knowledge work. No API keys to manage."}
         action={

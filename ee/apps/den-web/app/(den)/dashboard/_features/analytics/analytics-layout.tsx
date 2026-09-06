@@ -2,15 +2,15 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { ArrowUpRight, BarChart3, ChevronRight, Sparkles } from "lucide-react";
+import { ArrowUpRight, BarChart3, Sparkles } from "lucide-react";
 import { getAnalyticsRoute, getInferenceRoute } from "../../../_lib/den-org";
 import { useDenFlow } from "../../../_providers/den-flow-provider";
 
 export const analyticsSurfaceClass = "rounded-2xl border border-[#e3e7ee] bg-white";
 export const analyticsPageClass = "mx-auto grid w-full max-w-[1160px] gap-6 px-4 pb-12 pt-5 sm:px-6 lg:px-8";
 
-export function AnalyticsPageHeader({ orgName, orgSlug, active, title, description, action, caption }: {
-  orgName: string; orgSlug?: string | null; active: "adoption" | "models";
+export function AnalyticsPageHeader({ orgSlug, active, title, description, action, caption }: {
+  orgSlug?: string | null; active: "adoption" | "models";
   title: string; description: string; action?: ReactNode; caption?: ReactNode;
 }) {
   const { runtimeConfig } = useDenFlow();
@@ -19,11 +19,7 @@ export function AnalyticsPageHeader({ orgName, orgSlug, active, title, descripti
     ...(runtimeConfig.orgMode === "single_org" ? [] : [{ id: "models", label: "Models & usage", href: getInferenceRoute(orgSlug), icon: Sparkles }]),
   ];
   return <header className="grid gap-5">
-    <div className="flex items-center gap-2 text-xs text-[#637291]">
-      <span className="truncate font-medium text-[#30405F]">{orgName}</span>
-      <ChevronRight className="h-3 w-3 shrink-0" aria-hidden="true" />
-      <span>Analytics</span>
-    </div>
+    <p className="text-xs font-medium text-[#637291]">Analytics</p>
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div className="max-w-2xl">
         <h1 className="text-[28px] font-semibold tracking-[-0.04em] text-[#07192C]">{title}</h1>
