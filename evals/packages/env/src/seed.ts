@@ -106,6 +106,7 @@ export interface Seed {
   denLink(den: Den, options?: SeedDenLinkOptions): Promise<SeedDenLink>;
   tmpPath(label: string): string;
   composerText(app: Surface, text: string): Promise<void>;
+  browserFixtureDiscovery(app: Surface, origin: string, action: "hold" | "release"): Promise<void>;
   /** Migration-only raw write escape hatch. New specs must not use it. */
   evalIn(surface: Surface, expression: string, options?: { args?: readonly CdpFunctionArgument[]; awaitPromise?: boolean; timeoutMs?: number }): Promise<unknown>;
 }
