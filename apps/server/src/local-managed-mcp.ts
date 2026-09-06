@@ -1186,6 +1186,8 @@ export async function setLocalManagedMcpEnabled(
   name: string,
   enabled: boolean,
 ): Promise<boolean> {
+  const exists = await withVaultRead(config, (vault) => Boolean(vault.connections[connectionKey(workspaceId, name)]));
+  if (!exists) return false;
   const updated = await withVaultMutation(config, (vault) => {
     const connection = vault.connections[connectionKey(workspaceId, name)];
     if (!connection) return false;
@@ -1214,6 +1216,8 @@ export async function disconnectLocalManagedMcp(config: ServerConfig, workspaceI
 }
 
 export async function deleteLocalManagedMcp(config: ServerConfig, workspaceId: string, name: string): Promise<boolean> {
+  const exists = await withVaultRead(config, (vault) => Boolean(vault.connections[connectionKey(workspaceId, name)]));
+  if (!exists) return false;
   const removed = await withVaultMutation(config, (vault) => {
     const key = connectionKey(workspaceId, name);
     if (!vault.connections[key]) return false;
