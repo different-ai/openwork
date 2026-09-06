@@ -14,7 +14,8 @@ export async function captureBrowserFilm(surface: Surface, directory: string) {
   const browserUrl = new URL(version.webSocketDebuggerUrl);
   const baseUrl = new URL(surface.handle.cdpUrl);
   browserUrl.protocol = baseUrl.protocol === "https:" ? "wss:" : "ws:";
-  browserUrl.host = baseUrl.host;
+  browserUrl.hostname = baseUrl.hostname;
+  browserUrl.port = baseUrl.port;
   const browser = new WebSocket(browserUrl);
   await new Promise<void>((resolve, reject) => { browser.onopen = () => resolve(); browser.onerror = () => reject(new Error("Download observer connection failed")); });
   let id = 0;
