@@ -65,6 +65,7 @@ test("workspace New task opens an editable composer immediately and creates one 
     expect(await probe.eval(`document.querySelector('[contenteditable="true"]')?.textContent`)).toBe(world.prompt);
     expect(await requests()).toEqual([]);
   });
+  await user.see({ text: "New task model" });
   await user.click({ placeholder: "Describe your task..." });
   await user.press("Enter");
   await probe.eventually(() => agent.list(), {

@@ -3,6 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { engineSessionProbe, readAvailableModels, waitFor } from "@openwork/behaviors";
 import { resolveEvalEngine } from "@openwork/env";
 import type { Seed } from "@openwork/env";
+import { configureProvider } from "./chat.ts";
 import { daytonaSandbox, desktop as launchDesktop } from "@openwork/hosts";
 
 const stormProviderId = "active-session-storm-mock";
@@ -225,8 +226,15 @@ export async function workspaceNewTask(seed: Seed) {
   const app = await seed.desktop({ name: "workspace-new-task", den, as: "admin", model: `${providerId}/${modelId}` });
   const workspacePath = seed.tmpPath(`openwork-workspace-new-task-long-name-${Date.now()}`);
   const workspace = await seed.workspace(app, workspacePath, { create: true });
-  await configureWorkspaceProvider(seed, app, [workspace.workspaceId], {
-    providerId, modelId, modelName: "New task model", baseUrl: `${den.mocks.agent.url}/v1`,
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    provider: {
+      [providerId]: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "New task mock",
+        options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-new-task-mock" },
+        models: { [modelId]: { name: "New task model" } },
+      },
+    },
   });
   const sessions = await seed.sessions(app, ["Existing task"]);
   // TODO(primitive): seed.networkFault should delay and observe renderer requests.
