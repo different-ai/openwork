@@ -22,13 +22,8 @@ import type { DashboardTileFacts } from "../worlds/dashboard-launch-input.ts";
  * fetch stubs — and asserts the member now sees the provider's own rejection
  * naming `cloudId` on the tile, never the generic 500 text. The witness proves
  * the pasted launch arguments arrived byte-identically.
- *
- * The witness is an inline loopback MCP server, so Den must run in the same
- * place — the same local-placement constraint remote-mcp-apps declares.
+ * The testkit places the witness beside Den, including on Daytona.
  */
-
-const localPlacement = process.env.OPENWORK_EVAL_DAYTONA !== "1"
-  && !process.env.OPENWORK_EVAL_DEN_API_URL?.trim();
 
 const test = spec.world(atlassianDashboardTiles, { timeout: 480_000 });
 
@@ -37,7 +32,7 @@ function requireTile(value: DashboardTileFacts | null, label: string): Dashboard
   return value;
 }
 
-test.skipIf(!localPlacement)(
+test(
   "a dashboard tile launched with the reported Atlassian JSON names the missing required argument",
   async ({ world, user, probe, evidence }) => {
     await probe.eventually(() => world.openDashboard(), {
@@ -50,7 +45,7 @@ test.skipIf(!localPlacement)(
     });
 
     // Launch both tiles exactly as the member does: press Run.
-    world.receivedCalls.length = 0;
+    const launchedAt = new Date().toISOString();
     await user.click({ role: "button", label: `Run ${confluenceTileTitle}` });
     await user.click({ role: "button", label: `Run ${jiraTileTitle}` });
 
@@ -83,7 +78,8 @@ test.skipIf(!localPlacement)(
 
     // The witness saw both launches with the pasted arguments byte-identical
     // and no cloudId — the provider rejection is the only failure in the chain.
-    const witnessedByTool = new Map(world.receivedCalls.map((call) => [call.name, call.args]));
+    const calls = await world.witness.toolCalls({ sinceIso: launchedAt, atLeast: 2 });
+    const witnessedByTool = new Map(calls.map((call) => [call.name, call.args]));
     expect(witnessedByTool.get("getConfluencePage")).toEqual({ pageId: "1122334455" });
     expect(witnessedByTool.get("searchJiraIssuesUsingJql")).toEqual({ jql: expectedJql });
 

@@ -131,6 +131,41 @@ test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeo
     { name: "execute_capability", args: { target: "desktop" } },
   ]);
 
+  const appTool = {
+    name: "get_page",
+    title: "Get page",
+    inputSchema: { type: "object", properties: { cloudId: { type: "string" } }, required: ["cloudId"] },
+    _meta: { ui: { resourceUri: "ui://mock/page" } },
+    appHtml: "<!doctype html><html><body>Page</body></html>",
+    validateRequiredArguments: true,
+    result: { content: [{ type: "text", text: "page loaded" }] },
+  };
+  const appConfigured = await fetch(`${origin}/admin/tools`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ tools: [appTool] }),
+  });
+  assert.equal(appConfigured.status, 200);
+  const appCatalog = await rpc("tools/list", {});
+  assert.equal(appCatalog.result.tools[0]._meta.ui.resourceUri, "ui://mock/page");
+  assert.equal("appHtml" in appCatalog.result.tools[0], false);
+  assert.equal("validateRequiredArguments" in appCatalog.result.tools[0], false);
+  const appInitialized = await rpc("initialize", {});
+  assert.deepEqual(appInitialized.result.capabilities.resources, {});
+  const resource = await rpc("resources/read", { uri: "ui://mock/page" });
+  assert.equal(resource.result.contents[0].text, appTool.appHtml);
+  assert.equal(resource.result.contents[0].mimeType, "text/html;profile=mcp-app");
+  const rejected = await rpc("tools/call", { name: "get_page", arguments: {} });
+  assert.equal(rejected.error.code, -32602);
+  assert.match(rejected.error.message, /cloudId/);
+  assert.equal("result" in rejected, false);
+  const recovered = await rpc("tools/call", { name: "get_page", arguments: { cloudId: "workspace" } });
+  assert.equal(recovered.result.content[0].text, "page loaded");
+  assert.equal("error" in recovered, false);
+  const appLog = await (await fetch(`${origin}/requests`)).json();
+  assert.deepEqual(appLog.requests.flatMap((entry) => entry.toolCalls ?? [])
+    .filter((call) => call.name === "get_page").map((call) => call.args), [{}, { cloudId: "workspace" }]);
+
   const workload = await fetch(`${origin}/admin/agent-workloads`, {
     method: "POST",
     headers: { "content-type": "application/json" },
