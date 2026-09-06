@@ -1258,6 +1258,17 @@ function startSync(input: SyncOptions, entry: SyncEntry) {
       const event = normalizeEvent(raw);
       if (!event) return;
       applyEvent(entry, input.workspaceId, event);
+      if (event.type === "server.connected") {
+        // The SDK's iterator is lazy: subscribe() can return before the SSE
+        // connection opens. Recover missed message/role declarations at the
+        // actual handshake, not at iterator creation or only after run idle.
+        for (const sessionId of entry.trackedSessionRefs.keys()) {
+          void getReactQueryClient().invalidateQueries({
+            queryKey: snapshotKey(input.workspaceId, sessionId),
+            exact: true,
+          });
+        }
+      }
     },
     // Level-reconcile run statuses on every (re)connect before trusting any
     // cached idle: the server may have started or finished work while the

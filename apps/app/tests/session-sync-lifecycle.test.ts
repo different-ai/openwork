@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, jest, setSystemTime, test } from "bun:test";
+import { getReactQueryClient } from "../src/react-app/infra/query-client";
 
 type SyncInput = {
   workspaceId: string;
@@ -22,6 +23,8 @@ const {
   __setWorkspaceSessionSyncStatusFetcherForTest,
   __setWorkspaceSessionSyncSubscriptionFactoryForTest,
   ensureWorkspaceSessionSync,
+  snapshotKey,
+  trackWorkspaceSessionSync,
 } = await import("../src/react-app/domains/session/sync/session-sync");
 
 const inputs: SyncInput[] = [];
@@ -78,6 +81,41 @@ afterEach(() => {
 });
 
 describe("workspace session sync lifecycle", () => {
+  test("recovers only tracked snapshots at the actual handshake, not lazy iterator creation", async () => {
+    const connected = Promise.withResolvers<void>();
+    __setWorkspaceSessionSyncSubscriptionFactoryForTest(async (_baseUrl, _token, signal) => {
+      const ended = new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true }));
+      async function* stream() {
+        await connected.promise;
+        yield { type: "server.connected", properties: {} };
+        await ended;
+      }
+      return stream();
+    });
+    const syncInput = input("https://handshake.example/opencode", "token");
+    const client = getReactQueryClient();
+    const tracked = snapshotKey(syncInput.workspaceId, "session-tracked");
+    const untracked = snapshotKey(syncInput.workspaceId, "session-untracked");
+    const otherWorkspace = snapshotKey("ws_other", "session-tracked");
+    for (const key of [tracked, untracked, otherWorkspace]) client.setQueryData(key, {});
+    const release = ensureWorkspaceSessionSync(syncInput);
+    const untrack = trackWorkspaceSessionSync(syncInput, "session-tracked");
+    try {
+      await delay(10);
+      expect(client.getQueryState(tracked)?.isInvalidated).toBe(false);
+      connected.resolve();
+      const deadline = Date.now() + 2_000;
+      while (!client.getQueryState(tracked)?.isInvalidated && Date.now() < deadline) await delay(5);
+      expect(client.getQueryState(tracked)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(untracked)?.isInvalidated).toBe(false);
+      expect(client.getQueryState(otherWorkspace)?.isInvalidated).toBe(false);
+    } finally {
+      untrack();
+      release();
+      for (const key of [tracked, untracked, otherWorkspace]) client.removeQueries({ queryKey: key, exact: true });
+    }
+  });
+
   test("keeps a reattached observer after the older attachment releases", async () => {
     __setWorkspaceSessionSyncSubscriptionFactoryForTest(createSubscription);
     const syncInput = input("https://one.example/opencode", "token");
