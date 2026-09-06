@@ -987,6 +987,11 @@ export function createConnectionsStore(options: {
                 type: "local" as const,
                 command: (mcpEntryConfig["command"] as string[]) ?? entry.command!,
                 enabled: true,
+                // The hot-add call is what spawns the process on first connect;
+                // the file write above only matters on a later engine start.
+                ...(mcpEntryConfig["environment"]
+                  ? { environment: mcpEntryConfig["environment"] as Record<string, string> }
+                  : {}),
               };
 
         unwrap(
