@@ -7,7 +7,6 @@ import { adminDashboardWeb } from "../worlds/den-admin-navigation.ts";
 const test = spec.world(adminDashboardWeb, { timeout: 420_000 });
 const paletteInput = { testId: "den-command-palette-input" };
 const palette = { testId: "den-command-palette" };
-const paletteShortcut = process.platform === "darwin" ? "Meta+K" : "Control+K";
 
 function stringArray(value: unknown): string[] {
   return Array.isArray(value)
@@ -18,8 +17,6 @@ function stringArray(value: unknown): string[] {
 test("the Den command palette searches pages, navigates, and records recents", async ({ world, user, probe, evidence, step }) => {
   await user.see({ testId: "den-org-sidebar" }, { timeoutMs: 90_000 });
   await user.see({ text: /Download for this workspace/ }, { timeoutMs: 90_000 });
-  // The dashboard shell remounts while its data loads; let that transition settle before interacting.
-  await new Promise((resolve) => setTimeout(resolve, 1_500));
 
   await step("the Den header shows a search bar and the palette is closed", async () => {
     await user.see({ testId: "den-command-palette-trigger" });
@@ -63,7 +60,7 @@ test("the Den command palette searches pages, navigates, and records recents", a
   });
 
   await step("the keyboard shortcut reopens it with Connectors under Recent", async () => {
-    await user.press(paletteShortcut);
+    await user.press(world.web.handle.hostKind !== "daytona" && process.platform === "darwin" ? "Meta+K" : "Control+K");
     await user.see(paletteInput);
     await user.see({ text: "RECENT" });
     await user.see({ role: "option", label: /^Connectors/ });
