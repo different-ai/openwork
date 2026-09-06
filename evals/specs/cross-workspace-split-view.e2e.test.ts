@@ -113,10 +113,11 @@ async function clickOpenSplit(user: User): Promise<void> {
   await user.click({ role: "menuitem", label: "Open as side chat" });
 }
 
-async function closeSecondaryPane(app: Surface, user: User): Promise<void> {
+async function closeSecondaryPane(app: Surface, user: User, primary: SplitCandidate): Promise<void> {
   await user.click({ role: "button", label: "Close side chat" });
-  await waitFor(app, `!document.querySelector('[data-workbench-pane="secondary"]')`, {
-    timeoutMs: 15000, label: "secondary split pane closes",
+  await waitFor(app, `!document.querySelector('[data-workbench-pane="secondary"]')
+    && Boolean(document.querySelector('[data-session-surface-id="${primary.sessionId}"]'))`, {
+    timeoutMs: 15000, label: "side chat closes and the main conversation remains visible",
   });
 }
 
@@ -245,7 +246,7 @@ test("same-workspace and cross-workspace split sessions retain visible ownership
         && !sameWorkspaceFacts.primaryUnavailable
         && !sameWorkspaceFacts.secondaryUnavailable,
     );
-    await closeSecondaryPane(app, user);
+    await closeSecondaryPane(app, user, primary);
     expect(await evalIn(app, `document.querySelector('[data-session-surface-id="${primary.sessionId}"]') !== null`)).toBe(true);
     expect(await evalIn(app, `document.querySelector('[data-session-surface-id="${sameWorkspacePeer.sessionId}"]') === null`)).toBe(true);
 
