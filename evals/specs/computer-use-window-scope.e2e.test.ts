@@ -38,6 +38,16 @@ test("Computer Use respects window consent, fresh observations and the person's 
     return result.session_id;
   });
 
+  await step("The floating controls show the task, selected window and remaining access", async () => {
+    const panel = JSON.stringify(await world.panel());
+    expect(panel).toContain("Edit the disposable fixture draft and increment its counter.");
+    expect(panel).toContain("Workspace window");
+    expect(panel).toContain("Access ends in");
+    expect(panel).toContain("Take over");
+    expect(panel).toContain("Stop");
+    expect(panel).not.toContain("Other window");
+  });
+
   await step("A different connection cannot read or act through the grant", async () => {
     const other = await world.peerCall("computer_observe", { session_id: session });
     expect(other).toMatchObject({ isError: true });
@@ -84,10 +94,11 @@ test("Computer Use respects window consent, fresh observations and the person's 
     const observed = await observe();
     await world.resize();
     expect(toolState(await action(observed, "stale-layout", { type: "press", ref: refFor(observed, "Increment") })).code).toBe("stale_observation");
-    await world.pressControl("Pause");
+    await world.pressControl("Take over");
     expect(toolState(await world.call("computer_observe", { session_id: session })).code).toBe("session_paused");
-    expect(toolState(await world.call("computer_session_status", { session_id: session }))).toMatchObject({ state: "paused", pause_reason: "Paused by you.", next: "human_takeover" });
-    await world.pressControl("Resume");
+    expect(toolState(await world.call("computer_session_status", { session_id: session }))).toMatchObject({ state: "paused", pause_reason: "You have control. Click Continue when you are ready.", next: "human_takeover" });
+    await world.pressControl("Continue");
+    await expect.poll(async () => toolState(await world.call("computer_session_status", { session_id: session })).state).toBe("active");
     const resumed = toolState(await world.call("computer_session_status", { session_id: session }));
     expect(resumed).toMatchObject({ state: "active", next: "observe" });
     expect(resumed).not.toHaveProperty("pause_reason");
@@ -102,7 +113,8 @@ test("Computer Use respects window consent, fresh observations and the person's 
     await expect.poll(async () => toolState(await world.call("computer_session_status", { session_id: session })).state).toBe("paused");
     await expect.poll(() => world.state()).toEqual({ count: 1, otherCount: 0, draft: "Edited by person" });
     expect(toolState(await action(before, "after-human-edit", { type: "press", ref: refFor(before, "Increment") })).code).toBe("session_paused");
-    await world.pressControl("Resume");
+    await world.pressControl("Continue");
+    await expect.poll(async () => toolState(await world.call("computer_session_status", { session_id: session })).state).toBe("active");
     expect(toolState(await action(before, "after-human-resume", { type: "press", ref: refFor(before, "Increment") })).code).toBe("observation_required");
     expect(JSON.stringify(await observe())).toContain("Edited by person");
   });
@@ -123,8 +135,10 @@ test("Computer Use respects window consent, fresh observations and the person's 
     const opened = toolState(await pending);
     expect(opened).toMatchObject({ ok: true, state: "paused", window_title: "Workspace window" });
     const id = opened.session_id;
-    await world.front();
-    await world.pressControl("Resume");
+    expect(await world.foregroundWindow()).toEqual({ title: "" });
+    await world.pressControl("Continue");
+    await expect.poll(() => world.foregroundWindow()).toEqual({ title: "Workspace window" });
+    await expect.poll(async () => toolState(await world.call("computer_session_status", { session_id: id })).state).toBe("active");
     const observed = toolState(await world.call("computer_observe", { session_id: id }));
     const elements = observed.elements;
     if (!Array.isArray(elements)) throw new Error("No controls in drag observation");
@@ -140,14 +154,26 @@ test("Computer Use respects window consent, fresh observations and the person's 
       expect.poll(() => world.dragState(), { timeout: 10_000, interval: 20 }).toMatchObject({ downs: 1 }),
       drag.then(async (reply) => { throw new Error(`Drag finished before takeover: ${JSON.stringify(toolState(reply))}; ${JSON.stringify(await world.dragState())}; surface ${JSON.stringify(bounds)}`); }),
     ]);
-    await world.pressControl("Pause");
+    await world.pressControl("Take over");
     const interrupted = toolState(await drag);
     expect(interrupted).toMatchObject({ ok: false, may_have_acted: true, next: "human_takeover" });
     await expect.poll(() => world.dragState()).toMatchObject({ downs: 1, ups: 1 });
     const stopped = await world.dragState();
-    await world.pressControl("Resume");
+    await world.pressControl("Continue");
+    await expect.poll(async () => toolState(await world.call("computer_session_status", { session_id: id })).state).toBe("active");
     expect(await world.dragState()).toEqual(stopped);
     expect(toolState(await world.call("computer_act", { session_id: id, observation_id: observed.observation_id, request_id: "old-drag", action: { type: "drag", path } })).code).toBe("observation_required");
+    await world.pressControl("Take over");
+    await world.minimize();
+    await expect.poll(() => world.minimized()).toEqual({ minimized: true });
+    await world.pressControl("Continue");
+    await expect.poll(async () => toolState(await world.call("computer_session_status", { session_id: id }))).toMatchObject({ state: "paused", pause_reason: "The approved window is closed, minimized, or no longer on this desktop.", next: "human_takeover" });
+    expect(await world.dragState()).toEqual(stopped);
+    await world.restore();
+    await expect.poll(() => world.minimized()).toEqual({ minimized: false });
+    await world.pressControl("Continue");
+    await expect.poll(async () => toolState(await world.call("computer_session_status", { session_id: id })).state).toBe("active");
+    expect(await world.dragState()).toEqual(stopped);
     await world.pressControl("Stop");
     expect(toolState(await world.call("computer_session_status", { session_id: id })).code).toBe("session_unavailable");
     expect(await world.state()).toEqual({ count: 1, otherCount: 0, draft: "Edited by person" });

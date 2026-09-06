@@ -100,6 +100,11 @@ export async function computerUseWorld(_seed: Seed, { place }: { place: Place })
       list: () => helper.request("tools/list"),
       state: () => fixture.request("state"),
       resize: () => fixture.request("resize"),
+      panel: () => fixture.request("helper_panel", { name: "", pid: helper.pid, executable }),
+      foregroundWindow: () => fixture.request("foreground_window"),
+      minimized: () => fixture.request("minimized"),
+      minimize: () => fixture.request("minimize"),
+      restore: () => fixture.request("restore"),
       humanEdit: async () => {
         const activated = spawnSync("/usr/bin/osascript", ["-e", `tell application "System Events" to set frontmost of (first application process whose unix id is ${fixture.pid}) to true`], { encoding: "utf8", timeout: 5000 });
         if (activated.status !== 0) throw new Error(activated.stderr);
@@ -117,7 +122,7 @@ export async function computerUseWorld(_seed: Seed, { place }: { place: Place })
         }
         throw new Error("The native window picker did not become available.");
       },
-      async pressControl(name: "Allow this session" | "Cancel" | "Pause" | "Resume" | "Stop") {
+      async pressControl(name: "Allow this session" | "Cancel" | "Take over" | "Continue" | "Stop") {
         const deadline = Date.now() + 10_000;
         while (Date.now() < deadline) {
           const result = await fixture.request("press_helper_button", { name, pid: helper.pid, executable });

@@ -10,7 +10,7 @@ legacy whole-desktop tool is required.
 In OpenWork, enable **Library → Computer Use**, open its settings, and grant
 Accessibility and Screen Recording to **OpenWork Computer Use**. Mention a
 running app in a message. The helper asks you to choose its window and approve
-the requested mode. The floating panel provides **Pause**, **Resume**, and
+the requested mode. The floating panel provides **Take over**, **Continue**, and
 **Stop**. The setup window can stop all sessions.
 
 | Mode | Access | Foreground behavior |
@@ -21,8 +21,10 @@ the requested mode. The floating panel provides **Pause**, **Resume**, and
 
 The app and mode are fixed for the session. Changing either requires a new
 approval. A session lasts at most 15 minutes, pauses after two minutes without
-an operation, and permits at most 200 action attempts. Resume is a native
-person-only control. There is no resume, scope-upgrade, clipboard, URL-open,
+an operation, and permits at most 200 action attempts. Continue is a native
+person-only control. In control mode, it brings the approved window forward
+and requires a fresh observation before any further input. The floating
+panel shows the requested task and remaining access time. There is no resume, scope-upgrade, clipboard, URL-open,
 shell, whole-screen, or permission-grant tool.
 
 The default is a new app approval for every session. There are no persistent
@@ -38,7 +40,7 @@ OpenWork / any compatible MCP client
           └─ SessionRuntime: native consent, app/window identity, limits, receipts
               ├─ MacAccessibility: public AX APIs + window-only ScreenCaptureKit
               ├─ MacInput: exact-process input, window and focus checks
-              └─ SessionControls: native approval, Pause / Resume / Stop
+              └─ SessionControls: native approval, Take over / Continue / Stop
 ```
 
 The executable owns authority. A JavaScript client or orchestration script
@@ -157,6 +159,16 @@ is no background-activation or global-input fallback.
   and provider policies. Runtime in-memory retention is not a promise about
   the host's transcripts.
 
+## Handoff behavior
+
+The native panel keeps the requested task and chosen window visible throughout
+access, including while paused. **Take over** releases held pointer input and
+invalidates the current observation. Local typing and pointer input also pause
+access. **Continue** is an explicit person action; in control mode it raises
+only the approved window, checks that window is foreground, and requires the
+caller to observe again. It does not replay interrupted typing or dragging.
+**Stop** ends the grant. The access countdown continues while paused.
+
 ## Build, migration and verification
 
 ```
@@ -177,7 +189,8 @@ remain separate and are not part of this implementation.
 The native journey owns two disposable windows and drives the real helper
 over stdio. It verifies native consent, isolated connection grants, accessible
 actions, replay protection, read scope, protected-field omission, stale
-geometry, Pause and Stop. Its person-input fixture uses the real approval UI,
+geometry, person takeover during typing, pointer release during interrupted
+drags, Continue and Stop. Its person-input fixture uses the real approval UI,
 never a production auto-approve flag. It requires macOS plus existing person-
 granted Accessibility and Screen Recording; it never changes TCC permissions.
 If the selected placement is Linux/Daytona, it skips explicitly and the
