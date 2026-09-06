@@ -97,6 +97,9 @@ test('Slack delivery carries thread and state only advances after accepted respo
   assert.equal(requestBody.channel, 'C123');
   await deliver(state, { ...run, run_number: 11 }, report('failed'), options);
   assert.equal(requestBody.thread_ts, '123.456');
+  await deliver(state, { ...run, run_number: 12 }, report('failed'), { ...options, channel: 'C456' });
+  assert.equal(requestBody.channel, 'C456');
+  assert.equal(requestBody.thread_ts, undefined);
   await assert.rejects(() => deliver(state, { ...run, run_number: 12 }, report('passed'), {
     ...options, request: async () => ({ ok: true, json: async () => ({ ok: false, error: 'not_in_channel' }) }),
   }), /not_in_channel/);

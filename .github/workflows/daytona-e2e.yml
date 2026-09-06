@@ -307,6 +307,12 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
+      - name: Require a completed coverage plan
+        if: needs.plan.result != 'success' || needs.plan.outputs.enabled != 'true'
+        run: |
+          echo '## Product journeys — not tested' >> "$GITHUB_STEP_SUMMARY"
+          echo 'The coverage plan failed or execution was withheld by the PR authorization checks. See the plan job for the reason; no passing coverage is claimed.' >> "$GITHUB_STEP_SUMMARY"
+          exit 1
       - name: Download selected coverage
         uses: actions/download-artifact@v4
         with:

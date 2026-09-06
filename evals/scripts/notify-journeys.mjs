@@ -33,7 +33,8 @@ export function notification(previous, run, report, teamId = '') {
 }
 
 export async function deliver(previous, run, report, { token, channel, teamId, request = fetch }) {
-  const decision = notification(previous, run, report, teamId);
+  const decision = notification(previous?.channel === channel ? previous : undefined, run, report, teamId);
+  decision.state = { ...decision.state, channel };
   if (!decision.message) return decision.state;
   const response = await request('https://slack.com/api/chat.postMessage', {
     method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
