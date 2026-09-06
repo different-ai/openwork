@@ -77,6 +77,14 @@ export async function attachedCanary(seed: Seed, { place }: { place: Place }) {
   // Explicit reuse + provision:false neither signs in nor creates/deletes server resources.
   const den = await seed.den({ reuse: { apiUrl, webUrl }, provision: false, web: true });
   const web = await chrome({ host: localHost(), name: "cloud-web-canary", startUrl: "about:blank", headless: false });
+  try {
+    if (!web.handle.pid) throw new Error("Missing owned Chrome process");
+    const processInfo = await execute("ps", ["-p", String(web.handle.pid), "-o", "command="], { env: cliEnv });
+    if (processInfo.stdout.includes("--headless")) throw new Error("This canary requires headed Chrome; refusing the host's headless fallback");
+  } catch (error) {
+    await web[Symbol.asyncDispose]();
+    throw error;
+  }
   return {
     web, den, gatewayUrl, email, password, orgId, userId, marker, filename, workspace,
     expectedWorkerId: process.env.CANARY_WORKER_ID,

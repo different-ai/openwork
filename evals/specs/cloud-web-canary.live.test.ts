@@ -109,7 +109,7 @@ test(cliManaged
     await user.navigate(new URL(route, world.gatewayUrl).href);
     if (!cliManaged) await user.see({ testId: "cloud-workspace-takeover" }, { timeoutMs: 30_000 });
     await user.see("composer", { editable: true, timeoutMs: 180_000 });
-    await probe.eventually(async () => (await world.page()).ready, { within: 60_000, label: "workspace ready after idle wake" });
+    await probe.eventually(async () => (await world.page()).ready, { within: 60_000, label: cliManaged ? "workspace ready after manual restart" : "workspace ready after idle wake" });
     await user.see({ text: first });
     expect((await world.page()).route === route).toBe(true);
     const resumed = await workers();
