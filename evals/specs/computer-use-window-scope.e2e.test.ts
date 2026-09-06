@@ -48,6 +48,18 @@ test("Computer Use respects window consent, fresh observations and the person's 
     expect(panel).not.toContain("Other window");
   });
 
+  await step("Hiding the task panel preserves the grant and the menu bar restores its controls", async () => {
+    await world.pressControl("Hide panel");
+    expect(toolState(await world.call("computer_session_status", { session_id: session }))).toMatchObject({
+      state: "active", panel_visible: false, purpose: "Edit the disposable fixture draft and increment its counter.", window_title: "Workspace window",
+    });
+    expect(toolState(await world.peerCall("computer_session_status", { session_id: session })).code).toBe("session_unavailable");
+    await world.pressControl("Show Computer Use task");
+    expect(toolState(await world.call("computer_session_status", { session_id: session })).panel_visible).toBe(true);
+    expect(JSON.stringify(await world.panel())).toContain("Stop");
+    expect(await world.state()).toEqual({ count: 0, otherCount: 0, draft: "Initial draft" });
+  });
+
   await step("A different connection cannot read or act through the grant", async () => {
     const other = await world.peerCall("computer_observe", { session_id: session });
     expect(other).toMatchObject({ isError: true });
@@ -77,6 +89,21 @@ test("Computer Use respects window consent, fresh observations and the person's 
     expect(await world.state()).toEqual({ count: 0, otherCount: 0, draft: "Initial draft" });
   });
 
+  await step("Read-only refresh recovers from settling content and stops on continuous changes", async () => {
+    await world.refreshChanges(false);
+    const settled = toolState(await world.call("computer_observe", { session_id: session, include_image: false }));
+    expect(settled.ok).toBe(true);
+    expect(JSON.stringify(settled)).toContain("Ready after refresh");
+    expect(await world.refreshState()).toMatchObject({ text: "Ready after refresh" });
+    await world.refreshChanges(true);
+    const changing = toolState(await world.call("computer_observe", { session_id: session, include_image: false }));
+    expect(changing).toMatchObject({ code: "stale_observation", next: "observe" });
+    expect(toolState(await action(settled, "after-failed-refresh", { type: "press", ref: refFor(settled, "Increment") })).code).toBe("observation_required");
+    expect(await world.state()).toEqual({ count: 0, otherCount: 0, draft: "Initial draft" });
+    await world.refreshStable();
+    expect((await observe()).ok).toBe(true);
+  });
+
   await step("Accessible actions update the selected window once and leave the other window alone", async () => {
     const observed = await observe();
     const press = { type: "press", ref: refFor(observed, "Increment") };
@@ -100,7 +127,8 @@ test("Computer Use respects window consent, fresh observations and the person's 
     await world.pressControl("Continue");
     await expect.poll(async () => toolState(await world.call("computer_session_status", { session_id: session })).state).toBe("active");
     const resumed = toolState(await world.call("computer_session_status", { session_id: session }));
-    expect(resumed).toMatchObject({ state: "active", next: "observe" });
+    expect(resumed).toMatchObject({ state: "active", phase: "refreshing", next: "observe" });
+    expect(JSON.stringify(await world.panel())).toContain("Refreshing the approved window");
     expect(resumed).not.toHaveProperty("pause_reason");
     expect(toolState(await action(observed, "pre-pause-observation", { type: "press", ref: refFor(observed, "Increment") })).code).toBe("observation_required");
     expect((await observe()).ok).toBe(true);
@@ -110,13 +138,20 @@ test("Computer Use respects window consent, fresh observations and the person's 
   await step("A person's typing pauses control until they explicitly resume with a fresh view", async () => {
     const before = await observe();
     expect(await world.humanEdit()).toEqual({ ok: true });
+    expect(toolState(await world.call("computer_session_status", { session_id: session })).phase).toBe("person_interacting");
+    expect(await world.panel()).toMatchObject({ continue_enabled: false });
     await expect.poll(async () => toolState(await world.call("computer_session_status", { session_id: session })).state).toBe("paused");
     await expect.poll(() => world.state()).toEqual({ count: 1, otherCount: 0, draft: "Edited by person" });
+    await expect.poll(async () => toolState(await world.call("computer_session_status", { session_id: session })).phase).toBe("ready_to_continue");
+    expect(toolState(await world.call("computer_session_status", { session_id: session })).state).toBe("paused");
+    expect(await world.panel()).toMatchObject({ continue_enabled: true });
     expect(toolState(await action(before, "after-human-edit", { type: "press", ref: refFor(before, "Increment") })).code).toBe("session_paused");
     await world.pressControl("Continue");
     await expect.poll(async () => toolState(await world.call("computer_session_status", { session_id: session })).state).toBe("active");
     expect(toolState(await action(before, "after-human-resume", { type: "press", ref: refFor(before, "Increment") })).code).toBe("observation_required");
+    expect(toolState(await world.call("computer_session_status", { session_id: session })).phase).toBe("refreshing");
     expect(JSON.stringify(await observe())).toContain("Edited by person");
+    expect(toolState(await world.call("computer_session_status", { session_id: session })).phase).toBe("working");
   });
 
   await step("Stop revokes the session immediately and leaves both windows intact", async () => {
@@ -124,6 +159,7 @@ test("Computer Use respects window consent, fresh observations and the person's 
     expect(toolState(await world.call("computer_observe", { session_id: session })).code).toBe("session_unavailable");
     expect(await world.state()).toEqual({ count: 1, otherCount: 0, draft: "Edited by person" });
     expect(toolState(await world.call("cua_screenshot")).code).toBe("unknown_tool");
+    expect(await world.panel()).toMatchObject({ restore_available: false });
   });
 
   await step("Pausing an in-flight drag releases the pointer and never resumes the old path", async () => {

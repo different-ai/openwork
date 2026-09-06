@@ -169,6 +169,27 @@ only the approved window, checks that window is foreground, and requires the
 caller to observe again. It does not replay interrupted typing or dragging.
 **Stop** ends the grant. The access countdown continues while paused.
 
+During physical input, Continue is disabled until one second without another
+input event. That quiet period only makes Continue available; it never resumes
+control. Session status exposes `phase`: `person_interacting`,
+`ready_to_continue`, `refreshing`, or `working`, while preserving the existing
+`paused`/`active` state. After Continue, the panel says it is refreshing until
+an observation succeeds. Old input is never replayed.
+
+**Hide panel** hides this session's floating controls without revoking access.
+The **OW** menu bar item restores the task panel; its tooltip identifies the
+requested task. Stop removes both surfaces. Session status includes the task
+purpose, approved window title, and panel visibility for the owning caller.
+This associates the native panel with the approved task; navigation back to an
+OpenWork conversation is not added by this package.
+
+When the window changes during observation, the runtime makes at most three
+read-only capture attempts, 75 ms apart. Every attempt checks the same session
+generation, window identity, geometry, and semantic state. Continuous changes
+still return `stale_observation`; a failed refresh invalidates the old token.
+This does not relax the exact-image checks for visual actions, retry any input,
+or clear a person takeover.
+
 ## Build, migration and verification
 
 ```

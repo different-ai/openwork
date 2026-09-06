@@ -99,6 +99,9 @@ export async function computerUseWorld(_seed: Seed, { place }: { place: Place })
       peerCall: (name: string, args: Record<string, unknown> = {}) => peer.request("tools/call", { name, arguments: args }),
       list: () => helper.request("tools/list"),
       state: () => fixture.request("state"),
+      refreshChanges: (continuous: boolean) => fixture.request("refresh_changes", { continuous }),
+      refreshStable: () => fixture.request("refresh_stable"),
+      refreshState: () => fixture.request("refresh_state"),
       resize: () => fixture.request("resize"),
       panel: () => fixture.request("helper_panel", { name: "", pid: helper.pid, executable }),
       foregroundWindow: () => fixture.request("foreground_window"),
@@ -122,7 +125,7 @@ export async function computerUseWorld(_seed: Seed, { place }: { place: Place })
         }
         throw new Error("The native window picker did not become available.");
       },
-      async pressControl(name: "Allow this session" | "Cancel" | "Take over" | "Continue" | "Stop") {
+      async pressControl(name: "Allow this session" | "Cancel" | "Take over" | "Continue" | "Stop" | "Hide panel" | "Show Computer Use task") {
         const deadline = Date.now() + 10_000;
         while (Date.now() < deadline) {
           const result = await fixture.request("press_helper_button", { name, pid: helper.pid, executable });

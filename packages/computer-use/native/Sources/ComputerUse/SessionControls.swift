@@ -30,6 +30,9 @@ final class SessionControls: NSObject {
     private var stopObserver: NSObjectProtocol?
     private var timer: Timer?
     private var consentWindow: NSWindow?
+    private var statusItem: NSStatusItem?
+    var isVisible: Bool { panel?.isVisible == true }
+    var onUserInteraction: (() -> Void)?
     var onPause: ((String) -> Void)?
     var onResume: (() -> Void)?
     var onStop: (() -> Void)?
@@ -91,7 +94,8 @@ final class SessionControls: NSObject {
         let toggle = NSButton(title: "Take over", target: self, action: #selector(togglePause))
         let stop = NSButton(title: "Stop", target: self, action: #selector(stopSession))
         stop.bezelColor = .systemRed
-        let buttons = NSStackView(views: [toggle, stop])
+        let hide = NSButton(title: "Hide panel", target: self, action: #selector(hidePanel))
+        let buttons = NSStackView(views: [toggle, stop, hide])
         buttons.spacing = 8
         let stack = NSStackView(views: [title, window, task, status, expiry, buttons])
         stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 9
@@ -107,13 +111,20 @@ final class SessionControls: NSObject {
         }
         self.panel = panel; self.status = status; self.toggle = toggle; self.expiry = expiry
         panel.orderFrontRegardless()
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        item.button?.title = "OW"
+        item.button?.setAccessibilityTitle("Show Computer Use task")
+        item.button?.toolTip = "\(purpose) — Show Computer Use controls"
+        item.button?.target = self
+        item.button?.action = #selector(showPanel)
+        statusItem = item
         monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown,
             .keyDown, .scrollWheel, .mouseMoved, .leftMouseDragged, .rightMouseDragged]) { [weak self] event in
             guard let self else { return }
             // Our own postToPid events cannot be mistaken for a person taking over.
             if event.cgEvent?.getIntegerValueField(.eventSourceUnixProcessID) == Int64(ProcessInfo.processInfo.processIdentifier) { return }
             if mode == .control || NSWorkspace.shared.frontmostApplication?.processIdentifier == app.pid {
-                self.onPause?("You have control. Click Continue when you are ready.")
+                self.onUserInteraction?()
             }
         }
         let center = NSWorkspace.shared.notificationCenter
@@ -137,20 +148,24 @@ final class SessionControls: NSObject {
             MainActor.assumeIsolated { self?.onTick?() }
         }
     }
-    func update(_ message: String, paused: Bool) {
+    func update(_ message: String, paused: Bool, canContinue: Bool = true) {
         isPaused = paused; status?.stringValue = message; toggle?.title = paused ? "Continue" : "Take over"
+        toggle?.isEnabled = !paused || canContinue
     }
     func updateExpiry(seconds: Int) {
         expiry?.stringValue = String(format: "Access ends in %d:%02d", seconds / 60, seconds % 60)
     }
     func close() {
         cancelConsent()
+        if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }; statusItem = nil
         panel?.close(); panel = nil; timer?.invalidate(); timer = nil
         if let monitor { NSEvent.removeMonitor(monitor) }; monitor = nil
         for observer in workspaceObservers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
         workspaceObservers.removeAll()
         if let stopObserver { DistributedNotificationCenter.default().removeObserver(stopObserver) }; stopObserver = nil
     }
+    @objc private func hidePanel() { panel?.orderOut(nil) }
+    @objc private func showPanel() { panel?.orderFrontRegardless() }
     @objc private func togglePause() { if isPaused { onResume?() } else { onPause?("You have control. Click Continue when you are ready.") } }
     @objc private func stopSession() { onStop?() }
 }
