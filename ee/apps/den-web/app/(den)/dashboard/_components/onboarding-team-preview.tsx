@@ -16,7 +16,7 @@ export function OnboardingTeamPreview() {
       : sharedTools?.length ? <div className="mt-4">{sharedTools.map((connection) => <OnboardingResourceRow
         key={connection.id} title={connection.name} icon={<Plug className="size-4" />}
         description={connection.credentialMode === "per_member" ? "Each teammate connects their own account." : connection.authType === "none" ? "No personal sign-in required." : "Uses the account managed by your team."}
-        status={<span className="text-xs text-neutral-500">{connection.setupRequired || connection.needsReconnect ? "Setup needs attention" : "Available to everyone"}</span>}
+        status={<span className="text-xs text-neutral-500">{connection.setupRequired || (connection.needsReconnect && connection.reconnectActionOwner === "organization_admin") ? "Setup needs attention" : "Available to everyone"}</span>}
       />)}</div>
       : <p className="mt-4 text-sm leading-6 text-neutral-500">No tools shared with everyone yet. You can add tools now or from your workspace later.</p>}
     <p className="mt-4 text-xs leading-5 text-neutral-500">Making a tool available does not connect anyone’s account or verify that it can run a task.</p>
