@@ -65,7 +65,7 @@ export function LiveRow({ coworker, phase = "thinking", step = null, stepCall = 
     <div className="relative min-w-0 px-1 py-1.5 text-xs text-mist" data-testid="coworker-working" data-phase={status} data-outcome={terminal ? status : long ? "slow" : "working"} data-popover={open ? "open" : "closed"}>
       <div className="flex min-w-0 items-start gap-2.5">
         <span className="shrink-0">
-          <CoworkerAvatar animated={false} gaze={false} color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={22} />
+          <CoworkerAvatar identity={coworker.slug} animated={false} motion="quiet" gaze={false} color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={22} />
         </span>
         <div className="min-w-0 flex-1">
           <button

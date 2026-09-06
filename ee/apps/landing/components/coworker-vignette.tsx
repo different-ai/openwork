@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { FileText, MessageCircle, ListTodo, Plug, RotateCcw, ArrowUp, ArrowRight, ChevronLeft, Check, Pause, Play, Plus, Users } from "lucide-react";
-import { CoworkerAvatar, CoworkerMark } from "./coworker-brand";
+import { CoworkerAvatar, CoworkerMark, acknowledgeCoworker } from "./coworker-brand";
 import { CoworkerAction } from "./coworker-announcement-actions";
 import { DEMO_VIEWS, EXAMPLES, TEAM, DEFAULT_DEMO_COWORKER, customExample, type CoworkerId, type DemoView, type DemoCoworker, type StockCoworkerId } from "../lib/coworker-demo";
 import { CoworkerDemoBuilder } from "./coworker-demo-builder";
@@ -53,6 +53,7 @@ export function CoworkerVignette() {
   const example = selected === "scout" || selected === "editor" || selected === "ops" ? EXAMPLES[selected] : customExample(customMember!, state.answer);
   const groupBusy = groupStep > 0 && groupStep <= groupRun.length;
   const groupDone = groupStep > groupRun.length;
+  const groupSpeaker = groupBusy ? TEAM.filter((person) => groupRun.includes(person.id))[groupStep - 1]?.id : undefined;
 
   useEffect(() => {
     if (started.current) {
@@ -93,6 +94,7 @@ export function CoworkerVignette() {
   }
   function chooseCoworker(id: CoworkerId) {
     track("coworker_selected", id);
+    if (motion) acknowledgeCoworker("landing:" + id);
     setSelected(id);
     setView("chat");
     setDocumentOpen(false);
@@ -105,6 +107,7 @@ export function CoworkerVignette() {
   function playGroup() {
     if (groupBusy || !groupSelected.length) return;
     track("group_started");
+    if (motion) groupSelected.forEach((id) => acknowledgeCoworker("landing:" + id));
     setGroupRun([...groupSelected]);
     setGroupStep(1);
     function next(step: number) {
@@ -121,6 +124,7 @@ export function CoworkerVignette() {
     const id: CoworkerId = `custom-${++customId.current}`;
     const next = { ...draft, id, name: draft.name.trim(), role: draft.role.trim(), mission: draft.mission.trim(), responsibilities: draft.responsibilities.map((item) => item.trim()) };
     track("coworker_created");
+    if (motion) acknowledgeCoworker("landing:" + id, "wake");
     setCustom((current) => [...current, next]);
     setDraft(DEFAULT_DEMO_COWORKER);
     setProgress((current) => ({ ...current, [id]: emptyProgress() }));
@@ -130,6 +134,7 @@ export function CoworkerVignette() {
   function answerQuestion(index: number) {
     if (state.answerThinking || state.answer === index || !example.clarification.options[index]) return;
     track("question_answered", String(index));
+    if (motion) acknowledgeCoworker("landing:" + selected);
     update({ answer: index, answerThinking: true, assigned: false, resultOpen: false });
     later("answer:" + selected, 1000, () => {
       setProgress((current) => ({ ...current, [selected]: { ...current[selected], answerThinking: false } }));
@@ -139,6 +144,7 @@ export function CoworkerVignette() {
   function reply() {
     if (state.replied || state.thinking) return;
     track("message_sent");
+    if (motion) acknowledgeCoworker("landing:" + selected);
     update({ thinking: true });
     later("reply:" + selected, 1300, () => {
       setProgress((current) => ({ ...current, [selected]: { ...current[selected], replied: true, thinking: false } }));
@@ -196,11 +202,11 @@ export function CoworkerVignette() {
           <p className="cw-eyebrow cw-demo-sidebar-label">Your coworkers</p>
           <div className="cw-demo-team" role="group" aria-label="Choose a demo coworker">
             {team.map((person) => <button type="button" key={person.id} aria-label={"Talk to " + person.name} aria-pressed={selected === person.id && view !== "group" && view !== "create"} className="cw-demo-person" onClick={() => chooseCoworker(person.id)}>
-              <CoworkerAvatar {...person} size={30} /><span><span className="block text-sm font-medium">{person.name}</span><span className="cw-demo-role">{person.role}</span></span>
+              <CoworkerAvatar {...person} identity={"landing:" + person.id} animated={motion} motion="navigation" size={30} /><span><span className="block text-sm font-medium">{person.name}</span><span className="cw-demo-role">{person.role}</span></span>
             </button>)}
           </div>
           <button type="button" className="cw-demo-add" onClick={() => openView("create")}><Plus size={15} aria-hidden="true" />Add a coworker</button>
-          <button type="button" className="cw-demo-group-link" aria-pressed={view === "group"} onClick={() => openView("group")}><GroupFaces /><span>Launch team<small>Group chat</small></span></button>
+          <button type="button" className="cw-demo-group-link" aria-pressed={view === "group"} onClick={() => openView("group")}><GroupFaces active={groupSpeaker} animated={motion} /><span>Launch team<small>Group chat</small></span></button>
           <nav className="cw-demo-nav" aria-label="Explore the demo">
             {DEMO_VIEWS.map((item) => {
               const Icon = VIEW_ICONS[item.id];
@@ -215,15 +221,15 @@ export function CoworkerVignette() {
             <span className="text-[11px] text-[var(--cw-muted)]">Sample workspace</span>
           </header>
           <div className="cw-demo-content" ref={contentRef} tabIndex={0} role="region" aria-label={member.name + " " + view + " example"} key={selected + view + documentOpen}>
-            {view === "create" && <CoworkerDemoBuilder value={draft} onChange={setDraft} onCreate={createCoworker} />}
-            {view === "group" && <GroupConversation step={groupStep} run={groupRun} />}
+            {view === "create" && <CoworkerDemoBuilder value={draft} identity={"landing:custom-" + (customId.current + 1)} animated={motion} onChange={setDraft} onCreate={createCoworker} />}
+            {view === "group" && <GroupConversation step={groupStep} run={groupRun} active={groupSpeaker} animated={motion} />}
             {view === "chat" && <div className="cw-demo-conversation">
               <div className="flex justify-end"><p className="cw-chat-request">{example.question}</p></div>
-              <div className="cw-demo-reply"><CoworkerAvatar {...member} size={27} /><div className="min-w-0"><p className="cw-demo-speaker">{member.name}</p><p>{example.answer}</p>
+              <div className="cw-demo-reply"><CoworkerAvatar {...member} identity={"landing:" + member.id} animated={false} motion="quiet" gaze={false} size={27} /><div className="min-w-0"><p className="cw-demo-speaker">{member.name}</p><p>{example.answer}</p>
                 {customMember && <div className="cw-demo-owned-work"><p>What I’ll help with</p><ul>{example.responsibilities.map((item, index) => <li key={index}>{item}</li>)}</ul></div>}
                 <button type="button" className="cw-chat-document" onClick={openDocument} aria-label={"Open " + example.document.title}><FileText size={20} aria-hidden="true" /><span className="flex-1"><span className="block text-sm font-medium text-[var(--cw-text)]">{example.document.title}</span><span className="mt-0.5 block text-xs text-[var(--cw-muted)]">Draft · Ready to review</span></span><ArrowRight size={15} aria-hidden="true" /></button>
               </div></div>
-              {(state.replied || state.thinking) && <div className="cw-demo-message-enter" data-testid="demo-follow-up"><div className="mb-6 flex justify-end"><p className="cw-chat-request">{example.followUp}</p></div>{state.thinking ? <Thinking member={member} /> : <div className="cw-demo-reply cw-demo-message-enter"><CoworkerAvatar {...member} size={27} /><div><p className="cw-demo-speaker">{member.name}</p><p>{example.reply}</p></div></div>}</div>}
+              {(state.replied || state.thinking) && <div className="cw-demo-message-enter" data-testid="demo-follow-up"><div className="mb-6 flex justify-end"><p className="cw-chat-request">{example.followUp}</p></div>{state.thinking ? <Thinking member={member} /> : <div className="cw-demo-reply cw-demo-message-enter"><CoworkerAvatar {...member} identity={"landing:" + member.id} animated={false} motion="quiet" gaze={false} size={27} /><div><p className="cw-demo-speaker">{member.name}</p><p>{example.reply}</p></div></div>}</div>}
               {state.replied && <DemoQuestionCard member={member} question={example.clarification} selected={state.answer} thinking={state.answerThinking} onChoose={answerQuestion} />}
             </div>}
             {view === "documents" && (documentOpen ? <article className="cw-demo-document" data-testid="demo-document-preview">
@@ -258,7 +264,7 @@ export function CoworkerVignette() {
               <p className="mt-5 text-xs leading-5 text-[var(--cw-muted)]">These are example connections. Your accounts and files stay untouched.</p>
             </div>}
           </div>
-          {view === "group" && <GroupComposer effort={groupEffort} onEffortChange={setGroupEffort} selected={groupSelected} busy={groupBusy} onSend={playGroup} onEveryone={() => { track("group_recipient_selected", "everyone"); setGroupSelected(TEAM.map((person) => person.id)); }} onToggle={(id) => { track("group_recipient_selected", id); setGroupSelected((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]); }} />}
+          {view === "group" && <GroupComposer effort={groupEffort} onEffortChange={setGroupEffort} selected={groupSelected} busy={groupBusy} animated={motion} onSend={playGroup} onEveryone={() => { track("group_recipient_selected", "everyone"); if (motion) TEAM.filter((person) => !groupSelected.includes(person.id)).forEach((person) => acknowledgeCoworker("landing:" + person.id)); setGroupSelected(TEAM.map((person) => person.id)); }} onToggle={(id) => { track("group_recipient_selected", id); if (motion && !groupSelected.includes(id)) acknowledgeCoworker("landing:" + id); setGroupSelected((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]); }} />}
           {view === "chat" && <div className="cw-demo-composer-area">
             {state.model === "models" && <div className="cw-demo-model-note">Explore models through an OpenWork membership.<CoworkerAction href="#models" action="models" placement="demo" className="underline underline-offset-4">See membership<ArrowRight size={12} aria-hidden="true" /></CoworkerAction></div>}
             <form className="cw-demo-composer" onSubmit={(event) => { event.preventDefault(); reply(); }}>

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, rm, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -84,7 +84,7 @@ const GROUP_CANCEL_QUESTION = "@editor Ask which direction to choose before I st
 const PRIVATE_QUESTION = "Ask my private-only question and wait here for my answer.";
 const DIRECTION_QUESTION = { questions: [{ header: "Group direction", question: "Which direction should this group choose?", options: [{ label: "North", description: "The first route" }, { label: "South", description: "The second route" }], custom: false }] };
 
-type GateName = "consultation" | "worker" | "foreground" | "cancelled-worker";
+type GateName = "consultation" | "worker" | "foreground" | "cancelled-worker" | "approval";
 type ScriptedCall = { name: string; arguments: Record<string, unknown> };
 type ScriptedTurn = { call: ScriptedCall | null; reply: string; gate?: GateName };
 
@@ -92,7 +92,7 @@ type ScriptedTurn = { call: ScriptedCall | null; reply: string; gate?: GateName 
 const SCRIPT: Array<{ match: string; turn: ScriptedTurn }> = [
   { match: "Continue the earlier private request.", turn: { call: null, reply: CANARY_CONTINUED } },
   { match: CANARY_PROMPT, turn: { call: { name: "bash", arguments: { command: "printf 'counted\\n' >> continuation-canary.md", description: "Write the continuation canary once" } }, reply: "Unreachable before explicit continuation" } },
-  { match: APPROVAL_PROMPT, turn: { call: { name: "bash", arguments: { command: "printf 'approved\\n' >> approval-canary.md", description: "Write the group approval canary once" } }, reply: APPROVAL_REPLY } },
+  { match: APPROVAL_PROMPT, turn: { call: { name: "bash", arguments: { command: "printf 'approved\\n' >> approval-canary.md", description: "Write the group approval canary once" } }, reply: APPROVAL_REPLY, gate: "approval" } },
   { match: GROUP_QUESTION, turn: { call: { name: "question", arguments: DIRECTION_QUESTION }, reply: "The group chose North." } },
   { match: GROUP_CANCEL_QUESTION, turn: { call: { name: "question", arguments: DIRECTION_QUESTION }, reply: "This cancelled question must not complete." } },
   { match: PRIVATE_QUESTION, turn: { call: { name: "question", arguments: { questions: [{ header: "Private-only choice", question: "PRIVATE-QUESTION-CANARY: keep this in my discussion.", options: [{ label: "Private answer", description: "Not a group answer" }], custom: false }] } }, reply: "The private question was answered." } },
@@ -1182,6 +1182,7 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   await fill(restarted, '[data-testid="group-composer"]', APPROVAL_PROMPT);
   await clickButton(restarted, "Send");
   await waitFor(restarted, `Boolean(document.querySelector('[data-testid="group-waiting-person"][data-speaker="editor"] [data-testid="permission-card"]')) && !document.querySelector('[data-testid="group-working"]')`, { timeoutMs: 120_000, label: "quiet inline group permission" });
+  await waitFor(restarted, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Waiting for you" && document.querySelector('[data-testid="group-rail-row"][data-group-id=${json(pair.id)}] [data-testid="group-rail-line"]')?.textContent?.trim() === "Editor waiting for you" && !document.querySelector('[data-testid="group-chat"] header .coworker-avatar-group__member[data-active="true"]')`, { timeoutMs: 10_000, label: "human approval takes precedence over active group faces and reply wording" });
   const approvalStatus = resultRecord(await invokeCoworker(restarted, "groups.status", { id: pair.id }));
   const approval = Array.isArray(approvalStatus.interactions) ? approvalStatus.interactions.find(isRecord) : null;
   if (!isRecord(approval) || !isRecord(approval.pending) || !Array.isArray(approval.pending.permissions) || !isRecord(approval.pending.permissions[0])) throw new Error("Missing bound group approval.");
@@ -1197,7 +1198,27 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   expect(await invokeCoworker(restarted, "groups.interactions.reply", { ...approvalBinding, threadId: editorPrivate })).toMatchObject({ ok: false });
   expect(await readThreadMessages(restarted, "editor", editorPrivate)).toEqual(privateWaiting);
   await openGroup(restarted, pair.id);
-  await waitFor(restarted, `(() => { const button = [...document.querySelectorAll('[data-testid="group-waiting-person"][data-speaker="editor"] [data-testid="permission-card"] button')].find((button) => button.textContent.includes("Allow once")); if (!(button instanceof HTMLButtonElement) || button.disabled) return false; button.click(); return true; })()`, { label: "approve the restored group permission card once" });
+  await waitFor(restarted, `Boolean(document.querySelector('[data-testid="group-waiting-person"][data-speaker="editor"] [data-testid="permission-card"]'))`, { label: "restored group approval before the activity fault" });
+  // Deny timeline reads without blocking group status. Hold the provider's final
+  // reply so delivery never needs that timeline during the fault.
+  const approvalTimeline = path.join(String(runtime.coworkersDir), ".groups", String(pair.id), "timeline.jsonl");
+  const approvalTimelineMode = (await stat(approvalTimeline)).mode;
+  try {
+    await chmod(approvalTimeline, 0o200);
+    expect(await invokeCoworker(restarted, "groups.activity", { id: pair.id })).toMatchObject({ ok: false, error: expect.stringContaining("EACCES") });
+    await waitForText(restarted, "Live activity could not be refreshed.", { timeoutMs: 10_000 });
+    await waitFor(restarted, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Waiting for you"`, { timeoutMs: 10_000, label: "unanswered approval retains waiting-first presentation during the activity fault" });
+    await waitFor(restarted, `(() => { const button = [...document.querySelectorAll('[data-testid="group-waiting-person"][data-speaker="editor"] [data-testid="permission-card"] button')].find((button) => button.textContent.includes("Allow once")); if (!(button instanceof HTMLButtonElement) || button.disabled) return false; button.click(); return true; })()`, { label: "approve the restored group permission card once" });
+    await expect.poll(() => scripted.held.has("approval"), { timeout: 30_000 }).toBe(true);
+    await waitFor(restarted, `window.__COWORKER__.invoke("groups.status", { id: ${json(pair.id)} }).then((response) => response.ok && response.result.interactions.length === 0)`, { awaitPromise: true, timeoutMs: 10_000, label: "native approval cleared while activity is unavailable" });
+    await waitFor(restarted, `!document.querySelector('[data-testid="group-waiting-person"]') && document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() === "Activity unavailable" && document.querySelector('[data-testid="group-rail-row"][data-group-id=${json(pair.id)}] [data-testid="group-rail-line"]')?.textContent?.trim() === "Activity unavailable" && !document.querySelector('[data-testid="group-chat"] header .coworker-avatar-group__member[data-active="true"]')`, { timeoutMs: 10_000, label: "answered wait disappears despite the ancillary activity failure" });
+    expect(await invokeCoworker(restarted, "groups.activity", { id: pair.id })).toMatchObject({ ok: false, error: expect.stringContaining("EACCES") });
+    expect(await readThreadMessages(restarted, "editor", editorPrivate)).toEqual(privateWaiting);
+  } finally {
+    await chmod(approvalTimeline, approvalTimelineMode);
+  }
+  scripted.release("approval");
+  evidence.recordAssertionEvidence("Answered group waits clear even when activity cannot refresh", "A real timeline read-permission fault left the pending approval visible. After Allow once, native status cleared the interaction and the header and rail reported Activity unavailable with no waiting card or active face, while timeline reads still failed and the private question was unchanged. Timeline permissions were restored before releasing the held final reply.", true);
   await waitForText(restarted, APPROVAL_REPLY, { timeoutMs: 120_000 });
   await waitFor(restarted, `!document.querySelector('[data-testid="group-waiting-person"]') && document.querySelector('[data-testid="group-chat"]')?.dataset.live === "false"`, { label: "same group approval execution finished" });
   expect(resultText(await invokeCoworker(restarted, "coworkers.files.read", { slug: "editor", path: "approval-canary.md" }))).toBe("approved\n");

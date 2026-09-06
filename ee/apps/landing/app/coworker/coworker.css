@@ -45,7 +45,7 @@
 .cw-demo-icon-button { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex-shrink: 0; border-radius: 8px; color: var(--cw-muted); }
 .cw-demo-icon-button:hover { background: var(--cw-surface-2); color: var(--cw-text); }
 .cw-demo-layout { display: grid; grid-template-columns: 184px minmax(0, 1fr); }
-.cw-demo-sidebar { display: flex; flex-direction: column; padding: 24px 12px 16px; border-right: 1px solid var(--cw-border); background: #0b1018; }
+.cw-demo-sidebar { --avatar-group-separation: #0b1018; display: flex; flex-direction: column; padding: 24px 12px 16px; border-right: 1px solid var(--cw-border); background: #0b1018; }
 .cw-demo-sidebar-label { padding: 0 12px; margin-bottom: 14px; font-size: 9px; }
 .cw-demo-team { display: flex; flex-direction: column; gap: 5px; }
 .cw-demo-add { display: flex; align-items: center; gap: 10px; margin-top: 8px; padding: 10px; font-size: 11px; color: var(--cw-secondary); border: 1px dashed var(--cw-border); border-radius: 9px; }
@@ -143,22 +143,12 @@ button.cw-demo-list-row:hover { background: var(--cw-surface-2); }
 }
 @media (prefers-reduced-motion: reduce) { .cw * { transition: none !important; } }
 
-/* Shared app artwork, with the same blink and thinking-dot movement. */
-.cw .coworker-avatar { display: block; flex: none; overflow: visible; }
 .cw-demo { scroll-margin-top: 12px; }
-.cw .coworker-avatar :is(.coworker-avatar__body, .coworker-avatar__pupils) { transform-box: fill-box; transform-origin: center; }
-.cw-demo .coworker-avatar.is-animated .coworker-avatar__body { animation: cw-avatar-float 8.8s steps(6, jump-none) infinite; }
-.cw-demo .coworker-avatar.is-animated .coworker-avatar__pupils { animation: cw-avatar-blink 8.8s ease-in-out infinite; }
-.cw-demo .blink-phase-1 .coworker-avatar__pupils, .cw-demo .blink-phase-4 .coworker-avatar__pupils { animation-delay: -2s; }
-.cw-demo .blink-phase-2 .coworker-avatar__pupils, .cw-demo .blink-phase-5 .coworker-avatar__pupils { animation-delay: -5s; }
-@keyframes cw-avatar-float { 0%, 100% { transform: translateY(0); } 44%, 54% { transform: translateY(-0.8px); } }
-@keyframes cw-avatar-blink { 0%, 41.8%, 43.4%, 100% { transform: scaleY(1); } 42.6% { transform: scaleY(0.08); } }
+.cw-demo-person > .coworker-avatar { transform: rotate(-5deg); transform-origin: center; }
 .cw-demo-scenarios { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 9px; gap: 7px; background: #090e16; border-bottom: 1px solid var(--cw-border); }
 .cw-demo-scenarios button { display: flex; justify-content: center; align-items: center; gap: 9px; padding: 11px 8px; border-radius: 8px; color: var(--cw-muted); font-size: 12px; }
 .cw-demo-scenarios button[aria-pressed="true"] { background: #1a2230; color: var(--cw-text); }
 .cw-demo-scenarios button:hover { color: var(--cw-text); background: #151d2a; }
-.cw-demo-group-faces { display: inline-flex; flex: none; padding-right: 2px; }
-.cw-demo-group-faces svg + svg { margin-left: -9px; }
 .cw-demo-group-link { display: flex; align-items: center; gap: 9px; margin-top: 12px; padding: 11px 8px; border-radius: 10px; text-align: left; font-size: 11px; white-space: nowrap; }
 .cw-demo-group-link small { display: block; margin-top: 4px; color: var(--cw-muted); font-size: 10px; }
 .cw-demo-group-link:hover, .cw-demo-group-link[aria-pressed="true"] { background: #1a2230; }
@@ -175,7 +165,7 @@ button.cw-demo-list-row:hover { background: var(--cw-surface-2); }
 .cw-demo-message-enter { animation: cw-message-enter 300ms ease-out both; }
 @keyframes cw-message-enter { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
 .cw-demo-small-button:disabled { opacity: 0.5; cursor: default; }
-.cw-demo-group-intro { display: flex; align-items: flex-start; gap: 18px; padding-bottom: 20px; border-bottom: 1px solid var(--cw-border); }
+.cw-demo-group-intro { --avatar-group-separation: #0e131c; display: flex; align-items: flex-start; gap: 18px; padding-bottom: 20px; border-bottom: 1px solid var(--cw-border); }
 .cw-demo-group-intro h4 { font-size: 15px; font-weight: 500; }
 .cw-demo-group-intro p { margin-top: 8px; font-size: 12px; line-height: 1.8; color: var(--cw-muted); max-width: 440px; }
 .cw-demo-group-start { display: flex; flex-direction: column; align-items: center; gap: 17px; padding: 12px 0; color: var(--cw-muted); font-size: 13px; text-align: center; }
@@ -292,6 +282,7 @@ button.cw-demo-list-row:hover { background: var(--cw-surface-2); }
   .cw-demo-nav { margin-top: 5px; padding-top: 4px; }
   .cw-demo-nav-item { padding-block: 8px; }
   .cw-demo-workspace { height: clamp(365px, calc(100svh - 430px), 490px); }
+  .cw-demo-workspace:has(.cw-demo-group-start) { height: auto; min-height: 490px; }
   .cw-demo-builder { display: flex; flex-direction: column; }
   .cw-demo-builder-preview { flex-direction: row; flex-shrink: 0; justify-content: flex-start; text-align: left; gap: 16px; padding: 12px 18px; border-right: 0; border-bottom: 1px solid var(--cw-border); }
   .cw-demo-builder-preview > svg { width: 46px !important; height: 46px !important; }
@@ -315,6 +306,8 @@ button.cw-demo-list-row:hover { background: var(--cw-surface-2); }
   .cw-collaboration-example { padding-left: 22px; }
 }
 .cw-demo[data-motion="off"] *, .cw-demo[data-motion="off"] *::before { animation: none !important; transition: none !important; }
+.cw-demo[data-motion="off"] .coworker-avatar-group__member,
+.cw-demo[data-motion="off"] .coworker-avatar g:not([transform]) { transform: none !important; }
 @media (prefers-reduced-motion: reduce) { .cw * { animation: none !important; scroll-behavior: auto !important; transition: none !important; } }
 
 /* Spacious app composers, with the actual Dynamic effort slider inside. */

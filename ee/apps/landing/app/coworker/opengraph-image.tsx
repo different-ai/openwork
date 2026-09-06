@@ -1,6 +1,8 @@
 import { ImageResponse } from "next/og";
-import { CoworkerAvatar, CoworkerMark } from "../../components/coworker-brand";
+import { StaticCoworkerAvatar } from "@openwork/ui/coworker-artwork";
+import { CoworkerMark } from "../../components/coworker-brand";
 import { HERO } from "../../lib/coworker-content";
+import { TEAM } from "../../lib/coworker-demo";
 
 export const alt = "Open Coworker — Your work. Better together.";
 export const size = { width: 1200, height: 630 };
@@ -19,9 +21,7 @@ export default function CoworkerSocialImage() {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "auto" }}>
         <span style={{ fontSize: 19, color: "#9ba7b9" }}>Free and open source · Early access for macOS</span>
         <div style={{ display: "flex", gap: 12 }}>
-          <CoworkerAvatar name="Scout" color="blue" glasses="round" size={62} />
-          <CoworkerAvatar name="Editor" color="rose" glasses="square" size={62} />
-          <CoworkerAvatar name="Ops" color="mint" glasses="none" size={62} />
+          {TEAM.map((coworker) => <StaticCoworkerAvatar key={coworker.id} name={coworker.name} color={coworker.color} glasses={coworker.glasses} size={62} />)}
         </div>
       </div>
     </div>,

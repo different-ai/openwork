@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import "@openwork/ui/coworker.css";
 import "@openwork/ui/coworker-effort.css";
 import "./coworker.css";
 import { CoworkerAvatar, CoworkerMark } from "../../components/coworker-brand";
@@ -89,7 +90,7 @@ export default function CoworkerPage() {
               </figure>
               <div className="cw-collaboration-story">
                 <div><p className="cw-eyebrow">Group chats</p><h2>Good work is<br />a team effort.</h2><p>Bring research, writing, and planning into one conversation. Name the coworker you want to hear from, or ask everyone. Answer a question, choose a direction, and keep the work moving.</p><CoworkerDemoShortcut view="group">Try the team conversation</CoworkerDemoShortcut></div>
-                <div className="cw-collaboration-example"><div className="flex items-center gap-3">{TEAM.map((person) => <CoworkerAvatar key={person.id} {...person} size={40} />)}<span className="text-xs text-[var(--cw-muted)]">+ you</span></div><p className="cw-collaboration-quote">“Scout, find the angle. Editor, make it clear. Ops, help us get it out the door.”</p><p>One shared conversation. A clear part for everyone.</p></div>
+                <div className="cw-collaboration-example"><div className="flex items-center gap-3">{TEAM.map((person) => <CoworkerAvatar key={person.id} {...person} identity={"landing:" + person.id} motion="presentation" size={40} />)}<span className="text-xs text-[var(--cw-muted)]">+ you</span></div><p className="cw-collaboration-quote">“Scout, find the angle. Editor, make it clear. Ops, help us get it out the door.”</p><p>One shared conversation. A clear part for everyone.</p></div>
               </div>
               <div className="cw-custom-story"><div><p className="cw-eyebrow">Your team, your way</p><h2>Different coworkers.<br />A clear role for each.</h2></div><div><p>A growth partner to shape campaigns. A support partner to draft replies. A researcher to find the useful details. Add a coworker, give it responsibilities, and decide together what to take on first.</p><CoworkerDemoShortcut view="create">Make a coworker in the demo</CoworkerDemoShortcut></div></div>
               <ol className="mt-12 grid gap-8 md:grid-cols-3">
@@ -107,7 +108,7 @@ export default function CoworkerPage() {
               {BENEFITS.map((benefit, index) => {
                 const avatar = TEAM[index]!;
                 return <article key={benefit.title} className="cw-card flex flex-col p-6">
-                  <div className="flex items-center gap-3"><CoworkerAvatar name={benefit.name} color={avatar.color} glasses={avatar.glasses} size={44} /><p className="text-sm font-semibold">{benefit.name}<span className="mt-0.5 block text-xs font-normal text-[var(--cw-muted)]">{benefit.role}</span></p></div>
+                  <div className="flex items-center gap-3"><CoworkerAvatar name={benefit.name} identity={"landing:" + avatar.id} animated={false} motion="quiet" gaze={false} color={avatar.color} glasses={avatar.glasses} size={44} /><p className="text-sm font-semibold">{benefit.name}<span className="mt-0.5 block text-xs font-normal text-[var(--cw-muted)]">{benefit.role}</span></p></div>
                   <h2 className="mt-6 text-xl font-semibold leading-tight tracking-tight">{benefit.title}</h2>
                   <p className="mt-3 text-sm leading-6 text-[var(--cw-secondary)]">{benefit.text}</p>
                   <p className="mt-auto pt-6 text-sm leading-6 text-[var(--cw-muted)]">“{benefit.example}”</p>

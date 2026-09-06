@@ -1,8 +1,8 @@
 import { WORK_PATTERNS, rolesForPattern, teamAdvicePrompt, workPattern } from "@/lib/work-patterns";
 import { slugOfName } from "@/lib/onboarding-team";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { coworkerBridge, type AvatarColor, type AvatarGlasses, type CoworkerSummary, type TeamRole } from "@/lib/bridge";
-import { AvatarControls } from "@/ui/coworker-avatar";
+import { acknowledgeCoworker, AvatarControls } from "@/ui/coworker-avatar";
 import { OnboardingMascotStack } from "@/ui/onboarding-mascot";
 import { DEFAULT_PERSONALITY, type Personality } from "@/lib/personalities";
 import { PersonalityPicker } from "@/ui/personality-picker";
@@ -38,6 +38,8 @@ export function NewCoworker({
 }) {
   const [step, setStep] = useState<Step>(team.length > 0 ? "choose" : "identity");
   const [name, setName] = useState("");
+  const previewIdentity = useId();
+  const acknowledgedName = useRef("");
   const [role, setRole] = useState("");
   const [mission, setMission] = useState("");
   const [avatarColor, setAvatarColor] = useState<AvatarColor>("blue");
@@ -70,6 +72,8 @@ export function NewCoworker({
     let free = item.defaultName;
     for (let suffix = 2; takenSlugs.has(slugOfName(free)); suffix += 1) free = `${item.defaultName} ${suffix}`;
     setName(free);
+    acknowledgedName.current = free;
+    acknowledgeCoworker(previewIdentity);
     setRole(item.role);
     setMission(item.mission);
     setAvatarColor(item.avatarColor);
@@ -130,7 +134,7 @@ export function NewCoworker({
         <div className="creation-card m-auto grid min-w-0 w-full max-w-3xl shrink-0 overflow-hidden rounded-[30px] border border-line md:min-h-[540px] md:grid-cols-[290px_1fr]">
           <div className="avatar-stage flex min-h-[300px] flex-col items-center justify-center border-b border-line p-7 md:border-b-0 md:border-r">
             <OnboardingMascotStack
-              variant={{ kind: "coworker", name: name.trim() || "New coworker", color: avatarColor, glasses: avatarGlasses }}
+              variant={{ kind: "coworker", identity: previewIdentity, name: name.trim() || "New coworker", color: avatarColor, glasses: avatarGlasses }}
               size={140}
               sessionKey="new-coworker"
             />
@@ -195,6 +199,11 @@ export function NewCoworker({
                       value={name}
                       placeholder="Scout"
                       onChange={(event) => setName(event.target.value)}
+                      onBlur={() => {
+                        const next = name.trim();
+                        if (next && next !== acknowledgedName.current) acknowledgeCoworker(previewIdentity);
+                        acknowledgedName.current = next;
+                      }}
                       onKeyDown={(event) => {
                         if (event.key === "Enter") void create();
                       }}
@@ -203,8 +212,14 @@ export function NewCoworker({
                   <AvatarControls
                     color={avatarColor}
                     glasses={avatarGlasses}
-                    onColorChange={setAvatarColor}
-                    onGlassesChange={setAvatarGlasses}
+                    onColorChange={(color) => {
+                      setAvatarColor(color);
+                      if (color !== avatarColor) acknowledgeCoworker(previewIdentity);
+                    }}
+                    onGlassesChange={(glasses) => {
+                      setAvatarGlasses(glasses);
+                      if (glasses !== avatarGlasses) acknowledgeCoworker(previewIdentity);
+                    }}
                   />
                 </div> : null}
               </>

@@ -156,6 +156,7 @@ async function beginStatusTrace(app: App): Promise<void> {
         status: document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() ?? "",
         phrase: document.querySelector('[data-testid="group-progress-phrase"]')?.textContent?.trim() ?? "",
         rail: document.querySelector('[data-testid="group-rail-line"]')?.textContent?.trim() ?? "",
+        activeFaces: [...document.querySelectorAll('[data-testid="group-chat"] header .coworker-avatar-group__member[data-active="true"] .coworker-avatar')].map((avatar) => avatar.dataset.identity),
       });
     };
     const observer = new MutationObserver(record);
@@ -166,13 +167,13 @@ async function beginStatusTrace(app: App): Promise<void> {
   })()`);
 }
 
-async function endStatusTrace(app: App): Promise<Array<{ status: string; phrase: string; rail: string }>> {
+async function endStatusTrace(app: App): Promise<Array<{ status: string; phrase: string; rail: string; activeFaces: string[] }>> {
   const value = await evalIn(app, `(() => {
     window.__GROUP_TRACE__?.observer?.disconnect?.();
     return window.__GROUP_TRACE__?.trace ?? [];
   })()`);
   if (!Array.isArray(value) || !value.every(isRecord)) throw new Error("The group status trace was unavailable.");
-  return value.map((entry) => ({ status: String(entry.status), phrase: String(entry.phrase), rail: String(entry.rail) }));
+  return value.map((entry) => ({ status: String(entry.status), phrase: String(entry.phrase), rail: String(entry.rail), activeFaces: Array.isArray(entry.activeFaces) ? entry.activeFaces.map(String) : [] }));
 }
 
 test.skipIf(!enabled)(title, { timeout: 1_500_000 }, async ({ evidence }) => {
@@ -237,8 +238,27 @@ test.skipIf(!enabled)(title, { timeout: 1_500_000 }, async ({ evidence }) => {
   const phrases = [...new Set(rollCallTrace.map((entry) => entry.phrase).filter(Boolean))];
   expect(phrases.some((phrase) => /^(Choosing who should respond…|(Scout|Editor|Scout and Editor|Editor and Scout) (is|are) replying…( then (Scout|Editor))?)$/.test(phrase)), `live phrases: ${JSON.stringify(phrases)}`).toBe(true);
   expect(rollCallTrace.some((entry) => /is replying…|are replying…|Choosing who should respond…/.test(entry.rail)), `rail lines: ${JSON.stringify([...new Set(rollCallTrace.map((entry) => entry.rail))])}`).toBe(true);
-  const lastSpeaker = rollCallReplies[rollCallReplies.length - 1]?.speaker ?? "";
-  expect(await evalIn(app, `document.querySelector('[data-testid="group-rail-line"]')?.textContent?.trim()`)).toBe(`${names[lastSpeaker]} replied`);
+  const replySummary = await waitFor(app, `(() => { const line = document.querySelector('[data-testid="group-rail-line"]')?.textContent?.trim(); return /^(Scout and Editor|Editor and Scout) replied$/.test(line) ? line : false; })()`, { timeoutMs: 10_000, label: "both delivered replies named in the rail" });
+  expect(replySummary).toMatch(/^(Scout and Editor|Editor and Scout) replied$/);
+  expect(rollCallTrace.some((entry) => entry.activeFaces.length > 0)).toBe(true);
+  expect(rollCallTrace.flatMap((entry) => entry.activeFaces).every((slug) => slug === "scout" || slug === "editor")).toBe(true);
+  const faces = await evalIn(app, `(() => {
+    const header = document.querySelector('[data-testid="group-chat"] header [data-testid="group-avatars"]');
+    const members = [...header.querySelectorAll('.coworker-avatar-group__member')];
+    const boxes = members.map((member) => member.getBoundingClientRect());
+    return {
+      label: header.getAttribute('aria-label'),
+      count: header.dataset.count,
+      active: members.filter((member) => member.dataset.active === 'true').length,
+      separation: boxes[1].left - boxes[0].left,
+      width: boxes[0].width,
+      railSize: document.querySelector('[data-testid="group-rail-row"] .coworker-avatar')?.getAttribute('width'),
+      quietTranscript: [...document.querySelectorAll('[data-testid="group-chat"] [data-message-role="assistant"] .coworker-avatar')].every((avatar) => avatar.dataset.motion === 'quiet' && avatar.dataset.motionPaused === 'true' && avatar.getAnimations({ subtree: true }).length === 0),
+    };
+  })()`);
+  expect(faces).toMatchObject({ label: "Group: Editor, Scout", count: "2", active: 0, width: 30, railSize: "22", quietTranscript: true });
+  if (!isRecord(faces)) throw new Error("Group face layout was unavailable.");
+  expect(Number(faces.separation)).toBeGreaterThanOrEqual(Number(faces.width) * 0.9);
   expect(await evalIn(app, `document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim()`)).toBe("Ready");
   // The group header's status is plain text without a dot, and the composer's hint row carries no brand line; the
   // members hold nothing yet, so no summary line joins it either.
@@ -259,7 +279,7 @@ test.skipIf(!enabled)(title, { timeout: 1_500_000 }, async ({ evidence }) => {
 
   evidence.recordAssertionEvidence(
     "@everyone makes both coworkers answer in order, each signed, with a live row and rail line that say who is replying",
-    `Group ${groupId} was created from the rail as "Writing & Research" with Editor and Scout preselected. ROLL CALL was answered by ${rollCallReplies.map((line) => names[line.speaker]).join(" then ")} (routed by ${rollCallTurn.routedBy}, mode ${rollCallTurn.mode}); each bubble carried the speaker's own name, a name label, and its avatar; a time label was shown; live phrases seen: ${JSON.stringify(phrases)}; the rail ended on "${names[lastSpeaker]} replied"; the header then read a plain Ready with no dot and the composer carried no brand line.`,
+    `Group ${groupId} was created from the rail as "Writing & Research" with Editor and Scout preselected. ROLL CALL was answered by ${rollCallReplies.map((line) => names[line.speaker]).join(" then ")} (routed by ${rollCallTurn.routedBy}, mode ${rollCallTurn.mode}); each bubble carried the speaker's own name, a name label, and its quiet avatar; a time label was shown; live phrases seen: ${JSON.stringify(phrases)}; the rail ended on "${replySummary}". The separated header faces emphasized only members during work and none after settlement; the header then read a plain Ready with no dot and the composer carried no brand line.`,
     true,
   );
 

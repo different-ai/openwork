@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "@openwork/ui/coworker-effort.css";
+@import "@openwork/ui/coworker.css";
 @source "../../../packages/ui/src/react/coworker-avatar.tsx";
 @source "../../../packages/ui/src/react/coworker-option.tsx";
 
@@ -316,180 +317,16 @@ body.is-resizing-panel * {
   58% { transform: translateY(-0.8px) rotate(var(--mascot-peek-tilt)); }
 }
 
-.coworker-avatar {
-  --avatar-motion-delay: 0s;
-  --avatar-blink-delay: 0s;
-  --avatar-blink-duration: 8.8s;
-  --avatar-feature-look-x: 0px;
-  --avatar-feature-look-y: 0px;
-  --avatar-look-x: 0px;
-  --avatar-look-y: 0px;
-  --avatar-head-x: 0px;
-  --avatar-head-y: 0px;
-  --avatar-turn: 0deg;
-  --avatar-idle-feature-x: 0px;
-  --avatar-idle-feature-y: 0px;
-  --avatar-idle-look-x: 0px;
-  --avatar-idle-look-y: 0px;
-  --avatar-idle-head-y: 0px;
-  --avatar-idle-turn: 0deg;
-  display: block;
-  flex: none;
-  overflow: visible;
-}
-
-.coworker-avatar__pointer-body,
-.coworker-avatar__body,
-.coworker-avatar__depth,
-.coworker-avatar__pointer-features,
-.coworker-avatar__features,
-.coworker-avatar__pointer-gaze,
-.coworker-avatar__gaze,
-.coworker-avatar__pupils {
-  transform-box: fill-box;
-  transform-origin: center;
-}
-
 /* A logo-like resting tilt belongs to the face, never the row or its hit target.
- * At 44px this stepped SVG float travels about one screen pixel. */
+ * The shared navigation profile supplies the stepped one-screen-pixel float. */
 .coworker-rail-person .coworker-avatar {
-  --avatar-float-lift: -2.8px;
   transform: rotate(-5deg);
   transform-origin: center;
-}
-
-.coworker-avatar__pointer-body {
-  transform: translate(var(--avatar-head-x), var(--avatar-head-y)) rotate(var(--avatar-turn));
-  transition: transform 220ms cubic-bezier(0.22, 0.72, 0.24, 1);
-  will-change: transform;
-}
-
-.coworker-avatar__pointer-features {
-  transform: translate(var(--avatar-feature-look-x), var(--avatar-feature-look-y));
-  transition: transform 150ms cubic-bezier(0.22, 0.72, 0.24, 1);
-  will-change: transform;
-}
-
-.coworker-avatar__pointer-gaze,
-.coworker-mark__pointer-gaze {
-  transform: translate(var(--avatar-look-x), var(--avatar-look-y));
-  transition: transform 180ms cubic-bezier(0.22, 0.72, 0.24, 1);
-  will-change: transform;
-}
-
-.coworker-avatar.is-idle-looking .coworker-avatar__pointer-body {
-  transform: translateY(var(--avatar-idle-head-y)) rotate(var(--avatar-idle-turn));
-}
-
-.coworker-avatar.is-idle-looking .coworker-avatar__pointer-features {
-  transform: translate(var(--avatar-idle-feature-x), var(--avatar-idle-feature-y));
-}
-
-.coworker-avatar.is-idle-looking .coworker-avatar__pointer-gaze,
-.coworker-mark.is-idle-looking .coworker-mark__pointer-gaze {
-  transform: translate(var(--avatar-idle-look-x), var(--avatar-idle-look-y));
-}
-
-.coworker-avatar.is-idle-bobbing .coworker-avatar__pointer-body {
-  animation: coworker-idle-bob 440ms cubic-bezier(0.2, 0.72, 0.3, 1) 1 both;
-}
-
-/*
- * The idle motion is sub-pixel (a 0.8px float, turns of about a pixel), so it
- * is drawn in a handful of steps rather than at 60 frames a second: the eye
- * cannot tell, but a continuously moving avatar forces this window (with its
- * vibrancy) to recomposite on every frame — with three or four avatars on
- * screen that was most of a CPU core spent while the app sat idle. The blink
- * and the short idle glances keep their smooth curves; they last a fraction of
- * a second.
- */
-.coworker-avatar.is-animated .coworker-avatar__body {
-  animation: coworker-float 8.8s steps(6, jump-none) infinite;
-}
-
-.coworker-avatar.is-animated .coworker-avatar__depth {
-  animation: coworker-depth-turn 8.8s steps(6, jump-none) infinite;
-}
-
-.coworker-avatar.is-animated .coworker-avatar__features {
-  animation: coworker-feature-turn 8.8s steps(6, jump-none) infinite;
-}
-
-.coworker-avatar.is-animated .coworker-avatar__gaze {
-  animation: coworker-gaze-turn 8.8s steps(6, jump-none) infinite;
-}
-
-.coworker-avatar.is-animated .coworker-avatar__pupils {
-  animation: coworker-blink var(--avatar-blink-duration) ease-in-out infinite;
-  animation-delay: var(--avatar-blink-delay);
-}
-
-.coworker-avatar.is-idle-blinking .coworker-avatar__pupils,
-.coworker-mark.is-idle-blinking .coworker-mark__pupils {
-  animation: coworker-idle-blink 220ms ease-in-out 1 both !important;
-}
-
-.coworker-avatar.is-animated :is(
-  .coworker-avatar__body,
-  .coworker-avatar__depth,
-  .coworker-avatar__features,
-  .coworker-avatar__gaze
-) {
-  animation-delay: var(--avatar-motion-delay);
-}
-
-.coworker-avatar.motion-phase-1 {
-  --avatar-motion-delay: -2.9s;
-}
-
-.coworker-avatar.motion-phase-2 {
-  --avatar-motion-delay: -5.8s;
-}
-
-.coworker-avatar.blink-phase-0 {
-  --avatar-blink-delay: -1.4s;
-  --avatar-blink-duration: 8.2s;
-}
-
-.coworker-avatar.blink-phase-1 {
-  --avatar-blink-delay: -4.1s;
-  --avatar-blink-duration: 9.7s;
-}
-
-.coworker-avatar.blink-phase-2 {
-  --avatar-blink-delay: -6.8s;
-  --avatar-blink-duration: 11.3s;
-}
-
-.coworker-avatar.blink-phase-3 {
-  --avatar-blink-delay: -2.6s;
-  --avatar-blink-duration: 7.8s;
-}
-
-.coworker-avatar.blink-phase-4 {
-  --avatar-blink-delay: -8.2s;
-  --avatar-blink-duration: 10.5s;
-}
-
-.coworker-avatar.blink-phase-5 {
-  --avatar-blink-delay: -5.4s;
-  --avatar-blink-duration: 12.1s;
-}
-
-/* Environmental pause stops the lifecycle as well as its visual layers. Keep
- * structural SVG transforms and the sidebar's static tilt intact. */
-:is(.coworker-avatar, .coworker-mark)[data-motion-paused="true"] g:not([transform]) {
-  animation: none !important;
-  transform: none !important;
-  transition: none !important;
-  will-change: auto;
 }
 
 .coworker-mark {
   --avatar-look-x: 0px;
   --avatar-look-y: 0px;
-  --avatar-idle-look-x: 0px;
-  --avatar-idle-look-y: 0px;
   display: block;
   flex: none;
   overflow: visible;
@@ -505,7 +342,7 @@ body.is-resizing-panel * {
   transform-origin: center;
 }
 
-/* The mark's idle motion is stepped for the same reason as the avatars' (see above). */
+/* Keep the brand's stepped loading motion; the shared hook pauses it when inactive. */
 .coworker-mark:is(.is-animated, .is-loading) .coworker-mark__body {
   animation: coworker-float var(--mark-motion-duration) steps(6, jump-none) infinite;
 }
@@ -938,7 +775,7 @@ body.is-resizing-panel * {
 
 @keyframes coworker-float {
   0%, 100% { transform: translateY(0); }
-  44%, 54% { transform: translateY(var(--avatar-float-lift, -0.8px)); }
+  44%, 54% { transform: translateY(-0.8px); }
 }
 
 @keyframes coworker-depth-turn {
@@ -959,19 +796,6 @@ body.is-resizing-panel * {
 @keyframes coworker-blink {
   0%, 41.8%, 43.4%, 100% { transform: scaleY(1); }
   42.6% { transform: scaleY(0.08); }
-}
-
-@keyframes coworker-idle-blink {
-  0%, 100% { transform: scaleY(1); }
-  48%, 58% { transform: scaleY(0.08); }
-}
-
-@keyframes coworker-idle-bob {
-  0%, 20% { transform: translate(0, var(--avatar-idle-head-y)) rotate(var(--avatar-idle-turn)); }
-  40% { transform: translate(-0.16px, 0.46px) rotate(var(--avatar-idle-turn)); }
-  52% { transform: translate(0.3px, 0.88px) rotate(0deg); }
-  68% { transform: translate(-0.12px, 0.4px) rotate(var(--avatar-idle-turn)); }
-  100% { transform: translate(0, var(--avatar-idle-head-y)) rotate(var(--avatar-idle-turn)); }
 }
 
 /*
@@ -1022,7 +846,6 @@ a {
     animation: none !important;
   }
 
-  .coworker-avatar *,
   .coworker-mark *,
   .brand-loader__progress span,
   .inline-loader__progress span,
@@ -1030,9 +853,6 @@ a {
     animation: none !important;
   }
 
-  .coworker-avatar__pointer-body,
-  .coworker-avatar__pointer-features,
-  .coworker-avatar__pointer-gaze,
   .coworker-mark__pointer-gaze {
     transform: none !important;
     transition: none !important;
@@ -1085,23 +905,6 @@ a {
 }
 .bubble .coworker-markdown > :last-child {
   margin-bottom: 0;
-}
-
-/* A proposed teammate nods once when it joins the team; still under reduced motion. */
-@keyframes teammate-nod {
-  0%, 100% { transform: rotate(0deg) translateY(0); }
-  40% { transform: rotate(-1.5deg) translateY(1px); }
-  70% { transform: rotate(1deg) translateY(0); }
-}
-.teammate-nod {
-  display: inline-block;
-  transform-origin: 50% 80%;
-  animation: teammate-nod 300ms ease-out 1;
-}
-@media (prefers-reduced-motion: reduce) {
-  .teammate-nod {
-    animation: none;
-  }
 }
 
 /*

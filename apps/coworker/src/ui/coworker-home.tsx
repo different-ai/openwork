@@ -9,7 +9,7 @@ import type { EffortStop } from "@/lib/effort";
 import { clearAutoPicked, markAutoPicked, peekStartingModel, takeStartingModel } from "@/lib/model-choice";
 import { EffortDial } from "@/ui/effort-dial";
 import { createCoworkerThreads, recommendModel, type CoworkerActivity, type ThreadListItem } from "@/lib/threads";
-import { AvatarControls, CoworkerAvatar } from "@/ui/coworker-avatar";
+import { acknowledgeCoworker, AvatarControls, CoworkerAvatar } from "@/ui/coworker-avatar";
 import { PersonalityPicker } from "@/ui/personality-picker";
 import { CapabilitiesPanel } from "@/ui/capabilities";
 import { ActivityIcon, AppsIcon, Button, ErrorNote, IconButton, MemoryIcon, SlidersIcon, Tooltip } from "@/ui/kit";
@@ -443,7 +443,8 @@ export function CoworkerHome({
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="glass-header window-drag flex min-h-[78px] items-center gap-3 border-b border-line px-6 py-2" data-testid="conversation-header">
           <CoworkerAvatar
-            animated
+            identity={coworker.slug}
+            motion="attentive"
             color={coworker.avatarColor}
             glasses={coworker.avatarGlasses}
             name={coworker.name}
@@ -997,7 +998,7 @@ function CoworkerSettings({
       {/* Who the coworker is, laid out as rows on the panel itself rather than as a card inside a card. */}
       <section data-testid="coworker-profile-settings">
         <div className="flex items-center gap-3.5 pb-3">
-          <CoworkerAvatar animated color={avatarColor} glasses={avatarGlasses} name={coworker.name} size={56} />
+          <CoworkerAvatar identity={`${coworker.slug}:profile-preview`} motion="playful" color={avatarColor} glasses={avatarGlasses} name={coworker.name} size={56} />
           <div className="min-w-0">
             <p className="truncate text-base font-semibold tracking-[-0.02em] text-snow">{coworker.name}</p>
             <p className="truncate text-xs text-mist">{role.trim() || "Coworker"}</p>
@@ -1009,8 +1010,14 @@ function CoworkerSettings({
             layout="rows"
             color={avatarColor}
             glasses={avatarGlasses}
-            onColorChange={setAvatarColor}
-            onGlassesChange={setAvatarGlasses}
+            onColorChange={(color) => {
+              setAvatarColor(color);
+              if (color !== avatarColor) acknowledgeCoworker(`${coworker.slug}:profile-preview`);
+            }}
+            onGlassesChange={(glasses) => {
+              setAvatarGlasses(glasses);
+              if (glasses !== avatarGlasses) acknowledgeCoworker(`${coworker.slug}:profile-preview`);
+            }}
           />
           <label className="flex items-center gap-3 py-2.5">
             <span className="w-20 shrink-0 text-xs text-mist">Role</span>

@@ -9,8 +9,8 @@ export type DemoView = "chat" | "documents" | "assignments" | "connections" | "g
  * assignments, and OpenWork Connect. No providers or customer data are used. */
 export const TEAM: Array<{ id: StockCoworkerId; name: string; role: string; color: AvatarColor; glasses: AvatarGlasses }> = [
   { id: "scout", name: "Scout", role: "Research", color: "blue", glasses: "round" },
-  { id: "editor", name: "Editor", role: "Writing", color: "rose", glasses: "square" },
-  { id: "ops", name: "Ops", role: "Operations", color: "mint", glasses: "none" },
+  { id: "editor", name: "Editor", role: "Writing", color: "rose", glasses: "monocle" },
+  { id: "ops", name: "Ops", role: "Operations", color: "sage", glasses: "sunglasses" },
 ];
 
 export type DemoQuestion = { prompt: string; options: Array<{ label: string; description: string; reply: string }> };

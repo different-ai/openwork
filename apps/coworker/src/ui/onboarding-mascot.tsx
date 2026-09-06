@@ -24,7 +24,7 @@ import { CoworkerAvatar } from "@/ui/coworker-avatar";
 
 export type OnboardingMascotVariant =
   | { kind: "mark"; label?: string }
-  | { kind: "coworker"; name: string; color: AvatarColor; glasses: AvatarGlasses };
+  | { kind: "coworker"; identity?: string; name: string; color: AvatarColor; glasses: AvatarGlasses };
 
 export type MascotVisitor = { name: string; color: AvatarColor; glasses: AvatarGlasses };
 
@@ -248,7 +248,7 @@ export function OnboardingMascotStack({
                     ? { visibility: "visible", transitionDelay: "0ms" }
                     : undefined}
               >
-                <CoworkerAvatar animated={false} gaze={false} color={visitor.color} glasses={visitor.glasses} name={visitor.name} size={visitorSize} />
+                <CoworkerAvatar identity={`${sessionKey}:visitor:${index}`} motion="quiet" gaze={false} color={visitor.color} glasses={visitor.glasses} name={visitor.name} size={visitorSize} />
               </div>
             );
           })
@@ -257,7 +257,7 @@ export function OnboardingMascotStack({
         {variant.kind === "mark" ? (
           <CoworkerMark size={size} label={variant.label} tile={false} />
         ) : (
-          <CoworkerAvatar animated={false} color={variant.color} glasses={variant.glasses} name={variant.name} size={size} />
+          <CoworkerAvatar identity={variant.identity ?? sessionKey} motion="playful" color={variant.color} glasses={variant.glasses} name={variant.name} size={size} />
         )}
       </div>
     </div>

@@ -324,9 +324,10 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(welcomeLayout.launcherWidth as number).toBeLessThanOrEqual(680);
   expect(welcomeLayout.localTop as number).toBeGreaterThan(welcomeLayout.cloudTop as number);
   expect(Math.abs((welcomeLayout.cloudWidth as number) - (welcomeLayout.localWidth as number))).toBeLessThan(2);
-  // Native blur initialization can paint before the window receives focus. Gaze
-  // intentionally stays paused until the visible window is ready for interaction.
-  await app.client.send("Page.bringToFront", {});
+  // Renderer motion is deterministic without taking the person's foreground window.
+  // Restore emulation before inspecting native appearance; this is not native-focus proof.
+  await app.client.send("Emulation.setFocusEmulationEnabled", { enabled: true });
+  try {
   await waitFor(app, `document.hasFocus() && document.querySelector('svg[aria-label="Open Coworker"].coworker-mark')?.dataset.motionPaused === "false"`, {
     timeoutMs: 10_000, label: "visible welcome mascot ready to follow the pointer",
   });
@@ -337,7 +338,8 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     // The gaze follows the pointer synchronously, so read it in the same tick as the synthetic
     // move: a real mouse crossing the window cannot slip in between.
     window.dispatchEvent(new PointerEvent("pointermove", {
-      clientX: window.innerWidth - 2,
+      pointerType: "mouse",
+      clientX: bounds.left + bounds.width / 2 + 40,
       clientY: bounds.top + bounds.height / 2,
     }));
     const pointerLayer = mark.querySelector(".coworker-mark__pointer-gaze");
@@ -365,7 +367,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     throw new Error("Open Coworker brand gaze was unavailable.");
   }
   expect(brandGaze.lookX).toBeGreaterThan(0);
-  expect(brandGaze.lookX).toBeLessThanOrEqual(2);
+  expect(brandGaze.lookX).toBeLessThanOrEqual(2.4);
   expect(Math.abs(brandGaze.lookY)).toBeLessThanOrEqual(1.5);
   // The mark fronts the app icon's composition: one charcoal card behind it. Two visiting coworkers
   // (pale mint, pale violet) slide out once during the welcome and hide again; by the time the
@@ -459,6 +461,9 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     true,
   );
 
+  } finally {
+    await app.client.send("Emulation.setFocusEmulationEnabled", { enabled: false });
+  }
   // Native appearance must arrive through preload, while accessibility can make
   // the chrome solid without replacing the mascot or either onboarding action.
   await waitFor(app, `["none", "vibrancy", "mica"].includes(document.documentElement.dataset.windowMaterial)`, {
@@ -1304,77 +1309,34 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     `The strip's Coworker settings icon opened the settings with Apps & tools as their first row, then the AI model section${appChoseFirst ? ", whose one line said the model was chosen for the person and where it came from" : ", with no chosen-for-you line because the person had started this model on the local mode screen"}; the searchable picker selected Big Pickle for Scout, the record then said the person chose it and the line was gone, and the thinking-effort control appears only when the chosen model offers reasoning variants.`,
     true,
   );
-  await app.client.send("Page.bringToFront", {});
-  const avatarMotion = await evalIn(app, `(() => {
-    const avatar = document.querySelector('svg[aria-label="Scout avatar"].is-animated');
-    if (!avatar) return null;
-    const bounds = avatar.getBoundingClientRect();
-    window.dispatchEvent(new PointerEvent("pointermove", {
-      clientX: bounds.right + 24,
-      clientY: bounds.top - 24,
-    }));
-    const read = (selector) => {
-      const element = avatar.querySelector(selector);
-      if (!element) return null;
-      const style = getComputedStyle(element);
-      return {
-        animationName: style.animationName,
-        animationDuration: style.animationDuration,
-        animationDelay: style.animationDelay,
-        animationTimingFunction: style.animationTimingFunction,
-      };
-    };
-    return {
-      body: read(".coworker-avatar__body"),
-      depth: read(".coworker-avatar__depth"),
-      features: read(".coworker-avatar__features"),
-      gaze: read(".coworker-avatar__gaze"),
-      pupils: read(".coworker-avatar__pupils"),
-      glasses: Boolean(avatar.querySelector(".coworker-avatar__glasses")),
-      pointerBody: Boolean(avatar.querySelector(".coworker-avatar__pointer-body")),
-    };
-  })()`);
-  expect(avatarMotion).toMatchObject({
-    body: { animationName: "coworker-float", animationDuration: "8.8s", animationTimingFunction: "steps(6, jump-none)" },
-    depth: { animationName: "coworker-depth-turn", animationDuration: "8.8s" },
-    features: { animationName: "coworker-feature-turn", animationDuration: "8.8s" },
-    gaze: { animationName: "coworker-gaze-turn", animationDuration: "8.8s" },
-    pupils: { animationName: "coworker-blink", animationDuration: "8.2s", animationDelay: "-1.4s" },
-    glasses: true,
-    pointerBody: true,
-  });
-  if (!isRecord(avatarMotion)) throw new Error("Scout avatar motion layers were unavailable.");
-  const animatedLayers = ["body", "depth", "features", "gaze"]
-    .map((key) => avatarMotion[key])
-    .filter(isRecord);
-  expect(new Set(animatedLayers.map((layer) => layer.animationDelay)).size).toBe(1);
-  // The gaze settles on the next animation frames; poll for it rather than holding one long
-  // evaluation open, so a momentary renderer stall on a slow display does not read as a failure.
-  // Each poll moves the pointer again and reads the gaze rendered since the previous tick, so a
-  // focus change (which resets the gaze) or a slow frame cannot leave a stale zero behind.
+  await app.client.send("Emulation.setFocusEmulationEnabled", { enabled: true });
+  try {
   const coworkerGaze = await waitFor(app, `(() => {
-    const avatar = document.querySelector('svg[aria-label="Scout avatar"].is-animated');
-    if (!avatar) return false;
+    const avatar = document.querySelector('[data-testid="conversation-header"] svg.coworker-avatar');
+    if (!avatar || avatar.dataset.motionPaused !== "false" || avatar.dataset.reaction !== "none") return false;
     const bounds = avatar.getBoundingClientRect();
     window.dispatchEvent(new PointerEvent("pointermove", {
-      clientX: bounds.left - Math.max(24, bounds.width),
-      clientY: bounds.bottom + Math.max(24, bounds.height),
+      pointerType: "mouse", clientX: bounds.left + bounds.width / 2 - 24,
+      clientY: bounds.top + bounds.height / 2 + 18,
     }));
     const lookX = Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-x"));
     const lookY = Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-y"));
     if (!Number.isFinite(lookX) || !Number.isFinite(lookY) || lookX >= 0 || lookY <= 0) return false;
     return {
+      identity: avatar.dataset.identity,
+      motion: avatar.dataset.motion,
+      pointerOwners: document.querySelectorAll('[data-avatar-motion][data-gaze="pointer"]').length,
+      continuousAnimations: avatar.getAnimations({ subtree: true }).filter((animation) => animation.effect?.getTiming().iterations === Infinity).length,
       hasPointerLayer: avatar.querySelector(".coworker-avatar__pointer-gaze") !== null,
       lookX,
       lookY,
       featureLookX: Number.parseFloat(avatar.style.getPropertyValue("--avatar-feature-look-x")),
       featureLookY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-feature-look-y")),
-      headX: Number.parseFloat(avatar.style.getPropertyValue("--avatar-head-x")),
-      headY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-head-y")),
       turn: Number.parseFloat(avatar.style.getPropertyValue("--avatar-turn")),
     };
   })()`, { timeoutMs: 30_000, label: "Scout's gaze following a lower-left pointer" });
   expect(coworkerGaze).toMatchObject({
+    identity: "scout", motion: "attentive", pointerOwners: 1, continuousAnimations: 0,
     hasPointerLayer: true,
     lookX: expect.any(Number),
     lookY: expect.any(Number),
@@ -1388,15 +1350,23 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(coworkerGaze.lookY).toBeLessThanOrEqual(1.1);
   expect(Number(coworkerGaze.featureLookX)).toBeLessThan(0);
   expect(Number(coworkerGaze.featureLookY)).toBeGreaterThan(0);
-  expect(Number(coworkerGaze.headX)).toBeLessThan(0);
-  expect(Number(coworkerGaze.headY)).toBeGreaterThan(0);
   expect(Number(coworkerGaze.turn)).toBeLessThan(0);
   expect(Math.abs(Number(coworkerGaze.turn))).toBeLessThanOrEqual(1.7);
+  for (const pointerType of ["mouse", "touch"]) {
+    expect(await evalIn(app, `(() => {
+      window.dispatchEvent(new PointerEvent("pointermove", { pointerType: ${json(pointerType)}, clientX: window.innerWidth - 2, clientY: window.innerHeight - 2 }));
+      const avatar = document.querySelector('[data-testid="conversation-header"] svg.coworker-avatar');
+      return { gaze: avatar.dataset.gaze, lookX: parseFloat(avatar.style.getPropertyValue("--avatar-look-x")), lookY: parseFloat(avatar.style.getPropertyValue("--avatar-look-y")) };
+    })()`)).toEqual({ gaze: "neutral", lookX: 0, lookY: 0 });
+  }
   evidence.recordAssertionEvidence(
-    "The coworker avatar coordinates its head turn and keeps a restrained eye on the pointer",
-    "Scout's glasses and pupils followed a lower-left pointer at coordinated strengths while the whole avatar added a sub-two-degree lean and a fraction-of-a-pixel vertical nod. Its independent blink cadence remained intact.",
+    "The attentive header follows only a nearby fine pointer without continuous animation",
+    "With renderer focus emulated, Scout's pupils and glasses followed a nearby lower-left mouse. Only one avatar owned pointer attention; a distant mouse and touch returned it to neutral. This does not test native window focus or minimize.",
     true,
   );
+  } finally {
+    await app.client.send("Emulation.setFocusEmulationEnabled", { enabled: false });
+  }
   const storedCoworker = await invokeCoworker(app, "coworkers.get", { slug: "scout" });
   expect(storedCoworker).toMatchObject({
     ok: true,
@@ -1448,79 +1418,65 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   expect(startupScreens).toMatchObject({ wrongScreenObservations: 0, ready: true });
   evidence.recordAssertionEvidence("Restoring an existing team never flashes onboarding or Add a coworker, including under slower rendering", JSON.stringify(startupScreens), true);
   await waitForText(app, "Nova", { timeoutMs: 120_000 });
-  // Pointer tracking and idle glances both require a visible, focused window.
-  await app.client.send("Page.bringToFront", {});
+  // Keep renderer lifecycle assertions independent of the person's foreground app.
+  await app.client.send("Emulation.setFocusEmulationEnabled", { enabled: true });
+  try {
   const railAvatars = await waitFor(app, `(() => {
-    const avatars = [...document.querySelectorAll("aside nav svg.coworker-avatar")];
-    if (avatars.length !== 2) return false;
-    window.dispatchEvent(new PointerEvent("pointermove", {
-      clientX: window.innerWidth - 2,
-      clientY: window.innerHeight - 2,
-    }));
+    const avatars = [...document.querySelectorAll('.coworker-rail-person svg.coworker-avatar')];
+    if (avatars.length !== 2 || avatars.some((avatar) => avatar.dataset.motionPaused !== "false" || avatar.dataset.reaction !== "none")) return false;
     const facts = avatars.map((avatar) => {
-      const pupils = avatar.querySelector(".coworker-avatar__pupils");
-      const blink = pupils ? getComputedStyle(pupils) : null;
+      const bounds = avatar.getBoundingClientRect();
+      window.dispatchEvent(new PointerEvent("pointermove", { pointerType: "mouse", clientX: bounds.left + bounds.width / 2 + 16, clientY: bounds.top + bounds.height / 2 + 8 }));
       return {
-        name: avatar.getAttribute("aria-label"),
-        animated: avatar.classList.contains("is-animated"),
-        blinkName: blink?.animationName ?? "",
-        blinkDuration: blink?.animationDuration ?? "",
-        blinkDelay: blink?.animationDelay ?? "",
+        identity: avatar.dataset.identity,
+        motion: avatar.dataset.motion,
+        pointerOwners: [...document.querySelectorAll('[data-avatar-motion][data-gaze="pointer"]')].map((node) => node.dataset.identity),
+        floatDelay: avatar.style.getPropertyValue("--avatar-float-delay"),
         lookX: Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-x")),
         lookY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-y")),
-        featureLookY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-feature-look-y")),
-        headY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-head-y")),
-        turn: Number.parseFloat(avatar.style.getPropertyValue("--avatar-turn")),
       };
     });
-    // Both avatars have turned toward the bottom-right pointer once every look value is positive.
-    return facts.every((fact) => fact.lookX > 0 && fact.lookY > 0 && fact.featureLookY > 0) ? facts : false;
-  })()`, { timeoutMs: 30_000, label: "both rail avatars following the pointer" });
+    document.documentElement.dispatchEvent(new PointerEvent("pointerleave"));
+    return facts;
+  })()`, { timeoutMs: 30_000, label: "nearby rail pointer arbitration" });
   expect(railAvatars).toHaveLength(2);
   expect(railAvatars).toEqual(expect.arrayContaining([
-    expect.objectContaining({ name: "Scout avatar", animated: true, blinkName: "coworker-blink", blinkDuration: "8.2s", blinkDelay: "-1.4s" }),
-    expect.objectContaining({ name: "Nova avatar", animated: true, blinkName: "coworker-blink", blinkDuration: "10.5s", blinkDelay: "-8.2s" }),
+    expect.objectContaining({ identity: "scout", motion: "navigation", pointerOwners: ["scout"] }),
+    expect.objectContaining({ identity: "nova", motion: "navigation", pointerOwners: ["nova"] }),
   ]));
   if (!Array.isArray(railAvatars) || !railAvatars.every(isRecord)) {
     throw new Error("Left-rail coworker motion was unavailable.");
   }
   expect(railAvatars.every((avatar) => typeof avatar.lookX === "number" && avatar.lookX > 0)).toBe(true);
   expect(railAvatars.every((avatar) => typeof avatar.lookY === "number" && avatar.lookY > 0)).toBe(true);
-  expect(railAvatars.every((avatar) => typeof avatar.featureLookY === "number" && avatar.featureLookY > 0)).toBe(true);
-  expect(railAvatars.every((avatar) => typeof avatar.headY === "number" && avatar.headY > 0)).toBe(true);
-  expect(railAvatars.every((avatar) => typeof avatar.turn === "number" && avatar.turn > 0 && avatar.turn <= 1.7)).toBe(true);
-  expect(new Set(railAvatars.map((avatar) => avatar.blinkDuration)).size).toBe(2);
+  expect(new Set(railAvatars.map((avatar) => avatar.floatDelay)).size).toBe(2);
   evidence.recordAssertionEvidence(
-    "Every coworker in the left rail follows the pointer with its eyes and glasses",
-    "Scout and Nova moved their eyewear and pupils toward the same bottom-right pointer, then added a restrained whole-avatar nod and lean. Both stayed animated while unselected and retained different blink durations and offsets so the team never blinked in sync.",
+    "Only the nearest navigation avatar follows a fine pointer",
+    "A nearby mouse selected Scout then Nova as the sole pointer-attention owner. Both retained navigation motion with distinct stable-identity float offsets; the other identity never followed that pointer.",
     true,
   );
-  // The glance-and-blink overlap lasts about a quarter of a second every five to twelve
-  // seconds; polling over the wire would miss it, so the page itself records the moment
-  // both classes are present, with the values in force at that instant.
+  // Capture the finite seeded gesture in-page rather than polling inside a short blink.
   await evalIn(app, `(() => {
     const avatars = [...document.querySelectorAll("aside nav svg.coworker-avatar")];
     if (avatars.length === 0) return false;
     window.__idleGlance = null;
     const capture = (avatar) => {
       if (window.__idleGlance || !(avatar instanceof SVGSVGElement)) return;
-      if (!avatar.classList.contains("is-idle-looking") || !avatar.classList.contains("is-idle-blinking")) return;
+      if (avatar.dataset.gaze !== "idle" || avatar.dataset.blinking !== "true") return;
       const pupils = avatar.querySelector(".coworker-avatar__pupils");
-      const pointerBody = avatar.querySelector(".coworker-avatar__pointer-body");
       window.__idleGlance = {
         name: avatar.getAttribute("aria-label"),
-        featureY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-idle-feature-y")),
-        lookY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-idle-look-y")),
-        headY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-idle-head-y")),
-        turn: Number.parseFloat(avatar.style.getPropertyValue("--avatar-idle-turn")),
+        featureY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-feature-look-y")),
+        lookY: Number.parseFloat(avatar.style.getPropertyValue("--avatar-look-y")),
+        turn: Number.parseFloat(avatar.style.getPropertyValue("--avatar-turn")),
         blinkAnimation: pupils ? getComputedStyle(pupils).animationName : "",
-        bobAnimation: pointerBody ? getComputedStyle(pointerBody).animationName : "",
+        otherBlinking: avatars.filter((other) => other !== avatar && other.dataset.blinking === "true").length,
       };
     };
     const observer = new MutationObserver((records) => {
       for (const record of records) capture(record.target);
     });
-    for (const avatar of avatars) observer.observe(avatar, { attributes: true, attributeFilter: ["class"] });
+    for (const avatar of avatars) observer.observe(avatar, { attributes: true, attributeFilter: ["data-gaze", "data-blinking"] });
     window.__idleGlanceObserver = observer;
     return true;
   })()`);
@@ -1528,27 +1484,59 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   await evalIn(app, `(() => { window.__idleGlanceObserver?.disconnect(); return true; })()`);
   expect(idleAvatar).toMatchObject({
     name: expect.stringMatching(/^(Scout|Nova) avatar$/),
-    featureY: 0.65,
-    lookY: 1.2,
-    headY: 0.25,
+    featureY: 0.036,
+    lookY: 0.378,
     turn: expect.any(Number),
-    blinkAnimation: "coworker-idle-blink",
-    bobAnimation: "coworker-idle-bob",
+    blinkAnimation: "avatar-blink",
+    otherBlinking: 0,
   });
   if (!isRecord(idleAvatar) || typeof idleAvatar.turn !== "number") {
     throw new Error("The coworker's idle glance was unavailable.");
   }
-  expect(Math.abs(idleAvatar.turn)).toBe(0.35);
+  expect(Math.abs(idleAvatar.turn)).toBe(0.468);
   evidence.recordAssertionEvidence(
     "Coworkers make small unscripted glances while they wait",
-    "After the pointer became still, one rail avatar briefly looked down: its glasses, pupils, and whole-avatar pose moved by separate sub-pixel amounts with a 0.35-degree lean, and its short blink carried a sub-pixel check-and-rebound before it settled back.",
+    "After the pointer left, one rail avatar briefly glanced and blinked while its neighbor did not blink. Stable slug seeds stagger these finite gestures independently of stream or status updates.",
     true,
   );
+  const railSelection = await evalIn(app, `(async () => {
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const avatars = [...document.querySelectorAll('.coworker-rail-person svg.coworker-avatar')];
+    const nova = avatars.find((avatar) => avatar.dataset.identity === "nova");
+    const row = nova?.closest("button");
+    if (!row) return null;
+    const reactions = [];
+    const previous = new Map(avatars.map((avatar) => [avatar, avatar.dataset.reaction]));
+    const capture = () => avatars.forEach((avatar) => {
+      if (avatar.dataset.reaction !== "none" && avatar.dataset.reaction !== previous.get(avatar)) reactions.push({ identity: avatar.dataset.identity, reaction: avatar.dataset.reaction });
+      previous.set(avatar, avatar.dataset.reaction);
+    });
+    const observer = new MutationObserver(capture);
+    avatars.forEach((avatar) => observer.observe(avatar, { attributes: true, attributeFilter: ["data-reaction"] }));
+    try {
+      row.click();
+      capture();
+      const style = getComputedStyle(nova.querySelector('.coworker-avatar__pointer-body'));
+      const acknowledgement = { reaction: nova.dataset.reaction, animation: style.animationName, iterations: style.animationIterationCount, duration: style.animationDuration };
+      await wait(1000);
+      row.click();
+      await wait(100);
+      capture();
+      return { acknowledgement, reactions, settled: avatars.map((avatar) => [avatar.dataset.identity, avatar.dataset.reaction]), quietCopies: [...document.querySelectorAll('[data-testid="coworker-discussion-empty"] .coworker-avatar')].map((avatar) => [avatar.dataset.reaction, avatar.getAnimations({ subtree: true }).length]) };
+    } finally { observer.disconnect(); }
+  })()`, { awaitPromise: true, timeoutMs: 5_000 });
+  expect(railSelection).toMatchObject({
+    acknowledgement: { reaction: "engage", animation: "avatar-engage", iterations: "1", duration: "0.64s" },
+    reactions: [{ identity: "nova", reaction: "engage" }],
+    settled: expect.arrayContaining([["nova", "none"], ["scout", "none"]]),
+    quietCopies: [["none", 0]],
+  });
+  evidence.recordAssertionEvidence("Selection acknowledges once without reacting on the other identity or transcript", JSON.stringify(railSelection), true);
   const railMotionFacts = `(() => {
     const rows = [...document.querySelectorAll('.coworker-rail-person')];
     if (rows.length !== 2) return false;
     for (const [clientX, clientY] of [[2, 2], [window.innerWidth - 2, window.innerHeight - 2]]) {
-      window.dispatchEvent(new PointerEvent("pointermove", { clientX, clientY }));
+      window.dispatchEvent(new PointerEvent("pointermove", { pointerType: "mouse", clientX, clientY }));
     }
     const avatars = rows.map((row) => row.querySelector('svg.coworker-avatar'));
     const outside = [...document.querySelectorAll('.coworker-avatar')].filter((avatar) => !avatar.closest('.coworker-rail-person'));
@@ -1566,13 +1554,14 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
       },
       avatars: avatars.map((avatar) => {
         const body = avatar.querySelector('.coworker-avatar__body');
-        const gaze = ['feature-look-x', 'feature-look-y', 'look-x', 'look-y', 'head-x', 'head-y', 'turn', 'idle-feature-x', 'idle-feature-y', 'idle-look-x', 'idle-look-y', 'idle-head-y', 'idle-turn'];
+        const gaze = ['feature-look-x', 'feature-look-y', 'look-x', 'look-y', 'turn'];
         return {
           paused: avatar.dataset.motionPaused,
           animations: avatar.getAnimations({ subtree: true }).length,
           floatRunning: body.getAnimations().some((animation) => animation.playState === 'running'),
+          floatTiming: getComputedStyle(body).animationTimingFunction,
           floatY: new DOMMatrixReadOnly(getComputedStyle(body).transform).f * parseFloat(getComputedStyle(avatar).width) / avatar.viewBox.baseVal.width,
-          neutral: gaze.every((name) => parseFloat(avatar.style.getPropertyValue('--avatar-' + name)) === 0) && !avatar.matches('.is-idle-looking, .is-idle-blinking, .is-idle-bobbing') && [...avatar.querySelectorAll('g:not([transform])')].every((layer) => getComputedStyle(layer).transform === 'none'),
+          neutral: gaze.every((name) => parseFloat(avatar.style.getPropertyValue('--avatar-' + name)) === 0) && avatar.dataset.blinking === 'false' && avatar.dataset.reaction === 'none' && [...avatar.querySelectorAll('g:not([transform])')].every((layer) => getComputedStyle(layer).transform === 'none'),
           lookX: parseFloat(avatar.style.getPropertyValue('--avatar-look-x')),
         };
       }),
@@ -1580,7 +1569,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
   })()`;
   try {
     await app.client.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "no-preference" }] });
-    const before = await waitFor(app, `(() => { const facts = ${railMotionFacts}; return facts && facts.focused && !facts.hidden && facts.avatars.every((avatar) => avatar.paused === 'false' && avatar.floatRunning && avatar.lookX > 0) ? facts : false; })()`, { timeoutMs: 5_000, label: "visible rail motion before live accessibility change" });
+    const before = await waitFor(app, `(() => { const facts = ${railMotionFacts}; return facts && facts.focused && !facts.hidden && facts.avatars.every((avatar) => avatar.paused === 'false' && avatar.floatRunning) ? facts : false; })()`, { timeoutMs: 5_000, label: "visible rail motion before live accessibility change" });
     if (!isRecord(before)) throw new Error("Rail motion baseline was unavailable.");
     for (const paused of [true, false]) {
       await app.client.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: paused ? "reduce" : "no-preference" }] });
@@ -1599,7 +1588,7 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
         if (paused) expect(avatar).toMatchObject({ animations: 0, lookX: 0, floatY: 0 });
         else {
           expect(avatar.animations).toBeGreaterThan(0);
-          expect(avatar.lookX).toBeGreaterThan(0);
+          expect(avatar.floatTiming).toBe("steps(6, jump-none)");
         }
       }
       let moving: unknown;
@@ -1612,6 +1601,9 @@ test.skipIf(!enabled)(title, async ({ evidence }) => {
     await screenshot(app);
   } finally {
     await app.client.send("Emulation.setEmulatedMedia", { features: [] });
+  }
+  } finally {
+    await app.client.send("Emulation.setFocusEmulationEnabled", { enabled: false });
   }
   await clickButtonContaining(app, "Scout");
   await waitFor(app, `Boolean(document.querySelector('[data-testid="coworker-discussion-view"]')) && [...document.querySelectorAll("h1")].some((heading) => heading.textContent?.trim() === "Scout")`, { timeoutMs: 30_000, label: "Scout discussion view" });

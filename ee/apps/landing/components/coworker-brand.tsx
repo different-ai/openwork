@@ -1,5 +1,5 @@
 /** The site and desktop app share coworker artwork and appearance controls. */
-export { CoworkerAvatar, AvatarControls } from "@openwork/ui/coworker";
+export { CoworkerAvatar, AvatarControls, GroupAvatars, acknowledgeCoworker } from "@openwork/ui/coworker";
 export type { AvatarColor, AvatarGlasses } from "@openwork/ui/coworker";
 
 const BUBBLE_PATH = "M26 8h65c15 0 23 10 23 26v46c0 15-8 24-23 24H57l-15 9c-5 3-10 0-10-6v-3h-5C12 104 5 95 5 80V34C5 18 12 8 26 8Z";

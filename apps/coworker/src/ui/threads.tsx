@@ -98,7 +98,7 @@ import { classifyFailure, retryDelayMs } from "@/lib/turn-retry";
 import { applyStreamEvent, type LiveStream } from "@/lib/live-stream";
 import { useAutoGrow } from "@/ui/use-auto-grow";
 import { InteractionCard, InteractionCards, LETTERS, OptionRow, typingInField } from "@/ui/interactions";
-import { CoworkerAvatar } from "@/ui/coworker-avatar";
+import { acknowledgeCoworker, CoworkerAvatar } from "@/ui/coworker-avatar";
 import { InlineLoader } from "@/ui/brand";
 import { Button, Empty, ErrorNote, PlusIcon, StatusDot, ToolIcon } from "@/ui/kit";
 import { Markdown } from "@/ui/markdown";
@@ -241,7 +241,7 @@ function QuietEmptyConversation({ coworker, warmingUp = false, proposerName = ""
   const fromTeammate = newcomerLine(coworker, proposerName);
   return (
     <div className="mx-auto flex h-full max-w-md flex-col items-center justify-center py-10 text-center" data-testid="coworker-discussion-empty">
-      <CoworkerAvatar animated color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={44} />
+      <CoworkerAvatar identity={coworker.slug} animated={false} motion="quiet" gaze={false} color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={44} />
       <p className="mt-3 text-sm font-semibold text-snow">{coworker.name}</p>
       {coworker.role ? <p className="mt-0.5 text-xs text-mist">{coworker.role}</p> : null}
       <p className="mt-4 text-sm text-mist" data-testid="coworker-discussion-empty-line">{fromTeammate || "What should we work through?"}</p>
@@ -746,6 +746,7 @@ function DiscussionWelcome({
     setComposerError("");
     try {
       await onStartDiscussion(text);
+      acknowledgeCoworker(coworker.slug);
       setMessage("");
     } catch (cause) {
       setComposerError(cause instanceof Error ? cause.message : String(cause));
@@ -1673,6 +1674,7 @@ function ThreadView({
   function sendText(words: string) {
     const text = words.trim();
     if (!text) return;
+    acknowledgeCoworker(coworker.slug);
     if (activeTurnRef.current || turnStateRef.current.pending || appRetry || engineRunning) {
       commitTurnState((state) => enqueue(state, { id: newQueuedId(), text, queuedAt: Date.now() }));
       return;

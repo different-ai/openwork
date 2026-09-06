@@ -18,6 +18,17 @@
       "development": "./src/react/coworker-avatar.tsx",
       "default": "./src/react/coworker-avatar.tsx"
     },
+    "./coworker-artwork": {
+      "types": "./src/react/coworker-avatar-artwork.tsx",
+      "development": "./src/react/coworker-avatar-artwork.tsx",
+      "default": "./src/react/coworker-avatar-artwork.tsx"
+    },
+    "./coworker-motion": {
+      "types": "./src/react/coworker-avatar-motion.ts",
+      "development": "./src/react/coworker-avatar-motion.ts",
+      "default": "./src/react/coworker-avatar-motion.ts"
+    },
+    "./coworker.css": "./src/react/coworker-avatar.css",
     "./coworker-effort": {
       "types": "./src/react/coworker-effort-slider.tsx",
       "development": "./src/react/coworker-effort-slider.tsx",

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { coworkerBridge, type CoworkerGroupSummary, type CoworkerSummary } from "@/lib/bridge";
 import { suggestGroupName } from "@/lib/groups";
-import { CoworkerAvatar } from "@/ui/coworker-avatar";
+import { acknowledgeCoworker, CoworkerAvatar } from "@/ui/coworker-avatar";
 import { Button, ErrorNote } from "@/ui/kit";
 
 /**
@@ -44,7 +44,9 @@ export function NewGroupSheet({
     setBusy(true);
     setError("");
     try {
-      onCreated(await coworkerBridge.groups.create({ name: shownName.trim() || suggested, participantSlugs: members.map((member) => member.slug) }));
+      const group = await coworkerBridge.groups.create({ name: shownName.trim() || suggested, participantSlugs: members.map((member) => member.slug) });
+      for (const slug of group.participantSlugs) acknowledgeCoworker(slug, "wake");
+      onCreated(group);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
       setBusy(false);
@@ -77,7 +79,7 @@ export function NewGroupSheet({
                   onClick={() => toggle(coworker.slug)}
                   className={`flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-panel ${checked ? "bg-panel/70" : ""}`}
                 >
-                  <CoworkerAvatar color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={28} />
+                  <CoworkerAvatar identity={coworker.slug} motion="quiet" gaze={false} color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={28} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium text-snow">{coworker.name}</span>
                     {coworker.role ? <span className="block truncate text-[11px] text-mist">{coworker.role}</span> : null}

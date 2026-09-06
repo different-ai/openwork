@@ -13,20 +13,20 @@ import {
 } from "@/lib/group-runs";
 import {
   chooseSpeakers,
-  describeGroupActivity,
   describeSpeakerFailure,
   describeTurnProgress,
   listNames,
   mentionCandidates,
+  parseMentions,
   unfinishedSpeakers,
   type GroupParticipant,
 } from "@/lib/groups";
 import { createCoworkerThreads } from "@/lib/threads";
 import { executionProgress, type ExecutionActivity } from "@/lib/progress-activity";
+import { describeGroupPresentation } from "@/lib/group-presentation";
 import { PROGRESS_LIMITS } from "@/lib/progress-config";
 import { LiveRow } from "@/ui/live-row";
-import { CoworkerAvatar } from "@/ui/coworker-avatar";
-import { GroupAvatars } from "@/ui/coworker-rail";
+import { acknowledgeCoworker, CoworkerAvatar, GroupAvatars } from "@/ui/coworker-avatar";
 import { InteractionCard, InteractionCards, LETTERS, OptionRow, typingInField } from "@/ui/interactions";
 import { ActionMenu, Button, ErrorNote, PlusIcon } from "@/ui/kit";
 import { CollaborationReceipts, SendButton, SummaryLine } from "@/ui/threads";
@@ -165,7 +165,7 @@ function GroupExecutionRow({ activity, coworker, runtime }: { activity: Executio
   return <div className="min-w-0" data-testid="group-working" data-execution-id={activity.executionId} data-message-id={activity.messageId} data-thread-id={activity.threadId} data-speaker={activity.slug}>
     <p className="mb-1 px-2 text-[11px] font-medium text-mist [overflow-wrap:anywhere]" data-testid="group-speaker-name">{coworker.name}</p>
     {text ? <div className="flex min-w-0 items-end gap-2" data-message-role="assistant" data-live="true">
-      <span className="shrink-0"><CoworkerAvatar animated={false} color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={24} /></span>
+      <span className="shrink-0"><CoworkerAvatar identity={coworker.slug} animated={false} motion="quiet" gaze={false} color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={24} /></span>
       <div className="bubble bubble-coworker bubble-tail-left min-w-0 max-w-[76%] whitespace-pre-wrap [overflow-wrap:anywhere]" data-testid="group-live-reply">{text}</div>
     </div> : null}
     <LiveRow coworker={coworker} progress={progress} phase={text ? "writing" : "thinking"} wordsArrived={Boolean(text)} />
@@ -203,7 +203,7 @@ export function GroupChat({
   onGroupChanged: (group: CoworkerGroupSummary) => void;
   onGroupArchived: (group: CoworkerGroupSummary) => void;
   /** One plain line describing the latest activity, for the rail. */
-  onActivityLine: (id: string, line: string) => void;
+  onActivityLine: (id: string, line: string, activeSlugs: string[]) => void;
   /** Open one coworker's AI model setting, the fix for a model-related failure. */
   onChooseModel: (slug: string) => void;
   /** Open the group's details (members, facilitator, archive). */
@@ -268,15 +268,27 @@ export function GroupChat({
       if (reading) return;
       reading = true;
       try {
-        const [status, activity, updated, work] = await Promise.all([coworkerBridge.groups.status(group.id), coworkerBridge.groups.activity(group.id), coworkerBridge.groups.get(group.id), coworkerBridge.collaboration.receipts({ groupId: group.id })]);
-        if (cancelled) return;
-        setLive(status.active); setLiveTurn(status.turn); setQueue(status.queue);
-        setHumanWaits({ groupId: group.id, entries: status.interactions });
-        publishGroupRun({ groupId: group.id, active: status.active, ...(status.turn ? { turn: status.turn } : {}), done: !status.active });
-        setObserved({ groupId: group.id, ...activity }); setReceipts(work); setLoaded(true); setError("");
-        if (updated.updatedAt !== groupRef.current.updatedAt) changedRef.current(updated);
+        // Apply authoritative waits immediately, but settle every read before another poll.
+        const [status, activity, updated, work] = await Promise.allSettled([
+          coworkerBridge.groups.status(group.id).then((status) => {
+            if (cancelled || groupRef.current.id !== group.id) return;
+            setLive(status.active); setLiveTurn(status.turn); setQueue(status.queue);
+            setHumanWaits({ groupId: group.id, entries: status.interactions });
+            publishGroupRun({ groupId: group.id, active: status.active, ...(status.turn ? { turn: status.turn } : {}), done: !status.active });
+          }),
+          coworkerBridge.groups.activity(group.id),
+          coworkerBridge.groups.get(group.id),
+          coworkerBridge.collaboration.receipts({ groupId: group.id }),
+        ]);
+        if (cancelled || groupRef.current.id !== group.id) return;
+        if (status.status === "rejected") throw status.reason;
+        if (activity.status === "rejected") throw activity.reason;
+        if (updated.status === "rejected") throw updated.reason;
+        if (work.status === "rejected") throw work.reason;
+        setObserved({ groupId: group.id, ...activity.value }); setReceipts(work.value); setLoaded(true); setError("");
+        if (updated.value.updatedAt !== groupRef.current.updatedAt) changedRef.current(updated.value);
       } catch {
-        if (!cancelled) {
+        if (!cancelled && groupRef.current.id === group.id) {
           setObserved((current) => ({ ...current, executions: [] }));
           setError("Live activity could not be refreshed. Recorded replies and waiting receipts are kept.");
         }
@@ -289,8 +301,10 @@ export function GroupChat({
   }, [group.id]);
 
   useEffect(() => {
-    onActivityLine(group.id, interactions.length ? `${listNames(interactions.map((entry) => nameFor(entry.slug)))} waiting for you` : live && !liveTurn ? "Choosing who should respond…" : describeGroupActivity(events, nameFor, liveTurn));
-  }, [events, group.id, interactions, live, liveTurn, nameFor, onActivityLine]);
+    if (!loaded || observed.groupId !== group.id) return;
+    const presentation = describeGroupPresentation({ events, executions, interactions, active: live, turn: liveTurn ?? group.turns.at(-1) ?? null, nameFor, unavailable: Boolean(error) });
+    onActivityLine(group.id, presentation.line, presentation.activeSlugs);
+  }, [events, executions, interactions, group.id, group.turns, observed.groupId, live, liveTurn, loaded, error, nameFor, onActivityLine]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -300,12 +314,14 @@ export function GroupChat({
     if (loaded && active) composerRef.current?.focus();
   }, [loaded, group.id, active]);
 
-  async function startTurn(text: string, clientMessageId: string): Promise<void> {
+  async function startTurn(text: string, clientMessageId: string): Promise<boolean> {
     try {
       await coworkerBridge.groups.submit(group.id, { text, clientMessageId, context: briefing?.context });
       setLive(true);
+      return true;
     } catch (cause) {
       setFailedSend({ text, clientMessageId, error: cause instanceof Error ? cause.message : String(cause) });
+      return false;
     }
   }
 
@@ -367,7 +383,10 @@ export function GroupChat({
     setMessage("");
     setMention(null);
     const clientMessageId = newId("m");
-    void startTurn(text, clientMessageId);
+    if (await startTurn(text, clientMessageId)) {
+      const mentions = parseMentions(text, members);
+      for (const slug of mentions.everyone ? members.map((member) => member.slug) : mentions.slugs) acknowledgeCoworker(slug);
+    }
   }
 
   async function rename(): Promise<void> {
@@ -475,12 +494,13 @@ export function GroupChat({
   const showContinue = recoverable && !(unfinished.length === 1 && unfinished[0]?.status === "failed");
   const progressLine = liveTurn ? describeTurnProgress(liveTurn, nameFor) : "";
   const waiting = receipts.some((receipt) => ["waiting", "waiting-person", "resumption-queued"].includes(receipt.state));
-  const statusLine = !loaded || observed.groupId !== group.id ? "Checking activity" : error ? "Activity unavailable" : interactions.length ? "Waiting for you" : executions.length ? `${executions.length} active execution${executions.length === 1 ? "" : "s"}` : live ? (progressLine || "Choosing who should respond…") : waiting ? "Waiting for requested work" : "Ready";
+  const statusLine = !loaded || observed.groupId !== group.id ? "Checking activity" : interactions.length ? "Waiting for you" : error ? "Activity unavailable" : executions.length ? `${executions.length} active execution${executions.length === 1 ? "" : "s"}` : live ? (progressLine || "Choosing who should respond…") : waiting ? "Waiting for requested work" : "Ready";
+  const activeSlugs = describeGroupPresentation({ events, executions, interactions, active: live, turn: liveTurn, nameFor, unavailable: Boolean(error) }).activeSlugs;
 
   return (
     <div className="glass-main flex h-full min-w-0 flex-1 flex-col" data-testid="group-chat" data-group-id={group.id} data-live={live ? "true" : "false"}>
       <header className="glass-header window-drag flex min-h-[78px] shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-line px-4 py-3" data-testid="conversation-header">
-        <GroupAvatars members={members} size={30} />
+        <GroupAvatars members={members} size={30} activeSlugs={activeSlugs} gatherKey={active ? group.id : undefined} />
         <div className="min-w-0 flex-[1_1_10rem]">
           {renaming ? (
             <input
@@ -522,7 +542,7 @@ export function GroupChat({
           {introduction}
           {loaded && events.length === 0 && !introduction ? (
             <div className="mx-auto flex h-full max-w-md flex-col items-center justify-center py-10 text-center" data-testid="group-chat-empty">
-              <GroupAvatars members={members} size={40} />
+              <GroupAvatars members={members} size={40} animated={false} />
               <p className="mt-3 text-sm font-semibold text-snow">{group.name}</p>
               <p className="mt-0.5 text-xs text-mist">{members.map((member) => member.name).join(", ")}</p>
               <p className="mt-4 text-sm text-mist">What should we work through together? Name a coworker with @ to choose who answers.</p>
@@ -584,7 +604,7 @@ export function GroupChat({
                 {label ? <p className="pb-1 pt-2 text-center text-[11px] font-medium text-mist/80" data-testid="group-time-label">{label}</p> : null}
                 <div className={`flex items-end gap-2 ${continued ? "-mt-1.5" : ""}`} data-message-role="assistant" data-speaker={event.slug} data-continued={continued ? "true" : "false"}>
                   <span className="w-6 shrink-0">
-                    {tail && speaker ? <CoworkerAvatar color={speaker.avatarColor} glasses={speaker.avatarGlasses} name={speaker.name} size={24} /> : null}
+                    {tail && speaker ? <CoworkerAvatar identity={speaker.slug} animated={false} motion="quiet" gaze={false} color={speaker.avatarColor} glasses={speaker.avatarGlasses} name={speaker.name} size={24} /> : null}
                   </span>
                   <div className="max-w-[76%]">
                     {!continued ? <p className="mb-0.5 px-2 text-[11px] font-medium text-mist" data-testid="group-speaker-name">{nameFor(event.slug ?? "")}</p> : null}
@@ -679,7 +699,7 @@ export function GroupChat({
                       onMouseDown={(event) => event.preventDefault()}
                       onClick={() => insertMention(option)}
                     >
-                      {option.member ? <CoworkerAvatar color={option.member.avatarColor} glasses={option.member.avatarGlasses} name={option.member.name} size={18} /> : <span className="flex size-[18px] items-center justify-center rounded-full border border-line text-[10px] text-mist">@</span>}
+                      {option.member ? <CoworkerAvatar identity={option.member.slug} motion="quiet" gaze={false} color={option.member.avatarColor} glasses={option.member.avatarGlasses} name={option.member.name} size={18} /> : <span className="flex size-[18px] items-center justify-center rounded-full border border-line text-[10px] text-mist">@</span>}
                       <span className="text-snow">{option.label}</span>
                       {option.detail ? <span className="truncate text-mist">{option.detail}</span> : null}
                     </button>

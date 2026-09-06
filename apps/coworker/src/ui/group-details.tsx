@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { coworkerBridge, type CoworkerGroupSummary, type CoworkerSummary, type RuntimeInfo } from "@/lib/bridge";
 import { liveGroupRun } from "@/lib/group-runs";
 import { createCoworkerThreads, type EngineModelOption } from "@/lib/threads";
-import { CoworkerAvatar } from "@/ui/coworker-avatar";
+import { acknowledgeCoworker, CoworkerAvatar } from "@/ui/coworker-avatar";
 import { Button, ErrorNote } from "@/ui/kit";
 
 /**
@@ -71,7 +71,13 @@ export function GroupDetailsSheet({
     setBusy(label);
     setError("");
     try {
-      onChanged(await coworkerBridge.groups.update(group.id, patch));
+      const updated = await coworkerBridge.groups.update(group.id, patch);
+      if (patch.participantSlugs) {
+        for (const slug of updated.participantSlugs) {
+          if (!group.participantSlugs.includes(slug)) acknowledgeCoworker(slug, "wake");
+        }
+      }
+      onChanged(updated);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -133,7 +139,7 @@ export function GroupDetailsSheet({
                       onClick={() => toggle(coworker.slug)}
                       className="flex w-full items-center gap-3 py-2 text-left"
                     >
-                      <CoworkerAvatar color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={24} />
+                      <CoworkerAvatar identity={coworker.slug} motion="quiet" gaze={false} color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={24} />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm text-snow">{coworker.name}</span>
                         <span className="block truncate text-[11px] text-mist">{coworker.role || "No role yet"}</span>

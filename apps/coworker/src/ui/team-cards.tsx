@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ComponentProps, type KeyboardEvent, type ReactNode } from "react";
 import type { AvatarColor, AvatarGlasses, CoworkerSummary, TeamStates } from "@/lib/bridge";
 import type { DiscussionMessage } from "@/lib/conversation";
 import {
@@ -10,7 +10,7 @@ import {
   type SuggestionCard,
   type TeamCard,
 } from "@/lib/team";
-import { CoworkerAvatar } from "@/ui/coworker-avatar";
+import { acknowledgeCoworker, CoworkerAvatar } from "@/ui/coworker-avatar";
 import { typingInField } from "@/ui/interactions";
 
 /**
@@ -41,7 +41,8 @@ const ACCELERATORS = ["a", "b", "c", "d"] as const;
 export function TeammateTile({
   look,
   smallPrint,
-  nod = false,
+  identity,
+  motion = "quiet",
   children,
   className = "",
   testId = "teammate-card",
@@ -49,19 +50,20 @@ export function TeammateTile({
 }: {
   look: TeammateLook;
   smallPrint: string;
-  /** One nod when the teammate joins the team; still under reduced motion. */
-  nod?: boolean;
+  identity?: string;
+  motion?: ComponentProps<typeof CoworkerAvatar>["motion"];
   /** What sits in the name plate's place — an editable name, for example. */
   children?: ReactNode;
   className?: string;
   testId?: string;
   attributes?: Record<string, string>;
 }) {
+  const previewIdentity = useId();
   return (
     <div className={`min-w-0 rounded-[18px] bg-panel-2 px-3.5 py-3 text-left [overflow-wrap:anywhere] ${className}`} data-testid={testId} {...attributes}>
       <div className="flex items-start gap-3">
-        <span className={`shrink-0 ${nod ? "teammate-nod" : ""}`} data-testid="teammate-card-avatar">
-          <CoworkerAvatar animated gaze={false} color={look.avatarColor} glasses={look.avatarGlasses} name={look.name} size={44} />
+        <span className="shrink-0" data-testid="teammate-card-avatar">
+          <CoworkerAvatar identity={identity ?? previewIdentity} motion={motion} gaze={false} color={look.avatarColor} glasses={look.avatarGlasses} name={look.name} size={44} />
         </span>
         <div className="min-w-0 flex-1">
           {children ?? <p className="text-[15px] font-semibold leading-snug text-snow" data-testid="teammate-card-name">{look.name}</p>}
@@ -138,6 +140,7 @@ export function EditableTeammateTile({
   attributes?: Record<string, string>;
 }) {
   const [editing, setEditing] = useState(false);
+  const previewIdentity = useId();
   const [draft, setDraft] = useState(look.name);
   const inputRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
@@ -147,6 +150,7 @@ export function EditableTeammateTile({
     const next = draft.trim().slice(0, 40) || defaultName;
     setDraft(next);
     onNameChange(next);
+    if (next !== look.name) acknowledgeCoworker(previewIdentity);
     setEditing(false);
   }
   function onKeyDown(event: KeyboardEvent<HTMLInputElement>) {
@@ -161,7 +165,7 @@ export function EditableTeammateTile({
   }
   return (
     <div className="relative">
-      <TeammateTile look={look} smallPrint={smallPrint} className={onRemove ? "pr-11" : ""} attributes={{ "data-kind": "draft", ...attributes }}>
+      <TeammateTile look={look} identity={previewIdentity} motion="playful" smallPrint={smallPrint} className={onRemove ? "pr-11" : ""} attributes={{ "data-kind": "draft", ...attributes }}>
         {editing ? (
           <input
             ref={inputRef}
@@ -263,7 +267,6 @@ export function TeamCardsForTurn({
   onSendReply: (text: string) => void;
 }) {
   const [busyId, setBusyId] = useState("");
-  const [justAdded, setJustAdded] = useState("");
   const resolved = resolveTeamCards(cards, team.states, laterPersonMessage);
   if (resolved.length === 0) return null;
   const run = async (id: string, work: () => Promise<void>) => {
@@ -289,7 +292,7 @@ export function TeamCardsForTurn({
               : suggestionSmallPrint(card, proposer);
           const pills: ChoicePill[] = card.state === "open"
             ? [
-              { id: "add", label: busyId === card.id ? "Adding…" : "Add to team", tone: "primary", onChoose: () => void run(card.id, () => team.accept(card).then(() => setJustAdded(card.id))) },
+              { id: "add", label: busyId === card.id ? "Adding…" : "Add to team", tone: "primary", onChoose: () => void run(card.id, () => team.accept(card)) },
               { id: "dismiss", label: "Not now", onChoose: () => void run(card.id, () => team.decline(card)) },
             ]
             : card.state === "added" && card.createdSlug
@@ -300,7 +303,7 @@ export function TeamCardsForTurn({
               <TeammateTile
                 look={look}
                 smallPrint={smallPrint}
-                nod={justAdded === card.id}
+                identity={card.createdSlug || `suggestion:${card.id}`}
                 attributes={{ "data-kind": "suggestion", "data-state": card.state, "data-suggestion-id": card.id, ...(card.createdSlug ? { "data-slug": card.createdSlug } : {}) }}
               />
               <ChoicePills pills={pills} />
@@ -328,7 +331,7 @@ export function TeamCardsForTurn({
           : [];
         return (
           <div key={card.id} className="flex w-full max-w-[76%] flex-col items-stretch gap-2">
-            <TeammateTile look={look} smallPrint={smallPrint} attributes={{ "data-kind": "referral", "data-state": card.state, "data-slug": card.to.slug, "data-referral-id": card.id }} />
+            <TeammateTile look={look} identity={card.to.slug} smallPrint={smallPrint} attributes={{ "data-kind": "referral", "data-state": card.state, "data-slug": card.to.slug, "data-referral-id": card.id }} />
             <ChoicePills pills={pills} />
           </div>
         );

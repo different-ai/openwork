@@ -82,7 +82,7 @@ export function RetiredCoworkers({ onRestored }: { onRestored: (coworker: Cowork
           const confirming = confirmDeleteId === item.archiveId;
           return (
             <li key={item.archiveId} className="flex items-center gap-3 rounded-xl border border-line bg-panel/50 px-3 py-2.5">
-              <CoworkerAvatar animated={false} color={item.avatarColor} glasses={item.avatarGlasses} name={item.name} size={32} />
+              <CoworkerAvatar identity={item.slug} animated={false} color={item.avatarColor} glasses={item.avatarGlasses} name={item.name} size={32} />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-semibold text-snow">{item.name}</span>
                 <span className="block truncate text-[11px] text-mist">

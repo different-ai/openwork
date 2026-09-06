@@ -3,7 +3,7 @@ import type { CoworkerGroupSummary, CoworkerSummary, RuntimeInfo } from "@/lib/b
 import { describeRailLine } from "@/lib/rail-status";
 import type { DenSession } from "@/lib/den";
 import type { CoworkerActivity } from "@/lib/threads";
-import { CoworkerAvatar } from "@/ui/coworker-avatar";
+import { CoworkerAvatar, GroupAvatars } from "@/ui/coworker-avatar";
 import { Button, IconButton, PlusIcon, SearchIcon, SlidersIcon, StatusDot } from "@/ui/kit";
 import type { ResizablePanel } from "@/ui/use-resizable-panel";
 
@@ -42,30 +42,6 @@ function activityTextTone(activity: CoworkerActivity | undefined): string {
 
 const DOT_BG: Record<Tone, string> = { spark: "bg-spark", ready: "bg-ready", amber: "bg-amber", rose: "bg-rose", mist: "bg-mist" };
 
-/** Keep each face readable; a fourth member and beyond become a quiet count. */
-export function GroupAvatars({ members, size = 26 }: { members: readonly CoworkerSummary[]; size?: number }) {
-  const shown = members.slice(0, 3);
-  const extra = members.length - shown.length;
-  const step = Math.round(size * 0.94);
-  const facesWidth = shown.length ? size + step * (shown.length - 1) : size;
-  const countWidth = Math.max(Math.round(size * 0.7), String(extra).length * 6 + 12);
-  const width = facesWidth + (extra > 0 ? countWidth + 2 : 0);
-  return (
-    <span className="relative block shrink-0" style={{ width, height: size }} data-testid="group-avatars" data-count={members.length} aria-hidden="true">
-      {shown.map((member, index) => (
-        <span key={member.slug} className="absolute top-0" style={{ left: index * step }}>
-          <CoworkerAvatar color={member.avatarColor} glasses={member.avatarGlasses} name={member.name} size={size} animated={false} gaze={false} />
-        </span>
-      ))}
-      {extra > 0 ? (
-        <span className="absolute top-0 flex items-center justify-center text-[10px] font-semibold text-mist" style={{ left: facesWidth + 2, width: countWidth, height: size }}>
-          +{extra}
-        </span>
-      ) : null}
-    </span>
-  );
-}
-
 export function CoworkerRail({
   coworkers,
   runtime,
@@ -78,6 +54,7 @@ export function CoworkerRail({
   onOpenOpenWork,
   groups = [],
   groupLines = {},
+  groupActiveSlugs = {},
   selectedGroupId = "",
   onSelectGroup,
   onNewGroup,
@@ -96,6 +73,7 @@ export function CoworkerRail({
   groups?: CoworkerGroupSummary[];
   /** One plain line per group: the latest activity, when known. */
   groupLines?: Record<string, string>;
+  groupActiveSlugs?: Record<string, string[]>;
   selectedGroupId?: string;
   onSelectGroup?: (id: string) => void;
   onNewGroup?: () => void;
@@ -175,7 +153,8 @@ export function CoworkerRail({
                 >
                   {active ? <span aria-hidden="true" className="absolute -left-3 top-4 h-6 w-[3px] rounded-full bg-spark" /> : null}
                   <CoworkerAvatar
-                    animated
+                    identity={coworker.slug}
+                    motion="navigation"
                     color={coworker.avatarColor}
                     glasses={coworker.avatarGlasses}
                     name={coworker.name}
@@ -198,6 +177,8 @@ export function CoworkerRail({
                   key={group.id}
                   type="button"
                   aria-label={group.name}
+                  aria-description={groupLines[group.id]}
+                  title={group.name}
                   aria-current={active ? "true" : undefined}
                   data-testid="group-rail-avatar"
                   data-group-id={group.id}
@@ -208,7 +189,7 @@ export function CoworkerRail({
                   }`}
                 >
                   {active ? <span aria-hidden="true" className="absolute left-0 top-4 h-6 w-[3px] rounded-full bg-spark" /> : null}
-                  <GroupAvatars members={membersOf(group)} size={18} />
+                  <GroupAvatars members={membersOf(group)} size={18} activeSlugs={groupActiveSlugs[group.id]} />
                 </button>
               );
             })}
@@ -280,7 +261,8 @@ export function CoworkerRail({
                 >
                   <span className="mt-0.5 flex size-11 shrink-0 items-start justify-center">
                     <CoworkerAvatar
-                      animated
+                      identity={coworker.slug}
+                      motion="navigation"
                       color={coworker.avatarColor}
                       glasses={coworker.avatarGlasses}
                       name={coworker.name}
@@ -320,6 +302,8 @@ export function CoworkerRail({
                     <button
                       key={group.id}
                       aria-label={group.name}
+                      aria-description={groupLines[group.id]}
+                      title={group.name}
                       aria-current={active ? "true" : undefined}
                       data-testid="group-rail-row"
                       data-group-id={group.id}
@@ -330,11 +314,11 @@ export function CoworkerRail({
                       }`}
                     >
                       <span className="mt-0.5 flex h-11 min-w-11 shrink-0 items-center justify-center">
-                        <GroupAvatars members={members} size={22} />
+                        <GroupAvatars members={members} size={22} activeSlugs={groupActiveSlugs[group.id]} />
                       </span>
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-semibold text-snow">{group.name}</span>
-                        <span className="mt-0.5 block truncate text-[11px] text-mist" data-testid="group-rail-line">{groupLines[group.id] || members.map((member) => member.name).join(", ")}</span>
+                        <span className="mt-0.5 block truncate text-[11px] text-mist" title={groupLines[group.id] || members.map((member) => member.name).join(", ")} data-testid="group-rail-line">{groupLines[group.id] || members.map((member) => member.name).join(", ")}</span>
                       </span>
                     </button>
                   );

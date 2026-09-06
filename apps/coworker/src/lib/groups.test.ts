@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { describeGroupPresentation } from "./group-presentation.ts";
+import type { ExecutionActivity } from "./progress-activity.ts";
 import type { CoworkerGroupTurn, GroupSpeakerRun, GroupTimelineEvent, GroupTurnPatch } from "./bridge.ts";
 import {
   chooseSpeakers,
@@ -216,6 +218,31 @@ test("plain lines name who is replying, who is next, and why a speaker did not r
   assert.equal(unavailableModelReason("opencode/other", connected), 'The saved model "opencode/other" is not offered by OpenCode any more. Choose another of its AI models.');
   assert.equal(unavailableModelReason("missing-provider/missing-model", connected), 'The saved model "missing-provider/missing-model" is not available: provider "missing-provider" is not connected on this Mac. Choose another AI model or connect that provider in OpenWork.');
   assert.equal(describeSpeakerFailure(unavailableModelReason("missing-provider/missing-model", connected), "Editor").headline, "Editor's AI model is not available.");
+});
+
+test("group presentation uses observed replies, keeps human waits first, and never animates queued or unavailable work", () => {
+  const execution: ExecutionActivity = {
+    executionId: "exec_scout", messageId: "m1", threadId: "t1", slug: "scout", state: "running",
+    startedAt: 1, completedAt: null, continuation: false, pendingCoworkers: 0, pendingWorkers: 0,
+    available: true, nativeStatus: "busy", replies: [], tools: [], completedSteps: 0, failedSteps: 0,
+  };
+  const input = { events: [], executions: [execution], interactions: [], active: true, turn: null, nameFor: (slug: string) => team.find((member) => member.slug === slug)?.name ?? slug };
+  assert.deepEqual(describeGroupPresentation(input), { line: "Scout is replying…", activeSlugs: ["scout"] });
+  assert.deepEqual(describeGroupPresentation({ ...input, interactions: [{ slug: "editor" }, { slug: "editor" }] }), { line: "Editor waiting for you", activeSlugs: [] });
+  assert.deepEqual(describeGroupPresentation({ ...input, interactions: [{ slug: "editor" }], unavailable: true }), { line: "Editor waiting for you", activeSlugs: [] });
+  for (const [patch, line] of [
+    [{ state: "queued" }, "Waiting to start"],
+    [{ available: false }, "Activity unavailable"],
+    [{ nativeStatus: "unknown" }, "Activity unavailable"],
+    [{ nativeStatus: "retry" }, "Waiting for the AI model"],
+    [{ nativeStatus: "idle" }, "Waiting for a reply"],
+    [{ nativeStatus: "idle", pendingWorkers: 1 }, "Waiting for requested work"],
+  ] satisfies Array<[Partial<ExecutionActivity>, string]>) {
+    assert.deepEqual(describeGroupPresentation({ ...input, executions: [{ ...execution, ...patch }] }), { line, activeSlugs: [] });
+  }
+  const events = [event({ kind: "coworker", slug: "ops", turnId: "old", text: "Earlier" }), event({ kind: "user", turnId: "round", text: "Both" }), event({ kind: "coworker", slug: "scout", turnId: "round", text: "Sources" }), event({ kind: "coworker", slug: "editor", turnId: "round", text: "Draft" })];
+  assert.deepEqual(describeGroupPresentation({ ...input, events, executions: [], active: false }), { line: "Scout and Editor replied", activeSlugs: [] });
+  assert.deepEqual(describeGroupPresentation({ ...input, events: [...events, event({ kind: "user", text: "Next" })], executions: [], active: false }), { line: "Waiting for a reply", activeSlugs: [] });
 });
 
 test("a group turn is recorded through the store, asks each speaker in order with earlier replies, and keeps going past one failure", async () => {

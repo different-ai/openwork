@@ -117,6 +117,7 @@ for (const width of [1280, 375]) {
     await step("Explore an animated group chat and create a custom coworker", async () => {
       await user.click({ role: "link", label: "Try the team conversation" });
       await user.see({ role: "button", label: "Send group message" });
+      await user.see({ label: "Group: Scout, Editor, Ops", nth: 1 });
       await user.click({ role: "button", label: "Ask Scout to reply" });
       await user.click({ role: "button", label: "Ask Ops to reply" });
       await user.see({ testId: "demo-group-mentions" }, { text: "@Editor" });
@@ -144,8 +145,11 @@ for (const width of [1280, 375]) {
       await user.click({ role: "link", label: "Make a coworker in the demo" });
       await user.see({ role: "textbox", label: "Coworker name" });
       await user.type({ role: "textbox", label: "Coworker name" }, "Robin", { replace: true });
-      await user.click({ role: "button", label: "Mint" });
-      await user.click({ role: "button", label: "Soft square" });
+      await user.click({ role: "button", label: "Sage" });
+      await user.click({ role: "button", label: "Sunglasses" });
+      await user.see({ label: "Robin avatar" });
+      await user.click({ role: "button", label: "Monocle" });
+      await user.see({ label: "Robin avatar" });
       await user.see({ text: "Robin" });
       await user.click({ role: "button", label: "Set responsibilities" });
       await user.type({ role: "textbox", label: "Coworker role" }, "Research partner", { replace: true });

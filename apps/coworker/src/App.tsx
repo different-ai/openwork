@@ -2,9 +2,10 @@ import { patternDrafts, workPattern } from "@/lib/work-patterns";
 import { AllHandsOverview, allHandsContext } from "@/ui/all-hands";
 import type { AllHandsSettings } from "@/lib/bridge";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { coworkerBridge, type CoworkerGroupSummary, type CoworkerGroupTurn, type CoworkerSummary, type CoworkerTemplateSync, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
-import { publishGroupRun, subscribeGroupRuns } from "@/lib/group-runs";
-import { describeGroupActivity } from "@/lib/groups";
+import { coworkerBridge, type CoworkerGroupSummary, type CoworkerSummary, type CoworkerTemplateSync, type ProviderSyncRun, type RuntimeInfo } from "@/lib/bridge";
+import { acknowledgeCoworker } from "@/ui/coworker-avatar";
+import { publishGroupRun } from "@/lib/group-runs";
+import { describeGroupPresentation } from "@/lib/group-presentation";
 import {
   createDenAutomationsClient,
   exchangeGrant,
@@ -86,8 +87,10 @@ export default function App() {
 
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [groupLines, setGroupLines] = useState<Record<string, string>>({});
-  const setGroupLine = useCallback((id: string, line: string) => {
+  const [groupActiveSlugs, setGroupActiveSlugs] = useState<Record<string, string[]>>({});
+  const setGroupLine = useCallback((id: string, line: string, activeSlugs: string[]) => {
     setGroupLines((current) => (current[id] === line ? current : { ...current, [id]: line }));
+    setGroupActiveSlugs((current) => current[id]?.join("\0") === activeSlugs.join("\0") ? current : { ...current, [id]: activeSlugs });
   }, []);
   const replaceGroup = useCallback((group: CoworkerGroupSummary) => {
     setGroups((current) => [group, ...current.filter((item) => item.id !== group.id)].sort((a, b) => b.updatedAt - a.updatedAt));
@@ -151,24 +154,6 @@ export default function App() {
     void boot();
   }, [boot]);
 
-  // A group turn keeps running when its view is closed; the rail line still says who is replying.
-  useEffect(() => {
-    const lastTurn = new Map<string, CoworkerGroupTurn>();
-    return subscribeGroupRuns((update) => {
-      const nameFor = (slug: string) => coworkers.find((coworker) => coworker.slug === slug)?.name ?? slug;
-      if (update.turn) {
-        lastTurn.set(update.groupId, update.turn);
-        if (update.turn.status === "routing" || update.turn.status === "running") setGroupLine(update.groupId, describeGroupActivity([], nameFor, update.turn));
-      }
-      if (update.done) {
-        const turn = lastTurn.get(update.groupId);
-        const last = turn ? [...turn.speakers].reverse().find((speaker) => speaker.status === "succeeded") : undefined;
-        if (last) setGroupLine(update.groupId, `${nameFor(last.slug)} replied`);
-        lastTurn.delete(update.groupId);
-      }
-    });
-  }, [coworkers, setGroupLine]);
-
   useEffect(() => {
     if (!runtime) return;
     let cancelled = false;
@@ -181,16 +166,20 @@ export default function App() {
         if (cancelled) return;
         setGroups((current) => current.length === list.length && current.every((group, index) => group.id === list[index]?.id && group.updatedAt === list[index]?.updatedAt) ? current : list);
         for (const group of list.filter((group) => !group.archivedAt)) {
-          const status = await coworkerBridge.groups.status(group.id);
+          const [status, activity] = await Promise.all([
+            coworkerBridge.groups.status(group.id).catch(() => null),
+            coworkerBridge.groups.activity(group.id).catch(() => null),
+          ]);
           if (cancelled) return;
-          publishGroupRun({ groupId: group.id, active: status.active, ...(status.turn ? { turn: status.turn } : {}), done: !status.active });
+          if (status) publishGroupRun({ groupId: group.id, active: status.active, ...(status.turn ? { turn: status.turn } : {}), done: !status.active });
           const nameFor = (slug: string) => coworkers.find((coworker) => coworker.slug === slug)?.name ?? slug;
-          if (status.interactions.length) setGroupLine(group.id, `${status.interactions.map((entry) => nameFor(entry.slug)).join(", ")} waiting for you`);
-          else if (status.active) setGroupLine(group.id, status.turn ? describeGroupActivity([], nameFor, status.turn) : "Choosing who should respond…");
-          else {
-            const last = group.turns.at(-1)?.speakers.filter((speaker) => speaker.status === "succeeded").at(-1);
-            if (last) setGroupLine(group.id, `${nameFor(last.slug)} replied`);
-          }
+          const presentation = describeGroupPresentation({ executions: activity?.executions ?? [], interactions: status?.interactions ?? [], active: status?.active ?? false, turn: status?.turn ?? group.turns.at(-1) ?? null, events: activity?.timeline ?? [], nameFor, unavailable: !status || !activity });
+          setGroupLine(group.id, presentation.line, presentation.activeSlugs);
+        }
+      } catch {
+        if (!cancelled) {
+          setGroupActiveSlugs({});
+          setGroupLines((current) => Object.fromEntries(Object.keys(current).map((id) => [id, "Activity unavailable"])));
         }
       } finally { reading = false; }
     };
@@ -715,6 +704,8 @@ export default function App() {
           onChange={updateOnboardingDraft}
           onBack={() => setOnboardingStep("intents")}
           onCreated={(team, firstSlug) => {
+            const first = team.find((coworker) => coworker.slug === firstSlug) ?? team[0];
+            if (first) acknowledgeCoworker(first.slug, "wake");
             setBots(team);
             setSelectedSlug(team.some((coworker) => coworker.slug === firstSlug) ? firstSlug : (team[0]?.slug ?? ""));
             setOnboardingDraft(emptyOnboardingDraft());
@@ -812,12 +803,14 @@ export default function App() {
 
   /** A coworker joined the team (from onboarding, the Add screen, or a teammate's suggestion the person accepted). */
   function addCoworkerToList(coworker: CoworkerSummary) {
+    acknowledgeCoworker(coworker.slug, "wake");
     setBots((current) => [...current.filter((item) => item.slug !== coworker.slug), coworker].sort((a, b) => a.name.localeCompare(b.name)));
     void refreshRuntime();
   }
 
   /** Open another coworker's conversation, optionally with a message to send there as the person's own. */
   function visitCoworker(slug: string, prompt?: string) {
+    acknowledgeCoworker(slug);
     setSelectedGroupId("");
     setSelectedSlug(slug);
     if (prompt) setHomeRequest({ id: Date.now(), slug, kind: "turn", prompt });
@@ -862,6 +855,7 @@ export default function App() {
               selectedSlug={selectedGroup ? "" : selectedSlug}
               panel={rail}
               onSelect={(slug) => {
+                acknowledgeCoworker(slug);
                 setSelectedGroupId("");
                 setSelectedSlug(slug);
               }}
@@ -869,6 +863,7 @@ export default function App() {
               onOpenOpenWork={() => openGlobalSettings()}
               groups={liveGroups.filter((group) => allHandsSettings?.enabled || group.id !== allHandsSettings?.groupId)}
               groupLines={groupLines}
+              groupActiveSlugs={groupActiveSlugs}
               selectedGroupId={selectedGroup?.id ?? ""}
               onSelectGroup={setSelectedGroupId}
               onNewGroup={() => setCreatingGroup(true)}

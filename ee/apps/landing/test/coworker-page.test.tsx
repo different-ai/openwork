@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import CoworkerPage, { metadata } from "../app/coworker/page";
-import { CoworkerAvatar, CoworkerMark } from "../components/coworker-brand";
+import { CoworkerAvatar, CoworkerMark, GroupAvatars } from "../components/coworker-brand";
+import { StaticCoworkerAvatar, type AvatarColor, type AvatarGlasses } from "@openwork/ui/coworker-artwork";
 import { SiteFooter } from "../components/site-footer";
 import { BENEFITS, COWORKER, FAQ, FORBIDDEN_PHRASES, GET_STARTED, HERO, MODELS, POWERED_BY, STEPS, allClaims } from "../lib/coworker-content";
 
@@ -74,5 +75,29 @@ describe("/coworker announcement", () => {
     const avatar = renderToStaticMarkup(createElement(CoworkerAvatar, { name: "Editor", color: "rose", glasses: "square" }));
     expect(avatar).toContain('aria-label="Editor avatar"');
     expect(avatar).toContain("#e2c1cb");
+    const palettes: Record<AvatarColor, string> = { blue: "#b8c9f0", violet: "#c8c1e2", mint: "#b2d5cb", orange: "#e4c3ad", rose: "#e2c1cb", slate: "#e3e6ea", sand: "#ded0b0", sage: "#becab4" };
+    const glasses: AvatarGlasses[] = ["round", "square", "oval", "none", "sunglasses", "monocle"];
+    for (const color of Object.keys(palettes) as AvatarColor[]) for (const style of glasses) for (const size of [22, 96]) {
+      const props = { name: "Editor", identity: "editor", color, glasses: style, size, animated: false };
+      const staticArt = renderToStaticMarkup(createElement(StaticCoworkerAvatar, props));
+      expect(renderToStaticMarkup(createElement(CoworkerAvatar, props))).toBe(staticArt);
+      expect(staticArt).toContain(palettes[color]);
+      expect(staticArt).toContain('data-identity="editor"');
+      expect(staticArt.includes('class="coworker-avatar__monocle-chain"')).toBe(style === "monocle" && size > 36);
+      if (style === "sunglasses") expect(staticArt).toContain('fill-opacity="0.24"');
+    }
+  });
+  test("group artwork keeps up to three separate identities with a count beyond them", () => {
+    for (const count of [2, 3, 4]) for (const size of [18, 22, 30]) {
+      const members = Array.from({ length: count }, (_, index) => ({ slug: `member-${index}`, name: `Member ${index}`, avatarColor: "blue", avatarGlasses: "round" } satisfies Parameters<typeof GroupAvatars>[0]["members"][number]));
+      const group = renderToStaticMarkup(createElement(GroupAvatars, { members, size, animated: false, activeSlugs: ["member-1"] }));
+      expect(group).toContain(`data-count="${count}"`);
+      expect((group.match(/data-testid="coworker-avatar"/g) ?? []).length).toBe(Math.min(count, 3));
+      expect((group.match(/data-active="true"/g) ?? []).length).toBe(1);
+      expect(group).toContain(`left:${Math.round(size * 0.94)}px`);
+      expect(group.includes('coworker-avatar-group__extra')).toBe(count > 3);
+      expect(group).not.toContain('data-identity="member-3"');
+      if (count > 3) expect(group).toContain("+1</span>");
+    }
   });
 });

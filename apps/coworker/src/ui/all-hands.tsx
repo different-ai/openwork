@@ -74,7 +74,7 @@ export function AllHandsOverview({ settings, coworkers, activity, onRequest, onS
     <div className="flex items-center justify-between"><h3 className="text-xs font-semibold uppercase tracking-wider text-mist">Around the team</h3><span className="text-xs text-mist">Live activity · open a source</span></div>
     <div className="grid gap-2 sm:grid-cols-2">
       {relevant.map((coworker) => { const state = activity[coworker.slug]; return <button data-testid="all-hands-source" key={coworker.slug} onClick={() => onOpenCoworker(coworker.slug, state?.threadId)} className={`rounded-2xl border p-3 text-left transition-colors hover:bg-white/5 ${state?.state === "attention" ? "border-amber/30 bg-amber/5" : "border-line bg-panel/40"}`}>
-        <div className="flex items-center gap-2"><CoworkerAvatar color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={26} /><span className="text-sm font-semibold text-snow">{coworker.name}</span><span className="ml-auto text-xs text-mist">{state?.label ?? "Checking status"}</span></div>
+        <div className="flex items-center gap-2"><CoworkerAvatar identity={coworker.slug} animated={false} motion="quiet" color={coworker.avatarColor} glasses={coworker.avatarGlasses} name={coworker.name} size={26} /><span className="text-sm font-semibold text-snow">{coworker.name}</span><span className="ml-auto text-xs text-mist">{state?.label ?? "Checking status"}</span></div>
         <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-mist">{state?.summary || state?.detail || coworker.role}</p>
         {state?.updatedAt ? <p className="mt-2 text-[10px] text-mist">Updated {new Date(state.updatedAt).toLocaleString()}</p> : null}
       </button>; })}
