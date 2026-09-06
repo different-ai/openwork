@@ -24,7 +24,7 @@ type Session = { id: string; sandboxId: string; title: string; prompts: string[]
 type Sandbox = {
   id: string; name: string; workerId: string; snapshot: string;
   labels: Record<string, unknown>; bootstrapWorkerIds: string[];
-  state: "started" | "stopped" | "destroyed";
+  state: "started" | "stopped" | "destroying" | "destroyed";
   volumes: Array<{ volumeId: string; mountPath: string; subpath: string }>;
   purpose: string; endpoint: number; restored: boolean; sessions: Session[];
 };
@@ -37,10 +37,16 @@ type Sandbox = {
  */
 export async function startCloudRuntimeWitness() {
   const sandboxes: Sandbox[] = [];
-  const events: Array<{ sandboxId: string; operation: string; exitCode?: number | null }> = [];
+  const events: Array<{
+    sandboxId: string; operation: string; exitCode?: number | null; workerId?: string;
+    sandboxIds?: string[]; cursor?: string | null; nextCursor?: string | null;
+  }> = [];
   const commands = new Map<string, { exitCode: number | null }>();
   const checkpoints = new Map<string, Session[]>();
   const failedRestores = new Set<string>();
+  const deletionFaults = new Map<string, "fail" | "retain">();
+  const listedExtras = new Set<string>();
+  let recoveryFailure: { sandboxId: string; workerId: string; replacementAttempted: boolean } | null = null;
   const held = new Set<string>();
   const unexpected: string[] = [];
   let nextSession = 0;
@@ -68,20 +74,41 @@ export async function startCloudRuntimeWitness() {
   }
 
   async function handle(request: IncomingMessage, response: ServerResponse) {
-    const path = new URL(request.url ?? "/", "http://localhost").pathname;
+    const requestUrl = new URL(request.url ?? "/", "http://localhost");
+    const path = requestUrl.pathname;
     const method = request.method ?? "GET";
     if (method === "GET" && /\/volumes?\//.test(path)) {
       return json(response, 200, { id: "volume_witness", name: "witness", state: "ready" });
     }
+    if (method === "GET" && path === "/sandbox") {
+      const labels = record(JSON.parse(requestUrl.searchParams.get("labels") ?? "{}"));
+      const matches = sandboxes.filter((entry) => entry.state !== "destroyed" && (
+        listedExtras.has(entry.id) || Object.entries(labels).every(([key, value]) => entry.labels[key] === value)
+      ));
+      // Small, live pages expose callers that delete before exhausting the SDK iterator.
+      const cursor = requestUrl.searchParams.get("cursor");
+      const offset = cursor === null ? 0 : Number(cursor);
+      const items = matches.slice(offset, offset + 1);
+      const nextCursor = offset + 1 < matches.length ? String(offset + 1) : null;
+      events.push({ sandboxId: "", operation: "list", sandboxIds: items.map((entry) => entry.id), cursor, nextCursor,
+        workerId: typeof labels["openwork.den.worker-id"] === "string" ? labels["openwork.den.worker-id"] : undefined });
+      return json(response, 200, { items: items.map(sandboxDto), nextCursor });
+    }
     if (method === "POST" && path === "/sandbox") {
       const input = await body(request);
       const env = record(input.env);
+      const workerId = typeof env.DEN_WORKER_ID === "string" ? env.DEN_WORKER_ID : "";
+      if (workerId && recoveryFailure?.workerId === workerId) {
+        recoveryFailure.replacementAttempted = true;
+        events.push({ sandboxId: "", workerId, operation: "create-rejected" });
+        return json(response, 503, { message: "Witness worker creation unavailable" });
+      }
       if (sandboxes.some((entry) => entry.name === input.name && entry.state !== "destroyed")) {
         return json(response, 409, { message: "Sandbox with name already exists" });
       }
       const sandbox: Sandbox = {
         id: `sandbox_${sandboxes.length + 1}`, name: String(input.name),
-        workerId: typeof env.DEN_WORKER_ID === "string" ? env.DEN_WORKER_ID : "",
+        workerId,
         labels: record(input.labels), bootstrapWorkerIds: [],
         snapshot: String(input.snapshot), purpose: String(env.DEN_RUNTIME_PROVIDER),
         state: "started", endpoint: 0, restored: false, sessions: [],
@@ -98,6 +125,10 @@ export async function startCloudRuntimeWitness() {
     if (method === "GET" && preview) {
       const sandbox = sandboxById(preview[1]);
       if (sandbox.state === "destroyed") return json(response, 404, { message: "Sandbox not found" });
+      if (recoveryFailure?.sandboxId === sandbox.id && !recoveryFailure.replacementAttempted) {
+        events.push({ sandboxId: sandbox.id, operation: "endpoint-rejected" });
+        return json(response, 503, { message: "Witness endpoint issuance unavailable" });
+      }
       events.push({ sandboxId: sandbox.id, operation: "endpoint" });
       return json(response, 200, { url: `${url}/runtime/${sandbox.id}/endpoint_${++sandbox.endpoint}` });
     }
@@ -113,8 +144,13 @@ export async function startCloudRuntimeWitness() {
     if (lookup && (method === "GET" || method === "DELETE")) {
       const sandbox = sandboxes.find((entry) => (entry.id === lookup[1] || entry.name === lookup[1]) && entry.state !== "destroyed");
       if (sandbox && method === "DELETE") {
-        sandbox.state = "destroyed";
-        events.push({ sandboxId: sandbox.id, operation: "destroy" });
+        const fault = deletionFaults.get(sandbox.id);
+        if (fault === "fail") {
+          events.push({ sandboxId: sandbox.id, operation: "destroy-rejected" });
+          return json(response, 503, { message: "Witness deletion unavailable" });
+        }
+        sandbox.state = fault === "retain" ? "destroying" : "destroyed";
+        events.push({ sandboxId: sandbox.id, operation: fault === "retain" ? "destroy-pending" : "destroy" });
       }
       return json(response, sandbox ? 200 : 404, sandbox ? sandboxDto(sandbox) : { message: "Sandbox not found" });
     }
@@ -151,6 +187,14 @@ export async function startCloudRuntimeWitness() {
         } else if (command.includes("flush_checkpoint") && input.runAsync === false) {
           operation = "checkpoint-flush";
           checkpoints.set(checkpointKey(sandbox), structuredClone(sandbox.sessions));
+          exitCode = 0;
+        } else if (sandbox.purpose === "daytona-cleanup" && command.includes("node -e") && command.includes("fs.rmSync")) {
+          operation = "erase-data";
+          for (const mount of sandbox.volumes) {
+            for (const key of checkpoints.keys()) {
+              if (key.startsWith(`${mount.volumeId}:${mount.subpath}/`)) checkpoints.delete(key);
+            }
+          }
           exitCode = 0;
         } else {
           throw new Error(`Unimplemented witness command for ${sandbox.id}`);
@@ -216,7 +260,7 @@ export async function startCloudRuntimeWitness() {
   if (!address || typeof address === "string") throw new Error("Cloud witness has no listening address");
   url = `http://127.0.0.1:${address.port}`;
   return {
-    url, sandboxes, events, unexpected,
+    url, sandboxes, events, unexpected, checkpoints, deletionFaults, listedExtras,
     get sessions() { return sandboxes.filter((entry) => entry.state !== "destroyed").flatMap((entry) => entry.sessions); },
     ready(id?: string) {
       if (id) held.delete(id);
@@ -231,6 +275,22 @@ export async function startCloudRuntimeWitness() {
       sandbox.name = `${sandbox.name}-${snapshot}`;
     },
     failNextRestore(workerId: string) { failedRestores.add(workerId); },
+    failRecovery(id: string | null) {
+      // Both faults survive SDK retries; helpers have no worker identity and still work.
+      recoveryFailure = id === null ? null : { sandboxId: id, workerId: sandboxById(id).workerId, replacementAttempted: false };
+    },
+    seedCheckpoint(id: string) {
+      const sandbox = sandboxById(id);
+      const key = checkpointKey(sandbox);
+      checkpoints.set(key, structuredClone(sandbox.sessions));
+      return key;
+    },
+    seedOrphan(id: string) {
+      const source = sandboxById(id);
+      const orphan = { ...structuredClone(source), id: `sandbox_${sandboxes.length + 1}`, name: `${source.name}-orphan` };
+      sandboxes.push(orphan);
+      return orphan;
+    },
     async [Symbol.asyncDispose]() {
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));

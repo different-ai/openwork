@@ -516,3 +516,164 @@ test("concurrent retries isolate workers with identical names and colliding Type
   expect(witness.unexpected).toEqual([]);
   evidence.recordAssertionEvidence("Full worker identities isolate concurrent retries", "Two seeded Cloud workers sharing the first twelve TypeID characters were retried concurrently through the public endpoint. Distinct opaque provider names, persisted sandbox references, owner labels and four worker-scoped mounts were observed. Each sandbox bootstrapped only its owner; neither was stopped, restarted, destroyed, or adopted for the other member. No Linux volume I/O is claimed.", true);
 });
+
+test("Cloud APIs recover after wake and replacement failures and attempt every orphan deletion without touching a colleague", { timeout: 300_000 }, async ({ place, evidence, skip }) => {
+  needs({ placement: "local" });
+  if (!available) skip("needs: local MySQL and Redis");
+  await using witness = await startCloudRuntimeWitness();
+  await using den = await server({
+    place, web: false, env: runtimeEnv(witness.url),
+    org: { name: "Cloud Failure Isolation", members: { colleague: {} } },
+  });
+  if (!den.database) throw new Error("This isolated HTTP journey requires its own database");
+  const databaseUrl = den.database.url;
+  const colleague = den.members.colleague;
+  if (!colleague) throw new Error("Colleague session missing");
+  await grantWebAccess(databaseUrl, await organizationId(den.admin));
+  witness.ready();
+
+  async function createReady(session: DenSession) {
+    expect((await cloudRequest(session)).status).toBe("provisioning");
+    const instance = await eventually(() => cloudRequest(session), {
+      within: 60_000, label: "Cloud instance API provisions a healthy workspace", until: (value) => value.status === "ready",
+    });
+    const sandbox = witness.sandboxes.find((entry) => entry.id === instance.instanceName);
+    if (!sandbox) throw new Error("Ready API instance has no witness sandbox");
+    return sandbox;
+  }
+
+  async function memberState(workerId: string) {
+    return {
+      workers: await queryDenDatabase(databaseUrl, "SELECT id, name, created_by_user_id, status, image_version FROM worker WHERE id = ?", [workerId]),
+      runtimes: await queryDenDatabase(databaseUrl, "SELECT id, sandbox_id, workspace_volume_id, data_volume_id FROM daytona_sandbox WHERE worker_id = ?", [workerId]),
+      tokens: await queryDenDatabase(databaseUrl, "SELECT id, scope, SHA2(token, 256) AS digest FROM worker_token WHERE worker_id = ? ORDER BY id", [workerId]),
+    };
+  }
+
+  async function removeRuntimeRecord(workerId: string) {
+    // Arrange the orphan path only; DELETE /v1/workers/:id owns deprovision and row removal.
+    await queryDenDatabase(databaseUrl, "DELETE FROM daytona_sandbox WHERE worker_id = ?", [workerId]);
+  }
+
+  let owner = await createReady(den.admin);
+  const other = await createReady(colleague);
+  const ownerState = await memberState(owner.workerId);
+  expect(ownerState.workers).toHaveLength(1);
+  expect(ownerState.runtimes).toHaveLength(1);
+  expect(ownerState.tokens).toHaveLength(3);
+  const ownerCheckpoint = witness.seedCheckpoint(owner.id);
+  const otherCheckpoint = witness.seedCheckpoint(other.id);
+  expect(ownerCheckpoint).not.toBe(otherCheckpoint);
+  const otherCheckpointData = structuredClone(witness.checkpoints.get(otherCheckpoint));
+  const otherState = await memberState(other.workerId);
+  expect(otherState.tokens).toHaveLength(3);
+  const otherInstance = await cloudRequest(colleague);
+  const otherResources = structuredClone(witness.sandboxes.filter((entry) => entry.workerId === other.workerId));
+  const otherEvents = witness.events.filter((event) => event.sandboxId === other.id);
+
+  async function colleagueUnaffected() {
+    expect(await cloudRequest(colleague)).toEqual(otherInstance);
+    const current = await memberState(other.workerId);
+    expect(current.workers).toEqual(otherState.workers);
+    expect(current.runtimes).toEqual(otherState.runtimes);
+    // Compare fingerprints without putting tokens or their digests in assertion evidence.
+    expect(JSON.stringify(current.tokens) === JSON.stringify(otherState.tokens)).toBe(true);
+    expect(witness.sandboxes.filter((entry) => entry.workerId === other.workerId)).toEqual(otherResources);
+    expect(witness.events.filter((event) => event.sandboxId === other.id)).toEqual(otherEvents);
+    expect(witness.checkpoints.has(otherCheckpoint)).toBe(true);
+    expect(witness.checkpoints.get(otherCheckpoint)).toEqual(otherCheckpointData);
+  }
+
+  witness.sleep(owner.id);
+  witness.ready(owner.id);
+  witness.failRecovery(owner.id);
+  await queryDenDatabase(databaseUrl, "UPDATE worker SET status = 'stopped' WHERE id = ?", [owner.workerId]);
+  const recoveryStart = witness.events.length;
+  expect((await cloudRequest(den.admin)).status).toBe("waking");
+  await eventually(async () => (await memberState(owner.workerId)).workers.map((row) => record(row).status), {
+    within: 90_000, label: "fallback wake recovers the original worker", until: (states) => states.length === 1 && states[0] === "healthy",
+  });
+  witness.failRecovery(null);
+  const recoveryEvents = witness.events.slice(recoveryStart);
+  const bootstraps = recoveryEvents.flatMap((event, index) => event.sandboxId === owner.id && event.operation === "bootstrap" ? [index] : []);
+  const stops = recoveryEvents.flatMap((event, index) => event.sandboxId === owner.id && event.operation === "stop" ? [index] : []);
+  expect(bootstraps).toHaveLength(2);
+  expect(stops).toHaveLength(1);
+  const endpointFailure = recoveryEvents.findIndex((event) => event.sandboxId === owner.id && event.operation === "endpoint-rejected");
+  const replacementFailure = recoveryEvents.findIndex((event) => event.workerId === owner.workerId && event.operation === "create-rejected");
+  expect(endpointFailure).toBeGreaterThan(bootstraps[0]);
+  expect(replacementFailure).toBeGreaterThan(endpointFailure);
+  expect(stops[0]).toBeGreaterThan(replacementFailure);
+  expect(stops[0]).toBeLessThan(bootstraps[1]);
+  expect(recoveryEvents).toContainEqual({ sandboxId: owner.id, operation: "endpoint" });
+  const probe = witness.sandboxes.find((entry) => entry.purpose === "daytona-checkpoint-probe");
+  if (!probe) throw new Error("Recovery did not probe checkpoint storage");
+  expect(recoveryEvents).toContainEqual({ sandboxId: probe.id, operation: "checkpoint-probe", exitCode: 0 });
+  expect(probe.state).toBe("destroyed");
+  expect(owner.state).toBe("started");
+  expect(await cloudRequest(den.admin)).toMatchObject({ status: "ready", instanceName: owner.id });
+  const recoveredState = await memberState(owner.workerId);
+  expect(recoveredState.workers).toEqual(ownerState.workers);
+  expect(recoveredState.runtimes).toEqual(ownerState.runtimes);
+  expect(JSON.stringify(recoveredState.tokens) === JSON.stringify(ownerState.tokens)).toBe(true);
+  expect(witness.sandboxes.filter((entry) => entry.workerId === owner.workerId)).toEqual([owner]);
+  expect(witness.checkpoints.has(ownerCheckpoint)).toBe(true);
+  await colleagueUnaffected();
+  evidence.recordAssertionEvidence("Fallback wake refreshes the old instance before a second bootstrap", JSON.stringify(recoveryEvents) + " Public GET /v1/cloud/instance recovered the same worker and provider reference after endpoint issuance and replacement creation failed. Exactly one stop separated the two recovery bootstraps. The colleague's resources, checkpoint metadata, instance, rows and token fingerprints were unchanged. No browser UI or Linux execution was exercised.", true);
+
+  // Model a stale provider label index: the adapter must also check each DTO's actual labels.
+  witness.listedExtras.add(other.id);
+  for (const rejectFirst of [true, false]) {
+    if (!rejectFirst) owner = await createReady(den.admin);
+    const checkpoint = witness.seedCheckpoint(owner.id);
+    const orphan = witness.seedOrphan(owner.id);
+    const foreign = structuredClone(witness.sandboxes.filter((entry) => entry.workerId && entry.workerId !== owner.workerId));
+    expect(orphan.labels).toEqual(owner.labels);
+    expect(orphan.volumes).toEqual(owner.volumes);
+    expect((await memberState(owner.workerId)).runtimes).toHaveLength(1);
+    await removeRuntimeRecord(owner.workerId);
+    expect((await memberState(owner.workerId)).runtimes).toEqual([]);
+    witness.deletionFaults.set(owner.id, rejectFirst ? "fail" : "retain");
+    witness.deletionFaults.set(orphan.id, "retain");
+    const deletionStart = witness.events.length;
+    const deleted = await denFetch(den.admin, `/v1/workers/${owner.workerId}`, {
+      method: "DELETE", headers: { authorization: `Bearer ${den.admin.token}` }, signal: AbortSignal.timeout(90_000),
+    });
+    expect(deleted.response.status, deleted.text).toBe(204);
+    const operations = witness.events.slice(deletionStart);
+    const pages = operations.filter((event) => event.operation === "list");
+    // Pagination follows provider insertion order, not an expected cleanup order.
+    const listed = witness.sandboxes.filter((entry) => [owner.id, other.id, orphan.id].includes(entry.id)).map((entry) => entry.id);
+    expect(pages.map((event) => event.sandboxIds)).toEqual(listed.map((id) => [id]));
+    expect(pages.map((event) => event.workerId)).toEqual(listed.map(() => owner.workerId));
+    expect(pages.map((event) => event.cursor)).toEqual([null, "1", "2"]);
+    expect(pages.map((event) => event.nextCursor)).toEqual(["1", "2", null]);
+    const firstDelete = operations.findIndex((event) => event.operation.startsWith("destroy"));
+    expect(firstDelete).toBeGreaterThan(operations.findLastIndex((event) => event.operation === "list"));
+    const ownedDeletes = operations.filter((event) => [owner.id, orphan.id].includes(event.sandboxId) && event.operation.startsWith("destroy"));
+    expect(new Set(ownedDeletes.map((event) => event.sandboxId))).toEqual(new Set([owner.id, orphan.id]));
+    expect(ownedDeletes.filter((event) => event.sandboxId === owner.id).every((event) => event.operation === (rejectFirst ? "destroy-rejected" : "destroy-pending"))).toBe(true);
+    expect(ownedDeletes).toContainEqual({ sandboxId: orphan.id, operation: "destroy-pending" });
+    expect(owner.state).toBe(rejectFirst ? "started" : "destroying");
+    expect(orphan.state).toBe("destroying");
+    for (const sandbox of [owner, orphan]) {
+      const remaining = await fetch(`${witness.url}/sandbox/${sandbox.id}`, { signal: AbortSignal.timeout(5_000) });
+      expect(remaining.status).toBe(200);
+      expect(record(await remaining.json()).state).toBe(sandbox.state);
+    }
+    expect(await memberState(owner.workerId)).toEqual({ workers: [], runtimes: [], tokens: [] });
+    const erasures = operations.filter((event) => event.operation === "erase-data");
+    expect(erasures).toHaveLength(1);
+    expect(erasures[0].exitCode).toBe(0);
+    const cleanup = witness.sandboxes.find((entry) => entry.id === erasures[0].sandboxId);
+    if (!cleanup) throw new Error("Worker deletion did not create a cleanup helper");
+    expect(cleanup).toMatchObject({ workerId: "", purpose: "daytona-cleanup", state: "destroyed" });
+    expect(cleanup.volumes.map(({ volumeId, subpath }) => ({ volumeId, subpath }))).toEqual(owner.volumes.map(({ volumeId, subpath }) => ({ volumeId, subpath })));
+    expect(cleanup.volumes.map((mount) => mount.subpath)).toEqual([`workers/${owner.workerId}/workspace`, `workers/${owner.workerId}/data`]);
+    expect(witness.checkpoints.has(checkpoint)).toBe(false);
+    expect(witness.sandboxes.filter((entry) => entry.workerId && entry.workerId !== owner.workerId)).toEqual(foreign);
+    await colleagueUnaffected();
+    evidence.recordAssertionEvidence(rejectFirst ? "Orphan deletion continues after a provider failure" : "Orphan deletion continues when accepted resources remain visible", JSON.stringify(operations) + " Authenticated DELETE /v1/workers/:id returned 204 and removed the worker and token rows. All three SDK list pages were read before deletion; both owned resources were attempted despite the first remaining discoverable. The foreign-label colleague was untouched. A disposed helper erased only the owner's mounted checkpoint metadata. Provider deletion and storage erasure remain best effort; real files were not exercised.", true);
+  }
+  expect(witness.unexpected).toEqual([]);
+});
