@@ -42,6 +42,8 @@ export interface MockAgentWorkload {
   finalReplyChunkSize?: number;
   /** Hold the final response before sending headers, to exercise loading transitions. */
   finalReplyDelayMs?: number;
+  /** Chat Completions: emit a reasoning block before the final answer. */
+  finalReasoning?: string;
   /** Tool calls the agent makes before its final reply; empty answers directly. */
   steps: MockAgentToolStep[];
 }
