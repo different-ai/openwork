@@ -1,9 +1,11 @@
-# Enterprise network doctor
+# Enterprise network doctor (Windows, macOS, Linux)
 
 Published customer-facing network diagnostics guidance lives in
 [`packages/docs/start-here/network-diagnostics.mdx`](../../packages/docs/start-here/network-diagnostics.mdx).
 This repository page keeps the support handoff snippet and maintainer repro
 harness in one stable path.
+
+## Windows
 
 `scripts/support/openwork-doctor.ps1` is a Windows PowerShell 5.1-compatible, no-admin, read-only report for customer IT. It checks DNS, TCP 443, the live TLS certificate/chain with `SslStream`, served certificates with `openssl` when available, WinHTTP/.NET proxy settings, PowerShell/OS version, and `NODE_EXTRA_CA_CERTS`. Send this Teams-ready one-liner to the customer's IT contact once the file is available at the raw URL:
 
@@ -23,6 +25,30 @@ Common outcome patterns:
 - `LIKELY MISSING INTERMEDIATE OR UNTRUSTED ROOT` plus `MISSING INTERMEDIATE CONFIRMED BY OPENSSL`: the server is probably serving the DigiCert leaf without the intermediate, or the machine lacks the issuing root. Fix the control-plane TLS `fullchain`/certificate bundle first.
 - `LIKELY DNS ISSUE`: the hostname does not resolve on that machine. Check VPN, split-horizon DNS, and whether both web and API hostnames exist internally.
 - `PROXY DETECTED`: WinHTTP or .NET routes the URL through a proxy. Verify proxy auth/allowlisting and whether the desktop runtime is expected to use system proxy settings.
+
+## macOS and Linux
+
+`scripts/support/openwork-doctor.sh` is a Bash 3.2-compatible, no-admin, read-only report for customer IT. It checks system version, DNS resolver answers, TCP connectivity, the served TLS chain with `openssl s_client`, `NODE_EXTRA_CA_CERTS` presence/path/certificate count, Node's system/default CA counts when `node` is available, proxy environment variable names, OpenWork config file/key presence, macOS app version best-effort, and recent OpenCode engine log lines that mention `openwork-cloud` or `SSE error`.
+
+The script does not change the machine. It does not print secret values: proxy values are redacted, `NODE_EXTRA_CA_CERTS` is reported as presence/path/count only, and OpenWork config files are checked only for key presence.
+
+Prefer download-then-inspect over `curl | bash` for support diagnostics:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/different-ai/openwork/dev/scripts/support/openwork-doctor.sh
+# Inspect openwork-doctor.sh in an editor, then run it:
+bash openwork-doctor.sh openwork-poc.example.com
+```
+
+Pass the Den origin hostname as the first argument. The optional second argument is the port and defaults to `443`:
+
+```bash
+bash openwork-doctor.sh openwork-poc.example.com 443
+```
+
+Ask the customer to send the full output back to OpenWork support. The most important section is `TLS CHAIN`: `CHAIN OK (N certs)` means the server sent a full chain that OpenSSL trusts; `CHAIN INCOMPLETE` means the TLS terminator likely needs to serve the fullchain bundle because browsers can hide missing intermediates that Node/OpenWork/Java clients reject.
+
+## Windows repro harness
 
 `scripts/support/setup-openwork-tls-repro.ps1` is an admin-only Windows VM repro harness. It creates a root/intermediate/leaf chain with `New-SelfSignedCertificate`, trusts only the root, maps `poc.openwork.test` to localhost, and serves two HTTPS endpoints with HTTP.sys/`HttpListener`: healthy `:8443` has an installed intermediate; broken `:9443` uses a leaf whose intermediate was removed. Run in a Daytona Windows-class sandbox from an elevated PowerShell prompt:
 
