@@ -388,6 +388,18 @@ jobs:
             exit 1
           fi
 
+          # openwork.desktop launches via Exec=openwork, which resolves through
+          # /usr/bin/openwork. A dangling symlink there makes the app fail to
+          # start with no error, and the candidate fallback below would still
+          # find /opt/openwork/openwork and report success. Assert the real
+          # entry point resolves before falling back to anything.
+          if [ ! -x /usr/bin/openwork ]; then
+            echo "/usr/bin/openwork does not resolve to an executable" >&2
+            ls -l /usr/bin/openwork >&2 || true
+            echo "resolves to: $(readlink -f /usr/bin/openwork 2>/dev/null || echo '<unresolvable>')" >&2
+            exit 1
+          fi
+
           launch_bin=""
           for candidate in \
             "$(command -v openwork 2>/dev/null || true)" \
