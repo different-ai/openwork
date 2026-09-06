@@ -15,6 +15,8 @@ test("create, preview, save and reopen an app without changing already-open resu
     expect(search?.description).toContain("use save_artifact_view and follow its prerequisites");
     expect(search?.description).not.toContain("Always search first");
     expect(builder?.description).toContain("in-app dashboard or artifact view");
+    expect(builder?.description).toContain("current version must declare an explicit JSON Schema outputSchema");
+    expect(builder?.description).toContain("have a successful saved-Workflow run matching that schema");
     expect(builder?.description).toContain("execute_capability_script alone does not create its artifact snapshot");
   });
   evidence.recordAssertionEvidence("Capability discovery routes dashboard requests to the available direct builder", "The live MCP tools/list advertises the artifact builder and search explicitly routes dashboard requests to it without requiring capability search; the builder requires a saved Workflow run.", true);
