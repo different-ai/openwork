@@ -204,7 +204,11 @@ function validateAgentWorkloads(value) {
       if (step.argumentsFrom !== undefined && !["computer-mention", "capability-search"].includes(step.argumentsFrom)) {
         throw new Error(`agent workload ${promptMarker} has an unknown argument source`);
       }
-      return { tool: step.tool.trim(), arguments: structuredClone(step.arguments), argumentsFrom: step.argumentsFrom };
+      if (step.allowUnadvertisedTool !== undefined && typeof step.allowUnadvertisedTool !== "boolean") {
+        throw new Error(`agent workload ${promptMarker} allowUnadvertisedTool must be a boolean`);
+      }
+      return { tool: step.tool.trim(), arguments: structuredClone(step.arguments), argumentsFrom: step.argumentsFrom,
+        allowUnadvertisedTool: step.allowUnadvertisedTool === true };
     });
     const finalReplyDelayMs = workload.finalReplyDelayMs ?? 0;
     if (!Number.isInteger(finalReplyDelayMs) || finalReplyDelayMs < 0 || finalReplyDelayMs > 10000)
@@ -390,7 +394,7 @@ async function handleAgentCompletion(req, res, entry) {
     return;
   }
   const step = workload.steps[completedTools];
-  const toolName = offeredAgentTool(body, step.tool);
+  const toolName = offeredAgentTool(body, step.tool) ?? (step.allowUnadvertisedTool ? step.tool : null);
   if (!toolName) {
     entry.agentCompletion = { ...baseRequest, kind: "error", promptMarker: workload.promptMarker, toolName: step.tool, arguments: step.arguments };
     json(res, 400, { error: { message: `tool ${step.tool} was not offered to the mock agent` } });

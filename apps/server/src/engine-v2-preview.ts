@@ -1,3 +1,5 @@
+import { executionRules } from "./managed-policy-rules.js";
+import { managedDesktopPolicy } from "./managed-desktop-policy.js";
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -55,6 +57,7 @@ export interface RuntimeProviderRecordLike {
 }
 
 export interface EngineV2Preview {
+  start(): void;
   status(): EngineV2PreviewStatus;
   setEnabled(enabled: boolean): Promise<EngineV2PreviewStatus>;
   setChatRouting(chatRouting: boolean): Promise<EngineV2PreviewStatus>;
@@ -293,7 +296,7 @@ export function mapRuntimeMcpToV2(value: unknown): Record<string, unknown> | und
     ...(oauth === undefined ? {} : { oauth }), ...shared };
 }
 
-export function createEngineV2Preview(options: { config: ServerConfig; env?: Pick<EnvService, "list" | "onChange"> }): EngineV2Preview {
+export function createEngineV2Preview(options: { config: ServerConfig; env?: Pick<EnvService, "list" | "onChange">; deferStart?: boolean }): EngineV2Preview {
   const { config } = options;
   const rootDir = join(runtimeStorageDir(config), "opencode-v2", "state");
   const workspaceDir = join(rootDir, "workspace");
@@ -490,7 +493,8 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
     const managed = await createManagedOpencodeV2Server({
       bin: resolved.bin,
       rootDir,
-      env: { OPENCODE_MODELS_URL: opencodeModelsUrl },
+      env: { OPENCODE_MODELS_URL: opencodeModelsUrl, OPENWORK_SERVER_URL: `http://127.0.0.1:${config.port}`, OPENWORK_POLICY_TOKEN: managedDesktopPolicy(config).evaluationToken },
+      permissions: async () => executionRules((await readGlobalRuntimeOpencodeConfig(config)).managedPolicy?.execution),
     });
     sidecar = managed;
     if (!enabled || !allowRunning) {
@@ -618,6 +622,9 @@ export function createEngineV2Preview(options: { config: ServerConfig; env?: Pic
     await stopRuntime();
   }
 
-  if (enabled) void start().catch(recordStartError);
-  return { status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, syncWorkspaceMcp, stop };
+  function startWhenReady(): void {
+    if (enabled) void start().catch(recordStartError);
+  }
+  if (!options.deferStart) startWhenReady();
+  return { start: startWhenReady, status, setEnabled, setChatRouting, connection, ensureWorkspaceReady, syncWorkspaceMcp, stop };
 }

@@ -343,6 +343,9 @@ importers:
       '@openwork/paths':
         specifier: workspace:*
         version: link:../../packages/paths
+      '@openwork/types':
+        specifier: workspace:*
+        version: link:../../packages/types
       '@sentry/electron':
         specifier: ^7.16.0
         version: 7.16.0(@opentelemetry/core@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/exporter-trace-otlp-http@0.220.0(@opentelemetry/api@1.9.1))
@@ -389,9 +392,6 @@ importers:
       '@electron/rebuild':
         specifier: ^4.2.0
         version: 4.2.0
-      '@openwork/types':
-        specifier: workspace:*
-        version: link:../../packages/types
       electron:
         specifier: ^43.2.0
         version: 43.2.0
@@ -416,6 +416,9 @@ importers:
       '@openwork/enterprise-mcp-client':
         specifier: workspace:*
         version: link:../../packages/enterprise-mcp-client
+      '@openwork/types':
+        specifier: workspace:*
+        version: link:../../packages/types
       better-sqlite3:
         specifier: ^13.0.2
         version: 13.0.2
@@ -450,9 +453,6 @@ importers:
       '@openwork/paths':
         specifier: workspace:*
         version: link:../../packages/paths
-      '@openwork/types':
-        specifier: workspace:*
-        version: link:../../packages/types
       '@openwork/workbook':
         specifier: workspace:*
         version: link:../../packages/workbook

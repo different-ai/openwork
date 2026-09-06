@@ -155,9 +155,51 @@ function normalizeTeamAccess(value: unknown): TeamAccess | undefined {
   return parsed.success ? parsed.data : undefined;
 }
 
+// Execution restrictions intersect across matching policies, independently of
+// the legacy union-of-grants booleans.
+export const desktopExecutionPolicySchema = z.object({
+  commands: z.enum(["allow", "deny"]).default("allow"),
+  blockedCommands: z.array(z.string().trim().min(1).max(500)).max(100).default([]),
+  browserOrigins: z.array(z.string().url().max(2048).refine((value) => {
+    try {
+      const url = new URL(value);
+      return ["https:", "http:"].includes(url.protocol) && !url.username && !url.password
+        && url.pathname === "/" && !url.search && !url.hash;
+    } catch { return false; }
+  }, "Use an HTTP or HTTPS site without a path, credentials, or query.")
+    .transform((value) => new URL(value).origin)).max(100).optional(),
+  blockBrowserUploads: z.boolean().default(false),
+}).strict();
+export type DesktopExecutionPolicy = z.infer<typeof desktopExecutionPolicySchema>;
+// A member can belong to several teams, each contributing up to 100 patterns.
+// The effective union must not fail validation merely because it exceeds one
+// document's editing limit.
+const effectiveDesktopExecutionPolicySchema = desktopExecutionPolicySchema.extend({
+  blockedCommands: z.array(z.string().min(1).max(500)).default([]),
+});
+
+
+export function resolveDesktopExecutionPolicy(documents: unknown[]): DesktopExecutionPolicy {
+  const result: DesktopExecutionPolicy = { commands: "allow", blockedCommands: [], blockBrowserUploads: false };
+  for (const document of documents) {
+    const raw = coerceJsonRecord(document);
+    if (!isRecord(raw) || raw.execution === undefined) continue;
+    const policy = desktopExecutionPolicySchema.parse(raw.execution);
+    if (policy.commands === "deny") result.commands = "deny";
+    result.blockedCommands = [...new Set([...result.blockedCommands, ...policy.blockedCommands])];
+    result.blockBrowserUploads ||= policy.blockBrowserUploads;
+    if (policy.browserOrigins !== undefined) {
+      result.browserOrigins = result.browserOrigins === undefined ? policy.browserOrigins
+        : result.browserOrigins.filter((origin) => policy.browserOrigins?.includes(origin));
+    }
+  }
+  return result;
+}
+
 export const desktopPolicyDocumentSchema = desktopPolicyValueSchema
   .extend({
     access: teamAccessSchema.optional(),
+    execution: desktopExecutionPolicySchema.optional(),
     onboardingPrompts: onboardingPromptsSchema.optional(),
     onboardingPromptDescriptions: onboardingPromptDescriptionsSchema.optional(),
   })
@@ -166,6 +208,7 @@ export const desktopPolicyDocumentSchema = desktopPolicyValueSchema
 export const desktopPolicyDocumentWriteSchema = desktopPolicyValueSchema
   .extend({
     access: teamAccessSchema.optional(),
+    execution: desktopExecutionPolicySchema.optional(),
     onboardingPrompts: onboardingPromptsSchema.nullable().optional(),
     onboardingPromptDescriptions: onboardingPromptDescriptionsSchema
       .nullable()
@@ -178,6 +221,7 @@ export type DesktopPolicyDocumentWrite = z.infer<
   typeof desktopPolicyDocumentWriteSchema
 >;
 export type DefaultDesktopPolicyDocument = Required<DesktopPolicyValue> & {
+  execution?: DesktopExecutionPolicy;
   access?: TeamAccess;
   onboardingPrompts?: string[];
   onboardingPromptDescriptions?: string[];
@@ -268,6 +312,7 @@ export type BrandAccentColor = (typeof brandAccentColorValues)[number];
 
 export const desktopConfigSchema = desktopPolicyValueSchema
   .extend({
+    execution: effectiveDesktopExecutionPolicySchema.optional(),
     allowedDesktopVersions: z
       .array(z.string().trim().min(1).max(32))
       .optional(),
@@ -403,9 +448,11 @@ export function normalizeDesktopPolicyDocument(
   const onboardingPromptConfig = normalizeOnboardingPromptConfig(coerced);
 
   const access = normalizeTeamAccess(coerced);
+  const execution = isRecord(coerced) && coerced.execution !== undefined ? desktopExecutionPolicySchema.parse(coerced.execution) : undefined;
   return {
     ...policy,
     ...(access !== undefined ? { access } : {}),
+    ...(execution !== undefined ? { execution } : {}),
     ...(onboardingPromptConfig !== undefined ? onboardingPromptConfig : {}),
   };
 }
@@ -425,9 +472,11 @@ export function normalizeDesktopPolicyDocumentWrite(
   );
 
   const access = normalizeTeamAccess(coerced);
+  const execution = isRecord(coerced) && coerced.execution !== undefined ? desktopExecutionPolicySchema.parse(coerced.execution) : undefined;
   return {
     ...policy,
     ...(access !== undefined ? { access } : {}),
+    ...(execution !== undefined ? { execution } : {}),
     ...(rawPrompts === null
       ? { onboardingPrompts: null, onboardingPromptDescriptions: null }
       : onboardingPrompts !== undefined
@@ -477,9 +526,11 @@ export function resolveDesktopPolicyDocumentWrite(input: {
         : undefined;
 
   const access = write.access ?? normalizeTeamAccess(input.existingPolicy);
+  const execution = write.execution ?? normalizeDesktopPolicyDocument(input.existingPolicy).execution;
   return {
     ...policy,
     ...(access !== undefined ? { access } : {}),
+    ...(execution !== undefined ? { execution } : {}),
     ...(onboardingPrompts !== undefined ? { onboardingPrompts } : {}),
     ...(onboardingPromptDescriptions !== undefined
       ? { onboardingPromptDescriptions }
@@ -495,9 +546,11 @@ export function normalizeDefaultDesktopPolicyDocument(
   const onboardingPromptConfig = normalizeOnboardingPromptConfig(coerced);
 
   const access = normalizeTeamAccess(coerced);
+  const execution = isRecord(coerced) && coerced.execution !== undefined ? desktopExecutionPolicySchema.parse(coerced.execution) : undefined;
   return {
     ...policy,
     ...(access !== undefined ? { access } : {}),
+    ...(execution !== undefined ? { execution } : {}),
     ...(onboardingPromptConfig !== undefined ? onboardingPromptConfig : {}),
   };
 }
@@ -656,9 +709,11 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
   const connectEnabled =
     typeof raw?.connectEnabled === "boolean" ? raw.connectEnabled : undefined;
   const onboardingPromptConfig = normalizeOnboardingPromptConfig(raw);
+  const execution = raw?.execution === undefined ? undefined : effectiveDesktopExecutionPolicySchema.parse(raw.execution);
 
   return {
     ...policy,
+    ...(execution !== undefined ? { execution } : {}),
     ...(allowedDesktopVersions !== undefined ? { allowedDesktopVersions } : {}),
     ...(brandAppName !== undefined ? { brandAppName } : {}),
     ...(brandLogoUrl !== undefined ? { brandLogoUrl } : {}),

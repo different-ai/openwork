@@ -8,7 +8,7 @@ import test from "node:test";
 const electronStub = `
 export const app = { on() {} };
 export const clipboard = { writeText() {} };
-export const session = { fromPartition() { return {}; } };
+export const session = { fromPartition() { return { webRequest: { onBeforeRequest() {} } }; } };
 export const shell = { openExternal() { return Promise.resolve(); } };
 export const createdViews = [];
 export class BrowserWindow {
@@ -106,7 +106,7 @@ function createPanel() {
     handle(channel, handler) { handlers.set(channel, handler); },
     on(channel, handler) { handlers.set(channel, handler); },
   };
-  createBrowserPanel({ getWindow: () => mainWindow, remoteDebugPort: 0, onDeepLink: () => {} }).registerIpc(ipcMain);
+  createBrowserPanel({ getWindow: () => mainWindow, remoteDebugPort: 0, onDeepLink: () => {}, checkPolicy: async () => {} }).registerIpc(ipcMain);
   const invoke = (channel, ...args) => handlers.get(channel)(null, ...args);
   // Electron paints every child above the BrowserWindow's primary renderer.
   const onScreen = () => children.find((view) => view.getBounds().width > 1) ?? null;

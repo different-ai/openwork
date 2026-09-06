@@ -206,6 +206,7 @@ describe("cloud provider sync gateway", () => {
       async fetch(request) {
         const url = new URL(request.url);
         if (url.pathname !== "/v1/llm-providers") {
+          if (url.pathname === "/v1/me/desktop-config") return Response.json({});
           return Response.json({ error: "not_found" }, { status: 404 });
         }
         listOrgIds.push(request.headers.get("x-openwork-legacy-org-id") ?? "");
@@ -254,7 +255,8 @@ describe("cloud provider sync gateway", () => {
       expect(maxListRequestsInFlight).toBe(1);
 
       releaseFirstList();
-      expect((await changedSessionResponse).status).toBe(204);
+      const changedSession = await changedSessionResponse;
+      expect({ status: changedSession.status, body: await changedSession.text() }).toEqual({ status: 204, body: "" });
       // The replacement session fires its own sync pass; hold its Den list open
       // so both explicit runs deterministically join that active pass.
       await secondListReached;
@@ -780,6 +782,9 @@ describe("cloud provider sync gateway", () => {
           authorization: request.headers.get("authorization"),
           orgId: request.headers.get("x-openwork-legacy-org-id"),
         });
+        // This fixture isolates provider-catalog outages; policy verification
+        // remains available when the provider service fails.
+        if (url.pathname === "/v1/me/desktop-config") return Response.json({});
         if (denFailure) return Response.json({ error: "unavailable" }, { status: 503 });
         if (url.pathname === "/v1/llm-providers") return Response.json({ llmProviders: denProviders });
         const match = url.pathname.match(/^\/v1\/llm-providers\/([^/]+)\/connect$/);
