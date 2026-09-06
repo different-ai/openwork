@@ -15,6 +15,7 @@
 
 @source "../../index.html";
 @source "../";
+@source "../../../../packages/ui/src/**/*.{ts,tsx}";
 @source inline("{bg,text,border}-{bronze,gold,brown,orange,tomato,red,ruby,crimson,pink,plum,purple,violet,iris,indigo,blue,cyan,teal,jade,green,grass,sky,mint,lime,yellow,amber,gray,mauve,slate,sage,olive,sand}-{1..12}");
 
 @custom-variant dark (&:is(.dark, .dark *, [data-theme="dark"], [data-theme="dark"] *));

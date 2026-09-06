@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import { useEffect } from "react";
 import { Dithering } from "@paper-design/shaders-react";
+import { OnboardingIntro } from "@openwork/ui/react";
 
 import { t } from "../../../i18n";
 import { useBootState } from "../../shell/boot-state";
@@ -88,14 +89,11 @@ export function WelcomePage({
                 </span>
               </div>
 
-              <div className="mt-10 flex flex-col gap-2.5 sm:mt-14">
-                <h1 className="text-[30px] font-semibold leading-[38px] tracking-[-0.03em] text-foreground sm:text-[38px] sm:leading-[46px]">
-                  {t("welcome.title")}
-                </h1>
-                <p className="text-[15px] leading-[23px] text-muted-foreground">
-                  {t("welcome.subtitle")}
-                </p>
-              </div>
+              <OnboardingIntro
+                className="mt-10 sm:mt-14"
+                title={t("welcome.title")}
+                description={t("welcome.subtitle")}
+              />
 
               <div className="mt-11 flex flex-col gap-3">
                 {onTeamSignIn ? (
