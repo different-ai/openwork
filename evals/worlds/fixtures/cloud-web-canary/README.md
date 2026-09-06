@@ -85,6 +85,36 @@ pnpm --dir evals exec tsc --noEmit --strict --skipLibCheck --module preserve --m
 
 ## Proof Boundary
 
+### Explicit CLI-Managed Smoke
+
+`CANARY_MODE=cli-managed` selects the separately named manual-restart journey in
+the same spec. It does **not** prove automatic provisioning, Den idle-stop, or
+automatic wake. The operator creates both VMs and a unique volume using only
+the authenticated Daytona CLI; CLI credentials never leave that CLI. Seed a
+healthy synthetic worker, matching runtime tokens and the real runtime endpoint
+in the isolated Den. Set its image version to the pinned snapshot, give the
+endpoint a future expiry, disable the Den idle loop, and point Den's provider
+API at a loopback tripwire with an explicitly non-authenticating sentinel.
+
+Also supply `CANARY_RUNTIME_URL` (the owned runtime's bare HTTPS preview origin),
+`CANARY_WORKER_ID`, and `CANARY_CLI_LEDGER` (an owner-private JSON file outside
+the checkout). The ledger declares `mode: "cli-managed"`, a unique
+`prefix: "cwc-<8 lowercase hex digits>"`, and `createdSandboxes` containing
+`{role, id, name}` entries for `control` and `runtime`. Names must be the prefix
+plus `-control` or `-runtime`. CLI info must confirm both the exact ID and name
+before a fixture operation. Keep the real bootstrap at
+`/tmp/cloud-web-canary/start.sh` inside the owned runtime for restart. The control
+VM's loopback port 8098 exposes read-only `/stats` with `{requests: number}` and
+counts/rejects all provider requests; it must never simulate provisioning.
+
+With Chrome navigated away, the named fixture action calls CLI stop, verifies
+CLI info reports stopped, calls CLI start, relaunches that bootstrap and checks
+real runtime health before returning to the UI. Worker GETs assert identity,
+not physical lifecycle. The operator still owns teardown on every outcome.
+No Den deprovision call may use the sentinel. Model/read-receipt assertions are
+identical to the full managed journey. No skipped managed test is disguised as
+a passed CLI result: exactly the selected scope runs.
+
 The deterministic protocol issues one write, waits for its correlated engine
 result, issues read, then validates the **new read result** before answering.
 It selects the actual advertised tool names and argument schemas, not a shell

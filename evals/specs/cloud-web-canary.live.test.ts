@@ -1,12 +1,14 @@
 import { createHash } from "node:crypto";
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { attachedCanary, requirements, workerRows } from "../worlds/fixtures/cloud-web-canary/world.ts";
+import { attachedCanary, cliManaged, requirements, workerRows } from "../worlds/fixtures/cloud-web-canary/world.ts";
 
 // Operator-only attached journey. No VM, account, provider or gateway setup here.
 const test = spec.world(attachedCanary, { needs: requirements, timeout: 90_000 });
 
-test("managed Web signs in, streams a real file read, and preserves the conversation and file after idle wake", { timeout: 900_000 }, async ({ world, user, probe, step, evidence }) => {
+test(cliManaged
+  ? "CLI-managed Web signs in, streams a real file read, and preserves the conversation and file after manual runtime restart (automatic provisioning and wake unverified)"
+  : "managed Web signs in, streams a real file read, and preserves the conversation and file after idle wake", { timeout: 900_000 }, async ({ world, user, probe, step, evidence }) => {
   const first = `Canary read 1: ${world.marker}`;
   const second = `Canary read 2: ${world.marker}`;
   const expectedHash = createHash("sha256").update(`${world.marker}\n`).digest("hex");
@@ -14,6 +16,7 @@ test("managed Web signs in, streams a real file read, and preserves the conversa
   await step("Anonymous gateway opens Den login and returns through the Web handoff", async () => {
     expect(await world.stats()).toMatchObject({ verifiedReads: 0, writeToolCalls: 0, readToolCalls: 0,
       rejectedReadResults: 0, protocolErrors: 0, streamedReplies: 0, upstreamCalls: 0 });
+    if (cliManaged) expect(await world.providerCalls()).toBe(0);
     await user.navigate(world.gatewayUrl);
     await user.see({ role: "button", text: "Sign in to OpenWork" });
     expect(await probe.storage("openwork.den.authToken")).toBeNull();
@@ -29,9 +32,11 @@ test("managed Web signs in, streams a real file read, and preserves the conversa
     await probe.eventually(async () => (await world.page()).atGateway, { within: 60_000, label: "Web handoff returns to gateway" });
   });
 
-  await step("Provisioning takeover yields to a ready managed workspace", async () => {
-    await user.see({ testId: "cloud-workspace-takeover" }, { timeoutMs: 30_000 });
-    await probe.eventually(async () => (await world.page()).takeover === "provisioning", { within: 30_000, label: "provisioning takeover state" });
+  await step(cliManaged ? "The CLI-precreated runtime becomes a ready Web workspace" : "Provisioning takeover yields to a ready managed workspace", async () => {
+    if (!cliManaged) {
+      await user.see({ testId: "cloud-workspace-takeover" }, { timeoutMs: 30_000 });
+      await probe.eventually(async () => (await world.page()).takeover === "provisioning", { within: 30_000, label: "provisioning takeover state" });
+    }
     await user.see("composer", { editable: true, timeoutMs: 300_000 });
     await probe.eventually(async () => (await world.page()).ready, { within: 60_000, label: "ready workspace pill" });
     await user.notSee({ testId: "cloud-workspace-takeover" });
@@ -59,7 +64,8 @@ test("managed Web signs in, streams a real file read, and preserves the conversa
 
   await step("A UI prompt causes engine write then read, with a visibly streamed assistant answer", async () => {
     await user.click({ role: "button", label: "Change model" });
-    await user.click({ role: "button", label: /^Canary\s*cloud-web-canary$/ });
+    await user.click({ role: "button", text: /^Model\b/ });
+    await user.click({ role: "option", text: /^Canary\b/ });
     await user.see({ role: "button", label: "Change model" }, { text: /Canary/ });
     await user.type("composer", `Create ${world.filename} in the current workspace containing exactly this line: ${world.marker}\nThen read the file back and report its contents.`);
     await user.press("Enter");
@@ -85,18 +91,23 @@ test("managed Web signs in, streams a real file read, and preserves the conversa
     expect((await world.stats()).verifiedReads).toBe(1);
   });
 
-  await step("With the Web tab away, Den actually idle-stops the same worker", async () => {
+  await step(cliManaged ? "Fixture action: CLI stops and restarts the owned real runtime with the Web tab away" : "With the Web tab away, Den actually idle-stops the same worker", async () => {
     await user.navigate("about:blank");
-    await probe.eventually(async () => {
-      const rows = await workers();
-      return rows.length === 1 && rows[0].id === worker.id && rows[0].status === "stopped";
-    }, { within: 240_000, intervalMs: 3_000, label: "Den stored worker status becomes stopped" });
+    if (cliManaged) {
+      expect(await world.manualRestart()).toEqual({ stopped: true, started: true, runtimeHealthy: true, sameSandbox: true });
+      expect(await world.providerCalls()).toBe(0);
+    } else {
+      await probe.eventually(async () => {
+        const rows = await workers();
+        return rows.length === 1 && rows[0].id === worker.id && rows[0].status === "stopped";
+      }, { within: 240_000, intervalMs: 3_000, label: "Den stored worker status becomes stopped" });
+    }
     expect((await world.stats()).verifiedReads).toBe(1);
   });
 
-  await step("Reopening wakes the same worker and conversation; a fresh engine read proves file persistence", async () => {
+  await step(cliManaged ? "Reopening the same conversation after manual restart causes a fresh engine read of the preserved file" : "Reopening wakes the same worker and conversation; a fresh engine read proves file persistence", async () => {
     await user.navigate(new URL(route, world.gatewayUrl).href);
-    await user.see({ testId: "cloud-workspace-takeover" }, { timeoutMs: 30_000 });
+    if (!cliManaged) await user.see({ testId: "cloud-workspace-takeover" }, { timeoutMs: 30_000 });
     await user.see("composer", { editable: true, timeoutMs: 180_000 });
     await probe.eventually(async () => (await world.page()).ready, { within: 60_000, label: "workspace ready after idle wake" });
     await user.see({ text: first });
@@ -118,7 +129,10 @@ test("managed Web signs in, streams a real file read, and preserves the conversa
     expect(stats).toMatchObject({ writeToolCalls: 1, readToolCalls: 2, verifiedReads: 2, streamedReplies: 2,
       rejectedReadResults: 0, protocolErrors: 0, upstreamCalls: 0 });
     expect(stats.receipts).toEqual([{ sequence: 1, turn: 1, sha256: expectedHash }, { sequence: 2, turn: 2, sha256: expectedHash }]);
-    evidence.recordAssertionEvidence("UI continuity and fresh engine file read after Den idle stop",
-      "Trusted Chrome clicks and typing completed login, provisioning, streaming, reload and wake. GET /v1/workers observed healthy -> stopped -> healthy with one unchanged identity. Two distinct engine read receipts matched the normalized read-content hash; the follow-up caused no write. The deterministic fixture made zero upstream calls.", true);
+    if (cliManaged) expect(await world.providerCalls()).toBe(0);
+    evidence.recordAssertionEvidence(cliManaged ? "UI continuity and fresh engine read after CLI-managed restart" : "UI continuity and fresh engine file read after Den idle stop",
+      cliManaged
+        ? "Trusted Chrome completed login, Web handoff, streaming and reload. An explicitly named fixture action used Daytona CLI stop/info/start and relaunched the real runtime. Reopening the same session caused a second distinct engine read receipt with the original normalized hash and no additional write. The model made zero upstream calls and the Den provider tripwire observed zero requests. Automatic provisioning, Den idle-stop and automatic wake remain unverified."
+        : "Trusted Chrome clicks and typing completed login, provisioning, streaming, reload and wake. GET /v1/workers observed healthy -> stopped -> healthy with one unchanged identity. Two distinct engine read receipts matched the normalized read-content hash; the follow-up caused no write. The deterministic fixture made zero upstream calls.", true);
   });
 });
