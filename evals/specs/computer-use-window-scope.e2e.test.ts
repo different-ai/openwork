@@ -10,6 +10,7 @@ test("Computer Use respects window consent, fresh observations and the person's 
   await step("Discovery exposes identities without window content or input access", async () => {
     const discovery = toolState(await world.call("computer_discover"));
     expect(discovery.protocol).toBe("openwork.computer-use/1");
+    expect(discovery.apps).toEqual(expect.arrayContaining([expect.objectContaining({ app_id: world.appId })]));
     expect(JSON.stringify(discovery)).not.toContain("Initial draft");
     const unapproved = await world.call("computer_observe", { session_id: "invented" });
     expect(unapproved).toMatchObject({ isError: true });
