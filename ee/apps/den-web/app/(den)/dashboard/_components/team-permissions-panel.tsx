@@ -1,6 +1,6 @@
 "use client";
 
-import { ExecutionPolicyFields } from "./execution-policy-fields";
+import { ExecutionPolicyFields, validateExecutionPolicy } from "./execution-policy-fields";
 import { desktopExecutionPolicySchema } from "@openwork/types/den/desktop-policies";
 import { useState } from "react";
 import { LockKeyhole, SlidersHorizontal, ShieldCheck } from "lucide-react";
@@ -65,7 +65,7 @@ function TeamPermissionsEditor({ teamId, teamName, policy, canManage, onSaved }:
     try {
       const payload = {
         policyName: policy?.policyName ?? `${teamName} access`,
-        policy: { ...policy?.policy, access: draft, execution: desktopExecutionPolicySchema.parse(execution) },
+        policy: { ...policy?.policy, access: draft, execution: validateExecutionPolicy(execution) },
         teamIds: [teamId],
         isEnabled: true,
       };

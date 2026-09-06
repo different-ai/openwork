@@ -325,7 +325,7 @@ test(defaultJourney, async ({ world: selectedWorld, user, agent, probe, step, ev
 
 });
 
-test(teamJourney, async ({ world: selectedWorld, user, agent, probe, step, evidence, seed }) => {
+test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user, agent, probe, step, evidence, seed }) => {
   const world = selectedWorld.team;
   if (!world) throw new Error("Expected the Team Access world");
   const member = { user: user.on(world.member), agent: agent.on(world.member), probe: probe.on(world.member) };
@@ -611,6 +611,7 @@ test(teamJourney, async ({ world: selectedWorld, user, agent, probe, step, evide
     await admin.user.reload();
     await admin.user.see({ role: "checkbox", label: "Run OS commands" }, { timeoutMs: 60_000 });
     await admin.user.click({ role: "checkbox", label: "Run OS commands" });
+    await admin.user.click({ role: "checkbox", label: "Add AI providers" });
     await admin.user.click({ role: "checkbox", label: "Restrict browsing to approved sites" });
     await admin.user.type({ role: "textbox", label: "Approved websites" }, new URL(world.den.mocks.witness.url).origin, { replace: true });
     await admin.user.click({ role: "checkbox", label: "Block browser uploads and form submissions" });
@@ -625,6 +626,8 @@ test(teamJourney, async ({ world: selectedWorld, user, agent, probe, step, evide
     expect(otherPolicy.status).toBe(200);
     const attempts = [
       { action: "shell", input: { command: "printf TEAM_POLICY_EXECUTED" } },
+      { action: "model", input: { providerID: "unassigned-provider", id: "unassigned-model" } },
+      { action: "webfetch", input: { url: world.den.mocks.witness.url } },
       { action: "browser", input: { url: "https://unapproved.example.org", method: "GET" } },
       { action: "browser", input: { url: world.den.mocks.witness.url, method: "POST", hasUpload: true } },
     ];
@@ -645,6 +648,26 @@ test(teamJourney, async ({ world: selectedWorld, user, agent, probe, step, evide
     await other.user.notSee(manageExtensionsNotice);
     await admin.user.reload();
     await admin.user.see({ role: "textbox", label: "Approved websites" }, { value: new URL(world.den.mocks.witness.url).origin });
+    await admin.user.looks(["Team access contains a Commands & browser section with Run OS commands unchecked, an approved website, and browser uploads blocked"]);
+    await member.user.reload();
+    await member.user.click(accountMenu);
+    await member.user.click(accountMenuItem);
+    await member.user.click(permissionsTab);
+    await member.user.see({ text: "OS commands" });
+    await member.user.see({ text: "Approved websites" });
+    await member.user.see({ text: "Browser uploads and form submissions" });
+    await member.user.looks(["App permissions shows OS commands and browser uploads Blocked and lists the approved website as read-only information"]);
+    await member.user.click({ role: "button", label: "Back to app" });
+    const forbiddenConfig = await member.agent.desktopApi(`/workspace/${world.member.workspaceId}/opencode-config`, {
+      method: "POST", body: { scope: "project", content: JSON.stringify({ permission: { "*": "allow" }, plugin: [] }) },
+    });
+    expect(forbiddenConfig.status).toBe(403);
+    const extension = { name: "policy-proof-connection", config: { type: "remote", url: world.den.mocks.witness.mcpUrl, oauth: false } };
+    const deniedExtension = await member.agent.desktopApi(`/workspace/${world.member.workspaceId}/mcp`, { method: "POST", body: extension });
+    const permittedExtension = await other.agent.desktopApi(`/workspace/${world.control.workspaceId}/mcp`, { method: "POST", body: extension });
+    expect(deniedExtension.status).toBe(403);
+    expect(permittedExtension.status).toBe(200);
+    evidence.recordAssertionEvidence("Direct config and extension requests cannot bypass the restricted member's UI", JSON.stringify({ forbiddenConfig, deniedExtension, permittedExtension }), forbiddenConfig.status === 403 && deniedExtension.status === 403 && permittedExtension.status === 200);
     const allowedBrowser = await member.agent.browserRequest({ url: `${world.den.mocks.witness.url}/health` });
     expect(allowedBrowser.reached).toBe(true);
     const outside = new URL("/health", world.den.ref.apiUrl).toString();
@@ -665,10 +688,18 @@ test(teamJourney, async ({ world: selectedWorld, user, agent, probe, step, evide
       expect((await desktop.probe.desktopApi(filePath)).status).toBe(404);
       await desktop.agent.createSession(`Team policy ${index === 0 ? "restricted" : "control"}`);
       await desktop.agent.send(`Write the policy test witness by running this OS command: ${proof.command}. Request ${proof.marker}.`);
-      await desktop.probe.eventually(async () => {
-        if (await desktop.probe.has("Allow once")) await desktop.user.click("Allow once");
-        return desktop.probe.has(proof.reply);
-      }, { within: 120_000, label: "real engine finishes the command attempt", until: Boolean });
+      try {
+        await desktop.probe.eventually(async () => {
+          if (await desktop.probe.has("Allow once")) await desktop.user.click("Allow once");
+          return desktop.probe.has(proof.reply);
+        }, { within: 120_000, label: "real engine finishes the command attempt", until: Boolean });
+      } catch (error) {
+        const screen = await desktop.probe.text();
+        const requests = await world.den.mocks.witness.agentRequests({ promptMarker: proof.marker, atLeast: 0 });
+        evidence.recordAssertionEvidence("Command attempt did not finish", JSON.stringify({ screen, requests }), false);
+        await desktop.user.screenshot();
+        throw error;
+      }
       const witness = await desktop.probe.desktopApi(filePath);
       expect(witness.status).toBe(index === 0 ? 404 : 200);
       if (index === 1) expect(isRecord(witness.body) && witness.body.content).toBe(world.nonce);

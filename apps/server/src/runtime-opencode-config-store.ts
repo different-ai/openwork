@@ -211,7 +211,7 @@ export async function listRuntimeOpencodeConfigRows(config: ServerConfig): Promi
 
 export async function writeGlobalRuntimeOpencodeConfig(
   config: ServerConfig,
-  updater: (current: RuntimeOpencodeConfig) => RuntimeOpencodeConfig,
+  updater: (current: Omit<RuntimeOpencodeConfig, "managedPolicy">) => Omit<RuntimeOpencodeConfig, "managedPolicy">,
 ): Promise<{ config: RuntimeOpencodeConfig; changed: boolean }> {
   return await writeRuntimeOpencodeConfig(config, ENGINE_GLOBAL_RUNTIME_CONFIG_ID, updater);
 }
@@ -544,9 +544,10 @@ export function writeRuntimeOpencodeConfig(
   workspaceId: string,
   updater: (current: Omit<RuntimeOpencodeConfig, "managedPolicy">) => Omit<RuntimeOpencodeConfig, "managedPolicy">,
 ): Promise<{ config: RuntimeOpencodeConfig; changed: boolean }> {
-  return updateRuntimeConfig(config, workspaceId, (current) => ({
-    ...updater(current), managedPolicy: current.managedPolicy,
-  }));
+  return updateRuntimeConfig(config, workspaceId, (current) => {
+    const { managedPolicy, ...editable } = current;
+    return { ...updater(editable), managedPolicy };
+  });
 }
 
 // Only the verified Den-session boundary may call this writer.

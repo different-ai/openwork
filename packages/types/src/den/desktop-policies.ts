@@ -171,6 +171,13 @@ export const desktopExecutionPolicySchema = z.object({
   blockBrowserUploads: z.boolean().default(false),
 }).strict();
 export type DesktopExecutionPolicy = z.infer<typeof desktopExecutionPolicySchema>;
+// A member can belong to several teams, each contributing up to 100 patterns.
+// The effective union must not fail validation merely because it exceeds one
+// document's editing limit.
+const effectiveDesktopExecutionPolicySchema = desktopExecutionPolicySchema.extend({
+  blockedCommands: z.array(z.string().min(1).max(500)).default([]),
+});
+
 
 export function resolveDesktopExecutionPolicy(documents: unknown[]): DesktopExecutionPolicy {
   const result: DesktopExecutionPolicy = { commands: "allow", blockedCommands: [], blockBrowserUploads: false };
@@ -305,7 +312,7 @@ export type BrandAccentColor = (typeof brandAccentColorValues)[number];
 
 export const desktopConfigSchema = desktopPolicyValueSchema
   .extend({
-    execution: desktopExecutionPolicySchema.optional(),
+    execution: effectiveDesktopExecutionPolicySchema.optional(),
     allowedDesktopVersions: z
       .array(z.string().trim().min(1).max(32))
       .optional(),
@@ -702,7 +709,7 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
   const connectEnabled =
     typeof raw?.connectEnabled === "boolean" ? raw.connectEnabled : undefined;
   const onboardingPromptConfig = normalizeOnboardingPromptConfig(raw);
-  const execution = raw?.execution === undefined ? undefined : desktopExecutionPolicySchema.parse(raw.execution);
+  const execution = raw?.execution === undefined ? undefined : effectiveDesktopExecutionPolicySchema.parse(raw.execution);
 
   return {
     ...policy,

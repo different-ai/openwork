@@ -24,10 +24,7 @@ export function executionRules(policy: DesktopExecutionPolicy | undefined): Engi
   for (const resource of policy.blockedCommands) rules.push({ action: "shell", resource, effect: "deny" });
   if (policy.browserOrigins !== undefined) {
     rules.push({ action: "webfetch", resource: "*", effect: "deny" });
-    for (const origin of policy.browserOrigins) {
-      rules.push({ action: "webfetch", resource: origin, effect: "allow" });
-      rules.push({ action: "webfetch", resource: `${origin}/*`, effect: "allow" });
-    }
+    rules.push({ action: "websearch", resource: "*", effect: "deny" });
   }
   return rules;
 }
@@ -40,10 +37,25 @@ export function legacyExecutionPermissions(policy: DesktopExecutionPolicy | unde
   }
   return permissions;
 }
+// Glob matching without a regular expression: repeated wildcard patterns must
+// not create catastrophic backtracking on a long command.
 function matches(pattern: string, value: string): boolean {
-  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".");
-  return new RegExp(`^${escaped}$`, "is").test(value);
+  const rule = pattern.toLowerCase();
+  const command = value.toLowerCase();
+  let ruleIndex = 0;
+  let commandIndex = 0;
+  let star = -1;
+  let retry = 0;
+  while (commandIndex < command.length) {
+    if (rule[ruleIndex] === "?" || rule[ruleIndex] === command[commandIndex]) { ruleIndex++; commandIndex++; }
+    else if (rule[ruleIndex] === "*") { star = ruleIndex++; retry = commandIndex; }
+    else if (star >= 0) { ruleIndex = star + 1; commandIndex = ++retry; }
+    else return false;
+  }
+  while (rule[ruleIndex] === "*") ruleIndex++;
+  return ruleIndex === rule.length;
 }
+
 export function policyDenial(policy: DesktopConfig, action: string, input: Record<string, unknown>): string | null {
   const execution = policy.execution;
   if (action === "shell") {
@@ -52,12 +64,23 @@ export function policyDenial(policy: DesktopConfig, action: string, input: Recor
     if (execution?.blockedCommands.some((pattern) => matches(pattern, command))) return "This command is blocked by your team's policy.";
   }
   if (action === "file_write" && (hasExecutionLimits(execution) || policy.allowCustomProviders === false || policy.allowManageExtensions === false || policy.allowControlSettings === false)) {
-    const paths = [input.filePath, input.path, input.patchText, input.patch, ...(Array.isArray(input.ops) ? input.ops.map((op) => typeof op === "object" && op !== null ? JSON.stringify(op) : "") : [])];
-    if (paths.some((path) => typeof path === "string" && /(?:^|[\\/\s"])(?:opencode\.jsonc?|runtime-opencode-config\.json|\.opencode[\\/](?:plugins?|tools?|skills?|agents?)(?:[\\/]|$))/im.test(path))) return "Your organization manages this configuration. Change access in Den.";
+    const paths: unknown[] = [input.filePath, input.path];
+    for (const patch of [input.patchText, input.patch]) {
+      if (typeof patch === "string") for (const match of patch.matchAll(/^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm)) paths.push(match[1]);
+    }
+    if (Array.isArray(input.operations)) for (const operation of input.operations) {
+      if (typeof operation === "object" && operation !== null) {
+        for (const [key, value] of Object.entries(operation)) if (["path", "from", "to"].includes(key)) paths.push(value);
+      }
+    }
+    if (paths.some((path) => typeof path === "string" && /(?:^|[\\/])(?:opencode\.jsonc?$|runtime-opencode-config\.json$|\.opencode(?:[\\/]|$)|opencode[\\/](?:plugins?|tools?|skills?|agents?)(?:[\\/]|$))/i.test(path.trim()))) return "Your organization manages this configuration. Change access in Den.";
   }
   if (action === "engine_config" && (hasExecutionLimits(execution) || policy.allowCustomProviders === false || policy.allowManageExtensions === false || policy.allowControlSettings === false)) return "Your organization manages engine configuration. Change access in Den.";
-  if (action === "browser_external" && (hasExecutionLimits(execution) || policy.allowBuiltInExtensions === false)) return "Open this site in the managed browser.";
+  if (action === "browser_external" && (execution?.browserOrigins !== undefined || execution?.blockBrowserUploads || policy.allowBuiltInExtensions === false)) return "Open this site in the managed browser.";
   if (action === "model" && policy.allowZenModel === false && input.providerID === "opencode") return "Your organization has disabled this AI provider.";
+  // Native fetch follows redirects inside the engine. Until it exposes a
+  // per-hop hook, approved-site browsing must use the intercepted browser.
+  if ((action === "webfetch" || action === "websearch") && execution?.browserOrigins !== undefined) return "Use OpenWork's built-in browser to open approved websites.";
   if (action === "browser" || action === "webfetch") {
     if (action === "browser" && policy.allowBuiltInExtensions === false) return "Built-in extensions are disabled by your organization.";
     const url = typeof input.url === "string" ? input.url : "";
@@ -67,7 +90,7 @@ export function policyDenial(policy: DesktopConfig, action: string, input: Recor
         if (target.username || target.password || !execution.browserOrigins.includes(target.origin)) return "This website is not approved by your organization.";
       } catch { return "This website is not approved by your organization."; }
     }
-    if (execution?.blockBrowserUploads && (input.hasUpload === true || (typeof input.method === "string" && !["GET", "HEAD", "OPTIONS"].includes(input.method)))) return "Browser uploads are blocked by your team's policy.";
+    if (execution?.blockBrowserUploads && (/^wss?:/i.test(url) || input.hasUpload === true || (typeof input.method === "string" && !["GET", "HEAD", "OPTIONS"].includes(input.method)))) return "Browser uploads are blocked by your team's policy.";
   }
   if (action === "extensions" && policy.allowManageExtensions === false) return "Your organization has disabled local extension management.";
   if (action === "settings" && policy.allowControlSettings === false) return "Your organization has disabled changing these settings.";

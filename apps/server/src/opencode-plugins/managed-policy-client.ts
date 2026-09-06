@@ -9,7 +9,7 @@ export async function checkManagedTool(tool: string, raw: unknown): Promise<void
   let action: string | undefined;
   if (tool === "bash" || tool === "shell") action = "shell";
   else if (["write", "edit", "apply_patch", "patch"].includes(tool)) action = "file_write";
-  else if (tool === "webfetch") action = "webfetch";
+  else if (tool === "webfetch" || tool === "websearch") action = tool;
   else if (tool === "browser_navigate" || tool === "browser_open") action = "browser";
   else if (tool === "openwork_execute") {
     if (input.id === "browser.open_url") return check("browser", record(input.args));

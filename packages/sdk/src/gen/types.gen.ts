@@ -369,6 +369,12 @@ export type CurrentUserDesktopConfigResponse = {
   allowBuiltInExtensions?: boolean;
   allowAlphaUpdates?: boolean;
   showWelcomePage?: boolean;
+  execution?: {
+    commands?: "allow" | "deny";
+    blockedCommands?: Array<string>;
+    browserOrigins?: Array<string>;
+    blockBrowserUploads?: boolean;
+  };
   allowedDesktopVersions?: Array<string>;
   brandAppName?: string;
   brandLogoUrl?: string;
@@ -820,6 +826,12 @@ export type DenDesktopPolicyDocumentWrite = {
   access?: {
     mode: "custom" | "locked";
     capabilities: DenDesktopPolicyValue;
+  };
+  execution?: {
+    commands?: "allow" | "deny";
+    blockedCommands?: Array<string>;
+    browserOrigins?: Array<string>;
+    blockBrowserUploads?: boolean;
   };
   onboardingPrompts?: Array<string> | null;
   onboardingPromptDescriptions?: Array<string> | null;

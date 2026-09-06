@@ -1,6 +1,6 @@
 "use client";
 
-import { ExecutionPolicyFields } from "./execution-policy-fields";
+import { ExecutionPolicyFields, validateExecutionPolicy } from "./execution-policy-fields";
 import { desktopExecutionPolicySchema, type DesktopExecutionPolicy } from "@openwork/types/den/desktop-policies";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -209,7 +209,7 @@ function policyDocumentFromDraft(draft: PolicyDraft): DesktopPolicyDocumentWrite
     ? getOnboardingPromptDescriptions(draft, onboardingPrompts.length)
     : undefined;
   return {
-    execution: desktopExecutionPolicySchema.parse(draft.execution),
+    execution: validateExecutionPolicy(draft.execution),
     ...draft.policy,
     ...(draft.onboardingPromptsEnabled
       ? onboardingPrompts !== undefined
@@ -465,7 +465,6 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
             ) : null}
           </div>
 
-          <ExecutionPolicyFields value={draft.execution} onChange={(execution) => setDraft({ ...draft, execution })} />
           <fieldset className="grid gap-3" aria-describedby={POLICY_MODE_HELP_ID} data-testid="desktop-policy-mode">
             <legend className="text-[13px] font-medium text-gray-700">Policy mode</legend>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -533,6 +532,8 @@ export function DesktopPolicyEditorScreen({ desktopPolicyId }: { desktopPolicyId
               );
             })}
           </div>
+
+          <ExecutionPolicyFields value={draft.execution} disabled={formDisabled} onChange={(execution) => setDraft({ ...draft, execution })} />
 
           <div className="grid gap-4 rounded-[22px] border border-gray-200 bg-gray-50 px-5 py-4">
             <label className="flex items-start gap-3">
