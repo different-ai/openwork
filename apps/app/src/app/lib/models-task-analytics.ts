@@ -21,11 +21,12 @@ const toolSchema = z.object({
   }),
 });
 type Task = { sessionId: string; taskId: string; startedAt: number };
-type Pending = { event: ModelsAnalyticsEvent; expiresAt: number };
+type Pending = { event: ModelsAnalyticsEvent; expiresAt: number; consentedAt: string };
 
 let identity = "";
 let allowedUntil = 0;
 let allowed = false;
+let consentedAt: string | null = null;
 let checking: Promise<boolean> | null = null;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let flushing = false;
@@ -62,22 +63,34 @@ async function flush() {
   const batch = pending.splice(0, 50).filter((item) => item.expiresAt > Date.now());
   try {
     if (!batch.length) return;
-    const response = await request(ctx, "events", { method: "POST", body: JSON.stringify({ events: batch.map((item) => item.event) }) });
+    // Recheck consent at the upload boundary. A cached allowance must not send
+    // metadata after opt-out, or backfill it into a later consent period.
+    const settingsResponse = await request(ctx, "settings");
+    const settings = modelsAnalyticsSettingsSchema.safeParse(await settingsResponse.json());
+    if (ctx.identity !== identity) return;
+    allowed = settingsResponse.ok && settings.success && settings.data.enabled;
+    consentedAt = allowed && settings.success ? settings.data.consentedAt : null;
+    allowedUntil = Date.now() + 30_000;
+    if (!allowed || !consentedAt) { pending = []; return; }
+    const consented = batch.filter((item) => item.consentedAt === consentedAt);
+    if (!consented.length) return;
+    const response = await request(ctx, "events", { method: "POST", body: JSON.stringify({ events: consented.map((item) => item.event) }) });
     if (ctx.identity !== identity) return;
     if (response.status === 204 || response.status === 403 || response.status === 401) {
       pending = []; allowed = false; allowedUntil = 0; return;
     }
     const parsed = z.object({ acceptedIds: z.array(z.string()) }).safeParse(await response.json());
-    if (response.ok && parsed.success) pending.push(...batch.filter((item) => !parsed.data.acceptedIds.includes(item.event.id)));
-    else if (response.status >= 500) pending.push(...batch);
+    if (response.ok && parsed.success) pending.push(...consented.filter((item) => !parsed.data.acceptedIds.includes(item.event.id)));
+    else if (response.status >= 500) pending.push(...consented);
   } catch { if (ctx.identity === identity) pending.push(...batch); }
   finally { flushing = false; pending = pending.slice(-500); schedule(); }
 }
 
 function enqueue(event: ModelsAnalyticsEvent) {
+  if (!consentedAt) return;
   if (!modelsAnalyticsEventSchema.safeParse(event).success) return;
   if (pending.some((item) => item.event.id === event.id)) return;
-  pending.push({ event, expiresAt: Date.now() + 120_000 });
+  pending.push({ event, expiresAt: Date.now() + 120_000, consentedAt });
   pending = pending.slice(-500);
   schedule();
 }
@@ -86,7 +99,7 @@ async function observe(workspaceId: string, event: { type: string; properties?: 
   const ctx = context();
   const nextIdentity = ctx?.identity ?? "";
   if (identity !== nextIdentity) {
-    identity = nextIdentity; allowedUntil = 0; allowed = false; checking = null;
+    identity = nextIdentity; allowedUntil = 0; allowed = false; consentedAt = null; checking = null;
     tasks.clear(); messages.clear(); pending = [];
     lastCheckedTask = "";
   }
@@ -103,6 +116,7 @@ async function observe(workspaceId: string, event: { type: string; properties?: 
       const parsed = modelsAnalyticsSettingsSchema.safeParse(await response.json());
       if (identity !== ctx.identity) return false;
       allowed = response.ok && parsed.success && parsed.data.enabled;
+      consentedAt = allowed && parsed.success ? parsed.data.consentedAt : null;
       allowedUntil = Date.now() + 30_000;
       return allowed;
     }).catch(() => {

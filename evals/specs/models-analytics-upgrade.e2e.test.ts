@@ -232,6 +232,7 @@ test("an existing Models subscriber can decline, enable and disable task analyti
   evidence.recordAssertionEvidence("A real desktop file search produces tool activity within the same task", "The model invoked the native glob tool; its completed tool.executed event reached analytics with the skill invocation's task ID, without a handcrafted ingestion event", true);
   await webUser.click({ role: "button", label: "Turn off analytics" });
   await webUser.see({ role: "button", label: "Enable task analytics" });
+  await analyticsTransport.admin.phase("analytics-disabled");
   await send("Keep working after turning off task analytics.");
   const providerCalls = list(record(await fetch(`${world.witnessUrl}/fixture/requests`).then((response) => response.json())).calls);
   expect(providerCalls.at(-1)).toMatchObject({ model: "minimax/minimax-m3", authenticated: true, kind: "success" });
@@ -241,8 +242,10 @@ test("an existing Models subscriber can decline, enable and disable task analyti
   // delayed upload cannot make the disabled-period task appear after this check.
   await new Promise((resolve) => setTimeout(resolve, 40_000));
   expect(await activity()).toHaveLength(withSkill.length);
+  const afterOptOut = (await analyticsTransport.admin.requests()).requests.filter((request) => request.phase === "analytics-disabled");
+  expect(afterOptOut.some((request) => request.method === "POST" && request.path.endsWith("/inference/analytics/events"))).toBe(false);
   await user.on(app).see({ text: "Keep working after turning off task analytics." });
-  evidence.recordAssertionEvidence("Turning analytics off leaves the existing desktop conversation and selected model usable", "A new assistant reply arrived from the same selected model after disable; after re-enabling and observing 40 seconds of background reporting, the disabled-period task was absent and the earlier conversation was still visible", true);
+  evidence.recordAssertionEvidence("Turning analytics off leaves the existing desktop conversation and selected model usable", "A new assistant reply arrived from the same selected model after disable; the independent HTTP witness observed no task-event uploads across opt-out, re-enable and 40 seconds of background reporting, the disabled-period task was absent, and the earlier conversation was still visible", true);
   expect((await api("/v1/org", { method: "DELETE" })).response.status).toBe(200);
   await world.verifyErasure();
   evidence.recordAssertionEvidence("Deleting a workspace erases its task analytics and stored export credentials", "Workspace deletion returned 200; an independent data-store witness found no retained history or analytics configuration", true);
