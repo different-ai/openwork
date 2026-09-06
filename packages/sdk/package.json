@@ -24,7 +24,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
-    "@hey-api/openapi-ts": "0.90.10",
+    "@hey-api/openapi-ts": "0.97.3",
     "prettier": "3.8.3",
     "typescript": "^5.9.0"
   }
