@@ -11,6 +11,20 @@ export const clipboard = { writeText() {} };
 export const session = { fromPartition() { return {}; } };
 export const shell = { openExternal() { return Promise.resolve(); } };
 export const createdViews = [];
+export class BrowserWindow {
+  constructor(options) {
+    if (options.show !== false || options.focusable !== false) throw new Error("background host must never show or focus");
+    const children = [];
+    this.contentView = {
+      children,
+      addChildView(view) { children.push(view); },
+      removeChildView(view) { children.splice(children.indexOf(view), 1); },
+    };
+    this.destroyed = false;
+  }
+  isDestroyed() { return this.destroyed; }
+  destroy() { this.destroyed = true; }
+}
 export class WebContentsView {
   constructor() {
     createdViews.push(this);
@@ -203,7 +217,7 @@ test("a tab opened for a background conversation loads silently and leaves the v
   assert.equal(state.activeTabId, state.tabs.find((tab) => tab.ownerSessionId === "A").id);
   assert.equal(backgroundTab.ownerSessionId, "B");
   assert.equal(state.activeTabIdByOwner.B, tabId, "the tab is B's active tab, ready for when B is opened");
-  assert.deepEqual(backgroundView.getBounds(), { x: 0, y: 0, width: 1, height: 1 });
+  assert.deepEqual(backgroundView.getBounds(), { x: 0, y: 0, width: 1280, height: 800 });
   assert.deepEqual(commands(backgroundView), BACKGROUND_SEQUENCE, "the page lays out and focuses like a visible one");
   assert.equal(backgroundView.webContents.debugger.isAttached(), true, "our emulation session stays open while unseen");
   assert.deepEqual(commands(visibleView), [], "the visible tab is untouched");
@@ -253,7 +267,7 @@ test("switching to the background conversation swaps its tab on screen and resto
   assert.deepEqual(commands(bView), FOREGROUND_SEQUENCE, "B's emulation is undone before it is shown");
   assert.equal(bView.webContents.debugger.isAttached(), false, "our session is released for the user-driven reset path");
   assert.deepEqual(commands(aView), BACKGROUND_SEQUENCE, "A's tab now keeps painting in the background");
-  assert.deepEqual(aView.getBounds(), { x: 0, y: 0, width: 1, height: 1 });
+  assert.deepEqual(aView.getBounds(), { x: 0, y: 0, width: 1280, height: 800 });
   const state = invoke("openwork:browser:state");
   assert.equal(state.visibleSessionId, "B");
   assert.equal(state.activeTabId, state.activeTabIdByOwner.B);

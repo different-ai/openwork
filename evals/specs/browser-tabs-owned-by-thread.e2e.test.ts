@@ -39,7 +39,7 @@ test("a background conversation's agent browses silently and its page is waiting
     expect(state.nativeViews.find((view) => view.tabId === opened.tabId)).toMatchObject({
       attached: false,
       aboveApp: false,
-      bounds: { x: 0, y: 0, width: 1, height: 1 },
+      bounds: { x: 0, y: 0, ...BACKGROUND_TAB_VIEWPORT },
     });
     await user.see(tabButton(readingTab.name));
     await user.notSee(tabButton(opened.name));
@@ -101,7 +101,7 @@ test("a background conversation's agent browses silently and its page is waiting
     expect(native.nativeViews.find((view) => view.tabId === readingTab.tabId)).toMatchObject({
       attached: false,
       aboveApp: false,
-      bounds: { x: 0, y: 0, width: 1, height: 1 },
+      bounds: { x: 0, y: 0, ...BACKGROUND_TAB_VIEWPORT },
     });
   });
 

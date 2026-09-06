@@ -4,9 +4,9 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, WebContentsView, clipboard, session, shell } from "electron";
+import { app, BrowserWindow, WebContentsView, clipboard, session, shell } from "electron";
 import {
-  BACKGROUND_TAB_PRESENCE_BOUNDS,
+  BACKGROUND_TAB_VIEWPORT,
   backgroundTabEmulationCommands,
   createBrowserTabRegistry,
   foregroundTabEmulationCommands,
@@ -33,6 +33,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
   const browserTabs = new Map();
   const registry = createBrowserTabRegistry();
   let browserViewVisible = false;
+  let backgroundWindow = null;
   // Last browser panel bounds reported by the renderer, in renderer CSS pixels.
   // Converted to window device-independent pixels at every setBounds call.
   let lastBrowserBounds = null;
@@ -622,32 +623,46 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
   }
 
   function detachBrowserView(view) {
-    const mainWindow = window();
-    if (!mainWindow || !view) return;
-    try {
-      if (mainWindow.contentView.children.includes(view)) {
-        mainWindow.contentView.removeChildView(view);
+    if (!view) return;
+    for (const host of [window(), backgroundWindow]) {
+      try {
+        if (host && !host.isDestroyed() && host.contentView.children.includes(view)) {
+          host.contentView.removeChildView(view);
+        }
+      } catch {
+        // already removed
       }
-    } catch {
-      // already removed
     }
+  }
+
+  function backgroundBrowserWindow() {
+    if (!backgroundWindow || backgroundWindow.isDestroyed()) {
+      backgroundWindow = new BrowserWindow({
+        ...BACKGROUND_TAB_VIEWPORT,
+        show: false,
+        paintWhenInitiallyHidden: true,
+        focusable: false,
+        skipTaskbar: true,
+        webPreferences: { backgroundThrottling: false, sandbox: true },
+      });
+    }
+    return backgroundWindow;
   }
 
   // A tab whose conversation is not on screen must still behave like a real
   // page for the agent driving it: lay out at a real viewport, accept typing as
-  // a focused page, and paint so CDP screenshots work. Keep the native view
-  // detached while a DevTools session of ours emulates a full viewport and
-  // focus. Every child of BrowserWindow.contentView paints above the app;
-  // neither child ordering nor one-pixel bounds can isolate it. Both are undone when the tab
-  // returns to the screen. This is the headless-browser recipe applied to a
-  // headful window.
+  // a focused page, and paint so CDP screenshots work. Park it in a never-shown
+  // window: detached views stop painting, and every child of the main window's
+  // contentView paints above OpenWork, regardless of its child index or bounds.
+  // Moving the same view preserves the document and CDP target.
   function enterBackgroundMode(tab) {
     if (!tab || tab.background) return;
     const webContents = tab.view.webContents;
     if (webContents.isDestroyed()) return;
     tab.background = true;
     detachBrowserView(tab.view);
-    tab.view.setBounds({ ...BACKGROUND_TAB_PRESENCE_BOUNDS });
+    tab.view.setBounds({ x: 0, y: 0, ...BACKGROUND_TAB_VIEWPORT });
+    backgroundBrowserWindow().contentView.addChildView(tab.view);
     const cdp = webContents.debugger;
     runDetachedTask("emulate background browser tab", async () => {
       if (webContents.isDestroyed() || !tab.background) return;
@@ -907,6 +922,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     }
     browserTabs.clear();
     registry.clear();
+    if (backgroundWindow && !backgroundWindow.isDestroyed()) backgroundWindow.destroy();
+    backgroundWindow = null;
     lastBrowserBounds = null;
     sendBrowserState();
   }
