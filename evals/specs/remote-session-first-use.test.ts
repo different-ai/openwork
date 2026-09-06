@@ -421,7 +421,7 @@ test("concurrent retries isolate workers with identical names and colliding Type
 
   // Full, valid TypeIDs deliberately share the old twelve-character hint.
   // Seed durable failed workers; only public retry calls start the runtimes.
-  const workerIds = ["wrk_01kzxg44vee978et1656kycna1", "wrk_01kzxg44vee978et1656kycna2"];
+  const workerIds = ["wrk_0000000000e008000000000001", "wrk_0000000000e008000000000002"];
   expect(workerIds[0].slice(0, 12)).toBe(workerIds[1].slice(0, 12));
   expect(new Set(workerIds).size).toBe(2);
   const members = [den.admin, colleague];
