@@ -318,8 +318,10 @@ export async function preseededConnect(seed: Seed) {
 export async function connectorBranding(seed: Seed) {
   const engine = resolveEvalEngine();
   const proof = `Channel list ${crypto.randomUUID()}`;
-  const prompt = "List my Slack channels.";
-  const failurePrompt = "Read my Slack history.";
+  const prompt = "List three of my Slack channels.";
+  const failurePrompt = "Read the three latest items in my Slack history.";
+  const toolArguments = { limit: 3 };
+  const inputSchema = { type: "object", properties: { limit: { type: "integer" } }, required: ["limit"] };
   const search = (name: string) => ({ query: `Slack ${name}`, type: "mcp", limit: 1 });
   const steps = (name: string) => engine === "v2" ? [{
     tool: "execute",
@@ -327,20 +329,20 @@ export async function connectorBranding(seed: Seed) {
       const found = await tools["openwork-cloud"].search_capabilities(${JSON.stringify(search(name))});
       const result = typeof found === "string" ? JSON.parse(found) : found;
       const catalog = result.matches ? result : JSON.parse(result.content[0].text);
-      return await tools["openwork-cloud"].execute_capability({ name: catalog.matches[0].name, body: {} });
+      return await tools["openwork-cloud"].execute_capability({ name: catalog.matches[0].name, body: ${JSON.stringify(toolArguments)} });
     ` },
   }] : [
     { tool: "search_capabilities", arguments: search(name) },
-    { tool: "execute_capability", arguments: { body: {} }, argumentsFrom: "capability-search" },
+    { tool: "execute_capability", arguments: { body: toolArguments }, argumentsFrom: "capability-search" },
   ];
   const den = await seed.den({
     org: { name: "Connector tool display", admin: { name: "Connector Admin" } },
     mocks: { connector: seed.mock({
       allowUnauthenticatedMcp: true,
       tools: [
-        { name: "list_channels", description: "List Slack channels", inputSchema: { type: "object", properties: {} },
+        { name: "list_channels", description: "List Slack channels", inputSchema,
           delayMs: 4_000, result: { content: [{ type: "text", text: proof }] } },
-        { name: "read_history", description: "Read Slack history", inputSchema: { type: "object", properties: {} },
+        { name: "read_history", description: "Read Slack history", inputSchema,
           delayMs: 4_000, result: { isError: true, content: [{ type: "text", text: "History lookup failed." }] } },
       ],
     }) },

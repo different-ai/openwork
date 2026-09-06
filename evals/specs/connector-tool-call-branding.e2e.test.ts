@@ -19,7 +19,8 @@ test("connector-backed tool calls show first-class branding and human-readable l
   await step("the completed connector action exposes its arguments and survives reload", async () => {
     await user.see({ text: world.proof }, { timeoutMs: 60_000 });
     await user.see("Run task");
-    expect(await world.den.mocks.connector.toolCalls({ name: "list_channels", sinceIso, atLeast: 1 })).toHaveLength(1);
+    expect(await world.den.mocks.connector.toolCalls({ name: "list_channels", sinceIso, atLeast: 1 }))
+      .toMatchObject([{ name: "list_channels", args: { limit: 3 } }]);
     // TODO(primitive): probe.connectorBranding
     const inspect = () => probe.eval(`(() => {
       const rows = [...document.querySelectorAll('[data-capability-call]')];
@@ -34,11 +35,15 @@ test("connector-backed tool calls show first-class branding and human-readable l
     expect(branded).toMatchObject({ count: 1, connector: "Slack", imageLoaded: true });
     await user.click({ role: "button", label: "Listed channels. Show technical details" });
     await user.see({ text: /mcp:.*:list_channels/ });
+    await user.see({ text: /"limit":\s*3/ });
     await user.screenshot();
     await user.reload();
     await user.see({ text: /^Listed channels$/ }, { timeoutMs: 30_000 });
     expect(await inspect()).toMatchObject({ count: 1, connector: "Slack" });
     await user.notSee({ text: /openwork-cloud_execute_capability/ });
+    await user.click({ role: "button", label: "Listed channels. Show technical details" });
+    await user.see({ text: /"limit":\s*3/ });
+    await user.click({ role: "button", label: "Listed channels. Hide technical details" });
   });
 
   await step("a failed connector action stays identifiable and is not shown as successful", async () => {
@@ -49,7 +54,8 @@ test("connector-backed tool calls show first-class branding and human-readable l
     await user.see("Run task");
     await user.notSee({ role: "button", label: "Read history. Show technical details" });
     await user.notSee({ role: "button", label: /^Ran(?:\s|\.|[0-9]|$)/ });
-    expect(await world.den.mocks.connector.toolCalls({ name: "read_history", sinceIso, atLeast: 1 })).toHaveLength(1);
+    expect(await world.den.mocks.connector.toolCalls({ name: "read_history", sinceIso, atLeast: 1 }))
+      .toMatchObject([{ name: "read_history", args: { limit: 3 } }]);
     await user.screenshot();
     await user.reload();
     await user.see({ role: "button", label: /Read history failed/ }, { timeoutMs: 30_000 });
