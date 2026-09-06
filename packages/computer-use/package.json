@@ -1,0 +1,14 @@
+{
+  "name": "@openwork/computer-use",
+  "version": "0.1.0",
+  "private": true,
+  "description": "App-scoped computer use with native consent and observable sessions",
+  "license": "MIT",
+  "type": "module",
+  "exports": { ".": "./src/session.mjs" },
+  "bin": { "openwork-computer-use": "bin/openwork-computer-use.mjs" },
+  "scripts": {
+    "build:native": "swift build --package-path native -c release --product ComputerUse",
+    "check": "node --check bin/openwork-computer-use.mjs && node --check src/session.mjs && swift test --package-path native"
+  }
+}

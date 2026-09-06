@@ -1,0 +1,71 @@
+---
+title: "Work in desktop apps"
+description: "Approve a Mac app window and choose how OpenWork can help"
+---
+
+Computer Use is a preview for macOS 14 or later. It can read a window, use
+accessible app controls, or work with mouse and keyboard in the foreground.
+Use the built-in browser for websites and a dedicated connection when an app
+provides one.
+
+## Set up
+
+1. Open **Settings → Library → Computer Use** and enable it.
+2. Open **Permissions and session controls**.
+3. Grant **Accessibility** and **Screen Recording** to **OpenWork Computer Use**
+   in macOS settings. OpenWork cannot grant these permissions for you.
+4. Return to OpenWork and check readiness. Reconnect Computer Use if macOS asks
+   you to restart the helper or if you are upgrading from the previous version.
+5. Open the app you want to use and mention it in your message.
+
+For example: “In @TextEdit, review the document in the open window and suggest
+clearer wording.”
+
+## Approve the session
+
+When OpenWork needs an app, a native approval window names the app and requested
+task. You choose a window and approve one of three scopes:
+
+- **Read a window:** text and screenshots; no clicks or typing.
+- **Use app controls:** read and operate controls exposed by the app's
+  accessibility support. Your pointer remains available.
+- **Use mouse and keyboard:** operate the approved window while it is in
+  front. Bring it forward and click **Resume** in the floating panel to start.
+
+App approvals are separate from macOS permissions. Each approval lasts for one
+session, up to 15 minutes. OpenWork must ask again to change the app or scope.
+
+## Stay in control
+
+The floating **Computer Use** panel shows the app, scope and selected window.
+Use **Pause**, **Resume**, or **Stop** at any time. In mouse and keyboard mode,
+your input or switching to another app pauses the session. In app-controls
+mode, input in the target app pauses it. Idle sessions pause after two minutes.
+Only you can resume from the panel.
+
+The helper's setup window also offers **Stop all Computer Use sessions**.
+Windows remain open when a session stops; stopping does not undo completed
+changes.
+
+If a window moves, changes, becomes unavailable or no longer matches the last
+observation, OpenWork must look again before sending input. An app without
+usable accessibility information may require visual control or your help.
+Animations can cause visual input to pause for another observation.
+
+## Privacy and availability
+
+OpenWork reads and captures the selected window. That content is processed by
+your selected model provider and follows your host's conversation-retention
+settings. Standard password fields are omitted and masked when the app marks
+them correctly; custom controls may not do so. Enter passwords and handle
+security prompts yourself.
+
+Computer Use does not operate terminal apps, system permission settings or
+OpenWork itself. App access can still allow meaningful changes within that
+app, including saved files or sent messages, so describe your intended task
+clearly and remain present for sensitive work.
+
+Desktop control on Windows and Linux, locked-desktop use, background mouse and
+keyboard input, arbitrary keyboard shortcuts, and persistent app approvals are
+not available in this preview. The OpenWork Browser remains available for
+website tasks on supported desktop platforms.

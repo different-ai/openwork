@@ -37,6 +37,9 @@ function computerUseHelperAppPath() {
 }
 
 function getComputerUseMcpCommand() {
+  if (process.platform !== "darwin") {
+    throw new Error("Desktop Computer Use requires macOS 14 or later. Use the built-in browser for website tasks.");
+  }
   const helperExecutable = computerUseHelperExecutablePath();
   if (helperExecutable) return [helperExecutable, "mcp"];
 
@@ -45,9 +48,9 @@ function getComputerUseMcpCommand() {
   }
 
   if (process.env.OPENWORK_DEV_MODE === "1") {
-    return ["node", path.resolve(__dirname, "../../..", "packages/handsfree/bin/openwork-handsfree-computer-use.mjs"), "mcp"];
+    return ["node", path.resolve(__dirname, "../../..", "packages/computer-use/bin/openwork-computer-use.mjs"), "mcp"];
   }
-  return ["npx", "-y", "@openwork/handsfree", "mcp"];
+  throw new Error("The Computer Use helper is unavailable. Rebuild or reinstall OpenWork.");
 }
 
 // ---------------------------------------------------------------------------
@@ -69,12 +72,12 @@ function resolveComputerUseExecutable() {
 
   // 3. Dev fallback — raw Swift build output.
   if (!app.isPackaged) {
-    const swiftPkg = path.resolve(__dirname, "../../..", "packages/handsfree/native/HandsFree");
+    const swiftPkg = path.resolve(__dirname, "../../..", "packages/computer-use/native");
     const devCandidates = [
-      path.join(swiftPkg, ".build", "release", "HandsFreeComputerUse"),
-      path.join(swiftPkg, ".build", "arm64-apple-macosx", "release", "HandsFreeComputerUse"),
-      path.join(swiftPkg, ".build", "debug", "HandsFreeComputerUse"),
-      path.join(swiftPkg, ".build", "arm64-apple-macosx", "debug", "HandsFreeComputerUse"),
+      path.join(swiftPkg, ".build", "release", "ComputerUse"),
+      path.join(swiftPkg, ".build", "arm64-apple-macosx", "release", "ComputerUse"),
+      path.join(swiftPkg, ".build", "debug", "ComputerUse"),
+      path.join(swiftPkg, ".build", "arm64-apple-macosx", "debug", "ComputerUse"),
     ];
     for (const c of devCandidates) {
       if (existsSync(c)) return c;
@@ -85,6 +88,9 @@ function resolveComputerUseExecutable() {
 }
 
 async function checkComputerUsePermissions() {
+  if (process.platform !== "darwin") {
+    return { ok: false, accessibility: false, screenRecording: false, supported: false, error: "Desktop Computer Use is available on macOS 14 or later. Use the built-in browser for website tasks." };
+  }
   // Spawn binary --check → read JSON from stdout → exit. Always fresh.
   const bin = resolveComputerUseExecutable();
   if (!bin) {
@@ -104,9 +110,12 @@ function spawnCheckPermissions(bin) {
       try {
         const parsed = JSON.parse(stdout.trim());
         resolve({
-          ok: parsed?.ok === true,
-          accessibility: parsed?.accessibility === true,
-          screenRecording: parsed?.screenRecording === true,
+          ok: parsed?.ok === true && parsed?.protocolVersion === "openwork.computer-use/1",
+          accessibility: parsed?.accessibility === true && parsed?.protocolVersion === "openwork.computer-use/1",
+          screenRecording: parsed?.screenRecording === true && parsed?.protocolVersion === "openwork.computer-use/1",
+          supported: parsed?.supported === true,
+          protocolVersion: parsed?.protocolVersion,
+          ...(parsed?.protocolVersion !== "openwork.computer-use/1" ? { error: "This helper uses the previous Computer Use implementation. Rebuild or reinstall OpenWork, then reconnect Computer Use." } : {}),
         });
       } catch {
         resolve({ ok: false, accessibility: false, screenRecording: false, error: "Permission check returned invalid output." });
@@ -140,6 +149,7 @@ async function listRunningApps() {
 }
 
 async function openComputerUseSetupApp() {
+  if (process.platform !== "darwin") throw new Error("Desktop Computer Use requires macOS 14 or later.");
   // Open the GUI. Use the .app bundle if available so macOS shows it as
   // a real app with its own dock icon and permission identity.
   const appPath = computerUseHelperAppPath();
