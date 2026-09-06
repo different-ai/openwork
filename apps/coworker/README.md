@@ -1305,7 +1305,8 @@ fences late results and automatic resumption. Unknown legacy Worker origins do
 not route to whichever discussion happens to be open.
 
 Defaults: four active collaboration executions, one producer per native session,
-30-second setup, 60-second admission observation, 15-minute execution limits,
+30-second setup, 60-second admission observation, three-minute group replies,
+15-minute private execution limits,
 one-hour dependency deadlines, depth two, at most three dependencies per task,
 and at most two explicit follow-ups. Workers retain the existing background
 capacity setting. An admitted but incomplete idle execution requires recovery;

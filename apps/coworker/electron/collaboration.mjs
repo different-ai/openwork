@@ -8,7 +8,16 @@ const terminal = new Set(["succeeded", "failed", "cancelled"]);
 const text = (value, max = 4000) => typeof value === "string" ? value.trim().slice(0, max) : "";
 const keyFor = (...parts) => createHash("sha256").update(JSON.stringify(parts)).digest("hex").slice(0, 24);
 export const collaborationId = (...parts) => `work_${keyFor(...parts)}`;
-export const nativeMessageId = () => `msg_${Date.now().toString(16)}${randomUUID().replaceAll("-", "").slice(0, 20)}`;
+let lastMessageTimestamp = 0;
+let messageCounter = 0;
+/** Match native ascending IDs: a six-byte millisecond/counter prefix and
+ * fourteen random characters. Persisted IDs are never rewritten on upgrade. */
+export function nativeMessageId(timestamp = Date.now()) {
+  if (timestamp !== lastMessageTimestamp) { lastMessageTimestamp = timestamp; messageCounter = 0; }
+  const order = BigInt(timestamp) * 0x1000n + BigInt(++messageCounter);
+  const prefix = (order & 0xffffffffffffn).toString(16).padStart(12, "0");
+  return `msg_${prefix}${randomUUID().replaceAll("-", "").slice(0, 14)}`;
+}
 export async function withAbort(promise, signal) {
   let abort;
   const interrupted = new Promise((_, reject) => { abort = () => reject(signal.reason ?? new Error("Stopped.")); signal.addEventListener("abort", abort, { once: true }); });

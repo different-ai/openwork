@@ -5,7 +5,7 @@ import { facilitatorPrompt, earlierSpeakerOrders, routeWithFacilitator, facilita
 
 /** The window only submits requests and reads projections. All group execution
  * and cancellation remain alive when that window navigates or reloads. */
-export function createGroupExecution({ directory, collaboration, coworkerFor, coordinator, catalogFor, clientFor, setupTimeoutMs = 30_000, pollMs = 750 }) {
+export function createGroupExecution({ directory, collaboration, coworkerFor, coordinator, catalogFor, clientFor, setupTimeoutMs = 30_000, replyTimeoutMs = 180_000, pollMs = 750 }) {
   const active = new Map();
   let timer;
   let closed = false;
@@ -74,7 +74,7 @@ export function createGroupExecution({ directory, collaboration, coworkerFor, co
           }
           executions.add(id);
           const words = request.attempt ? `Continue the earlier group request from the work already present in this thread. This is a follow-up, not permission to repeat completed tool actions. Inspect the existing results, state what was completed, and perform only missing work. If an earlier action's outcome is uncertain, ask the person instead of repeating it.\n\nOriginal objective and current group context:\n${prompt}` : prompt;
-          const entry = await collaboration.submit({ id, owner, groupRequestId: request.id, prompt: request.context ? `${request.context}\n\n${words}` : words, tools: { coworker_team_refer: false } });
+          const entry = await collaboration.submit({ id, owner, groupRequestId: request.id, prompt: request.context ? `${request.context}\n\n${words}` : words, timeoutMs: replyTimeoutMs, tools: { coworker_team_refer: false } });
           return collaboration.wait(entry.id, signal);
         },
         route: async (input) => {

@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { createCollaboration } from "./collaboration.mjs";
+import { createCollaboration, nativeMessageId } from "./collaboration.mjs";
 import { createGroupExecution, repairGroupSelection } from "./group-execution.mjs";
 import {
   INTERRUPTED_TURN_MESSAGE,
@@ -34,6 +34,12 @@ async function withHome(run) {
 }
 
 test("a group needs two distinct valid coworkers", () => {
+  const timestamp = 1_700_000_000_000;
+  const first = nativeMessageId(timestamp);
+  const second = nativeMessageId(timestamp);
+  assert.equal(first.slice(4, 16), ((BigInt(timestamp) * 0x1000n + 1n) & 0xffffffffffffn).toString(16).padStart(12, "0"));
+  assert.match(first, /^msg_[0-9a-f]{12}[0-9A-Za-z]{14}$/);
+  assert.ok(first < second);
   assert.deepEqual(normalizeParticipantSlugs(["scout", "nova", "scout"]), ["scout", "nova"]);
   assert.throws(() => normalizeParticipantSlugs(["scout"]), /at least two/);
   assert.throws(() => normalizeParticipantSlugs(["scout", "../etc"]), /Invalid coworker slug/);

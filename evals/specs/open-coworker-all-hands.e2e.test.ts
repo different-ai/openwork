@@ -1,5 +1,8 @@
 import { clickButton, coworker, evalIn, fill, needs, screenshot, test, waitFor } from "@openwork/testkit";
-import { expect } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { expect, onTestFinished } from "vitest";
 import { allHandsModel } from "../packages/labs/src/mock-all-hands-model.ts";
 const enabled = process.env.OPENWORK_EVAL_E2E_TESTS === "1";
 type App = Awaited<ReturnType<typeof coworker>>;
@@ -20,7 +23,11 @@ async function openSettings(app: App) {
 test.skipIf(!enabled)("All Hands is optional, chats with coworkers, remembers focus, and keeps history when disabled", { timeout: 900_000 }, async ({ evidence }) => {
   needs({ optIn: ["OPENWORK_EVAL_E2E_TESTS"], commands: ["opencode"] });
   await using model = await allHandsModel();
-  await using app = await coworker({ name: "all-hands" });
+  // Native engines walk parent folders for configuration. A profile inside
+  // the checkout inherits development plugins rather than a person's setup.
+  const profileDir = await mkdtemp(path.join(os.tmpdir(), "open-coworker-all-hands-profile-"));
+  onTestFinished(() => rm(profileDir, { recursive: true, force: true }));
+  await using app = await coworker({ name: "all-hands", profileDir });
   await waitFor(app, `(document.body?.innerText ?? "").toLowerCase().includes("welcome to open coworker")`, { timeoutMs: 120_000, label: "welcome" });
   for (const name of ["Scout", "Editor"]) await invoke(app, "coworkers.create", { name, role: name === "Scout" ? "Research partner" : "Writing partner", mission: "Help the team review the launch.", avatarColor: "blue", avatarGlasses: "round" });
   const runtime = await invoke(app, "runtime.info");
@@ -60,6 +67,7 @@ test.skipIf(!enabled)("All Hands is optional, chats with coworkers, remembers fo
   await waitFor(app, `document.querySelector('[data-testid="all-hands-current-focus"]')?.textContent === "customer blockers"`, { label: "focus remembered from chat" });
   await waitFor(app, `document.querySelectorAll('[data-message-role="user"]').length >= 2 && document.querySelector('[data-testid="group-chat"]')?.getAttribute("data-live") === "false"`, { timeoutMs: 240_000, label: "focus discussion settled" });
   const groupId = await setting(app, "groupId");
+  expect(await evalIn(app, `(async () => (await window.__COWORKER__.invoke("groups.get", { id: ${JSON.stringify(groupId)} })).result.turns.at(-1)?.status)()`, { awaitPromise: true })).toBe("succeeded");
   await evalIn(app, "location.reload(); true");
   await waitFor(app, `Boolean(document.querySelector('[data-testid="group-rail-row"][aria-label="All Hands"]'))`, { timeoutMs: 120_000, label: "saved All Hands" });
   expect(await setting(app, "groupId")).toBe(groupId);
@@ -71,6 +79,7 @@ test.skipIf(!enabled)("All Hands is optional, chats with coworkers, remembers fo
   await screenshot(app);
   await clickButton(app, "Gather the team");
   await waitFor(app, `document.querySelectorAll('[data-message-role="user"]').length >= 3 && document.querySelector('[data-testid="group-chat"]')?.getAttribute("data-live") === "false"`, { timeoutMs: 240_000, label: "manual briefing settled" });
+  expect(await evalIn(app, `(async () => (await window.__COWORKER__.invoke("groups.get", { id: ${JSON.stringify(groupId)} })).result.turns.at(-1)?.status)()`, { awaitPromise: true })).toBe("succeeded");
   // Configure a real future slot through the product boundary, then leave the room.
   // The scheduled turn must arrive without clicking Gather or revisiting All Hands.
   const nextTime = String(await evalIn(app, `(() => { const at = new Date(Date.now() + 65_000); return String(at.getHours()).padStart(2, "0") + ":" + String(at.getMinutes()).padStart(2, "0"); })()`));
@@ -78,7 +87,10 @@ test.skipIf(!enabled)("All Hands is optional, chats with coworkers, remembers fo
   await evalIn(app, `document.querySelector('[data-testid="all-hands-source"]').click(); true`);
   // Use the source card to leave All Hands; it opens the coworker's actual conversation.
   await waitFor(app, `document.querySelector('[data-testid="all-hands-space"]')?.getAttribute("data-active") === "false"`, { label: "another conversation remains active" });
-  await waitFor(app, `(async () => { const group = (await window.__COWORKER__.invoke("groups.get", { id: ${JSON.stringify(groupId)} })).result; return group.turns.some(turn => turn.clientMessageId.startsWith("all-hands:") && turn.status === "succeeded"); })()`, { awaitPromise: true, timeoutMs: 180_000, label: "scheduled briefing completed in background" });
+  await waitFor(app, `(async () => { const group = (await window.__COWORKER__.invoke("groups.get", { id: ${JSON.stringify(groupId)} })).result; return group.turns.some(turn => turn.clientMessageId.startsWith("all-hands:") && turn.status === "succeeded"); })()`, { awaitPromise: true, timeoutMs: 180_000, label: "scheduled briefing completed in background" }).catch(async (error) => {
+    const [group, status, activity] = await Promise.all([invoke(app, "groups.get", { id: groupId }), invoke(app, "groups.status", { id: groupId }), invoke(app, "groups.activity", { id: groupId })]);
+    throw new Error(`${String(error)}\nGroup state: ${JSON.stringify({ group, status, activity })}\nFixture prompts: ${JSON.stringify(model.prompts.map((prompt) => prompt.slice(0, 250)))}`);
+  });
   expect(await evalIn(app, `document.querySelector('[data-testid="all-hands-space"]')?.getAttribute("data-active")`)).toBe("false");
   const occurrence = await setting(app, "lastOccurrence");
   expect(occurrence).not.toBe("");
