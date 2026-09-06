@@ -25,6 +25,13 @@ export async function observeTranscript(probe: Probe, entries: readonly { role: 
     window[key] = { state, stop() { clearTimeout(timer); cancelAnimationFrame(frame); } };
   }`, { args: [key, JSON.stringify(entries)] });
   return {
+    read() {
+      return probe.eval(`(key) => {
+        const observer = window[key];
+        if (!observer) throw new Error("Transcript observer was lost before verification");
+        return observer.state;
+      }`, { args: [key] });
+    },
     async finish() {
       const result = await probe.eval(`(key) => {
         const observer = window[key];

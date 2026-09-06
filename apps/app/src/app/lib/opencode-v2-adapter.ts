@@ -705,6 +705,33 @@ export function translateV2Event(
   const properties = eventProperties(value);
   const sessionID = readSessionID(properties);
 
+  if (type === "session.inbox.enqueued") {
+    const messageID = readString(properties, "inboxID");
+    const item = readRecord(properties, "item");
+    const payload = readRecord(item, "payload");
+    if (!sessionID || !messageID || readString(item, "type") !== "user" || !payload) return null;
+    // The inbox ID becomes the persisted user-message ID on delivery. Using
+    // it here lets the live row reconcile with history without duplicating it.
+    const message = mapV2Message({
+      ...payload,
+      id: messageID,
+      type: "user",
+      time: { created: readNumber(value, "created") ?? readTimestamp(properties) },
+    }, sessionID);
+    if (!message) return null;
+    return [
+      { type: "message.updated", properties: { info: message.info } },
+      ...message.parts.map((part): OpencodeEvent => ({ type: "message.part.updated", properties: { part } })),
+    ];
+  }
+
+  if (type === "session.inbox.cancelled") {
+    const messageID = readString(properties, "inboxID");
+    return sessionID && messageID
+      ? [{ type: "message.removed", properties: { sessionID, messageID } }]
+      : null;
+  }
+
   if (type === "session.execution.started") {
     if (!sessionID) return null;
     return [{ type: "session.status", properties: { sessionID, status: { type: "busy" } } }];

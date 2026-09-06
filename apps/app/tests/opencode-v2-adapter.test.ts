@@ -151,6 +151,39 @@ function jsonResponse(value: unknown, status = 200): Response {
 }
 
 describe("OpenCode v2 event translation", () => {
+  test("renders an admitted user message before execution using its persisted identity", () => {
+    const state = createV2EventTranslationState();
+    const admitted = {
+      type: "session.inbox.enqueued",
+      created: 1_788_657_600_000,
+      location: { directory: "/workspace" },
+      data: {
+        sessionID: "ses_upgrade",
+        inboxID: "msg_user",
+        item: { type: "user", payload: { text: "hi" }, delivery: "steer" },
+      },
+    };
+    const expected = [
+      { type: "message.updated", properties: { info: {
+        id: "msg_user", sessionID: "ses_upgrade", role: "user", time: { created: admitted.created },
+      } } },
+      { type: "message.part.updated", properties: { part: {
+        id: "msg_user:0", messageID: "msg_user", sessionID: "ses_upgrade", type: "text", text: "hi",
+      } } },
+    ];
+    expect(translateV2Event(admitted, state)).toEqual(expected);
+    // A replay must update the same message and part, not create another row.
+    expect(translateV2Event(admitted, state)).toEqual(expected);
+    expect(translateV2Event({
+      type: "session.inbox.cancelled", data: { sessionID: "ses_upgrade", inboxID: "msg_user" },
+    }, state)).toEqual([
+      { type: "message.removed", properties: { sessionID: "ses_upgrade", messageID: "msg_user" } },
+    ]);
+    expect(translateV2Event({ ...admitted, data: {
+      ...admitted.data, item: { type: "synthetic", payload: { text: "Internal instructions" }, delivery: "steer" },
+    } }, state)).toBeNull();
+  });
+
   test("uses the created envelope timestamp for an untitled session", () => {
     const created = 1_788_548_737_221;
     const event = {
