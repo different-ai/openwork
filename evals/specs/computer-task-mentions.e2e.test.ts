@@ -18,17 +18,41 @@ test("computer mentions steer tasks through Connect and Automations names the co
     await user.type("composer", "COMPUTER-CLOUD-TASK Summarize the project notes.");
     await user.press("Enter");
     await user.see({ text: "Received computer task.", nth: 0 }, { timeoutMs: 90_000 });
+    await user.see({ text: /^@cloud COMPUTER-CLOUD-TASK Summarize the project notes\.$/ });
+    await user.notSee({ text: /The user selected @cloud|Use OpenWork Connect search_capabilities/ });
+    await user.reload();
+    await user.see({ text: /^@cloud COMPUTER-CLOUD-TASK Summarize the project notes\.$/ });
+    await user.notSee({ text: /The user selected @cloud|Use OpenWork Connect search_capabilities/ });
+    evidence.recordAssertionEvidence("Cloud mention stays compact after reload", "The user sees the exact @cloud task text before and after reload; generated routing instructions are absent in both views.", true);
   });
 
   await step("typing desktop directly works without selecting the menu", async () => {
-    await user.click({ role: "button", label: "New task" });
+    await user.click({ role: "button", label: "New session" });
     await user.type("composer", "@desktop COMPUTER-DESKTOP-TASK Summarize my local project notes.");
     await user.press("Enter");
     await user.see({ text: "Received computer task.", nth: 0 }, { timeoutMs: 90_000 });
-    await user.click({ role: "button", label: "New task" });
+    await user.click({ role: "button", label: "New session" });
     await user.type("composer", "COMPUTER-PLAIN-TASK Explain the address person@cloud and the word desktop.");
     await user.press("Enter");
     await user.see({ text: "Received computer task.", nth: 0 }, { timeoutMs: 90_000 });
+  });
+
+  await step("skill mentions keep generated instructions out of the user message", async () => {
+    for (const { token, visible, hidden } of [
+      { token: "[skill summarize]", visible: "summarize COMPUTER-PLAIN-TASK Summarize notes.", hidden: /Load \[skill summarize\] and follow its instructions/ },
+      { token: "[connect-skill summarize|Summarize|Team tools|skill:summarize]", visible: "/summarize COMPUTER-PLAIN-TASK Summarize notes.", hidden: /skill:summarize/ },
+    ]) {
+      await user.click({ role: "button", label: "New session" });
+      await user.type("composer", `${token} COMPUTER-PLAIN-TASK Summarize notes.`);
+      await user.press("Enter");
+      await user.see({ text: "Received computer task.", nth: 0 }, { timeoutMs: 90_000 });
+      await user.see({ text: visible });
+      await user.notSee({ text: hidden });
+      await user.reload();
+      await user.see({ text: visible });
+      await user.notSee({ text: hidden });
+    }
+    evidence.recordAssertionEvidence("Skill labels survive reload without instruction expansion", "Both local and Connect skill labels remain visible before and after reload, with generated instructions absent from chat.", true);
   });
 
   await step("computer handoffs reach Connect, while ordinary text makes no tool call", async () => {
@@ -37,6 +61,8 @@ test("computer mentions steer tasks through Connect and Automations names the co
       { visible: "@cloud COMPUTER-CLOUD-TASK Summarize the project notes.", routing: [expect.stringContaining('target "cloud"')] },
       { visible: "@desktop COMPUTER-DESKTOP-TASK Summarize my local project notes.", routing: [expect.stringContaining('target "desktop"')] },
       { visible: "COMPUTER-PLAIN-TASK Explain the address person@cloud and the word desktop.", routing: [] },
+      { visible: "[skill summarize] COMPUTER-PLAIN-TASK Summarize notes.", routing: [expect.stringContaining("Load [skill summarize] and follow its instructions.")] },
+      { visible: "/summarize COMPUTER-PLAIN-TASK Summarize notes.", routing: [expect.stringContaining("skill:summarize")] },
     ]);
     const calls = await probe.toolCalls(world.den.mocks.agent);
     expect(calls.map(({ name, args }) => ({ name, args }))).toEqual([
