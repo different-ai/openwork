@@ -68,8 +68,9 @@ never falls back to an external browser.
 
 Tasks use the built-in browser's existing sign-in. Sign in directly in the page
 and resume the task; the persistent partition keeps that session available.
-External profile import and login syncing are separately owned work, not part
-of this feature. No cookies are imported or copied from another browser.
+The separately enabled login-sync feature can also supply that shared sign-in.
+Browser task tools neither read another browser's profile nor enroll sites in
+sync; its native consent and managed-desktop restrictions remain unchanged.
 
 Popups force the same sandbox, context isolation and same-origin security as
 ordinary tabs, regardless of website-supplied features. The per-frame preload
@@ -117,7 +118,7 @@ untrusted even if its tool claims to be read-only.
 Conversation-owned tabs, background-view parking, viewport recovery, team
 execution policy, native computer use and workflow dashboard panels remain
 owned by their current implementations. Browser tasks reuse those boundaries.
-External profile syncing remains separate in #4452. The browser access
+External profile syncing is provided separately by merged #4452. The browser access
 mechanism from #4481 is superseded by the merged execution policy in #4564;
 this feature adds no Den policy fields or login-import API.
 
@@ -178,6 +179,7 @@ without its own desktop browser returns an unavailable result; this does not
 connect to a different machine's external browser.
 The deterministic provider verifies tool availability, execution context and
 result delivery and a verified completion answer in the conversation. It does not prove open-ended planning
-quality for every provider. External browser profiles, declarative WebMCP,
-closed-shadow-root DOM references, file transfer, restart restoration of live
-tab handles, and continuous login sync remain outside the supported subset.
+quality for every provider. Direct control of external browser profiles,
+declarative WebMCP, closed-shadow-root DOM references, file transfer and restart
+restoration of live tab handles remain outside the browser-task subset. Login
+sync retains its separately documented support limits.
