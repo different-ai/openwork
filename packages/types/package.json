@@ -62,6 +62,7 @@
     "./den/desktop-policies": {
       "types": "./src/den/desktop-policies.ts",
       "development": "./src/den/desktop-policies.ts",
+      "bun": "./src/den/desktop-policies.ts",
       "default": "./dist/den/desktop-policies.js"
     },
     "./den/connect-diagnostics": {
