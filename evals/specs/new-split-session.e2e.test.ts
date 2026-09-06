@@ -54,6 +54,11 @@ test("side chats keep questions, replies, and saved splits attached to their own
     await user.see(paletteInput);
     await user.type(paletteInput, query, { replace: true });
     await user.click({ role: "option", label });
+    await probe.eventually(() => probe.eval(`(() => {
+      const input = document.querySelector('[data-command-palette-input]');
+      return !input || input.getClientRects().length === 0 || getComputedStyle(input).visibility === "hidden";
+    })()`), { within: 10_000, label: "the palette closes after selecting the action", until: (value) => value === true })
+      .catch(async (error: unknown) => { await user.screenshot(); throw error; });
     await user.notSee(paletteInput);
   };
   const reopen = async (sessionId: string) => {

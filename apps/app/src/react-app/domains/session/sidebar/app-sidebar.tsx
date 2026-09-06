@@ -2312,7 +2312,7 @@ function SessionMenuItem({
             aria-label={accessibleState}
             aria-description={shortcutDigit === undefined ? undefined : sessionNumberShortcutDescription(ctx.sessionNumberShortcutOs, shortcutDigit)}
             aria-keyshortcuts={ariaKeyShortcuts}
-            className={cn(rowButtonClass, "w-full")}
+            className={cn(rowButtonClass, "w-full text-start")}
             style={rowButtonStyle}
           >
             {leading}
