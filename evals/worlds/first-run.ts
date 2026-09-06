@@ -90,6 +90,7 @@ export async function appSmokeWorld(seed: Seed) {
     },
     async packagedToolIds() {
       return evalIn(app, `(async () => {
+        await window.__OPENWORK_ELECTRON__.invokeDesktop("engineStart", ${JSON.stringify(seed.tmpPath("packaged-plugin-smoke"))}, { runtime: "direct" });
         const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
         const headers = { Authorization: "Bearer " + info.ownerToken, "Content-Type": "application/json" };
         const created = await fetch(info.baseUrl + "/workspaces/local", {
