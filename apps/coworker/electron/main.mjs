@@ -25,7 +25,9 @@ import { readExecutionActivity } from "../src/lib/progress-activity.ts";
 import { PROGRESS_LIMITS } from "../src/lib/progress-config.ts";
 import { createGroupExecution, repairGroupSelection } from "./group-execution.mjs";
 import { installCollaborationPlugin } from "./collaboration-plugin.mjs";
-import { connectedModelCatalog } from "../src/lib/threads.ts";
+import { installProgressPlugin } from "./progress-plugin.mjs";
+import { createProgressSummaries } from "./progress-summaries.mjs";
+import { connectedModelCatalog, createCoworkerThreads, eligibleProgressModels } from "../src/lib/threads.ts";
 import { cloudModelOptions, resolveCloudModel } from "../src/lib/cloud-responsibilities.ts";
 import { createDenAutomationsClient, listAssignedCoworkerTemplates } from "../src/lib/den.ts";
 import { createTemplateInstaller, exportCoworkerTemplate, parseCoworkerTemplateFile, templateScope } from "./templates.mjs";
@@ -183,6 +185,9 @@ const serverConfigPath = process.env.COWORKER_SERVER_CONFIG?.trim()
 // rewrites the OpenWork desktop app's engine state on the same machine.
 process.env.OPENWORK_RUNTIME_DB ||= path.join(path.dirname(serverConfigPath), "coworker-runtime.sqlite");
 process.env.OPENWORK_ENV_STORE ||= path.join(path.dirname(serverConfigPath), "coworker-env.json");
+// This desktop client renders native question cards. A non-interactive parent
+// process must not hide the tool; workspace permission rules still govern it.
+process.env.OPENCODE_ENABLE_QUESTION_TOOL = "true";
 const settingsPath = path.join(path.dirname(serverConfigPath), SETTINGS_FILE);
 
 /**
@@ -850,22 +855,12 @@ async function collaborationClient(slug, { kind = "reply", signal } = {}) {
   }
   signal?.throwIfAborted();
   const client = createHeadlessThreadClient({ baseUrl: handle.url, workspaceId: coworker.workspaceId, token: ownerToken, defaultModel: await localRunModel(coworker, kind) });
-  client.pendingInteractions = async (threadId, abort) => {
-    const base = `${handle.url}/workspace/${encodeURIComponent(coworker.workspaceId)}/opencode`;
-    const headers = { Authorization: `Bearer ${ownerToken}` };
-    const replies = await Promise.all(["/permission", "/question", `/v2/session/${encodeURIComponent(threadId)}/permission`].map(async (route) => {
-      const response = await fetch(`${base}${route}`, { headers, signal: AbortSignal.any([abort, AbortSignal.timeout(8_000)]) });
-      // Older native engines serve their HTML fallback for an unknown v2 route.
-      // That optional protocol probe is not a failed collaboration turn.
-      const optional = route.startsWith("/v2/");
-      const json = response.headers.get("content-type")?.includes("application/json");
-      if (optional && (!json || response.status === 404)) return [];
-      if (!response.ok || !json) throw new Error("The coworker's permission requests could not be read. Its work has been kept.");
-      const result = await response.json();
-      return Array.isArray(result) ? result : result.data ?? [];
-    }));
-    return replies.some((items) => items.some((item) => item.sessionID === threadId));
-  };
+  const interactions = createCoworkerThreads({ serverUrl: handle.url, workspaceId: coworker.workspaceId, token: ownerToken });
+  client.workspaceId = coworker.workspaceId;
+  client.pendingInteractions = interactions.listThreadInteractions;
+  client.replyPermission = interactions.replyPermission;
+  client.replyQuestion = interactions.replyQuestion;
+  client.rejectQuestion = interactions.rejectQuestion;
   return client;
 }
 
@@ -877,10 +872,38 @@ async function privateOwner(slug, threadId, kind = "private") {
   return collaboration.registerOwner({ slug, threadId, conversationId: threadId, kind });
 }
 
-/** Activity observation never starts a server, installs tools, or cancels native work. */
+let progressCoordinator = null;
+/** Only an already-warmed coordinator is usable. No setup or engine repair on this path. */
+async function readyProgressTransport() {
+  const handle = serverHandle;
+  const workspaceId = progressCoordinator?.workspaceId;
+  if (!handle?.managedOpencode || !workspaceId || !warmedCoworkerWorkspaces.has(workspaceId)) return null;
+  const response = await fetch(`${handle.url}/workspace/${encodeURIComponent(workspaceId)}/opencode/provider`, { headers: { Authorization: `Bearer ${ownerToken}` }, signal: AbortSignal.timeout(PROGRESS_LIMITS.activityReadTimeoutMs) });
+  if (!response.ok || handle !== serverHandle) return null;
+  const catalog = connectedModelCatalog(await response.json());
+  return {
+    key: `${handle.url}/${workspaceId}`,
+    models: eligibleProgressModels(catalog),
+    client: createHeadlessThreadClient({ baseUrl: handle.url, workspaceId, token: ownerToken, requestTimeoutMs: PROGRESS_LIMITS.timeoutMs }),
+  };
+}
+
+const progressSummaries = createProgressSummaries({
+  settings: () => readSettings(settingsPath),
+  ready: readyProgressTransport,
+  listExecutions: () => collaboration.read((state) => Object.values(state.executions).filter((entry) => {
+    const task = state.tasks[entry.taskId];
+    if (entry.state !== "running" || entry.owner.kind === "coordinator" || task?.executionId !== entry.id || ["succeeded", "failed", "cancelled"].includes(task.state)) return false;
+    for (let parent = task, depth = 0; parent && depth < 8; parent = state.tasks[parent.parentId], depth++) if (parent.cancelRequested || parent.state === "cancelled") return false;
+    return !state.groups[entry.owner.groupId]?.cancelledRequestIds?.includes(entry.groupRequestId);
+  }).map((entry) => ({ executionId: entry.id, budgetId: entry.taskId, createdAt: Math.min(entry.createdAt, state.tasks[entry.taskId].createdAt), slug: entry.owner.slug, threadId: entry.owner.threadId, groupId: entry.owner.groupId }))),
+  readActivity: async (entry) => (await readCollaborationActivity({ ...(entry.groupId ? { groupId: entry.groupId } : { slug: entry.slug, threadId: entry.threadId }), executionId: entry.executionId }))[0],
+});
+
+/** Activity observation never starts a server, installs tools, or cancels parent work. */
 async function readCollaborationActivity(scope) {
   const entries = await collaboration.activityEntries(scope, PROGRESS_LIMITS.maxActivityExecutions);
-  const observed = await Promise.all(entries.map(async (entry) => {
+  const observed = await Promise.all(entries.filter((entry) => !scope.executionId || entry.executionId === scope.executionId).map(async (entry) => {
     const empty = { replies: [], tools: [], completedSteps: 0, failedSteps: 0, available: false, nativeStatus: "unknown" };
     if (!serverHandle?.managedOpencode) return { ...entry, ...empty };
     try {
@@ -893,7 +916,9 @@ async function readCollaborationActivity(scope) {
   const current = await collaboration.activityEntries(scope, PROGRESS_LIMITS.maxActivityExecutions);
   return observed.flatMap((entry) => {
     const latest = current.find((item) => item.executionId === entry.executionId && item.messageId === entry.messageId && item.threadId === entry.threadId && item.slug === entry.slug);
-    return latest ? [{ ...entry, ...latest }] : [];
+    if (!latest) return [];
+    const activity = { ...entry, ...latest };
+    return [{ ...activity, progressNote: progressSummaries.noteFor(activity) }];
   });
 }
 
@@ -1480,14 +1505,17 @@ async function listPreparedCoworkers() {
 async function ensureCoordinatorWorkspace() {
   await ensurePlatformServer();
   const coordinator = await ensureCoordinatorHome(coworkersDir);
+  await installProgressPlugin(coordinator);
   if (coordinator.workspaceId) {
     await warmCoworkerWorkspace(coordinator);
+    progressCoordinator = coordinator;
     return coordinator;
   }
   const workspaceId = await registerCoworkerWorkspace(coordinator);
   const updated = await updateCoordinator(coworkersDir, { workspaceId });
   if (!serverHandle?.managedOpencode) await restartPlatformServer();
   await warmCoworkerWorkspace(updated);
+  progressCoordinator = updated;
   return updated;
 }
 
@@ -1944,7 +1972,7 @@ const commands = {
   "turns.send": async ({ slug, threadId, prompt, messageId, model, retry, retryByPerson, retryLabel, kind }) => {
     const owner = await privateOwner(slug, threadId, kind === "assignment" ? "assignment" : "private");
     const entry = await collaboration.submit({ owner, prompt, messageId, model, retry, retryByPerson: retryByPerson === true, retryLabel, track: true });
-    return collaboration.acceptance(entry.id);
+    return { ...await collaboration.acceptance(entry.id), prompt: entry.prompt };
   },
   "turns.cancel": async ({ slug, threadId, messageId }) => { await collaboration.cancelThread(slug, threadId, messageId); return { ok: true }; },
   "templates.sync": async ({ userEmail, automatic = false, installIds = [] }) => {
@@ -2098,6 +2126,7 @@ const commands = {
   "groups.list": async () => listGroups(coworkersDir),
   "groups.submit": async ({ id, ...input }) => groupExecution.submit(id, input),
   "groups.status": async ({ id }) => groupExecution.status(id),
+  "groups.interactions.reply": async (input) => { await groupExecution.replyInteraction(input); return { ok: true }; },
   "groups.activity": async ({ id }) => {
     // Read delivered bubbles first. An execution behind any of these is already terminal,
     // so the later running-only projection cannot return the same reply as a live bubble.
@@ -2253,9 +2282,14 @@ const commands = {
   "allHands.prepare": async () => prepareAllHands(coworkersDir, await listCoworkers(coworkersDir)),
   "allHands.claim": async () => claimAllHands(coworkersDir),
   "settings.get": async () => readSettings(settingsPath),
+  "settings.progressModels": async () => {
+    const transport = await readyProgressTransport().catch(() => null);
+    return (transport?.models ?? []).map(({ id, label, cost }) => ({ id, label, cost }));
+  },
   "settings.update": async (patch) => {
     const next = await updateSettings(settingsPath, patch);
-    void drainLocalRunQueue();
+    progressSummaries.configure(next);
+    if (patch?.maxParallelLocalRuns !== undefined) void drainLocalRunQueue();
     return next;
   },
   "shell.openExternal": async ({ url }) => {
@@ -2412,7 +2446,13 @@ if (!singleInstanceLock) {
     installApplicationMenu();
     registerIpc();
     // Start the platform in the background; the renderer gates on runtime.info.
-    void ensurePlatformServer().then(async () => { await groupExecution.start(); await collaboration.start(); }).catch((error) => {
+    void ensurePlatformServer().then(async () => {
+      await groupExecution.start();
+      await collaboration.start();
+      progressSummaries.start();
+      // Ordinary initialization, never triggered by a progress note or activity read.
+      void ensureCoordinatorWorkspace().catch(() => {});
+    }).catch((error) => {
       engineError = error instanceof Error ? error.message : String(error);
     });
     startLocalResponsibilitiesScheduler();
@@ -2428,6 +2468,7 @@ if (!singleInstanceLock) {
   });
 
   app.on("before-quit", (event) => {
+    progressSummaries.stop();
     groupExecution.stop();
     void collaboration.stop();
     if (localResponsibilitiesTimer) {

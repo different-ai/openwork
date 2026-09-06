@@ -25,21 +25,23 @@ export function InteractionCards({
   onPermission,
   onAnswer,
   onSkip,
+  keyboardShortcuts = true,
 }: {
   coworker: CoworkerSummary;
   pending: PendingInteractions;
   onPermission: (permission: PendingPermission, decision: PermissionReply) => Promise<void>;
   onAnswer: (question: PendingQuestion, answers: string[][]) => Promise<void>;
   onSkip: (question: PendingQuestion) => Promise<void>;
+  keyboardShortcuts?: boolean;
 }) {
   if (pending.permissions.length === 0 && pending.questions.length === 0) return null;
   return (
     <div className="space-y-2" aria-live="polite">
       {pending.permissions.map((permission) => (
-        <PermissionCard key={permission.id} coworker={coworker} permission={permission} onDecide={onPermission} />
+        <PermissionCard key={permission.id} coworker={coworker} permission={permission} onDecide={onPermission} keyboardShortcuts={keyboardShortcuts} />
       ))}
       {pending.questions.map((question) => (
-        <QuestionCard key={question.id} coworker={coworker} question={question} onAnswer={onAnswer} onSkip={onSkip} />
+        <QuestionCard key={question.id} coworker={coworker} question={question} onAnswer={onAnswer} onSkip={onSkip} keyboardShortcuts={keyboardShortcuts} />
       ))}
     </div>
   );
@@ -83,10 +85,12 @@ function PermissionCard({
   coworker,
   permission,
   onDecide,
+  keyboardShortcuts,
 }: {
   coworker: CoworkerSummary;
   permission: PendingPermission;
   onDecide: (permission: PendingPermission, decision: PermissionReply) => Promise<void>;
+  keyboardShortcuts: boolean;
 }) {
   const [busy, setBusy] = useState<PermissionReply | "">("");
   const [error, setError] = useState("");
@@ -109,6 +113,7 @@ function PermissionCard({
   ];
 
   useEffect(() => {
+    if (!keyboardShortcuts) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (busy || typingInField(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
       const choice = choices.find((item) => item.letter === event.key.toUpperCase());
@@ -160,11 +165,13 @@ function QuestionCard({
   question,
   onAnswer,
   onSkip,
+  keyboardShortcuts,
 }: {
   coworker: CoworkerSummary;
   question: PendingQuestion;
   onAnswer: (question: PendingQuestion, answers: string[][]) => Promise<void>;
   onSkip: (question: PendingQuestion) => Promise<void>;
+  keyboardShortcuts: boolean;
 }) {
   const [selected, setSelected] = useState<string[][]>(() => question.questions.map(() => []));
   const [custom, setCustom] = useState<string[]>(() => question.questions.map(() => ""));
@@ -232,6 +239,7 @@ function QuestionCard({
   }
 
   useEffect(() => {
+    if (!keyboardShortcuts) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (busy || typingInField(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
       // Letters answer the first question still waiting for a choice.
@@ -300,13 +308,13 @@ function QuestionCard({
       {error ? <div className="mt-2"><ErrorNote>{error}</ErrorNote></div> : null}
       {!instant || question.questions.some((item) => item.custom) ? (
         <div className="mt-3 flex items-center justify-between gap-2">
-          <p className="text-[11px] text-mist">{instant ? "Choose an option, or type your own and press Send." : "Press a letter to choose."}</p>
+          <p className="text-[11px] text-mist">{instant ? "Choose an option, or type your own and press Send." : keyboardShortcuts ? "Press a letter to choose." : "Choose your answers, then press Send."}</p>
           <Button variant="primary" className="text-xs" disabled={busy || !complete} onClick={() => void submit()}>
             {busy ? "Sending…" : "Send"}
           </Button>
         </div>
       ) : (
-        <p className="mt-2 px-1 text-[11px] text-mist">{busy ? "Sending…" : "Click or press a letter to answer."}</p>
+        <p className="mt-2 px-1 text-[11px] text-mist">{busy ? "Sending…" : keyboardShortcuts ? "Click or press a letter to answer." : "Choose an answer."}</p>
       )}
     </InteractionCard>
   );

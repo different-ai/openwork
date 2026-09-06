@@ -1,7 +1,7 @@
 import { useComposerDraft } from "@/ui/use-composer-draft";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
-import { coworkerBridge, type CollaborationReceipt, type CoworkerGroupSummary, type CoworkerGroupTurn, type CoworkerSummary, type GroupTimelineEvent, type RuntimeInfo } from "@/lib/bridge";
+import { coworkerBridge, type CollaborationReceipt, type CoworkerGroupSummary, type CoworkerGroupTurn, type CoworkerSummary, type GroupInteraction, type GroupTimelineEvent, type RuntimeInfo } from "@/lib/bridge";
 import { assignmentPrompt, assignmentTitle, timeLabelBetween, type DiscussionMessage } from "@/lib/conversation";
 import { combineSummaryLines, describeCoworkerSummary, type CoworkerSummaryLine } from "@/lib/coworker-summary";
 import { classifyThreads, discussionIds, loadDiscussionRegistry } from "@/lib/discussions";
@@ -27,7 +27,7 @@ import { PROGRESS_LIMITS } from "@/lib/progress-config";
 import { LiveRow } from "@/ui/live-row";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
 import { GroupAvatars } from "@/ui/coworker-rail";
-import { InteractionCard, LETTERS, OptionRow, typingInField } from "@/ui/interactions";
+import { InteractionCard, InteractionCards, LETTERS, OptionRow, typingInField } from "@/ui/interactions";
 import { ActionMenu, Button, ErrorNote, PlusIcon } from "@/ui/kit";
 import { CollaborationReceipts, SendButton, SummaryLine } from "@/ui/threads";
 import { useAutoGrow } from "@/ui/use-auto-grow";
@@ -214,6 +214,8 @@ export function GroupChat({
   const [observed, setObserved] = useState<{ groupId: string; timeline: GroupTimelineEvent[]; executions: ExecutionActivity[] }>({ groupId: "", timeline: [], executions: [] });
   const events = observed.groupId === group.id ? observed.timeline : [];
   const executions = observed.groupId === group.id ? observed.executions : [];
+  const [humanWaits, setHumanWaits] = useState<{ groupId: string; entries: GroupInteraction[] }>({ groupId: "", entries: [] });
+  const interactions = humanWaits.groupId === group.id ? humanWaits.entries : [];
   const [loaded, setLoaded] = useState(false);
   const [message, setMessage] = useComposerDraft(`group:${group.id}`);
   const [live, setLive] = useState(false);
@@ -269,6 +271,7 @@ export function GroupChat({
         const [status, activity, updated, work] = await Promise.all([coworkerBridge.groups.status(group.id), coworkerBridge.groups.activity(group.id), coworkerBridge.groups.get(group.id), coworkerBridge.collaboration.receipts({ groupId: group.id })]);
         if (cancelled) return;
         setLive(status.active); setLiveTurn(status.turn); setQueue(status.queue);
+        setHumanWaits({ groupId: group.id, entries: status.interactions });
         publishGroupRun({ groupId: group.id, active: status.active, ...(status.turn ? { turn: status.turn } : {}), done: !status.active });
         setObserved({ groupId: group.id, ...activity }); setReceipts(work); setLoaded(true); setError("");
         if (updated.updatedAt !== groupRef.current.updatedAt) changedRef.current(updated);
@@ -286,8 +289,8 @@ export function GroupChat({
   }, [group.id]);
 
   useEffect(() => {
-    onActivityLine(group.id, live && !liveTurn ? "Choosing who should respond…" : describeGroupActivity(events, nameFor, liveTurn));
-  }, [events, group.id, live, liveTurn, nameFor, onActivityLine]);
+    onActivityLine(group.id, interactions.length ? `${listNames(interactions.map((entry) => nameFor(entry.slug)))} waiting for you` : live && !liveTurn ? "Choosing who should respond…" : describeGroupActivity(events, nameFor, liveTurn));
+  }, [events, group.id, interactions, live, liveTurn, nameFor, onActivityLine]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -472,7 +475,7 @@ export function GroupChat({
   const showContinue = recoverable && !(unfinished.length === 1 && unfinished[0]?.status === "failed");
   const progressLine = liveTurn ? describeTurnProgress(liveTurn, nameFor) : "";
   const waiting = receipts.some((receipt) => ["waiting", "waiting-person", "resumption-queued"].includes(receipt.state));
-  const statusLine = !loaded || observed.groupId !== group.id ? "Checking activity" : error ? "Activity unavailable" : executions.length ? `${executions.length} active execution${executions.length === 1 ? "" : "s"}` : live ? (progressLine || "Choosing who should respond…") : waiting ? "Waiting for requested work" : "Ready";
+  const statusLine = !loaded || observed.groupId !== group.id ? "Checking activity" : error ? "Activity unavailable" : interactions.length ? "Waiting for you" : executions.length ? `${executions.length} active execution${executions.length === 1 ? "" : "s"}` : live ? (progressLine || "Choosing who should respond…") : waiting ? "Waiting for requested work" : "Ready";
 
   return (
     <div className="glass-main flex h-full min-w-0 flex-1 flex-col" data-testid="group-chat" data-group-id={group.id} data-live={live ? "true" : "false"}>
@@ -541,7 +544,7 @@ export function GroupChat({
                   <span title={speaker?.error && speaker.error !== event.text ? speaker.error : undefined}>{event.text}</span>
                   {speaker && recoverable ? (
                     <span className="flex items-center gap-x-3">
-                      <button type="button" className="font-medium text-snow/80 underline-offset-2 hover:underline" data-testid="group-speaker-retry" data-speaker={speaker.slug} onClick={() => void resume(recoverable, speaker.slug)}>Retry</button>
+                      <button type="button" className="font-medium text-snow/80 underline-offset-2 hover:underline" data-testid="group-speaker-retry" data-speaker={speaker.slug} onClick={() => void resume(recoverable, speaker.slug)}>Continue</button>
                       {failure?.modelRelated ? (
                         <button type="button" className="font-medium text-snow/80 underline-offset-2 hover:underline" onClick={() => onChooseModel(speaker.slug)}>Choose AI model</button>
                       ) : null}
@@ -594,11 +597,24 @@ export function GroupChat({
             );
           })}
           <CollaborationReceipts receipts={observed.groupId === group.id ? receipts : []} />
-          {executions.map((execution) => {
+          {interactions.map((entry) => {
+            const member = members.find((member) => member.slug === entry.slug);
+            if (!member) return null;
+            const binding = { groupId: group.id, executionId: entry.executionId, workspaceId: entry.workspaceId, threadId: entry.threadId, slug: entry.slug };
+            return <div key={entry.executionId} data-testid="group-waiting-person" data-execution-id={entry.executionId} data-thread-id={entry.threadId} data-speaker={entry.slug}>
+              <p className="mb-2 text-xs text-mist">{member.name} is waiting for your permission or answer.</p>
+              <InteractionCards coworker={member} pending={entry.pending} keyboardShortcuts={false}
+                onPermission={async (request, reply) => { await coworkerBridge.groups.replyInteraction({ ...binding, kind: "permission", requestId: request.id, reply }); }}
+                onAnswer={async (request, answers) => { await coworkerBridge.groups.replyInteraction({ ...binding, kind: "question", requestId: request.id, answers }); }}
+                onSkip={async (request) => { await coworkerBridge.groups.replyInteraction({ ...binding, kind: "question", requestId: request.id, reply: "reject" }); }} />
+              <button type="button" className="mt-2 text-xs text-mist underline" onClick={() => void coworkerBridge.collaboration.cancel(entry.executionId).catch((cause) => setError(String(cause)))}>Stop {member.name}'s step</button>
+            </div>;
+          })}
+          {executions.filter((execution) => !interactions.some((entry) => entry.executionId === execution.executionId)).map((execution) => {
             const member = coworkers.find((coworker) => coworker.slug === execution.slug);
             return member ? <GroupExecutionRow key={execution.executionId} activity={execution} coworker={member} runtime={runtime} /> : null;
           })}
-          {live && executions.length === 0 ? <p className="px-1 text-[11px] text-mist [overflow-wrap:anywhere]" data-testid="group-progress-phrase">{statusLine}</p> : null}
+          {live && executions.length === 0 && interactions.length === 0 ? <p className="px-1 text-[11px] text-mist [overflow-wrap:anywhere]" data-testid="group-progress-phrase">{statusLine}</p> : null}
           {showContinue && recoverable ? (
             <div className="flex items-center justify-center gap-3 text-[11px] text-mist" data-testid="group-turn-recovery" data-turn-id={recoverable.id}>
               <span>{listNames(unfinished.map((speaker) => nameFor(speaker.slug)))} still to reply</span>

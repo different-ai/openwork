@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { describeWorkLine, describeWorkProgress, describeWorkStep, executionDuration, executionMetadata, summarizeWork, workStepState } from "./work-receipt.ts";
-import { PROGRESS_LIMITS } from "./progress-config.ts";
-import { createProgressService, isLongProgress, progressFingerprint, progressNoteText, type ProgressNote, type ProgressObservation, type ProgressSummarizer } from "./progress-service.ts";
+import { PROGRESS_LIMITS, PROGRESS_SYSTEM } from "./progress-config.ts";
+import { createProgressBudget, createProgressService, isLongProgress, progressFingerprint, progressNoteText, type ProgressNote, type ProgressObservation, type ProgressSummarizer } from "./progress-service.ts";
 
 test("tool calls become steps a person can read, with the tool name kept for details", () => {
   const edit = describeWorkStep({ tool: "edit", status: "completed", input: { filePath: "/Users/me/coworkers/yo/memory/index.md" } });
@@ -122,7 +122,8 @@ test("summaries debounce, cap input/output/calls, suppress unchanged facts, and 
   assert.equal(requests.length, 1);
   assert.equal(requests[0]?.modelId, "chosen/cheap");
   assert.equal(requests[0]?.maxOutputTokens, PROGRESS_LIMITS.maxOutputTokens);
-  assert.ok(requests[0] && requests[0].prompt.length <= PROGRESS_LIMITS.maxInputChars);
+  assert.ok(requests[0] && Buffer.byteLength(requests[0].prompt + PROGRESS_SYSTEM) + PROGRESS_LIMITS.inputFramingBytes <= PROGRESS_LIMITS.maxInputBytes);
+  assert.doesNotMatch(requests[0]?.prompt ?? "", /[^\x20-\x7e]/);
   assert.doesNotMatch(requests[0]?.prompt ?? "", /execution-one/);
   assert.equal(notes.length, 1);
   assert.equal(progressNoteText(progressObservation, notes[0]), "Waiting for a result. Pending: 1 coworker result and 2 Worker results.");
@@ -155,6 +156,7 @@ test("new facts, timeout, and disposal abort summaries and reject late generatio
   pending[0]?.resolve('{"facts":["status","dependencies"]}');
   await Promise.resolve();
   assert.equal(notes.length, 0);
+  service.update({ ...progressObservation, completedSteps: 3 });
   context.mock.timers.tick(PROGRESS_LIMITS.minCallIntervalMs);
   assert.equal(pending.length, 2);
   context.mock.timers.tick(PROGRESS_LIMITS.timeoutMs);
@@ -171,6 +173,37 @@ test("new facts, timeout, and disposal abort summaries and reject late generatio
   service.update({ ...progressObservation, completedSteps: 5 });
   context.mock.timers.tick(60_000);
   assert.equal(pending.length, 3);
+});
+
+test("a main-owned budget survives service replacement and counts errors without retrying facts", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 20_000 });
+  const budget = createProgressBudget();
+  const calls: number[] = [];
+  const create = () => createProgressService({
+    executionId: progressObservation.executionId, enabled: true, cheapModelId: "fixture/progress", budget,
+    summarize: async () => { calls.push(Date.now()); throw new Error("fixture failure"); },
+    onNote: () => assert.fail("errors cannot select facts"),
+  });
+  let service = create();
+  service.update(progressObservation);
+  context.mock.timers.tick(PROGRESS_LIMITS.debounceMs);
+  await Promise.resolve();
+  service.dispose();
+  service = create();
+  service.update(progressObservation);
+  context.mock.timers.tick(60_000);
+  assert.equal(calls.length, 1);
+  for (let completedSteps = 3; completedSteps < 8; completedSteps++) {
+    service.dispose();
+    service = create();
+    service.update({ ...progressObservation, completedSteps });
+    context.mock.timers.tick(PROGRESS_LIMITS.minCallIntervalMs);
+    await Promise.resolve();
+  }
+  assert.equal(calls.length, 3);
+  assert.equal(budget.calls, 3);
+  assert.ok(calls.slice(1).every((at, index) => at - (calls[index] ?? 0) >= PROGRESS_LIMITS.minCallIntervalMs));
+  service.dispose();
 });
 
 test("the coworker's document tools read as plain steps: wrote, updated by section, put aside, archived", () => {

@@ -1,4 +1,4 @@
-import { PROGRESS_LIMITS } from "./progress-config.ts";
+import { PROGRESS_LIMITS, PROGRESS_SYSTEM } from "./progress-config.ts";
 import { EXECUTION_KINDS, EXECUTION_STATES, executionKind, executionState, executionTimestamp, type ExecutionMetadataInput } from "./work-receipt.ts";
 
 export const PROGRESS_STATES = {
@@ -28,10 +28,16 @@ export type ProgressObservation = {
   failedSteps?: number;
   pendingCoworkers?: number;
   pendingWorkers?: number;
+  /** Main-owned validated selection; never a model-authored string. */
+  note?: ProgressNote;
 };
 type FactId = "status" | "steps" | "dependencies";
 type ProgressFact = { id: FactId; text: string };
 export type ProgressNote = { fingerprint: string; factIds: FactId[]; source: "observed" | "selected" };
+export type ProgressBudget = { calls: number; lastCallAt: number; pending: boolean; attempted: Set<string> };
+export function createProgressBudget(): ProgressBudget {
+  return { calls: 0, lastCallAt: -Infinity, pending: false, attempted: new Set() };
+}
 
 function count(value: number | undefined): number | null {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.min(PROGRESS_LIMITS.maxCount, Math.floor(value)) : null;
@@ -107,20 +113,20 @@ export function createProgressService(options: {
   /** Explicitly selected inexpensive model. Absence always means zero inference. */
   cheapModelId?: string;
   summarize?: ProgressSummarizer;
+  /** Retained by main even when settings dispose and recreate the service. */
+  budget?: ProgressBudget;
   onNote: (note: ProgressNote) => void;
 }) {
   const { executionId, enabled, cheapModelId, summarize, onNote } = options;
   const modelId = cheapModelId?.trim();
   let currentKey = "";
   let generation = 0;
-  let calls = 0;
-  let lastCallAt = -Infinity;
+  const budget = options.budget ?? createProgressBudget();
   let disposed = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let timeout: ReturnType<typeof setTimeout> | undefined;
   let controller: AbortController | undefined;
   let latest: ProgressNote | undefined;
-  const attempted = new Set<string>();
   const cancel = () => {
     generation++;
     clearTimeout(timer);
@@ -145,18 +151,19 @@ export function createProgressService(options: {
       }
       const terminal = ["completed", "failed", "cancelled", "unknown", "streaming"].includes(observation.status);
       if (!enabled || !modelId || !summarize || terminal || !isLongProgress(observation, now)
-        || timer !== undefined || controller || attempted.has(key) || calls >= PROGRESS_LIMITS.maxCallsPerExecution) return latest ?? fallback;
+        || timer !== undefined || controller || budget.pending || budget.attempted.has(key) || budget.calls >= PROGRESS_LIMITS.maxCallsPerExecution) return latest ?? fallback;
 
       const version = generation;
       const required = facts.filter((fact) => fact.id !== "steps" || Boolean(count(observation.failedSteps)));
-      const prompt = `Select useful observed progress facts. Return only JSON {"facts":["status",...]}. Include status and dependencies when present, and steps if any failed. Do not write prose, predictions, ETA, confidence, or reasoning.\n${JSON.stringify(facts)}`;
-      if (prompt.length > PROGRESS_LIMITS.maxInputChars) return latest ?? fallback;
+      const prompt = JSON.stringify(facts);
+      if (/[^\x20-\x7e]/.test(prompt) || prompt.length + PROGRESS_SYSTEM.length + PROGRESS_LIMITS.inputFramingBytes > PROGRESS_LIMITS.maxInputBytes) return latest ?? fallback;
       timer = setTimeout(() => {
         timer = undefined;
-        if (disposed || version !== generation) return;
-        calls++;
-        lastCallAt = Date.now();
-        attempted.add(key);
+        if (disposed || version !== generation || budget.pending || budget.attempted.has(key) || budget.calls >= PROGRESS_LIMITS.maxCallsPerExecution || Date.now() - budget.lastCallAt < PROGRESS_LIMITS.minCallIntervalMs) return;
+        budget.calls++;
+        budget.pending = true;
+        budget.lastCallAt = Date.now();
+        budget.attempted.add(key);
         const active = new AbortController();
         controller = active;
         timeout = setTimeout(() => {
@@ -168,7 +175,7 @@ export function createProgressService(options: {
             const result = await summarize({ modelId, prompt, maxOutputTokens: PROGRESS_LIMITS.maxOutputTokens, signal: active.signal });
             if (active.signal.aborted || disposed || version !== generation || result.length > PROGRESS_LIMITS.maxOutputChars) return;
             const parsed: unknown = JSON.parse(result);
-            if (!parsed || typeof parsed !== "object" || !("facts" in parsed) || !Array.isArray(parsed.facts)) return;
+            if (!parsed || typeof parsed !== "object" || Object.keys(parsed).length !== 1 || !("facts" in parsed) || !Array.isArray(parsed.facts)) return;
             const ids: unknown[] = parsed.facts;
             if (ids.length === 0 || ids.length > PROGRESS_LIMITS.maxFacts || new Set(ids).size !== ids.length
               || ids.some((id) => !facts.some((fact) => fact.id === id))) return;
@@ -179,13 +186,17 @@ export function createProgressService(options: {
           } catch {
             // Failure, cancellation, and invalid output keep the observed fallback. No retries.
           } finally {
+            // Space from settlement, not from setup: slow admission must not
+            // compress the interval between actual provider requests.
+            budget.lastCallAt = Date.now();
+            budget.pending = false;
             if (controller === active) {
               clearTimeout(timeout);
               controller = undefined;
             }
           }
         })();
-      }, Math.max(PROGRESS_LIMITS.debounceMs, PROGRESS_LIMITS.minCallIntervalMs - (now - lastCallAt)));
+      }, Math.max(PROGRESS_LIMITS.debounceMs, PROGRESS_LIMITS.minCallIntervalMs - (now - budget.lastCallAt)));
       return latest ?? fallback;
     },
     dispose() {

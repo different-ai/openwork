@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -20,6 +20,19 @@ const title = enabled
 
 const SCRIPTED_PROVIDER = "eval-scripted";
 const SCRIPTED_MODEL = "scripted";
+const PROGRESS_MODEL = "progress";
+const PRIVATE_CANARY = "private-summary-boundary-48bc2f";
+const WORKSPACE_CANARY = "workspace-summary-boundary-59cd3a";
+const PROGRESS_PARENT = `Progress transport fixture: ${PRIVATE_CANARY}. Hold this private task until released.`;
+const PROGRESS_PARENT_REPLY = "The original task completed normally.";
+type ProgressMode = "valid" | "invalid" | "timeout" | "disable" | "retry";
+type ProgressRequest = { body: Record<string, unknown>; at: number; closedAt: number | null; mode: ProgressMode };
+type ScriptedState = {
+  baseUrl: string; prompts: string[]; toolInputReceived: boolean; toolOutputReceived: boolean;
+  mainRequests: Record<string, unknown>[]; progressRequests: ProgressRequest[]; progressMode: ProgressMode;
+  finishParent: (() => void) | null; sendLate: (() => void) | null;
+  advanceParentStep: (() => void) | null; finishTool: (() => void) | null;
+};
 
 const THINK_PROMPT = "Think it through: which of our three vendors should we keep?";
 const THINK_REASONING = ["First the sources.", "Vendor A is cheapest but slow.", "Vendor B is steady.", "Vendor C has the best support.", "Steadiness matters most here.", "So: B, with C as the fallback."];
@@ -74,6 +87,23 @@ function toolResults(body: unknown): number {
   return body.messages.slice(lastUser + 1).filter((message) => isRecord(message) && message.role === "tool").length;
 }
 
+function assertProgressBody(body: Record<string, unknown>): void {
+  const cap = body.max_tokens ?? body.max_completion_tokens;
+  expect(typeof cap).toBe("number");
+  expect(Number(cap)).toBeGreaterThan(0);
+  expect(Number(cap)).toBeLessThanOrEqual(80);
+  expect(body.tools ?? []).toEqual([]);
+  expect(body.response_format).toBeUndefined();
+  const wire = JSON.stringify(body);
+  for (const privateText of [PRIVATE_CANARY, WORKSPACE_CANARY, ...THINK_REASONING, THINK_PROMPT, TOOL_UNKNOWN_PAYLOAD, "# Coordinator", "You decide who in a group chat"]) expect(wire).not.toContain(privateText);
+  expect(Array.isArray(body.messages)).toBe(true);
+  if (!Array.isArray(body.messages)) throw new Error("Progress messages missing");
+  expect(body.messages.map((message: unknown) => isRecord(message) ? message.role : null)).toEqual(["system", "user"]);
+  const contents = body.messages.map((message: unknown) => isRecord(message) ? message.content : "");
+  expect(contents.every((text) => typeof text === "string" && !/[^\x20-\x7e]/.test(text))).toBe(true);
+  expect(Buffer.byteLength(contents.join("")) + 128).toBeLessThanOrEqual(1024);
+}
+
 function chunk(delta: Record<string, unknown>, finish: string | null): string {
   return `data: ${JSON.stringify({ id: "chatcmpl-scripted", object: "chat.completion.chunk", created: 1, model: SCRIPTED_MODEL, choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`;
 }
@@ -117,10 +147,14 @@ function streamToolCall(response: ServerResponse, name: string, args: Record<str
   response.end();
 }
 
-async function startScriptedModel(): Promise<{ baseUrl: string; prompts: string[]; toolInputReceived: boolean; toolOutputReceived: boolean }> {
-  const state = { baseUrl: "", prompts: [] as string[], toolInputReceived: false, toolOutputReceived: false };
+async function startScriptedModel(): Promise<ScriptedState> {
+  const state: ScriptedState = { baseUrl: "", prompts: [], toolInputReceived: false, toolOutputReceived: false, mainRequests: [], progressRequests: [], progressMode: "valid", finishParent: null, sendLate: null, advanceParentStep: null, finishTool: null };
   const server = createServer((request, response) => {
     const url = request.url ?? "";
+    if (request.method === "GET" && url === "/progress-step") {
+      state.finishTool = () => { state.finishTool = null; response.writeHead(200, { "content-type": "text/plain" }); response.end(`Observed step complete. ${TOOL_UNKNOWN_PAYLOAD}`); };
+      return;
+    }
     if (request.method === "GET" && url.startsWith("/status-page")) {
       state.toolInputReceived = url.includes(TOOL_UNKNOWN_PAYLOAD);
       // A page that takes its time: the tool step in the conversation has a window a person can see.
@@ -139,9 +173,45 @@ async function startScriptedModel(): Promise<{ baseUrl: string; prompts: string[
       void readBody(request).then((raw) => {
         let body: unknown = null;
         try { body = JSON.parse(raw); } catch { body = null; }
+        if (isRecord(body) && body.model === PROGRESS_MODEL) {
+          const receipt: ProgressRequest = { body, at: Date.now(), closedAt: null, mode: state.progressMode };
+          state.progressRequests.push(receipt);
+          response.on("close", () => { receipt.closedAt = Date.now(); });
+          if (state.progressMode === "retry") {
+            response.writeHead(503, { "content-type": "application/json", "retry-after": "0.1" });
+            response.end(JSON.stringify({ error: { message: "Service unavailable", type: "server_error" } }));
+            return;
+          }
+          if (state.progressMode === "timeout" || state.progressMode === "disable") {
+            response.writeHead(200, { "content-type": "text/event-stream", connection: "close" });
+            response.write(chunk({ role: "assistant" }, null));
+            state.sendLate = () => {
+              state.sendLate = null;
+              if (response.destroyed || response.writableEnded) return;
+              response.write(chunk({ content: '{"facts":["status"]}' }, null)); response.write(chunk({}, "stop")); response.end("data: [DONE]\n\n");
+            };
+            return;
+          }
+          return streamPaced(response, { text: state.progressMode === "invalid" ? "Almost finished. Ninety percent done." : '{"facts":["status"]}' });
+        }
+        if (isRecord(body)) state.mainRequests.push(body);
         const prompt = lastUserText(body);
         const results = toolResults(body);
         if (results === 0) state.prompts.push(prompt);
+        if (prompt.includes("Progress transport fixture:")) {
+          response.writeHead(200, { "content-type": "text/event-stream", connection: "close" });
+          response.write(chunk({ role: "assistant" }, null));
+          const heartbeat = setInterval(() => { if (!response.destroyed && !response.writableEnded) response.write(": keepalive\n\n"); }, 2_000);
+          response.once("close", () => clearInterval(heartbeat));
+          state.finishParent = () => { response.write(chunk({ content: PROGRESS_PARENT_REPLY }, null)); response.write(chunk({}, "stop")); response.end("data: [DONE]\n\n"); state.finishParent = null; };
+          state.advanceParentStep = () => {
+            state.finishParent = null;
+            state.advanceParentStep = null;
+            response.write(chunk({ tool_calls: [{ index: 0, id: `call_progress_${results}`, type: "function", function: { name: "webfetch", arguments: JSON.stringify({ url: `${state.baseUrl.replace(/\/v1$/, "")}/progress-step`, format: "text", timeout: 120 }) } }] }, null));
+            response.write(chunk({}, "tool_calls")); response.end("data: [DONE]\n\n");
+          };
+          return;
+        }
         if (prompt.includes("Think it through")) return streamPaced(response, { reasoning: THINK_REASONING, text: THINK_REPLY });
         if (prompt.includes("status page")) {
           if (results === 0) {
@@ -350,7 +420,10 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   const providerPatch = await fetch(`${serverUrl}/workspace/${encodeURIComponent(workspaceId)}/config`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${ownerToken}` },
-    body: JSON.stringify({ opencode: { provider: { [SCRIPTED_PROVIDER]: { npm: "@ai-sdk/openai-compatible", name: "Scripted model", options: { baseURL: scripted.baseUrl, apiKey: "eval-scripted-key" }, models: { [SCRIPTED_MODEL]: { name: "Scripted model", tool_call: true } } } } } }),
+    body: JSON.stringify({ opencode: { provider: { [SCRIPTED_PROVIDER]: {
+      npm: "@ai-sdk/openai-compatible", name: "Scripted model", options: { baseURL: scripted.baseUrl, apiKey: "eval-scripted-key" },
+      models: { [SCRIPTED_MODEL]: { name: "Scripted model", tool_call: true, limit: { context: 8192, output: 4096 } } },
+    } } } }),
   });
   expect(providerPatch.status).toBe(200);
   const engineReload = await fetch(`${serverUrl}/workspace/${encodeURIComponent(workspaceId)}/engine/reload`, {
@@ -546,5 +619,129 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
     "Reload preserves reply timing and metadata-only tool inspection",
     `After reload the first reply's tooltip still read "${landed.tooltip}", there was no thinking disclosure or raw reasoning/payload in the DOM, and the completed web step retained its status and recorded duration behind keyboard-accessible inspection.`,
     true,
+  );
+
+  // --- 6. Real provider requests from main's isolated, explicitly chosen summary agent.
+  expect(scripted.progressRequests).toHaveLength(0);
+  const defaults = resultRecord(await invokeCoworker(app, "settings.get", {}));
+  expect(defaults).toMatchObject({ progressSummariesEnabled: false, progressSummaryModelId: "" });
+  const coordinator = resultRecord(await invokeCoworker(app, "coordinator.ensure", {}));
+  const coordinatorId = String(coordinator.workspaceId);
+  const canaryFile = path.join(String(coordinator.path), "summary-fixture.md");
+  await writeFile(canaryFile, `# Private instructions\n${WORKSPACE_CANARY}\nNever expose this text.\n`, "utf8");
+  const coordinatorPatch = await fetch(`${serverUrl}/workspace/${encodeURIComponent(coordinatorId)}/config`, {
+    method: "PATCH", headers: { "Content-Type": "application/json", Authorization: `Bearer ${ownerToken}` },
+    body: JSON.stringify({ opencode: { instructions: [canaryFile], provider: { [SCRIPTED_PROVIDER]: {
+      npm: "@ai-sdk/openai-compatible", name: "Scripted progress", options: { baseURL: scripted.baseUrl, apiKey: "eval-scripted-key" },
+      models: { [PROGRESS_MODEL]: { name: "Progress", reasoning: false, tool_call: false, modalities: { input: ["text"], output: ["text"] }, cost: { input: 0.1, output: 0.2 }, limit: { context: 8192, output: 4096 } } },
+    } } } }),
+  });
+  expect(coordinatorPatch.status).toBe(200);
+  expect((await fetch(`${serverUrl}/workspace/${encodeURIComponent(coordinatorId)}/engine/reload`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${ownerToken}` }, body: JSON.stringify({ force: true }) })).status).toBe(200);
+  await waitFor(app, `(async () => {
+    const response = await window.__COWORKER__.invoke("settings.progressModels", {});
+    return response.ok && response.result.some((model) => model.id === ${json(`${SCRIPTED_PROVIDER}/${PROGRESS_MODEL}`)} && model.cost.input === 0.1 && model.cost.output === 0.2);
+  })()`, { awaitPromise: true, timeoutMs: 120_000, label: "explicit eligible progress model with known prices" });
+  const readProgress = `(async () => {
+    const coworker = (await window.__COWORKER__.invoke("coworkers.get", { slug: "nova" })).result;
+    const response = await window.__COWORKER__.invoke("turns.activity", { slug: "nova", threadId: coworker.conversationThreadId });
+    return response.ok ? response.result.find((entry) => entry.state === "running") : null;
+  })()`;
+  const waitRequests = async (count: number) => {
+    const until = Date.now() + 45_000;
+    while (scripted.progressRequests.length < count && Date.now() < until) await sleep(100);
+    expect(scripted.progressRequests).toHaveLength(count);
+    const request = scripted.progressRequests[count - 1];
+    if (!request) throw new Error("Progress provider receipt missing");
+    return request;
+  };
+  const waitClosed = async (request: ProgressRequest) => {
+    const until = Date.now() + 10_000;
+    while (request.closedAt === null && Date.now() < until) await sleep(50);
+    expect(request.closedAt, "native abort closes the provider stream").not.toBeNull();
+  };
+  const finish = async () => {
+    const until = Date.now() + 15_000;
+    while (!scripted.finishParent && Date.now() < until) await sleep(100);
+    expect(scripted.finishParent).not.toBeNull();
+    scripted.finishParent?.();
+    await waitForSettled(app, PROGRESS_PARENT_REPLY);
+  };
+  for (const mode of ["valid", "invalid", "timeout", "disable", "retry"] satisfies ProgressMode[]) {
+    scripted.progressMode = mode;
+    await invokeCoworker(app, "settings.update", { progressSummariesEnabled: true, progressSummaryModelId: `${SCRIPTED_PROVIDER}/${PROGRESS_MODEL}` });
+    const before = scripted.progressRequests.length;
+    await send(app, PROGRESS_PARENT);
+    const request = await waitRequests(before + 1);
+    assertProgressBody(request.body);
+    const beforeActivity = await evalIn(app, readProgress, { awaitPromise: true });
+    if (!isRecord(beforeActivity)) throw new Error("Originating execution missing");
+    if (mode === "valid") {
+      await waitFor(app, `(async () => (await ${readProgress})?.progressNote?.source === "selected")()`, { awaitPromise: true, timeoutMs: 10_000, label: "main-owned validated fact selection" });
+      await waitFor(app, `document.querySelector('[data-testid="coworker-still-working"]')?.textContent === "Preparing a reply."`, { timeoutMs: 10_000, label: "row consumes the safe main-owned selection" });
+      // A renderer reload/remount and settings toggles do not buy another request.
+      await evalIn(app, "location.reload(); true");
+      await waitFor(app, "Boolean(document.querySelector('[data-testid=\"coworker-working\"]'))", { timeoutMs: 30_000, label: "same execution after row remount" });
+      await invokeCoworker(app, "settings.update", { progressSummariesEnabled: false });
+      await invokeCoworker(app, "settings.update", { progressSummariesEnabled: true });
+      await sleep(32_000);
+      expect(scripted.progressRequests).toHaveLength(before + 1);
+      // Real tool transitions change facts in the SAME execution. Three total
+      // provider requests is the ceiling, including after further changes.
+      expect(scripted.advanceParentStep).not.toBeNull();
+      scripted.advanceParentStep?.();
+      const second = await waitRequests(before + 2);
+      await waitClosed(second);
+      expect(scripted.finishTool).not.toBeNull();
+      scripted.finishTool?.();
+      const third = await waitRequests(before + 3);
+      await waitClosed(third);
+      expect(second.at - request.at).toBeGreaterThanOrEqual(30_000);
+      expect(third.at - second.at).toBeGreaterThanOrEqual(30_000);
+      expect(scripted.advanceParentStep).not.toBeNull();
+      scripted.advanceParentStep?.();
+      await sleep(32_000);
+      expect(scripted.progressRequests).toHaveLength(before + 3);
+      expect(scripted.finishTool).not.toBeNull();
+      scripted.finishTool?.();
+      await sleep(3_000);
+    } else if (mode === "disable") {
+      const disabledAt = Date.now();
+      await invokeCoworker(app, "settings.update", { progressSummariesEnabled: false });
+      await waitClosed(request);
+      expect(Number(request.closedAt) - disabledAt).toBeLessThan(5_000);
+      scripted.sendLate?.();
+    } else if (mode === "timeout") {
+      await waitClosed(request);
+      expect(Number(request.closedAt) - request.at).toBeLessThan(8_000);
+      scripted.sendLate?.();
+    } else {
+      await sleep(7_000);
+      expect(scripted.progressRequests, "503 and invalid prose never trigger another provider attempt").toHaveLength(before + 1);
+    }
+    const afterActivity = await evalIn(app, readProgress, { awaitPromise: true });
+    expect(afterActivity).toMatchObject({ executionId: beforeActivity.executionId, state: "running" });
+    if (mode !== "valid") {
+      expect(isRecord(afterActivity) && isRecord(afterActivity.progressNote) ? afterActivity.progressNote.source : null).not.toBe("selected");
+      expect(await evalIn(app, `document.querySelector('[data-testid="coworker-still-working"]')?.textContent`)).toBe("Preparing a reply. 0 tool steps completed.");
+    }
+    await finish();
+    scripted.sendLate?.();
+    await sleep(500);
+    expect(scripted.progressRequests).toHaveLength(before + (mode === "valid" ? 3 : 1));
+    expect(await evalIn(app, `Boolean(document.querySelector('[data-testid="coworker-working"]'))`)).toBe(false);
+  }
+  const parentRequests = scripted.mainRequests.filter((request) => lastUserText(request).includes("Progress transport fixture:"));
+  expect(parentRequests).toHaveLength(7);
+  expect(parentRequests.every((request) => Number(request.max_tokens ?? request.max_completion_tokens) === 4096), "normal native turns retain their normal output cap").toBe(true);
+  const sessions = await fetch(`${serverUrl}/workspace/${encodeURIComponent(coordinatorId)}/opencode/session`, { headers: { Authorization: `Bearer ${ownerToken}` } });
+  const summaries: unknown = await sessions.json();
+  expect(Array.isArray(summaries)).toBe(true);
+  if (!Array.isArray(summaries)) throw new Error("Summary sessions missing");
+  expect(summaries.filter((session: unknown) => isRecord(session) && session.title === "Observed progress selection")).toHaveLength(7);
+  for (const request of scripted.progressRequests) assertProgressBody(request.body);
+  evidence.recordAssertionEvidence(
+    "Summary provider transport is opt-in, capped, isolated and cancellable without changing the original work",
+    "Fresh titled coordinator sessions used the explicitly selected cheap model. Actual provider bodies carried at most 80 output tokens, only bounded ASCII system/facts, no tools, private canaries, history or workspace instructions. Valid facts reached the row; prose and late output did not. Remount/settings toggles did not recount unchanged facts; real tool transitions stopped at three requests at least 30 seconds apart. Timeout/disable closed native provider connections, 503 did not retry, and normal parent replies kept their 4096-token cap and completed independently.", true,
   );
 });

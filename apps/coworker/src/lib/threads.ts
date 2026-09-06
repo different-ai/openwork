@@ -19,6 +19,7 @@ import { readCloudProviderSyncStatus, type CloudProviderSyncStatus } from "./den
 import { discussionIds, discussionIdsForWorkspace } from "./discussions.ts";
 import type { StreamEvent } from "./live-stream.ts";
 import { workerNameFromTitle } from "./workers.ts";
+import { PROGRESS_LIMITS } from "./progress-config.ts";
 
 export type ThreadListItem = {
   id: string;
@@ -159,7 +160,27 @@ export type EngineModelOption = {
   releaseDate: string;
   /** What the provider charges per million tokens; 0/0 for a free model. A lane pick never costs more than the standard model. */
   cost: { input: number; output: number };
+  /** Separate fail-closed projection: legacy cost/reasoning defaults are NOT evidence. */
+  progressEligibility?: {
+    transport: "openai" | "openai-compatible" | null;
+    knownPrice: boolean;
+    nonReasoning: boolean;
+    text: boolean;
+    active: boolean;
+  };
 };
+
+export type ProgressModelOption = Pick<EngineModelOption, "id" | "label" | "cost">;
+export function eligibleProgressModels(catalog: Pick<EngineModelCatalog, "models" | "connectedProviderIds">): EngineModelOption[] {
+  return catalog.models.filter((model) => {
+    const safe = model.progressEligibility;
+    return catalog.connectedProviderIds.includes(model.providerId) && safe?.transport && safe.knownPrice && safe.nonReasoning && safe.text && safe.active
+      // Native catalogs can synthesize 0/0 when custom-provider pricing is
+      // omitted. Do not present that absence as a confirmed free summary model.
+      && model.cost.input > 0 && model.cost.output > 0
+      && model.cost.input <= PROGRESS_LIMITS.maxInputPrice && model.cost.output <= PROGRESS_LIMITS.maxOutputPrice;
+  });
+}
 
 export type EngineModelCatalog = {
   models: EngineModelOption[];
@@ -268,6 +289,14 @@ export function connectedModelCatalog(
         status: model.status ?? "active",
         releaseDate: model.release_date ?? "",
         cost: { input: model.cost?.input ?? 0, output: model.cost?.output ?? 0 },
+        progressEligibility: {
+          transport: model.api?.npm === "@ai-sdk/openai" ? "openai" : model.api?.npm === "@ai-sdk/openai-compatible" ? "openai-compatible" : null,
+          knownPrice: typeof model.cost?.input === "number" && Number.isFinite(model.cost.input) && model.cost.input >= 0
+            && typeof model.cost?.output === "number" && Number.isFinite(model.cost.output) && model.cost.output >= 0,
+          nonReasoning: model.capabilities?.reasoning === false,
+          text: model.capabilities?.input?.text === true && model.capabilities?.output?.text === true,
+          active: model.status === "active",
+        } satisfies NonNullable<EngineModelOption["progressEligibility"]>,
       };
     }),
   );
@@ -329,6 +358,7 @@ export function parseModelPreference(value: string): { providerId: string; model
 export type PendingPermission = {
   id: string;
   sessionID: string;
+  tool?: { messageID: string; callID: string };
   protocol: "legacy" | "v2";
   /** Legacy `permission` or v2 `action`, e.g. `bash`, `edit`, `external_directory`. */
   action: string;
@@ -349,6 +379,7 @@ export type PendingQuestionItem = {
 export type PendingQuestion = {
   id: string;
   sessionID: string;
+  tool?: { messageID: string; callID: string };
   questions: PendingQuestionItem[];
 };
 
@@ -403,12 +434,12 @@ export type CoworkerThreads = {
   listModels: () => Promise<EngineModelOption[]>;
   readActivity: () => Promise<CoworkerActivity>;
   /** Pending permissions and questions across the coworker's threads. */
-  listPendingInteractions: () => Promise<PendingInteractions>;
+  listPendingInteractions: (signal?: AbortSignal) => Promise<PendingInteractions>;
   /** Pending permissions and questions for one thread, including v2 session-scoped requests. */
-  listThreadInteractions: (threadId: string) => Promise<PendingInteractions>;
-  replyPermission: (permission: PendingPermission, reply: PermissionReply) => Promise<void>;
-  replyQuestion: (question: PendingQuestion, answers: string[][]) => Promise<void>;
-  rejectQuestion: (question: PendingQuestion) => Promise<void>;
+  listThreadInteractions: (threadId: string, signal?: AbortSignal) => Promise<PendingInteractions>;
+  replyPermission: (permission: PendingPermission, reply: PermissionReply, signal?: AbortSignal) => Promise<void>;
+  replyQuestion: (question: PendingQuestion, answers: string[][], signal?: AbortSignal) => Promise<void>;
+  rejectQuestion: (question: PendingQuestion, signal?: AbortSignal) => Promise<void>;
   /**
    * Follow the engine's events. `onEvent` fires for anything worth a re-read;
    * `onStream`, when given, also receives the words of a reply as they arrive
@@ -423,11 +454,13 @@ function normalizeLegacyPermission(value: {
   permission: string;
   patterns: string[];
   always: string[];
+  tool?: { messageID: string; callID: string };
 }): PendingPermission {
   return {
     id: value.id,
     sessionID: value.sessionID,
     protocol: "legacy",
+    tool: value.tool,
     action: value.permission,
     resources: value.patterns,
     canAlways: value.always.length > 0,
@@ -440,11 +473,13 @@ function normalizeV2Permission(value: {
   action: string;
   resources: string[];
   save?: string[];
+  source?: { messageID: string; callID: string };
 }): PendingPermission {
   return {
     id: value.id,
     sessionID: value.sessionID,
     protocol: "v2",
+    tool: value.source,
     action: value.action,
     resources: value.resources,
     canAlways: (value.save?.length ?? 0) > 0,
@@ -454,6 +489,7 @@ function normalizeV2Permission(value: {
 function normalizeQuestion(value: {
   id: string;
   sessionID: string;
+  tool?: { messageID: string; callID: string };
   questions: Array<{
     header: string;
     question: string;
@@ -465,6 +501,7 @@ function normalizeQuestion(value: {
   return {
     id: value.id,
     sessionID: value.sessionID,
+    tool: value.tool,
     questions: value.questions.map((question) => ({
       header: question.header,
       question: question.question,
@@ -587,24 +624,42 @@ export function createCoworkerThreads(options: {
    * this coworker's directory by the workspace proxy; v2 requests are
    * session-scoped and read per thread in `listThreadInteractions`.
    */
-  async function listPendingInteractions(): Promise<PendingInteractions> {
+  async function listPendingInteractions(signal?: AbortSignal): Promise<PendingInteractions> {
     const [permissionsResult, questionsResult] = await Promise.all([
-      opencode.permission.list(),
-      opencode.question.list(),
+      opencode.permission.list(undefined, { signal }),
+      opencode.question.list(undefined, { signal }),
     ]);
+    for (const result of [permissionsResult, questionsResult]) {
+      if (result.error !== undefined || !Array.isArray(result.data)) throw new Error(`Reading pending requests failed (${result.response?.status ?? "network"})`);
+    }
     return {
       permissions: (permissionsResult.data ?? []).map(normalizeLegacyPermission),
       questions: (questionsResult.data ?? []).map(normalizeQuestion),
     };
   }
 
-  async function listThreadInteractions(threadId: string): Promise<PendingInteractions> {
+  async function listThreadInteractions(threadId: string, signal?: AbortSignal): Promise<PendingInteractions> {
     const [workspaceWide, v2Result] = await Promise.all([
-      listPendingInteractions(),
-      opencode.v2.session.permission.list({ sessionID: threadId }).catch(() => undefined),
+      listPendingInteractions(signal),
+      opencode.v2.session.permission.list({ sessionID: threadId }, { signal, fetch: async (request) => {
+        const response = await fetch(request);
+        // The SDK's HTML interceptor discards the HTTP status. Normalize only
+        // this optional route's successful old-engine web shell before it runs.
+        if ((response.ok || response.status === 404) && response.headers.get("content-type")?.includes("text/html")) {
+          await response.body?.cancel();
+          return Response.json({}, { status: 404 });
+        }
+        if (!response.ok && response.status !== 404) throw new Error(`Reading permission requests failed (${response.status})`);
+        return response;
+      } }),
     ]);
+    // An old engine's HTML shell means this optional route is absent, not
+    // permission to hide authentication, server or malformed JSON failures.
+    if (v2Result.error instanceof Error) throw v2Result.error;
+    const unsupported = v2Result.response?.status === 404;
+    if (!unsupported && (v2Result.error !== undefined || !Array.isArray(v2Result.data?.data))) throw new Error(`Reading permission requests failed (${v2Result.response?.status ?? "network"})`);
     const legacy = workspaceWide.permissions.filter((permission) => permission.sessionID === threadId);
-    const v2 = (v2Result?.data?.data ?? []).map(normalizeV2Permission);
+    const v2 = unsupported ? [] : (v2Result.data?.data ?? []).map(normalizeV2Permission).filter((permission) => permission.sessionID === threadId);
     const seen = new Set(legacy.map((permission) => permission.id));
     return {
       permissions: [...legacy, ...v2.filter((permission) => !seen.has(permission.id))],
@@ -612,25 +667,25 @@ export function createCoworkerThreads(options: {
     };
   }
 
-  async function replyPermission(permission: PendingPermission, reply: PermissionReply): Promise<void> {
+  async function replyPermission(permission: PendingPermission, reply: PermissionReply, signal?: AbortSignal): Promise<void> {
     const result =
       permission.protocol === "v2"
-        ? await opencode.v2.session.permission.reply({ sessionID: permission.sessionID, requestID: permission.id, reply })
-        : await opencode.permission.reply({ requestID: permission.id, reply });
+        ? await opencode.v2.session.permission.reply({ sessionID: permission.sessionID, requestID: permission.id, reply }, { signal })
+        : await opencode.permission.reply({ requestID: permission.id, reply }, { signal });
     if (result.error !== undefined) {
       throw new Error(`Replying to the permission request failed (${result.response?.status ?? "network"})`);
     }
   }
 
-  async function replyQuestion(question: PendingQuestion, answers: string[][]): Promise<void> {
-    const result = await opencode.question.reply({ requestID: question.id, answers });
+  async function replyQuestion(question: PendingQuestion, answers: string[][], signal?: AbortSignal): Promise<void> {
+    const result = await opencode.question.reply({ requestID: question.id, answers }, { signal });
     if (result.error !== undefined) {
       throw new Error(`Answering the question failed (${result.response?.status ?? "network"})`);
     }
   }
 
-  async function rejectQuestion(question: PendingQuestion): Promise<void> {
-    const result = await opencode.question.reject({ requestID: question.id });
+  async function rejectQuestion(question: PendingQuestion, signal?: AbortSignal): Promise<void> {
+    const result = await opencode.question.reject({ requestID: question.id }, { signal });
     if (result.error !== undefined) {
       throw new Error(`Skipping the question failed (${result.response?.status ?? "network"})`);
     }

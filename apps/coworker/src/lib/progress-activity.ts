@@ -1,7 +1,7 @@
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { PROGRESS_LIMITS } from "./progress-config.ts";
 import { executionMetadata, executionTimestamp, type ExecutionMetadataInput } from "./work-receipt.ts";
-import type { ProgressObservation } from "./progress-service.ts";
+import type { ProgressNote, ProgressObservation } from "./progress-service.ts";
 
 export type ExecutionActivity = {
   executionId: string;
@@ -22,6 +22,7 @@ export type ExecutionActivity = {
   tools: Array<ExecutionMetadataInput & { partId: string }>;
   completedSteps: number;
   failedSteps: number;
+  progressNote?: ProgressNote;
 };
 
 /** Reads only. No setup, model choice, admission, or native cancellation. */
@@ -88,5 +89,6 @@ export function executionProgress(activity: ExecutionActivity, hasText = false):
     ...(activity.available ? { completedSteps: activity.completedSteps, failedSteps: activity.failedSteps } : {}),
     pendingCoworkers: activity.pendingCoworkers,
     pendingWorkers: activity.pendingWorkers,
+    note: activity.progressNote,
   };
 }

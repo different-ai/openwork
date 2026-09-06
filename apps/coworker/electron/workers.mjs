@@ -39,7 +39,7 @@ export function workerTurnTools() {
     ...SELF_TOOL_NAMES.filter((name) => name !== "self_read"),
     ...TEAM_TOOL_NAMES.filter((name) => name !== "team_list"),
   ];
-  return { task: false, coworker_team_consult: false, ...Object.fromEntries(management.map((name) => [`coworker_${name}`, false])) };
+  return { task: false, question: false, coworker_team_consult: false, ...Object.fromEntries(management.map((name) => [`coworker_${name}`, false])) };
 }
 
 export const WORKER_STATUSES = ["starting", "running", "waiting", "paused", "finished", "cancelled", "failed"];

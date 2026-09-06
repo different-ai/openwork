@@ -75,6 +75,14 @@ const OTHER_DISCUSSION_PROMPT = "Keep this separate discussion for tomorrow's ag
 const OTHER_DISCUSSION_REPLY = "This discussion is for tomorrow's agenda.";
 const PRIVATE_EDITOR_PROMPT = "Can you answer this private question while the consultation is running?";
 const PRIVATE_EDITOR_REPLY = "Yes. This private reply is independent of the group consultation.";
+const CANARY_PROMPT = "Write one counted line to continuation-canary.md, then confirm the receipt.";
+const CANARY_CONTINUED = "The earlier counted line is kept. Only the missing confirmation is complete.";
+const APPROVAL_PROMPT = "@editor Write one approved line to approval-canary.md, asking me first.";
+const APPROVAL_REPLY = "The approved line was written once.";
+const GROUP_QUESTION = "@editor Ask which direction the group should choose.";
+const GROUP_CANCEL_QUESTION = "@editor Ask which direction to choose before I stop this step.";
+const PRIVATE_QUESTION = "Ask my private-only question and wait here for my answer.";
+const DIRECTION_QUESTION = { questions: [{ header: "Group direction", question: "Which direction should this group choose?", options: [{ label: "North", description: "The first route" }, { label: "South", description: "The second route" }], custom: false }] };
 
 type GateName = "consultation" | "worker" | "foreground" | "cancelled-worker";
 type ScriptedCall = { name: string; arguments: Record<string, unknown> };
@@ -82,6 +90,12 @@ type ScriptedTurn = { call: ScriptedCall | null; reply: string; gate?: GateName 
 
 /** First match wins: a request passed on carries the original words too, so the hand-over line comes first. */
 const SCRIPT: Array<{ match: string; turn: ScriptedTurn }> = [
+  { match: "Continue the earlier private request.", turn: { call: null, reply: CANARY_CONTINUED } },
+  { match: CANARY_PROMPT, turn: { call: { name: "bash", arguments: { command: "printf 'counted\\n' >> continuation-canary.md", description: "Write the continuation canary once" } }, reply: "Unreachable before explicit continuation" } },
+  { match: APPROVAL_PROMPT, turn: { call: { name: "bash", arguments: { command: "printf 'approved\\n' >> approval-canary.md", description: "Write the group approval canary once" } }, reply: APPROVAL_REPLY } },
+  { match: GROUP_QUESTION, turn: { call: { name: "question", arguments: DIRECTION_QUESTION }, reply: "The group chose North." } },
+  { match: GROUP_CANCEL_QUESTION, turn: { call: { name: "question", arguments: DIRECTION_QUESTION }, reply: "This cancelled question must not complete." } },
+  { match: PRIVATE_QUESTION, turn: { call: { name: "question", arguments: { questions: [{ header: "Private-only choice", question: "PRIVATE-QUESTION-CANARY: keep this in my discussion.", options: [{ label: "Private answer", description: "Not a group answer" }], custom: false }] } }, reply: "The private question was answered." } },
   { match: PRIVATE_EDITOR_PROMPT, turn: { call: null, reply: PRIVATE_EDITOR_REPLY } },
   { match: OTHER_DISCUSSION_PROMPT, turn: { call: null, reply: OTHER_DISCUSSION_REPLY } },
   { match: `Objective: ${CONSULT_OBJECTIVE}`, turn: { call: null, reply: CONSULT_SYNTHESIS } },
@@ -262,9 +276,17 @@ async function startScriptedModel() {
         let body: unknown = null;
         try { body = JSON.parse(raw); } catch { body = null; }
         const prompt = lastUserText(body);
-        const scripted = SCRIPT.find((entry) => prompt.includes(entry.match));
+        const groupMarker = "\nThe person's message: ";
+        const groupStart = prompt.lastIndexOf(groupMarker);
+        const currentRequest = groupStart >= 0 ? prompt.slice(groupStart + groupMarker.length) : prompt;
+        const scripted = SCRIPT.find((entry) => currentRequest.includes(entry.match));
         const results = toolResults(body);
         state.seenToolResults.push(...results);
+        if (prompt === CANARY_PROMPT && results.length > 0) {
+          response.writeHead(400, { "content-type": "application/json" });
+          response.end(JSON.stringify({ error: { message: "Interrupted after the canary write. Review the completed action before continuing.", type: "interrupted_execution" } }));
+          return;
+        }
         if (results.length === 0) {
           state.prompts.push(prompt);
           state.facts.push(promptFacts(body, raw, prompt));
@@ -1099,4 +1121,111 @@ test.skipIf(!enabled)(title, { timeout: 1_200_000 }, async ({ evidence }) => {
   expect(scripted.errors).toEqual([]);
   expect(scripted.held.size).toBe(0);
   evidence.recordAssertionEvidence("Stopping a held Worker prevents its late return and restart does not duplicate settled collaboration", "Stop follow-up cancelled the second Worker through the visible receipt. Releasing its late provider response, reloading the renderer, and relaunching the packaged app on the same temporary profile kept the cancellation. Across five seconds of scheduler polling, native private messages and the pair timeline stayed identical, both completed automatic follow-ups still numbered one, other private threads stayed unchanged, and no cancelled follow-up was requested.", true);
+
+  // --- 8. Real tool-side-effect canary: Continue is a new native message, not a replay.
+  const liveRuntime = resultRecord(await invokeCoworker(restarted, "runtime.info", {}));
+  for (const member of team) {
+    const base = `${String(liveRuntime.serverUrl)}/workspace/${encodeURIComponent(String(member.workspaceId))}`;
+    const headers = { "Content-Type": "application/json", Authorization: `Bearer ${String(liveRuntime.ownerToken)}` };
+    // Tool permissions belong to the workspace file. The server's runtime
+    // provider/MCP patch intentionally does not accept arbitrary tool grants.
+    const config: unknown = JSON.parse(resultText(await invokeCoworker(restarted, "coworkers.files.read", { slug: String(member.slug), path: "opencode.json" })));
+    if (!isRecord(config)) throw new Error("Expected the fixture workspace configuration.");
+    await invokeCoworker(restarted, "coworkers.files.write", { slug: String(member.slug), path: "opencode.json", content: JSON.stringify({ ...config, permission: { ...(isRecord(config.permission) ? config.permission : {}), bash: member.slug === "editor" ? "ask" : "allow", question: "allow" } }) });
+    expect((await fetch(`${base}/engine/reload`, { method: "POST", headers, body: JSON.stringify({ force: true }) })).status).toBe(200);
+  }
+  await evalIn(restarted, "location.reload(); true");
+  await openCoworker(restarted, "nova", "Nova");
+  await openDiscussion(restarted, origin);
+  await fill(restarted, 'textarea[aria-label="Message Nova"]', CANARY_PROMPT);
+  await clickButton(restarted, "Send");
+  await waitFor(restarted, `document.querySelector('[data-testid="coworker-turn-failed"] [data-choice="continue"]')?.textContent.includes("Continue")`, { timeoutMs: 120_000, label: "tool-bearing failure offers Continue" });
+  const failedHistory = await readThreadMessages(restarted, "nova", origin);
+  const failedUser = failedHistory.find((message) => message.role === "user" && message.text === CANARY_PROMPT);
+  expect(failedUser).toBeDefined();
+  expect(resultText(await invokeCoworker(restarted, "coworkers.files.read", { slug: "nova", path: "continuation-canary.md" }))).toBe("counted\n");
+  const failedTools = failedHistory.filter((message) => message.parentId === failedUser?.id).flatMap((message) => Array.isArray(message.tools) ? message.tools : []);
+  expect(failedTools).toEqual([expect.objectContaining({ name: "bash", status: "completed" })]);
+  await evalIn(restarted, `document.querySelector('[data-testid="coworker-turn-failed"] [data-choice="continue"]').click(); true`);
+  await waitForText(restarted, CANARY_CONTINUED, { timeoutMs: 120_000 });
+  await waitFor(restarted, `!document.querySelector('[data-testid="coworker-working"]')`, { label: "continuation settled" });
+  const continuedHistory = await readThreadMessages(restarted, "nova", origin);
+  expect(continuedHistory.slice(0, failedHistory.length)).toEqual(failedHistory);
+  const continuedUser = continuedHistory.filter((message) => message.role === "user" && String(message.text).startsWith("Continue the earlier private request."));
+  expect(continuedUser).toHaveLength(1);
+  expect(continuedUser[0]?.id).not.toBe(failedUser?.id);
+  expect(continuedHistory.filter((message) => message.text === CANARY_CONTINUED)).toEqual([expect.objectContaining({ parentId: continuedUser[0]?.id, completed: true })]);
+  await evalIn(restarted, "location.reload(); true");
+  await openCoworker(restarted, "nova", "Nova");
+  expect(resultText(await invokeCoworker(restarted, "coworkers.files.read", { slug: "nova", path: "continuation-canary.md" }))).toBe("counted\n");
+  expect(await readThreadMessages(restarted, "nova", origin)).toEqual(continuedHistory);
+  expect(await readThreadMessages(restarted, "nova", otherPrivate)).toEqual(otherMessages);
+  expect(scripted.prompts.filter((prompt) => prompt === CANARY_PROMPT)).toHaveLength(1);
+  evidence.recordAssertionEvidence("Continue preserves a failed tool-bearing execution and its single real file effect", "Native bash appended one counted line, then inference failed. The visible Continue action admitted one new user message in the same native thread. All earlier user/assistant/tool records survived unchanged, the file still had exactly one line after continuation and renderer reload, and the other private discussion did not change.", true);
+
+  // --- 9. Group native approval/question cards never answer another private session.
+  await openCoworker(restarted, "editor", "Editor");
+  await fill(restarted, 'textarea[aria-label="Message Editor"]', PRIVATE_QUESTION);
+  await clickButton(restarted, "Send");
+  const privateQuestionState = await waitFor(restarted, `document.querySelector('[data-testid="question-card"]')?.textContent.includes("PRIVATE-QUESTION-CANARY") ? "pending" : [...document.querySelectorAll('[data-message-role="assistant"]')].some((node) => node.textContent.includes("The private question was answered.")) ? "answered" : false`, { timeoutMs: 120_000, label: "private native question pending" });
+  const questionConfig = privateQuestionState === "pending" ? null : await evalIn(restarted, `(async () => {
+    const runtime = (await window.__COWORKER__.invoke("runtime.info")).result;
+    const member = (await window.__COWORKER__.invoke("coworkers.get", {slug:"editor"})).result;
+    const base = runtime.serverUrl + "/workspace/" + encodeURIComponent(member.workspaceId) + "/opencode";
+    const headers = {Authorization: "Bearer " + runtime.ownerToken};
+    const [config, agents, ids] = await Promise.all(["/config", "/agent", "/experimental/tool/ids"].map(route => fetch(base + route, {headers}).then(response => response.json()).catch(() => null)));
+    return {defaultAgent: config?.default_agent, questionPermission: config?.permission?.question, questionTool: config?.tools?.question, agents: Array.isArray(agents) ? agents.map(agent => ({name:agent.name, questionRules:agent.permission?.filter(rule=>rule.permission==="question")})) : null, questionRegistered: Array.isArray(ids) ? ids.includes("question") : null};
+  })()`, {awaitPromise:true});
+  expect(privateQuestionState, JSON.stringify({ results: scripted.seenToolResults.slice(-3), config: questionConfig, tools: scripted.facts.find((fact) => fact.prompt === PRIVATE_QUESTION)?.toolNames })).toBe("pending");
+  const privateWaiting = await readThreadMessages(restarted, "editor", editorPrivate);
+  await openGroup(restarted, pair.id);
+  await fill(restarted, '[data-testid="group-composer"]', APPROVAL_PROMPT);
+  await clickButton(restarted, "Send");
+  await waitFor(restarted, `Boolean(document.querySelector('[data-testid="group-waiting-person"][data-speaker="editor"] [data-testid="permission-card"]')) && !document.querySelector('[data-testid="group-working"]')`, { timeoutMs: 120_000, label: "quiet inline group permission" });
+  const approvalStatus = resultRecord(await invokeCoworker(restarted, "groups.status", { id: pair.id }));
+  const approval = Array.isArray(approvalStatus.interactions) ? approvalStatus.interactions.find(isRecord) : null;
+  if (!isRecord(approval) || !isRecord(approval.pending) || !Array.isArray(approval.pending.permissions) || !isRecord(approval.pending.permissions[0])) throw new Error("Missing bound group approval.");
+  const approvalBinding = { groupId: pair.id, executionId: approval.executionId, slug: approval.slug, threadId: approval.threadId, workspaceId: approval.workspaceId, requestId: approval.pending.permissions[0].id, kind: "permission", reply: "once" };
+  expect(approval.threadId).not.toBe(editorPrivate);
+  expect(await invokeCoworker(restarted, "coworkers.files.read", { slug: "editor", path: "approval-canary.md" })).toMatchObject({ ok: false });
+  expect(await evalIn(restarted, `document.body.innerText.includes("PRIVATE-QUESTION-CANARY")`)).toBe(false);
+  await fill(restarted, '[data-testid="group-composer"]', "Keep this draft while I decide");
+  await expect.poll(() => evalIn(restarted, `document.activeElement?.getAttribute("data-testid")`)).toBe("group-composer");
+  await openGroup(restarted, unrelatedGroupId);
+  expect(await evalIn(restarted, `document.querySelectorAll('[data-testid="permission-card"], [data-testid="question-card"]').length`)).toBe(0);
+  expect(await invokeCoworker(restarted, "groups.interactions.reply", { ...approvalBinding, groupId: unrelatedGroupId })).toMatchObject({ ok: false });
+  expect(await invokeCoworker(restarted, "groups.interactions.reply", { ...approvalBinding, threadId: editorPrivate })).toMatchObject({ ok: false });
+  expect(await readThreadMessages(restarted, "editor", editorPrivate)).toEqual(privateWaiting);
+  await openGroup(restarted, pair.id);
+  await waitFor(restarted, `(() => { const button = [...document.querySelectorAll('[data-testid="group-waiting-person"][data-speaker="editor"] [data-testid="permission-card"] button')].find((button) => button.textContent.includes("Allow once")); if (!(button instanceof HTMLButtonElement) || button.disabled) return false; button.click(); return true; })()`, { label: "approve the restored group permission card once" });
+  await waitForText(restarted, APPROVAL_REPLY, { timeoutMs: 120_000 });
+  await waitFor(restarted, `!document.querySelector('[data-testid="group-waiting-person"]') && document.querySelector('[data-testid="group-chat"]')?.dataset.live === "false"`, { label: "same group approval execution finished" });
+  expect(resultText(await invokeCoworker(restarted, "coworkers.files.read", { slug: "editor", path: "approval-canary.md" }))).toBe("approved\n");
+  const approvalMessages = await readThreadMessages(restarted, "editor", String(approval.threadId));
+  expect(approvalMessages.filter((message) => message.role === "user")).toHaveLength(1);
+  expect(approvalMessages.filter((message) => message.text === APPROVAL_REPLY)).toHaveLength(1);
+  expect(await invokeCoworker(restarted, "groups.interactions.reply", approvalBinding)).toMatchObject({ ok: false });
+  for (const { prompt, cancel } of [{ prompt: GROUP_QUESTION, cancel: false }, { prompt: GROUP_CANCEL_QUESTION, cancel: true }]) {
+    await fill(restarted, '[data-testid="group-composer"]', prompt);
+    await clickButton(restarted, "Send");
+    await waitFor(restarted, `Boolean(document.querySelector('[data-testid="group-waiting-person"] [data-testid="question-card"]')) && !document.querySelector('[data-testid="group-working"]')`, { timeoutMs: 120_000, label: "native question inside the group" });
+    const status = resultRecord(await invokeCoworker(restarted, "groups.status", { id: pair.id }));
+    const wait = Array.isArray(status.interactions) ? status.interactions.find(isRecord) : null;
+    if (!isRecord(wait) || !isRecord(wait.pending) || !Array.isArray(wait.pending.questions) || !isRecord(wait.pending.questions[0])) throw new Error("Missing bound group question.");
+    if (cancel) await evalIn(restarted, `document.querySelector('[data-testid="group-waiting-person"] > button').click(); true`);
+    else await evalIn(restarted, `[...document.querySelectorAll('[data-testid="group-waiting-person"] [data-testid="question-card"] button')].find((button) => button.textContent.includes("North")).click(); true`);
+    await waitFor(restarted, `!document.querySelector('[data-testid="group-waiting-person"]') && document.querySelector('[data-testid="group-chat"]')?.dataset.live === "false"`, { timeoutMs: 120_000, label: cancel ? "group question cancellation settled" : "native question answer settled" });
+    if (!cancel) await waitForText(restarted, "The group chose North.");
+    expect(await invokeCoworker(restarted, "groups.interactions.reply", { groupId: pair.id, executionId: wait.executionId, workspaceId: wait.workspaceId, slug: wait.slug, threadId: wait.threadId, kind: "question", requestId: wait.pending.questions[0].id, answers: [["North"]] })).toMatchObject({ ok: false });
+  }
+  const groupMessages = await readThreadMessages(restarted, "editor", String(approval.threadId));
+  expect(groupMessages.filter((message) => message.role === "user")).toHaveLength(3);
+  expect(groupMessages.some((message) => message.text === "This cancelled question must not complete.")).toBe(false);
+  expect(groupMessages.filter((message) => message.role === "assistant").flatMap((message) => Array.isArray(message.tools) ? message.tools : [])).toEqual(expect.arrayContaining([expect.objectContaining({ name: "question", status: "completed", output: expect.stringContaining("North") })]));
+  expect(await readThreadMessages(restarted, "editor", editorPrivate)).toEqual(privateWaiting);
+  await openCoworker(restarted, "editor", "Editor", false);
+  await waitFor(restarted, `document.querySelector('[data-testid="question-card"]')?.textContent.includes("PRIVATE-QUESTION-CANARY")`, { label: "private question remains unanswered" });
+  expect(await evalIn(restarted, `document.body.innerText.includes("Group direction")`)).toBe(false);
+  expect(await invokeCoworker(restarted, "turns.cancel", { slug: "editor", threadId: editorPrivate })).toMatchObject({ ok: true });
+  evidence.recordAssertionEvidence("Group permission and question replies stay bound to their native execution and do not expose or answer a private question", "The group showed Editor's native cards with a static waiting receipt and no writing indicator. Wrong-group and wrong-session replies were rejected, Allow once wrote one line without another native user message, North answered the next native question, and cancelling the last question rejected a late answer. The simultaneous private question remained unchanged and visible only in Editor's private discussion.", true);
 });

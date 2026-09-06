@@ -1,5 +1,5 @@
 import { createGroup, getGroup, listGroups, beginGroupTurn, updateGroup, updateGroupTurn, appendGroupEvent, readGroupTimeline } from "./groups.mjs";
-import { collaborationId, withAbort } from "./collaboration.mjs";
+import { collaborationId, continuationPrompt, withAbort } from "./collaboration.mjs";
 import { runGroupTurn, resumeGroupTurn, fallbackPlan, parseMentions, MAX_SPEAKERS_PER_TURN } from "../src/lib/groups.ts";
 import { facilitatorPrompt, earlierSpeakerOrders, routeWithFacilitator, facilitatorModels } from "../src/lib/facilitator.ts";
 
@@ -73,7 +73,7 @@ export function createGroupExecution({ directory, collaboration, coworkerFor, co
             if (!["failed", "cancelled", "succeeded"].includes(prior.state)) throw new Error("The earlier reply is still being reconciled. Wait for it to settle before asking for a follow-up.");
           }
           executions.add(id);
-          const words = request.attempt ? `Continue the earlier group request from the work already present in this thread. This is a follow-up, not permission to repeat completed tool actions. Inspect the existing results, state what was completed, and perform only missing work. If an earlier action's outcome is uncertain, ask the person instead of repeating it.\n\nOriginal objective and current group context:\n${prompt}` : prompt;
+          const words = request.attempt ? continuationPrompt({ objective: prompt, refs: ["earlier group messages in this native thread"], completedActions: [], resumeInstructions: "Finish only the missing group reply." }, [], "Continue the earlier group request from the work already present in this thread. The person explicitly requested this follow-up.") : prompt;
           const entry = await collaboration.submit({ id, owner, groupRequestId: request.id, prompt: request.context ? `${request.context}\n\n${words}` : words, timeoutMs: replyTimeoutMs, tools: { coworker_team_refer: false } });
           return collaboration.wait(entry.id, signal);
         },
@@ -174,7 +174,13 @@ export function createGroupExecution({ directory, collaboration, coworkerFor, co
       if (serviceError) throw new Error(serviceError);
       const queue = await collaboration.read((state) => state.groups[groupId]?.queue ?? []);
       const group = await getGroup(directory, groupId);
-      return { active: active.has(groupId) || queue.length > 0, turn: group.turns.find((turn) => turn.id === queue[0]?.turnId || turn.clientMessageId === queue[0]?.id) ?? null, queue: queue.slice(1).map((entry) => ({ clientMessageId: entry.id, text: entry.text })) };
+      const interactions = group.archivedAt === null ? (await collaboration.groupInteractions(groupId)).filter((entry) => group.participantSlugs.includes(entry.slug)) : [];
+      return { active: active.has(groupId) || queue.length > 0, interactions, turn: group.turns.find((turn) => turn.id === queue[0]?.turnId || turn.clientMessageId === queue[0]?.id) ?? null, queue: queue.slice(1).map((entry) => ({ clientMessageId: entry.id, text: entry.text })) };
+    },
+    async replyInteraction(input) {
+      const group = await getGroup(directory, input.groupId);
+      if (group.archivedAt !== null || !group.participantSlugs.includes(input.slug)) throw new Error("That coworker is no longer in this active group.");
+      return collaboration.replyInteraction(input);
     },
     async remove(groupId, id) { await collaboration.change((state) => { if (state.groups[groupId]) state.groups[groupId].queue = state.groups[groupId].queue.filter((entry) => entry.id !== id); }); },
     async cancel(groupId) {

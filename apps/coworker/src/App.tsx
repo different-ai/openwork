@@ -185,7 +185,8 @@ export default function App() {
           if (cancelled) return;
           publishGroupRun({ groupId: group.id, active: status.active, ...(status.turn ? { turn: status.turn } : {}), done: !status.active });
           const nameFor = (slug: string) => coworkers.find((coworker) => coworker.slug === slug)?.name ?? slug;
-          if (status.active) setGroupLine(group.id, status.turn ? describeGroupActivity([], nameFor, status.turn) : "Choosing who should respond…");
+          if (status.interactions.length) setGroupLine(group.id, `${status.interactions.map((entry) => nameFor(entry.slug)).join(", ")} waiting for you`);
+          else if (status.active) setGroupLine(group.id, status.turn ? describeGroupActivity([], nameFor, status.turn) : "Choosing who should respond…");
           else {
             const last = group.turns.at(-1)?.speakers.filter((speaker) => speaker.status === "succeeded").at(-1);
             if (last) setGroupLine(group.id, `${nameFor(last.slug)} replied`);

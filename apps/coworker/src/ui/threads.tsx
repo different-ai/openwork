@@ -38,7 +38,7 @@ import {
   type PendingInteractions,
   type ThreadListItem,
 } from "@/lib/threads";
-import { isRunning, type HeadlessThreadModel, type HeadlessThreadUsage, type HeadlessTurnAcceptance } from "@openwork/headless-threads";
+import { isRunning, type HeadlessThreadModel, type HeadlessThreadUsage } from "@openwork/headless-threads";
 import {
   classifyThreads,
   configureDiscussionStore,
@@ -1294,6 +1294,7 @@ function ThreadView({
     const messageLane: ModelLane = laneWithPreference(classifyRequest(prompt), coworker.effortPreference);
     const turnLane: ModelLane = automatic ? messageLane : "standard";
     const attempt = send.mode === "retry" ? send.attempt : 0;
+    let continued = false;
     /**
      * When a model the app chose by itself cannot answer, move to the next
      * choice and try the same message again, once or twice, telling the
@@ -1387,6 +1388,12 @@ function ThreadView({
       const recorded = await coworkerBridge.turns.activity(coworker.slug, threadId).catch(() => []);
       const ownedFailure = recorded.find((entry) => entry.messageId === messageId)?.failure;
       if (ownedFailure) { message = ownedFailure; engineKnows = false; }
+      const snapshot = await threads.client.getThreadSnapshot(threadId).catch(() => null);
+      // Never schedule a replay after tool work, including after a provider failure.
+      if (!snapshot || snapshot.messages.some((entry) => entry.parentId === messageId && entry.parts.some((part) => part.type === "tool"))) {
+        setFailure(message);
+        return;
+      }
       if (await fallBack(message)) return;
       if (retryLater(message, retryable)) return;
       // The engine's own reply carries the words; only a failure it never saw needs remembering here.
@@ -1446,10 +1453,16 @@ function ThreadView({
         }
       }
       // A re-send waits for the engine to let go of the earlier attempt (a stop is still settling, say).
-      const acceptance: HeadlessTurnAcceptance = await coworkerBridge.turns.send({ slug: coworker.slug, threadId, kind, prompt, messageId, model: turnModel, retry: send.mode === "retry", retryByPerson: send.mode === "retry" && send.byPerson === true, retryLabel: send.mode === "retry" ? send.switchedTo : undefined });
+      const acceptance = await coworkerBridge.turns.send({ slug: coworker.slug, threadId, kind, prompt, messageId, model: turnModel, retry: send.mode === "retry", retryByPerson: send.mode === "retry" && send.byPerson === true, retryLabel: send.mode === "retry" ? send.switchedTo : undefined });
+      if (acceptance.messageId && acceptance.messageId !== messageId) {
+        continued = true;
+        messageId = acceptance.messageId;
+        prompt = acceptance.prompt;
+        commitTurnState((state) => beginPending(state, { messageId, prompt, startedAt: acceptance.acceptedAt }));
+      }
       // Keep the selected retry model when admission is confirmed. Its receipt
       // is displayed only once the correlated reply actually completes.
-      if (send.mode === "retry" && send.switchedTo) setResolution({ messageId, note: `Retried with ${send.switchedTo}` });
+      if (send.mode === "retry" && send.switchedTo) setResolution({ messageId, note: `${continued ? "Continued" : "Retried"} with ${send.switchedTo}` });
       const waiting: ActiveTurn = { messageId, prompt, phase: "waiting" };
       activeTurnRef.current = waiting;
       setActiveTurn(waiting);
@@ -1500,7 +1513,7 @@ function ThreadView({
         // The stream closed without a word: the person hears that the reply never came and can retry it.
         await settleFailure(EMPTY_REPLY_MESSAGE, false, true);
       } else if (result.outcome === "settled" || landed) {
-        if (send.mode === "retry" && send.switchedTo) setResolution({ messageId, note: `Retried with ${send.switchedTo}` });
+        if (send.mode === "retry" && send.switchedTo) setResolution({ messageId, note: `${continued ? "Continued" : "Retried"} with ${send.switchedTo}` });
         commitTurnState((state) => state.pending?.messageId === messageId ? clearPending(state) : state);
       } else if (result.outcome === "failed" || (result.outcome === "timeout" && terminalError)) {
         // The same raw text the transcript's failure reads, so the retry decision sees the provider's own error type too.
@@ -1596,7 +1609,7 @@ function ThreadView({
     check();
   }), []);
 
-  /** Run the unresolved turn again under its own message id, on another model when one was chosen. */
+  /** The backend retries tool-free work or creates a new continuation after tool work. */
   const retryPending = useCallback(async (switched?: { model: HeadlessThreadModel; label: string }) => {
     // A Retry pressed the moment after Stop waits for the stopped turn to let go rather than being lost.
     await untilTurnReleased();
@@ -1798,7 +1811,7 @@ function ThreadView({
 
   const needsYou = hasPendingInteractions(pending);
   // The one value every surface reads: derived from the record, the engine, the reply, and the clock.
-  const outcome = deriveTurnOutcome({
+  const rawOutcome = deriveTurnOutcome({
     coworkerName: coworker.name,
     now,
     turn: pendingTurn ? { ...pendingTurn, recovered } : null,
@@ -1812,6 +1825,10 @@ function ThreadView({
     signedIn: session !== null,
     recommendedModel: recommendedModel?.modelLabel ?? "",
   });
+  const needsContinuation = pendingTurn && messages.some((message) => message.parentId === pendingTurn.messageId && message.toolCalls.length > 0);
+  const outcome = rawOutcome && needsContinuation && ["failed", "stopped-by-you", "cut-off"].includes(rawOutcome.kind)
+    ? { ...rawOutcome, detail: "Earlier actions and their history are kept. Continue performs only missing work, using a new message in this discussion.", choices: rawOutcome.choices.map((choice): TurnChoice => choice.id === "retry" || choice.id === "continue" ? { ...choice, id: "continue", label: "Continue" } : choice) }
+    : rawOutcome;
   // A reply that landed while this view was not driving the turn (after a reload) settles the record.
   useEffect(() => {
     if (outcome?.kind === "replied" && !activeTurnRef.current) commitTurnState(clearPending);
@@ -2159,7 +2176,7 @@ export function conversationBlocks(
     calls = [];
   };
   // Bubbles decide grouping: a reply with no visible words never counts as a neighbour, nor does a review turn.
-  const continuation = (message: TranscriptMessage) => message.role === "user" && message.text.startsWith("Continue the original task using these requested results.");
+  const continuation = (message: TranscriptMessage) => message.role === "user" && (message.text.startsWith("Continue the original task using these requested results.") || message.text.startsWith("Continue the earlier private request."));
   const bubbles = messages.filter((message, index) =>
     message.role === "assistant" ? Boolean(message.text) || isActive(message, index) : !reviewTurn(message) && !continuation(message),
   );

@@ -246,6 +246,7 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
       parts: [{ type: "text", text: input.prompt }],
       ...(input.messageId === undefined ? {} : { messageID: input.messageId }),
       ...(input.tools === undefined ? {} : { tools: input.tools }),
+      ...(input.agent === undefined ? {} : { agent: input.agent }),
       ...(model === undefined ? {} : { model: { providerID: model.providerId, modelID: model.modelId } }),
       ...(model?.variant === undefined ? {} : { variant: model.variant }),
     }, { signal: requestSignal(signal) });

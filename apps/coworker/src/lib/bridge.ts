@@ -22,6 +22,10 @@ import type { AssignedCoworkerTemplate } from "@openwork/types/coworker-template
 import type { HeadlessThreadModel, HeadlessTurnAcceptance } from "@openwork/headless-threads";
 import type { ThreadTurnState } from "./thread-queue.ts";
 import type { ExecutionActivity } from "./progress-activity.ts";
+import type { PendingInteractions, PermissionReply } from "./threads.ts";
+
+export type GroupInteraction = { executionId: string; slug: string; threadId: string; workspaceId: string; deadline: number; pending: PendingInteractions };
+export type GroupInteractionReply = { groupId: string; executionId: string; slug: string; threadId: string; workspaceId: string; requestId: string } & ({ kind: "permission"; reply: PermissionReply } | { kind: "question"; answers: string[][]; reply?: never } | { kind: "question"; reply: "reject"; answers?: never });
 
 export type CollaborationReceipt = {
   id: string;
@@ -251,6 +255,8 @@ export type CoworkerSettings = {
   minimumRunGapMinutes: number;
   /** The most runs one assignment may make in a day on this Mac. */
   maxRunsPerDay: number;
+  progressSummariesEnabled: boolean;
+  progressSummaryModelId: string;
 };
 
 /** One recorded change to the coworker's memory or soul, by the coworker, the person, or an undo. */
@@ -395,7 +401,8 @@ export const coworkerBridge = {
     activity: (slug: string, threadId: string) => invoke<ExecutionActivity[]>("turns.activity", { slug, threadId }),
     state: (slug: string, threadId: string) => invoke<ThreadTurnState>("turns.state", { slug, threadId }),
     update: (slug: string, threadId: string, previous: ThreadTurnState, next: ThreadTurnState) => invoke<ThreadTurnState>("turns.update", { slug, threadId, previous, next }),
-    send: (input: { slug: string; threadId: string; prompt: string; messageId: string; model?: HeadlessThreadModel; retry?: boolean; retryByPerson?: boolean; retryLabel?: string; kind: "discussion" | "assignment" | "worker" }) => invoke<HeadlessTurnAcceptance>("turns.send", input),
+    /** Explicit person recovery may return a NEW messageId and continuation prompt after tool work. */
+    send: (input: { slug: string; threadId: string; prompt: string; messageId: string; model?: HeadlessThreadModel; retry?: boolean; retryByPerson?: boolean; retryLabel?: string; kind: "discussion" | "assignment" | "worker" }) => invoke<HeadlessTurnAcceptance & { prompt: string }>("turns.send", input),
     cancel: (slug: string, threadId: string, messageId?: string) => invoke<{ ok: boolean }>("turns.cancel", { slug, threadId, messageId }),
   },
   templates: {
@@ -423,7 +430,8 @@ export const coworkerBridge = {
   groups: {
     activity: (id: string) => invoke<{ timeline: GroupTimelineEvent[]; executions: ExecutionActivity[] }>("groups.activity", { id }),
     submit: (id: string, input: { clientMessageId: string; text: string; context?: string; turnId?: string; only?: string; attempt?: number }) => invoke<{ accepted: boolean }>("groups.submit", { id, ...input }),
-    status: (id: string) => invoke<{ active: boolean; turn: CoworkerGroupTurn | null; queue: Array<{ clientMessageId: string; text: string }> }>("groups.status", { id }),
+    status: (id: string) => invoke<{ active: boolean; interactions: GroupInteraction[]; turn: CoworkerGroupTurn | null; queue: Array<{ clientMessageId: string; text: string }> }>("groups.status", { id }),
+    replyInteraction: (input: GroupInteractionReply) => invoke<{ ok: boolean }>("groups.interactions.reply", input),
     cancel: (id: string) => invoke<{ ok: boolean }>("groups.cancel", { id }),
     removeQueued: (id: string, clientMessageId: string) => invoke<{ ok: boolean }>("groups.removeQueued", { id, clientMessageId }),
     list: () => invoke<CoworkerGroupSummary[]>("groups.list"),
@@ -548,6 +556,7 @@ export const coworkerBridge = {
   },
   settings: {
     get: () => invoke<CoworkerSettings>("settings.get"),
+    progressModels: () => invoke<import("./threads.ts").ProgressModelOption[]>("settings.progressModels"),
     update: (patch: Partial<CoworkerSettings>) => invoke<CoworkerSettings>("settings.update", patch),
   },
   openExternal: (url: string) => invoke<{ ok: boolean }>("shell.openExternal", { url }),

@@ -47,6 +47,8 @@ export function normalizeSettings(value) {
     maxParallelLocalRuns: clampParallelRuns(source.maxParallelLocalRuns),
     minimumRunGapMinutes: clampMinimumRunGap(source.minimumRunGapMinutes),
     maxRunsPerDay: clampMaxRunsPerDay(source.maxRunsPerDay),
+    progressSummariesEnabled: source.progressSummariesEnabled === true,
+    progressSummaryModelId: typeof source.progressSummaryModelId === "string" && source.progressSummaryModelId.length <= 256 && /^[\x21-\x7e]+\/[\x21-\x7e]+$/.test(source.progressSummaryModelId) ? source.progressSummaryModelId : "",
   };
 }
 

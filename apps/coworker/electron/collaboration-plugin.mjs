@@ -49,6 +49,16 @@ export default async ({ directory }) => {
 };
 `;
 
+/** Native custom roles deny question by default. Supply the interactive-client
+ * default only where the person has not already set a question/catch-all rule. */
+export function withInteractiveQuestionDefault(config) {
+  const permission = config.permission === undefined ? {} : config.permission;
+  if (!permission || typeof permission !== "object" || Array.isArray(permission)
+    || Object.hasOwn(permission, "question") || Object.hasOwn(permission, "*")
+    || config.tools?.question === false || config.tools?.["*"] === false) return config;
+  return { ...config, permission: { ...permission, question: "allow" } };
+}
+
 export async function installCollaborationPlugin(coworker, config) {
   const root = path.join(coworker.path, ".opencode");
   await mkdir(root, { recursive: true });
@@ -58,9 +68,11 @@ export async function installCollaborationPlugin(coworker, config) {
   const connection = JSON.stringify(config);
   if (await readFile(connectionFile, "utf8").catch(() => "") !== connection) await writeFile(connectionFile, connection, { mode: 0o600 });
   const target = path.join(coworker.path, "opencode.json");
-  const current = JSON.parse(await readFile(target, "utf8"));
+  const previous = JSON.parse(await readFile(target, "utf8"));
+  const current = withInteractiveQuestionDefault(previous);
   const plugin = pathToFileURL(source).href;
-  if ((current.plugin ?? []).includes(plugin)) return;
-  await writeFile(`${target}.collaboration.tmp`, JSON.stringify({ ...current, plugin: [...(current.plugin ?? []), plugin] }, null, 2), "utf8");
+  const installed = (current.plugin ?? []).includes(plugin);
+  if (installed && current === previous) return;
+  await writeFile(`${target}.collaboration.tmp`, JSON.stringify({ ...current, plugin: installed ? current.plugin : [...(current.plugin ?? []), plugin] }, null, 2), "utf8");
   await rename(`${target}.collaboration.tmp`, target);
 }

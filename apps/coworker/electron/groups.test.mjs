@@ -5,6 +5,8 @@ import path from "node:path";
 import test from "node:test";
 import { createCollaboration, nativeMessageId } from "./collaboration.mjs";
 import { createGroupExecution, repairGroupSelection } from "./group-execution.mjs";
+import { withInteractiveQuestionDefault } from "./collaboration-plugin.mjs";
+import { createCoworkerThreads } from "../src/lib/threads.ts";
 import {
   INTERRUPTED_TURN_MESSAGE,
   MAX_TURNS,
@@ -32,6 +34,14 @@ async function withHome(run) {
     await rm(home, { recursive: true, force: true });
   }
 }
+
+test("native questions get a client default without overriding explicit tool rules", () => {
+  assert.deepEqual(withInteractiveQuestionDefault({}), { permission: { question: "allow" } });
+  assert.deepEqual(withInteractiveQuestionDefault({ permission: { bash: "ask" } }), { permission: { bash: "ask", question: "allow" } });
+  for (const config of [{ permission: "deny" }, { permission: { "*": "ask" } }, { permission: { question: "deny" } }, { tools: { question: false } }, { tools: { "*": false } }]) {
+    assert.equal(withInteractiveQuestionDefault(config), config);
+  }
+});
 
 test("a group needs two distinct valid coworkers", () => {
   const timestamp = 1_700_000_000_000;
@@ -232,9 +242,16 @@ function nativeFixture(onSend = async () => {}) {
   const requests = [];
   const aborted = [];
   const held = new Set();
+  const interactions = new Map();
+  const decisions = [];
   let sequence = 0;
   const snapshot = (threadId) => ({ threadId, title: threadId, status: { type: held.has(threadId) ? "busy" : "idle" }, messages: histories.get(threadId) ?? [], todos: [] });
-  return { requests, aborted, histories, held, clientFor: async (slug) => ({
+  return { requests, aborted, histories, held, interactions, decisions, clientFor: async (slug) => ({
+    workspaceId: `workspace_${slug}`,
+    pendingInteractions: async (threadId) => interactions.get(threadId) ?? { permissions: [], questions: [] },
+    replyPermission: async (request, reply) => { decisions.push({ slug, request, reply }); interactions.delete(request.sessionID); held.delete(request.sessionID); },
+    replyQuestion: async (request, answers) => { decisions.push({ slug, request, answers }); interactions.delete(request.sessionID); held.delete(request.sessionID); },
+    rejectQuestion: async (request) => { decisions.push({ slug, request, reply: "reject" }); interactions.delete(request.sessionID); held.delete(request.sessionID); },
     createThread: async () => ({ id: `ses_${++sequence}` }),
     getThreadSnapshot: async (threadId) => snapshot(threadId),
     sendTurn: async (threadId, input) => {
@@ -264,6 +281,27 @@ async function eventually(check) {
   while (Date.now() < deadline) { if (await check()) return; await new Promise((resolve) => setTimeout(resolve, 10)); }
   assert.fail("The collaboration did not settle within the module check's deadline.");
 }
+
+test("fresh admission waits through an idle unfinished placeholder", async () => {
+  await withHome(async (home) => {
+    const fixture = nativeFixture();
+    let polls = 0;
+    const service = createCollaboration({ directory: home, pollMs: 5, consult: async () => {}, spawn: async () => {}, cancelWorker: async () => {}, clientFor: async (slug) => {
+      const client = await fixture.clientFor(slug);
+      return { ...client, waitForThread: async (...args) => {
+        const result = await client.waitForThread(...args);
+        if (++polls !== 1) return result;
+        return { ...result, outcome: "timeout", snapshot: { ...result.snapshot, messages: result.snapshot.messages.map((message) => message.role === "assistant" ? { ...message, completedAt: null } : message) } };
+      } };
+    } });
+    try {
+      const entry = await service.submit({ owner: { slug: "scout", threadId: "ses_placeholder", conversationId: "ses_placeholder", kind: "private" }, messageId: "msg_placeholder", prompt: "Wait for the real reply" });
+      await eventually(async () => (await service.read((state) => state.executions[entry.id])).state === "succeeded");
+      assert.equal(polls, 2);
+      assert.equal(fixture.requests.length, 1);
+    } finally { await service.stop(); }
+  });
+});
 
 test("a focused consultation and a Worker resume the immutable private origin exactly once", async () => {
   await withHome(async (home) => {
@@ -407,6 +445,184 @@ test("explicit follow-up keeps the prior failure and native history", async () =
       assert.equal(fixture.histories.get("ses_retry").filter((message) => message.role === "user").length, 2);
     } finally { await service.stop(); }
   });
+});
+
+test("private Continue uses a new admission, keeps tool effects once and fences the old dependency generation", async () => {
+  await withHome(async (home) => {
+    let effects = 0;
+    let service;
+    let child;
+    const fixture = nativeFixture(async ({ input, reply, threadId }) => {
+      if (input.prompt !== "Write once then fail") return;
+      effects++;
+      await writeFile(path.join(home, "effect.txt"), String(effects));
+      const trusted = await service.context("scout", { sessionID: threadId, messageID: reply.id, callID: reply.parts[0].callId });
+      child = await service.request(trusted, "worker", { name: "Old generation", goal: "Check", continuation: { objective: "Finish the receipt", refs: ["effect.txt"], completedActions: ["Wrote effect.txt once"], resumeInstructions: "Read the receipt without writing again." } });
+      reply.error = { message: "Interrupted after writing" };
+    });
+    const options = { directory: home, clientFor: fixture.clientFor, pollMs: 5, cancelWorker: async () => {} };
+    service = createCollaboration(options);
+    try {
+      const root = await service.submit({ owner: { slug: "scout", threadId: "ses_once", conversationId: "ses_once", kind: "private" }, messageId: "msg_once", prompt: "Write once then fail", track: true });
+      await eventually(async () => (await service.read((state) => state.executions[root.id])).state === "failed" && fixture.aborted.length > 0);
+      const history = structuredClone(fixture.histories.get("ses_once"));
+      await assert.rejects(service.submit({ ...root, retry: true }), /Choose Continue/);
+      const next = await service.submit({ ...root, retry: true, retryByPerson: true });
+      assert.notEqual(next.messageId, root.messageId);
+      assert.equal(next.owner.threadId, root.owner.threadId);
+      assert.match(next.prompt, /Objective: Finish the receipt/);
+      assert.match(next.prompt, /References: native message msg_once; effect.txt/);
+      assert.match(next.prompt, /Already completed: Wrote effect.txt once/);
+      assert.match(next.prompt, /outcome is uncertain, ask the person/);
+      assert.equal((await service.submit({ ...root, retry: true, retryByPerson: true })).id, next.id);
+      await service.completeWorker({ slug: "scout", id: child.structured.worker.id, status: "finished" }, [{ kind: "finding", text: "LATE OLD RESULT" }]);
+      await service.cancel(root.id);
+      await eventually(async () => (await service.read((state) => state.executions[next.id])).state === "succeeded");
+      assert.equal(effects, 1);
+      assert.equal(await readFile(path.join(home, "effect.txt"), "utf8"), "1");
+      assert.deepEqual(fixture.histories.get("ses_once").slice(0, history.length), history);
+      assert.equal((await service.read((state) => state.executions[root.id])).state, "failed");
+      assert.equal(fixture.requests.length, 2);
+      await service.stop();
+      service = createCollaboration(options);
+      await service.start();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      assert.equal(fixture.requests.length, 2);
+    } finally { await service.stop(); }
+  });
+});
+
+test("group human waits release capacity but retain their session lock and exact request binding", async () => {
+  await withHome(async (home) => {
+    const fixture = nativeFixture(async ({ input, reply, threadId }) => {
+      if (input.prompt === "Other work can proceed") fixture.held.add(threadId);
+      if (!input.prompt.startsWith("Wait")) return;
+      fixture.held.add(threadId);
+      const tool = { messageID: reply.id, callID: reply.parts[0].callId };
+      fixture.interactions.set(threadId, { permissions: [{ id: "permission_a", sessionID: threadId, protocol: "legacy", action: "bash", resources: ["safe canary"], canAlways: false, tool }, { id: "PRIVATE_REQUEST", sessionID: "ses_private", tool }], questions: [{ id: "STALE_REQUEST", sessionID: threadId, tool: { messageID: "old-assistant", callID: "old-call" } }] });
+    });
+    const options = { directory: home, clientFor: fixture.clientFor, maxActiveExecutions: 1, pollMs: 5 };
+    const service = createCollaboration(options);
+    const owner = { slug: "scout", threadId: "ses_group", conversationId: "grp_a", groupId: "grp_a", kind: "group" };
+    try {
+      const first = await service.submit({ owner, messageId: "msg_wait", prompt: "Wait for permission" });
+      await eventually(async () => (await service.read((state) => state.executions[first.id])).state === "waiting-person");
+      const waits = await service.groupInteractions("grp_a");
+      assert.deepEqual(waits[0].pending.permissions.map((request) => request.id), ["permission_a"]);
+      assert.deepEqual(waits[0].pending.questions, []);
+      assert.deepEqual(await service.groupInteractions("grp_other"), []);
+      const sameSession = await service.submit({ owner, messageId: "msg_later", prompt: "Second producer must wait" });
+      const elsewhere = await service.submit({ owner: { slug: "editor", threadId: "ses_elsewhere", conversationId: "ses_elsewhere", kind: "private" }, messageId: "msg_elsewhere", prompt: "Other work can proceed" });
+      await eventually(() => fixture.held.has("ses_elsewhere"));
+      assert.equal((await service.read((state) => state.executions[sameSession.id])).state, "queued");
+      const binding = { groupId: "grp_a", executionId: first.id, slug: "scout", threadId: owner.threadId, workspaceId: "workspace_scout", requestId: "permission_a", kind: "permission", reply: "once" };
+      for (const patch of [{ groupId: "grp_other" }, { slug: "editor" }, { threadId: "ses_private" }, { workspaceId: "workspace_editor" }, { executionId: elsewhere.id }, { requestId: "PRIVATE_REQUEST" }]) await assert.rejects(service.replyInteraction({ ...binding, ...patch }), /no longer/);
+      await assert.rejects(service.replyInteraction({ ...binding, reply: "always" }), /not offered/);
+      await assert.rejects(service.replyInteraction(binding), /available execution slots/);
+      assert.equal(fixture.decisions.length, 0);
+      fixture.held.delete("ses_elsewhere");
+      await eventually(async () => (await service.read((state) => state.executions[elsewhere.id])).state === "succeeded");
+      await service.replyInteraction(binding);
+      await assert.rejects(service.replyInteraction(binding), /no longer/);
+      await eventually(async () => (await service.read((state) => state.executions[sameSession.id])).state === "succeeded");
+      assert.equal(fixture.requests.filter((request) => request.messageId === first.messageId).length, 1);
+      assert.equal(fixture.decisions.length, 1);
+      assert.equal((await service.read((state) => state.executions[first.id])).state, "succeeded");
+    } finally { await service.stop(); }
+  });
+});
+
+test("a dependency-free tool-free retry retains its message ID", async () => {
+  await withHome(async (home) => {
+    let attempt = 0;
+    let retries = 0;
+    const fixture = nativeFixture(async ({ reply }) => { reply.parts = []; if (++attempt === 1) reply.error = { message: "Provider unavailable" }; });
+    const service = createCollaboration({ directory: home, pollMs: 5, clientFor: async (slug) => {
+      const client = await fixture.clientFor(slug);
+      return { ...client, retryTurn: async (threadId, input) => { retries++; fixture.histories.set(threadId, []); return client.sendTurn(threadId, input); } };
+    } });
+    try {
+      const root = await service.submit({ owner: { slug: "scout", threadId: "ses_tool_free", conversationId: "ses_tool_free", kind: "private" }, messageId: "msg_tool_free", prompt: "Reply without tools" });
+      await eventually(async () => (await service.read((state) => state.executions[root.id])).state === "failed" && fixture.aborted.length > 0);
+      const retry = await service.submit({ ...root, retry: true, retryByPerson: true });
+      assert.equal(retry.messageId, root.messageId);
+      await eventually(async () => (await service.read((state) => state.executions[root.id])).state === "succeeded");
+      assert.equal(retries, 1);
+      assert.equal(fixture.histories.get(root.owner.threadId).filter((message) => message.role === "user").length, 1);
+    } finally { await service.stop(); }
+  });
+});
+
+test("a recovered group question observes the same admission; cancel and expired waits reject late answers", async () => {
+  await withHome(async (home) => {
+    const fixture = nativeFixture();
+    const owner = { slug: "scout", threadId: "ses_question", conversationId: "grp_question", groupId: "grp_question", kind: "group" };
+    let clock = Date.now();
+    const options = { directory: home, clientFor: fixture.clientFor, pollMs: 5, now: () => clock, personTimeoutMs: 1000 };
+    let service = createCollaboration(options);
+    try {
+      const root = await service.submit({ owner, messageId: "msg_question", prompt: "Question already admitted" });
+      await eventually(async () => (await service.read((state) => state.executions[root.id])).state === "succeeded");
+      await service.stop();
+      const reply = fixture.histories.get(owner.threadId).at(-1);
+      const question = { id: "question_a", sessionID: owner.threadId, questions: [{ header: "Choose", question: "Which?", options: [{ label: "A", description: "One" }], custom: false, multiple: false }], tool: { messageID: reply.id, callID: reply.parts[0].callId } };
+      // Simulate a crash while the native producer is still waiting, not a second send.
+      await service.change((state) => { Object.assign(state.executions[root.id], { state: "waiting-person", personDeadline: clock + 1000, remainingMs: 2000, interactions: { permissions: [], questions: [{ id: question.id }] } }); state.tasks[root.taskId].state = "waiting-person"; });
+      fixture.held.add(owner.threadId);
+      fixture.interactions.set(owner.threadId, { permissions: [], questions: [question] });
+      service = createCollaboration(options);
+      await service.start();
+      await eventually(async () => (await service.groupInteractions(owner.groupId))[0]?.pending.questions.length === 1);
+      const binding = { groupId: owner.groupId, executionId: root.id, slug: owner.slug, threadId: owner.threadId, workspaceId: "workspace_scout", requestId: question.id, kind: "question", answers: [["A"]] };
+      await service.replyInteraction(binding);
+      await eventually(async () => (await service.read((state) => state.executions[root.id])).state === "succeeded");
+      assert.equal(fixture.requests.length, 1);
+      assert.deepEqual(fixture.decisions[0].answers, [["A"]]);
+      for (const mode of ["cancel", "expire"]) {
+        const client = await fixture.clientFor(owner.slug);
+        const entry = await service.submit({ owner, messageId: `msg_${mode}`, prompt: mode });
+        await eventually(async () => (await service.read((state) => state.executions[entry.id])).state === "succeeded");
+        const latest = (await client.getThreadSnapshot(owner.threadId)).messages.at(-1);
+        fixture.interactions.set(owner.threadId, { permissions: [], questions: [{ ...question, tool: { messageID: latest.id, callID: latest.parts[0].callId } }] });
+        fixture.held.add(owner.threadId);
+        await service.change((state) => { Object.assign(state.executions[entry.id], { state: "waiting-person", personDeadline: clock + 1000, remainingMs: 2000 }); state.tasks[entry.taskId].state = "waiting-person"; });
+        await eventually(async () => (await service.groupInteractions(owner.groupId))[0]?.pending.questions.length === 1);
+        if (mode === "cancel") await service.cancel(entry.id);
+        else clock += 2000;
+        await assert.rejects(service.replyInteraction({ ...binding, executionId: entry.id }), /no longer/);
+        await eventually(async () => ["failed", "cancelled"].includes((await service.read((state) => state.executions[entry.id])).state));
+      }
+      assert.equal(fixture.decisions.length, 1);
+    } finally { await service.stop(); }
+  });
+});
+
+test("shared native interaction helpers tolerate an absent v2 HTML route without hiding real failures", async (t) => {
+  let mode = "html";
+  const replies = [];
+  t.mock.method(globalThis, "fetch", async (request) => {
+    const url = new URL(request.url);
+    const v2 = url.pathname.includes("/api/session/");
+    if (request.method === "POST") { replies.push({ path: url.pathname, body: await request.json() }); return Response.json(true); }
+    if (v2 && mode === "html") return new Response("<!doctype html><html></html>", { headers: { "content-type": "text/html" } });
+    if (v2 && mode === "forbidden") return Response.json({ error: "Denied" }, { status: 403 });
+    if (v2 && mode === "server-error") return new Response("Unavailable", { status: 503, headers: { "content-type": "text/html" } });
+    if (!v2 && url.pathname.endsWith("/question") && mode === "question-error") return Response.json({ error: "Unavailable" }, { status: 500 });
+    if (v2) return Response.json({ data: [{ id: "v2-a", sessionID: "ses_a", action: "edit", resources: ["a.md"], source: { type: "tool", messageID: "assistant_a", callID: "call_a" } }] });
+    if (url.pathname.endsWith("/question")) return Response.json([]);
+    return Response.json([{ id: "legacy-a", sessionID: "ses_a", permission: "bash", patterns: ["safe"], always: [], tool: { messageID: "assistant_a", callID: "call_a" } }, { id: "private", sessionID: "ses_private", permission: "bash", patterns: ["PRIVATE"], always: [] }]);
+  });
+  const threads = createCoworkerThreads({ serverUrl: "http://127.0.0.1:1", workspaceId: "workspace_a", token: "fixture" });
+  const legacy = await threads.listThreadInteractions("ses_a");
+  assert.deepEqual(legacy.permissions.map((request) => request.id), ["legacy-a"]);
+  assert.deepEqual(legacy.permissions[0].tool, { messageID: "assistant_a", callID: "call_a" });
+  for (mode of ["forbidden", "server-error", "question-error"]) await assert.rejects(threads.listThreadInteractions("ses_a"), /Reading .* failed/);
+  mode = "json";
+  const native = await threads.listThreadInteractions("ses_a");
+  assert.equal(native.permissions.length, 2);
+  await threads.replyPermission(native.permissions[1], "once");
+  assert.match(replies[0].path, /workspace\/workspace_a\/opencode\/api\/session\/ses_a\/permission\/v2-a\/reply/);
+  assert.deepEqual(replies[0].body, { reply: "once" });
 });
 
 test("a nested consultation delivers the final child continuation to its parent once", async () => {

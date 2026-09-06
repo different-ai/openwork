@@ -16,7 +16,9 @@ import {
   modelSourceLabel,
   type EngineModelCatalog,
   type EngineModelOption,
+  type ProgressModelOption,
 } from "@/lib/threads";
+import { PROGRESS_LIMITS } from "@/lib/progress-config";
 import { clearAutoPicked } from "@/lib/model-choice";
 import { CoworkerMark, InlineLoader } from "@/ui/brand";
 import { Button, ErrorNote, StatusDot } from "@/ui/kit";
@@ -336,6 +338,7 @@ export function OpenWorkSettings({
                     hint={models.length > 0 ? `${cloudProviders.length} OpenWork Cloud provider${cloudProviders.length === 1 ? "" : "s"} · ${localProviders.length} on this Mac` : "Provider connections are shared; each coworker chooses its own AI model."}
                   />
                 </SettingsCard>
+                <ProgressSummariesCard active={active} />
                 {coworkers.length > 0 ? (
                   <SettingsCard>
                     {coworkers.map((coworker) => (
@@ -503,6 +506,50 @@ export function OpenWorkSettings({
 }
 
 const PARALLEL_CHOICES = [1, 2, 3, 4, 6, 8];
+
+function ProgressSummariesCard({ active }: { active: boolean }) {
+  const [settings, setSettings] = useState<CoworkerSettings | null>(null);
+  const [models, setModels] = useState<ProgressModelOption[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (!active) return;
+    let cancelled = false;
+    void Promise.all([coworkerBridge.settings.get(), coworkerBridge.settings.progressModels()]).then(([next, choices]) => {
+      if (!cancelled) { setSettings(next); setModels(choices); }
+    }).catch(() => { if (!cancelled) setError("Progress preferences could not be read. Observed activity is still available."); });
+    return () => { cancelled = true; };
+  }, [active]);
+  async function choose(patch: Partial<CoworkerSettings>) {
+    setSaving(true);
+    setError("");
+    try { setSettings(await coworkerBridge.settings.update(patch)); }
+    catch { setError("That preference could not be saved. Observed activity is still available."); }
+    finally { setSaving(false); }
+  }
+  const selected = settings?.progressSummaryModelId ?? "";
+  return <SettingsCard testId="progress-summaries-card">
+    <div className="space-y-3 p-4">
+      <label className="flex items-center justify-between gap-4 text-sm font-semibold text-snow">
+        Progress summaries
+        <input type="checkbox" aria-label="Enable progress summaries" checked={settings?.progressSummariesEnabled ?? false} disabled={!settings || saving} onChange={(event) => void choose({ progressSummariesEnabled: event.target.checked })} />
+      </label>
+      <p className="text-xs leading-relaxed text-mist">Optional AI selection of observed activity facts for long-running work. Private messages, reasoning, file contents and tool results are never sent. Activity stays deterministic unless you enable this and choose a model.</p>
+      <label className="block space-y-1 text-xs text-mist">
+        <span>Summary model</span>
+        <select aria-label="Progress summary model" className="block w-full min-w-0 rounded-lg border border-line bg-ink p-2 text-snow" value={selected} disabled={!settings || saving} onChange={(event) => void choose({ progressSummaryModelId: event.target.value })}>
+          <option value="">No model selected</option>
+          {selected && !models.some((model) => model.id === selected) ? <option value={selected} disabled>Selected model is not currently eligible</option> : null}
+          {models.map((model) => <option key={model.id} value={model.id}>{model.label} (${model.cost.input} input / ${model.cost.output} output per million tokens)</option>)}
+        </select>
+      </label>
+      <p className="text-[11px] leading-relaxed text-mist">Connected, active, non-reasoning text models with verified OpenAI-compatible token caps only. Known prices must be at most ${PROGRESS_LIMITS.maxInputPrice.toFixed(2)} input and ${PROGRESS_LIMITS.maxOutputPrice.toFixed(2)} output per million tokens. No automatic fallback.</p>
+      {!models.length ? <p className="text-xs text-mist">No eligible model is ready here yet. Models with missing price or capability information are not offered. Observed activity will continue normally.</p> : null}
+      <p className="text-[11px] text-mist">At most {PROGRESS_LIMITS.maxCallsPerExecution} requests per originating task, {PROGRESS_LIMITS.minCallIntervalMs / 1000} seconds apart, with {PROGRESS_LIMITS.maxOutputTokens} output tokens and a {PROGRESS_LIMITS.timeoutMs / 1000}-second timeout each.</p>
+      {error ? <ErrorNote>{error}</ErrorNote> : null}
+    </div>
+  </SettingsCard>;
+}
 const GAP_CHOICES = [15, 30, 60];
 const PER_DAY_CHOICES = [1, 2, 4, 6, 8, 12];
 

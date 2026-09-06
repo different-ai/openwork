@@ -1,8 +1,8 @@
-import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { CoworkerSummary } from "@/lib/bridge";
 import type { LivePhase } from "@/lib/live-phase";
 import type { LiveStream } from "@/lib/live-stream";
-import { PROGRESS_STATES, createProgressService, isLongProgress, progressFingerprint, progressNoteText, type ProgressNote, type ProgressObservation } from "@/lib/progress-service";
+import { PROGRESS_STATES, isLongProgress, progressNoteText, type ProgressNote, type ProgressObservation } from "@/lib/progress-service";
 import { EXECUTION_KINDS, EXECUTION_STATES, executionMetadata, type ExecutionMetadataInput, type WorkStep } from "@/lib/work-receipt";
 import { CoworkerAvatar } from "@/ui/coworker-avatar";
 import { ToolIcon } from "@/ui/kit";
@@ -55,21 +55,7 @@ export function LiveRow({ coworker, phase = "thinking", step = null, stepCall = 
   const typing = !hasWords && !quiet && (status === "preparing" || status === "resuming");
   const tool = observation.tool ? executionMetadata(observation.tool) : null;
   const label = status === "tool" && tool ? `${EXECUTION_KINDS[tool.kind]}: ${EXECUTION_STATES[tool.status]}` : PROGRESS_STATES[status];
-  const serviceRef = useRef<ReturnType<typeof createProgressService> | null>(null);
-  const [observedNote, setObservedNote] = useState<ProgressNote>();
-  const fingerprint = progressFingerprint(observation);
-  const updateNote = useEffectEvent(() => {
-    const note = serviceRef.current?.update(observation);
-    if (note) setObservedNote((current) => current?.fingerprint === note.fingerprint ? current : note);
-  });
-  useEffect(() => {
-    // Only deterministic copy is integrated here. No inference adapter or model is configured.
-    const service = createProgressService({ executionId: observation.executionId, onNote: setObservedNote });
-    serviceRef.current = service;
-    return () => { service.dispose(); serviceRef.current = null; };
-  }, [observation.executionId]);
-  useEffect(() => { updateNote(); }, [fingerprint, long]);
-  const note = progressNote ?? observedNote;
+  const note = progressNote ?? observation.note;
 
   useEffect(() => { setOpen(false); }, [observation.executionId, hidden]);
 

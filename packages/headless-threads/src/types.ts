@@ -131,6 +131,8 @@ export interface HeadlessThreadTurnInput {
   model?: HeadlessThreadModel;
   /** Native tool permissions for this session's turn; omitted preserves the engine's defaults. */
   tools?: Record<string, boolean>;
+  /** Explicit native agent; an unknown name is rejected rather than defaulted. */
+  agent?: string;
   /** Stable engine message id used to make prompt admission idempotent. */
   messageId?: string;
   signal?: AbortSignal;

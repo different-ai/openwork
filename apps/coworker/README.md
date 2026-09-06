@@ -1310,20 +1310,49 @@ Defaults: four active collaboration executions, one producer per native session,
 one-hour dependency deadlines, depth two, at most three dependencies per task,
 and at most two explicit follow-ups. Workers retain the existing background
 capacity setting. An admitted but incomplete idle execution requires recovery;
-it is not silently executed again. Group requests needing a permission or answer
-stop with an explanation instead of waiting invisibly.
+it is not silently executed again. An explicit private **Continue** after tool
+work admits a new message in the same native thread, preserving the earlier
+history, failure, and completed effects. Its bounded continuation brief references
+that work and fences the old dependency generation. Tool-free retries retain the
+original message ID.
+
+Group permissions and questions appear beside the conversation under the named
+participant. They enter a durable, quiet waiting state with a one-hour deadline,
+release global execution capacity, and retain their native-session lock. Answers
+are bound to the exact group, workspace, session, execution and request; stale or
+cross-scope replies are refused. Answering resumes that same native execution,
+not a resubmitted prompt. The existing permission rules still apply. Coworker
+enables native questions only where no explicit question/catch-all rule already
+exists; Workers and the progress summarizer do not receive that tool.
 
 `src/lib/progress-config.ts` is the progress-budget location: notes after 15 seconds,
 2-second debounce, 30-second minimum model-call interval, 5-second timeout,
-three calls per execution, 2,048 input characters, and 80 output tokens. Only
-changed facts can trigger optional summarization; stale/cancelled results are
-discarded. The optional interface selects existing facts, never invents prose.
-**This build uses deterministic notes and makes no extra inference calls.** The
-native model client cannot enforce a per-request output-token cap, so the optional
-cheap-model transport is not enabled or integrated. No expensive fallback is used.
+three attempts per originating task, a conservative 1,024-byte/token ASCII input
+bound including framing reserve, and at most 80 output tokens. Only changed facts
+can trigger optional summarization; stale/cancelled results are discarded. The
+model selects existing facts and never authors speculative progress prose.
+
+**Settings → General → Progress summaries** is off by default. Enabling it requires
+an explicit eligible model: active, text-capable, non-reasoning, using a supported
+OpenAI/OpenAI-compatible transport, with positive catalog prices at or below
+$0.50 input and $2 output per million tokens. Missing/zero prices are excluded
+because native catalogs may synthesize zero for unknown custom-provider pricing.
+Catalog pricing is not a vendor billing guarantee. There is no automatic or
+expensive replacement model; ineligibility keeps deterministic notes.
+
+The main process owns the budget across navigation, settings toggles, and task
+continuations. Previously running work does not acquire a new inference budget
+after an app restart. Each request uses a fresh tool-less coordinator session;
+a scoped native plugin strips inherited context, enforces `maxOutputTokens`,
+and blocks hidden provider retries. Timeout, disablement and stale work explicitly
+abort the native summary session with a separate bounded cleanup signal. Missing
+plugin/cap support fails closed. Summary failure never blocks the actual task.
 
 The extended `open-coworker-team` journey exercises the real packaged plugin,
 consultation and Worker returns, independent conversations, cancellation, and
-process restart with loopback scripted inference. A supplied absolute native
+process restart, non-replaying private continuation, and group approval/question
+isolation with loopback scripted inference. `open-coworker-live-turn` also checks
+the actual provider cap, request/stream cancellation, context isolation, and
+unchanged-budget behavior. A supplied absolute native
 Electron binary makes the CLI report its actual local placement; explicit
 remote/attached placement is not overridden. Module checks are not journey proof.

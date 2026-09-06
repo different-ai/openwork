@@ -262,6 +262,7 @@ describe("sendTurn", () => {
       prompt: "They also lost the receipt.",
       model: { providerId: "anthropic", modelId: "claude-sonnet-5" },
       tools: { coworker_worker_spawn: false },
+      agent: "progress-summary",
     });
 
     expect(acceptance).toEqual({
@@ -279,6 +280,7 @@ describe("sendTurn", () => {
       parts: [{ type: "text", text: "They also lost the receipt." }],
       model: { providerID: "anthropic", modelID: "claude-sonnet-5" },
       tools: { coworker_worker_spawn: false },
+      agent: "progress-summary",
     });
   });
 
