@@ -624,7 +624,7 @@ export function SessionRoute() {
         }),
     [sessionsByWorkspaceId],
   );
-  const selectedPermissionSessionIds = useMemo(() => {
+  const selectedInteractionSessionIds = useMemo(() => {
     const selected = selectedSessionId?.trim();
     if (!selected) return [];
     const sessions = sessionsByWorkspaceId[selectedWorkspaceId] ?? [];
@@ -632,14 +632,14 @@ export function SessionRoute() {
   }, [selectedSessionId, selectedWorkspaceId, sessionsByWorkspaceId]);
   const activeSelectedWorkspaceSessionIds = useMemo(
     () => Array.from(new Set([
-      ...selectedPermissionSessionIds,
+      ...selectedInteractionSessionIds,
       ...(sessionsByWorkspaceId[selectedWorkspaceId] ?? []).flatMap((session) => {
         if (!isActiveSessionStatus(getSessionStatus(session))) return [];
         const id = String(session?.id ?? "").trim();
         return id ? [id] : [];
       }),
     ])),
-    [selectedPermissionSessionIds, selectedWorkspaceId, sessionsByWorkspaceId],
+    [selectedInteractionSessionIds, selectedWorkspaceId, sessionsByWorkspaceId],
   );
   const remoteAccessRestart = useRemoteAccessRestart({
     isEnabled: () => openworkServerSettings.remoteAccessEnabled === true,
@@ -1089,7 +1089,7 @@ export function SessionRoute() {
     // a client-only prefix, while interaction caches use the server workspace.
     workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspaceId,
     sessionId: selectedSessionId,
-    permissionSessionIds: selectedPermissionSessionIds,
+    interactionSessionIds: selectedInteractionSessionIds,
     workspaceRoot: selectedWorkspaceRoot,
   });
   const activePermissionSourceTitle = useMemo(() => {
