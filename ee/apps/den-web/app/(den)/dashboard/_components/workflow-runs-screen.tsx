@@ -20,7 +20,7 @@ function formatDuration(durationMs: number): string {
 
 function WorkflowRunCard({ run }: { run: WorkflowRun }) {
   return (
-    <li data-run-id={run.id}>
+    <li data-run-id={run.id} data-testid={`workflow-run-${run.id}`}>
       <DenCard>
         <h2 className="text-[15px] font-medium text-gray-950">
           {run.workflow ? (

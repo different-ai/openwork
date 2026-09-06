@@ -83,6 +83,8 @@ test("workflow activity shows linked version diagrams and keeps one-off and inac
   const failed = before.find((run) => run.status === "failed" && isRecord(run.workflow) && run.workflow.configObjectId === world.configObjectId);
   expect(failed).toMatchObject({ workflow: { graph: world.originalGraph } });
   const failedReceiptId = field(failed, "id");
+  const oneOff = before.find((run) => run.source === "adhoc" && run.status === "succeeded");
+  const oneOffReceiptId = field(oneOff, "id");
 
   await step("read existing diagrams directly in the run list", async () => {
     await user.see({ text: "Workflow Runs" }, { timeoutMs: 90_000 });
@@ -102,7 +104,13 @@ test("workflow activity shows linked version diagrams and keeps one-off and inac
     await user.see({ text: "Succeeded" });
     await user.see({ text: "Failed" });
     await user.notSee({ text: `plugin:${world.pluginId}:${world.configObjectId}` });
-    await user.see({ text: "One-off task" });
+    await user.see({ testId: `workflow-run-${oneOffReceiptId}` }, { text: /One-off task[\s\S]*Succeeded[\s\S]*Technical details/ });
+    await user.see({ testId: `workflow-run-time-${oneOffReceiptId}` });
+    await user.notSee({ testId: `workflow-run-link-${oneOffReceiptId}` });
+    await user.notSee({ testId: `workflow-run-visualization-${oneOffReceiptId}` });
+    await user.click({ testId: `workflow-run-details-${oneOffReceiptId}` });
+    await user.see({ testId: `workflow-run-${oneOffReceiptId}` }, { text: /Source[\s\S]*adhoc[\s\S]*Tool calls[\s\S]*den.getWorkers[\s\S]*Duration[\s\S]*ms/ });
+    await user.click({ testId: `workflow-run-details-${oneOffReceiptId}` });
     await user.notSee({ role: "link", label: "One-off task" });
     await user.notSee({ label: "One-off task workflow visualization" });
     await user.screenshot();
