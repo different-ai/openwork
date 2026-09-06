@@ -103,6 +103,7 @@ describe("cloud super-admin role hierarchy", () => {
 
   test("keeps admins read-only across Settings while super-admins inherit mutation flags", () => {
     const orgSettings = read("../app/(den)/dashboard/_components/org-settings-screen.tsx");
+    const orgSettingsSection = read("../app/(den)/dashboard/_components/organization-settings-section.tsx");
     const diagnostics = read("../app/(den)/dashboard/_components/diagnostics-screen.tsx");
     const diagnosticCard = read("../app/(den)/dashboard/_components/egress-diagnostics-card.tsx");
     const brand = read("../app/(den)/dashboard/_components/brand-appearance-screen.tsx");
@@ -116,8 +117,8 @@ describe("cloud super-admin role hierarchy", () => {
     expect(getOrgAccessFlags("super-admin", false).canManageSettings).toBe(true);
     expect(getOrgAccessFlags("admin", false).canManageSettings).toBe(false);
     expect(orgSettings).toContain("const canManageSettings = access.canManageSettings");
-    expect(orgSettings).toContain("Admins can view settings here. Owners and super-admins can change them.");
-    expect(orgSettings).toContain("disabled={!canManageDesktopVersions || requiresServerUpgrade}");
+    expect(orgSettingsSection).toContain("Admins can view settings here. Owners and super-admins can change them.");
+    expect(orgSettingsSection).toContain("disabled={!canManageDesktopVersions || requiresServerUpgrade}");
     expect(diagnostics).toContain("canView={access.canViewSettings} canManage={access.canManageSettings}");
     expect(diagnosticCard).toContain("disabled={!canManage || loading || !available}");
     expect(diagnosticCard).toContain("Only workspace owners and super-admins can run this diagnostic.");
