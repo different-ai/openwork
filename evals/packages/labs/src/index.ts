@@ -8,3 +8,4 @@ export * from "./mock-mcp.ts";
 export * from "./not-implemented.ts";
 export * from "./release-feed.ts";
 export * from "./mock-planetscale.ts";
+export * from "./mock-atlassian.ts";

@@ -710,7 +710,13 @@ function tokenFingerprint(req) {
 
 function mcpResult(message) {
   if (configuredTools.length && message.method === "tools/list") {
-    return { tools: configuredTools.map(({ result, delayMs, ...tool }) => tool) };
+    return { tools: configuredTools.map(({ result, delayMs, appHtml, validateRequiredArguments, ...tool }) => tool) };
+  }
+  if (message.method === "resources/read") {
+    const tool = configuredTools.find((candidate) => candidate._meta?.ui?.resourceUri === message.params?.uri);
+    if (tool?.appHtml !== undefined) {
+      return { contents: [{ uri: message.params.uri, mimeType: "text/html;profile=mcp-app", text: tool.appHtml }] };
+    }
   }
   if (message.method === "tools/call") {
     const tool = configuredTools.find((candidate) => candidate.name === message.params?.name);
@@ -720,7 +726,13 @@ function mcpResult(message) {
     case "initialize":
       return {
         protocolVersion: "2025-06-18",
-        capabilities: { tools: {} },
+        capabilities: {
+          tools: {},
+          ...(configuredTools.some((tool) => tool.appHtml !== undefined) ? {
+            resources: {},
+            extensions: { "io.modelcontextprotocol/ui": { mimeTypes: ["text/html;profile=mcp-app"] } },
+          } : {}),
+        },
         serverInfo: { name: "mock-oauth-mcp", version: "1.0.0" },
       };
     case "tools/list":
@@ -857,6 +869,22 @@ function mcpResult(message) {
 }
 
 function mcpResponse(message) {
+  if (message.method === "tools/call") {
+    const tool = configuredTools.find((candidate) => candidate.name === message.params?.name);
+    if (tool?.validateRequiredArguments) {
+      const missing = (tool.inputSchema.required ?? []).filter((key) => message.params?.arguments?.[key] === undefined);
+      if (missing.length) {
+        return {
+          jsonrpc: "2.0",
+          id: message.id,
+          error: {
+            code: -32602,
+            message: `Invalid arguments for tool ${tool.name}: ${JSON.stringify(missing.map((key) => ({ path: [key], message: "Required" })))}`,
+          },
+        };
+      }
+    }
+  }
   // This fixture speaks legacy MCP. Give modern clients the explicit fallback
   // signal instead of a successful but malformed discovery response.
   if (message.method === "server/discover") {
