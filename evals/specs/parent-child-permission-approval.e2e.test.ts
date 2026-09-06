@@ -100,7 +100,7 @@ questionTest("a parent answers its real child question without settling an unrel
   const open = async (sessionId: string, title: string) => {
     // A pending question replaces the composer. Navigate as a person rather
     // than waiting for the control rail's composer-based readiness check.
-    await user.click({ role: "button", label: title });
+    await user.click({ text: title });
     await probe.eventually(() => probe.hash(), {
       within: 30_000, label: "the requested root conversation is selected",
       until: (hash) => hash.includes(`/session/${sessionId}`),
