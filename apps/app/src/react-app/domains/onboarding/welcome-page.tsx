@@ -107,6 +107,7 @@ export function WelcomePage({
                   onClick={onTeamSignIn}
                   disabled={busy}
                   data-testid="welcome-team-signin"
+                  aria-label={t("welcome.sign_in_cloud")}
                 >
                   Sign in
                 </Button>
@@ -147,7 +148,7 @@ export function WelcomePage({
                   Use this folder
                 </Button>
               </div>
-                ) : null}
+            ) : null}
           </div>
         </ScrollAreaViewport>
       </ScrollArea>

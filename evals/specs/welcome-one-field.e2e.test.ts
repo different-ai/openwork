@@ -16,12 +16,11 @@ test("the welcome join field takes a server URL or web invite and points the app
     await user.see("Sign in to OpenWork Cloud");
     await user.see("Use Without Cloud");
     await user.see({ text: "Join your organization" });
-    await user.see({ text: "Paste your invite link, install link, or server URL" });
     await user.notSee({ text: /Using OpenWork on-premises\?/ });
     await user.looks([
       "The Welcome to OpenWork heading is visible",
-      "Sign in to OpenWork Cloud and Use Without Cloud are offered",
-      "Join your organization says to paste an invite link, install link, or server URL",
+      "Sign in and Use Without Cloud are offered",
+      "Join your organization is a secondary action below the primary Use Without Cloud button",
       "The page does not say Using OpenWork on-premises",
     ]);
   });

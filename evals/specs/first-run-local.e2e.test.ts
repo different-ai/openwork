@@ -14,6 +14,7 @@ test("first use without an invite or cloud reaches local task UI with honest mod
     await user.see({ text: "Connect tools via MCP" });
     await user.see({ text: "Choose a folder, then a model. No OpenWork account needed." });
     await user.see({ testId: "welcome-team-signin" });
+    await user.see("Sign in to OpenWork Cloud");
     await user.see({ testId: "welcome-join-org" });
     expect(await probe.eval(`(() => {
       const local = document.querySelector('[data-testid="welcome-use-without-cloud"]');
