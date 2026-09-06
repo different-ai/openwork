@@ -9,12 +9,10 @@ test("first use without an invite or cloud reaches local task UI with honest mod
   await step("Welcome", async () => {
     await user.see({ text: "Welcome to OpenWork" });
     await user.see("Use Without Cloud");
-    await user.see({ text: "Your first useful task" });
-    await user.see({ text: "Work with your files" });
+    await user.see({ text: "Draft with files" });
     await user.see({ text: "Reuse skills" });
-    await user.see({ text: "Connect your tools" });
-    await user.see({ text: "No OpenWork account needed. Choose a folder, set up a model, then describe your first task." });
-    await user.see({ text: "Add MCP connections in your workspace to bring other apps into your tasks. Some tools need their own sign-in." });
+    await user.see({ text: "Connect tools via MCP" });
+    await user.see({ text: "Choose a folder, then a model. No OpenWork account needed." });
     await user.see({ testId: "welcome-team-signin" });
     await user.see({ testId: "welcome-join-org" });
     expect(await probe.eval(`(() => {
