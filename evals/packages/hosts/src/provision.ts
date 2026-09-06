@@ -276,12 +276,42 @@ export async function provisionDesktopSandbox(options: DesktopSandboxOptions & P
   });
 
   await timedStep(log, "install gate", async () => {
-    await execInSandbox(
+    // pnpm's progress stream over a long-lived `daytona exec` session was
+    // observed wedging the session past every local timeout, so the install
+    // runs detached with its output in a file, and childless polls read back
+    // an explicit exit sentinel — the same shape as the boot and Vite gates.
+    const detachScript = `rm -f /tmp/install-gate.log; python3 - <<PYEOF
+import subprocess
+log = open("/tmp/install-gate.log", "ab", buffering=0)
+subprocess.Popen(["bash", "-lc", "cd /workspace && pnpm install --store-dir /workspace/.openwork-daytona/pnpm-store; echo INSTALL_EXIT=$?"], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
+PYEOF
+echo detached`;
+    await execInSandbox(exec, sandbox, detachScript, { timeoutMs: 30_000, context: `install detach for ${sandbox}` });
+    const deadline = Date.now() + INSTALL_TIMEOUT_MS;
+    let exitCode: number | null = null;
+    while (Date.now() < deadline) {
+      const probe = await execInSandbox(
+        exec,
+        sandbox,
+        "grep -o \"INSTALL_EXIT=[0-9]*\" /tmp/install-gate.log 2>/dev/null || echo INSTALL_RUNNING",
+        { timeoutMs: 15_000, context: `install probe for ${sandbox}` },
+      ).catch(() => null);
+      const match = probe ? /INSTALL_EXIT=(\d+)/.exec(probe.stdout) : null;
+      if (match) {
+        exitCode = Number.parseInt(match[1], 10);
+        break;
+      }
+      await delay(10_000);
+    }
+    if (exitCode === 0) return;
+    const installLog = await execInSandbox(
       exec,
       sandbox,
-      "cd /workspace; pnpm install --store-dir /workspace/.openwork-daytona/pnpm-store",
-      { timeoutMs: INSTALL_TIMEOUT_MS, context: `install gate for ${sandbox}` },
-    );
+      "tail -40 /tmp/install-gate.log 2>&1 || true",
+      { timeoutMs: 30_000, context: `install log for ${sandbox}` },
+    ).catch(() => null);
+    const reason = exitCode === null ? `did not finish within ${INSTALL_TIMEOUT_MS}ms` : `exited ${exitCode}`;
+    throw new Error(`Install gate failed for ${sandbox}: pnpm install ${reason}. Log tail:\n${installLog ? outputTail(installLog) : "unavailable"}`);
   });
 
   await timedStep(log, "cleanup and disk gate", async () => {
