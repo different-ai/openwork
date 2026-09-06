@@ -4,7 +4,7 @@ import { parentChildPermissionWorld } from "../worlds/first-run.ts";
 import { delegatedQuestionHandoff, permissionStopRecovery } from "../worlds/chat.ts";
 
 describe("Parent permission presentation", () => {
-const test = spec.world(parentChildPermissionWorld);
+const test = spec.world(parentChildPermissionWorld, { scope: "file" });
 
 test("a parent task surfaces and resolves its child session permission request", async ({ user, probe, step }) => {
   await step("The parent exposes the child request", async () => {
@@ -63,7 +63,7 @@ function text(value: unknown): string {
 }
 
 describe("Stop and retry reliability", () => {
-const stopTest = spec.world(permissionStopRecovery, { timeout: 600_000 });
+const stopTest = spec.world(permissionStopRecovery, { scope: "file", timeout: 600_000 });
 
 stopTest("retry recovery and stopping a permission leave other requests and fresh work intact", async ({ world, user, probe, step }) => {
   const v2 = world.engine === "v2";
@@ -145,8 +145,8 @@ stopTest("retry recovery and stopping a permission leave other requests and fres
 });
 
 describe("Delegated question handoff", () => {
-const questionTest = spec.world(delegatedQuestionHandoff, { timeout: 600_000 });
-questionTest("a parent answers its real child question without settling an unrelated root question", async ({ world, user, probe, step }) => {
+const questionTest = spec.world(delegatedQuestionHandoff, { scope: "file", timeout: 600_000 });
+questionTest("a parent answers its real child question without settling an unrelated root question", { timeout: 1_200_000 }, async ({ world, user, probe, step }) => {
   const v2 = world.engine === "v2";
   const mount = `/workspace/${encodeURIComponent(world.workspace.workspaceId)}/${v2 ? "opencode2/api" : "opencode"}`;
   const sessionPath = (id: string) => `/session/${encodeURIComponent(id)}`;

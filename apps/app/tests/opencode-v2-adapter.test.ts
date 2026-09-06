@@ -666,7 +666,7 @@ describe("OpenCode v2 client compatibility", () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async (input) => {
       expect(input instanceof Request && input.url.endsWith("/api/session/s/interrupt")).toBe(true);
-      return jsonResponse({ data: { interrupted } });
+      return jsonResponse({ interrupted });
     };
     try {
       expect((await createClientV2("http://opencode.test/opencode2", undefined, {}).session.abort({ sessionID: "s" })).data)
