@@ -1,4 +1,4 @@
-import { desktopConfigSchema, type DesktopConfig } from "@openwork/types/den/desktop-policies";
+import { desktopConfigSchema, type DesktopConfig } from "@openwork/types/den/desktop-policies-runtime";
 import { existsSync } from "node:fs";
 import { importNodeSqlite, runtimeDbPath } from "./runtime-db.js";
 import type { ServerConfig } from "./types.js";

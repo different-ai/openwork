@@ -62,8 +62,7 @@
     "./den/desktop-policies": {
       "types": "./src/den/desktop-policies.ts",
       "development": "./src/den/desktop-policies.ts",
-      "bun": "./src/den/desktop-policies.ts",
-      "default": "./dist/den/desktop-policies.js"
+      "default": "./src/den/desktop-policies.ts"
     },
     "./den/connect-diagnostics": {
       "types": "./src/den/connect-diagnostics.ts",
@@ -114,6 +113,12 @@
       "types": "./src/visualization.ts",
       "development": "./src/visualization.ts",
       "default": "./src/visualization.ts"
+    },
+    "./den/desktop-policies-runtime": {
+      "types": "./src/den/desktop-policies.ts",
+      "development": "./src/den/desktop-policies.ts",
+      "bun": "./src/den/desktop-policies.ts",
+      "default": "./dist/den/desktop-policies.js"
     }
   },
   "files": [
