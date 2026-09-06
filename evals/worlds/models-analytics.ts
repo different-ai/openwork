@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { allocateFreePort } from "@openwork/cdp";
 import { provisionOrg } from "@openwork/behaviors";
 import { createDaytonaHost, defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
@@ -92,6 +94,40 @@ export async function modelsAnalyticsWorld(seed: Seed) {
       const analytics = await seed.api(other.admin, "/v1/inference/analytics/settings", { method: "PATCH", headers: scoped, body: JSON.stringify({ enabled: true, consentVersion: 1 }) });
       if (!analytics.response.ok) throw new Error("Second subscriber analytics setup failed");
       return other;
+    },
+    async desktop() {
+      // Shape the API directly: the web /api/den route redirects to another
+      // origin, which would strip bearer credentials before reaching Den.
+      const analyticsTransport = await seed.denLink({ ...den, ref: { ...den.ref, webUrl: den.ref.apiUrl } }, remote ? { sandboxId: remote } : {});
+      const desktopDen = { apiUrl: analyticsTransport.ref.webUrl, webUrl: analyticsTransport.ref.webUrl };
+      const runtimeConfig = object(await fetch(`${den.ref.webUrl}/api/runtime-config`, { signal: AbortSignal.timeout(5_000) }).then((response) => response.json()));
+      const upgradeDenApi = async () => {
+        // API discovery must keep the desktop on the independently observed link.
+        await analyticsTransport.admin.rules([{ kind: "status", pathPrefix: "/api/runtime-config", statusCode: 200, times: 10_000, body: { ...runtimeConfig, denApiUrl: desktopDen.apiUrl } }]);
+      };
+      await analyticsTransport.admin.rules([
+        { kind: "status", pathPrefix: "/api/runtime-config", statusCode: 200, times: 10_000, body: { ...runtimeConfig, denApiUrl: desktopDen.apiUrl } },
+        { kind: "status", pathPrefix: "/v1/inference/analytics", statusCode: 404, times: 10_000, body: { error: "not_found" } },
+      ]);
+      const modelsAccess = await fetch(`${desktopDen.apiUrl}/v1/inference`, { headers: { authorization: `Bearer ${den.admin.token}`, "x-openwork-org-id": orgId }, signal: AbortSignal.timeout(10_000) });
+      if (!modelsAccess.ok) throw new Error(`Observed Den link cannot access the existing Models subscription: HTTP ${modelsAccess.status}`);
+      const app = await seed.desktop({ den: { ...den, ref: desktopDen }, as: "admin", model: "openwork/z-ai/glm-5.2" });
+      const workspacePath = seed.tmpPath("models-analytics-upgrade");
+      const skillPath = join(workspacePath, ".opencode/skills/analytics-fixture");
+      const skill = "---\nname: analytics-fixture\ndescription: A harmless skill for the Models analytics upgrade journey.\n---\n\nReport that Models are working. No files or external services are needed.\n";
+      if (app.handle.sandboxId) {
+        const script = `mkdir -p ${quote(skillPath)}\nprintf %s ${Buffer.from(skill).toString("base64")} | base64 -d > ${quote(join(skillPath, "SKILL.md"))}\nprintf %s eyJwZXJtaXNzaW9uIjp7InNraWxsIjoiYWxsb3cifX0= | base64 -d > ${quote(join(workspacePath, "opencode.json"))}`;
+        const encoded = Buffer.from(script).toString("base64");
+        const result = await execInSandbox(defaultDaytonaExec, app.handle.sandboxId, `printf %s ${encoded} | base64 -d | bash`, { timeoutMs: 15_000, context: "Seed native analytics skill" });
+        if (result.code !== 0) throw new Error("Native skill arrangement failed");
+      } else {
+        await mkdir(skillPath, { recursive: true });
+        await writeFile(join(skillPath, "SKILL.md"), skill);
+        await writeFile(join(workspacePath, "opencode.json"), JSON.stringify({ permission: { skill: "allow" } }));
+      }
+      await seed.workspace(app, workspacePath, { create: true });
+      const session = await seed.session(app, { title: "Existing Models conversation" });
+      return { app, session, analyticsTransport, upgradeDenApi };
     },
     async rollout(enabled: boolean) {
       const result = await seed.api(den.admin, `/v1/admin/organizations/${orgId}/capabilities`, { method: "PUT", body: JSON.stringify({ capabilities: { modelsAnalytics: enabled } }) });

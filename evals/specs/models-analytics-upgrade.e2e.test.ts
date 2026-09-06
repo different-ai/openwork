@@ -1,6 +1,6 @@
 import { spec } from "@openwork/testkit";
 import { expect } from "vitest";
-import { denFetch } from "@openwork/behaviors";
+import { denFetch, sendComposerMessage, waitForAssistantReply, selectModel } from "@openwork/behaviors";
 import { modelsAnalyticsWorld } from "../worlds/models-analytics.ts";
 
 const test = spec.world(modelsAnalyticsWorld, { timeout: 900_000, needs: {} });
@@ -10,7 +10,7 @@ function record(value: unknown): Record<string, unknown> {
 }
 function list(value: unknown): Record<string, unknown>[] { return Array.isArray(value) ? value.map(record) : []; }
 
-test("an existing Models subscriber can upgrade Den and opt into analytics without losing Models", { timeout: 1_800_000 }, async ({ world, user, probe, evidence }) => {
+test("an existing Models subscriber can decline, enable and disable task analytics without losing Models", { timeout: 1_800_000 }, async ({ world, user, probe, evidence }) => {
   {
   const api = (path: string, init?: RequestInit, session = world.den.admin) => denFetch(session, path, {
     ...init, headers: { authorization: `Bearer ${session.token}`, "x-openwork-org-id": world.orgId, "content-type": "application/json" },
@@ -177,10 +177,77 @@ test("an existing Models subscriber can upgrade Den and opt into analytics witho
   evidence.recordAssertionEvidence("Turning off task analytics stops export while Models keeps responding", "New Models request returned 200 after disable; no extra spans arrived across a full export interval", true);
   evidence.recordAssertionEvidence("Opt-out finishes only after an already-authorized export has finished", "The Langfuse witness held an export response; the UI could not confirm opt-out until the response was released, then no later export arrived", true);
   }
-  const removed = await denFetch(world.den.admin, "/v1/org", { method: "DELETE", headers: {
-    authorization: `Bearer ${world.den.admin.token}`, "x-openwork-org-id": world.orgId,
-  } });
-  expect(removed.response.status).toBe(200);
+  {
+  const webUser = user.on(world.web);
+  const api = (path: string, init?: RequestInit) => denFetch(world.den.admin, path, { ...init,
+    headers: { authorization: `Bearer ${world.den.admin.token}`, "x-openwork-org-id": world.orgId, "content-type": "application/json" },
+  });
+  await world.rollout(true);
+  expect((await api("/v1/inference/analytics/settings", { method: "PATCH", body: JSON.stringify({ enabled: false }) })).response.ok).toBe(true);
+  const { app, session, analyticsTransport, upgradeDenApi } = await world.desktop();
+  await selectModel(app, "z-ai/glm-5.2", { provider: "OpenWork Models" });
+  let replies = 0;
+  async function send(prompt: string) {
+    await sendComposerMessage(app, prompt);
+    const reply = await probe.eventually(() => waitForAssistantReply(app, { timeoutMs: 30_000 }), {
+      within: 60_000, label: "a new assistant reply", until: (reply) => reply.assistantMessageCount > replies && reply.text.includes("Models are working."),
+    });
+    replies = reply.assistantMessageCount;
+    await user.on(app).see({ role: "button", label: "Run task" }, { timeoutMs: 60_000 });
+    await user.on(app).notSee({ testId: "session-error-card" });
+  }
+  const activity = async () => list(record((await api(`/v1/inference/analytics/activity?sessionId=${session.sessionId}`)).body).events);
+  await send("Summarize the plan before enabling task analytics.");
+  const legacyRequests = await probe.eventually(async () => (await analyticsTransport.admin.requests()).requests, {
+    within: 30_000, label: "the desktop encounters an unavailable analytics endpoint",
+    until: (requests) => requests.some((request) => request.path.endsWith("/inference/analytics/settings") && request.status === 404 && request.faulted),
+  });
+  expect(legacyRequests.some((request) => request.method === "POST" && request.path.endsWith("/inference/analytics/events"))).toBe(false);
+  evidence.recordAssertionEvidence("A newer desktop keeps Models working when Den has no analytics endpoint", "The real desktop received an injected HTTP 404 for analytics settings, still produced the assistant reply, and never attempted to upload task events", true);
+  await upgradeDenApi();
+  await webUser.reload();
+  await webUser.see({ role: "button", label: "Enable task analytics" }, { timeoutMs: 60_000 });
+  await webUser.click({ role: "button", label: "Enable task analytics" });
+  await webUser.see({ role: "tab", label: "Activity" });
+  expect(await activity()).toEqual([]);
+  await send("Continue the same conversation after enabling task analytics.");
+  await user.on(app).screenshot();
+  const events = await probe.eventually(activity, { within: 90_000, label: "live task correlated with its model call", until: (events) => events.some((event) => event.type === "model.call") && events.some((event) => typeof event.type === "string" && ["task.completed", "task.failed", "task.cancelled"].includes(event.type)) });
+  expect(events.filter((event) => event.type === "task.completed")).toHaveLength(1);
+  expect(new Set(events.map((event) => event.taskId)).size).toBe(1);
+  expect(events.filter((event) => event.type === "task.started")).toHaveLength(1);
+  expect(JSON.stringify(events)).not.toContain("Continue the same conversation");
+  await selectModel(app, "minimax/minimax-m3", { provider: "OpenWork Models" });
+  await send("Continue with another OpenWork model.");
+  const switched = await probe.eventually(activity, { within: 90_000, label: "model switch keeps the conversation's task history", until: (events) => events.filter((event) => event.type === "task.completed").length === 2 });
+  expect(new Set(switched.filter((event) => event.type === "model.call").map((event) => event.model))).toEqual(new Set(["z-ai/glm-5.2", "minimax/minimax-m3"]));
+  await user.on(app).see({ text: "Summarize the plan before enabling task analytics." });
+  await user.on(app).screenshot();
+  evidence.recordAssertionEvidence("Real desktop tasks correlate with inference usage after opt-in without replacing the conversation or collecting earlier prompts", "The same conversation produced new replies before and after opt-in; runtime task start/completion joined the model call by task ID; two models and two tasks retained; prompt text absent", true);
+  await send("Load the analytics fixture skill, find its file, and report whether Models are working.");
+  const withSkill = await probe.eventually(activity, { within: 90_000, label: "native skill and tool activity reaches Models analytics", until: (rows) => rows.some((row) => row.type === "skill.loaded" && row.skill === "analytics-fixture") && rows.some((row) => row.type === "tool.executed" && row.tool === "glob") && rows.filter((row) => row.type === "task.completed").length === 3 });
+  expect(withSkill.find((row) => row.skill === "analytics-fixture")).toMatchObject({ type: "skill.loaded", tool: "skill", status: "completed" });
+  evidence.recordAssertionEvidence("A real desktop skill invocation produces task analytics", "The model invoked the native skill tool; OpenCode loaded the arranged skill and the resulting skill.loaded event reached the API without a handcrafted ingestion event", true);
+  expect(withSkill.find((row) => row.tool === "glob")).toMatchObject({ type: "tool.executed", status: "completed", taskId: withSkill.find((row) => row.skill === "analytics-fixture")?.taskId });
+  evidence.recordAssertionEvidence("A real desktop file search produces tool activity within the same task", "The model invoked the native glob tool; its completed tool.executed event reached analytics with the skill invocation's task ID, without a handcrafted ingestion event", true);
+  await webUser.click({ role: "button", label: "Turn off analytics" });
+  await webUser.see({ role: "button", label: "Enable task analytics" });
+  await analyticsTransport.admin.phase("analytics-disabled");
+  await send("Keep working after turning off task analytics.");
+  const providerCalls = list(record(await fetch(`${world.witnessUrl}/fixture/requests`).then((response) => response.json())).calls);
+  expect(providerCalls.at(-1)).toMatchObject({ model: "minimax/minimax-m3", authenticated: true, kind: "success" });
+  await webUser.click({ role: "button", label: "Enable task analytics" });
+  await webUser.see({ role: "tab", label: "Activity" });
+  // Observe beyond background reporting and the cached settings interval so a
+  // delayed upload cannot make the disabled-period task appear after this check.
+  await new Promise((resolve) => setTimeout(resolve, 40_000));
+  expect(await activity()).toHaveLength(withSkill.length);
+  const afterOptOut = (await analyticsTransport.admin.requests()).requests.filter((request) => request.phase === "analytics-disabled");
+  expect(afterOptOut.some((request) => request.method === "POST" && request.path.endsWith("/inference/analytics/events"))).toBe(false);
+  await user.on(app).see({ text: "Keep working after turning off task analytics." });
+  evidence.recordAssertionEvidence("Turning analytics off leaves the existing desktop conversation and selected model usable", "A new assistant reply arrived from the same selected model after disable; the independent HTTP witness observed no task-event uploads across opt-out, re-enable and 40 seconds of background reporting, the disabled-period task was absent, and the earlier conversation was still visible", true);
+  expect((await api("/v1/org", { method: "DELETE" })).response.status).toBe(200);
   await world.verifyErasure();
   evidence.recordAssertionEvidence("Deleting a workspace erases its task analytics and stored export credentials", "Workspace deletion returned 200; an independent data-store witness found no retained history or analytics configuration", true);
+  }
 });
