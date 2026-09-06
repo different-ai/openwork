@@ -1,12 +1,12 @@
 "use client";
 
 import { ArrowRight, Check, Loader2, Plus } from "lucide-react";
+import { GOOGLE_WORKSPACE_QUICK_ADD_ID, MICROSOFT_365_QUICK_ADD_ID } from "./connector-catalog";
 import { EFFORT_LABELS, type ConnectorEffort, presetEffort } from "./connector-effort";
 import type { ExternalMcpConnection, ExternalMcpPreset } from "./mcp-connections-data";
 import { IntegrationIcon } from "./integration-icon";
 
-export const GOOGLE_WORKSPACE_QUICK_ADD_ID = "google-workspace";
-export const MICROSOFT_365_QUICK_ADD_ID = "microsoft-365";
+export { GOOGLE_WORKSPACE_QUICK_ADD_ID, MICROSOFT_365_QUICK_ADD_ID };
 
 const SUITE_CONNECTORS = [
   {
