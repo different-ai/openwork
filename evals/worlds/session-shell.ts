@@ -276,7 +276,6 @@ export async function archiveSessions(seed: Seed) {
   const app = await seed.desktop({ name: "session-archive-undo" });
   const workspacePath = seed.tmpPath("session-archive-undo");
   const workspace = await seed.workspace(app, workspacePath);
-  await waitForWorkspaceSessionsLoaded(seed, app, workspace.workspaceId);
   const [candidate, neighbor] = await seed.sessions(app, ["Archive candidate", "Archive neighbor"]);
   if (!candidate || !neighbor) throw new Error("Archive world did not create both sessions.");
 
