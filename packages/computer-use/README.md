@@ -7,8 +7,11 @@ legacy whole-desktop tool is required.
 
 ## Start
 
-In OpenWork, enable **Library → Computer Use**, open its settings, and grant
-Accessibility and Screen Recording to **OpenWork Computer Use**. Mention a
+In OpenWork, open **Library → Computer Use** and choose **Enable Computer Use**
+for the current workspace. If macOS access is missing, open permission setup
+from that page and grant Accessibility and Screen Recording to the app macOS
+identifies. Return to OpenWork and wait for **Ready**. macOS permissions alone
+do not enable the workspace connection. Mention a
 running app in a message. The helper asks you to choose its window and approve
 the requested mode. The floating panel provides **Take over**, **Continue**, and
 **Stop**. The setup window can stop all sessions.

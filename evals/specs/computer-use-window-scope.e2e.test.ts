@@ -18,6 +18,14 @@ test("Computer Use respects window consent, fresh observations and the person's 
     expect(await world.state()).toEqual({ count: 0, otherCount: 0, draft: "Initial draft" });
   });
 
+  await step("Setup launched alongside the runtime reports the same granted permissions", async () => {
+    const panel = JSON.stringify(await world.setupPanel());
+    expect(panel).toContain("Accessibility · Allowed");
+    expect(panel).toContain("Screen Recording · Allowed");
+    expect(panel).not.toContain("Needed to read");
+    expect(toolState(await world.call("computer_discover")).permissions).toMatchObject({ accessibility: true, screenRecording: true });
+  });
+
   const session = await step("The person chooses a window and grants app controls", async () => {
     const pending = world.call("computer_open_session", { app_id: world.appId, pid: world.appPid, mode: "assist", purpose: "Edit the disposable fixture draft and increment its counter." });
     // A trusted person-input fixture presses the real native approval button.

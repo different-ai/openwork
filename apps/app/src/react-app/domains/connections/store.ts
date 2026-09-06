@@ -908,10 +908,11 @@ export function createConnectionsStore(options: {
       }
 
       if (entryType === "local") {
-        if (!entry.command?.length) {
+        const command = await resolveLocalMcpCommand(entry);
+        if (!command?.length) {
           throw new Error("Missing MCP command.");
         }
-        mcpEntryConfig["command"] = await resolveLocalMcpCommand(entry);
+        mcpEntryConfig["command"] = command;
         const environment = await resolveLocalMcpEnvironment(entry);
         if (environment) {
           mcpEntryConfig["environment"] = environment;

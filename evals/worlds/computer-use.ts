@@ -103,6 +103,26 @@ export async function computerUseWorld(_seed: Seed, { place }: { place: Place })
       refreshStable: () => fixture.request("refresh_stable"),
       refreshState: () => fixture.request("refresh_state"),
       resize: () => fixture.request("resize"),
+      async setupPanel() {
+        const setup = spawn(executable, ["setup"], { stdio: "ignore" });
+        try {
+          await new Promise<void>((resolve, reject) => { setup.once("spawn", resolve); setup.once("error", reject); });
+          const deadline = Date.now() + 5_000;
+          while (Date.now() < deadline) {
+            const result = await fixture.request("helper_panel", { name: "", pid: setup.pid, executable });
+            if (record(result) && typeof result.text === "string" && result.text.includes("Accessibility")) return result;
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
+          throw new Error("The setup window did not show permission status.");
+        } finally {
+          setup.kill("SIGTERM");
+          await new Promise<void>((resolve) => {
+            if (setup.exitCode !== null || setup.signalCode !== null || !setup.pid) { resolve(); return; }
+            const timeout = setTimeout(() => { setup.kill("SIGKILL"); resolve(); }, 2_000);
+            setup.once("exit", () => { clearTimeout(timeout); resolve(); });
+          });
+        }
+      },
       panel: () => fixture.request("helper_panel", { name: "", pid: helper.pid, executable }),
       foregroundWindow: () => fixture.request("foreground_window"),
       minimized: () => fixture.request("minimized"),

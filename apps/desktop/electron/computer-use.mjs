@@ -7,7 +7,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, shell } from "electron";
+import { app } from "electron";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -55,7 +55,8 @@ function getComputerUseMcpCommand() {
 
 // ---------------------------------------------------------------------------
 // Permission checks — spawn the binary with --check, read stdout, done.
-// Fresh process = fresh TCC read = always accurate. No HTTP server needed.
+// Check in the same launch context as setup. TCC can attribute a child process
+// differently from a helper opened separately through LaunchServices.
 // ---------------------------------------------------------------------------
 
 function resolveComputerUseExecutable() {
@@ -148,21 +149,28 @@ async function listRunningApps() {
   });
 }
 
+let setupProcess = null;
+
 async function openComputerUseSetupApp() {
   if (process.platform !== "darwin") throw new Error("Desktop Computer Use requires macOS 14 or later.");
-  // Open the GUI. Use the .app bundle if available so macOS shows it as
-  // a real app with its own dock icon and permission identity.
-  const appPath = computerUseHelperAppPath();
-  if (appPath) {
-    const result = await shell.openPath(appPath);
-    if (result) console.error("[ComputerUse] shell.openPath error:", result);
+  const bin = resolveComputerUseExecutable();
+  if (!bin) throw new Error("The Computer Use helper is unavailable. Rebuild or reinstall OpenWork.");
+  // Keep the responsible application consistent with --check and the MCP
+  // child. LaunchServices gives the GUI its own TCC identity instead.
+  if (setupProcess && setupProcess.exitCode === null && !setupProcess.killed) {
+    setupProcess.kill("SIGUSR1");
     return;
   }
-
-  // Fallback: spawn the raw binary (opens the same GUI).
-  const bin = resolveComputerUseExecutable();
-  if (!bin) throw new Error("Helper binary not found. Run pnpm dev to build it.");
-  const child = spawn(bin, [], { detached: true, stdio: "ignore" });
+  const child = spawn(bin, ["setup"], { stdio: "ignore" });
+  setupProcess = child;
+  child.once("exit", () => { if (setupProcess === child) setupProcess = null; });
+  await new Promise((resolve, reject) => {
+    child.once("spawn", resolve);
+    child.once("error", (error) => {
+      if (setupProcess === child) setupProcess = null;
+      reject(error);
+    });
+  });
   child.unref();
 }
 

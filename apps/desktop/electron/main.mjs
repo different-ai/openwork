@@ -1896,7 +1896,7 @@ const desktopCommandHandlers = {
       return getComputerUseMcpCommand();
   },
   "checkComputerUsePermissions": async (event, ...args) => {
-      // Spawn --check → fresh TCC read → always accurate.
+      // Read permissions in the same child-process context as setup.
       return checkComputerUsePermissions();
   },
   "listRunningApps": async (event, ...args) => {

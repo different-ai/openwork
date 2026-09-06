@@ -1863,10 +1863,12 @@ function McpQuickConnectSection(props: {
     const connecting = props.connectingName === entry.name;
     const hidden = props.isEntryHidden(entry);
     const disabledReason = props.disabledReasonForEntry(entry);
+    const isComputerUse = entry.id === "computer-use";
+    const ready = isComputerUse ? enablement?.active === true : configured || enablement?.active;
     const entryUrl = typeof entry.url === "string" ? entry.url : undefined;
     const group: ExtensionInventoryGroup = disabledReason
       ? "disabled"
-      : configured || enablement?.active
+      : ready
         ? "ready"
         : "available";
     cards.push({
@@ -1881,7 +1883,7 @@ function McpQuickConnectSection(props: {
           iconSrc={entry.iconSrc}
           url={entryUrl}
           taxonomy={taxonomyForDirectoryEntry(entry)}
-          connected={configured}
+          connected={isComputerUse ? ready : configured}
           enablement={enablement?.results}
           connecting={connecting}
           hidden={hidden}
@@ -1890,7 +1892,7 @@ function McpQuickConnectSection(props: {
           disabled={props.busy}
           meta={t("extensions.surface_this_device")}
           actionLabel={configured ? "View details" : t("mcp.tap_to_connect")}
-          nextActionLabel={configured || disabledReason ? undefined : t("connect.row_action_connect")}
+          nextActionLabel={isComputerUse ? ready || disabledReason ? undefined : "Set up" : configured || disabledReason ? undefined : t("connect.row_action_connect")}
           onClick={() => props.onDetail(entry)}
         />
       ),

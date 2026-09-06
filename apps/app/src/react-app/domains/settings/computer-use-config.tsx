@@ -67,6 +67,10 @@ export function ComputerUseConfig({ connected, connecting, onConnect, onRefresh,
     retry: false,
     refetchOnWindowFocus: true,
     staleTime: 0,
+    refetchInterval: 2_000,
+  });
+  const connect = useMutation({
+    mutationFn: async () => { await onConnect?.(); await onRefresh?.(); },
   });
   const setup = useMutation({
     mutationFn: async () => parsePermissionResult(await desktopBridge.openComputerUsePermissionSetup()),
@@ -76,18 +80,19 @@ export function ComputerUseConfig({ connected, connecting, onConnect, onRefresh,
     if (result) onPermissionsChange?.({ accessibility: result.accessibility, screenRecording: result.screenRecording });
   }, [result, onPermissionsChange]);
 
-  const error = (setup.error ?? checkError)?.message ?? result?.error;
+  const error = (connect.error ?? setup.error ?? checkError)?.message ?? result?.error;
   const supported = hasDesktopBridge() && result?.supported !== false;
-  const ready = connected && result?.ok === true;
+  const permissionsReady = result?.ok === true;
+  const ready = connected && permissionsReady;
   const busy = isFetching || setup.isPending;
-  const refresh = async () => { setup.reset(); await refetch(); await onRefresh?.(); };
+  const refresh = async () => { setup.reset(); connect.reset(); await refetch(); await onRefresh?.(); };
 
   return (
     <Card variant="outline" size="sm">
       <CardHeader>
         <CardTitle>Work in an app you choose</CardTitle>
         <CardDescription>
-          Approve one Mac app, choose its window, and decide how OpenWork can help. Each session has its own Pause and Stop controls.
+          Approve one Mac app, choose its window, and decide how OpenWork can help. Each session has its own Take over and Stop controls.
         </CardDescription>
         <CardAction>
           <Button variant="ghost" size="icon-sm" aria-label="Refresh Computer Use status" onClick={() => void refresh()} disabled={busy}>
@@ -98,8 +103,14 @@ export function ComputerUseConfig({ connected, connecting, onConnect, onRefresh,
       <CardContent className="space-y-5">
         <div className="flex items-center gap-2 rounded-xl border border-border bg-muted/40 px-3 py-3 text-sm" role="status" aria-live="polite">
           {ready ? <CheckCircle2 className="size-4 shrink-0 text-green-11" /> : <ShieldCheck className="size-4 shrink-0 text-muted-foreground" />}
-          <span>{ready ? "Ready · app access is approved when a session starts" : !supported ? "Available in OpenWork for macOS 14 or later" : !connected ? "Enable Computer Use to get started" : "Finish macOS permissions below"}</span>
+          <span>{ready ? "Ready · app access is approved when a session starts" : !supported ? "Available in OpenWork for macOS 14 or later" : !connected ? permissionsReady ? "Permissions are ready. Enable Computer Use for this workspace." : "Set up Computer Use for this workspace" : "Connected · finish macOS permissions below"}</span>
         </div>
+        {!ready ? (
+          <Button className="w-full" onClick={() => { if (!connected) connect.mutate(); else setup.mutate(); }} disabled={!supported || connecting || connect.isPending || setup.isPending || (!connected && !onConnect)}>
+            {connecting || connect.isPending || setup.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
+            {connecting || connect.isPending ? "Enabling…" : !connected ? "Enable Computer Use" : "Allow macOS access"}
+          </Button>
+        ) : null}
         {error ? <Alert variant="destructive"><CircleAlert /><AlertDescription className="break-words">{error}</AlertDescription></Alert> : null}
         <div className="space-y-3">
           <p className="text-sm font-medium">You choose the scope</p>
@@ -126,16 +137,8 @@ export function ComputerUseConfig({ connected, connecting, onConnect, onRefresh,
         </p>
       </CardContent>
       <CardFooter className="flex flex-wrap items-center justify-between gap-3 border-t border-border">
-        <p className="max-w-sm text-xs text-muted-foreground">{ready ? "Mention an app in your next message, then approve the window when asked." : "Enable the extension and allow both macOS permissions."}</p>
-        {!connected ? (
-          <Button onClick={() => void onConnect?.()} disabled={!supported || !onConnect || connecting}>
-            {connecting ? <Loader2 className="size-4 animate-spin" /> : null}
-            {connecting ? "Enabling…" : "Enable Computer Use"}
-          </Button>
-        ) : <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={() => void onConnect?.()} disabled={!onConnect || connecting}>{connecting ? "Reconnecting…" : "Reconnect Computer Use"}</Button>
-          <Button variant="outline" onClick={() => void refresh()} disabled={busy}>Check readiness</Button>
-        </div>}
+        <p className="max-w-sm text-xs text-muted-foreground">{ready ? "Mention an app in your next message, then approve the window when asked." : !connected ? "macOS access and enabling tools for this workspace are separate steps." : "Allow access, then return here. Status updates automatically."}</p>
+        {ready ? <Button variant="outline" onClick={() => void refresh()} disabled={busy}>Check readiness</Button> : null}
       </CardFooter>
     </Card>
   );

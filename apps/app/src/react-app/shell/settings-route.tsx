@@ -2004,7 +2004,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     onComputerUsePermissionsChange: setComputerUsePermissions,
     restartLocalServer: restartExtensionLocalServer,
     connectMcp: async (entry) => {
-      await connectionsStore.connectMcp(entry);
+      const result = await connectionsStore.connectMcp(entry);
+      if (!result.ok) throw new Error(result.error);
     },
     refreshMcpServers: () => connectionsStore.refreshMcpServers(),
     providers,
