@@ -154,7 +154,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
   });
 
   await step("finish opens the dashboard without requiring an installation or provider", async () => {
-    await user.see({ role: "heading", label: "Your workspace is ready" });
+    await user.see({ text: "Your workspace is ready" });
     await user.notSee({ testId: "den-org-sidebar" });
     await user.click({ role: "link", label: "Finish setup" });
     await user.see({ testId: "den-org-sidebar" }, { timeoutMs: 30_000 });
