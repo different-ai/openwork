@@ -115,6 +115,18 @@ For an API-native computer-tool adapter, route every action through this same
 session boundary and stop for pending safety checks; never automatically
 acknowledge them. No such adapter is enabled by this package.
 
+## Pointer event compatibility
+
+The pointer backend constructs AppKit events with the approved window number,
+then posts them only to the pinned process. On recent macOS, these events also
+need a window-local coordinate in addition to the public screen coordinate.
+`MacInput` isolates an availability-checked lookup of the private
+`CGEventSetWindowLocation` symbol for this purpose. This is an OS compatibility
+dependency, not a public-API stability guarantee. If unavailable, pointer input
+fails explicitly before a press; accessible app controls remain usable.
+Foreground, hit-test, consent and per-event session checks still apply. There
+is no background-activation or global-input fallback.
+
 ## Boundaries and known limits
 
 - macOS 14+ is the only native backend. Windows needs a separately tested UI

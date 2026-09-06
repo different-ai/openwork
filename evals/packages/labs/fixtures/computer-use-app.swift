@@ -68,40 +68,75 @@ final class Fixture: NSObject, NSApplicationDelegate {
         case "drag_state": result = ["downs": dragSurface.downs, "moves": dragSurface.moves, "ups": dragSurface.ups]
         case "human_edit":
             windows[0].makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            windows[0].makeFirstResponder(draft)
-            if let editor = draft.currentEditor() { editor.selectAll(nil) }
-            let units = Array("Edited by person".utf16)
-            for down in [true, false] {
-                if let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down) {
-                    units.withUnsafeBufferPointer { buffer in
-                        if let base = buffer.baseAddress { event.keyboardSetUnicodeString(stringLength: units.count, unicodeString: base) }
+            Task { @MainActor in
+                let frame = self.windows[0].frame
+                let point = CGPoint(x: frame.minX + 100, y: (NSScreen.screens.first?.frame.maxY ?? 0) - frame.maxY + 16)
+                var hit: AXUIElement?
+                var owner: pid_t = 0
+                var ownsPoint = false
+                for _ in 0..<20 {
+                    if AXUIElementCopyElementAtPosition(AXUIElementCreateSystemWide(), Float(point.x), Float(point.y), &hit) == .success,
+                       let hit, AXUIElementGetPid(hit, &owner) == .success, owner == ProcessInfo.processInfo.processIdentifier {
+                        ownsPoint = true; break
                     }
-                    event.postToPid(ProcessInfo.processInfo.processIdentifier)
+                    try? await Task.sleep(nanoseconds: 50_000_000)
                 }
+                guard ownsPoint else { self.respond(request, result: ["ok": false, "stage": "fixture_window_covered"]); return }
+                for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+                    CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
+                }
+                for _ in 0..<20 {
+                    if NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier { break }
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                }
+                // Only post person-input events while our disposable window owns focus.
+                guard NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier,
+                      NSApp.keyWindow == self.windows[0] else {
+                    self.respond(request, result: ["ok": false, "stage": "focus", "front": NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0, "pid": ProcessInfo.processInfo.processIdentifier, "key": NSApp.keyWindow?.title ?? ""]); return
+                }
+                self.windows[0].makeFirstResponder(self.draft)
+                if let editor = self.draft.currentEditor() { editor.selectAll(nil) }
+                let units = Array("Edited by person".utf16)
+                for down in [true, false] {
+                    if let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down) {
+                        units.withUnsafeBufferPointer { buffer in
+                            if let base = buffer.baseAddress { event.keyboardSetUnicodeString(stringLength: units.count, unicodeString: base) }
+                        }
+                        event.post(tap: .cghidEventTap)
+                    }
+                }
+                self.respond(request, result: ["ok": true])
             }
-            result = ["ok": true]
+            return
         case "permissions": result = ["accessibility": AXIsProcessTrusted()]
         case "resize":
             windows[0].setContentSize(NSSize(width: 440, height: 350)); result = ["ok": true]
         case "front": windows[0].makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); result = ["ok": true]
         case "press_helper_button", "select_helper_window":
-            let buttons: Set<String> = ["Allow this session", "Cancel", "Pause", "Resume", "Stop"]
-            if let params = request["params"] as? [String: Any], let pid = params["pid"] as? Int32,
-               let name = params["name"] as? String,
-               (method == "select_helper_window" ? name == "Workspace window" : buttons.contains(name)),
-               let expected = params["executable"] as? String,
-               let process = NSRunningApplication(processIdentifier: pid),
-               process.executableURL?.resolvingSymlinksInPath().path == URL(fileURLWithPath: expected).resolvingSymlinksInPath().path {
-                result = method == "select_helper_window" ? selectWindow(pid: pid, title: name) : ["ok": pressButton(pid: pid, title: name)]
-            } else { result = ["ok": false] }
+            Task.detached {
+                var result: [String: Any] = [:]
+                let buttons: Set<String> = ["Allow this session", "Cancel", "Pause", "Resume", "Stop"]
+                if let params = request["params"] as? [String: Any], let pid = params["pid"] as? Int32,
+                   let name = params["name"] as? String,
+                   (method == "select_helper_window" ? name == "Workspace window" : buttons.contains(name)),
+                   let expected = params["executable"] as? String,
+                   let process = NSRunningApplication(processIdentifier: pid),
+                   process.executableURL?.resolvingSymlinksInPath().path == URL(fileURLWithPath: expected).resolvingSymlinksInPath().path {
+                    result = method == "select_helper_window" ? self.selectWindow(pid: pid, title: name) : ["ok": self.pressButton(pid: pid, title: name)]
+                } else { result = ["ok": false] }
+                await self.respond(request, result: result)
+            }
+            return
         default: result = ["error": "Unknown fixture operation"]
         }
+        respond(request, result: result)
+    }
+    func respond(_ request: [String: Any], result: [String: Any]) {
         if let data = try? JSONSerialization.data(withJSONObject: ["id": request["id"] ?? NSNull(), "result": result], options: [.sortedKeys]) {
             FileHandle.standardOutput.write(data + Data([10]))
         }
     }
-    func findControl(pid: pid_t, title: String?, role expectedRole: String) -> AXUIElement? {
+    nonisolated func findControl(pid: pid_t, title: String?, role expectedRole: String) -> AXUIElement? {
         let root = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(root, 0.2)
         var visited = 0
@@ -122,7 +157,7 @@ final class Fixture: NSObject, NSApplicationDelegate {
         }
         return find(root, depth: 0)
     }
-    func selectWindow(pid: pid_t, title: String) -> [String: Any] {
+    nonisolated func selectWindow(pid: pid_t, title: String) -> [String: Any] {
         guard let picker = findControl(pid: pid, title: nil, role: kAXPopUpButtonRole) else { return ["ok": false] }
         var previous: CFTypeRef?
         AXUIElementCopyAttributeValue(picker, kAXValueAttribute as CFString, &previous)
@@ -130,10 +165,14 @@ final class Fixture: NSObject, NSApplicationDelegate {
               let item = findControl(pid: pid, title: title, role: kAXMenuItemRole),
               AXUIElementPerformAction(item, kAXPressAction as CFString) == .success else { return ["ok": false] }
         var selected: CFTypeRef?
-        AXUIElementCopyAttributeValue(picker, kAXValueAttribute as CFString, &selected)
+        for _ in 0..<50 {
+            AXUIElementCopyAttributeValue(picker, kAXValueAttribute as CFString, &selected)
+            if selected as? String == title { break }
+            Thread.sleep(forTimeInterval: 0.02)
+        }
         return ["ok": true, "previous": previous as? String ?? "", "selected": selected as? String ?? ""]
     }
-    func pressButton(pid: pid_t, title: String) -> Bool {
+    nonisolated func pressButton(pid: pid_t, title: String) -> Bool {
         guard let button = findControl(pid: pid, title: title, role: kAXButtonRole) else { return false }
         return AXUIElementPerformAction(button, kAXPressAction as CFString) == .success
     }

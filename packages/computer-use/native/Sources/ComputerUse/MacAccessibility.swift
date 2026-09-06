@@ -7,7 +7,19 @@ struct AppIdentity {
     let app: NSRunningApplication
     let bundleID: String
     let executable: URL
-    let launched: Date
+    let launched: ProcessStart
+    // Launch Services may omit launchDate for directly launched apps. The
+    // kernel start time still prevents a recycled PID from inheriting a grant.
+    struct ProcessStart: Equatable {
+        let seconds: UInt64
+        let microseconds: UInt64
+        init?(pid: pid_t) {
+            var info = proc_bsdinfo()
+            let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+            guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
+            seconds = info.pbi_start_tvsec; microseconds = info.pbi_start_tvusec
+        }
+    }
     var pid: pid_t { app.processIdentifier }
     var name: String { app.localizedName ?? bundleID }
 
@@ -15,7 +27,7 @@ struct AppIdentity {
         let matches = NSWorkspace.shared.runningApplications.filter {
             $0.bundleIdentifier == bundleID && $0.activationPolicy == .regular && (pid == nil || $0.processIdentifier == pid)
         }
-        guard matches.count == 1, let app = matches.first, let executable = app.executableURL, let launched = app.launchDate else {
+        guard matches.count == 1, let app = matches.first, let executable = app.executableURL, let launched = ProcessStart(pid: app.processIdentifier) else {
             throw UseError("app_unavailable", "Choose an exact running app from computer_discover; supply its pid if several copies are open.", next: "discover")
         }
         guard isAllowed(app) else { throw UseError("protected_app", "This app cannot be operated through Computer Use.", next: "use_structured_tool") }
@@ -23,7 +35,7 @@ struct AppIdentity {
     }
     func validate() throws {
         guard !app.isTerminated, let current = NSRunningApplication(processIdentifier: pid),
-              current.bundleIdentifier == bundleID, current.executableURL == executable, current.launchDate == launched,
+              current.bundleIdentifier == bundleID, current.executableURL == executable, ProcessStart(pid: pid) == launched,
               Self.isAllowed(current) else {
             throw UseError("app_changed", "The approved app exited or changed. Open a new session.", next: "open_session")
         }
@@ -74,22 +86,29 @@ final class MacAccessibility {
         try app.validate()
         let root = AXUIElementCreateApplication(app.pid)
         AXUIElementSetMessagingTimeout(root, 0.2)
-        let axWindows = attribute(root, kAXWindowsAttribute) as? [AXUIElement] ?? []
-        let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
-        try app.validate()
-        return content.windows.compactMap { window in
-            guard window.owningApplication?.processID == app.pid, window.windowLayer == 0,
-                  window.frame.width > 20, window.frame.height > 20 else { return nil }
-            let matches = axWindows.filter { element in
-                guard let bounds = frame(element) else { return false }
-                return abs(bounds.minX - window.frame.minX) < 2 && abs(bounds.minY - window.frame.minY) < 2
-                    && abs(bounds.width - window.frame.width) < 2 && abs(bounds.height - window.frame.height) < 2
-            }
-            // Never guess a window from a repeated title or take the first match.
-            guard matches.count == 1, let element = matches.first else { return nil }
-            AXUIElementSetMessagingTimeout(element, 0.2)
-            return WindowTarget(id: window.windowID, title: window.title ?? "Untitled window", element: element, frame: window.frame)
-        }.sorted { $0.id < $1.id }
+        for attempt in 0..<5 {
+            let axWindows = attribute(root, kAXWindowsAttribute) as? [AXUIElement] ?? []
+            let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+            try app.validate()
+            let targets: [WindowTarget] = content.windows.compactMap { window in
+                guard window.owningApplication?.processID == app.pid, window.windowLayer == 0,
+                      window.frame.width > 20, window.frame.height > 20 else { return nil }
+                let matches = axWindows.filter { element in
+                    guard let bounds = frame(element) else { return false }
+                    return abs(bounds.minX - window.frame.minX) < 2 && abs(bounds.minY - window.frame.minY) < 2
+                        && abs(bounds.width - window.frame.width) < 2 && abs(bounds.height - window.frame.height) < 2
+                }
+                // Never guess a window from a repeated title or take the first match.
+                guard matches.count == 1, let element = matches.first else { return nil }
+                AXUIElementSetMessagingTimeout(element, 0.2)
+                return WindowTarget(id: window.windowID, title: window.title ?? "Untitled window", element: element, frame: window.frame)
+            }.sorted { $0.id < $1.id }
+            if !targets.isEmpty { return targets }
+            // WindowServer and Accessibility can report different frames during
+            // opening animation. Refresh reads briefly; never guess or dispatch input.
+            if attempt < 4 { try await Task.sleep(nanoseconds: 100_000_000) }
+        }
+        return []
     }
 
     func validate(_ target: WindowTarget, app: AppIdentity, requireFrontmost: Bool = false) throws -> CGRect {
@@ -244,7 +263,8 @@ final class MacAccessibility {
     }
     func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
         var value: CFTypeRef?
-        return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
+        let result = AXUIElementCopyAttributeValue(element, name as CFString, &value)
+        return result == .success ? value : nil
     }
     func elementAttribute(_ element: AXUIElement, _ name: String) -> AXUIElement? {
         guard let value = attribute(element, name), CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }

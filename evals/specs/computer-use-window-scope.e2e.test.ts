@@ -19,7 +19,7 @@ test("Computer Use respects window consent, fresh observations and the person's 
   });
 
   const session = await step("The person chooses a window and grants app controls", async () => {
-    const pending = world.call("computer_open_session", { app_id: world.appId, mode: "assist", purpose: "Edit the disposable fixture draft and increment its counter." });
+    const pending = world.call("computer_open_session", { app_id: world.appId, pid: world.appPid, mode: "assist", purpose: "Edit the disposable fixture draft and increment its counter." });
     // A trusted person-input fixture presses the real native approval button.
     await Promise.race([
       (async () => {
@@ -42,7 +42,7 @@ test("Computer Use respects window consent, fresh observations and the person's 
     const other = await world.peerCall("computer_observe", { session_id: session });
     expect(other).toMatchObject({ isError: true });
     expect(toolState(other).code).toBe("session_unavailable");
-    const busy = toolState(await world.peerCall("computer_open_session", { app_id: world.appId, mode: "assist", purpose: "Try a second session." }));
+    const busy = toolState(await world.peerCall("computer_open_session", { app_id: world.appId, pid: world.appPid, mode: "assist", purpose: "Try a second session." }));
     expect(busy.code).toBe("computer_busy");
   });
 
@@ -98,7 +98,7 @@ test("Computer Use respects window consent, fresh observations and the person's 
 
   await step("A person's typing pauses control until they explicitly resume with a fresh view", async () => {
     const before = await observe();
-    await world.humanEdit();
+    expect(await world.humanEdit()).toEqual({ ok: true });
     await expect.poll(async () => toolState(await world.call("computer_session_status", { session_id: session })).state).toBe("paused");
     await expect.poll(() => world.state()).toEqual({ count: 1, otherCount: 0, draft: "Edited by person" });
     expect(toolState(await action(before, "after-human-edit", { type: "press", ref: refFor(before, "Increment") })).code).toBe("session_paused");
@@ -117,7 +117,7 @@ test("Computer Use respects window consent, fresh observations and the person's 
   await step("Pausing an in-flight drag releases the pointer and never resumes the old path", async () => {
     // Remove the text caret before verifying a static drag surface.
     await world.prepareDrag();
-    const pending = world.call("computer_open_session", { app_id: world.appId, mode: "control", purpose: "Drag inside the disposable fixture, then hand control back." });
+    const pending = world.call("computer_open_session", { app_id: world.appId, pid: world.appPid, mode: "control", purpose: "Drag inside the disposable fixture, then hand control back." });
     await world.selectWindow();
     await world.pressControl("Allow this session");
     const opened = toolState(await pending);
@@ -136,7 +136,10 @@ test("Computer Use respects window consent, fresh observations and the person's 
     const y = bounds.y + 10;
     const path = Array.from({ length: 32 }, (_, index) => ({ x: x + index, y }));
     const drag = world.call("computer_act", { session_id: id, observation_id: observed.observation_id, request_id: "interrupt-drag", action: { type: "drag", path } });
-    await expect.poll(() => world.dragState()).toMatchObject({ downs: 1 });
+    await Promise.race([
+      expect.poll(() => world.dragState(), { timeout: 10_000, interval: 20 }).toMatchObject({ downs: 1 }),
+      drag.then(async (reply) => { throw new Error(`Drag finished before takeover: ${JSON.stringify(toolState(reply))}; ${JSON.stringify(await world.dragState())}; surface ${JSON.stringify(bounds)}`); }),
+    ]);
     await world.pressControl("Pause");
     const interrupted = toolState(await drag);
     expect(interrupted).toMatchObject({ ok: false, may_have_acted: true, next: "human_takeover" });

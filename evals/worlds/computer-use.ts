@@ -12,7 +12,9 @@ function record(value: unknown): value is Record<string, unknown> {
 }
 
 function pipeClient(executable: string, args: string[]) {
-  const child = spawn(executable, args, { stdio: ["pipe", "pipe", "ignore"] });
+  const child = spawn(executable, args, { stdio: ["pipe", "pipe", "pipe"] });
+  let stderr = "";
+  child.stderr.on("data", (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(-2000); });
   const pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void; timer: NodeJS.Timeout }>();
   let nextId = 0;
   const lines = createInterface({ input: child.stdout });
@@ -26,7 +28,7 @@ function pipeClient(executable: string, args: string[]) {
     else request.resolve(message.result);
   });
   const fail = () => {
-    for (const value of pending.values()) { clearTimeout(value.timer); value.reject(new Error("Fixture process exited")); }
+    for (const value of pending.values()) { clearTimeout(value.timer); value.reject(new Error(`Fixture process exited: ${stderr}`)); }
     pending.clear();
   };
   child.on("error", fail); child.on("exit", fail);
@@ -64,7 +66,7 @@ export function toolState(value: unknown): Record<string, unknown> {
 export async function computerUseWorld(_seed: Seed, { place }: { place: Place }) {
   // Do not silently run local Mac resources after the CLI selected Daytona.
   if (place.kind !== "local" || process.platform !== "darwin") throw new SkipError("macOS native desktop placement; the selected host cannot run AppKit");
-  needs({ commands: ["swift", "swiftc"] });
+  needs({ commands: ["swift", "swiftc", "osascript"] });
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
   const native = join(root, "packages/computer-use/native");
   const build = spawnSync("swift", ["build", "--package-path", native, "--product", "ComputerUse"], { encoding: "utf8", timeout: 120_000 });
@@ -76,7 +78,7 @@ export async function computerUseWorld(_seed: Seed, { place }: { place: Place })
   const directory = await mkdtemp(join(tmpdir(), "openwork-computer-use-"));
   const contents = join(directory, "Computer Use Fixture.app/Contents");
   await mkdir(join(contents, "MacOS"), { recursive: true });
-  await writeFile(join(contents, "Info.plist"), `<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>org.example.openwork.computer-use-fixture</string><key>CFBundleName</key><string>Computer Use Fixture</string><key>CFBundleExecutable</key><string>Fixture</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>`);
+  await writeFile(join(contents, "Info.plist"), `<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>org.example.openwork.computer-use-fixture</string><key>CFBundleName</key><string>Computer Use Fixture</string><key>CFBundleExecutable</key><string>Fixture</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleVersion</key><string>1</string><key>CFBundleShortVersionString</key><string>1.0</string><key>LSMinimumSystemVersion</key><string>14.0</string></dict></plist>`);
   const fixtureExecutable = join(contents, "MacOS/Fixture");
   const compiled = spawnSync("swiftc", ["-parse-as-library", join(root, "evals/packages/labs/fixtures/computer-use-app.swift"), "-o", fixtureExecutable], { encoding: "utf8", timeout: 90_000 });
   if (compiled.status !== 0) { await rm(directory, { recursive: true }); throw new Error(compiled.stderr); }
@@ -92,12 +94,17 @@ export async function computerUseWorld(_seed: Seed, { place }: { place: Place })
     await peer.request("initialize", { protocolVersion: "2025-11-25", clientInfo: { name: "peer-journey", version: "1" }, capabilities: {} });
     return {
       appId: "org.example.openwork.computer-use-fixture",
+      appPid: fixture.pid,
       call: (name: string, args: Record<string, unknown> = {}) => helper.request("tools/call", { name, arguments: args }),
       peerCall: (name: string, args: Record<string, unknown> = {}) => peer.request("tools/call", { name, arguments: args }),
       list: () => helper.request("tools/list"),
       state: () => fixture.request("state"),
       resize: () => fixture.request("resize"),
-      humanEdit: () => fixture.request("human_edit"),
+      humanEdit: async () => {
+        const activated = spawnSync("/usr/bin/osascript", ["-e", `tell application "System Events" to set frontmost of (first application process whose unix id is ${fixture.pid}) to true`], { encoding: "utf8", timeout: 5000 });
+        if (activated.status !== 0) throw new Error(activated.stderr);
+        return fixture.request("human_edit");
+      },
       prepareDrag: () => fixture.request("prepare_drag"),
       dragState: () => fixture.request("drag_state"),
       front: () => fixture.request("front"),
