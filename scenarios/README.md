@@ -81,8 +81,10 @@ engine on its already-open browser, avoiding a second provisioned environment.
 
 Create a named folder and export plain functions. Add `e2e.test.ts` only for a new
 user journey, using `spec.world` from the existing testkit. Scenario tests use the
-same CLI, CI matrix, channel rules, boundary checks, and evidence publisher as
-legacy specs. Tests are discovered by filename without importing workflows.
+same CLI, channel rules, boundary checks, and evidence publisher as
+legacy specs. The secret-bearing Daytona PR workflow retains its existing legacy-spec
+selection; it does not automatically select scenario tests. Run a scenario explicitly
+with the CLI and publish its evidence on the PR. Tests are discovered by filename without importing workflows.
 
 For an attached live-service check, use `live.test.ts` and name it explicitly:
 `pnpm evals:pr ../scenarios/<name>/live.test.ts`. Declare the existing testkit's
