@@ -64,6 +64,7 @@ final class Fixture: NSObject, NSApplicationDelegate {
         var result: [String: Any] = [:]
         switch method {
         case "state": result = ["count": count, "otherCount": otherCount, "draft": draft.stringValue]
+        case "prepare_drag": windows[0].makeFirstResponder(nil); result = ["ok": true]
         case "drag_state": result = ["downs": dragSurface.downs, "moves": dragSurface.moves, "ups": dragSurface.ups]
         case "human_edit":
             windows[0].makeKeyAndOrderFront(nil)

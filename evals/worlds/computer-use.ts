@@ -98,6 +98,7 @@ export async function computerUseWorld(_seed: Seed, { place }: { place: Place })
       state: () => fixture.request("state"),
       resize: () => fixture.request("resize"),
       humanEdit: () => fixture.request("human_edit"),
+      prepareDrag: () => fixture.request("prepare_drag"),
       dragState: () => fixture.request("drag_state"),
       front: () => fixture.request("front"),
       async selectWindow() {

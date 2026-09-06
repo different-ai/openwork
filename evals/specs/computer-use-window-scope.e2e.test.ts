@@ -115,6 +115,8 @@ test("Computer Use respects window consent, fresh observations and the person's 
   });
 
   await step("Pausing an in-flight drag releases the pointer and never resumes the old path", async () => {
+    // Remove the text caret before verifying a static drag surface.
+    await world.prepareDrag();
     const pending = world.call("computer_open_session", { app_id: world.appId, mode: "control", purpose: "Drag inside the disposable fixture, then hand control back." });
     await world.selectWindow();
     await world.pressControl("Allow this session");
