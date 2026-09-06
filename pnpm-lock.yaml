@@ -1373,6 +1373,19 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
+  packages/presentation:
+    dependencies:
+      react:
+        specifier: 'catalog:'
+        version: 19.2.8
+      remotion:
+        specifier: 4.0.520
+        version: 4.0.520(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+    devDependencies:
+      '@types/react':
+        specifier: ^19.1.13
+        version: 19.2.14
+
   packages/sdk:
     devDependencies:
       '@hey-api/openapi-ts':
@@ -8361,6 +8374,12 @@ packages:
 
   remark-stringify@11.0.0:
     resolution: {integrity: sha512-1OSmLd3awB/t8qdoEOMazZkNsfVTeY4fTsgzcQFdXNq8ToTN4ZGwrMnlda4K6smTFKD+GRV6O48i6Z4iKgPPpw==}
+
+  remotion@4.0.520:
+    resolution: {integrity: sha512-dORllOm7QdlHW/ZHNNWNXfQnO7pk9lwWIlSJ8p9V1URvjI75+pX+pTbrs6tVyRz6KQIXwI8MaeE22pC5U4EXIw==}
+    peerDependencies:
+      react: '>=16.8.0'
+      react-dom: '>=16.8.0'
 
   require-directory@2.1.1:
     resolution: {integrity: sha512-fGxEI7+wsG9xrvdjsrlmL22OMTTiHRwAMroiEeMgq8gzoLC/PQr7RsRDSTLUg/bZAZtF+TVIkHc6/4RIKrui+Q==}
@@ -17013,6 +17032,11 @@ snapshots:
       '@types/mdast': 4.0.4
       mdast-util-to-markdown: 2.1.2
       unified: 11.0.5
+
+  remotion@4.0.520(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
+    dependencies:
+      react: 19.2.8
+      react-dom: 19.2.8(react@19.2.8)
 
   require-directory@2.1.1: {}
 

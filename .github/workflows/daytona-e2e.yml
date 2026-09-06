@@ -119,9 +119,9 @@ jobs:
           raw_desktop="$(node evals/scripts/list-daytona-raw-desktop-tests.mjs)"
           excluded="$(printf '%s\n' "$raw_desktop" | jq -Rsc 'split("\n") | map(select(length > 0))')"
           # shellcheck disable=SC2012
-          eligible_tests="$(ls evals/specs/*.e2e.test.ts | sed 's#^evals/specs/##' | jq -Rsc --argjson excluded "$excluded" 'split("\n") | map(select(length > 0)) | map(select(. as $test | $excluded | index($test) | not))')"
+          eligible_tests="$(node evals/bin/evals.mjs --list | jq -Rsc --argjson excluded "$excluded" 'split("\n") | map(select(length > 0)) | map(select(. as $test | $excluded | index($test) | not))')"
           if [ "$EVENT_NAME" = "workflow_run" ]; then
-            matched_tests="$(git diff --name-only --diff-filter=ACMR "$BASE_SHA...$HEAD_SHA" | { grep -E '^evals/specs/[^/]+\.e2e\.test\.ts$' || true; } | sed 's#^evals/specs/##' | jq -Rsc 'split("\n") | map(select(length > 0))')"
+            matched_tests="$(git diff --name-only --diff-filter=ACMR "$BASE_SHA...$HEAD_SHA" | { grep -E '^(evals/specs/[^/]+\.e2e\.test\.ts|scenarios/[^/]+/.*)$' || true; } | sed -E 's#^evals/specs/##; s#^(scenarios/[^/]+)/.*#\1/e2e.test.ts#' | sort -u | jq -Rsc 'split("\n") | map(select(length > 0))')"
             only_filter=""
           else
             matched_tests='[]'

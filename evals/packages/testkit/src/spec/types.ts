@@ -1,4 +1,4 @@
-import type { DenSession, DenFetchResult } from "@openwork/behaviors";
+import type { DenSession, DenFetchResult, FieldTypingOptions } from "@openwork/behaviors";
 import type { CdpFunctionArgument, Surface, Target } from "@openwork/cdp";
 import type {
   MockHandle,
@@ -22,7 +22,7 @@ export interface ClickOptions {
   hitTest?: boolean;
 }
 
-export interface TypeOptions {
+export interface TypeOptions extends FieldTypingOptions {
   /** Optional visible character pacing for recorded journeys. */
   intervalMs?: number;
   /** Replace existing text with a real select-all key chord before typing. Defaults to append. */
