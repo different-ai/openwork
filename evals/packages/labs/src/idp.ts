@@ -721,7 +721,7 @@ function authorize(state: MockIdpState, url: URL, response: ServerResponse): voi
   if (state.config.knobs.interactive && !url.searchParams.has("decision")) {
     const fields = [...url.searchParams].map(([name, value]) => `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}">`).join("");
     response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
-    response.end(`<!doctype html><html><head><title>Test organization sign-in</title></head><body style="font:16px system-ui;max-width:420px;margin:60px auto;padding:24px"><h1>Test organization sign-in</h1><p>Confirm your identity to return to OpenWork.</p><form>${fields}<button name="decision" value="approve">Approve sign-in</button> <button name="decision" value="deny">Deny sign-in</button></form></body></html>`);
+    response.end(`<!doctype html><html><head><title>Test organization sign-in</title></head><body style="font:16px system-ui;max-width:420px;margin:60px auto;padding:24px"><h1>Test organization sign-in</h1><p>Confirm your identity to return to OpenWork.</p><form>${fields}<label>Email <input name="mock_email" type="email" value="${escapeHtml(url.searchParams.get("login_hint") ?? state.config.defaultSubject.email)}"></label><p></p><button name="decision" value="approve">Approve sign-in</button> <button name="decision" value="deny">Deny sign-in</button></form></body></html>`);
     return;
   }
   if (url.searchParams.get("decision") === "deny") {
@@ -733,7 +733,7 @@ function authorize(state: MockIdpState, url: URL, response: ServerResponse): voi
     return;
   }
 
-  const loginHint = url.searchParams.get("login_hint") ?? undefined;
+  const loginHint = (state.config.knobs.interactive ? url.searchParams.get("mock_email") : null) ?? url.searchParams.get("login_hint") ?? undefined;
   const requestedSubject = loginHint ? { email: loginHint } : undefined;
   const subject = subjectWithKnobs(state.config, requestedSubject);
   if (matchesBlockedUser(subject, state.config.knobs.blockedUser)) {

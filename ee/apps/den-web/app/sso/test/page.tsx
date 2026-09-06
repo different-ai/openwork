@@ -3,6 +3,7 @@
 import { DenStatusScreen } from "../../../components/den-status-screen";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { getRuntimeConfig } from "../../(den)/_lib/runtime-config";
 import { denApiCredentials, denApiEndpoint } from "../../(den)/_lib/den-api-origin";
 
 function completionUrl(intentId: string, failed = false) {
@@ -30,6 +31,7 @@ function SsoTestStartContent() {
     let cancelled = false;
     void (async () => {
       try {
+        await getRuntimeConfig();
         const endpoint = denApiEndpoint(`/v1/sso/test/${encodeURIComponent(intentId)}/start`);
         const response = await fetch(endpoint, {
           method: "POST",

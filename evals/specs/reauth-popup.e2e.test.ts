@@ -64,14 +64,25 @@ test("workspace SSO verifies through a real popup and safely recovers from inter
     await user.click({ role: "button", label: "Continue with SSO" });
     const popup = await waiting();
     await user.click({ role: "button", label: "Cancel" });
-    await user.notSee({ role: "dialog" });
+    expect(await probe.eval("document.querySelector('[role=dialog]') === null")).toBe(true);
     await probe.eventually(() => world.popupCount(), { within: 10_000, label: "cancel closes popup", until: (count) => count === 0 });
     expect(await world.storedName()).toBe(world.originalName);
     popup.client.close();
     evidence.recordAssertionEvidence("Cancelling the parent dialog closes the popup and discards the pending change", "The dialog and popup both closed and the original workspace name remained stored.", true);
   });
-  await step("successful SSO resumes and persists the pending settings change", async () => {
+  await step("a different SSO identity cannot approve the original user’s change", async () => {
     await user.click({ role: "button", label: "Save settings" });
+    await user.see({ role: "button", label: "Continue with SSO" });
+    await user.click({ role: "button", label: "Continue with SSO" });
+    const popup = await waiting();
+    await user.on(popup).type({ role: "textbox", label: "Email" }, world.otherEmail, { replace: true });
+    await user.on(popup).click({ role: "button", label: "Approve sign-in" });
+    await user.see({ text: `Sign in as ${world.den.admin.email} to confirm this change.` }, { timeoutMs: 60_000 });
+    expect(await world.storedName()).toBe(world.originalName);
+    popup.client.close();
+    evidence.recordAssertionEvidence("A different identity cannot approve the original user's pending change", "The IdP authenticated a second synthetic identity, but OpenWork required the original admin and the stored workspace name stayed unchanged.", true);
+  });
+  await step("successful SSO resumes and persists the pending settings change", async () => {
     await user.see({ role: "button", label: "Continue with SSO" });
     await user.click({ role: "button", label: "Continue with SSO" });
     const popup = await waiting();
@@ -79,7 +90,7 @@ test("workspace SSO verifies through a real popup and safely recovers from inter
     await user.on(popup).screenshot();
     await user.on(popup).click({ role: "button", label: "Approve sign-in" });
     await user.see({ text: "Workspace settings updated." }, { timeoutMs: 60_000 });
-    await user.notSee({ role: "dialog" });
+    expect(await probe.eval("document.querySelector('[role=dialog]') === null")).toBe(true);
     expect(await world.storedName()).toBe(changedName);
     await probe.eventually(() => world.popupCount(), { within: 10_000, label: "successful popup closes", until: (count) => count === 0 });
     await user.reload();

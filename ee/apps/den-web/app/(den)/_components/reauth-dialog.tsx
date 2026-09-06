@@ -205,6 +205,11 @@ export function ReauthDialog({
       setError(null);
       void (async () => {
         try {
+          const result = await requestJson("/v1/me", { method: "GET" });
+          const verifiedUser = getUser(result.payload);
+          if (!result.response.ok || !verifiedUser || verifiedUser.id !== user?.id) {
+            throw new Error(`Sign in as ${user?.email} to confirm this change.`);
+          }
           await onVerifiedRef.current();
         } catch (nextError) {
           setError(nextError instanceof Error ? nextError.message : "Re-authentication failed.");
@@ -219,7 +224,7 @@ export function ReauthDialog({
       popupRef.current?.close();
       stopPopupWatcher();
     };
-  }, [open, nonce]);
+  }, [open, nonce, user?.id, user?.email]);
 
   async function submitPassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -314,6 +319,7 @@ export function ReauthDialog({
     try {
       const nextUrl = new URL(ssoUrl, window.location.origin);
       nextUrl.searchParams.set("callbackURL", getReauthCompleteUrl(nonce));
+      nextUrl.searchParams.set("errorCallbackURL", getReauthCompleteUrl(nonce, true));
       nextUrl.searchParams.set("loginHint", user.email);
 
       popup.location.href = nextUrl.toString();

@@ -2,8 +2,11 @@ import type { Seed } from "@openwork/env";
 import { connect, debuggerUrlFor, listTargets, type Surface } from "@openwork/cdp";
 import { defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
 function record(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected response object");
+  if (!isRecord(value)) throw new Error("Expected response object");
   return value;
 }
 function text(value: unknown): string {
@@ -25,7 +28,7 @@ export async function reauthPopup(seed: Seed) {
   const preview = await defaultDaytonaExec(["preview-url", sandbox, "-p", "19190", "--expires", "86400"]);
   if (preview.code !== 0) throw new Error("Could not expose test IdP");
   const issuer = text(preview.stdout.match(/https:\/\/[^\s]+/)?.[0]);
-  const fixtureSource = `import { startMockIdpLab } from "/workspace/evals/packages/labs/src/idp.ts"; await startMockIdpLab(${JSON.stringify({ domain, publicIssuer: issuer, listen: { host: "0.0.0.0", port: 19190 }, knobs: { interactive: true } })});`;
+  const fixtureSource = `import { startMockIdpLab } from "/workspace/evals/packages/labs/src/idp.ts"; await startMockIdpLab(${JSON.stringify({ domain, defaultSubject: { email: den.admin.email, name: "SSO Admin" }, publicIssuer: issuer, listen: { host: "0.0.0.0", port: 19190 }, knobs: { interactive: true } })});`;
   await remote(`echo ${Buffer.from(fixtureSource).toString("base64")} | base64 -d > /tmp/reauth-idp.mjs`);
   await remote(`python3 - <<PY
 import subprocess
@@ -55,7 +58,7 @@ PY`);
     await web.client.send("Network.setCookie", { name: cookie.slice(0, separator), value: cookie.slice(separator + 1), url, httpOnly: true, secure: true });
   }
   return {
-    den, web, originalName, testUrl, issuer, organizationId,
+    den, web, originalName, testUrl, issuer, organizationId, otherEmail: `other@${domain}`,
     async enable() {
       const result = await seed.api(den.admin, "/v1/sso/enable", { method: "POST", headers, body: "{}" });
       if (result.response.status !== 204) throw new Error(`SSO enable: ${result.response.status} ${result.text}`);
