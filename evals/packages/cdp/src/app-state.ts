@@ -97,9 +97,11 @@ const PROBE_EXPRESSION = `(() => {
   const stored = localStorage.getItem("openwork.react.activeWorkspace");
   const routeMatch = (route.match(/\\/workspace\\/([^/?#]+)/) ?? [])[1] ?? null;
   const workspaceId = (stored && stored.length > 0 ? stored : null) ?? routeMatch;
-  // Any settings/extensions surface inside a workspace is interactive too.
+  // Any settings/extensions surface inside a workspace is interactive too. The
+  // settings shell always offers "Back to app" even when an organization
+  // policy hides every tab but Cloud; the /extensions route renders the Library.
   const settingsSurface = /\\/workspace\\/[^/?#]+\\/(settings|extensions)/.test(route)
-    && (text.includes("Extensions") || text.includes("Preferences") || text.includes("Permissions"));
+    && (text.includes("Back to app") || text.includes("Library") || text.includes("Extensions") || text.includes("Preferences") || text.includes("Permissions"));
   const surface = welcome
     ? "welcome"
     : (taskUi || settingsSurface) && workspaceId && !needsWorkspace

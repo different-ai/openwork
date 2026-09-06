@@ -54,8 +54,12 @@ describe("env-file", () => {
 
   test("upsertMany updates existing keys in place", async () => {
     const svc = new EnvService({ path });
+    let changes = 0;
+    const unsubscribe = svc.onChange(() => { changes += 1; });
     await svc.upsertMany([{ key: "FOO", value: "1" }]);
     await svc.upsertMany([{ key: "FOO", value: "2" }]);
+    expect(changes).toBe(2);
+    unsubscribe();
     const items = await svc.list();
     expect(items).toHaveLength(1);
     expect(items[0].value).toBe("2");

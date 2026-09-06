@@ -16,6 +16,8 @@ interface SharedAppOptions {
   host?: Host;
   model?: string;
   workspacePath?: string;
+  /** Arrange a previously activated private-Den installation; does not test activation. */
+  enterpriseActivated?: boolean;
   /** Reuse this caller-owned local Electron profile root instead of creating one. */
   profileDir?: string;
   /** Eval-only delay before the desktop starts its embedded OpenWork server. */
@@ -154,6 +156,9 @@ export async function app(options: AppOptions): Promise<App> {
         bootstrap: {
           baseUrl: options.den.ref.webUrl,
           requireSignin: false,
+          ...(options.enterpriseActivated ? { enterpriseActivation: {
+            activatedAt: new Date().toISOString(), denBaseUrl: options.den.ref.apiUrl,
+          } } : {}),
         },
         env: Object.keys(env).length > 0 ? env : undefined,
       });
@@ -209,6 +214,9 @@ export async function app(options: AppOptions): Promise<App> {
       bootstrap: {
         baseUrl: options.den.ref.webUrl,
         requireSignin: false,
+        ...(options.enterpriseActivated ? { enterpriseActivation: {
+          activatedAt: new Date().toISOString(), denBaseUrl: options.den.ref.apiUrl,
+        } } : {}),
       },
       env: Object.keys(env).length > 0 ? env : undefined,
     });

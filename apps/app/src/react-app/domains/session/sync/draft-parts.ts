@@ -15,8 +15,8 @@ import {
   joinWorkspaceRelativePath,
   toFileUrl,
 } from "./prompt-file-parts";
-import { appMentionInstruction } from "../surface/composer/app-mentions";
-import { connectSkillPrompt, parseConnectSkillToken } from "../surface/composer/connect-skill-token";
+import { mentionPromptParts } from "./mention-parts";
+import { parseConnectSkillToken } from "../surface/composer/connect-skill-token";
 import { decodeComposerMentionValue } from "../surface/composer/mention-encoding";
 
 // All workspace-scoped server URLs/clients/tokens come from
@@ -75,7 +75,8 @@ export async function draftToParts(
         .filter((part): part is Extract<ComposerPart, { type: "paste" }> => part.type === "paste")
         .map((part) => [part.label, part.text] as const),
     );
-    for (const segment of draft.text.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|@[^\s@]+)/)) {
+    const segments = draft.text.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|@[^\s@]+)/);
+    for (const [index, segment] of segments.entries()) {
       if (!segment) continue;
       const attachmentMatch = segment.match(/^\[attachment (.+)\]$/);
       if (attachmentMatch?.[1]) {
@@ -94,12 +95,12 @@ export async function draftToParts(
       }
       const connectSkill = parseConnectSkillToken(segment);
       if (connectSkill) {
-        parts.push({ type: "text", text: connectSkillPrompt(connectSkill) });
+        parts.push(...mentionPromptParts({ type: "connect-skill", ...connectSkill }));
         continue;
       }
       const skillMatch = segment.match(/^\[skill (.+)\]$/);
       if (skillMatch?.[1]) {
-        parts.push({ type: "text", text: `Load [skill ${skillMatch[1]}] and follow its instructions.` });
+        parts.push(...mentionPromptParts({ type: "skill", name: skillMatch[1] }));
         continue;
       }
       if (segment.startsWith("@")) {
@@ -107,14 +108,16 @@ export async function draftToParts(
         const mentionPart = draft.parts.find((part) =>
           (part.type === "agent" && part.name === value)
           || (part.type === "app" && part.name === value)
+          || (part.type === "computer" && part.target === value
+            && (index <= 1 && !segments[0] || /\s$/.test(segments[index - 1] ?? "")))
           || (part.type === "file" && part.path === value),
         );
         if (mentionPart?.type === "agent") {
           parts.push({ type: "agent", name: mentionPart.name });
           continue;
         }
-        if (mentionPart?.type === "app") {
-          parts.push({ type: "text", text: appMentionInstruction(mentionPart.name) });
+        if (mentionPart?.type === "computer" || mentionPart?.type === "app") {
+          parts.push(...mentionPromptParts(mentionPart));
           continue;
         }
         if (mentionPart?.type === "file") {
@@ -152,12 +155,8 @@ export async function draftToParts(
         parts.push({ type: "agent", name: part.name });
         continue;
       }
-      if (part.type === "skill") {
-        parts.push({ type: "text", text: `Load [skill ${part.name}] and follow its instructions.` });
-        continue;
-      }
-      if (part.type === "app") {
-        parts.push({ type: "text", text: appMentionInstruction(part.name) });
+      if (part.type === "skill" || part.type === "connect-skill" || part.type === "computer" || part.type === "app") {
+        parts.push(...mentionPromptParts(part));
         continue;
       }
       if (part.type === "file") {

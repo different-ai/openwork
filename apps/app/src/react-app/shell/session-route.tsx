@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import { useLocation, useNavigate } from "react-router";
+import { Archive, ArchiveRestore } from "lucide-react";
 import { toast } from "@/components/ui/sonner";
 import type { ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 
@@ -18,7 +19,7 @@ import { downloadTextAsFile } from "@/app/lib/download";
 import { canCreateWorkspaces } from "@/app/lib/workspace-creation-policy";
 import { createClient, unwrap } from "@/app/lib/opencode";
 import { abortSessionSafe, forkSession, listCommands, revertSession, setSessionArchived, shellInSession, unrevertSession } from "@/app/lib/opencode-session";
-import { deleteNativeSession, getNativeSessionMessages } from "@/app/lib/opencode-session-native";
+import { getNativeSessionMessages } from "@/app/lib/opencode-session-native";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
 import { getSessionDescendantIds } from "@/react-app/domains/session/sidebar/utils";
 import {
@@ -77,6 +78,8 @@ import {
   describeTaskCreateFailure,
   describeTaskCreateRetry,
   describeWorkspaceCreateError,
+  createRouteSession,
+  deleteRouteSession,
   downloadWorkspaceJson,
   folderNameFromPath,
   getSessionStatus,
@@ -100,6 +103,7 @@ import {
   type SessionPagePaneRuntime,
 } from "@/react-app/domains/session/chat/session-page";
 import { AutomationsPage } from "@/react-app/domains/automations/automations-page";
+import { AppsPage } from "@/react-app/domains/apps/apps-page";
 import { DashboardPage } from "@/react-app/domains/dashboard/dashboard-page";
 import { useDashboardDeploymentAvailability } from "@/react-app/domains/dashboard/dashboard-availability";
 import { useAutomationDeploymentEnabled } from "@/react-app/domains/automations/automation-availability";
@@ -352,6 +356,7 @@ function singlePickedDirectory(selection: string | string[] | null) {
 export function SessionRoute() {
   const navigate = useNavigate();
   const location = useLocation();
+  const appsRouteActive = /^(?:\/apps|\/dashboard\/apps)(?:\/|$)/.test(location.pathname);
   const automationsRouteRequested = /^\/automations(?:\/|$)/.test(location.pathname);
   const dashboardRouteRequested = /^\/dashboard(?:\/|$)/.test(location.pathname);
   const {
@@ -486,7 +491,7 @@ export function SessionRoute() {
     runRemoteWorkspaceConnectionCheck,
   } = useWorkspaceRouteState({
     developerMode,
-    workspaceRoute: automationsRouteActive ? "automations" : dashboardWorkspaceRoute ? "dashboard" : "session",
+    workspaceRoute: appsRouteActive ? "apps" : automationsRouteActive ? "automations" : dashboardWorkspaceRoute ? "dashboard" : "session",
     onServerSettingsChanged: () => setOpenworkServerSettingsVersion((value) => value + 1),
     onHostInfo: setOpenworkServerHostInfoState,
   });
@@ -1380,6 +1385,7 @@ export function SessionRoute() {
 
                 const parts = await draftToParts(draft, selectedWorkspaceRoot, targetSessionId, selectedWorkspaceEndpoint);
                 const system = await buildOpenworkSessionSystemContext(client, {
+                  workspaceId: selectedWorkspaceId,
                   cacheKey: targetSessionId,
                   runtimeKey: environmentRuntimeKey,
                 });
@@ -1699,6 +1705,7 @@ export function SessionRoute() {
                 }
                 const parts = await draftToParts(draft, workspaceRoot, targetSessionId, endpoint);
                 const system = await buildOpenworkSessionSystemContext(endpoint.client, {
+                  workspaceId: workspace.id,
                   cacheKey: targetSessionId,
                   runtimeKey: workspace.workspaceType === "remote" ? null : environmentRuntimeKey,
                 });
@@ -2069,6 +2076,8 @@ export function SessionRoute() {
     openAs: "primary" | "split",
     source: "new_task" | "new_split" = openAs === "split" ? "new_split" : "new_task",
   ): Promise<string | null> => {
+    const sideChatOwner = openAs === "split" ? useWorkbenchStore.getState().primary : null;
+    if (openAs === "split" && !sideChatOwner) return null;
     const workspace = workspaces.find((item) => item.id === workspaceId);
     if (
       !workspace ||
@@ -2081,11 +2090,6 @@ export function SessionRoute() {
     if (!endpoint || !endpoint.token) {
       return null;
     }
-    const workspaceClient = createClient(
-      endpoint.opencodeBaseUrl,
-      workspace.path?.trim() || undefined,
-      { token: endpoint.token, mode: "openwork" },
-    );
     const toastId = taskCreateUnavailableToastId(workspaceId);
     const attempts = TASK_CREATE_RETRY_DELAYS_MS.length + 1;
     try {
@@ -2095,9 +2099,7 @@ export function SessionRoute() {
       // and used to surface as a dead-end "unavailable" toast that only Cmd+R
       // seemed to fix. Retry transient failures with a visible countdown first.
       const session = await withTransientEngineRetry({
-        load: async () => unwrap(
-          await workspaceClient.session.create({ directory: workspace.path?.trim() || undefined }),
-        ),
+        load: () => createRouteSession(endpoint, workspace.path?.trim() || undefined),
         retryDelaysMs: TASK_CREATE_RETRY_DELAYS_MS,
         onRetry: (attempt) => {
           const notice = describeTaskCreateRetry({ developerMode, attempt, attempts });
@@ -2122,6 +2124,7 @@ export function SessionRoute() {
         writeActiveWorkspaceId(workspaceId || null);
         writeLastSessionFor(workspaceId, session.id);
       }
+      useComposerStateStore.setState({ pendingFocusSessionId: session.id });
       rememberPendingCreatedSession(workspaceId, session.id);
       applyLastUsedModelToSession(session.id);
       setSessionsByWorkspaceId((current) => {
@@ -2134,7 +2137,6 @@ export function SessionRoute() {
       });
       if (openAs === "primary") {
         navigateToWorkspaceSession(workspaceId, session.id);
-        focusPromptSoon();
       } else {
         const tab = {
           workspaceId,
@@ -2144,8 +2146,9 @@ export function SessionRoute() {
         };
         const workbench = useWorkbenchStore.getState();
         workbench.openTab(tab);
-        workbench.setSplit(tab);
-        workbench.focusPane("secondary");
+        if (sideChatOwner) {
+          workbench.setSideChat(sideChatOwner, tab);
+        }
       }
       void refreshRouteState();
       return session.id;
@@ -2475,6 +2478,9 @@ export function SessionRoute() {
         if (!parent) return { ok: false, error: "The selected session is unavailable." };
 
         const childSessionId = `${selectedSessionId}:eval-child`;
+        // Match a real session.created event: a concurrent list snapshot must
+        // not remove this newly seeded child before its approval is answered.
+        rememberPendingCreatedSession(selectedWorkspaceId, childSessionId);
         const request: PendingPermission = {
           id: `${selectedSessionId}:eval-child-permission`,
           sessionID: childSessionId,
@@ -2519,7 +2525,7 @@ export function SessionRoute() {
         return { childSessionId };
       },
     };
-  }, [selectedSessionId, selectedWorkspaceEndpoint?.workspaceId, selectedWorkspaceId, sessionsByWorkspaceId, setSessionsByWorkspaceId]);
+  }, [rememberPendingCreatedSession, selectedSessionId, selectedWorkspaceEndpoint?.workspaceId, selectedWorkspaceId, sessionsByWorkspaceId, setSessionsByWorkspaceId]);
   useControlAction(seedChildPermissionControlAction);
 
   const commandPaletteControlAction = useMemo<OpenworkControlAction>(() => ({
@@ -2889,26 +2895,48 @@ export function SessionRoute() {
       const ownerWorkspace = workspaceSessionGroups.find((group) =>
         group.sessions.some((session) => session?.id === sessionId),
       )?.workspace;
-      try {
-        await setSessionArchived(
-          opencodeClient,
-          sessionId,
-          archived,
-          ownerWorkspace?.path || selectedWorkspaceRoot || undefined,
-        );
-        if (ownerWorkspace) await reloadWorkspaceSessions(ownerWorkspace.id);
-        await refreshRouteState();
-      } catch (error) {
-        console.error("[session-route] archive session failed", error);
-        toast.error(
-          archived
-            ? t("session_management.archive_failed")
-            : t("session_management.unarchive_failed"),
-          { description: describeRouteError(error) },
-        );
-      }
+      const apply = async (nextArchived: boolean) => {
+        try {
+          await setSessionArchived(
+            opencodeClient,
+            sessionId,
+            nextArchived,
+            ownerWorkspace?.path || selectedWorkspaceRoot || undefined,
+          );
+          if (ownerWorkspace) await reloadWorkspaceSessions(ownerWorkspace.id);
+          await refreshRouteState();
+          return true;
+        } catch (error) {
+          console.error("[session-route] archive session failed", error);
+          toast.error(
+            nextArchived
+              ? t("session_management.archive_failed")
+              : t("session_management.unarchive_failed"),
+            { description: describeRouteError(error) },
+          );
+          return false;
+        }
+      };
+      if (!(await apply(archived))) return;
+      // Archiving is easy to hit by accident from the row's hover actions, so
+      // confirm it quietly with a way back. Undo reuses the same owner
+      // workspace and does not announce itself again.
+      toast.undo(
+        archived
+          ? t("session_management.session_archived")
+          : t("session_management.session_unarchived"),
+        {
+          id: `session-archive:${sessionId}`,
+          icon: archived ? Archive : ArchiveRestore,
+          undo: { label: t("common.undo"), onClick: () => void apply(!archived) },
+          view: ownerWorkspace
+            ? { label: t("common.view"), onClick: () => navigateToWorkspaceSession(ownerWorkspace.id, sessionId) }
+            : undefined,
+          closeLabel: t("common.close"),
+        },
+      );
     },
-    [opencodeClient, refreshRouteState, reloadWorkspaceSessions, selectedWorkspaceRoot, workspaceSessionGroups],
+    [navigateToWorkspaceSession, opencodeClient, refreshRouteState, reloadWorkspaceSessions, selectedWorkspaceRoot, workspaceSessionGroups],
   );
 
   const handleCreateWorkspace = useCallback(async (
@@ -3152,6 +3180,13 @@ export function SessionRoute() {
     }
   }, [client, local, refreshRouteState]);
 
+  const startAppConversation = async (prompt: string) => {
+    const sessionId = await handleCreateTaskInWorkspaceWithOpenMode(selectedWorkspaceId, "primary");
+    if (!sessionId) throw new Error("Could not start a conversation. Check that your workspace is connected.");
+    saveSessionDraft(sessionDraftScope, selectedWorkspaceId, sessionId, { text: prompt, mode: "prompt" });
+    focusPromptSoon();
+  };
+
   return (
     <WorkspaceProvider
       client={opencodeClient}
@@ -3263,8 +3298,10 @@ export function SessionRoute() {
           }}
         />
       }
-      primaryTitle={automationsRouteActive ? "Automations" : dashboardRouteActive ? "Dashboard" : undefined}
-      primarySlot={automationsRouteActive ? (
+      primaryTitle={appsRouteActive ? "Dashboard" : automationsRouteActive ? "Automations" : dashboardRouteActive ? "Dashboard" : undefined}
+      primarySlot={appsRouteActive ? (
+        <AppsPage onNewApp={startAppConversation} />
+      ) : automationsRouteActive ? (
         <AutomationsPage providerCatalog={providerCatalog} workspaceId={selectedWorkspaceId} />
       ) : dashboardRouteActive ? (
         <WorkspaceProvider
@@ -3274,7 +3311,7 @@ export function SessionRoute() {
           workspaceId={dashboardEndpoint?.workspaceId ?? ""}
           selectedWorkspaceRoot={selectedWorkspaceRoot}
         >
-          <DashboardPage fallbackEndpoints={dashboardFallbackEndpoints} />
+          <DashboardPage fallbackEndpoints={dashboardFallbackEndpoints} onCreateApp={startAppConversation} />
         </WorkspaceProvider>
       ) : undefined}
       terminalOpen={terminalOpen}
@@ -3300,7 +3337,7 @@ export function SessionRoute() {
               navigate(automationsRoute());
             }
           : undefined,
-        dashboardActive: dashboardRouteActive,
+        dashboardActive: dashboardRouteActive || appsRouteActive,
         onOpenDashboard: mcpAppsDashboardEnabled
           ? () => {
               navigate(dashboardRoute());
@@ -3351,15 +3388,8 @@ export function SessionRoute() {
             if (!workspace) return;
             const endpoint = endpointForWorkspace(workspace);
             if (!endpoint?.token) return;
-            const workspaceClient = createClient(
-              endpoint.opencodeBaseUrl,
-              workspace.path?.trim() || undefined,
-              { token: endpoint.token, mode: "openwork" },
-            );
             try {
-              const session = unwrap(
-                await workspaceClient.session.create({ directory: workspace.path?.trim() || undefined }),
-              );
+              const session = await createRouteSession(endpoint, workspace.path?.trim() || undefined);
               if (workspaceId === selectedWorkspaceId) {
                 void refreshCloudProviderSync("new_chat");
               }
@@ -3478,7 +3508,7 @@ export function SessionRoute() {
           ? async (sessionId) => {
               const endpoint = endpointForWorkspace(selectedWorkspace);
               if (!endpoint) return;
-              await deleteNativeSession(endpoint, sessionId);
+              await deleteRouteSession(endpoint, sessionId);
               if (selectedSessionId === sessionId) {
                 navigateToWorkspaceSession(selectedWorkspaceId);
               }
@@ -3615,7 +3645,7 @@ export function SessionRoute() {
       currentSessionForGroupMove={currentSessionForGroupMove}
       currentSessionGroupId={currentSessionGroupId}
       onMoveCurrentSessionToGroup={handleMoveCurrentSessionToGroup}
-      extraItems={[...currentSessionActionPaletteItems, ...(sessionFindPaletteItem ? [sessionFindPaletteItem] : []), sessionSearchPaletteItem, ...terminalPaletteItems, developerModePaletteItem, diagnosticsCopyPaletteItem, diagnosticsExportPaletteItem, nextSessionTabPaletteItem, prevSessionTabPaletteItem, reloadConfigPaletteItem]}
+      extraItems={[...currentSessionActionPaletteItems, ...(sessionFindPaletteItem ? [sessionFindPaletteItem] : []), sessionSearchPaletteItem, ...terminalPaletteItems, ...(checkDesktopRestriction({ restriction: "allowControlSettings" }) ? [] : [developerModePaletteItem]), diagnosticsCopyPaletteItem, diagnosticsExportPaletteItem, nextSessionTabPaletteItem, prevSessionTabPaletteItem, reloadConfigPaletteItem]}
       listAgents={listAgents}
       selectedAgent={selectedAgent}
       onSelectAgent={setSelectedAgent}

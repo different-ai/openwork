@@ -30,6 +30,12 @@ export interface BrowserState {
   activeTabId: string | null;
   visibleSessionId: string | null;
   tabs: BrowserTabState[];
+  nativeViews: Array<{
+    tabId: string;
+    attached: boolean;
+    aboveApp: boolean;
+    bounds: Viewport & { x: number; y: number };
+  }>;
 }
 
 export interface OpenedTab extends BuiltinBrowserTab {
@@ -56,9 +62,22 @@ function pngSize(png: Buffer): Viewport {
 
 function parseBrowserState(value: unknown): BrowserState {
   if (!isRecord(value) || !Array.isArray(value.tabs)) throw new Error("The desktop bridge did not report browser state.");
+  if (!Array.isArray(value.nativeViews)) throw new Error("The desktop bridge did not report native browser views.");
   return {
     activeTabId: typeof value.activeTabId === "string" ? value.activeTabId : null,
     visibleSessionId: typeof value.visibleSessionId === "string" ? value.visibleSessionId : null,
+    nativeViews: value.nativeViews.map((view) => {
+      if (!isRecord(view) || typeof view.attached !== "boolean" || typeof view.aboveApp !== "boolean"
+        || !isRecord(view.bounds) || typeof view.bounds.x !== "number" || typeof view.bounds.y !== "number") {
+        throw new Error("The desktop bridge reported malformed native browser view state.");
+      }
+      return {
+        tabId: stringField(view.tabId),
+        attached: view.attached,
+        aboveApp: view.aboveApp,
+        bounds: { ...parseViewport(view.bounds), x: view.bounds.x, y: view.bounds.y },
+      };
+    }),
     tabs: value.tabs.map((tab) => {
       if (!isRecord(tab)) throw new Error("Browser state listed a malformed tab.");
       return {

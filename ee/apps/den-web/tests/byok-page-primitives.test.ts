@@ -42,9 +42,11 @@ describe("Bring your Own Keys page", () => {
   });
 
   test("screen is built from shared primitives instead of local markup", () => {
-    for (const primitive of ["DenOptionCard", "DenSectionHeader", "DenTable", "DenBrandMark", "DenBadge", "DenNotice"]) {
+    for (const primitive of ["DenOptionCard", "DenSectionHeader", "DenListRow", "DenBrandMark", "DenChip", "DenNotice"]) {
       expect(screen).toContain(primitive);
     }
+    expect(screen).not.toContain("OpenWork Model Keys");
+    expect(screen).not.toContain("getProviderEnvNames");
     expect(screen).not.toContain("<table");
     expect(screen).not.toContain("<input");
     expect(screen).not.toContain("hover:-translate-y-0.5");

@@ -97,6 +97,28 @@ test("electronSurfaceEnv matches the isolated Electron demo contract", () => {
   assert.equal(env.XDG_STATE_HOME, paths.stateHome);
 });
 
+test("electronSurfaceEnv maps the v2 eval lane before caller overrides", () => {
+  const previous = process.env.OPENWORK_EVAL_ENGINE;
+  process.env.OPENWORK_EVAL_ENGINE = "V2";
+  try {
+    const paths = electronProfilePaths(join(tmpdir(), "openwork-local-host-v2-env"));
+    const options = {
+      appName: "OpenWork Eval v2",
+      appIdentifier: "com.differentai.openwork.eval.v2",
+      port: 5124,
+      cdpPort: 9124,
+    };
+    assert.equal(electronSurfaceEnv(paths, options).OPENWORK_ENGINE_V2_PREVIEW, "1");
+    assert.equal(
+      electronSurfaceEnv(paths, options, { OPENWORK_ENGINE_V2_PREVIEW: "sidecar" }).OPENWORK_ENGINE_V2_PREVIEW,
+      "sidecar",
+    );
+  } finally {
+    if (previous === undefined) delete process.env.OPENWORK_EVAL_ENGINE;
+    else process.env.OPENWORK_EVAL_ENGINE = previous;
+  }
+});
+
 test("stopOwnedElectronSurface verifies profile ownership before removing it", async () => {
   const profileDir = await mkdtemp(join(tmpdir(), "openwork-owned-electron-"));
   const userDataDir = join(profileDir, "electron-userdata");

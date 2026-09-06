@@ -60,6 +60,12 @@ const EXTENSION_MIME_TYPES: Record<string, string> = {
   png: "image/png",
   gif: "image/gif",
   webp: "image/webp",
+  mp4: "video/mp4",
+  mov: "video/quicktime",
+  webm: "video/webm",
+  m4v: "video/x-m4v",
+  avi: "video/x-msvideo",
+  mkv: "video/x-matroska",
   pdf: "application/pdf",
   docx: DOCX_MIME,
   pptx: PPTX_MIME,
@@ -298,6 +304,11 @@ function attachmentPathNotePart(uploaded: UploadedChatAttachment[]): TextPartInp
   return {
     type: "text",
     synthetic: true,
+    metadata: {
+      openworkAttachments: uploaded
+        .filter((item) => modelFacingAttachmentMime(item.mime) === null)
+        .map((item) => ({ filename: item.filename, mime: item.mime, url: item.url })),
+    },
     text: [
       "Attached files were copied into this worker workspace for tool access:",
       ...uploaded.map((item) => `- ${item.filename}: ${item.workspacePath} (${item.url})`),

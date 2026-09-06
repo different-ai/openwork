@@ -11,12 +11,13 @@ export function LayoutStack({ children, className }: LayoutStackProps) {
 }
 
 interface LayoutSectionProps {
+  id?: string;
   children: React.ReactNode;
 }
 
-export function LayoutSection({ children }: LayoutSectionProps) {
+export function LayoutSection({ children, id }: LayoutSectionProps) {
   return (
-    <div data-section className="group/section flex flex-col gap-6">
+    <div id={id} tabIndex={id ? -1 : undefined} data-section className="group/section flex scroll-mt-6 flex-col gap-6">
       {children}
     </div>
   );

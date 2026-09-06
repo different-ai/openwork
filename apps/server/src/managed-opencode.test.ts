@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { createManagedOpencodeServer } from "./managed-opencode.js";
+import { createManagedOpencodeV2Server } from "./managed-opencode-v2.js";
 
 const roots: string[] = [];
 
@@ -25,6 +26,25 @@ async function writeExecutable(root: string, name: string, lines: string[]): Pro
 }
 
 describe("managed OpenCode startup", () => {
+  test("gives the next engine a policy-only credential without inheriting the client credential", async () => {
+    const root = await createRoot();
+    const bin = await writeExecutable(root, "policy-env.mjs", [
+      "const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch(request) {",
+      "  if (new URL(request.url).pathname === '/env') return Response.json({ policy: process.env.OPENWORK_POLICY_TOKEN, client: process.env.OPENWORK_SERVER_TOKEN ?? null });",
+      "  return Response.json({ healthy: true, version: 'test', pid: process.pid });",
+      "} });",
+      "console.log(`opencode server listening on http://127.0.0.1:${server.port}`);",
+      "process.on('SIGTERM', () => { server.stop(true); process.exit(0); });",
+    ]);
+    const managed = await createManagedOpencodeV2Server({
+      bin, rootDir: root,
+      env: { OPENWORK_SERVER_TOKEN: "must-stay-private", OPENWORK_POLICY_TOKEN: "policy-only-test-token" },
+    });
+    try {
+      expect(await managed.fetchJson("/env")).toEqual({ status: 200, json: { policy: "policy-only-test-token", client: null } });
+    } finally { await managed.close(); }
+  });
+
   test("spawns the engine with npm audit disabled so first-run installs never wait on the advisories endpoint", async () => {
     const root = await createRoot();
     const defaultDumpPath = join(root, "default-env.log");

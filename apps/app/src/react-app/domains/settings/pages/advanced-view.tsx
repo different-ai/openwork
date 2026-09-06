@@ -1,10 +1,13 @@
 /** @jsxImportSource react */
-import { useEffect, useReducer, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
+
+import { useLocation } from "react-router";
+import { ADVANCED_SETTINGS_SECTIONS } from "../advanced-sections";
 
 import { Separator } from "@/components/ui/separator";
 
 import type { OpencodeConnectStatus } from "@/app/types";
-import type { OpenworkCloudMcpHealth, OpenworkRuntimeConfigStatus, OpenworkServerStatus } from "@/app/lib/openwork-server";
+import type { EngineV2PreviewStatus, OpenworkCloudMcpHealth, OpenworkRuntimeConfigStatus, OpenworkServerStatus } from "@/app/lib/openwork-server";
 import { t } from "@/i18n";
 import { LayoutStack } from "../settings-layout";
 import type { useDenSession } from "../cloud/use-den-session";
@@ -12,10 +15,12 @@ import type { useDenSession } from "../cloud/use-den-session";
 import { advancedLocalReducer, initialAdvancedLocalState } from "./advanced-view-state";
 import {
   AdvancedDeveloperSection,
+  AdvancedEngineV2PreviewSection,
   AdvancedCloudMcpDiagnosticsSection,
   AdvancedOrganizationServerSection,
   AdvancedRuntimeConfigSourcesSection,
   AdvancedRuntimeSection,
+  AdvancedWorkspaceRunModeSection,
 } from "./advanced-view-sections";
 
 type AdvancedOrganizationServerSession = Pick<
@@ -33,6 +38,7 @@ type AdvancedOrganizationServerSession = Pick<
 >;
 
 export type AdvancedViewProps = {
+  sectionId?: string;
   busy: boolean;
   clientConnected: boolean;
   opencodeConnectStatus: OpencodeConnectStatus | null;
@@ -47,11 +53,26 @@ export type AdvancedViewProps = {
   cloudMcpUrl: string | null;
   cloudMcpHealth: OpenworkCloudMcpHealth | null;
   refreshCloudMcpHealth: () => Promise<OpenworkCloudMcpHealth | null>;
+  getEngineV2PreviewStatus: () => Promise<EngineV2PreviewStatus>;
+  setEngineV2PreviewEnabled: (enabled: boolean) => Promise<EngineV2PreviewStatus>;
+  setEngineV2PreviewChatRouting: (enabled: boolean) => Promise<EngineV2PreviewStatus>;
 };
 
 type AdvancedStatusTone = "ready" | "warning" | "error" | "neutral";
 
 export function AdvancedView(props: AdvancedViewProps) {
+  const location = useLocation();
+  const viewRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const sectionId = props.sectionId;
+    if (!ADVANCED_SETTINGS_SECTIONS.some((section) => section.id === sectionId)) return;
+    const frame = requestAnimationFrame(() => {
+      const section = viewRef.current?.querySelector<HTMLElement>(`#advanced-${sectionId}`);
+      section?.scrollIntoView({ block: "start" });
+      section?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [location.key, props.sectionId]);
   const [localState, dispatchLocal] = useReducer(
     advancedLocalReducer,
     initialAdvancedLocalState,
@@ -155,57 +176,67 @@ export function AdvancedView(props: AdvancedViewProps) {
   }, [props.canInspectRuntimeConfig]);
 
   return (
-    <LayoutStack>
-      <AdvancedOrganizationServerSection
-        authBusy={props.organizationServer.authBusy}
-        baseUrl={props.organizationServer.baseUrl}
-        baseUrlBusy={props.organizationServer.baseUrlBusy}
-        baseUrlDraft={props.organizationServer.baseUrlDraft}
-        baseUrlError={props.organizationServer.baseUrlError}
-        onApplyBaseUrl={props.organizationServer.onApplyBaseUrl}
-        onBaseUrlDraftChange={props.organizationServer.onBaseUrlDraftChange}
-        onClearServerConfiguration={props.organizationServer.onClearServerConfiguration}
-        onResetBaseUrlToDefault={props.organizationServer.onResetBaseUrlToDefault}
-        sessionBusy={props.organizationServer.sessionBusy}
-        cloudMcpUrl={props.cloudMcpUrl}
-      />
+    <div ref={viewRef}>
+      <LayoutStack>
+        <AdvancedOrganizationServerSection
+          authBusy={props.organizationServer.authBusy}
+          baseUrl={props.organizationServer.baseUrl}
+          baseUrlBusy={props.organizationServer.baseUrlBusy}
+          baseUrlDraft={props.organizationServer.baseUrlDraft}
+          baseUrlError={props.organizationServer.baseUrlError}
+          onApplyBaseUrl={props.organizationServer.onApplyBaseUrl}
+          onBaseUrlDraftChange={props.organizationServer.onBaseUrlDraftChange}
+          onClearServerConfiguration={props.organizationServer.onClearServerConfiguration}
+          onResetBaseUrlToDefault={props.organizationServer.onResetBaseUrlToDefault}
+          sessionBusy={props.organizationServer.sessionBusy}
+          cloudMcpUrl={props.cloudMcpUrl}
+        />
 
-      <AdvancedRuntimeSection
-        clientStatusLabel={clientStatusLabel}
-        clientTone={clientTone}
-        clientDetailLines={clientDetailLines}
-        openworkStatusLabel={openworkStatusLabel}
-        openworkTone={openworkTone}
-        openworkDetailLines={openworkDetailLines}
-      />
+        <AdvancedRuntimeSection
+          clientStatusLabel={clientStatusLabel}
+          clientTone={clientTone}
+          clientDetailLines={clientDetailLines}
+          openworkStatusLabel={openworkStatusLabel}
+          openworkTone={openworkTone}
+          openworkDetailLines={openworkDetailLines}
+        />
 
-      <AdvancedCloudMcpDiagnosticsSection
-        cloudMcpHealth={props.cloudMcpHealth}
-        onRefresh={props.refreshCloudMcpHealth}
-      />
+        <AdvancedCloudMcpDiagnosticsSection
+          cloudMcpHealth={props.cloudMcpHealth}
+          onRefresh={props.refreshCloudMcpHealth}
+        />
 
-      <AdvancedRuntimeConfigSourcesSection
-        busy={props.busy}
-        canInspect={props.canInspectRuntimeConfig}
-        configStatus={configStatus}
-        configStatusBusy={configStatusBusy}
-        configStatusError={configStatusError}
-        onRefresh={refreshRuntimeConfigStatus}
-      />
+        <AdvancedRuntimeConfigSourcesSection
+          busy={props.busy}
+          canInspect={props.canInspectRuntimeConfig}
+          configStatus={configStatus}
+          configStatusBusy={configStatusBusy}
+          configStatusError={configStatusError}
+          onRefresh={refreshRuntimeConfigStatus}
+        />
 
-      <AdvancedDeveloperSection
-        busy={props.busy}
-        developerMode={props.developerMode}
-        opencodeDevModeEnabled={props.opencodeDevModeEnabled}
-        deepLinkOpen={debugDeepLinkOpen}
-        deepLinkInput={debugDeepLinkInput}
-        deepLinkBusy={debugDeepLinkBusy}
-        deepLinkStatus={debugDeepLinkStatus}
-        onToggleDeveloperMode={props.toggleDeveloperMode}
-        onToggleDeepLink={() => dispatchLocal({ type: "toggleDeepLink" })}
-        onDeepLinkInput={(input) => dispatchLocal({ type: "deepLinkInput", input })}
-        onSubmitDeepLink={submitDebugDeepLink}
-      />
-    </LayoutStack>
+        <AdvancedEngineV2PreviewSection
+          getStatus={props.getEngineV2PreviewStatus}
+          setEnabled={props.setEngineV2PreviewEnabled}
+          setChatRouting={props.setEngineV2PreviewChatRouting}
+        />
+
+        <AdvancedWorkspaceRunModeSection />
+
+        <AdvancedDeveloperSection
+          busy={props.busy}
+          developerMode={props.developerMode}
+          opencodeDevModeEnabled={props.opencodeDevModeEnabled}
+          deepLinkOpen={debugDeepLinkOpen}
+          deepLinkInput={debugDeepLinkInput}
+          deepLinkBusy={debugDeepLinkBusy}
+          deepLinkStatus={debugDeepLinkStatus}
+          onToggleDeveloperMode={props.toggleDeveloperMode}
+          onToggleDeepLink={() => dispatchLocal({ type: "toggleDeepLink" })}
+          onDeepLinkInput={(input) => dispatchLocal({ type: "deepLinkInput", input })}
+          onSubmitDeepLink={submitDebugDeepLink}
+        />
+      </LayoutStack>
+    </div>
   );
 }

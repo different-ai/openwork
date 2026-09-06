@@ -452,6 +452,15 @@ export function createCloudMcpSubmissionCoordinator(): CloudMcpSubmissionCoordin
   };
 
   const submit = (input: SubmissionCoordinatorInput): Promise<CloudMcpSubmissionResult> => {
+    // Ungated messages have no shared preparation to coordinate. Two split
+    // panes can submit in the same workspace while the first request is pending.
+    // Sharing that promise would report both drafts sent but drop the second.
+    if (!input.prepare) {
+      return (async () => {
+        await input.send();
+        return { outcome: "sent", bypassed: true };
+      })();
+    }
     if (active?.scopeKey === input.scopeKey) return active.promise;
     if (active) cancel("context_changed");
 
@@ -460,8 +469,8 @@ export function createCloudMcpSubmissionCoordinator(): CloudMcpSubmissionCoordin
     const cancellation = new Promise<CloudMcpSubmissionPreparationResult>((resolve) => {
       resolveCancellation = resolve;
     });
-    if (input.prepare) input.onState?.({ status: "checking" });
-    const preparation = input.prepare?.() ?? Promise.resolve<CloudMcpSubmissionPreparationResult>({ outcome: "bypass" });
+    input.onState?.({ status: "checking" });
+    const preparation = input.prepare();
 
     const task = (async (): Promise<CloudMcpSubmissionResult> => {
       const prepared = await Promise.race([preparation, cancellation]);

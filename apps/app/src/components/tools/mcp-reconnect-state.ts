@@ -23,8 +23,8 @@ type ChatMcpReconnectStore = {
 
 const READY_RECORD: ChatMcpReconnectRecord = { phase: "ready", error: null, authorizeUrl: null }
 
-export function chatMcpReconnectKey(toolCallId: string, connectionId: string): string {
-  return `${toolCallId}:${connectionId}`
+export function chatMcpReconnectKey(toolCallId: string, connectionId: string, scope = ""): string {
+  return JSON.stringify([scope, toolCallId, connectionId])
 }
 
 export const useChatMcpReconnectStore = create<ChatMcpReconnectStore>((set) => ({

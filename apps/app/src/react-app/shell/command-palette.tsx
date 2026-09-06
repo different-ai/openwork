@@ -29,6 +29,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { ChevronLeftIcon } from "lucide-react";
 import type { ModelOption, ModelRef } from "@/app/types";
+import { useCheckDesktopRestriction } from "../domains/cloud/desktop-config-provider";
 import { usePlatform } from "../kernel/platform";
 import {
   resolveSessionNumberShortcutOs,
@@ -207,6 +208,9 @@ export function CommandPalette(props: CommandPaletteProps) {
     [sessionNumberOs],
   );
   const hasNestedModelPicker = props.modelOptions !== undefined && props.onSelectModel !== undefined;
+  // Organization policy (`allowControlSettings`) can hide desktop settings;
+  // the settings palette entries follow the same allow-list as the settings nav.
+  const checkDesktopRestriction = useCheckDesktopRestriction();
 
   const rootItems = useMemo<PaletteItem[]>(() => [
     {
@@ -237,10 +241,10 @@ export function CommandPalette(props: CommandPaletteProps) {
     ...(props.onOpenSessionInSplit && props.currentSession
       ? [{
           id: "open-in-split-view",
-          title: "Open in split view…",
+          title: `${t("session_management.open_in_split_view")}…`,
           detail: "Choose any session, including one from another workspace",
           meta: "Workbench",
-          searchText: "split view side by side session workspace",
+          searchText: "side chat split view side by side session workspace",
           group: ACTIONS_GROUP,
           action: () => {
             setMode("split-sessions");
@@ -250,10 +254,10 @@ export function CommandPalette(props: CommandPaletteProps) {
     ...(props.onCreateNewSplitSession && props.currentSession
       ? [{
           id: "new-split",
-          title: "New split",
+          title: t("session_management.new_split"),
           detail: "Start an empty session beside this one",
           meta: "Workbench",
-          searchText: "new split empty session side by side pane",
+          searchText: "new side chat new split empty session side by side pane",
           action: () => {
             props.onClose();
             props.onCreateNewSplitSession?.();
@@ -380,6 +384,7 @@ export function CommandPalette(props: CommandPaletteProps) {
     () => buildCommandPaletteSettingsItems({
       developerMode: props.developerMode,
       capabilities: platform.capabilities,
+      checkRestriction: checkDesktopRestriction,
       onOpenSettings: (route) => {
         props.onClose();
         props.onOpenSettings(route);
@@ -390,6 +395,7 @@ export function CommandPalette(props: CommandPaletteProps) {
       },
     }),
     [
+      checkDesktopRestriction,
       platform.capabilities,
       props.developerMode,
       props.onClose,
@@ -692,7 +698,7 @@ export function CommandPalette(props: CommandPaletteProps) {
           {mode === "sessions"
             ? t("session.palette_title_sessions")
             : mode === "split-sessions"
-              ? "Open in split view"
+              ? t("session_management.open_in_split_view")
             : mode === "accessible-items"
               ? "Accessible items"
               : mode === "agents"

@@ -4,9 +4,9 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, WebContentsView, clipboard, session, shell } from "electron";
+import { app, BrowserWindow, WebContentsView, clipboard, session, shell } from "electron";
 import {
-  BACKGROUND_TAB_PRESENCE_BOUNDS,
+  BACKGROUND_TAB_VIEWPORT,
   backgroundTabEmulationCommands,
   createBrowserTabRegistry,
   foregroundTabEmulationCommands,
@@ -26,13 +26,26 @@ const MENU_OVERLAY_WIDTH = 196;
 const MENU_OVERLAY_HEIGHT = 176;
 const MENU_OVERLAY_READY_TIMEOUT_MS = 2000;
 
-export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
+export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, checkPolicy }) {
+  let policyRequestHookInstalled = false;
+  function installPolicyRequestHook() {
+    if (policyRequestHookInstalled || !checkPolicy) return;
+    policyRequestHookInstalled = true;
+    // The session request boundary covers normal navigation, redirects, frames,
+    // scripted fetches and CDP navigation; window navigation events do not.
+    session.fromPartition(BROWSER_SESSION_PARTITION).webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, callback) => {
+      if (["about:", "data:", "blob:"].some((scheme) => details.url.startsWith(scheme))) { callback({ cancel: false }); return; }
+      Promise.resolve(checkPolicy({ url: details.url, method: details.method, hasUpload: Boolean(details.uploadData?.length) }))
+        .then(() => callback({ cancel: false }), () => callback({ cancel: true }));
+    });
+  }
   // tabId -> { tabId, view, favicon, background }. Order, ownership, the active
   // tab per conversation, and which conversation is on screen live in the
   // registry; this map only holds the native views.
   const browserTabs = new Map();
   const registry = createBrowserTabRegistry();
   let browserViewVisible = false;
+  let backgroundWindow = null;
   // Last browser panel bounds reported by the renderer, in renderer CSS pixels.
   // Converted to window device-independent pixels at every setBounds call.
   let lastBrowserBounds = null;
@@ -255,6 +268,23 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     };
   }
 
+  // Read the actual native hierarchy, not the registry's intended surfacing.
+  // A tab can be logically background while its native view covers the app.
+  function browserNativeViews() {
+    const mainWindow = window();
+    const children = mainWindow?.contentView.children ?? [];
+    return [...browserTabs.values()].map(({ tabId, view }) => {
+      const index = children.indexOf(view);
+      return {
+        tabId,
+        attached: index !== -1,
+        // BrowserWindow's primary renderer is below the entire contentView.
+        aboveApp: index !== -1,
+        bounds: view.getBounds(),
+      };
+    });
+  }
+
   function browserTabUrl(tab) {
     const url = tab?.view?.webContents?.getURL?.();
     return typeof url === "string" && url && url !== "about:blank" ? url : null;
@@ -431,7 +461,10 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
         break;
       case "open-external":
         if (request.url && isHttpUrl(request.url)) {
-          runDetachedTask("open browser tab externally", () => shell.openExternal(request.url));
+          runDetachedTask("open browser tab externally", async () => {
+            await checkPolicy?.({ url: request.url, external: true });
+            await shell.openExternal(request.url);
+          });
         }
         break;
       case "close-tab":
@@ -503,6 +536,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
   });
 
   function createBrowserTab(url = "about:blank", { select = true, initializeBlank = true, ownerSessionId = null } = {}) {
+    installPolicyRequestHook();
     const tabId = createBrowserTabId();
     const view = new WebContentsView({
       webPreferences: {
@@ -525,7 +559,11 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
       runDetachedTask("initialize browser tab", () => view.webContents.loadURL("about:blank"));
     }
     view.webContents.setWindowOpenHandler(({ url: targetUrl }) => {
-      runDetachedTask("open browser popup externally", () => shell.openExternal(targetUrl));
+      runDetachedTask("open browser popup", async () => {
+        try { await checkPolicy?.({ url: targetUrl, external: true }); }
+        catch { createBrowserTab(targetUrl, { ownerSessionId, initializeBlank: false }); return; }
+        await shell.openExternal(targetUrl);
+      });
       return { action: "deny" };
     });
     view.webContents.on("did-start-navigation", (_event, targetUrl, isInPlace, isMainFrame) => {
@@ -605,37 +643,46 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
   }
 
   function detachBrowserView(view) {
-    const mainWindow = window();
-    if (!mainWindow || !view) return;
-    try {
-      if (mainWindow.contentView.children.includes(view)) {
-        mainWindow.contentView.removeChildView(view);
+    if (!view) return;
+    for (const host of [window(), backgroundWindow]) {
+      try {
+        if (host && !host.isDestroyed() && host.contentView.children.includes(view)) {
+          host.contentView.removeChildView(view);
+        }
+      } catch {
+        // already removed
       }
-    } catch {
-      // already removed
     }
+  }
+
+  function backgroundBrowserWindow() {
+    if (!backgroundWindow || backgroundWindow.isDestroyed()) {
+      backgroundWindow = new BrowserWindow({
+        ...BACKGROUND_TAB_VIEWPORT,
+        show: false,
+        paintWhenInitiallyHidden: true,
+        focusable: false,
+        skipTaskbar: true,
+        webPreferences: { backgroundThrottling: false, sandbox: true },
+      });
+    }
+    return backgroundWindow;
   }
 
   // A tab whose conversation is not on screen must still behave like a real
   // page for the agent driving it: lay out at a real viewport, accept typing as
-  // a focused page, and paint so CDP screenshots work. Chromium only paints a
-  // page it considers visible, so the view keeps a one-pixel presence in the
-  // window corner (under the rounded-corner mask) while a DevTools session of
-  // ours emulates a full viewport and focus. Both are undone when the tab
-  // returns to the screen. This is the headless-browser recipe applied to a
-  // headful window.
+  // a focused page, and paint so CDP screenshots work. Park it in a never-shown
+  // window: detached views stop painting, and every child of the main window's
+  // contentView paints above OpenWork, regardless of its child index or bounds.
+  // Moving the same view preserves the document and CDP target.
   function enterBackgroundMode(tab) {
     if (!tab || tab.background) return;
     const webContents = tab.view.webContents;
     if (webContents.isDestroyed()) return;
     tab.background = true;
-    const mainWindow = window();
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      if (!mainWindow.contentView.children.includes(tab.view)) {
-        mainWindow.contentView.addChildView(tab.view);
-      }
-      tab.view.setBounds({ ...BACKGROUND_TAB_PRESENCE_BOUNDS });
-    }
+    detachBrowserView(tab.view);
+    tab.view.setBounds({ x: 0, y: 0, ...BACKGROUND_TAB_VIEWPORT });
+    backgroundBrowserWindow().contentView.addChildView(tab.view);
     const cdp = webContents.debugger;
     runDetachedTask("emulate background browser tab", async () => {
       if (webContents.isDestroyed() || !tab.background) return;
@@ -759,15 +806,15 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
   function attachActiveBrowserView() {
     const mainWindow = window();
     if (!mainWindow || !browserViewVisible) return;
+    if (!lastBrowserBounds || lastBrowserBounds.width <= 0 || lastBrowserBounds.height <= 0) return;
     const tab = getBrowserTab();
     if (!tab) return;
     exitBackgroundMode(tab);
     detachIdleBrowserViews(tab.view);
+    // Size before attaching so a restored view never flashes at stale bounds.
+    tab.view.setBounds(scaleRendererBounds(lastBrowserBounds));
     if (!mainWindow.contentView.children.includes(tab.view)) {
       mainWindow.contentView.addChildView(tab.view);
-    }
-    if (lastBrowserBounds && lastBrowserBounds.width > 0 && lastBrowserBounds.height > 0) {
-      tab.view.setBounds(scaleRendererBounds(lastBrowserBounds));
     }
   }
 
@@ -895,6 +942,8 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
     }
     browserTabs.clear();
     registry.clear();
+    if (backgroundWindow && !backgroundWindow.isDestroyed()) backgroundWindow.destroy();
+    backgroundWindow = null;
     lastBrowserBounds = null;
     sendBrowserState();
   }
@@ -935,7 +984,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink }) {
         view.setBounds(scaleRendererBounds(bounds));
       }
     });
-    ipcMain.handle("openwork:browser:state", () => browserStatePayload());
+    ipcMain.handle("openwork:browser:state", () => ({ ...browserStatePayload(), nativeViews: browserNativeViews() }));
     ipcMain.handle("openwork:browser:createTab", (_event, url, sessionId) => {
       const target = typeof url === "string" && url.trim() ? url : BROWSER_NEW_TAB_URL;
       const ownerSessionId = sessionId === undefined ? registry.visibleSessionId() : normalizeSessionId(sessionId);

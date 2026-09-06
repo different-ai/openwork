@@ -24,6 +24,7 @@ export type ComposerSessionState = {
 };
 
 export type ComposerStateStore = {
+  pendingFocusSessionId: string | null;
   sessions: Record<string, ComposerSessionState>;
   queuedDrafts: Record<string, QueuedComposerItem[]>;
   /**
@@ -100,6 +101,7 @@ function createQueuedItem(draft: ComposerDraft, id?: string): QueuedComposerItem
 }
 
 export const useComposerStateStore = create<ComposerStateStore>((set) => ({
+  pendingFocusSessionId: null,
   sessions: {},
   queuedDrafts: {},
   history: {},

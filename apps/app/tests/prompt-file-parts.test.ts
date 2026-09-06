@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
+import type { ComposerPart } from "../src/app/types";
+import { encodeConnectSkillToken } from "../src/react-app/domains/session/surface/composer/connect-skill-token";
 import { draftToParts } from "../src/react-app/domains/session/sync/draft-parts";
 import { firstLineLocalFileParts, isReadInlineablePath } from "../src/react-app/domains/session/sync/prompt-file-parts";
 import {
@@ -217,4 +219,53 @@ describe("Connect skill slash commands", () => {
     }]);
     expect(withoutProvenance?.description).toBe("");
   });
+});
+
+
+describe("computer task mentions", () => {
+  for (const target of ["cloud", "desktop"] satisfies Array<"cloud" | "desktop">) {
+    test(`${target} routing is hidden from the visible prompt and survives inline attachment parsing`, async () => {
+      for (const attachmentToken of ["", "[attachment removed]"]) {
+        const text = `@${target} Summarize notes for person@${target} ${attachmentToken}`;
+        const parts = await draftToParts({
+          mode: "prompt",
+          text,
+          parts: [{ type: "computer", target }, { type: "text", text: ` Summarize notes for person@${target} ` }],
+          attachments: [],
+        }, "/workspace", "ses_computer", null);
+        const instructions = parts.filter((part) => part.type === "text" && part.synthetic);
+        expect(instructions).toHaveLength(1);
+        expect(instructions[0]).toMatchObject({ text: expect.stringContaining(`target "${target}"`) });
+        expect(parts.filter((part) => part.type === "text" && !part.synthetic)
+          .map((part) => part.type === "text" ? part.text : "").join(""))
+          .toBe(`@${target} Summarize notes for person@${target} `);
+      }
+    });
+  }
+});
+
+
+describe("generated mention instructions", () => {
+  const connected = { type: "connect-skill", slug: "summarize", name: "Summarize", marketplace: "Team tools", capability: "skill:summarize" } satisfies ComposerPart;
+  const cases: { part: ComposerPart; token: string; label: string; instruction: string }[] = [
+    { part: { type: "app", name: "Notes" }, token: "@Notes", label: "@Notes", instruction: "computer-use tools" },
+    { part: { type: "skill", name: "summarize" }, token: "[skill summarize]", label: "[skill summarize]", instruction: "follow its instructions" },
+    { part: connected, token: encodeConnectSkillToken(connected), label: "/summarize", instruction: "skill:summarize" },
+  ];
+  for (const { part, token, label, instruction } of cases) {
+    test(`${part.type} preserves its label and hides instructions in both send branches`, async () => {
+      for (const attachmentToken of ["", "[attachment removed]"]) {
+        const parts = await draftToParts({
+          mode: "prompt", text: `${token} Please summarize. ${attachmentToken}`,
+          parts: [part, { type: "text", text: " Please summarize. " }], attachments: [],
+        }, "/workspace", "ses_mentions", null);
+        expect(parts.filter((part) => part.type === "text" && !part.synthetic)
+          .map((part) => part.type === "text" ? part.text : "").join(""))
+          .toBe(`${label} Please summarize. `);
+        expect(parts.filter((part) => part.type === "text" && part.synthetic)).toEqual([
+          { type: "text", synthetic: true, text: expect.stringContaining(instruction) },
+        ]);
+      }
+    });
+  }
 });

@@ -59,7 +59,7 @@ export function DenToggleRow({
           checked ? "justify-end bg-gray-900" : "justify-start bg-gray-200"
         }`}
       >
-        <span className="h-5 w-5 rounded-full bg-white shadow-sm" />
+        <span className="h-5 w-5 rounded-full bg-white shadow-xs" />
       </span>
     </button>
   );

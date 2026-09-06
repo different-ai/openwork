@@ -131,6 +131,8 @@ function numberField(value: Record<string, unknown>, key: string): number | null
   return typeof value[key] === "number" && Number.isFinite(value[key]) ? value[key] : null;
 }
 
+export class TargetNotFoundError extends Error {}
+
 export async function locate(surface: Surface, target: Target): Promise<Located> {
   const parsed = JSON.stringify(parseTarget(target));
   const value = await callFunctionOnSurface(surface, `(serialized) => {
@@ -192,7 +194,7 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
         : 'button, a[href], input, textarea, [contenteditable="true"], [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="menuitem"], [role="tab"], [role="option"], [data-testid]';
     const candidates = [...document.querySelectorAll(selector)].filter((element) => {
       if (target.role && implicitRole(element) !== target.role) return false;
-      if (target.placeholder !== undefined && element.getAttribute("placeholder") !== target.placeholder) return false;
+      if (target.placeholder !== undefined && (element.getAttribute("placeholder") ?? element.getAttribute("aria-placeholder")) !== target.placeholder) return false;
       if (target.testId !== undefined && element.getAttribute("data-testid") !== target.testId) return false;
       if (!matcher(target.label, accessibleName(element))) return false;
       return true;
@@ -249,7 +251,7 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
       visible: styleVisible && rect.width > 0 && rect.height > 0 && inViewport,
       hitTestOk,
       editable: element.isContentEditable || !element.readOnly && (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement),
-      value: typeof element.value === "string" ? element.value : "",
+      value: typeof element.value === "string" ? element.value : element.isContentEditable ? element.innerText : "",
       text: (element.isContentEditable ? element.innerText : element.innerText ?? element.value ?? element.textContent ?? "").trim(),
       covering: hit && !hitTestOk ? {
         tag: hit.tagName.toLowerCase(),
@@ -263,7 +265,7 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
       ? value.candidates.filter((candidate): candidate is string => typeof candidate === "string").slice(0, 8)
       : [];
     const candidateDetail = candidates.length > 0 ? ` Visible button/link candidates: ${candidates.join(", ")}.` : "";
-    throw new Error(`Could not locate ${JSON.stringify(typeof target === "string" ? target : parseTarget(target))}.${candidateDetail}`);
+    throw new TargetNotFoundError(`Could not locate ${JSON.stringify(typeof target === "string" ? target : parseTarget(target))}.${candidateDetail}`);
   }
   if (!isRecord(value) || !isRecord(value.center) || !isRecord(value.rect)) {
     throw new Error(`Could not locate ${JSON.stringify(typeof target === "string" ? target : parseTarget(target))}.`);
@@ -387,4 +389,19 @@ export async function waitForLocated(
   }
   const detail = lastError instanceof Error ? ` ${lastError.message}` : "";
   throw new Error(`Timed out after ${timeoutMs}ms locating target.${detail}`);
+}
+
+/** Require every inspection in the interval to observe a missing or hidden target. */
+export async function assertAbsent(surface: Surface, target: Target, timeoutMs = 3000): Promise<void> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("Absence observation requires a positive duration");
+  const deadline = Date.now() + timeoutMs;
+  do {
+    try {
+      const found = await locate(surface, target);
+      if (found.visible) throw new Error(`Target remained visible: ${JSON.stringify(target)}`);
+    } catch (error) {
+      if (!(error instanceof TargetNotFoundError)) throw error;
+    }
+    await new Promise(resolve => setTimeout(resolve, Math.min(100, Math.max(0, deadline - Date.now()))));
+  } while (Date.now() < deadline);
 }

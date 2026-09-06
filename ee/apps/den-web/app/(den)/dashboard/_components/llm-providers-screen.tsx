@@ -2,17 +2,17 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { Cpu, KeyRound, Plus, Search } from "lucide-react";
+import { ChevronRight, KeyRound, Plus, Search } from "lucide-react";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
-import { DenBadge } from "../../_components/ui/badge";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenCard } from "../../_components/ui/card";
+import { DenChip } from "../../_components/ui/chip";
 import { DenInput } from "../../_components/ui/input";
+import { DenList, DenListRow } from "../../_components/ui/list-row";
 import { DenNotice } from "../../_components/ui/notice";
 import { DenOptionCard } from "../../_components/ui/option-card";
 import { DenSectionHeader } from "../../_components/ui/section-header";
-import { DenTable, type DenTableColumn } from "../../_components/ui/table";
 import {
   getLlmProviderRoute,
   getNewLlmProviderRoute,
@@ -26,48 +26,20 @@ import {
   type DenDesktopPolicyRole,
 } from "./desktop-policy-data";
 import {
-  type DenLlmProviderSource,
   formatProviderTimestamp,
   getProviderDocUrl,
-  getProviderEnvNames,
   getProviderIconSlug,
   useOrgLlmProviders,
 } from "./llm-provider-data";
 
 type ModelAccessMode = "open" | "managed";
 
-type OpenWorkKeyRow = {
-  id: string;
-  name: string;
-  email: string;
-  createdAt: string | null;
-};
-
 const ADMIN_EXCEPTION_POLICY_NAME = "Admins may add providers";
 const ADMIN_EXCEPTION_ROLES: DenDesktopPolicyRole[] = ["owner", "admin"];
 
-function getProviderSourceLabel(source: DenLlmProviderSource) {
-  if (source === "openwork") return "OpenWork";
-  return source === "custom" ? "Custom" : "Catalog";
+function plural(count: number, noun: string) {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
-
-const openWorkKeyColumns: readonly DenTableColumn<OpenWorkKeyRow>[] = [
-  {
-    key: "member",
-    header: "Member",
-    render: (row) => (
-      <>
-        <p className="text-[14px] font-medium text-gray-950">{row.name}</p>
-        <p className="text-[12px] text-gray-500">{row.email}</p>
-      </>
-    ),
-  },
-  {
-    key: "created",
-    header: "Created",
-    render: (row) => <span className="text-[13px] text-gray-600">{formatProviderTimestamp(row.createdAt)}</span>,
-  },
-];
 
 function getPolicyMemberIds(policy: DenDesktopPolicy) {
   return policy.assignments.flatMap((assignment) => (assignment.orgMemberId ? [assignment.orgMemberId] : []));
@@ -117,11 +89,6 @@ export function LlmProvidersScreen() {
     setZenAllowed(defaultPolicy?.policy.allowZenModel !== false);
   }, [defaultPolicy, adminExceptionPolicies]);
 
-  const openWorkProviders = useMemo(
-    () => llmProviders.filter((provider) => provider.source === "openwork"),
-    [llmProviders],
-  );
-
   const customProviders = useMemo(
     () => llmProviders.filter((provider) => provider.source !== "openwork"),
     [llmProviders],
@@ -133,49 +100,25 @@ export function LlmProvidersScreen() {
       return customProviders;
     }
 
-    return customProviders.filter((provider) => {
-      const env = getProviderEnvNames(provider.providerConfig).join(" ").toLowerCase();
-      const doc = (getProviderDocUrl(provider.providerConfig) ?? "").toLowerCase();
-      return (
+    return customProviders.filter(
+      (provider) =>
         provider.name.toLowerCase().includes(normalizedQuery) ||
         provider.providerId.toLowerCase().includes(normalizedQuery) ||
-        provider.models.some((model) => model.name.toLowerCase().includes(normalizedQuery)) ||
-        env.includes(normalizedQuery) ||
-        doc.includes(normalizedQuery)
-      );
-    });
+        provider.models.some((model) => model.name.toLowerCase().includes(normalizedQuery)),
+    );
   }, [customProviders, query]);
 
-  const openWorkKeyRows = useMemo(() => {
-    const rows = openWorkProviders.flatMap((provider) =>
-      provider.access.members.map((member) => ({
-        id: `${provider.id}:${member.id}`,
-        name: member.user.name || member.user.email,
-        email: member.user.email,
-        createdAt: member.createdAt ?? provider.createdAt,
-      })),
-    );
-    rows.sort((a, b) => a.name.localeCompare(b.name));
-    return rows;
-  }, [openWorkProviders]);
+  const modelCount = customProviders.reduce((total, provider) => total + provider.models.length, 0);
+  const providerCount = customProviders.length;
+  const hasOpenWorkModels = llmProviders.some((provider) => provider.source === "openwork");
 
-  const modelNames = useMemo(() => {
-    const names = llmProviders.flatMap((provider) =>
-      provider.models.flatMap((model) => {
-        const name = model.name.trim();
-        return name ? [name] : [];
-      }),
-    );
-    return [...new Set(names)];
-  }, [llmProviders]);
-
-  const managedOutcome = modelNames.length > 0
-    ? `Members see exactly: ${modelNames.join(", ")}`
-    : "Members see no models yet — add a provider below";
-  const openOutcome = modelNames.length > 0
-    ? `Members may add their own providers; org models below include: ${modelNames.join(", ")}`
-    : "Members may add their own providers. No org models are defined yet.";
-  const accessOutcome = accessMode === "managed" ? managedOutcome : openOutcome;
+  const accessOutcome = accessMode === "managed"
+    ? modelCount > 0
+      ? `Members see exactly the ${plural(modelCount, "model")} from the ${plural(providerCount, "provider")} below${hasOpenWorkModels ? ", plus OpenWork Models" : ""}.`
+      : "Members see no models yet — add a provider below."
+    : modelCount > 0
+      ? `Members may add their own providers alongside the ${plural(modelCount, "model")} below.`
+      : "Members may add their own providers. No org models are defined yet.";
   const accessFormDisabled = policiesBusy || accessSaving || !defaultPolicy;
 
   const updateDefaultPolicy = async (allowCustomProviders: boolean, allowZenModel: boolean) => {
@@ -390,7 +333,7 @@ export function LlmProvidersScreen() {
           icon={Search}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search providers, models, or env keys..."
+          placeholder="Search providers or models..."
         />
 
         <Link href={getNewLlmProviderRoute(orgSlug)} className={buttonVariants({ variant: "primary" })}>
@@ -406,90 +349,61 @@ export function LlmProvidersScreen() {
           Loading your provider library...
         </div>
       ) : (
-      <div className="grid gap-8">
-        {openWorkKeyRows.length > 0 ? (
-          <section className="overflow-hidden rounded-[28px] border border-gray-200 bg-white">
-            <DenSectionHeader
-              className="border-b border-gray-100 px-6 py-4"
-              title="OpenWork Model Keys"
-              description="Members in this organization with an OpenWork Models key."
-            />
-            <DenTable columns={openWorkKeyColumns} rows={openWorkKeyRows} getRowKey={(row) => row.id} />
-          </section>
-        ) : null}
-
-        <section className="grid gap-4">
-          <DenSectionHeader
-            title="Your providers"
-            description="Each card is one set of credentials and the models it exposes."
-          />
-          {filteredProviders.length === 0 ? (
-            <div className="rounded-[32px] border border-dashed border-gray-200 bg-white px-6 py-12 text-center">
-              <p className="text-[16px] font-medium tracking-[-0.03em] text-gray-900">
-                {customProviders.length === 0 ? "No custom providers configured yet." : "No providers match that search yet."}
-              </p>
-              <p className="mx-auto mt-3 max-w-[560px] text-[15px] leading-8 text-gray-500">
-                {customProviders.length === 0
-                  ? "Start with a models.dev provider, select the models you want to expose, add the credential, and then grant access to the right people or teams."
-                  : "Try a broader search term, or create a new provider if this org needs a different stack."}
-              </p>
-            </div>
-          ) : (
-            <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
-              {filteredProviders.map((provider) => {
-            const envNames = getProviderEnvNames(provider.providerConfig);
-            const memberAccessCount = provider.access.members.length;
-            const teamAccessCount = provider.access.teams.length;
-            return (
-              <Link
-                key={provider.id}
-                href={getLlmProviderRoute(orgSlug, provider.id)}
-                data-testid="llm-provider-card"
-                className="block overflow-hidden rounded-[28px] border border-gray-200 bg-white p-6 transition-colors hover:border-gray-300"
-              >
-                <div className="flex items-start gap-3">
-                  <DenBrandMark
-                    name={provider.name}
-                    simpleIconSlug={getProviderIconSlug(provider.providerId)}
-                    serviceUrl={getProviderDocUrl(provider.providerConfig)}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <h3 className="truncate text-[16px] font-medium tracking-[-0.02em] text-gray-950">{provider.name}</h3>
-                    <p className="mt-0.5 truncate text-[13px] text-gray-500">
-                      {provider.providerId} · {getProviderSourceLabel(provider.source)}
-                    </p>
-                  </div>
-                  <DenBadge>
-                    {provider.models.length} {provider.models.length === 1 ? "model" : "models"}
-                  </DenBadge>
-                </div>
-
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <DenBadge tone={provider.hasApiKey ? "success" : "warning"} icon={KeyRound}>
-                    {provider.hasApiKey ? "Credential saved" : "Credential missing"}
-                  </DenBadge>
-                  {envNames.slice(0, 2).map((envName) => (
-                    <DenBadge key={envName}>{envName}</DenBadge>
-                  ))}
-                  {envNames.length > 2 ? <DenBadge>+{envNames.length - 2} more keys</DenBadge> : null}
-                </div>
-
-                <div className="mt-5 flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-gray-100 pt-4 text-[13px] text-gray-500">
-                  <span>
-                    {provider.access.allMembers
-                      ? "Everyone in the org"
-                      : `${memberAccessCount} people · ${teamAccessCount} teams`}
-                  </span>
-                  <span aria-hidden>·</span>
-                  <span>{formatProviderTimestamp(provider.updatedAt)}</span>
-                </div>
-              </Link>
-            );
-          })}
-            </div>
-          )}
-        </section>
-      </div>
+      <section className="grid gap-4">
+        <DenSectionHeader
+          title="Your providers"
+          description="One row per credential and the models it exposes."
+        />
+        {filteredProviders.length === 0 ? (
+          <div className="rounded-[32px] border border-dashed border-gray-200 bg-white px-6 py-12 text-center">
+            <p className="text-[16px] font-medium tracking-[-0.03em] text-gray-900">
+              {customProviders.length === 0 ? "No custom providers configured yet." : "No providers match that search yet."}
+            </p>
+            <p className="mx-auto mt-3 max-w-[560px] text-[15px] leading-8 text-gray-500">
+              {customProviders.length === 0
+                ? "Pick a models.dev provider, choose the models to expose, add the credential, and grant access."
+                : "Try a broader search term, or create a new provider if this org needs a different stack."}
+            </p>
+          </div>
+        ) : (
+          <DenList>
+            {filteredProviders.map((provider) => {
+              const members = provider.access.members.length;
+              const teams = provider.access.teams.length;
+              const accessText = provider.access.allMembers
+                ? "Everyone in the org"
+                : `${members} ${members === 1 ? "person" : "people"} · ${plural(teams, "team")}`;
+              return (
+                <DenListRow
+                  key={provider.id}
+                  href={getLlmProviderRoute(orgSlug, provider.id)}
+                  dataAttributes={{ "data-testid": "llm-provider-card" }}
+                  leading={
+                    <DenBrandMark
+                      name={provider.name}
+                      simpleIconSlug={getProviderIconSlug(provider.providerId)}
+                      serviceUrl={getProviderDocUrl(provider.providerConfig)}
+                    />
+                  }
+                  title={provider.name}
+                  chips={
+                    <>
+                      <DenChip>{plural(provider.models.length, "model")}</DenChip>
+                      {!provider.hasApiKey ? (
+                        <DenChip tone="warning" icon={KeyRound}>
+                          Credential missing
+                        </DenChip>
+                      ) : null}
+                    </>
+                  }
+                  meta={`${provider.providerId} · ${accessText} · Updated ${formatProviderTimestamp(provider.updatedAt)}`}
+                  action={<ChevronRight aria-hidden className="h-4 w-4 text-gray-400" />}
+                />
+              );
+            })}
+          </DenList>
+        )}
+      </section>
       )}
     </DashboardPageTemplate>
   );

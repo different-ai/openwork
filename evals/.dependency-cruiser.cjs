@@ -40,7 +40,7 @@ module.exports = {
     {
       name: "specs-use-testkit-only",
       severity: "error",
-      from: { path: "^specs/.*\\.e2e\\.test\\.ts$" },
+      from: { path: "^(?:specs/.*\\.e2e\\.test\\.ts|\\.\\./scenarios/.*/e2e\\.test\\.ts)$" },
       to: { path: "^@openwork/(?:hosts|cdp|behaviors|test-evidence|labs|env)(?:/|$)" },
     },
     // Imperative worlds stay framework-free and arrange only through lower layers.

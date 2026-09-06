@@ -227,12 +227,6 @@ class DaytonaPlacementHost implements Host {
     }
   }
 
-  async signal(handle: SurfaceHandle, pid: number, signal: "SIGSTOP" | "SIGCONT"): Promise<void> {
-    const placed = this.#surfaces.get(handle);
-    if (!placed) throw new Error(`Surface ${handle.name} is not placed on a Daytona sandbox.`);
-    await placed.host.signal(handle, pid, signal);
-  }
-
   async disposeSurface(handle: SurfaceHandle): Promise<void> {
     const placed = this.#surfaces.get(handle);
     if (!placed) return;

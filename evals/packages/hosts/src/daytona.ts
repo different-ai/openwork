@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { setTimeout } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { resolveEvalEngineValue } from "./eval-engine.ts";
 import type { ChromeSurfaceOptions, DenServiceHandle, DenServiceOptions, ElectronSurfaceOptions, Host, ShareLinks, SurfaceHandle } from "./types.ts";
 
 export interface DaytonaExecResult {
@@ -604,6 +605,7 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
       }
 
       const env = new Map<string, string>();
+      if (resolveEvalEngineValue(process.env.OPENWORK_EVAL_ENGINE) === "v2") env.set("OPENWORK_ENGINE_V2_PREVIEW", "1");
       appendExtraEnv(env, opts.env);
       env.set("DAYTONA_ELECTRON_LOG", logPath);
       env.set("OPENWORK_ELECTRON_REMOTE_DEBUG_PORT", String(port));
@@ -679,7 +681,7 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
       `mkdir -p ${shellQuote(profileDir)}`,
       "CHROME_BIN=\"$(command -v chromium || command -v google-chrome || command -v google-chrome-stable || true)\"",
       "if [ -z \"$CHROME_BIN\" ]; then echo 'No chromium/google-chrome binary found in sandbox.' >&2; exit 127; fi",
-      `DISPLAY=:99 nohup "$CHROME_BIN" --headless=new --window-size=1280,900 --no-sandbox --disable-dev-shm-usage --ignore-gpu-blocklist --use-gl=swiftshader --enable-unsafe-swiftshader --disable-http2 --remote-debugging-address=0.0.0.0 --remote-debugging-port=${port} --user-data-dir=${shellQuote(profileDir)} ${shellQuote(startUrl)} >${shellQuote(logPath)} 2>&1 &`,
+      `DISPLAY=:99 nohup "$CHROME_BIN" --headless=new --window-size=1280,900 --no-sandbox --disable-dev-shm-usage --ignore-gpu-blocklist --use-gl=swiftshader --enable-unsafe-swiftshader --remote-debugging-address=0.0.0.0 --remote-debugging-port=${port} --user-data-dir=${shellQuote(profileDir)} ${shellQuote(startUrl)} >${shellQuote(logPath)} 2>&1 &`,
     ].join("; ");
 
     try {
@@ -834,17 +836,10 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
     for (const handle of [...spawnedSurfaces]) await disposeSurface(handle);
   }
 
-  async function signal(_surface: SurfaceHandle, pid: number, signal: "SIGSTOP" | "SIGCONT"): Promise<void> {
-    if (!Number.isInteger(pid) || pid <= 0) throw new Error(`Refusing to signal an invalid pid ${pid}.`);
-    const flag = signal === "SIGSTOP" ? "-STOP" : "-CONT";
-    await checkedExec(exec, ["exec", requireSandbox(), "--", "kill", flag, String(pid)], `${signal} pid ${pid} in Daytona sandbox`, { timeoutMs: 30_000 });
-  }
-
   return {
     kind: "daytona",
     workspaceRoot: "/workspace",
     previewUrl,
-    signal,
     spawnElectron,
     spawnChrome,
     startDen,

@@ -8,6 +8,11 @@
       "types": "./src/index.ts",
       "development": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./eval-engine": {
+      "types": "./src/eval-engine.ts",
+      "development": "./src/eval-engine.ts",
+      "default": "./src/eval-engine.ts"
     }
   },
   "dependencies": {

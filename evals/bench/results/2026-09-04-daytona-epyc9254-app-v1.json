@@ -1,0 +1,158 @@
+{
+  "lane": "app-v1",
+  "createdAt": "2026-09-04T14:50:43.226Z",
+  "machine": {
+    "platform": "linux",
+    "arch": "x64",
+    "cpus": 48,
+    "cpuModel": "AMD EPYC 9254 24-Core Processor",
+    "memGB": 377.4,
+    "node": "v25.6.0"
+  },
+  "appCommit": "bb6964dd0c06f1dde664bee3f005fb7c4eb1ba34",
+  "iterations": 5,
+  "pacingMs": 20,
+  "tokens": 20,
+  "pollResolutionMs": 50,
+  "executionPlan": {
+    "coldInstances": 5,
+    "warmIterations": 5,
+    "warmScenariosRunIn": "last cold instance only"
+  },
+  "modelReselectedPerSession": false,
+  "uiCompactionAvailable": false,
+  "results": {
+    "cold_boot_to_composer": [
+      {
+        "appInteractive": 22997,
+        "workspaceReady": 41709,
+        "composerReady": 41710,
+        "desktopTotalMs": 22997,
+        "appReadinessMs": 5362
+      },
+      {
+        "appInteractive": 19588,
+        "workspaceReady": 36825,
+        "composerReady": 36826,
+        "desktopTotalMs": 19588,
+        "appReadinessMs": 5774
+      },
+      {
+        "appInteractive": 19647,
+        "workspaceReady": 36457,
+        "composerReady": 36458,
+        "desktopTotalMs": 19647,
+        "appReadinessMs": 5594
+      },
+      {
+        "appInteractive": 19326,
+        "workspaceReady": 35368,
+        "composerReady": 35376,
+        "desktopTotalMs": 19326,
+        "appReadinessMs": 5285
+      },
+      {
+        "appInteractive": 19459,
+        "workspaceReady": 38015,
+        "composerReady": 38016,
+        "desktopTotalMs": 19459,
+        "appReadinessMs": 5359
+      }
+    ],
+    "first_send_cold": [
+      1893,
+      1949,
+      1856,
+      1811,
+      1808
+    ],
+    "new_session_ready": [
+      736,
+      797,
+      851,
+      790,
+      806
+    ],
+    "message_rtt": [
+      {
+        "userRendered": 263,
+        "firstToken": 265,
+        "complete": 558
+      },
+      {
+        "userRendered": 169,
+        "firstToken": 176,
+        "complete": 530
+      },
+      {
+        "userRendered": 210,
+        "firstToken": 211,
+        "complete": 563
+      },
+      {
+        "userRendered": 187,
+        "firstToken": 194,
+        "complete": 537
+      },
+      {
+        "userRendered": 253,
+        "firstToken": 256,
+        "complete": 600
+      }
+    ],
+    "workspace_switch": [
+      {
+        "aToB": 245,
+        "bToA": 159
+      },
+      {
+        "aToB": 195,
+        "bToA": 146
+      },
+      {
+        "aToB": 198,
+        "bToA": 199
+      },
+      {
+        "aToB": 192,
+        "bToA": 180
+      },
+      {
+        "aToB": 174,
+        "bToA": 160
+      }
+    ],
+    "long_message": [
+      {
+        "insertMs": 90,
+        "userRendered": 296,
+        "firstToken": 301,
+        "complete": 626
+      },
+      {
+        "insertMs": 100,
+        "userRendered": 246,
+        "firstToken": 251,
+        "complete": 581
+      },
+      {
+        "insertMs": 75,
+        "userRendered": 391,
+        "firstToken": 486,
+        "complete": 664
+      },
+      {
+        "insertMs": 76,
+        "userRendered": 316,
+        "firstToken": 325,
+        "complete": 591
+      },
+      {
+        "insertMs": 76,
+        "userRendered": 254,
+        "firstToken": 260,
+        "complete": 562
+      }
+    ]
+  }
+}

@@ -10,6 +10,8 @@ export interface ElectronSurfaceOptions {
     baseUrl: string;
     apiBaseUrl?: string;
     requireSignin?: boolean;
+    /** Seed an installation already activated against its private Den. */
+    enterpriseActivation?: { activatedAt: string; denBaseUrl: string };
   };
   env?: Record<string, string>;
   /** Root package script used for a source Electron launch. Setting this bypasses OPENWORK_EVAL_ELECTRON_BINARY. */
@@ -54,13 +56,6 @@ export interface Host {
   spawnChrome(name: string, opts?: ChromeSurfaceOptions): Promise<SurfaceHandle>;
   startDen?(opts?: DenServiceOptions): Promise<DenServiceHandle>;
   share?(): Promise<ShareLinks>;
-  /**
-   * Deliver a stop/continue signal to a process on the host that runs
-   * `surface`. Specs that suspend the engine to reproduce a laptop sleep must
-   * do it where the app runs; `process.kill` from the driver only reaches the
-   * driver's own machine.
-   */
-  signal(surface: SurfaceHandle, pid: number, signal: "SIGSTOP" | "SIGCONT"): Promise<void>;
   disposeSurface(handle: SurfaceHandle): Promise<void>;
 }
 

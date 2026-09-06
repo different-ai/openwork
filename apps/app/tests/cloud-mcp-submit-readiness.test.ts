@@ -474,6 +474,47 @@ describe("Cloud MCP pre-send readiness", () => {
     expect(runs).toBe(4);
   });
 
+  test("ungated split-pane messages send independently while another request is pending", async () => {
+    const coordinator = createCloudMcpSubmissionCoordinator();
+    const sent: string[] = [];
+    let releasePrimary = () => {};
+    const primaryPending = new Promise<void>((resolve) => { releasePrimary = resolve; });
+    const primary = coordinator.submit({
+      scopeKey: "same-workspace-and-model",
+      send: async () => {
+        sent.push("primary");
+        await primaryPending;
+      },
+    });
+    try {
+      const secondary = coordinator.submit({
+        scopeKey: "same-workspace-and-model",
+        send: async () => { sent.push("secondary"); },
+      });
+      expect(sent).toEqual(["primary", "secondary"]);
+      expect(secondary).not.toBe(primary);
+      await expect(secondary).resolves.toEqual({ outcome: "sent", bypassed: true });
+    } finally {
+      releasePrimary();
+      await primary;
+    }
+    expect(sent).toEqual(["primary", "secondary"]);
+  });
+
+  test("a failed ungated pane does not fail another pane's send", async () => {
+    const coordinator = createCloudMcpSubmissionCoordinator();
+    const primary = coordinator.submit({
+      scopeKey: "same-workspace-and-model",
+      send: async () => { throw new Error("primary failed"); },
+    });
+    const secondary = coordinator.submit({
+      scopeKey: "same-workspace-and-model",
+      send: async () => {},
+    });
+    await expect(primary).rejects.toThrow("primary failed");
+    await expect(secondary).resolves.toEqual({ outcome: "sent", bypassed: true });
+  });
+
   test("workspace or model changes cannot release an old queued message", async () => {
     const coordinator = createCloudMcpSubmissionCoordinator();
     const original = requiredDecision({ workspaceId: "workspace_a", model: "gpt-5" });

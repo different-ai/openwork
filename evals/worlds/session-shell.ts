@@ -1,7 +1,9 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { mkdir, rm } from "node:fs/promises";
-import { daytonaSandbox, desktop as launchDesktop } from "@openwork/hosts";
+import { engineSessionProbe, readAvailableModels, waitFor } from "@openwork/behaviors";
+import { resolveEvalEngine } from "@openwork/env";
 import type { Seed } from "@openwork/env";
+import { daytonaSandbox, desktop as launchDesktop } from "@openwork/hosts";
 
 const stormProviderId = "active-session-storm-mock";
 const stormModelId = "mock-agent-workload-model";
@@ -217,32 +219,10 @@ export async function workspaceNewTask(seed: Seed) {
   return oneWorkspace(seed, `openwork-kitchen-vercel-env-hit-target-${Date.now()}`);
 }
 
-// TODO(primitive): seed.workspace should resolve only after the workspace's first session load settles; until then session.create_task returns no id (#4364).
-async function waitForWorkspaceSessionsLoaded(
-  seed: Seed,
-  app: Awaited<ReturnType<Seed["desktop"]>>,
-  workspaceId: string,
-  timeoutMs = 60_000,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let lastState: unknown = null;
-  while (Date.now() < deadline) {
-    lastState = await seed.evalIn(app, `(workspaceId) => {
-      const route = window.__openwork?.slice?.("route");
-      const workspace = (route?.workspaces ?? []).find((item) => item.id === workspaceId);
-      return workspace ? { exists: true, loading: workspace.loading } : { exists: false, loading: null };
-    }`, { args: [workspaceId] });
-    if (isRecord(lastState) && lastState.exists === true && lastState.loading === false) return;
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  throw new Error(`Workspace ${workspaceId} did not finish its first session load within ${timeoutMs}ms. Last state: ${JSON.stringify(lastState)}`);
-}
-
 export async function pinnedSessions(seed: Seed) {
   const app = await seed.desktop({ name: "pinned-sessions-exposed" });
   const workspacePath = seed.tmpPath("pinned-sessions-exposed");
   const workspace = await seed.workspace(app, workspacePath);
-  await waitForWorkspaceSessionsLoaded(seed, app, workspace.workspaceId);
   const [candidate, neighbor] = await seed.sessions(app, ["Candidate session", "Neighbor session"]);
   if (!candidate || !neighbor) throw new Error("Pinned world did not create both sessions.");
 
@@ -293,21 +273,78 @@ export async function commandPaletteSearch(seed: Seed) {
 }
 
 export async function archiveSessions(seed: Seed) {
-  const stamp = `${Date.now()}-${process.pid}`;
-  const app = await seed.desktop({ name: "session-archive-button" });
-  const workspaceB = await seed.workspace(app, `/tmp/openwork-session-archive-${stamp}-b`);
-  const [b1] = await seed.sessions(app, [`Archive B1 ${stamp}`]);
-  const workspaceA = await additionalWorkspace(seed, app, `/tmp/openwork-session-archive-${stamp}-a`);
-  const [a1, a2] = await seed.sessions(app, [`Archive A1 ${stamp}`, `Archive A2 ${stamp}`]);
-  if (!a1 || !a2 || !b1) throw new Error("Archive world did not create all three sessions.");
-  return {
-    app,
-    workspaceA,
-    workspaceB,
-    a1: { ...a1, workspaceId: workspaceA.workspaceId },
-    a2: { ...a2, workspaceId: workspaceA.workspaceId },
-    b1: { ...b1, workspaceId: workspaceB.workspaceId },
-  };
+  const app = await seed.desktop({ name: "session-archive-undo" });
+  const workspacePath = seed.tmpPath("session-archive-undo");
+  const workspace = await seed.workspace(app, workspacePath);
+  const [candidate, neighbor] = await seed.sessions(app, ["Archive candidate", "Archive neighbor"]);
+  if (!candidate || !neighbor) throw new Error("Archive world did not create both sessions.");
+
+  /**
+   * OpenCode's own `time.archived` stamp per session id (0 when active), read
+   * through the workspace-scoped OpenWork server mount the desktop uses.
+   */
+  // TODO(primitive): probe.sessions should expose the workspace's native session list.
+  async function archivedAt(): Promise<Record<string, number>> {
+    const value = await seed.evalIn(app, `async (workspaceId) => {
+      const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
+      if (!info?.running || !info.baseUrl) throw new Error("OpenWork server is unavailable");
+      const response = await fetch(
+        String(info.baseUrl).replace(/\\/+$/, "") + "/workspace/" + encodeURIComponent(workspaceId) + "/opencode/session?limit=200",
+        {
+          headers: { Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? "") },
+          signal: AbortSignal.timeout(15000),
+        },
+      );
+      if (!response.ok) throw new Error("Workspace session listing failed with HTTP " + response.status);
+      const body = await response.json();
+      if (!Array.isArray(body)) throw new Error("Workspace session listing was not an array");
+      return Object.fromEntries(body
+        .filter((session) => typeof session?.id === "string")
+        .map((session) => [session.id, typeof session?.time?.archived === "number" ? session.time.archived : 0]));
+    }`, { args: [workspace.workspaceId], awaitPromise: true, timeoutMs: 20_000 });
+    if (!isRecord(value)) throw new Error(`Workspace archived state was malformed: ${JSON.stringify(value)}`);
+    const stamps: Record<string, number> = {};
+    for (const [sessionId, stamp] of Object.entries(value)) {
+      if (typeof stamp !== "number") throw new Error(`Archived stamp for ${sessionId} was malformed: ${JSON.stringify(stamp)}`);
+      stamps[sessionId] = stamp;
+    }
+    return stamps;
+  }
+
+  /** Which rows the workspace's own session tree shows, and whether the global Archived section exists. */
+  // TODO(primitive): probe.sidebar should expose the workspace tree and the Archived section.
+  async function sidebar(): Promise<{ active: string[]; archivedSection: boolean }> {
+    const value = await seed.evalIn(app, `(workspaceId) => {
+      const tree = document.querySelector('[data-sidebar-workspace-id="' + workspaceId + '"]');
+      return {
+        active: [...(tree?.querySelectorAll("[data-sidebar-session-id]") ?? [])]
+          .map((row) => row.getAttribute("data-sidebar-session-id")),
+        archivedSection: Boolean(document.querySelector("[data-global-archived-sessions]")),
+      };
+    }`, { args: [workspace.workspaceId] });
+    if (!isRecord(value)
+      || !Array.isArray(value.active)
+      || !value.active.every((sessionId) => typeof sessionId === "string")
+      || typeof value.archivedSection !== "boolean") {
+      throw new Error(`Sidebar archive facts were malformed: ${JSON.stringify(value)}`);
+    }
+    return { active: value.active, archivedSection: value.archivedSection };
+  }
+
+  /** True once the undo pill is on screen and its slide-in has finished, i.e. when a person would reach for it. */
+  // TODO(primitive): user.click should wait for a target's entrance animation to settle.
+  async function undoToastSettled(): Promise<boolean> {
+    const value = await seed.evalIn(app, `(() => {
+      const pill = document.querySelector("[data-undo-toast]");
+      const toast = pill?.closest("[data-sonner-toast]");
+      if (!(toast instanceof HTMLElement)) return false;
+      return toast.dataset.mounted === "true"
+        && toast.getAnimations({ subtree: true }).every((animation) => animation.playState !== "running");
+    })()`);
+    return value === true;
+  }
+
+  return { app, workspace, workspacePath, candidate, neighbor, archivedAt, sidebar, undoToastSettled };
 }
 
 export async function responsiveSessions(seed: Seed) {
@@ -373,8 +410,14 @@ export async function externalSessionVisibility(seed: Seed) {
   if (!repoRoot) throw new Error("External session visibility needs a spawned desktop with a known workspace root.");
   // Real checkout directories avoid conflating session-list freshness with a
   // missing-directory cold start in OpenCode.
-  const home = await seed.workspace(app, `${repoRoot}/apps/app`);
-  const other = await additionalWorkspace(seed, app, `${repoRoot}/apps/server`);
+  const homePath = `${repoRoot}/apps/app`;
+  const otherPath = `${repoRoot}/apps/server`;
+  const home = await seed.workspace(app, homePath);
+  const other = await additionalWorkspace(seed, app, otherPath);
+  const workspaceDirectories = new Map([
+    [home.workspaceId, homePath],
+    [other.workspaceId, otherPath],
+  ]);
   // TODO(primitive): seed.desktop should accept an initial viewport for Electron surfaces.
   // The sidebar renders its workspace rows only on a desktop-width viewport.
   await app.client.send("Emulation.setDeviceMetricsOverride", {
@@ -382,6 +425,19 @@ export async function externalSessionVisibility(seed: Seed) {
     height: 900,
     deviceScaleFactor: 1,
     mobile: false,
+  });
+  // These empty workspaces do not send prompts. Let the model catalog settle
+  // and explicitly close its picker before testing sidebar clicks: the missing
+  // default-model prompt can otherwise appear between hit-testing and clicking.
+  await readAvailableModels(app);
+  await seed.evalIn(app, `(() => {
+    const close = document.querySelector('[data-slot="dialog-content"] [data-slot="dialog-close"]');
+    if (!(close instanceof HTMLElement)) throw new Error("Model picker close control unavailable");
+    close.click();
+  })()`);
+  await waitFor(app, `!document.querySelector('[data-slot="dialog-overlay"]')`, {
+    timeoutMs: 30_000,
+    label: "model picker backdrop dismissed before sidebar interaction",
   });
   const rawServerInfo = await seed.evalIn(app, `window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo")`, {
     awaitPromise: true,
@@ -409,6 +465,50 @@ export async function externalSessionVisibility(seed: Seed) {
     app,
     home,
     other,
+    homePath,
+    engine: resolveEvalEngine(),
+    async observeWorkspaceEvents(workspaceId: string) {
+      const abort = new AbortController();
+      const url = new URL(`${externalServerUrl}/workspace/${encodeURIComponent(workspaceId)}/opencode2/api/event`);
+      // A client-supplied location must not override its authenticated mount.
+      url.searchParams.set("location[directory]", workspaceId === home.workspaceId ? otherPath : homePath);
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${serverToken}` },
+        signal: AbortSignal.any([abort.signal, AbortSignal.timeout(120_000)]),
+      });
+      if (!response.ok || !response.body) throw new Error(`Workspace event stream returned ${response.status}`);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let received = "";
+      let failure: unknown;
+      const finished = (async () => {
+        try {
+          for (;;) {
+            const chunk = await reader.read();
+            if (chunk.done) break;
+            received += decoder.decode(chunk.value, { stream: true });
+          }
+        } catch (error) {
+          if (!abort.signal.aborted) failure = error;
+        }
+      })();
+      return {
+        snapshot() {
+          if (failure) throw failure;
+          return received;
+        },
+        async [Symbol.asyncDispose]() {
+          abort.abort();
+          await reader.cancel().catch(() => undefined);
+          await finished;
+        },
+      };
+    },
+    async serverSessionIds(workspaceId: string): Promise<string[]> {
+      const response = await engineSessionProbe({ engine: resolveEvalEngine(), serverUrl: externalServerUrl, token: serverToken, workspaceId }).list();
+      if (!response.ok) throw new Error(`Session list returned HTTP ${response.status}`);
+      return response.data.map((session) => session.id);
+    },
     /** The sidebar's own per-workspace session lists and load state. */
     // TODO(primitive): probe.route should expose the sidebar's per-workspace session lists.
     async route(): Promise<SidebarRouteFacts> {
@@ -435,19 +535,19 @@ export async function externalSessionVisibility(seed: Seed) {
      * OpenWork server's workspace mount, never through the desktop's UI state.
      */
     // TODO(primitive): seed.externalSession should create a session on the server without touching the renderer.
-    async createSessionOutsideWindow(workspaceId: string, title: string): Promise<string> {
-      const url = `${externalServerUrl.replace(/\/+$/, "")}/workspace/${encodeURIComponent(workspaceId)}/opencode/session`;
-      const headers = {
-        Authorization: `Bearer ${serverToken}`,
-        "Content-Type": "application/json",
-      };
+    async createSessionOutsideWindow(workspaceId: string, title: string, requestedDirectory?: string): Promise<string> {
+      const directory = requestedDirectory ?? workspaceDirectories.get(workspaceId);
+      if (!directory) throw new Error(`No directory is registered for workspace ${workspaceId}.`);
+      const probe = engineSessionProbe({
+        engine: resolveEvalEngine(),
+        serverUrl: externalServerUrl,
+        token: serverToken,
+        workspaceId,
+      });
       const findCreatedSession = async (): Promise<string | null> => {
         try {
-          const response = await fetch(`${url}?limit=200`, { headers, signal: AbortSignal.timeout(15_000) });
-          const value: unknown = await response.json().catch(() => null);
-          if (!response.ok || !Array.isArray(value)) return null;
-          const match = value.find((session) => isRecord(session) && session.title === title && typeof session.id === "string");
-          return isRecord(match) && typeof match.id === "string" ? match.id : null;
+          const response = await probe.list();
+          return response.ok ? response.data.find((session) => session.title === title)?.id ?? null : null;
         } catch {
           return null;
         }
@@ -458,15 +558,9 @@ export async function externalSessionVisibility(seed: Seed) {
         const existing = await findCreatedSession();
         if (existing) return existing;
         try {
-          const response = await fetch(url, {
-            method: "POST",
-            headers,
-            body: JSON.stringify({ title }),
-            signal: AbortSignal.timeout(30_000),
-          });
-          const value: unknown = await response.json().catch(() => null);
-          if (response.ok && isRecord(value) && typeof value.id === "string") return value.id;
-          lastError = `HTTP ${response.status}: ${JSON.stringify(value)}`;
+          const response = await probe.create(directory, title);
+          if (response.ok && response.data) return response.data.id;
+          lastError = `HTTP ${response.status}: ${JSON.stringify(response.body)}`;
         } catch (error) {
           lastError = error instanceof Error ? error.message : String(error);
         }
