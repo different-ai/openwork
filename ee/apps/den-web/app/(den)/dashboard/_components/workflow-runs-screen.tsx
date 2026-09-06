@@ -40,7 +40,7 @@ function WorkflowRunCard({ run }: { run: WorkflowRun }) {
           <DenChip tone={run.status === "succeeded" ? "success" : "danger"}>
             {run.status === "succeeded" ? "Succeeded" : "Failed"}
           </DenChip>
-          <time dateTime={run.finishedAt}>{new Date(run.finishedAt).toLocaleString()}</time>
+          <time data-testid={`workflow-run-time-${run.id}`} dateTime={run.finishedAt}>{new Date(run.finishedAt).toLocaleString()}</time>
         </div>
         <details className="mt-4 border-t border-gray-100 pt-3 text-[12px] text-gray-500">
           <summary data-testid={`workflow-run-details-${run.id}`} className="cursor-pointer font-medium">Technical details</summary>

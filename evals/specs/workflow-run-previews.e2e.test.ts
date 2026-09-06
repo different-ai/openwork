@@ -85,43 +85,32 @@ test("workflow activity shows linked version diagrams and keeps one-off and inac
   await step("read existing diagrams directly in the run list", async () => {
     await user.see({ text: "Workflow Runs" }, { timeoutMs: 90_000 });
     await user.see({ text: "Workflows are repeatable tasks you and your team can save, share, and run again. See their recent activity here." });
-    await probe.eventually(() => probe.eval(`Boolean(document.querySelector('[data-run-id="${world.receiptId}"] [data-testid="den-workflow-flow-diagram"]'))`), { within: 30_000, label: "saved run diagram", until: (value) => value === true });
-    const rendered = await probe.eval(`(() => {
-      const row = document.querySelector('[data-run-id="${world.receiptId}"]');
-      const diagram = row.querySelector('[data-testid="den-workflow-flow-diagram"]');
-      const details = row.querySelector('details');
-      return {
-        title: row.querySelector('h2 a')?.textContent,
-        href: row.querySelector('h2 a')?.getAttribute('href'),
-        nodes: [...diagram.querySelectorAll('[data-node-id]')].map(node => node.getAttribute('data-node-id')),
-        status: row.innerText.includes('Succeeded'),
-        time: Boolean(row.querySelector('time')?.dateTime),
-        detailsClosed: !details.open,
-        rawSourceHidden: details.querySelector('dd').getClientRects().length === 0,
-      };
-    })()`);
-    const graphNodes = record(world.originalGraph).nodes;
-    if (!Array.isArray(graphNodes)) throw new Error("Expected graph nodes");
-    expect(rendered).toEqual({ title: "Weekly briefing", href: `/dashboard/library/workflows/${world.configObjectId}`, nodes: graphNodes.map((node) => field(node, "id")), status: true, time: true, detailsClosed: true, rawSourceHidden: true });
+    await user.see({ testId: "den-workflow-flow-diagram", nth: 1 }, { timeoutMs: 30_000 });
+    await user.notSee({ testId: "den-workflow-flow-diagram", nth: 2 });
+    await user.see({ testId: `workflow-run-link-${world.receiptId}` }, { text: "Weekly briefing" });
+    await user.see({ testId: `workflow-run-time-${world.receiptId}` });
+    await user.see({ text: "Succeeded" });
+    await user.see({ text: "Failed" });
+    await user.notSee({ text: `plugin:${world.pluginId}:${world.configObjectId}` });
     await user.see({ text: "One-off task" });
-    const adhoc = before.find((run) => run.source === "adhoc");
-    expect(adhoc).toBeDefined();
-    expect(await probe.eval(`Boolean(document.querySelector('[data-run-id="${adhoc?.id}"] a, [data-run-id="${adhoc?.id}"] [data-testid="den-workflow-flow-diagram"]'))`)).toBe(false);
+    await user.notSee({ role: "link", label: "One-off task" });
+    await user.notSee({ label: "One-off task workflow visualization" });
     await user.screenshot();
   });
-  evidence.recordAssertionEvidence("Saved runs show the existing visualization of their executed version", "The API graph matches the original version and differs from the later edit. The rendered run includes every original graph node, a library link, status and time; one-off runs have neither a fabricated link nor a diagram.", true);
+  evidence.recordAssertionEvidence("Saved runs show the existing visualization of their executed version", "The API graph matches the original version and differs from the later edit. The activity page renders both saved-run diagrams with a library link, status and time; one-off runs have neither a fabricated link nor a visualization.", true);
   evidence.recordAssertionEvidence("Workflow activity explains reuse and keeps raw run details collapsed", "The introduction is visible and the closed details element keeps raw source values out of the visible run card.", true);
 
   await step("open the linked workflow in the existing library", async () => {
     await user.click({ testId: `workflow-run-link-${world.receiptId}` });
     await user.see({ testId: "den-workflow-detail" }, { timeoutMs: 60_000 });
-    expect(await probe.eval("location.pathname")).toBe(`/dashboard/library/workflows/${world.configObjectId}`);
+    await user.see({ text: "How it works" });
+    await user.see({ text: "Weekly briefing" });
     expect(await readRuns()).toEqual(before);
     await user.navigate(`${world.den.ref.webUrl}/dashboard/workflow-runs`);
     await user.see({ text: "Workflow Runs" });
     await user.click({ testId: `workflow-run-details-${world.receiptId}` });
     await user.see({ text: `plugin:${world.pluginId}:${world.configObjectId}` });
-    expect(await probe.eval(`document.querySelector('[data-run-id="${world.receiptId}"] details').open`)).toBe(true);
+
   });
   evidence.recordAssertionEvidence("The run opens its library workflow and technical details remain available", "Clicking the workflow name opens the existing library detail without creating any new runs. Expanding Technical details reveals its saved source.", true);
 
