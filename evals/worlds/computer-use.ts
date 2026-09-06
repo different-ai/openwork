@@ -108,12 +108,14 @@ export async function computerUseWorld(_seed: Seed, { place }: { place: Place })
         try {
           await new Promise<void>((resolve, reject) => { setup.once("spawn", resolve); setup.once("error", reject); });
           const deadline = Date.now() + 5_000;
+          let lastPanel: unknown;
           while (Date.now() < deadline) {
             const result = await fixture.request("helper_panel", { name: "", pid: setup.pid, executable });
+            lastPanel = result;
             if (record(result) && typeof result.text === "string" && result.text.includes("Accessibility")) return result;
             await new Promise((resolve) => setTimeout(resolve, 100));
           }
-          throw new Error("The setup window did not show permission status.");
+          throw new Error(`The setup window did not show permission status: ${JSON.stringify(lastPanel)}`);
         } finally {
           setup.kill("SIGTERM");
           await new Promise<void>((resolve) => {

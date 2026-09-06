@@ -187,7 +187,7 @@ final class PermissionSetup: NSObject, NSApplicationDelegate {
         let axButton = NSButton(title: "Open Accessibility settings", target: self, action: #selector(openAccessibility))
         let captureButton = NSButton(title: "Open Screen Recording settings", target: self, action: #selector(openCapture))
         let stop = NSButton(title: "Stop all Computer Use sessions", target: self, action: #selector(stopAll))
-        let footer = NSTextField(wrappingLabelWithString: "If macOS asks you to restart after changing permissions, reconnect Computer Use in OpenWork. Windows and Linux desktop control are not available in this version.")
+        let footer = NSTextField(wrappingLabelWithString: "After allowing access, return to Library → Computer Use in OpenWork to finish setup. If macOS asks you to restart, quit and reopen OpenWork. Windows and Linux desktop control are not available in this version.")
         footer.font = .systemFont(ofSize: 12); footer.textColor = .secondaryLabelColor
         let stack = NSStackView(views: [title, description, accessibility, axButton, capture, captureButton, stop, footer])
         stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 12
