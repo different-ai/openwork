@@ -97,8 +97,9 @@ test("an existing Models subscriber can decline, enable and disable task analyti
   evidence.recordAssertionEvidence("A second paid, opted-in organization cannot see the first organization's activity", "The second organization has analytics access, returns HTTP 200, and sees zero events", true);
 
   await user.see({ text: "completed" }, { timeoutMs: 45_000 });
+  await user.see({ text: /^(MiniMax-M3, GLM-5\.2|GLM-5\.2, MiniMax-M3)$/ });
   await user.notSee({ text: "Your next OpenWork Models task appears here" });
-  evidence.recordAssertionEvidence("New Models activity appears without a manual refresh", "The empty activity screen became a completed task after real model requests, without reloading or pressing Refresh; provider coverage guidance was visible before the first task", true);
+  evidence.recordAssertionEvidence("New Models activity appears without a manual refresh", "The empty activity screen became a completed task showing both real inference models, MiniMax-M3 and GLM-5.2, without reloading or pressing Refresh; provider coverage guidance was visible before the first task", true);
   await user.screenshot();
   await user.click({ role: "tab", label: "Consumption" });
   await user.see({ text: "$0.0123" });

@@ -115,11 +115,11 @@ test("organization model analytics aggregate session dimensions without cross-or
   );
   await user.see({ text: "Understand how your team works in OpenWork" }, { timeoutMs: 60_000 });
   await user.click({ role: "button", label: "Refresh analytics" });
-  await user.see({ text: "prov/model-a" }, { timeoutMs: 30_000 });
-  await user.see({ text: "prov/model-b" });
+  await user.see({ text: /^prov\/model-a\s+1$/ }, { timeoutMs: 30_000 });
+  await user.see({ text: /^prov\/model-b\s+1$/ });
   await user.notSee({ text: "No model usage yet" });
   await user.screenshot();
-  evidence.recordAssertionEvidence("Usage and adoption shows the same model usage returned by the organization API", "Both distinct models are visible on the real analytics screen and the empty-state message is absent", true);
+  evidence.recordAssertionEvidence("Usage and adoption shows the same model usage returned by the organization API", "Both model rows show exactly one session, matching the API totals, and the empty-state message is absent", true);
 
   await world.analyticsStoreUnavailable(true);
   const unavailable = await denFetch(den.admin, "/v1/telemetry/analytics", { headers: auth(den.admin, primaryOrgId) });
