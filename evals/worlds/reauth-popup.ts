@@ -95,8 +95,8 @@ PY`);
         ? "window.__reauthOriginalOpen = window.open; window.open = () => null"
         : "window.open = window.__reauthOriginalOpen; delete window.__reauthOriginalOpen" });
     },
-    async sendCompletion(kind: "wrong-nonce" | "foreign-origin" | "stale") {
-      await web.client.send("Runtime.evaluate", { expression: `window.dispatchEvent(new MessageEvent("message", { origin: ${kind === "foreign-origin" ? '"https://foreign.example.test"' : 'location.origin'}, data: { type: "openwork:reauth-complete", nonce: ${kind === "wrong-nonce" ? '"unrelated"' : 'document.querySelector("[data-reauth-nonce]").dataset.reauthNonce'}, error: null } }))` });
+    async sendCompletion(kind: "wrong-nonce" | "foreign-origin" | "stale", nonce?: string) {
+      await web.client.send("Runtime.evaluate", { expression: `window.dispatchEvent(new MessageEvent("message", { origin: ${kind === "foreign-origin" ? '"https://foreign.example.test"' : 'location.origin'}, data: { type: "openwork:reauth-complete", nonce: ${nonce !== undefined ? JSON.stringify(nonce) : kind === "wrong-nonce" ? '"unrelated"' : 'document.querySelector("[data-reauth-nonce]").dataset.reauthNonce'}, error: null } }))` });
     },
   };
 }

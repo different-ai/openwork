@@ -60,10 +60,23 @@ test("workspace SSO verifies through a real popup and safely recovers from inter
     popup.client.close();
     evidence.recordAssertionEvidence("Unrelated completion messages and provider denial cannot complete the pending workspace mutation", "Wrong nonce and foreign origin kept the waiting screen; provider denial restored retry; the stored name remained unchanged.", true);
   });
+  await step("a completion signal without fresh authentication cannot save settings", async () => {
+    await user.click({ role: "button", label: "Continue with SSO" });
+    const popup = await waiting();
+    await world.sendCompletion("stale");
+    await user.see({ role: "button", label: "Continue with SSO" }, { timeoutMs: 30_000 });
+    expect(await world.storedName()).toBe(world.originalName);
+    expect(await world.popupCount()).toBe(0);
+    popup.client.close();
+    evidence.recordAssertionEvidence("A matching completion signal cannot bypass server-side fresh authentication", "The signal closed the popup, but the aged server session rejected the retried mutation and the security check reopened with the original workspace name unchanged.", true);
+  });
   await step("Cancel closes the real popup and does not retry", async () => {
     await user.click({ role: "button", label: "Continue with SSO" });
     const popup = await waiting();
+    const nonce = await probe.eval("document.querySelector('[data-reauth-nonce]').dataset.reauthNonce");
+    if (typeof nonce !== "string") throw new Error("Expected the current dialog nonce");
     await user.click({ role: "button", label: "Cancel" });
+    await world.sendCompletion("stale", nonce);
     expect(await probe.eval("document.querySelector('[role=dialog]') === null")).toBe(true);
     await probe.eventually(() => world.popupCount(), { within: 10_000, label: "cancel closes popup", until: (count) => count === 0 });
     expect(await world.storedName()).toBe(world.originalName);
