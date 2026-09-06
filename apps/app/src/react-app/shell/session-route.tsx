@@ -134,6 +134,7 @@ import {
   nextFavoriteModel,
   useModelCollectionsStore,
 } from "@/react-app/domains/session/models/model-collections-store";
+import { useSessionAgentStore } from "@/react-app/domains/session/surface/session-agent-store";
 import { openModelPickerEvent, openProviderAuthEvent } from "@/react-app/shell/new-providers-listener";
 import { markComposerAutoSend } from "@/react-app/domains/session/surface/composer-auto-send";
 import { sendWithRevertRollback } from "@/react-app/domains/session/surface/safe-edit-resend";
@@ -557,14 +558,24 @@ export function SessionRoute() {
     workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? null,
     providerModel: cloudMcpProviderModel,
   });
-  // Agent selection is persisted in local prefs (like the model variant) so
-  // it survives reloads instead of silently falling back to "build" (#2101).
-  const selectedAgent = local.prefs.selectedAgent;
+  // Agent selection is per-session (keyed by sessionId in localStorage) so
+  // switching between sessions restores each session's own agent (#3461).
+  // When no session is selected (empty-state new-task composer), fall back to
+  // the global pref so the user's last new-session choice is preserved across
+  // reloads (#2101).
+  const sessionAgentMap = useSessionAgentStore((state) => state.bySessionId);
+  const selectedAgent = selectedSessionId
+    ? (sessionAgentMap[selectedSessionId] ?? null)
+    : local.prefs.selectedAgent;
   const setSelectedAgent = useCallback(
     (agent: string | null) => {
-      local.setPrefs((previous) => ({ ...previous, selectedAgent: agent }));
+      if (selectedSessionId) {
+        useSessionAgentStore.getState().setAgent(selectedSessionId, agent);
+      } else {
+        local.setPrefs((previous) => ({ ...previous, selectedAgent: agent }));
+      }
     },
-    [local.setPrefs],
+    [selectedSessionId, local.setPrefs],
   );
   // One-way latch for "a refreshRouteState is currently running"; prevents
   // overlapping route refreshes from queueing up when the user clicks fast.
