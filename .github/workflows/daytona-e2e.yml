@@ -1,15 +1,16 @@
-# Runs one Daytona E2E spec per job so the testkit owns fresh topology
-# provisioning and each failure has one spec owner. CI does not grep test logs:
-# the evals:e2e exit code is the verdict (0 passed, 1 failed, 2 skipped and
-# therefore Incomplete). The explicit --daytona placement also fails loudly
-# when the Daytona CLI is missing or unauthenticated.
-name: Daytona E2E
+name: Product journeys
+run-name: ${{ github.event_name == 'workflow_run' && 'Critical user journeys' || inputs.suite == 'critical' && 'Critical user journeys' || 'Full regression' }}
 
 on:
   schedule:
     - cron: "0 6,18 * * *"
   workflow_dispatch:
     inputs:
+      suite:
+        description: "Which journeys to exercise"
+        type: choice
+        options: [full, critical]
+        default: full
       only:
         description: "Substring filter on E2E test filenames; empty runs all eligible tests"
         required: false
@@ -25,7 +26,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: daytona-e2e-${{ github.event.workflow_run.pull_requests[0].number || github.run_id }}
+  group: product-journeys-${{ github.event.workflow_run.pull_requests[0].number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -38,9 +39,12 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     outputs:
-      enabled: ${{ steps.config.outputs.enabled }}
-      tests: ${{ steps.matrix.outputs.tests }}
-      has_tests: ${{ steps.matrix.outputs.has_tests }}
+      enabled: ${{ steps.matrix.outputs.has_daytona != '' }}
+      daytona: ${{ steps.matrix.outputs.daytona }}
+      local: ${{ steps.matrix.outputs.local }}
+      has_daytona: ${{ steps.matrix.outputs.has_daytona }}
+      has_local: ${{ steps.matrix.outputs.has_local }}
+      suite: ${{ steps.matrix.outputs.suite }}
     steps:
       - name: Authorize Warden-cleared pull request
         id: authorize
@@ -71,7 +75,7 @@ jobs:
           fi
 
           guarded="$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename' \
-            | grep -E '^(\.github/|warden\.toml$|\.warden/|\.agents/skills/|\.claude/skills/)' || true)"
+            | grep -E '^(evals/scripts/|\.github/|warden\.toml$|\.warden/|\.agents/skills/|\.claude/skills/)' || true)"
           if [ -n "$guarded" ]; then
             echo "::notice::E2E regression withheld: PR changes trusted review machinery."
             echo "authorized=false" >> "$GITHUB_OUTPUT"
@@ -79,76 +83,48 @@ jobs:
           fi
           echo "authorized=true" >> "$GITHUB_OUTPUT"
 
-      - name: Check Daytona E2E configuration
-        id: config
-        if: github.event_name != 'workflow_run' || steps.authorize.outputs.authorized == 'true'
-        env:
-          DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          set -euo pipefail
-
-          missing=""
-          [ -z "${DAYTONA_API_KEY:-}" ] && missing="$missing DAYTONA_API_KEY"
-          [ -z "${OPENAI_API_KEY:-}" ] && missing="$missing OPENAI_API_KEY"
-          if [ -n "$missing" ]; then
-            echo "::notice::Skipping Daytona E2E; missing GitHub configuration:$missing."
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "enabled=true" >> "$GITHUB_OUTPUT"
-
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        if: steps.config.outputs.enabled == 'true'
+        if: github.event_name != 'workflow_run' || steps.authorize.outputs.authorized == 'true'
         with:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Build E2E test matrix
+      - name: Select user journeys
         id: matrix
-        if: steps.config.outputs.enabled == 'true'
+        if: github.event_name != 'workflow_run' || steps.authorize.outputs.authorized == 'true'
         env:
           ONLY_FILTER: ${{ inputs.only }}
+          SUITE: ${{ inputs.suite }}
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.workflow_run.pull_requests[0].base.sha }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
-
-          raw_desktop="$(node evals/scripts/list-daytona-raw-desktop-tests.mjs)"
-          excluded="$(printf '%s\n' "$raw_desktop" | jq -Rsc 'split("\n") | map(select(length > 0))')"
-          # shellcheck disable=SC2012
-          eligible_tests="$(ls evals/specs/*.e2e.test.ts | sed 's#^evals/specs/##' | jq -Rsc --argjson excluded "$excluded" 'split("\n") | map(select(length > 0)) | map(select(. as $test | $excluded | index($test) | not))')"
           if [ "$EVENT_NAME" = "workflow_run" ]; then
-            matched_tests="$(git diff --name-only --diff-filter=ACMR "$BASE_SHA...$HEAD_SHA" | { grep -E '^evals/specs/[^/]+\.e2e\.test\.ts$' || true; } | sed 's#^evals/specs/##' | jq -Rsc 'split("\n") | map(select(length > 0))')"
-            only_filter=""
-          else
-            matched_tests='[]'
-            only_filter="$ONLY_FILTER"
+            git diff --name-only --diff-filter=ACMR "$BASE_SHA...$HEAD_SHA" | jq -Rsc 'split("\n") | map(select(length > 0))' > /tmp/journey-changes.json
+            export CHANGED_FILES=/tmp/journey-changes.json
           fi
-
-          tests="$(echo "$eligible_tests" | jq -c --arg event "$EVENT_NAME" --arg only "$only_filter" --argjson matched "$matched_tests" 'map(select(if $event == "workflow_run" then (. as $test | ($matched | index($test)) != null) else ($only == "" or contains($only)) end))')"
-          count="$(echo "$tests" | jq 'length')"
-          has_tests=false
-          if [ "$count" -gt 0 ]; then
-            has_tests=true
-          fi
-          echo "tests=$tests" >> "$GITHUB_OUTPUT"
-          echo "has_tests=$has_tests" >> "$GITHUB_OUTPUT"
-          echo "### Daytona E2E plan: $count spec(s)" >> "$GITHUB_STEP_SUMMARY"
-          echo "$tests" | jq -r '.[] | "- `\(.)`"' >> "$GITHUB_STEP_SUMMARY"
+          node --test evals/scripts/journey-ci.test.mjs
+          node evals/scripts/plan-journeys.mjs
+      - name: Save selected coverage
+        if: steps.matrix.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: journey-plan
+          path: journey-plan/plan.json
+          retention-days: 14
 
   e2e:
     needs: plan
-    if: needs.plan.outputs.enabled == 'true' && needs.plan.outputs.has_tests == 'true'
-    name: E2E (${{ matrix.spec }})
+    if: needs.plan.outputs.has_daytona == 'true'
+    name: Journey — ${{ matrix.journey.name }}
     environment: ${{ github.event_name == 'workflow_run' && 'pr-slow-specs' || 'scheduled-e2e-regression' }}
     strategy:
       fail-fast: false
       max-parallel: 4
       matrix:
-        spec: ${{ fromJSON(needs.plan.outputs.tests) }}
+        journey: ${{ fromJSON(needs.plan.outputs.daytona) }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 45
     steps:
@@ -197,11 +173,13 @@ jobs:
           DAYTONA_API_KEY: ${{ secrets.DAYTONA_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           NIGHTLY_MODEL: ${{ vars.OPENWORK_EVAL_NIGHTLY_MODEL }}
-          SPEC_SLUG: ${{ matrix.spec }}
+          SPEC_SLUG: ${{ matrix.journey.spec }}
+          MODEL_KIND: ${{ matrix.journey.model }}
+          OPENWORK_EVAL_REF: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
         run: |
           set -euo pipefail
 
-          if [ "$SPEC_SLUG" = "org-team-lifecycle-critical-path.e2e.test.ts" ]; then
+          if [ "$MODEL_KIND" = "live" ]; then
             MODEL="${NIGHTLY_MODEL:-gpt-5.6-luna}"
           else
             MODEL="big-pickle"
@@ -215,6 +193,7 @@ jobs:
           exit "$cli_status"
 
       - name: Judge deferred vision claims
+        id: vision
         if: steps.run.outcome == 'success'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -222,29 +201,49 @@ jobs:
           set -euo pipefail
           pnpm --dir evals evidence:judge -- --test-run latest
 
-      - name: Upload E2E test artifacts
+      - name: Record journey outcome
+        if: always()
+        env:
+          SPEC_SLUG: ${{ matrix.journey.spec }}
+          JOURNEY_LOG: /tmp/daytona-e2e.log
+          EXECUTION: ${{ steps.run.outcome }}
+          VISION: ${{ steps.vision.outcome }}
+        run: node evals/scripts/journey-report.mjs record
+      - name: Upload journey evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: daytona-e2e-${{ strategy.job-index }}
-          path: evals/results/test-runs/
+          name: journey-evidence-${{ matrix.journey.spec }}
+          path: |
+            evals/results/test-runs/
+            /tmp/daytona-e2e.log
           retention-days: 14
-          if-no-files-found: ignore
+          if-no-files-found: warn
+      - name: Save journey result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: journey-result-${{ matrix.journey.spec }}
+          path: journey-result.json
+          retention-days: 14
+          if-no-files-found: warn
 
-  local-handoff:
-    # The profile-permission fault and restart must run beside Electron.
-    # Keep this one journey scheduled even though it cannot use Daytona.
-    if: >-
-      github.repository == 'different-ai/openwork' &&
-      (github.event_name == 'schedule' ||
-      (github.event_name == 'workflow_dispatch' &&
-      (inputs.only == '' || contains('cross-server-handoff-atomic-commit.e2e.test.ts', inputs.only))))
-    name: E2E local (cross-server-handoff-atomic-commit.e2e.test.ts)
+  local-journey:
+    needs: plan
+    if: needs.plan.outputs.has_local == 'true'
+    name: Journey — ${{ matrix.journey.name }}
+    environment: ${{ github.event_name == 'workflow_run' && 'pr-slow-specs' || 'scheduled-e2e-regression' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        journey: ${{ fromJSON(needs.plan.outputs.local) }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
           persist-credentials: false
       - uses: ./.github/actions/setup-tests
       - name: Prepare local Den and Electron
@@ -256,54 +255,77 @@ jobs:
           pnpm --filter @openwork-ee/den-db build
           pnpm --filter @openwork/email build
           pnpm dev:den:mysql
-      - name: Run local handoff journey
+      - name: Run user journey
+        id: run
+        env:
+          SPEC_SLUG: ${{ matrix.journey.spec }}
         run: |
           set -euo pipefail
           # Permission failures must be real; root would bypass the fault.
           test "$(id -u)" -ne 0
-          xvfb-run -a pnpm evals:e2e cross-server-handoff-atomic-commit.e2e.test.ts --local 2>&1 | tee /tmp/local-handoff-e2e.log
-      - name: Upload local handoff evidence
+          xvfb-run -a pnpm evals:e2e "$SPEC_SLUG" --local 2>&1 | tee /tmp/local-handoff-e2e.log
+      - name: Judge deferred vision claims
+        id: vision
+        if: steps.run.outcome == 'success'
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: pnpm --dir evals evidence:judge -- --test-run latest
+      - name: Record journey outcome
+        if: always()
+        env:
+          SPEC_SLUG: ${{ matrix.journey.spec }}
+          JOURNEY_LOG: /tmp/local-handoff-e2e.log
+          EXECUTION: ${{ steps.run.outcome }}
+          VISION: ${{ steps.vision.outcome }}
+        run: node evals/scripts/journey-report.mjs record
+      - name: Upload journey evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: local-handoff-e2e
+          name: journey-evidence-${{ matrix.journey.spec }}
           path: |
             evals/results/test-runs/
             /tmp/local-handoff-e2e.log
           retention-days: 14
           if-no-files-found: warn
+      - name: Save journey result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: journey-result-${{ matrix.journey.spec }}
+          path: journey-result.json
+          retention-days: 14
+          if-no-files-found: warn
 
   verdict:
-    needs:
-      - plan
-      - e2e
-      - local-handoff
-    if: always() && (needs.plan.outputs.enabled == 'true' || needs.local-handoff.result != 'skipped')
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    name: ${{ needs.plan.outputs.suite || 'Product journeys' }}
+    needs: [plan, e2e, local-journey]
+    if: always()
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Report Daytona E2E verdict
-        env:
-          E2E_RESULT: ${{ needs.e2e.result }}
-          LOCAL_HANDOFF_RESULT: ${{ needs.local-handoff.result }}
-          EVENT_NAME: ${{ github.event_name }}
-          HAS_TESTS: ${{ needs.plan.outputs.has_tests }}
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Download selected coverage
+        uses: actions/download-artifact@v4
+        with:
+          name: journey-plan
+          path: journey-plan
+      - name: Download outcomes
+        uses: actions/download-artifact@v4
+        with:
+          pattern: journey-result-*
+          path: journey-results
+      - name: Report verified coverage
         run: |
-          set -euo pipefail
-
-          echo "Local handoff E2E result: **$LOCAL_HANDOFF_RESULT**." >> "$GITHUB_STEP_SUMMARY"
-          if [ "$LOCAL_HANDOFF_RESULT" != "success" ] && [ "$LOCAL_HANDOFF_RESULT" != "skipped" ]; then
-            exit 1
-          fi
-          # A manual filter can select only the local journey.
-          if [ "$HAS_TESTS" != "true" ] && [ "$LOCAL_HANDOFF_RESULT" = "success" ]; then
-            exit 0
-          fi
-          if [ "$EVENT_NAME" = "workflow_run" ] && [ "$HAS_TESTS" != "true" ]; then
-            echo "Warden suggestion: add or update an evals/specs/<feature>.e2e.test.ts test for this PR." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          echo "Daytona E2E matrix result: **$E2E_RESULT**." >> "$GITHUB_STEP_SUMMARY"
-          if [ "$E2E_RESULT" != "success" ]; then
-            exit 1
-          fi
+          mkdir -p journey-results
+          node evals/scripts/journey-report.mjs
+      - name: Save readable report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: journey-report
+          path: journey-report.json
+          retention-days: 30
+          if-no-files-found: warn
