@@ -111,6 +111,14 @@ async function embeddedServerUrl(seed: Seed, app: Surface): Promise<string> {
   return stringField(info.baseUrl).replace(/\/+$/, "");
 }
 
+async function loginWitnessUrl(seed: Seed, app: Surface): Promise<string> {
+  return stringField(await seed.evalIn(
+    app,
+    "window.__OPENWORK_ELECTRON__.browserLogins.testWitnessUrl()",
+    { awaitPromise: true },
+  ));
+}
+
 async function withTabClient<T>(app: Surface, targetId: string, run: (client: CdpClient) => Promise<T>): Promise<T> {
   const target = (await listTargets(app.handle.cdpUrl)).find((candidate) => candidate.id === targetId);
   if (!target) throw new Error(`Built-in browser tab target ${targetId} is not listed by the app's CDP endpoint.`);
@@ -146,11 +154,6 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
   const workspace = await seed.workspace(app, seed.tmpPath("builtin-browser"));
   const session = await seed.session(app);
   const origin = await embeddedServerUrl(seed, app);
-  const loginWitnessOrigin = stringField(await seed.evalIn(
-    app,
-    "window.__OPENWORK_ELECTRON__.browserLogins.testWitnessUrl()",
-    { awaitPromise: true },
-  ));
 
   return {
     app,
@@ -209,7 +212,7 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
 
     /** Open a page that reports only whether an HttpOnly session cookie arrived. */
     async openLoginWitnessTab(name: string): Promise<BuiltinBrowserTab> {
-      const url = `${loginWitnessOrigin}/?login-probe=${encodeURIComponent(name)}`;
+      const url = `${await loginWitnessUrl(seed, app)}/?login-probe=${encodeURIComponent(name)}`;
       const result = await seed.evalIn(
         app,
         `window.__OPENWORK_ELECTRON__.browser.openUrl(${JSON.stringify(url)})`,
@@ -221,7 +224,7 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
 
     /** Open the value-free login witness from a conversation that is not on screen. */
     async openLoginWitnessTabAs(name: string, ownerSessionId: string): Promise<OpenedTab> {
-      const url = `${loginWitnessOrigin}/?login-probe=${encodeURIComponent(name)}`;
+      const url = `${await loginWitnessUrl(seed, app)}/?login-probe=${encodeURIComponent(name)}`;
       const result = await seed.evalIn(
         app,
         `window.__openworkControl.command(${JSON.stringify({
@@ -275,9 +278,6 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
 
     /** The page origin the built-in browser can always reach: the embedded OpenWork server. */
     origin,
-
-    /** Host used by the value-free HttpOnly login witness. */
-    loginWitnessHost: new URL(loginWitnessOrigin).hostname,
 
     /**
      * Seed a Firefox-shaped cookie store the import dialog can find, so the
@@ -442,13 +442,18 @@ export function builtinBrowserWorld(seed: Seed) {
   return createBuiltinBrowserWorld(seed);
 }
 
-export function browserLoginSyncWorld(seed: Seed) {
-  return createBuiltinBrowserWorld(seed, { OPENWORK_EVAL_BROWSER_LOGIN_SYNC: "1" });
+export async function browserLoginSyncWorld(seed: Seed) {
+  const world = await createBuiltinBrowserWorld(seed, { OPENWORK_EVAL_BROWSER_LOGIN_SYNC: "1" });
+  const loginWitnessOrigin = await loginWitnessUrl(seed, world.app);
+  return {
+    ...world,
+    /** Host used by the value-free HttpOnly login witness. */
+    loginWitnessHost: new URL(loginWitnessOrigin).hostname,
+  };
 }
 
-/** Persist a real user message with a link; no model turn or injected DOM. */
-export async function transcriptLinkWorld(seed: Seed) {
-  const world = await builtinBrowserWorld(seed);
+/** Add a persisted transcript link to an existing world without launching another desktop. */
+export async function transcriptLinkWorld(seed: Seed, world: Awaited<ReturnType<typeof builtinBrowserWorld>>) {
   const { app, workspace } = world;
   const reading = { ...world.session, title: "Reading a shared link" };
   await world.renameSession(reading.sessionId, reading.title);

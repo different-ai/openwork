@@ -3,7 +3,10 @@ import type { Target } from "@openwork/cdp";
 import { eventually, spec } from "@openwork/testkit";
 import { builtinBrowserWorld, transcriptLinkWorld } from "../worlds/browser-panel.ts";
 
-const test = spec.world(builtinBrowserWorld);
+const test = spec.world(async (seed) => {
+  const world = await builtinBrowserWorld(seed);
+  return { ...world, withTranscriptLink: () => transcriptLinkWorld(seed, world) };
+});
 
 // A user reads one conversation while another conversation's agent browses the
 // web. The browser tab belongs to the conversation whose agent opened it: it
@@ -117,9 +120,8 @@ test("a background conversation's agent browses silently and its page is waiting
   });
 });
 
-const linkTest = spec.world(transcriptLinkWorld);
-
-linkTest("a transcript link's menu copies its exact address and opens only its own conversation's browser", async ({ world, user, step }) => {
+test("a transcript link's menu copies its exact address and opens only its own conversation's browser", async ({ world: browserWorld, user, step }) => {
+  const world = await browserWorld.withTranscriptLink();
   const link: Target = { role: "link", label: world.linkUrl };
   const menuItem = (label: string): Target => ({ role: "menuitem", label });
   await user.see(link);
