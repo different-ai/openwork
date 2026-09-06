@@ -164,7 +164,7 @@ type ActiveTurn = {
 };
 
 /** How a turn is (re)sent: a fresh message, or the same message id run again after a failure, a stop, or a cut-off. */
-type TurnSend = { mode: "send" } | { mode: "retry"; attempt: number; switchedTo?: string };
+type TurnSend = { mode: "send" } | { mode: "retry"; attempt: number; switchedTo?: string; byPerson?: boolean };
 
 /** One quiet line's worth of history for a reply that ended without words, kept in the transcript. */
 function endedWithoutWords(message: TranscriptMessage): "stopped" | "failed" | null {
@@ -1340,7 +1340,9 @@ function ThreadView({
       appRetryTimerRef.current = window.setTimeout(() => {
         appRetryTimerRef.current = null;
         setAppRetry(null);
-        void submitTurn(prompt, messageId, { mode: "retry", attempt: attempt + 1 }, modelOverride, failedModels);
+        // A deferred admission keeps the selected model's receipt. It does not
+        // inherit permission to undo a later person-initiated cancellation.
+        void submitTurn(prompt, messageId, { mode: "retry", attempt: attempt + 1, ...(send.mode === "retry" && send.switchedTo ? { switchedTo: send.switchedTo } : {}) }, modelOverride, failedModels);
       }, delay);
       return true;
     };
@@ -1380,6 +1382,11 @@ function ThreadView({
         setFailure(stall.reason);
         return;
       }
+      // The execution owner may have stopped an exhausted allowance before a
+      // screen poll saw its retry state. Keep that reason, not the abort it caused.
+      const recorded = await coworkerBridge.turns.activity(coworker.slug, threadId).catch(() => []);
+      const ownedFailure = recorded.find((entry) => entry.messageId === messageId)?.failure;
+      if (ownedFailure) { message = ownedFailure; engineKnows = false; }
       if (await fallBack(message)) return;
       if (retryLater(message, retryable)) return;
       // The engine's own reply carries the words; only a failure it never saw needs remembering here.
@@ -1439,7 +1446,7 @@ function ThreadView({
         }
       }
       // A re-send waits for the engine to let go of the earlier attempt (a stop is still settling, say).
-      const acceptance: HeadlessTurnAcceptance = await coworkerBridge.turns.send({ slug: coworker.slug, threadId, kind, prompt, messageId, model: turnModel, retry: send.mode === "retry" });
+      const acceptance: HeadlessTurnAcceptance = await coworkerBridge.turns.send({ slug: coworker.slug, threadId, kind, prompt, messageId, model: turnModel, retry: send.mode === "retry", retryByPerson: send.mode === "retry" && send.byPerson === true, retryLabel: send.mode === "retry" ? send.switchedTo : undefined });
       // Keep the selected retry model when admission is confirmed. Its receipt
       // is displayed only once the correlated reply actually completes.
       if (send.mode === "retry" && send.switchedTo) setResolution({ messageId, note: `Retried with ${send.switchedTo}` });
@@ -1595,7 +1602,7 @@ function ThreadView({
     await untilTurnReleased();
     const turn = turnStateRef.current.pending;
     if (!turn) return;
-    void submitTurn(turn.prompt, turn.messageId, { mode: "retry", attempt: 0, ...(switched ? { switchedTo: switched.label } : {}) }, switched?.model);
+    void submitTurn(turn.prompt, turn.messageId, { mode: "retry", attempt: 0, byPerson: true, ...(switched ? { switchedTo: switched.label } : {}) }, switched?.model);
   }, [submitTurn, untilTurnReleased]);
 
   /** Switch this coworker to the recommended model and retry the failed message. */
@@ -1961,6 +1968,7 @@ function ThreadView({
         <div className="mx-auto max-w-3xl space-y-3">
           {freshDiscussion ? <QuietEmptyConversation coworker={coworker} proposerName={team?.coworkers.find((member) => member.slug === coworker.suggestedBy?.slug)?.name ?? ""} /> : null}
           {conversationBlocks(visibleMessages, (message, index) => working && message.role === "assistant" && index === lastAssistantIndex).map((block) => {
+            const retriedWith = block.kind === "message" ? executions.find((entry) => entry.messageId === block.message.id)?.retryLabel : undefined;
             if (block.kind === "actions") {
                return <ActionLine key={block.id} review={block.review} calls={block.calls} client={mcpClient} />;
             }
@@ -1991,7 +1999,7 @@ function ThreadView({
                    liveStream={block.active && block.message.id === correlatedStream?.messageId && phase === "writing" ? correlatedStream : null}
                   sentAt={block.message.role === "assistant" ? visibleMessages.find((entry) => entry.id === block.message.parentId)?.createdAt ?? null : null}
                 />
-                {resolution && block.message.id === resolution.messageId && replyStateFor(visibleMessages, resolution.messageId).state === "complete" ? <QuietLine outcome="retried" text={resolution.note} /> : null}
+                {retriedWith ? <QuietLine outcome="retried" text={`Retried with ${safeWorkLabel(retriedWith, "the selected model")}`} /> : resolution && block.message.id === resolution.messageId && replyStateFor(visibleMessages, resolution.messageId).state === "complete" ? <QuietLine outcome="retried" text={resolution.note} /> : null}
               </Fragment>
             );
           })}

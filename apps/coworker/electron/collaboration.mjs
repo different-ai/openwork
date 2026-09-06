@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { isRunning, toTranscript } from "@openwork/headless-threads";
+import { stalledRetry } from "../src/lib/threads.ts";
 
 const terminal = new Set(["succeeded", "failed", "cancelled"]);
 const text = (value, max = 4000) => typeof value === "string" ? value.trim().slice(0, max) : "";
@@ -30,6 +31,7 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
   const active = new Map();
   const dispatching = new Map();
   const cancelIntents = new Set();
+  const cancelVersions = new Map();
   let pumpFailures = 0;
   let serviceError = "";
   let loading;
@@ -205,6 +207,8 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
           if (result.outcome === "aborted") throw controller.signal.reason ?? new Error("Stopped.");
           if (result.outcome === "failed") throw new Error(result.terminalError?.message || "The reply failed.");
           if (result.outcome === "settled") break;
+          const stalled = snapshot.status.type === "retry" ? stalledRetry(snapshot.status, now()) : null;
+          if (stalled) throw new Error(stalled);
           if (entry.owner.kind !== "private" && entry.owner.kind !== "assignment") {
             const pending = await withAbort(Promise.resolve(client.pendingInteractions?.(entry.owner.threadId, controller.signal)), AbortSignal.any([controller.signal, AbortSignal.timeout(setupTimeoutMs)]));
             if (pending) throw new Error("This coworker needs your permission or an answer. The step was stopped safely. Give the needed instruction in the conversation and ask again.");
@@ -389,26 +393,38 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
         return selected.slice(0, limit).map((entry) => {
           const task = state.tasks[entry.taskId];
           const pending = (task?.dependencies ?? []).map((id) => state.tasks[id]).filter((child) => child && !terminal.has(child.state));
-          return { executionId: entry.id, messageId: entry.messageId, threadId: entry.owner.threadId, slug: entry.owner.slug, state: entry.state, startedAt: entry.sentAt, completedAt: entry.endedAt, continuation: entry.continuation, pendingCoworkers: pending.filter((child) => child.kind === "consultation").length, pendingWorkers: pending.filter((child) => child.kind === "worker").length };
+           return { executionId: entry.id, messageId: entry.messageId, threadId: entry.owner.threadId, slug: entry.owner.slug, state: entry.state, startedAt: entry.sentAt, completedAt: entry.endedAt, continuation: entry.continuation, failure: entry.state === "failed" ? entry.error : "", retryLabel: entry.state === "succeeded" ? entry.retryLabel ?? "" : "", pendingCoworkers: pending.filter((child) => child.kind === "consultation").length, pendingWorkers: pending.filter((child) => child.kind === "worker").length };
         });
       });
     },
     async excludedThreads(slug) { return read((state) => Object.values(state.owners).filter((owner) => owner.slug === slug && !["private", "assignment"].includes(owner.kind)).map((owner) => owner.threadId)); },
     async submit(input) {
       if (closed || serviceError) throw new Error(serviceError || "The collaboration service is closing.");
+      const requestedId = input.id ?? collaborationId(input.owner.slug, input.owner.threadId, input.messageId);
+      const before = input.retry ? await read((state) => state.executions[requestedId]) : null;
+      const cancelVersion = before ? cancelVersions.get(before.taskId) ?? 0 : 0;
+      const stopping = before && active.get(threadKey(before.owner));
+      // An explicit retry can arrive while the previous observer is unwinding.
+      // Await that owned release, rather than turning admission into a model error.
+      if (stopping?.id === requestedId) await withAbort(stopping.done, AbortSignal.timeout(setupTimeoutMs));
       const entry = await change((state) => {
+        if (before && (cancelVersions.get(before.taskId) ?? 0) !== cancelVersion) throw new Error("The retry was cancelled before admission.");
         if (input.groupRequestId && state.groups[input.owner.groupId]?.cancelledRequestIds?.includes(input.groupRequestId)) throw new Error("This group turn was stopped.");
         const id = input.id ?? collaborationId(input.owner.slug, input.owner.threadId, input.messageId);
         const previous = state.executions[id];
         if (previous && input.retry) {
           const task = state.tasks[previous.taskId];
-          if (cancelled(state, task) || cancelIntents.has(id)) throw new Error("This task was cancelled. Start a new request rather than resuming cancelled work.");
+          const stopped = cancelled(state, task) || cancelIntents.has(id);
+          if (stopped && (input.retryByPerson !== true || task.dependencies.length || task.parentId || !["private", "assignment"].includes(previous.owner.kind))) throw new Error("This task was cancelled. Start a new request rather than resuming cancelled work.");
           if (task.dependencies.length) throw new Error("This turn already delegated work. Use its collaboration receipt to continue without repeating completed actions.");
           if (active.has(threadKey(previous.owner))) throw new Error("The earlier step is still stopping. Try again once it settles.");
           if (!terminal.has(previous.state)) return previous;
           if ((previous.attempts ?? 0) >= 3) throw new Error("This turn reached its retry limit. Review the earlier work and send a new request.");
           previous.previousAttempts = [...(previous.previousAttempts ?? []), { state: previous.state, error: previous.error, endedAt: previous.endedAt }];
-          Object.assign(previous, { state: "queued", retry: true, acceptance: null, deadline: null, sentAt: null, error: "", attempts: (previous.attempts ?? 0) + 1, ...(input.model ? { model: input.model } : {}) });
+          // Only a new, explicit person action can retry a stopped, dependency-free
+          // turn. run() still refuses to replay any earlier tool-bearing attempt.
+          if (stopped) { task.cancelRequested = false; cancelIntents.delete(task.id); cancelIntents.delete(id); }
+          Object.assign(previous, { state: "queued", retry: true, retryLabel: text(input.retryLabel, 100) || previous.retryLabel || "", acceptance: null, deadline: null, sentAt: null, error: "", attempts: (previous.attempts ?? 0) + 1, ...(input.model ? { model: input.model } : {}) });
           task.state = "running";
           task.error = "";
           return previous;
@@ -527,6 +543,8 @@ export function createCollaboration({ directory, clientFor, consult, spawn, canc
     },
     async cancel(id) {
       cancelIntents.add(id);
+      const cancelledTaskId = data?.executions[id]?.taskId ?? id;
+      cancelVersions.set(cancelledTaskId, (cancelVersions.get(cancelledTaskId) ?? 0) + 1);
       if (data) {
         const taskId = data.executions[id]?.taskId;
         if (taskId) cancelIntents.add(taskId);

@@ -1941,9 +1941,9 @@ const commands = {
   "turns.state": async ({ slug, threadId }) => { await getCoworker(coworkersDir, slug); return collaboration.threadState(slug, threadId); },
   "turns.activity": async ({ slug, threadId }) => readCollaborationActivity({ slug, threadId }),
   "turns.update": async ({ slug, threadId, previous, next }) => { await getCoworker(coworkersDir, slug); return collaboration.updateThread(slug, threadId, previous, next); },
-  "turns.send": async ({ slug, threadId, prompt, messageId, model, retry, kind }) => {
+  "turns.send": async ({ slug, threadId, prompt, messageId, model, retry, retryByPerson, retryLabel, kind }) => {
     const owner = await privateOwner(slug, threadId, kind === "assignment" ? "assignment" : "private");
-    const entry = await collaboration.submit({ owner, prompt, messageId, model, retry, track: true });
+    const entry = await collaboration.submit({ owner, prompt, messageId, model, retry, retryByPerson: retryByPerson === true, retryLabel, track: true });
     return collaboration.acceptance(entry.id);
   },
   "turns.cancel": async ({ slug, threadId, messageId }) => { await collaboration.cancelThread(slug, threadId, messageId); return { ok: true }; },

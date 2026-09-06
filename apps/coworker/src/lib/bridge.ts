@@ -395,7 +395,7 @@ export const coworkerBridge = {
     activity: (slug: string, threadId: string) => invoke<ExecutionActivity[]>("turns.activity", { slug, threadId }),
     state: (slug: string, threadId: string) => invoke<ThreadTurnState>("turns.state", { slug, threadId }),
     update: (slug: string, threadId: string, previous: ThreadTurnState, next: ThreadTurnState) => invoke<ThreadTurnState>("turns.update", { slug, threadId, previous, next }),
-    send: (input: { slug: string; threadId: string; prompt: string; messageId: string; model?: HeadlessThreadModel; retry?: boolean; kind: "discussion" | "assignment" | "worker" }) => invoke<HeadlessTurnAcceptance>("turns.send", input),
+    send: (input: { slug: string; threadId: string; prompt: string; messageId: string; model?: HeadlessThreadModel; retry?: boolean; retryByPerson?: boolean; retryLabel?: string; kind: "discussion" | "assignment" | "worker" }) => invoke<HeadlessTurnAcceptance>("turns.send", input),
     cancel: (slug: string, threadId: string, messageId?: string) => invoke<{ ok: boolean }>("turns.cancel", { slug, threadId, messageId }),
   },
   templates: {

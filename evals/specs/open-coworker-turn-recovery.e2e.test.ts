@@ -485,10 +485,14 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   await evalIn(app, `document.querySelector('[data-testid="coworker-turn-choice"][data-choice="use-model"]').click(); true`);
   await waitForReply(app, SECOND_MODEL_REPLY, 120_000);
   // The turn settles a moment after its reply shows: the bubble goes, one receipt line stays.
-  expect(await waitFor(app, `(() => {
+  const retryReceipt = await waitFor(app, `(() => {
     const lines = [...document.querySelectorAll('[data-testid="coworker-turn-line"][data-outcome="retried"]')].map((line) => line.textContent?.trim());
     return lines.length > 0 && document.querySelectorAll('[data-testid="coworker-turn-failed"]').length === 0 ? lines : false;
-  })()`, { timeoutMs: 30_000, label: "the Retried with line" })).toEqual([`Retried with ${SECOND_MODEL_LABEL}`]);
+  })()`, { timeoutMs: 30_000, label: "the Retried with line" }).catch(async (error) => {
+    const activity = await invokeCoworker(app, "turns.activity", { slug: "nova", threadId: await threadIdOf() });
+    throw new Error(`${String(error)}\nRecorded retry activity: ${JSON.stringify(activity)}\n${await describeThread(app, serverUrl, ownerToken, workspaceId, await threadIdOf(), scripted)}`);
+  });
+  expect(retryReceipt).toEqual([`Retried with ${SECOND_MODEL_LABEL}`]);
   const hardTrace = await endOutcomeTrace(app);
   expect(hardTrace.outcomes).toContain("failed");
   const hardBubbles = await evalIn(app, USER_BUBBLES);
@@ -624,19 +628,18 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   })()`, { timeoutMs: 30_000, label: "the words streaming into a live bubble" });
   expect(liveBubble).toMatchObject({ text: SLOW_OPENING, typingRow: false, header: "Working" });
   const slowRow = await waitFor(app, `(() => {
-    const row = document.querySelector('[data-testid="coworker-working"][data-outcome="slow"]');
-    if (!row) return false;
+    if (document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() !== "Still working") return false;
     return {
-      phrase: row.querySelector('[data-testid="coworker-still-working"] > span')?.textContent?.trim() ?? "",
-      stop: Boolean(row.querySelector('[data-testid="coworker-turn-choice"][data-choice="stop"]')),
+      typingRow: Boolean(document.querySelector('[data-testid="coworker-typing"]')),
+      stop: Boolean(document.querySelector('[data-testid="coworker-send"][data-role="stop"]')),
       liveBubble: (document.querySelector('[data-testid="coworker-live-bubble"]')?.textContent ?? "").includes(${json(SLOW_OPENING)}),
       header: document.querySelector('[data-testid="coworker-top-status"]')?.textContent?.trim() ?? "",
       threadStatus: document.querySelector('[data-testid="coworker-thread-status"]')?.textContent?.trim() ?? "",
       rail: document.querySelector('[data-testid="coworker-rail-line"]')?.textContent?.trim() ?? "",
       failed: document.querySelectorAll('[data-testid="coworker-turn-failed"], [data-testid="coworker-turn-timeout"], [data-testid="coworker-turn-line"][data-outcome="failed"]').length,
     };
-  })()`, { timeoutMs: SLOW_HOLD_MS + 30_000, label: "the live row softened past the wait budget" });
-  expect(slowRow).toEqual({ phrase: "Nova is still working on it…", stop: true, liveBubble: true, header: "Still working", threadStatus: "Still working", rail: "Still working on it", failed: 0 });
+  })()`, { timeoutMs: SLOW_HOLD_MS + 30_000, label: "long streaming keeps Stop without a duplicate typing indicator" });
+  expect(slowRow).toEqual({ typingRow: false, stop: true, liveBubble: true, header: "Still working", threadStatus: "Still working", rail: "Still working on it", failed: 0 });
   await waitForReply(app, SLOW_REPLY, 60_000);
   const slowTrace = await endOutcomeTrace(app);
   expect(slowTrace.outcomes).toContain("slow");
@@ -645,7 +648,7 @@ test.skipIf(!enabled)(title, { timeout: 900_000 }, async ({ evidence }) => {
   expect(slowTrace.headers).not.toContain("Reply failed");
   evidence.recordAssertionEvidence(
     "Two minutes without a reply is still working, in the same words everywhere, the words that did arrive are already in a bubble, and the reply then lands",
-    `The scripted model sent its first words and then held the rest for ${SLOW_HOLD_MS / 1_000} s. The words that had arrived ("${SLOW_OPENING}") were already in a live bubble with the header on Working and no typing row. Past the wait budget the live row read "Nova is still working on it…" with one inline Stop, the header and thread status said Still working and the rail "Still working on it", nothing rose or card-shaped appeared, and the reply arrived afterwards.`,
+    `The scripted model sent its first words and then held the rest for ${SLOW_HOLD_MS / 1_000} s. Those words stayed in the live bubble with no duplicate typing indicator. Past the wait budget the composer still offered Stop, the header and thread status said Still working and the rail "Still working on it", no failure appeared, and the reply arrived afterwards.`,
     true,
   );
 

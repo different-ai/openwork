@@ -12,6 +12,8 @@ export type ExecutionActivity = {
   startedAt: number | null;
   completedAt: number | null;
   continuation: boolean;
+  retryLabel?: string;
+  failure?: string;
   pendingCoworkers: number;
   pendingWorkers: number;
   available: boolean;
