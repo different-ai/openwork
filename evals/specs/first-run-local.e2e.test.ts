@@ -5,10 +5,26 @@ import { bareFirstRunWorld } from "../worlds/first-run.ts";
 const test = spec.world(bareFirstRunWorld);
 const prompt = "Create a short welcome checklist for this OpenWork workspace. Use exactly three bullets and mention one thing I can do next.";
 
-test("first use without an invite or cloud reaches local task UI with honest model setup", async ({ world, user, probe, step }) => {
+test("first use without an invite or cloud reaches local task UI with honest model setup", async ({ world, user, probe, step, evidence }) => {
   await step("Welcome", async () => {
     await user.see({ text: "Welcome to OpenWork" });
     await user.see("Use Without Cloud");
+    await user.see({ text: "Your first useful task" });
+    await user.see({ text: "Work with your files" });
+    await user.see({ text: "Reuse skills" });
+    await user.see({ text: "Connect your tools" });
+    await user.see({ text: "No OpenWork account needed. Choose a folder, set up a model, then describe your first task." });
+    await user.see({ text: "Add MCP connections in your workspace to bring other apps into your tasks. Some tools need their own sign-in." });
+    await user.see({ testId: "welcome-team-signin" });
+    await user.see({ testId: "welcome-join-org" });
+    expect(await probe.eval(`(() => {
+      const local = document.querySelector('[data-testid="welcome-use-without-cloud"]');
+      const cloud = document.querySelector('[data-testid="welcome-team-signin"]');
+      return Boolean(local && cloud && (local.compareDocumentPosition(cloud) & Node.DOCUMENT_POSITION_FOLLOWING));
+    })()`)).toBe(true);
+    await user.notSee({ text: "Run task" });
+    await user.screenshot();
+    evidence.recordAssertionEvidence("First launch explains files, skills, and MCP connections before setup, with local setup first and cloud entry still available", "All three capabilities and model/account requirements are visible; the local action precedes cloud sign-in in reading order, both cloud routes remain visible, and no task can run on the welcome screen.", true);
     await user.notSee({ text: /Something went wrong/ });
   });
 
@@ -17,6 +33,8 @@ test("first use without an invite or cloud reaches local task UI with honest mod
     await user.type({ placeholder: "/workspace/my-project" }, world.workspacePath);
     await user.click("Use this folder");
     await user.see({ text: "Power your first task" }, { timeoutMs: 120_000 });
+    await user.notSee({ text: "Your first useful task" });
+    evidence.recordAssertionEvidence("Use Without Cloud reaches model setup using the selected local folder", "The existing folder picker accepted the test workspace and opened Power your first task without requesting OpenWork sign-in.", true);
   });
 
   await step("Finish onboarding", async () => {

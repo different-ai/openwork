@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { useEffect } from "react";
-import { Dithering } from "@paper-design/shaders-react";
-import { OnboardingIntro } from "@openwork/ui/react";
+import { FileTextIcon, LayersIcon, PlugIcon } from "lucide-react";
+import { OnboardingIntro, OnboardingResourceRow } from "@openwork/ui/react";
 
 import { t } from "../../../i18n";
 import { useBootState } from "../../shell/boot-state";
@@ -56,25 +56,8 @@ export function WelcomePage({
 
       <ScrollArea className="relative z-10">
         <ScrollAreaViewport>
-          <div className="relative flex min-h-dvh items-center justify-center px-6 py-16">
-            {/* Paper first-load spec: subtle black pixel-dither mosaic over a
-                near-white ground. `dark:invert` flips the pixels to white so
-                the texture survives dark mode. */}
-            <div className="pointer-events-none absolute inset-0 overflow-hidden opacity-[0.1] dark:invert">
-              <Dithering
-                className="size-full"
-                speed={0.01}
-                shape="warp"
-                type="2x2"
-                size={20.3}
-                scale={1.19}
-                frame={264559.21}
-                colorBack="#00000000"
-                colorFront="#000000"
-              />
-            </div>
-
-            <div className="relative z-10 w-full max-w-[720px] rounded-3xl border border-border bg-background px-8 pb-12 pt-10 sm:px-16 sm:pb-16 sm:pt-14">
+          <div className="mx-auto flex min-h-dvh w-full max-w-5xl flex-col justify-center px-6 py-16 sm:px-10">
+            <div className="mb-10">
               <div className="flex items-center gap-2.5">
                 <img
                   src={resolveExtensionIconSrc("/openwork-mark.svg")}
@@ -88,32 +71,43 @@ export function WelcomePage({
                   {appName}
                 </span>
               </div>
+            </div>
 
-              <OnboardingIntro
-                className="mt-10 sm:mt-14"
-                title={t("welcome.title")}
-                description={t("welcome.subtitle")}
-              />
+            <div className="grid items-start gap-10 md:grid-cols-[1.2fr_1fr] md:gap-14">
+              <section aria-label="What you can do">
+                <OnboardingIntro
+                  eyebrow="Your first useful task"
+                  title={t("welcome.title")}
+                  description="Turn your files and connected tools into work you can review and refine."
+                />
+                <div className="mt-7">
+                  <OnboardingResourceRow
+                    icon={<FileTextIcon className="size-4" />}
+                    title="Work with your files"
+                    description="Choose a folder, then ask for a brief, a checklist, or changes to a document."
+                  />
+                  <OnboardingResourceRow
+                    icon={<LayersIcon className="size-4" />}
+                    title="Reuse skills"
+                    description="Skills give the AI repeatable instructions. Discover available skills in the task composer."
+                  />
+                  <OnboardingResourceRow
+                    icon={<PlugIcon className="size-4" />}
+                    title="Connect your tools"
+                    description="Add MCP connections in your workspace to bring other apps into your tasks. Some tools need their own sign-in."
+                  />
+                </div>
+              </section>
 
-              <div className="mt-11 flex flex-col gap-3">
-                {onTeamSignIn ? (
-                  <Button
-                    type="button"
-                    size="lg"
-                    className="h-12 w-full text-[15px] font-semibold"
-                    onClick={onTeamSignIn}
-                    disabled={busy}
-                    data-testid="welcome-team-signin"
-                  >
-                    {t("welcome.sign_in_cloud")}
-                  </Button>
-                ) : null}
-
+              <section aria-label="Get started" className="rounded-2xl border border-border bg-card p-6">
+                <h2 className="text-base font-semibold text-foreground">Start with a folder</h2>
+                <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                  No OpenWork account needed. Choose a folder, set up a model, then describe your first task.
+                </p>
                 <Button
                   type="button"
                   size="lg"
-                  variant={onTeamSignIn ? "outline" : "default"}
-                  className="h-12 w-full text-[15px] font-medium"
+                  className="mt-5 h-12 w-full text-[15px] font-semibold"
                   onClick={onGetStarted}
                   disabled={busy}
                   data-testid="welcome-use-without-cloud"
@@ -122,12 +116,35 @@ export function WelcomePage({
                     ? t("welcome.creating_workspace")
                     : (getStartedLabel || t("welcome.use_without_cloud"))}
                 </Button>
+                <p className="mt-3 text-xs leading-5 text-muted-foreground">
+                  You choose the model provider. Review the result, ask follow-up questions, and refine it in the same task.
+                </p>
+
+                {onTeamSignIn ? (
+                  <div className="mt-6 border-t border-border pt-5">
+                    <p className="mb-3 text-sm leading-6 text-muted-foreground">
+                      Already using OpenWork Cloud? Sign in for your team’s shared tools and model access.
+                    </p>
+                    <Button
+                      type="button"
+                      size="lg"
+                      variant="outline"
+                      className="h-12 w-full text-[15px] font-medium"
+                      onClick={onTeamSignIn}
+                      disabled={busy}
+                      data-testid="welcome-team-signin"
+                    >
+                      {t("welcome.sign_in_cloud")}
+                    </Button>
+                  </div>
+                ) : null}
 
                 <div className="pt-2">
                   <button
                     type="button"
                     className="w-full rounded-lg px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
                     onClick={onJoinOrganization}
+                    disabled={busy}
                     data-testid="welcome-join-org"
                   >
                     <span className="font-medium text-foreground/90">
@@ -164,7 +181,7 @@ export function WelcomePage({
                     </Button>
                   </div>
                 ) : null}
-              </div>
+              </section>
             </div>
           </div>
         </ScrollAreaViewport>
