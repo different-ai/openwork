@@ -3,7 +3,6 @@ import { Globe } from "lucide-react";
 
 import type { BrowserLoginSite, BrowserLoginSyncState } from "@/app/lib/desktop";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
 
 import { SettingsNotice, SettingsSection, SettingsStatusBadge } from "../settings/settings-section";
 import {
@@ -11,7 +10,6 @@ import {
   LayoutSectionItemContent,
   LayoutSectionItemDescription,
   LayoutSectionItemHeader,
-  LayoutSectionItemHeaderActions,
   LayoutSectionItemTitle,
 } from "../settings/settings-layout";
 import { LoginSyncDialog } from "./login-sync-dialog";
@@ -100,26 +98,12 @@ export function BrowserLoginsPanel() {
           <LayoutSectionItemDescription>
             Keep selected sites signed in by reading one browser profile. OpenWork never changes the source browser, and sync starts only after you choose sites and enable it.
           </LayoutSectionItemDescription>
-          {!loginSync.managedByOrg ? (
-            <LayoutSectionItemHeaderActions>
-              <Switch
-                checked={loginSync.localAllowed}
-                onCheckedChange={(checked) => loginSync.setLocalAllowed(checked === true)}
-                aria-label="Make browser login sync available"
-                data-testid="login-sync-permission-switch"
-              />
-            </LayoutSectionItemHeaderActions>
-          ) : null}
         </LayoutSectionItemHeader>
         <LayoutSectionItemContent className="gap-3">
           <SettingsNotice>
             {loginSync.managedByOrg
-              ? loginSync.policyAllowed
-                ? "Organization permission: available. You still choose a profile and sites, then explicitly enable continuing reads."
-                : "Organization permission: unavailable. No browser login data is read."
-              : loginSync.localAllowed
-                ? "Local permission: available. Nothing is read until you choose a profile and sites, then enable sync."
-                : "Local permission: off. Turn it on to make setup available; this alone will not start sync."}
+              ? "Browser login sync is not yet available on organization-managed Desktop. No browser login data is read."
+              : "Nothing is read until you choose a profile and exact sites, then confirm continuing sync."}
           </SettingsNotice>
 
           {error ? <SettingsNotice tone="error">{error}</SettingsNotice> : null}

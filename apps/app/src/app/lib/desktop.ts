@@ -105,7 +105,7 @@ export type BrowserLoginSyncResult = {
 };
 
 export type BrowserLoginSyncBridge = {
-  setPolicyAllowed: (allowed: boolean) => Promise<BrowserLoginSyncState>;
+  disableForManagedContext: () => Promise<BrowserLoginSyncState>;
   sources: () => Promise<BrowserLoginSources>;
   preview: (request: { sourceId: string }) => Promise<BrowserLoginPreview>;
   configure: (request: { previewId: string; sites: string[] }) => Promise<BrowserLoginSyncResult>;

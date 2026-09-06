@@ -200,7 +200,7 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     },
   },
   browserLogins: {
-    setPolicyAllowed(allowed) { return ipcRenderer.invoke("openwork:browser-logins:setPolicyAllowed", allowed); },
+    disableForManagedContext() { return ipcRenderer.invoke("openwork:browser-logins:disableForManagedContext"); },
     sources() { return ipcRenderer.invoke("openwork:browser-logins:sources"); },
     preview(request) { return ipcRenderer.invoke("openwork:browser-logins:preview", request); },
     configure(request) { return ipcRenderer.invoke("openwork:browser-logins:configure", request); },

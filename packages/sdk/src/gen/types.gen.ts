@@ -367,7 +367,6 @@ export type CurrentUserDesktopConfigResponse = {
   allowControlSettings?: boolean;
   allowManageExtensions?: boolean;
   allowBuiltInExtensions?: boolean;
-  allowBrowserLoginSync?: boolean;
   allowAlphaUpdates?: boolean;
   showWelcomePage?: boolean;
   execution?: {
@@ -862,7 +861,6 @@ export type DenDesktopPolicyValue = {
   allowControlSettings?: boolean;
   allowManageExtensions?: boolean;
   allowBuiltInExtensions?: boolean;
-  allowBrowserLoginSync?: boolean;
   allowAlphaUpdates?: boolean;
   showWelcomePage?: boolean;
 };
@@ -874,7 +872,6 @@ export type DenDesktopPolicyDocumentWrite = {
   allowControlSettings?: boolean;
   allowManageExtensions?: boolean;
   allowBuiltInExtensions?: boolean;
-  allowBrowserLoginSync?: boolean;
   allowAlphaUpdates?: boolean;
   showWelcomePage?: boolean;
   access?: {

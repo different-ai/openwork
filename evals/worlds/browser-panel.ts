@@ -320,21 +320,6 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
       return result.map(String);
     },
 
-    /** Ask the desktop to preview a discovered source; used to prove the policy gate refuses. */
-    async previewLoginStore(sourceId: string): Promise<{ ok: boolean; error: string | null; sites: string[] }> {
-      const result = await seed.evalIn(
-        app,
-        `window.__OPENWORK_ELECTRON__.browserLogins.preview(${JSON.stringify({ sourceId })})
-          .then((preview) => ({ ok: true, error: null, sites: preview.sites.map((site) => site.site) }))
-          .catch((error) => ({ ok: false, error: String(error && error.message || error), sites: [] }))`,
-        { awaitPromise: true, timeoutMs: 30_000 },
-      );
-      if (!isRecord(result) || typeof result.ok !== "boolean" || !Array.isArray(result.sites)) {
-        throw new Error("The desktop bridge did not answer the login preview.");
-      }
-      return { ok: result.ok, error: typeof result.error === "string" ? result.error : null, sites: result.sites.map(String) };
-    },
-
     /** Sites the built-in browser is signed in to, as Settings shows them. */
     async signedInSites(): Promise<string[]> {
       const result = await seed.evalIn(app, "window.__OPENWORK_ELECTRON__.browserLogins.signedInSites()", { awaitPromise: true });

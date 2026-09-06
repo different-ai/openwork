@@ -85,7 +85,7 @@ function setup({ pollIntervalMs = 0, watchSource = null } = {}) {
   let sourceRows = [
     { originAttributes: "", name: "sid", value: "first-secret", host: ".example.com", path: "/", expiry: nowSeconds + 3600, lastAccessed: (nowSeconds - 10) * 1e6, isSecure: 1, isHttpOnly: 1, sameSite: 1 },
     { originAttributes: "", name: "theme", value: "dark", host: "app.example.com", path: "/", expiry: nowSeconds + 3600, lastAccessed: 0, isSecure: 0, isHttpOnly: 0, sameSite: 0 },
-    { originAttributes: "", name: "auth", value: "bank-secret", host: ".chase.com", path: "/", expiry: nowSeconds + 3600, lastAccessed: (nowSeconds - 20) * 1e6, isSecure: 1, isHttpOnly: 1, sameSite: 2 },
+    { originAttributes: "", name: "auth", value: "bank-secret", host: ".bank.example", path: "/", expiry: nowSeconds + 3600, lastAccessed: (nowSeconds - 20) * 1e6, isSecure: 1, isHttpOnly: 1, sameSite: 2 },
   ];
   let failRead = false;
   let confirmationAllowed = true;
@@ -144,8 +144,8 @@ async function configureExample(logins) {
 
 test("policy permission does not read or configure a source", async () => {
   const { logins, confirmations, queries } = setup();
-  await assert.rejects(logins.listSources(), /turned off/);
-  await assert.rejects(logins.preview({ sourceId: "firefox:chosen" }), /turned off/);
+  await assert.rejects(logins.listSources(), /unavailable/);
+  await assert.rejects(logins.preview({ sourceId: "firefox:chosen" }), /unavailable/);
   assert.deepEqual(await logins.getState(), {
     policyAllowed: false,
     configured: false,
@@ -183,7 +183,7 @@ test("setup exposes no values, keeps sensitive sites unchecked, and reads values
 
   assert.deepEqual(preview.sites.map((site) => [site.site, site.category, site.preselected]), [
     ["example.com", "ordinary", true],
-    ["chase.com", "finance", false],
+    ["bank.example", "finance", false],
   ]);
   assert.equal(JSON.stringify(preview).includes("first-secret"), false);
   const previewSelect = queries.find((entry) => entry.sql.startsWith("SELECT host, name, path"));
@@ -222,7 +222,7 @@ test("sync updates and removes managed source cookies without touching unselecte
   assert.deepEqual(await fixture.logins.syncNow(), { sites: [{ site: "example.com", synced: 0, failed: 0, removed: 1 }] });
   assert.deepEqual(await fixture.browserSession.cookies.get(), []);
   assert.equal(readFileSync(fixture.cookiesPath, "utf8"), unchangedSource);
-  assert.equal(fixture.rows().some((row) => row.host === ".chase.com"), true, "the unselected source site stays untouched");
+  assert.equal(fixture.rows().some((row) => row.host === ".bank.example"), true, "the unselected source site stays untouched");
   fixture.logins.shutdown();
 });
 
@@ -281,7 +281,7 @@ test("policy revocation stops reads but preserves copied state until the user fo
   assert.equal(blocked.status, "policy_off");
   assert.equal(blocked.active, false);
   assert.equal((await fixture.browserSession.cookies.get()).length, 1);
-  await assert.rejects(fixture.logins.syncNow(), /turned off/);
+  await assert.rejects(fixture.logins.syncNow(), /unavailable/);
   assert.equal((await fixture.browserSession.cookies.get()).length, 1);
   const reallowed = await fixture.logins.setPolicyAllowed(true);
   assert.equal(reallowed.active, false, "policy restoration cannot silently restart a revoked sync");

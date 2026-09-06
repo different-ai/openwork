@@ -38,7 +38,6 @@ describe("restricted desktop policy mode", () => {
       allowControlSettings: false,
       allowManageExtensions: false,
       allowBuiltInExtensions: false,
-      allowBrowserLoginSync: false,
       allowAlphaUpdates: false,
       showWelcomePage: true,
     });
@@ -51,8 +50,6 @@ describe("restricted desktop policy mode", () => {
     for (const definition of desktopPolicyDefinitions) {
       expect([true, false, null]).toContain(definition.restrictedValue);
     }
-    expect(desktopPolicyDefaults.allowBrowserLoginSync).toBe(false);
-    expect(calculateEffectiveDesktopPolicy({ orgPolicyCount: 0, assignedPolicies: [] }).allowBrowserLoginSync).toBe(false);
   });
 
   test("derives the mode from saved values", () => {

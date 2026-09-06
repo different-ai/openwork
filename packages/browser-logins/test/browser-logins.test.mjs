@@ -54,7 +54,7 @@ describe("sites", () => {
   });
 
   test("finance, email, and identity sites are recognised and stay unchecked", () => {
-    expect(classifySite("chase.com")).toBe("finance");
+    expect(classifySite("bank.example")).toBe("finance");
     expect(classifySite("mybank.example")).toBe("finance");
     expect(classifySite("proton.me")).toBe("email");
     expect(classifySite("okta.com")).toBe("identity");
@@ -77,10 +77,10 @@ describe("sites", () => {
       cookie({ host: "app.example.com", name: "theme", httpOnly: false, secure: false }),
       cookie({ host: ".adnetwork.test", name: "uid", httpOnly: false }),
       cookie({ host: ".old.test", name: "sid", expiresAt: nowSeconds - 5 }),
-      cookie({ host: ".chase.com", name: "auth", lastAccessedAt: nowSeconds - 5000 }),
+      cookie({ host: ".bank.example", name: "auth", lastAccessedAt: nowSeconds - 5000 }),
     ], { now: NOW });
 
-    expect(sites.map((site) => site.site)).toEqual(["example.com", "chase.com"]);
+    expect(sites.map((site) => site.site)).toEqual(["example.com", "bank.example"]);
     expect(sites[0]).toMatchObject({
       hosts: ["app.example.com", "example.com"],
       cookieCount: 2,

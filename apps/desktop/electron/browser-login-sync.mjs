@@ -38,7 +38,7 @@ const require = createRequire(import.meta.url);
 const PREVIEW_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
 const DEFAULT_WATCH_DEBOUNCE_MS = 750;
-const POLICY_OFF_MESSAGE = "Browser login sync is turned off. An administrator can make it available in desktop policies.";
+const POLICY_OFF_MESSAGE = "Browser login sync is unavailable in this managed Desktop context.";
 
 function defaultOpenDatabase(filePath) {
   const Database = require("better-sqlite3");
@@ -196,6 +196,7 @@ async function describeSourceFiles(sourcePath) {
  *   pollIntervalMs?: number,
  *   watchSource?: typeof watchFileSystem | null,
  *   watchDebounceMs?: number,
+ *   initialPolicyAllowed?: boolean,
  *   confirmUserAction?: (input: { action: "discover" | "read" | "configure" | "resume", source: { id: string, browser: string, label: string, profile: string } | null, sites?: string[] }) => Promise<boolean>,
  * }} [options]
  */
@@ -212,10 +213,11 @@ export function createBrowserLoginSync({
   pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
   watchSource = watchFileSystem,
   watchDebounceMs = DEFAULT_WATCH_DEBOUNCE_MS,
+  initialPolicyAllowed = false,
   confirmUserAction = async () => true,
 } = {}) {
-  let policyAllowed = false;
-  let policyInitialized = false;
+  let policyAllowed = initialPolicyAllowed === true;
+  let policyInitialized = policyAllowed;
   let state = emptySyncState();
   let stateLoaded = false;
   let stateLoad = null;
@@ -883,7 +885,9 @@ export function createBrowserLoginSync({
       ipcMain.handle("openwork:browser-logins:writeTestStore", (_event, request) => writeTestStore(request && typeof request === "object" ? request : {}));
       ipcMain.handle("openwork:browser-logins:testWitnessUrl", () => startTestWitness());
     }
-    ipcMain.handle("openwork:browser-logins:setPolicyAllowed", (_event, value) => setPolicyAllowed(value));
+    // Renderer code may only revoke access. Enabling is derived from trusted
+    // main-process installation state and can never be asserted by the renderer.
+    ipcMain.handle("openwork:browser-logins:disableForManagedContext", () => setPolicyAllowed(false));
     ipcMain.handle("openwork:browser-logins:sources", () => listSources());
     ipcMain.handle("openwork:browser-logins:preview", (_event, request) => preview(request && typeof request === "object" ? request : {}));
     ipcMain.handle("openwork:browser-logins:configure", (_event, request) => configure(request && typeof request === "object" ? request : {}));

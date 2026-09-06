@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo } from "react";
 
 import { isElectronRuntime } from "@/app/utils";
 
-import { useDesktopConfig } from "../cloud/desktop-config-provider";
 import { useDenAuth } from "../cloud/den-auth-provider";
 import { isLoginSyncPromptDue, usePersistedBrowserLoginsStore } from "./browser-logins-store";
 
@@ -18,9 +17,6 @@ export type BrowserLoginSyncAccess = {
   policyAllowed: boolean;
   /** An organization policy decides; the local permission is not consulted. */
   managedByOrg: boolean;
-  /** The user's permission on an unmanaged install. */
-  localAllowed: boolean;
-  setLocalAllowed: (allowed: boolean) => void;
   /** The one-time setup offer should be shown in the built-in browser. */
   promptDue: boolean;
   markPromptShown: () => void;
@@ -34,12 +30,8 @@ export type BrowserLoginSyncAccess = {
  * permission turns on, the next built-in-browser visit offers setup once.
  */
 export function useBrowserLoginSync(): BrowserLoginSyncAccess {
-  const { config, freshConfigStatus } = useDesktopConfig();
   const denAuth = useDenAuth();
-  const managedValue = config.allowBrowserLoginSync;
-  const localAllowed = usePersistedBrowserLoginsStore((state) => state.localAllowed);
   const prompt = usePersistedBrowserLoginsStore((state) => state.prompt);
-  const setLocalAllowed = usePersistedBrowserLoginsStore((state) => state.setLocalAllowed);
   const observeEffectiveAllowed = usePersistedBrowserLoginsStore((state) => state.observeEffectiveAllowed);
   const markPromptShownInStore = usePersistedBrowserLoginsStore((state) => state.markPromptShown);
   const resolvePrompt = usePersistedBrowserLoginsStore((state) => state.resolvePrompt);
@@ -47,17 +39,16 @@ export function useBrowserLoginSync(): BrowserLoginSyncAccess {
   const bridge = getBrowserLoginsBridge();
   const available = bridge !== null;
   const managedByOrg = denAuth.isSignedIn;
-  // Login sync never trusts a cached org grant. A revocation made while the
-  // app was closed must stop reads until a fresh policy response says yes.
-  const policyAllowed = managedByOrg
-    ? freshConfigStatus === "ready" && managedValue === true
-    : localAllowed;
+  // Managed enablement requires a future trusted main-process policy channel.
+  // This PR ships personal Desktop sync only; renderer code can revoke but
+  // never assert main-process access.
+  const policyAllowed = available && !managedByOrg;
 
   useEffect(() => {
     if (!bridge) return;
     observeEffectiveAllowed(policyAllowed);
-    void bridge.setPolicyAllowed(policyAllowed);
-  }, [bridge, observeEffectiveAllowed, policyAllowed]);
+    if (managedByOrg) void bridge.disableForManagedContext();
+  }, [bridge, managedByOrg, observeEffectiveAllowed, policyAllowed]);
 
   const markPromptShown = useCallback(() => markPromptShownInStore(), [markPromptShownInStore]);
   const dismissPrompt = useCallback(() => resolvePrompt("dismissed"), [resolvePrompt]);
@@ -67,11 +58,9 @@ export function useBrowserLoginSync(): BrowserLoginSyncAccess {
     available,
     policyAllowed,
     managedByOrg,
-    localAllowed,
-    setLocalAllowed,
     promptDue: available && policyAllowed && isLoginSyncPromptDue({ prompt }),
     markPromptShown,
     dismissPrompt,
     completePrompt,
-  }), [available, completePrompt, dismissPrompt, localAllowed, managedByOrg, markPromptShown, policyAllowed, prompt, setLocalAllowed]);
+  }), [available, completePrompt, dismissPrompt, managedByOrg, markPromptShown, policyAllowed, prompt]);
 }

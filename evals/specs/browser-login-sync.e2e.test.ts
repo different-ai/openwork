@@ -21,7 +21,7 @@ test("selected browser logins stay synced until the user pauses them", async ({ 
       lastAccessedAt: nowSeconds - 5,
     }]),
     {
-      host: ".chase.com",
+      host: ".bank.example",
       name: "auth",
       value: "bank-fixture",
       path: "/",
@@ -36,27 +36,18 @@ test("selected browser logins stay synced until the user pauses them", async ({ 
   const tab = await world.openLoginWitnessTab("sync");
   expect(await world.readLoginWitness(tab)).toBe("signed-out");
 
-  await step("Permission alone does not read or configure a browser profile", async () => {
-    await user.notSee({ testId: "login-sync-card" });
-    const refused = await world.previewLoginStore(store.id);
-    expect(refused.ok).toBe(false);
-    expect(refused.error).toMatch(/turned off/i);
-
-    await world.openSettingsPanel("permissions");
-    await user.click({ testId: "login-sync-permission-switch" });
-    const permitted = await eventually(() => world.loginSyncState(), {
+  await step("Personal Desktop offers setup but reads nothing until the user acts", async () => {
+    const available = await eventually(() => world.loginSyncState(), {
       within: 15_000,
       until: (value) => value.policyAllowed === true,
-      label: "the local permission reaches main-process enforcement",
+      label: "the trusted personal Desktop gate is available",
     });
-    expect(permitted.policyAllowed).toBe(true);
-    expect(permitted.configured).toBe(false);
-    expect(permitted.active).toBe(false);
+    expect(available.configured).toBe(false);
+    expect(available.active).toBe(false);
+    await user.see({ testId: "login-sync-card" }, { timeoutMs: 30_000 });
   });
 
   await step("The user chooses one profile and sites; finance stays unchecked", async () => {
-    await world.showSession(world.session.sessionId);
-    await user.see({ testId: "login-sync-card" }, { timeoutMs: 30_000 });
     await user.click({ testId: "login-sync-open" });
     await user.click({ testId: `login-sync-source-${store.id}` });
     await user.see({ testId: `login-sync-site-${world.loginWitnessHost}` }, { timeoutMs: 30_000 });

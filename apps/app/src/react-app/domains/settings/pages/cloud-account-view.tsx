@@ -187,7 +187,6 @@ const permissionLabels = {
   allowControlSettings: "Change app settings",
   allowManageExtensions: "Add tools, skills & MCP servers",
   allowBuiltInExtensions: "Use built-in extensions",
-  allowBrowserLoginSync: "Keep browser logins synced",
   allowAlphaUpdates: "Try experimental updates",
   showWelcomePage: "Show welcome page",
 };

@@ -2700,6 +2700,9 @@ browserPanel.registerIpc(ipcMain);
 const browserLoginEvalSeam = !app.isPackaged && process.env.OPENWORK_EVAL_BROWSER_LOGIN_SYNC === "1";
 const browserLoginSync = createBrowserLoginSync({
   statePath: path.join(app.getPath("userData"), "browser-login-sync.json"),
+  initialPolicyAllowed:
+    DESKTOP_DISTRIBUTION.flavor === "public"
+    && initialRunnerBootstrap.requireSignin !== true,
   confirmUserAction: browserLoginEvalSeam
     ? async () => true
     : async ({ action, source, sites = [] }) => {
