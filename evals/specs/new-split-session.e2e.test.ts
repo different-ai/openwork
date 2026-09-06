@@ -124,7 +124,8 @@ test("side chats keep questions, replies, and saved splits attached to their own
       };
     }`, { args: [primary] });
     expect(await rowLayout()).toMatchObject({ attached: true, pinned: false, compactHeaders: true, oldControls: 0 });
-    await user.rightClick({ text: world.session.title });
+    await user.rightClick({ role: "button", label: world.session.title });
+    await user.screenshot();
     await user.click({ role: "menuitem", label: /^Pin session$/ });
     await probe.eventually(rowLayout, { within: 15_000, label: "the session and its side-chat control move into Pinned",
       until: (value) => isRecord(value) && value.pinned === true && value.attached === true,

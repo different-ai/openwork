@@ -2287,15 +2287,15 @@ function SessionMenuItem({
       data-sidebar-session-id={session.id}
       data-sidebar-session-workspace-id={workspaceId}
     >
-      <div className="relative min-w-0 flex-1">
-        <SessionContextMenu
-          sessionId={session.id}
-          workspaceId={workspaceId}
-          sessionTitle={displayTitle}
-          workspaceTitle={workspaceName}
-          isPinned={isPinned}
-          isArchived={isArchived}
-        >
+      <SessionContextMenu
+        sessionId={session.id}
+        workspaceId={workspaceId}
+        sessionTitle={displayTitle}
+        workspaceTitle={workspaceName}
+        isPinned={isPinned}
+        isArchived={isArchived}
+      >
+        <div className="relative min-w-0 flex-1">
           <SidebarMenuSubButton
             isActive={isSelected}
             data-session-tab-id={session.id}
@@ -2318,9 +2318,9 @@ function SessionMenuItem({
             <SessionTitle intent={titleIntent} title={displayTitle} tooltip={itemTitle} />
             <SessionNumberShortcutSlot digit={shortcutDigit} />
           </SidebarMenuSubButton>
-        </SessionContextMenu>
-        {trailing}
-      </div>
+          {trailing}
+        </div>
+      </SessionContextMenu>
       <SessionSideChatControl workspaceId={workspaceId} sessionId={session.id} title={displayTitle} />
     </SidebarMenuSubItem>
   );
