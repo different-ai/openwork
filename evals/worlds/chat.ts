@@ -234,9 +234,20 @@ export async function newSplitPrimary(seed: Seed) {
   const den = await seed.den({ mocks: { agent: mock } });
   const app = await seed.desktop({ name: "new-split-session", den, as: "admin", model: `${providerId}/${modelId}` });
   const workspace = await seed.workspace(app, seed.tmpPath("new-split-session"));
+  // Arrange an allowed native question tool independently of custom-agent defaults.
+  // TODO(primitive): write workspace fixture files through a first-class seed API.
+  const questionPolicyWritten = await seed.evalIn(app, `async (workspaceId) => {
+    const port = localStorage.getItem("openwork.server.port");
+    const token = localStorage.getItem("openwork.server.token");
+    const response = await fetch("http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId) + "/files/content", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+      body: JSON.stringify({ path: "opencode.json", content: JSON.stringify({ permission: { question: "allow" } }) }),
+    });
+    return response.ok;
+  }`, { args: [workspace.workspaceId], awaitPromise: true });
+  if (questionPolicyWritten !== true) throw new Error("Could not arrange the question-tool policy.");
   await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
-    // The journey requires the native question tool regardless of the selected agent's defaults.
-    permission: { question: "allow" },
     provider: {
       [providerId]: {
         npm: "@ai-sdk/openai-compatible",
