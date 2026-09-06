@@ -2818,11 +2818,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                 onOpenModelPicker={handleOpenModelPicker}
               />
             ) : props.chatPane === "secondary" && snapshot && renderedMessages.length === 0 ? (
-              <div className="mx-auto max-w-sm px-4 py-12" data-second-chat-intro>
-                <h2 className="text-xl font-semibold tracking-tight">{t("session_management.second_chat_title")}</h2>
-                <p className="mt-3 text-sm leading-relaxed text-muted-foreground">{t("session_management.second_chat_description")}</p>
-                <p className="mt-4 text-xs leading-relaxed text-muted-foreground">{t("session_management.second_chat_saved")}</p>
-              </div>
+              null
             ) : (
               <DevProfiler id="MessageList">
                 <OpenTargetProvider
@@ -2892,11 +2888,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
       </div>
 
       <div ref={composerShellRef} className="shrink-0 px-0 pb-2 pt-2">
-        {props.chatPane ? (
-          <div className="mx-auto mb-2 max-w-[800px] px-5 text-xs font-medium text-muted-foreground" data-chat-composer-label={props.chatPane}>
-            {t(props.chatPane === "primary" ? "session_management.message_main" : "session_management.message_second")}
-          </div>
-        ) : null}
         {(props.providerConnectedCount ?? 0) === 0 ? (
           <button
             type="button"

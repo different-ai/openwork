@@ -943,3 +943,104 @@ test("v2 provider catalog retains display names without exposing request setting
     globalThis.fetch = originalFetch;
   }
 });
+
+describe("v2 question forms", () => {
+  const form = {
+    id: "frm_choice", sessionID: "ses_side", title: "Questions",
+    metadata: { kind: "question", tool: { messageID: "msg_side", id: "call_question" } },
+    fields: [
+      { key: "q0", type: "string", title: "Format", description: "Which format?", custom: true,
+        options: [{ label: "Summary", value: "summary_value", description: "A short overview" }] },
+      { key: "q1", type: "multiselect", title: "Sections", description: "Which sections?", custom: true,
+        options: [{ label: "Facts", value: "facts_value" }, { label: "Actions", value: "actions_value" }] },
+    ],
+  };
+
+  test("maps pending, answered, and cancelled forms to the existing question UI protocol", () => {
+    const state = createV2EventTranslationState();
+    expect(translateV2Event({ type: "form.created", data: { form } }, state)).toEqual([{
+      type: "question.asked", properties: {
+        id: "frm_choice", sessionID: "ses_side", tool: { messageID: "msg_side", callID: "call_question" },
+        questions: [
+          { header: "Format", question: "Which format?", custom: true, multiple: false,
+            options: [{ label: "Summary", description: "A short overview" }] },
+          { header: "Sections", question: "Which sections?", custom: true, multiple: true,
+            options: [{ label: "Facts", description: "" }, { label: "Actions", description: "" }] },
+        ],
+      },
+    }]);
+    expect(translateV2Event({ type: "form.created", data: { form: { ...form, metadata: { kind: "oauth" } } } }, state)).toBeNull();
+    for (const [event, expected] of [["form.replied", "question.replied"], ["form.cancelled", "question.rejected"]]) {
+      expect(translateV2Event({ type: event, data: { id: form.id, sessionID: form.sessionID } }, state)).toEqual([
+        { type: expected, properties: { requestID: form.id, sessionID: form.sessionID } },
+      ]);
+    }
+  });
+
+  test("an interaction client can answer a live form it never listed, preserving values and custom text", async () => {
+    const originalFetch = globalThis.fetch;
+    const writes: { path: string; body: unknown }[] = [];
+    globalThis.fetch = async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const path = new URL(request.url).pathname;
+      if (request.method === "GET" && path.endsWith("/api/form/request")) return Response.json({ data: [form] });
+      writes.push({ path, body: request.body ? await request.json() : null });
+      return new Response(null, { status: 204 });
+    };
+    try {
+      const client = createClientV2("http://owner.test/opencode2", "/workspace", {});
+      expect((await client.question.reply({ requestID: form.id, answers: [["Summary"], ["Facts", "Custom section"]] })).data).toBe(true);
+      expect(writes).toEqual([{ path: "/opencode2/api/session/ses_side/form/frm_choice/reply", body: {
+        answer: { q0: "summary_value", q1: ["facts_value", "Custom section"] },
+      } }]);
+      expect((await client.question.reject({ requestID: form.id })).data).toBe(true);
+      expect(writes.at(-1)?.path).toBe("/opencode2/api/session/ses_side/form/frm_choice/cancel");
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test("failed list and reply requests remain failures and do not settle another question", async () => {
+    const originalFetch = globalThis.fetch;
+    const methods: string[] = [];
+    globalThis.fetch = async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      methods.push(request.method);
+      return Response.json({ message: "Unavailable" }, { status: 503 });
+    };
+    try {
+      const client = createClientV2("http://owner.test/opencode2", "/workspace", {});
+      expect((await client.question.reply({ requestID: form.id, answers: [["Summary"]] })).response.status).toBe(503);
+      expect(methods).toEqual(["GET"]);
+      globalThis.fetch = async (input, init) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        return request.method === "GET" ? Response.json({ data: [form] }) : Response.json({ message: "Try again" }, { status: 503 });
+      };
+      expect((await client.question.reply({ requestID: form.id, answers: [["Summary"]] })).response.status).toBe(503);
+      expect((await client.question.list()).data?.map((item) => item.id)).toEqual([form.id]);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test("writes session context before prompting and fails closed if it cannot be written", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: { method: string; path: string; body: unknown }[] = [];
+    let status = 204;
+    globalThis.fetch = async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const path = new URL(request.url).pathname;
+      requests.push({ method: request.method, path, body: await request.json() });
+      return path.includes("/instructions/") && status !== 204
+        ? Response.json({ message: "Unavailable" }, { status }) : new Response(null, { status: 204 });
+    };
+    try {
+      const client = createClientV2("http://owner.test/opencode2", "/workspace", {});
+      const parameters = { sessionID: "ses_side", model: { providerID: "mock", modelID: "model" },
+        system: "Main conversation reference: ses_main", parts: [{ type: "text", text: "What is happening?" }] };
+      expect((await client.session.promptAsync(parameters)).response.status).toBe(202);
+      expect(requests.map((item) => item.method)).toEqual(["POST", "PUT", "POST"]);
+      expect(requests[1]).toMatchObject({ path: "/opencode2/api/session/ses_side/instructions/entries/openwork-context", body: { value: parameters.system } });
+      expect(requests[2]?.body).toEqual({ text: "What is happening?" });
+      requests.length = 0; status = 503;
+      expect((await client.session.promptAsync(parameters)).response.status).toBe(503);
+      expect(requests.map((item) => item.method)).toEqual(["POST", "PUT"]);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+});

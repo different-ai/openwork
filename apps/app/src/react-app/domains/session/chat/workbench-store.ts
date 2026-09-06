@@ -1,5 +1,6 @@
 import type { OpenworkSessionRef } from "@openwork/types/openwork-context";
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 
 export type WorkbenchPane = "primary" | "secondary";
 export type WorkbenchSessionTab = OpenworkSessionRef & {
@@ -222,7 +223,7 @@ type WorkbenchStore = WorkbenchSnapshot & {
   focusPane: (pane: WorkbenchPane) => void;
 };
 
-export const useWorkbenchStore = create<WorkbenchStore>((set) => ({
+export const useWorkbenchStore = create<WorkbenchStore>()(persist((set) => ({
   ...initialWorkbenchSnapshot,
   sync: (input) => set((state) => syncWorkbenchSnapshot(state, input)),
   openTab: (tab) => set((state) => openWorkbenchTab(state, tab)),
@@ -230,4 +231,7 @@ export const useWorkbenchStore = create<WorkbenchStore>((set) => ({
   setSplit: (session) => set((state) => setWorkbenchSplit(state, session)),
   setSideChat: (owner, session) => set((state) => setWorkbenchSideChat(state, owner, session)),
   focusPane: (pane) => set((state) => focusWorkbenchPane(state, pane)),
+}), {
+  name: "openwork.session-splits.v1",
+  partialize: (state) => ({ tabs: state.tabs, sideChats: state.sideChats }),
 }));

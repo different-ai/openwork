@@ -52,6 +52,13 @@ test("side chats keep questions, replies, and saved splits attached to their own
     await user.click({ role: "option", label });
     await user.notSee(paletteInput);
   };
+  const preservedHistory = async (sessionId: string, ...messages: string[]) => {
+    await probe.eventually(() => agent.run("session.read_transcript", { count: 30 }), {
+      within: 30_000, label: "the reopened conversation retains its earlier messages",
+      until: (value) => isRecord(value) && value.ok === true && value.sessionId === sessionId
+        && messages.every((message) => JSON.stringify(value.messages).includes(message)),
+    });
+  };
   const before = await ids();
   await user.rightClick({ text: world.session.title });
   await user.click({ role: "menuitem", label: /^Open (a second|side) chat$/ });
@@ -67,6 +74,12 @@ test("side chats keep questions, replies, and saved splits attached to their own
       await send("primary", world.primaryQuestionPrompt);
       await user.see({ text: "Which format should the main task use?" }, { timeoutMs: 45_000 });
       expect(await pane("secondary")).not.toHaveProperty("text", expect.stringContaining("Which format should the main task use?"));
+      await probe.eventually(() => probe.eval(`(id) => {
+        const row = document.querySelector('[data-sidebar-session-id="' + id + '"]');
+        return Boolean(row?.querySelector('[data-session-side-chat] [data-session-attention-indicator]'));
+      }`, { args: [primary] }), {
+        within: 15_000, label: "the attached side chat shows that it needs an answer", until: (value) => value === true,
+      });
       await user.screenshot();
     } catch (error) {
       await user.screenshot();
@@ -94,7 +107,7 @@ test("side chats keep questions, replies, and saved splits attached to their own
     await answer("secondary", primary, "No system instructions");
     expect(await pane("secondary")).toHaveProperty("answer", expect.stringContaining("Main conversation reference"));
     await send("primary", world.contextPrompt);
-    await answer("primary", "OpenWork", "Main conversation reference");
+    await answer("primary", "User context:", "Main conversation reference");
   });
 
   await step("the split belongs to the session row and follows it into Pinned", async () => {
@@ -132,10 +145,17 @@ test("side chats keep questions, replies, and saved splits attached to their own
     await probe.eventually(facts, { within: 15_000, label: "the attached side-chat button focuses the side pane", until: (value) => value.focused === "secondary" });
     await user.click({ role: "button", label: `Side chat · ${world.switchSession.title}` });
     await waitSplit(other.primary, other.secondary);
+    await send("secondary", world.secondaryPrompt);
+    await answer("secondary", "Secondary split received", "Primary split received");
+    await send("primary", world.primaryPrompt);
+    await answer("primary", "Primary split received", "Secondary split received");
     const saved = await ids();
     await user.click({ role: "button", label: "Close side chat" });
     await probe.eventually(facts, { within: 15_000, label: "closing the side pane keeps its owner open", until: (value) => value.primary === other.primary && value.panes === 0 });
     expect(await ids()).toEqual(saved);
+    await preservedHistory(other.primary, world.primaryPrompt, "Primary split received");
+    expect(await agent.run("session.open", { sessionId: other.secondary })).toMatchObject({ ok: true });
+    await preservedHistory(other.secondary, world.secondaryPrompt, "Secondary split received");
     await user.click({ role: "button", label: `Side chat · ${world.session.title}` });
     await waitSplit(primary, first.secondary);
     await user.reload();
@@ -172,6 +192,11 @@ test("side chats keep questions, replies, and saved splits attached to their own
       until: (value) => value.primary === third.secondary && value.panes === 0,
     });
     expect(await ids()).toEqual(saved);
+    await preservedHistory(third.secondary, world.secondaryPrompt, "Secondary split received");
+    expect(await agent.run("session.open", { sessionId: first.secondary })).toMatchObject({ ok: true });
+    await preservedHistory(first.secondary, world.secondaryQuestionPrompt, "Side checklist", world.contextPrompt);
+    expect(await agent.run("session.open", { sessionId: primary })).toMatchObject({ ok: true });
+    await preservedHistory(primary, world.primaryQuestionPrompt, "Main outline", world.primaryPrompt, "Primary split received");
     await user.screenshot();
   });
 });

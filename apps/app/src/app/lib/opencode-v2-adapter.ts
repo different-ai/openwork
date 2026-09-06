@@ -5,6 +5,7 @@ import type {
   PermissionV2Request,
   Provider,
   ProviderListResponse,
+  QuestionRequest,
   Session,
   SessionStatus,
   TextPart,
@@ -84,6 +85,44 @@ type V2PermissionReplyParameters = {
   reply?: PermissionReply;
   message?: string;
 };
+
+type V2QuestionField = {
+  key: string;
+  multiple: boolean;
+  options: { value: string; label: string; description: string }[];
+};
+
+function mapV2Question(value: unknown): { request: QuestionRequest; fields: V2QuestionField[] } | null {
+  if (!isRecord(value) || readString(value.metadata, "kind") !== "question") return null;
+  const id = readString(value, "id");
+  const sessionID = readString(value, "sessionID");
+  if (!id || !sessionID || !Array.isArray(value.fields) || value.fields.length === 0) return null;
+  const fields: V2QuestionField[] = [];
+  const questions: QuestionRequest["questions"] = [];
+  for (const field of value.fields) {
+    const key = readString(field, "key");
+    const type = readString(field, "type");
+    if (!isRecord(field) || !key || (type !== "string" && type !== "multiselect")) return null;
+    const options = Array.isArray(field.options) ? field.options.flatMap((option) => {
+      const label = readString(option, "label");
+      const value = readString(option, "value");
+      return label !== undefined && value !== undefined
+        ? [{ label, value, description: readString(option, "description") ?? "" }] : [];
+    }) : [];
+    fields.push({ key, multiple: type === "multiselect", options });
+    questions.push({
+      header: readString(field, "title") ?? "",
+      question: readString(field, "description") ?? readString(field, "title") ?? "",
+      options: options.map(({ label, description }) => ({ label, description })),
+      multiple: type === "multiselect",
+      custom: field.custom !== false,
+    });
+  }
+  const source = readRecord(value.metadata, "tool");
+  const messageID = readString(source, "messageID");
+  const callID = readString(source, "id");
+  return { request: { id, sessionID, questions, ...(messageID && callID ? { tool: { messageID, callID } } : {}) }, fields };
+}
 
 type V2MessageRole = "user" | "assistant" | "system";
 
@@ -933,6 +972,17 @@ export function translateV2Event(
     return permission ? [{ type: "permission.asked", properties: permission }] : null;
   }
 
+  if (type === "form.created") {
+    const question = mapV2Question(properties.form);
+    return question ? [{ type: "question.asked", properties: question.request }] : null;
+  }
+
+  if (type === "form.replied" || type === "form.cancelled") {
+    const requestID = readString(properties, "id");
+    if (!sessionID || !requestID) return null;
+    return [{ type: type === "form.replied" ? "question.replied" : "question.rejected", properties: { sessionID, requestID } }];
+  }
+
   if (type === "permission.replied" || type === "permission.v2.replied") {
     const requestID = readString(properties, "requestID");
     const reply = readString(properties, "reply");
@@ -1180,6 +1230,7 @@ export function createClientV2(
   const compatibilityClient = createClient(baseUrl, directory, { mode: "openwork", token: auth.token });
   const injectedEventListeners = new Set<(event: OpencodeEvent) => void>();
   const permissionSessionByRequestID = new Map<string, string>();
+  const questionFormsByID = new Map<string, NonNullable<ReturnType<typeof mapV2Question>>>();
 
   const emitInjectedEvent = (event: OpencodeEvent) => {
     for (const listener of injectedEventListeners) listener(event);
@@ -1302,6 +1353,49 @@ export function createClientV2(
     return { data: true, request: result.request, response: result.response };
   };
 
+  const listQuestions = async (
+    _parameters: DirectoryParameters = {}, options?: RequestOptions,
+  ): Promise<FieldsResult<QuestionRequest[]>> => {
+    const result = await request("GET", "/api/form/request", undefined, options?.signal);
+    if (!result.response.ok) return failedResult(result);
+    const questions = responseItems(result.payload).flatMap((item) => {
+      const question = mapV2Question(item);
+      if (!question) return [];
+      questionFormsByID.set(question.request.id, question);
+      return [question.request];
+    });
+    return successfulResult(result, questions);
+  };
+
+  const settleQuestion = async (
+    parameters: DirectoryParameters & { requestID: string; answers?: string[][] },
+    options?: RequestOptions,
+  ): Promise<FieldsResult<boolean>> => {
+    // SSE and interaction clients have separate lifetimes. A question received
+    // live must also be answerable without having appeared in the initial list.
+    if (!questionFormsByID.has(parameters.requestID)) {
+      const listed = await listQuestions(parameters, options);
+      if (listed.data === undefined) return { error: listed.error, request: listed.request, response: listed.response };
+    }
+    const question = questionFormsByID.get(parameters.requestID);
+    if (!question) return {
+      error: { name: "QuestionNotFound", requestID: parameters.requestID },
+      request: new Request(`${baseUrl}/api/form/request`),
+      response: new Response(null, { status: 404 }),
+    };
+    const answer = parameters.answers ? Object.fromEntries(question.fields.map((field, index) => {
+      const values = (parameters.answers?.[index] ?? []).map((label) =>
+        field.options.find((option) => option.label === label)?.value ?? label);
+      return [field.key, field.multiple ? values : values[0] ?? ""];
+    })) : undefined;
+    const result = await request("POST",
+      `/api/session/${encodeURIComponent(question.request.sessionID)}/form/${encodeURIComponent(parameters.requestID)}/${answer ? "reply" : "cancel"}`,
+      answer ? { answer } : undefined, options?.signal);
+    if (!result.response.ok) return failedResult(result);
+    questionFormsByID.delete(parameters.requestID);
+    return successfulResult(result, true);
+  };
+
   const getSession = async (
     parameters: SessionParameters,
     options?: RequestOptions,
@@ -1408,6 +1502,12 @@ export function createClientV2(
         options?.signal,
       );
       if (!modelResult.response.ok) return failedResult(modelResult);
+      if (parameters.system !== undefined) {
+        const instructions = await request("PUT",
+          `/api/session/${encodeURIComponent(parameters.sessionID)}/instructions/entries/openwork-context`,
+          { value: parameters.system }, options?.signal);
+        if (!instructions.response.ok) return failedResult(instructions);
+      }
       const text = (parameters.parts ?? [])
         .filter((part) => part.type === "text" && typeof part.text === "string")
         .map((part) => typeof part.text === "string" ? part.text : "")
@@ -1564,7 +1664,9 @@ export function createClientV2(
       respond: respondPermission,
     },
     question: {
-      list: async (): Promise<FieldsResult<never[]>> => localResult(baseUrl, "/api/question", []),
+      list: listQuestions,
+      reply: settleQuestion,
+      reject: (parameters: DirectoryParameters & { requestID: string }, options?: RequestOptions) => settleQuestion(parameters, options),
     },
     v2: {
       session: {
