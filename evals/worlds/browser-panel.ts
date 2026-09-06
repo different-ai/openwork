@@ -521,6 +521,11 @@ export async function transcriptLinkWorld(seed: Seed) {
       };
     },
 
+    async menuLabels(surface: Surface) {
+      return evaluate(surface.client, `Array.from(document.querySelectorAll('[role="menu"]'),
+        menu => menu.getAttribute("aria-label"))`);
+    },
+
     async menuFocused(surface: Surface) {
       // Native hiding retains the DOM; backgroundThrottling also affects visibilityState.
       return await evaluate(surface.client, "document.hasFocus()") === true;

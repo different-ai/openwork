@@ -158,10 +158,11 @@ linkTest("a transcript link's menu copies its exact address and opens only its o
 
   await step("Right-click and Escape leave the transcript and every browser page unchanged", async () => {
     await menuFocus(true);
-    await menu.see({ role: "menu", label: "link context menu" });
     for (const label of ["Open in OpenWork", "Open in Default Browser", "Copy Link Address"]) {
       await menu.see(menuItem(label));
     }
+    // TargetRole excludes menu; keep its container semantics as a DOM observation.
+    expect(await world.menuLabels(overlay)).toEqual(["link context menu"]);
     await user.notSee(menuItem("Edit message"));
     await unchanged();
     await menu.press("Escape");
