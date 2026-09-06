@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { LogOut, Settings } from "lucide-react";
 import { getErrorMessage, requestJson } from "../_lib/den-flow";
-import { type DenOrgSummary, formatRoleLabel, getJoinOrgRoute, getOnboardingPeopleRoute, getOrgDashboardRoute, parseOrgListPayload } from "../_lib/den-org";
+import { type DenOrgSummary, formatRoleLabel, getJoinOrgRoute, getOnboardingToolsRoute, getOrgDashboardRoute, parseOrgListPayload } from "../_lib/den-org";
 import { useOrgListWindow } from "../_lib/use-org-list-window";
 import { useDenFlow } from "../_providers/den-flow-provider";
 
@@ -151,7 +151,7 @@ export function OrganizationScreen() {
       if (intent === "team" && desktopSetup === "restricted") {
         await applyRestrictedSetup(nextOrg.id);
       }
-      router.push(getOnboardingPeopleRoute(nextOrg.slug));
+      router.push(getOnboardingToolsRoute(nextOrg.slug));
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : "Failed to create organization.");
       setCreateBusy(false);

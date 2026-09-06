@@ -1,16 +1,19 @@
 "use client";
 
+import { OnboardingTeamPreview } from "./onboarding-team-preview";
+
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, Check, LoaderCircle, Plus, X } from "lucide-react";
 import { z } from "zod";
 import { SetupFrame } from "../../_components/setup-frame";
 import {
+  normalizeAuthIntentParam, PENDING_AUTH_INTENT_STORAGE_KEY,
   getRequestError,
   requestJson,
   WORKSPACE_REAUTH_SECURITY_MESSAGE,
 } from "../../_lib/den-flow";
-import { getOnboardingToolsRoute, getOrgAccessFlags } from "../../_lib/den-org";
+import { getInferenceRoute, getMarketplaceOnboardingRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -145,7 +148,9 @@ function TeammatesForm({ orgId, orgSlug, organizationName, selfEmail, selfName, 
 
   function continueSetup() {
     if (sendingRef.current) return;
-    router.push(getOnboardingToolsRoute(orgSlug));
+    const intent = normalizeAuthIntentParam(window.sessionStorage.getItem(PENDING_AUTH_INTENT_STORAGE_KEY));
+    if (intent === "models") window.sessionStorage.removeItem(PENDING_AUTH_INTENT_STORAGE_KEY);
+    router.push(intent === "models" ? getInferenceRoute(orgSlug) : getMarketplaceOnboardingRoute(orgSlug));
     // The admin layout unmounts its children during a full organization refresh.
     // Refresh only after leaving this form, so sent and failed rows survive retries.
     void refreshOrgData();
@@ -165,7 +170,7 @@ function TeammatesForm({ orgId, orgSlug, organizationName, selfEmail, selfName, 
     <div className="mt-7 border-t border-neutral-100 pt-5 text-sm leading-6 text-neutral-500">A shared place for tools, connections, and the way your team works.</div>
   </div>;
 
-  return <SetupFrame step="people" title="Bring your people." description={description} aside={preview}>
+  return <SetupFrame step="people" title="Bring your people." description={description} aside={<div className="space-y-4"><OnboardingTeamPreview />{preview}</div>}>
     <div data-testid="onboarding-teammates" aria-busy={sending}>
       {canInvite ? <form noValidate onSubmit={(event) => { event.preventDefault(); void sendInvitations(); }}>
         <div className="mb-5 flex items-center justify-between gap-3">

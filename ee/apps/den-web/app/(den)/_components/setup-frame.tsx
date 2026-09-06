@@ -7,9 +7,9 @@ import styles from "./setup-frame.module.css";
 const steps = [
   { id: "account", label: "Account" },
   { id: "space", label: "Your space" },
-  { id: "people", label: "People" },
   { id: "tools", label: "Tools" },
-  { id: "ready", label: "Get to work" },
+  { id: "people", label: "People" },
+  { id: "ready", label: "Review & finish" },
 ];
 
 export type SetupStep = "account" | "space" | "people" | "tools" | "ready";

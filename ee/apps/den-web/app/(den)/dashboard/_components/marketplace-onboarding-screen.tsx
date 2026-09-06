@@ -1,5 +1,7 @@
 "use client";
 
+import { OnboardingTeamPreview } from "./onboarding-team-preview";
+
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -51,11 +53,13 @@ function useLocalStorageFlag(key: string) {
 }
 
 function useInferenceEnabled() {
+  const { orgId } = useOrgDashboard();
   return useQuery({
-    queryKey: ["onboarding", "inference"] as const,
+    queryKey: ["onboarding", "inference", orgId],
+    enabled: Boolean(orgId),
     queryFn: async (): Promise<boolean> => {
-      const { response, payload } = await requestJson("/v1/inference", { method: "GET" }, 12000);
-      if (!response.ok) return false;
+      const { response, payload } = await requestJson("/v1/inference", { method: "GET", headers: orgId ? { "x-openwork-org-id": orgId } : {} }, 12000);
+      if (!response.ok) throw new Error("Could not check model access.");
       const inference = isRecord(payload) && isRecord(payload.inference) ? payload.inference : null;
       return inference?.enabled === true;
     },
@@ -130,7 +134,7 @@ export function MarketplaceOnboardingScreen({
   releaseTag?: string;
 }) {
   const { activeOrg, orgSlug, orgContext } = useOrgDashboard();
-  const { data: modelsEnabled = false, isLoading: modelsLoading } = useInferenceEnabled();
+  const { data: modelsEnabled = false, isPending: modelsLoading, isError: modelsError } = useInferenceEnabled();
   const [appInstalled, setAppInstalled] = useLocalStorageFlag(APP_INSTALLED_KEY);
 
   const [mobileDevice, setMobileDevice] = useState(false);
@@ -143,10 +147,16 @@ export function MarketplaceOnboardingScreen({
   return (
     <SetupFrame
       step="ready"
-      title="Put your tools to work."
-      description={`Start a chat. Build dashboards, run workflows, and use ${orgName}’s tools—with the model you choose.`}
+      title="Review your team’s starting point."
+      description={`See what you’ve prepared for ${orgName}, then open your workspace. Downloads and personal account connections can happen later.`}
+      aside={<OnboardingTeamPreview />}
     >
       <div className="grid gap-8" data-testid="marketplace-onboarding">
+        <section aria-label="Team setup review" className="rounded-2xl bg-neutral-50 p-5 text-sm leading-6 text-neutral-600">
+          <h2 className="font-semibold text-neutral-950">Your team setup</h2>
+          <p className="mt-2">{orgContext ? `${orgContext.members.length} ${orgContext.members.length === 1 ? "member" : "members"} · ${orgContext.invitations.filter((invitation) => invitation.status === "pending").length} pending invitations` : "Checking your team…"}</p>
+          <p className="mt-2">Invitations are separate from account connections. Teammates connect personal accounts after joining.</p>
+        </section>
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-neutral-50 px-4 py-3 text-xs text-neutral-500">
           <span>More useful with your team’s tools.</span>
           <Link href={getOnboardingToolsRoute(orgSlug)} className="font-medium text-neutral-900 underline-offset-4 hover:underline">Choose team tools →</Link>
@@ -192,6 +202,8 @@ export function MarketplaceOnboardingScreen({
               <p className="mt-1 text-sm leading-6 text-[var(--dls-text-secondary)]" role="status">
                 {modelsLoading
                   ? "Checking OpenWork Models…"
+                  : modelsError
+                    ? "We couldn’t check OpenWork Models. Review model access from your workspace."
                   : modelsEnabled
                     ? "OpenWork Models are on for this workspace."
                     : "Choose your model and provider. Use OpenWork Models or bring your own account—you can set this up later."}

@@ -1,12 +1,14 @@
 "use client";
 
+import { OnboardingTeamPreview } from "./onboarding-team-preview";
+
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, Check, LoaderCircle } from "lucide-react";
 import { SetupFrame } from "../../_components/setup-frame";
 import { OnboardingTexture } from "../../_components/onboarding-texture";
-import { normalizeAuthIntentParam, PENDING_AUTH_INTENT_STORAGE_KEY, WORKSPACE_REAUTH_SECURITY_MESSAGE } from "../../_lib/den-flow";
-import { getInferenceRoute, getMarketplaceOnboardingRoute } from "../../_lib/den-org";
+import { WORKSPACE_REAUTH_SECURITY_MESSAGE } from "../../_lib/den-flow";
+import { getOnboardingPeopleRoute } from "../../_lib/den-org";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { IntegrationIcon } from "./integration-icon";
@@ -95,16 +97,10 @@ function ToolsForm() {
 
   function continueSetup() {
     if (addingRef.current) return;
-    const intent = normalizeAuthIntentParam(window.sessionStorage.getItem(PENDING_AUTH_INTENT_STORAGE_KEY));
-    if (intent === "models") {
-      window.sessionStorage.removeItem(PENDING_AUTH_INTENT_STORAGE_KEY);
-      router.push(getInferenceRoute(orgSlug));
-      return;
-    }
-    router.push(getMarketplaceOnboardingRoute(orgSlug));
+    router.push(getOnboardingPeopleRoute(orgSlug));
   }
 
-  return <SetupFrame step="tools" title="Give your team a head start." description={description} panelVisual={<OnboardingTexture />}>
+  return <SetupFrame step="tools" title="Give your team a head start." description={description} aside={<OnboardingTeamPreview />} panelVisual={<OnboardingTexture />}>
     <div className="mb-5">
       <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-neutral-400">Optional · Team tools</p>
       <h2 className="mt-2 text-xl font-semibold tracking-[-0.03em] text-neutral-950">What do you work with?</h2>
