@@ -1,5 +1,5 @@
 import { expect } from "vitest";
-import { eventually, observeTranscript, spec } from "@openwork/testkit";
+import { eventually, observeTranscript, readTranscriptMessages, spec } from "@openwork/testkit";
 import { streamedMarkdown, streamedMarkdownMarker } from "../worlds/chat.ts";
 
 const test = spec.world(streamedMarkdown, { timeout: 300_000 });
@@ -33,8 +33,19 @@ test("a streaming answer renders as markdown block by block and settles to the s
     ...blockSentinels.map((text): { role: "assistant"; text: string } => ({ role: "assistant", text })),
   ]);
   await user.type("composer", prompt);
+  await probe.eventually(() => probe.composer(), {
+    within: 10_000,
+    label: "composer is ready to send the typed draft",
+    until: (state) => state.runTaskEnabled && state.draftText === prompt,
+  });
   await user.click("Run task");
-  await user.see({ text: prompt }, { timeoutMs: 2_000 });
+  // Cold engine initialization is not a Markdown-rendering latency contract.
+  // Observe the real user bubble (which also contains its timestamp), not the draft.
+  expect(await probe.eventually(() => readTranscriptMessages(probe, "user"), {
+    within: 30_000,
+    label: "sent text appears in the transcript, not just the composer",
+    until: (messages) => messages.some(message => message.includes(prompt)),
+  })).toEqual([expect.stringContaining(prompt)]);
 
   await step("finished blocks render as markdown while later blocks are still arriving", async () => {
     await user.see({ text: headingText }, { timeoutMs: 90_000 });

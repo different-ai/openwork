@@ -205,6 +205,22 @@ async function seedSessionRetry(
   throw new Error(`Session creation did not settle: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
 }
 
+async function readySessionComposer(seed: Seed, app: Awaited<ReturnType<Seed["desktop"]>>, sessionId: string) {
+  // Session creation returns before its routed composer necessarily mounts.
+  const ready = await seed.evalIn(app, `async (sessionId) => {
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
+      const editor = document.querySelector('[contenteditable="true"][data-lexical-editor="true"]');
+      if (editor?.closest('[data-session-surface-id]')?.getAttribute('data-session-surface-id') === sessionId) return true;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    return false;
+  }`, { args: [sessionId], awaitPromise: true, timeoutMs: 35000 });
+  if (ready !== true) throw new Error("The session composer did not mount");
+  // A background Electron window can ignore CDP input without focus emulation.
+  await app.client.send("Emulation.setFocusEmulationEnabled", { enabled: true });
+}
+
 export async function emptyChat(seed: Seed) {
   const app = await seed.desktop({ name: "chat-empty" });
   const workspace = await seed.workspace(app, seed.tmpPath("chat-empty"));
@@ -537,6 +553,7 @@ export async function attachmentUpload(seed: Seed) {
       if (!response.ok) throw new Error("Video fixture write failed: " + response.status);
     }`, { args: [workspace.workspaceId, videoBase64], awaitPromise: true });
     const session = await seedSessionRetry(seed, app);
+    await readySessionComposer(seed, app, session.sessionId);
     return {
       app,
       workspace,
@@ -796,6 +813,7 @@ export async function streamedMarkdown(seed: Seed) {
   }`, { args: [workspace.workspaceId, engine, providerId, modelId], awaitPromise: true, timeoutMs: 65000 });
   if (ready !== true) throw new Error(`Selected ${engine} engine was not ready for the streaming journey`);
   const session = await seedSessionRetry(seed, app);
+  await readySessionComposer(seed, app, session.sessionId);
   return { app, den, workspace, session,
     async videoState(play = false) {
       return seed.evalIn(app, `async (play) => {
