@@ -103,6 +103,8 @@ export interface StartMockMcpOptions {
   appToolName?: string;
   /** Script deterministic OpenAI-compatible agent turns through this mock. */
   agentWorkloads?: MockAgentWorkload[];
+  /** Verify native provider requests retain this private model header. */
+  agentRequiredHeader?: { name: string; value: string };
 }
 
 export type EnterpriseMcpProfileId =
@@ -353,7 +355,7 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
     const response = await fetch(`${url}/admin/agent-workloads`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workloads: options.agentWorkloads }),
+      body: JSON.stringify({ workloads: options.agentWorkloads, requiredHeader: options.agentRequiredHeader }),
       signal: AbortSignal.timeout(15_000),
     });
     if (!response.ok) {

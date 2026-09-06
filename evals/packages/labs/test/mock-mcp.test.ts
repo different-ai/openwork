@@ -129,3 +129,26 @@ test("turn-scoped workloads isolate revisions from earlier markers and tool roun
   assert.deepEqual(requests.map((request) => request.completedTools), [0, 1]);
   assert.deepEqual(requests.map((request) => request.matchedMarkers), [["revise sketch"], ["revise sketch"]]);
 });
+
+
+test("native Responses preserve the configured provider header", async () => {
+  await using mock = await startMockMcp({
+    port: await allocateFreePort(),
+    agentWorkloads: [{ promptMarker: "native-header-proof", finalReply: "The header reached the provider", steps: [] }],
+    agentRequiredHeader: { name: "x-private-model-setting", value: "fixture-only-value" },
+  });
+  const request = (header?: string) => fetch(`${mock.url}/v1/responses`, {
+    method: "POST", headers: { "content-type": "application/json", ...(header ? { "x-private-model-setting": header } : {}) },
+    body: JSON.stringify({ model: "native-fixture", input: "native-header-proof", stream: true }),
+  });
+  for (const header of [undefined, "wrong-value"]) {
+    const denied = await request(header);
+    assert.equal(denied.status, 401);
+    await denied.text();
+  }
+  const accepted = await request("fixture-only-value");
+  assert.equal(accepted.status, 200);
+  const events = (await accepted.text()).split("\n").filter(line => line.startsWith("data: ")).map(line => JSON.parse(line.slice(6)));
+  assert.ok(events.some(event => event.type === "response.completed"));
+  assert.equal(events.filter(event => event.type === "response.output_text.delta").map(event => event.delta).join(""), "The header reached the provider");
+});
