@@ -514,6 +514,15 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
     const libraryText = await member.probe.text();
     evidence.recordAssertionEvidence("The locked desktop hides Settings, redirects forbidden routes, and explains how to get an MCP server", JSON.stringify({ redirected, forbiddenRoute, permissionsText, menuText, libraryText }), redirected.includes("/settings/cloud-account") && forbiddenRoute.includes("/settings/cloud-account") && count(permissionsText, "Blocked") === lockedKeys.length && libraryText.includes("Need an MCP server or skill"));
     await member.user.looks(["The Library shows organization restrictions and guidance for requesting an MCP server or skill"]);
+    const deniedProviders = await member.agent.desktopApi(`/workspace/${world.member.workspaceId}/runtime-config/disabled-providers`, {
+      method: "POST", body: { providers: [] },
+    });
+    const allowedProviders = await agent.on(world.control).desktopApi(`/workspace/${world.control.workspaceId}/runtime-config/disabled-providers`, {
+      method: "POST", body: { providers: [] },
+    });
+    expect(deniedProviders.status).toBe(403);
+    expect(allowedProviders.status).toBe(200);
+    evidence.recordAssertionEvidence("Locked settings block provider-visibility configuration only for the assigned team", JSON.stringify({ deniedProviders, allowedProviders }), deniedProviders.status === 403 && allowedProviders.status === 200);
   });
 
   await step("Custom allows Settings but keeps local tools blocked", async () => {
