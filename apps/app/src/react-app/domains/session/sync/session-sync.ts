@@ -30,6 +30,7 @@ import { applyRevertCursor, reconcileTranscriptMessages } from "./transcript-rec
 import {
   useSessionActivityStore,
 } from "../status/session-activity-store";
+import { useWorkbenchStore } from "../chat/workbench-store";
 import { notifyDesktopEvent } from "../../../shell/desktop-notifications";
 import { notifyAlert } from "../../../shell/notifications";
 import { t } from "@/i18n";
@@ -825,6 +826,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const sessionId = props.sessionID ?? props.info?.id ?? "";
     if (sessionId) entry.titleRecovery?.resolve(sessionId);
     if (sessionId) useSessionActivityStore.getState().removeSession(workspaceId, sessionId);
+    if (sessionId) useWorkbenchStore.getState().closeTab({ workspaceId, sessionId });
     if (sessionId) stopTrackingLiveSession(entry, sessionId);
     if (sessionId) {
       for (const listener of entry.sessionDeletedListeners.keys()) listener(sessionId);

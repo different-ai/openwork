@@ -236,4 +236,24 @@ test("side chats keep questions, replies, and saved splits attached to their own
     await preservedHistory(primary, world.primaryQuestionPrompt, "Main outline", world.primaryPrompt, "Primary split received");
     await user.screenshot();
   });
+
+  await step("deleting a conversation clears its saved split and keeps the other conversation usable", async () => {
+    await palette("new split", /^Open side chat/);
+    const pair = await waitSplit(primary);
+    await user.rightClick({ role: "button", label: world.session.title });
+    await user.click({ role: "menuitem", label: "Delete session" });
+    await user.see({ text: "Delete session?" });
+    await user.click({ role: "button", label: "Delete" });
+    await probe.eventually(ids, { within: 30_000, label: "only the explicitly deleted conversation is removed",
+      until: (value) => !value.includes(primary) && value.includes(pair.secondary),
+    });
+    await probe.eventually(() => probe.storage("openwork.session-splits.v1"), {
+      within: 15_000, label: "the saved split no longer references the deleted conversation",
+      until: (value) => isRecord(value) && !JSON.stringify(value).includes(primary),
+    });
+    await reopen(pair.secondary);
+    await send("primary", world.secondaryPrompt);
+    await preservedHistory(pair.secondary, world.secondaryPrompt, "Secondary split received");
+    await user.screenshot();
+  });
 });
