@@ -248,6 +248,32 @@ Provider-specific starter guides:
 install an ingress controller. Use it only when the cluster already has a
 compatible provider ingress controller.
 
+## Go-live verification
+
+The TLS Secret used by your ingress or load balancer must contain the complete
+server chain. Use `fullchain.pem`, not `cert.pem`, when creating TLS material:
+
+```bash
+kubectl create secret tls openwork-tls \
+  --cert=fullchain.pem \
+  --key=privkey.pem \
+  --namespace openwork
+```
+
+Then verify from a non-browser machine:
+
+```bash
+echo | openssl s_client -connect HOST:443 -servername HOST -showcerts 2>/dev/null | grep -c "BEGIN CERT"
+```
+
+The count must be at least `2` (leaf plus intermediate). Browsers may not reveal
+a missing intermediate because they can repair or cache chains, but the OpenWork
+engine will fail strict TLS with `UNABLE_TO_VERIFY_LEAF_SIGNATURE`.
+
+Run the published
+[self-hosted go-live checklist](../../../packages/docs/start-here/self-hosted-go-live-checklist.mdx)
+before handoff.
+
 Published self-host planning pages:
 
 - [Private network deployment](../../../packages/docs/start-here/private-network-deployment.mdx)

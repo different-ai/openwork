@@ -1,0 +1,34 @@
+---
+title: "Enterprise network requirements"
+description: "Network, TLS, proxy, DNS, and streaming requirements for enterprise desktop onboarding."
+---
+
+Share this page with customer IT before onboarding OpenWork Desktop to a self-hosted Den. The desktop includes browser-like surfaces and engine-class processes; both need the right network path.
+
+## Desktop destinations
+
+| Destination | Used for | Requirement |
+| --- | --- | --- |
+| Organization Den origin (`https://HOST`, TCP 443) | Sign-in, organization policy, install handoff, and agent MCP sync at `/api/den/mcp/agent`. | Allow HTTPS from desktop machines and serve a complete certificate chain. |
+| Configured model provider endpoints | Chat and agent model calls to the provider your organization configures. | Allow HTTPS to every provider origin you enable, or to your approved internal model gateway. |
+| Installer download origin | Initial app download and updates, or your self-hosted installer artifact host. | Allow HTTPS from onboarding machines, or publish installers from an approved internal origin. |
+
+## Requirements
+
+1. Serve the complete certificate chain on the Den origin. Replace `HOST` with your Den hostname:
+
+   ```bash
+   echo | openssl s_client -connect HOST:443 -servername HOST -showcerts 2>/dev/null | grep -c "BEGIN CERT"
+   ```
+
+   The result must be `2` or higher: at least the leaf certificate plus its intermediate.
+
+2. If TLS inspection re-signs traffic, provide the corporate CA to OpenWork through `NODE_EXTRA_CA_CERTS`. See [Certificate trust and proxies](/start-here/certificate-trust-and-proxies).
+
+3. The MCP route (`/api/den/mcp/agent`) uses streaming with server-sent events (SSE). Proxies must not buffer, transform, or terminate long-lived streamed responses.
+
+4. Do not require per-user client certificates (mTLS) on the Den origin. Browser clients can present them, but the engine cannot.
+
+5. The hostname must resolve through standard system resolvers for non-browser processes. For split-horizon VPN DNS, verify that terminal commands resolve the same host that the browser opens.
+
+6. `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` environment variables are honored by engine-class processes. PAC files, WinHTTP proxy settings, and browser proxy settings are not. If a proxy is mandatory, document both the environment variable configuration and the browser or system proxy policy.

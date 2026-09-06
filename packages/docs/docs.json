@@ -91,9 +91,11 @@
             "group": "Plan your network",
             "pages": [
               "start-here/private-network-deployment",
+              "start-here/enterprise-network-requirements",
               "start-here/air-gapped-deployment",
               "start-here/outbound-network-access",
-              "start-here/certificate-trust-and-proxies"
+              "start-here/certificate-trust-and-proxies",
+              "start-here/self-hosted-go-live-checklist"
             ]
           },
           {
