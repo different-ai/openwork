@@ -251,7 +251,7 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
       visible: styleVisible && rect.width > 0 && rect.height > 0 && inViewport,
       hitTestOk,
       editable: element.isContentEditable || !element.readOnly && (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement),
-      value: typeof element.value === "string" ? element.value : "",
+      value: typeof element.value === "string" ? element.value : element.isContentEditable ? element.innerText : "",
       text: (element.isContentEditable ? element.innerText : element.innerText ?? element.value ?? element.textContent ?? "").trim(),
       covering: hit && !hitTestOk ? {
         tag: hit.tagName.toLowerCase(),
