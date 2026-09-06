@@ -31,7 +31,7 @@ test("side chats keep questions, replies, and saved splits attached to their own
       && value.primaryWorkspace === workspaceId && value.secondaryWorkspace === workspaceId,
   });
   const send = async (pane: "primary" | "secondary", text: string) => {
-    await user.type({ role: "textbox", nth: pane === "primary" ? 0 : 1 }, text);
+    await user.type({ placeholder: "Describe your task...", nth: pane === "primary" ? 0 : 1 }, text);
     await user.press("Enter");
   };
   const pane = (which: "primary" | "secondary") => probe.eval(`(which) => {
@@ -147,7 +147,7 @@ test("side chats keep questions, replies, and saved splits attached to their own
     const second = await waitSplit(primary);
     expect(second.secondary).not.toBe(first.secondary);
     expect(await ids()).toContain(first.secondary);
-    await user.click({ role: "textbox", nth: 1 });
+    await user.click({ placeholder: "Describe your task...", nth: 1 });
     await palette("new task", /^New session/);
     const third = await probe.eventually(facts, { within: 30_000, label: "New session replaces only the focused side conversation",
       until: (value) => value.primary === primary && value.secondary !== second.secondary && value.panes === 1,
@@ -159,7 +159,7 @@ test("side chats keep questions, replies, and saved splits attached to their own
     await answer("primary", "Primary split received", "Secondary split received");
     const context = await world.agentContextViaServer();
     expect(context).toMatchObject({ ok: true, context: { conversations: { layout: { primarySessionId: primary, secondarySessionId: third.secondary } } } });
-    await user.click({ role: "textbox", nth: 0 });
+    await user.click({ placeholder: "Describe your task...", nth: 0 });
     await palette("new task", /^New session/);
     await probe.eventually(facts, { within: 30_000, label: "New session in the main pane starts a separate conversation",
       until: (value) => value.primary !== primary && value.panes === 0,

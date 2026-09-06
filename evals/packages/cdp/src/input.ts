@@ -194,7 +194,7 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
         : 'button, a[href], input, textarea, [contenteditable="true"], [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="menuitem"], [role="tab"], [role="option"], [data-testid]';
     const candidates = [...document.querySelectorAll(selector)].filter((element) => {
       if (target.role && implicitRole(element) !== target.role) return false;
-      if (target.placeholder !== undefined && element.getAttribute("placeholder") !== target.placeholder) return false;
+      if (target.placeholder !== undefined && (element.getAttribute("placeholder") ?? element.getAttribute("aria-placeholder")) !== target.placeholder) return false;
       if (target.testId !== undefined && element.getAttribute("data-testid") !== target.testId) return false;
       if (!matcher(target.label, accessibleName(element))) return false;
       return true;
