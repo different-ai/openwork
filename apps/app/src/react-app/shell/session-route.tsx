@@ -3374,7 +3374,9 @@ export function SessionRoute() {
         onPrefetchSession: () => {},
         onCreateTaskInWorkspace: (workspaceId, groupId) => {
           const { focusedPane, secondary } = useWorkbenchStore.getState();
-          if (!groupId && !(focusedPane === "secondary" && secondary)) {
+          const hasWorkspaceError = Boolean(errorsByWorkspaceId[workspaceId]?.trim())
+            || workspaceConnectionStateById[workspaceId]?.status === "error";
+          if (!groupId && !hasWorkspaceError && !(focusedPane === "secondary" && secondary)) {
             // The empty composer creates its session on submit. Opening it must
             // not wait for an engine request, especially on a cold v2 runtime.
             setLegacySelectedWorkspaceId(workspaceId);

@@ -224,7 +224,7 @@ export async function workspaceNewTask(seed: Seed) {
   const den = await seed.den({ mocks: { agent: mock } });
   const app = await seed.desktop({ name: "workspace-new-task", den, as: "admin", model: `${providerId}/${modelId}` });
   const workspacePath = seed.tmpPath(`openwork-workspace-new-task-long-name-${Date.now()}`);
-  const workspace = await seed.workspace(app, workspacePath);
+  const workspace = await seed.workspace(app, workspacePath, { create: true });
   await configureWorkspaceProvider(seed, app, [workspace.workspaceId], {
     providerId, modelId, modelName: "New task model", baseUrl: `${den.mocks.agent.url}/v1`,
   });

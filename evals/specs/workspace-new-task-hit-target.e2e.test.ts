@@ -15,7 +15,7 @@ test("workspace New task opens an editable composer immediately and creates one 
   await step("the plus remains the topmost hit target", async () => {
     // TODO(primitive): probe.hitTarget should identify the painted element at a visible control's center.
     const hit = await probe.eval(`(() => {
-      const plus = document.querySelector('[data-workspace-new-task]');
+      const plus = document.querySelector('[data-sidebar-workspace-id="${world.workspace.workspaceId}"] [data-workspace-new-task]');
       if (!(plus instanceof HTMLElement)) return { hitPlus: false, hitTitle: false, tag: "" };
       const rect = plus.getBoundingClientRect();
       const node = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
@@ -34,11 +34,11 @@ test("workspace New task opens an editable composer immediately and creates one 
   const before = (await agent.list()).map((session) => session.sessionId).sort();
   const requests = () => probe.eval(`window.__newTaskRequests`);
   // TODO(primitive): probe.attribute should read the accessible control's aria-expanded value.
-  const expandedBefore = await probe.eval(`document.querySelector('[data-workspace-new-task]')
+  const expandedBefore = await probe.eval(`document.querySelector('[data-sidebar-workspace-id="${world.workspace.workspaceId}"] [data-workspace-new-task]')
     ?.closest("[data-workspace-actions]")?.parentElement?.querySelector("[aria-expanded]")?.getAttribute("aria-expanded")`);
   // TODO(primitive): probe.paintTiming should measure input-to-visible-content in the renderer.
   await probe.eval(`(() => {
-    const button = document.querySelector('[data-workspace-new-task]');
+    const button = document.querySelector('[data-sidebar-workspace-id="${world.workspace.workspaceId}"] [data-workspace-new-task]');
     button.addEventListener("click", () => {
       const started = performance.now();
       const observer = new MutationObserver(() => {
@@ -79,7 +79,7 @@ test("workspace New task opens an editable composer immediately and creates one 
   expect(JSON.stringify(creationRequests)).toContain(world.workspace.workspaceId);
   expect((await agent.list()).length).toBe(before.length + 1);
   // TODO(primitive): probe.attribute should read the accessible control's aria-expanded value.
-  const expandedAfter = await probe.eval(`document.querySelector('[data-workspace-new-task]')
+  const expandedAfter = await probe.eval(`document.querySelector('[data-sidebar-workspace-id="${world.workspace.workspaceId}"] [data-workspace-new-task]')
     ?.closest("[data-workspace-actions]")?.parentElement?.querySelector("[aria-expanded]")?.getAttribute("aria-expanded")`);
   expect(expandedAfter).toBe(expandedBefore);
 });
