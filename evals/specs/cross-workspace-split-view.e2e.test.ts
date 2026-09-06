@@ -126,7 +126,7 @@ async function openCrossWorkspaceSplitFromPalette(app: Surface, user: User, cand
   const mac = app.handle.hostKind !== "daytona" && process.platform === "darwin";
   await user.press(mac ? "Meta+K" : "Control+K");
   await user.click({ role: "option", label: /Open as side chat/ });
-  await user.click({ role: "option", text: candidate.title });
+  await user.click({ role: "option", label: new RegExp(candidate.title) });
 }
 
 async function readSplitFacts(app: Surface, primary: SplitCandidate, secondary: SplitCandidate): Promise<SplitFacts> {
