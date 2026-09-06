@@ -22,10 +22,11 @@ function readDenApiUrl(request?: Request) {
   try {
     return denUrls(process.env).api;
   } catch {
-    if (!request) {
-      return "";
-    }
-    return denUrls({ DEN_BASE_URL: new URL(request.url).origin }).api;
+    // Only the canonical hosted origin has a known public API during migration.
+    // Never let an untrusted request host choose an authenticated API destination.
+    return request && new URL(request.url).origin === "https://app.openworklabs.com"
+      ? "https://api.openworklabs.com"
+      : "";
   }
 }
 

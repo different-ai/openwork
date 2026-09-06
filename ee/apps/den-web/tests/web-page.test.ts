@@ -18,6 +18,7 @@ const originalEnv = {
   DEN_API_BASE: process.env.DEN_API_BASE,
   DEN_API_PUBLIC_URL: process.env.DEN_API_PUBLIC_URL,
   DEN_BASE_URL: process.env.DEN_BASE_URL,
+  DEN_ORG_MODE: process.env.DEN_ORG_MODE,
   DEN_WEB_OPENWORK_WEB_URL: process.env.DEN_WEB_OPENWORK_WEB_URL,
 };
 
@@ -43,6 +44,7 @@ afterEach(() => {
   restoreEnvValue("DEN_API_BASE");
   restoreEnvValue("DEN_API_PUBLIC_URL");
   restoreEnvValue("DEN_BASE_URL");
+  restoreEnvValue("DEN_ORG_MODE");
   restoreEnvValue("DEN_WEB_OPENWORK_WEB_URL");
 });
 
@@ -217,30 +219,54 @@ describe("Web dashboard page", () => {
   });
 
   test("runtime config exposes the public Den API URL without leaking the internal API base", async () => {
+    process.env.DEN_ORG_MODE = "multi_org";
     process.env.DEN_BASE_URL = "https://den.example.test";
     process.env.DEN_API_PUBLIC_URL = "https://public-api.example.test";
     process.env.DEN_API_BASE = "http://openwork-ee-den-api:8788";
 
-    const publicPayload: unknown = await (await GET()).json();
+    const request = new Request("https://untrusted.example.test/api/runtime-config");
+    const publicPayload: unknown = await (await GET(request)).json();
     expect(readStringProperty(publicPayload, "denApiUrl")).toBe("https://public-api.example.test");
     expect(JSON.stringify(publicPayload)).not.toContain("openwork-ee-den-api");
 
     delete process.env.DEN_API_PUBLIC_URL;
-    const derivedPayload: unknown = await (await GET()).json();
+    const derivedPayload: unknown = await (await GET(request)).json();
     expect(readStringProperty(derivedPayload, "denApiUrl")).toBe("https://api.den.example.test");
     expect(JSON.stringify(derivedPayload)).not.toContain("openwork-ee-den-api");
   });
 
-  test("runtime config derives the public API URL from the request during deployment migration", async () => {
+  test("runtime config only uses the canonical hosted mapping during deployment migration", async () => {
     delete process.env.DEN_API_PUBLIC_URL;
-    delete process.env.DEN_BASE_URL;
     process.env.DEN_API_BASE = "http://openwork-ee-den-api:8788";
+    process.env.DEN_ORG_MODE = "multi_org";
 
-    const response = await GET(new Request("https://app.openworklabs.com/api/runtime-config"));
-    const payload: unknown = await response.json();
+    for (const baseUrl of [undefined, "", "https://invalid.example.test/path"]) {
+      if (baseUrl === undefined) delete process.env.DEN_BASE_URL;
+      else process.env.DEN_BASE_URL = baseUrl;
 
-    expect(response.status).toBe(200);
-    expect(readStringProperty(payload, "denApiUrl")).toBe("https://api.app.openworklabs.com");
-    expect(JSON.stringify(payload)).not.toContain("openwork-ee-den-api");
+      for (const origin of [
+        "https://app.openworklabs.com",
+        "https://untrusted.example.test",
+        "https://app.openworklabs.com.untrusted.example.test",
+        "https://app.openworklabs.com@untrusted.example.test",
+        "https://app.openworklabs.com:444",
+        "http://app.openworklabs.com",
+        "http://localhost:3005",
+        undefined,
+      ]) {
+        const request = origin ? new Request(`${origin}/api/runtime-config`, {
+          headers: { "x-forwarded-host": "app.openworklabs.com", "x-forwarded-proto": "https" },
+        }) : undefined;
+        const response = await GET(request);
+        const payload: unknown = await response.json();
+
+        expect(response.status).toBe(200);
+        expect(readStringProperty(payload, "denApiUrl")).toBe(
+          origin === "https://app.openworklabs.com" ? "https://api.openworklabs.com" : "",
+        );
+        expect(JSON.stringify(payload)).not.toContain("openwork-ee-den-api");
+        expect(JSON.stringify(payload)).not.toContain("untrusted.example.test");
+      }
+    }
   });
 });

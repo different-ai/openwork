@@ -46,6 +46,21 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
   };
 
   await step("a person arrives at signup and creates their actual account", async () => {
+    for (const host of [new URL(world.den.ref.webUrl).host, "untrusted.example.test"]) {
+      const { response, body: config } = await probe.api(
+        { ...world.den.admin, apiUrl: world.den.ref.webUrl },
+        "/api/runtime-config",
+        {
+          headers: { host, "x-forwarded-host": host, "x-forwarded-proto": "https" },
+          signal: AbortSignal.timeout(30_000),
+        },
+      );
+      expect(response.status).toBe(200);
+      if (!isRecord(config)) throw new Error("Expected runtime configuration");
+      expect(config.denApiUrl).toBe(world.den.ref.apiUrl);
+      expect(JSON.stringify(config)).not.toContain("untrusted.example.test");
+    }
+    evidence.recordAssertionEvidence("Signup runtime configuration keeps its configured API despite untrusted host headers", "Both normal and host-poisoned requests returned the isolated Den API, never an attacker-selected destination.", true);
     await user.see({ text: "Good work starts here." }, { timeoutMs: 90_000 });
     await user.see({ role: "textbox", label: "Email" });
     await user.notSee({ role: "textbox", label: "Team name" });
