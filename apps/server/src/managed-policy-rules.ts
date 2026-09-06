@@ -2,7 +2,7 @@ import type { DesktopConfig, DesktopExecutionPolicy, DesktopPolicyKey } from "@o
 import { z } from "zod";
 
 export const managedPolicyActionSchema = z.enum([
-  "sync", "shell", "terminal", "file_write", "engine_config", "browser_external",
+  "sync", "shell", "terminal", "saved_command", "file_write", "engine_config", "browser_external",
   "model", "webfetch", "websearch", "browser", "extensions", "settings", "provider", "workspace",
 ]);
 export type ManagedPolicyAction = z.infer<typeof managedPolicyActionSchema>;
@@ -66,6 +66,7 @@ function matches(pattern: string, value: string): boolean {
 export function policyDenial(policy: DesktopConfig, action: ManagedPolicyAction, input: Record<string, unknown>): string | null {
   const execution = policy.execution;
   if (action === "terminal" && (execution?.commands === "deny" || execution?.blockedCommands.length)) return "Interactive terminals are blocked by your team's command policy.";
+  if (action === "saved_command" && (execution?.commands === "deny" || execution?.blockedCommands.length)) return "Saved commands are blocked by your team's command policy.";
   if (action === "shell") {
     if (execution?.commands === "deny") return "Your organization has blocked OS commands for your team.";
     const command = typeof input.command === "string" ? input.command : "";
@@ -85,7 +86,9 @@ export function policyDenial(policy: DesktopConfig, action: ManagedPolicyAction,
   }
   if (action === "engine_config" && (hasExecutionLimits(execution) || policy.allowCustomProviders === false || policy.allowManageExtensions === false || policy.allowControlSettings === false)) return "Your organization manages engine configuration. Change access in Den.";
   if (action === "browser_external" && (execution?.browserOrigins !== undefined || execution?.blockBrowserUploads || policy.allowBuiltInExtensions === false)) return "Open this site in the managed browser.";
-  if (action === "model" && policy.allowZenModel === false && input.providerID === "opencode") return "Your organization has disabled this AI provider.";
+  if ((action === "model" || action === "provider") && input.providerID === "opencode") {
+    return policy.allowZenModel === false ? "Your organization has disabled this AI provider." : null;
+  }
   // Native fetch follows redirects inside the engine. Until it exposes a
   // per-hop hook, approved-site browsing must use the intercepted browser.
   if ((action === "webfetch" || action === "websearch") && execution?.browserOrigins !== undefined) return "Use OpenWork's built-in browser to open approved websites.";

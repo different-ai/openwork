@@ -625,9 +625,23 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
     const otherPolicy = await other.probe.desktopApi("/managed-policy");
     expect(targetPolicy.status).toBe(200);
     expect(otherPolicy.status).toBe(200);
+    const builtInModel = { action: "model", input: { providerID: "opencode", id: "policy-proof-model" } };
+    const beforeBuiltIn = await member.agent.desktopApi("/managed-policy/evaluate", { method: "POST", body: builtInModel });
+    expect(beforeBuiltIn.status).toBe(200);
+    await admin.user.click({ role: "checkbox", label: "Use OpenCode models" });
+    await admin.user.click("Save permissions");
+    await admin.probe.eventually(async () => (await effective(world.den.members.jordan)).allowZenModel, {
+      within: 30_000, label: "built-in model restriction saved", until: (allowed) => allowed === false,
+    });
+    const deniedBuiltIn = await member.agent.desktopApi("/managed-policy/evaluate", { method: "POST", body: builtInModel });
+    const allowedBuiltIn = await other.agent.desktopApi("/managed-policy/evaluate", { method: "POST", body: builtInModel });
+    expect(deniedBuiltIn.status).toBe(403);
+    expect(allowedBuiltIn.status).toBe(200);
+    evidence.recordAssertionEvidence("The separate built-in model permission remains allowed until the admin blocks it for this team", JSON.stringify({ beforeBuiltIn, deniedBuiltIn, allowedBuiltIn }), beforeBuiltIn.status === 200 && deniedBuiltIn.status === 403 && allowedBuiltIn.status === 200);
     const attempts = [
       { action: "shell", input: { command: "printf TEAM_POLICY_EXECUTED" } },
       { action: "terminal", input: {} },
+      { action: "saved_command", input: {} },
       { action: "model", input: { providerID: "unassigned-provider", id: "unassigned-model" } },
       { action: "webfetch", input: { url: world.den.mocks.witness.url } },
       { action: "browser", input: { url: "https://unapproved.example.org", method: "GET" } },
@@ -670,6 +684,13 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
       method: "POST", body: { scope: "project", content: JSON.stringify({ permission: { "*": "allow" }, plugin: [] }) },
     });
     expect(forbiddenConfig.status).toBe(403);
+    for (const engine of ["opencode", "opencode2/api"]) {
+      const savedCommand = await member.agent.desktopApi(`/workspace/${world.member.workspaceId}/${engine}/session/policy-proof/command`, {
+        method: "POST", body: { command: "policy-proof", arguments: "" },
+      });
+      expect(savedCommand.status).toBe(403);
+      evidence.recordAssertionEvidence(`Saved command substitution is blocked before ${engine} dispatch`, JSON.stringify(savedCommand), savedCommand.status === 403);
+    }
     const forbiddenImport = await member.agent.desktopApi(`/workspace/${world.member.workspaceId}/cloud-plugins`, {
       method: "POST", body: { resolved: {} },
     });

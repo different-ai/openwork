@@ -84,9 +84,15 @@ class ManagedDesktopPolicy {
     }
     await this.assert("sync");
     if (terminal) await this.assert(/\/shell(?:\/|$)/.test(decoded) ? "shell" : "terminal", input);
+    // Command templates can run shell substitutions before tool hooks fire.
+    if (/\/session\/[^/]+\/command(?:\/|$)/.test(enginePath)) await this.assert("saved_command");
     if (/^\/(?:config|global\/config)(?:\/|$)/.test(enginePath)) await this.assert("engine_config");
     if (/^\/(?:mcp|plugins?|skills?|agents?)(?:\/|$)/.test(enginePath)) await this.assert("extensions");
-    if (/^\/(?:auth|providers?)(?:\/|$)/.test(enginePath)) await this.assert("provider");
+    if (/^\/(?:auth|providers?)(?:\/|$)/.test(enginePath)) {
+      const providerID = enginePath.match(/^\/auth\/([^/]+)(?:\/|$)/)?.[1]
+        ?? enginePath.match(/^\/provider\/([^/]+)\/oauth\/(?:authorize|callback)$/)?.[1];
+      await this.assert("provider", providerID ? { providerID } : {});
+    }
     const model = typeof input.model === "object" && input.model !== null ? Object.fromEntries(Object.entries(input.model)) : input;
     if ("providerID" in model) await this.assert("model", model);
   }
@@ -95,7 +101,7 @@ class ManagedDesktopPolicy {
     if (!policy) return;
     const denial = policyDenial(policy, action, input);
     if (denial) throw new ApiError(403, "organization_policy_denied", denial);
-    if (action === "model" && policy.allowCustomProviders === false) {
+    if (action === "model" && policy.allowCustomProviders === false && input.providerID !== "opencode") {
       const runtime = await readGlobalRuntimeOpencodeConfig(this.config);
       const providerID = typeof input.providerID === "string" ? input.providerID : "";
       const modelID = typeof input.id === "string" ? input.id : typeof input.modelID === "string" ? input.modelID : "";

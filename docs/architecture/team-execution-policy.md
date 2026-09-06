@@ -16,7 +16,7 @@ remain unchanged.
 | Blocked command patterns | Same shell rule targets | Shared command matcher; patterns are not a shell sandbox |
 | Approved websites | Native fetch/search denied; use built-in browser | Browser session request interception, including frames, redirects and script requests |
 | Block browser uploads | Browser request method and upload-body checks | POST, PUT, PATCH and other non-read methods are denied |
-| Add AI providers | Existing Den catalog; injected provider list | Local provider writes and unassigned model dispatch are denied |
+| Add AI providers | Den catalog plus the separately permitted built-in provider | Local custom provider writes and unassigned organization model dispatch are denied |
 | Use OpenCode models | Existing provider policy | Model dispatch rejects the built-in provider when blocked |
 | Manage extensions | Existing Library restrictions | Local extension, skill and MCP mutation routes |
 | Change app settings | Existing settings visibility | Server configuration mutation routes |
@@ -44,6 +44,9 @@ existing third-party extensions have their own transports, and arbitrary allowed
 OS commands can use other network clients. Disabling OS commands closes the shell
 route; a device-wide outbound guarantee still requires a sandbox or network
 control outside this feature. Installed extensions are not automatically removed.
+Saved commands and interactive terminals are blocked when command restrictions
+apply. Saved command templates can evaluate shell substitutions before normal
+tool hooks, so their entry point must also be guarded.
 
 ## Verification
 
@@ -56,3 +59,8 @@ with `OPENWORK_EVAL_ENGINE=v1` and `OPENWORK_EVAL_ENGINE=v2`, using the full fea
 commit as `OPENWORK_EVAL_REF` and `OPENWORK_EVAL_DAYTONA_REF` for remote placement.
 
 A passing evaluator response alone is not proof that an action was blocked.
+
+Upstream contracts: [legacy shell identity](https://github.com/anomalyco/opencode/blob/v1.18.18/packages/opencode/src/tool/shell/id.ts),
+[legacy command substitution](https://github.com/anomalyco/opencode/blob/v1.18.18/packages/opencode/src/session/prompt.ts#L1317),
+[current permissions](https://opencode.ai/v2/docs/permissions), and
+[execution hooks](https://opencode.ai/v2/docs/build/plugins).

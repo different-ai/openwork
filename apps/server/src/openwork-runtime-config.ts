@@ -63,7 +63,10 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
   const provider = runtimeProviderMap(runtimeConfig);
   return {
     ...engineConfig,
-    ...(runtimeConfig.managedPolicy?.allowCustomProviders === false ? { enabled_providers: Object.keys(provider).filter((id) => /^(?:lpr_|openwork$)/i.test(id)) } : {}),
+    ...(runtimeConfig.managedPolicy?.allowCustomProviders === false ? { enabled_providers: [
+      ...Object.keys(provider).filter((id) => /^(?:lpr_|openwork$)/i.test(id)),
+      ...(runtimeConfig.managedPolicy.allowZenModel !== false ? ["opencode"] : []),
+    ] } : {}),
     permission: { ...engineConfig.permission, ...permissions },
     default_agent: runtimeConfig.default_agent ?? "openwork",
     agent: {
