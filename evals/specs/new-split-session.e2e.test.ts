@@ -61,7 +61,7 @@ test("side chats keep questions, replies, and saved splits attached to their own
       .catch(async (error: unknown) => { await user.screenshot(); throw error; });
     await user.notSee(paletteInput);
   };
-  const reopen = async (sessionId: string) => {
+  const rowTarget = async (sessionId: string): Promise<{ role: "button"; label: string; nth: number }> => {
     const target = await probe.eventually(() => probe.eval(`(id) => {
       const row = document.querySelector('[data-session-tab-id="' + id + '"]');
       const label = row?.getAttribute("aria-label");
@@ -74,7 +74,10 @@ test("side chats keep questions, replies, and saved splits attached to their own
       until: (value) => isRecord(value) && typeof value.label === "string" && typeof value.nth === "number" && value.nth >= 0,
     });
     if (!isRecord(target) || typeof target.label !== "string" || typeof target.nth !== "number") throw new Error("Missing saved conversation control");
-    await user.click({ role: "button", label: target.label, nth: target.nth });
+    return { role: "button", label: target.label, nth: target.nth };
+  };
+  const reopen = async (sessionId: string) => {
+    await user.click(await rowTarget(sessionId));
     await probe.eventually(facts, { within: 30_000, label: "clicking the saved conversation opens it",
       until: (value) => value.primary === sessionId,
     });
@@ -160,7 +163,7 @@ test("side chats keep questions, replies, and saved splits attached to their own
       };
     }`, { args: [primary] });
     expect(await rowLayout()).toMatchObject({ attached: true, pinned: false, compactHeaders: true, oldControls: 0 });
-    await user.rightClick({ role: "button", label: world.session.title });
+    await user.rightClick(await rowTarget(primary));
     await user.screenshot();
     await user.click({ role: "menuitem", label: /^Pin session$/ });
     await probe.eventually(rowLayout, { within: 15_000, label: "the session and its side-chat control move into Pinned",
@@ -240,7 +243,8 @@ test("side chats keep questions, replies, and saved splits attached to their own
   await step("deleting a conversation clears its saved split and keeps the other conversation usable", async () => {
     await palette("new split", /^Open side chat/);
     const pair = await waitSplit(primary);
-    await user.rightClick({ role: "button", label: world.session.title });
+    await user.rightClick(await rowTarget(primary));
+    await user.screenshot();
     await user.click({ role: "menuitem", label: "Delete session" });
     await user.see({ text: "Delete session?" });
     await user.click({ role: "button", label: "Delete" });
