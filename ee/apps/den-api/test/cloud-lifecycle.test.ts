@@ -1,10 +1,10 @@
-import { DaytonaConflictError } from "@daytonaio/sdk"
+import { RuntimeProviderError } from "@openwork-ee/cloud-runtime/contract"
+import { CloudRuntimeError, createCloudRuntimeOrchestrator, type CloudRuntimeOrchestratorConfig } from "@openwork-ee/cloud-runtime/orchestrator"
+import { createFakeProvider, createInMemoryRuntimeInstanceStore, type FakeOperation } from "@openwork-ee/cloud-runtime/testing"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { beforeAll, describe, expect, test } from "bun:test"
-import type { DaytonaProvisioningRuntime, DaytonaSandboxRuntime } from "../src/workers/daytona.js"
 
 type CloudLifecycleModule = typeof import("../src/workers/cloud-lifecycle.js")
-type DaytonaModule = typeof import("../src/workers/daytona.js")
 type WakeCloudWorkerOptions = NonNullable<Parameters<CloudLifecycleModule["wakeCloudWorker"]>[1]>
 type Store = NonNullable<WakeCloudWorkerOptions["store"]>
 type TestWorker = NonNullable<Awaited<ReturnType<Store["getWorker"]>>>
@@ -22,12 +22,10 @@ function seedRequiredEnv() {
 }
 
 let lifecycle: CloudLifecycleModule
-let daytona: DaytonaModule
 
 beforeAll(async () => {
   seedRequiredEnv()
   lifecycle = await import("../src/workers/cloud-lifecycle.js")
-  daytona = await import("../src/workers/daytona.js")
 })
 
 function makeWorker(input: {
@@ -115,83 +113,77 @@ function makeStore(input: { workers: TestWorker[]; tokens?: TestWorkerToken[] })
   }
 }
 
-function makeDaytonaWakeRuntime(input: {
+const imageVersion = "openwork-0.18.8"
+
+function orchestratorConfig(): CloudRuntimeOrchestratorConfig {
+  return {
+    instanceNamePrefix: "den-cloud-worker",
+    sharedVolumeName: "den-cloud-workers",
+    workspaceMountPath: "/workspace",
+    dataMountPath: "/persist/openwork",
+    runtimeWorkspacePath: "/tmp/openwork-workspace",
+    runtimeDataPath: "/tmp/openwork-data",
+    sidecarDir: "/tmp/openwork-sidecars",
+    checkpointIntervalSeconds: 300,
+    checkpointKeep: 3,
+    port: 8787,
+    publicEndpoint: false,
+    lifecycle: {},
+    resources: { cpu: 2, memoryGb: 4, diskGb: 8 },
+    endpointTtlSeconds: 86_400,
+    endpointRefreshLeadMs: 300_000,
+    createTimeoutMs: 300_000,
+    stopTimeoutMs: 120_000,
+    destroyTimeoutMs: 120_000,
+    healthcheckTimeoutMs: 300_000,
+    pollIntervalMs: 1_000,
+    activityHeartbeatUrl: (workerId) => `https://den.example/v1/workers/${workerId}/activity-heartbeat`,
+    bootstrap: { imageDescription: "test runtime image", rebuildHint: "rebuild the test image" },
+  }
+}
+
+/** A real orchestrator over the in-memory fake host, seeded with one stopped instance for the worker. */
+function makeWakeRuntime(input: {
+  workerId: TestWorker["id"]
   startError?: Error
-  refreshStates?: string[]
-} = {}) {
-  let state = "stopped"
-  let startCalls = 0
-  let refreshCalls = 0
+  onOperation?: (operation: FakeOperation, controls: { setRunning: () => void }) => void
+} = { workerId: createDenTypeId("worker") }) {
+  let sandboxId = ""
   let healthChecks = 0
-  const sandbox = {
-    id: "sbx_wake_test",
-    get state() {
-      return state
+  const provider = createFakeProvider({
+    image: { id: imageVersion, version: imageVersion },
+    onOperation: (operation) => {
+      if (operation.name === "start" && operation.attempt === 1 && input.startError) throw input.startError
+      input.onOperation?.(operation, { setRunning: () => provider.fake.setState(sandboxId, "running") })
     },
-    get target() {
-      return "us-test"
-    },
-    async refreshData() {
-      const refreshState = input.refreshStates?.[refreshCalls]
-      refreshCalls += 1
-      if (refreshState !== undefined) {
-        state = refreshState
-      }
-    },
-    async start() {
-      startCalls += 1
-      if (input.startError) {
-        throw input.startError
-      }
-      state = "started"
-    },
-    async stop() {
-      state = "stopped"
-    },
-    async delete() {},
-    async getSignedPreviewUrl() {
-      return { url: "https://wake.preview.example.test" }
-    },
-    process: {
-      async createSession() {},
-      async executeSessionCommand() {
-        return { cmdId: "cmd_1" }
-      },
-      async getSessionCommand() {
-        return { exitCode: null }
-      },
-      async getSessionCommandLogs() {
-        return { stdout: "", stderr: "" }
-      },
-    },
-  } satisfies DaytonaSandboxRuntime
-  const runtime = {
-    async getVolume() {
-      return { id: "vol_shared", state: "ready" }
-    },
-    async getSandbox() {
-      return sandbox
-    },
-    async createSandbox() {
-      throw new Error("unexpected sandbox create")
-    },
-    async upsertSandbox() {},
-    async checkpointExists() {
-      return false
-    },
-    async verifyRestoreMarker() {
-      return false
-    },
-    async waitForHealth() {
+  })
+  sandboxId = provider.fake.seed({ idempotencyKey: "sbx-wake-test", state: "stopped" }).id
+  const store = createInMemoryRuntimeInstanceStore()
+  store.records.set(input.workerId, {
+    workerId: input.workerId,
+    sandbox: { providerId: "fake", ref: { sandboxId } },
+    storage: { workspaceVolumeId: "vol_shared", dataVolumeId: "vol_shared" },
+    endpointUrl: "https://wake.preview.example.test",
+    endpointExpiresAt: new Date("2026-07-25T12:00:00.000Z"),
+    region: "us-test",
+  })
+  store.imageVersions.set(input.workerId, imageVersion)
+  const orchestrator = createCloudRuntimeOrchestrator({
+    provider,
+    store,
+    config: orchestratorConfig(),
+    logger: { warn: () => undefined },
+    fetch: async () => {
       healthChecks += 1
+      return new Response(null, { status: 200 })
     },
-  } satisfies DaytonaProvisioningRuntime
+    sleep: async () => undefined,
+  })
 
   return {
-    runtime,
-    record: { sandbox_id: sandbox.id, workspace_volume_id: "vol_shared", data_volume_id: "vol_shared" },
+    orchestrator,
     get startCalls() {
-      return startCalls
+      return provider.fake.count("start", sandboxId)
     },
     get healthChecks() {
       return healthChecks
@@ -261,7 +253,7 @@ describe("cloud lifecycle idle stop", () => {
     expect(runs).toBe(0)
   })
 
-  test("marks stopped only when the Daytona stop succeeds", async () => {
+  test("marks stopped only when the host stop succeeds", async () => {
     const idleBefore = new Date("2026-07-25T12:00:00.000Z")
     const stoppedWorker = makeWorker({
       status: "healthy",
@@ -436,7 +428,7 @@ describe("cloud lifecycle wake", () => {
     expect(updates.map((update) => update.status)).toEqual(["provisioning", "failed"])
   })
 
-  test("runs one Daytona wake for concurrent calls to the same worker", async () => {
+  test("runs one host wake for concurrent calls to the same worker", async () => {
     const worker = makeWorker({ status: "stopped" })
     const { store } = makeStore({
       workers: [worker],
@@ -473,7 +465,7 @@ describe("cloud lifecycle wake", () => {
     expect(worker.status).toBe("healthy")
   })
 
-  test("keeps a worker provisioning while a Daytona start conflict converges healthy", async () => {
+  test("keeps a worker provisioning while a host start conflict converges healthy", async () => {
     const worker = makeWorker({ status: "stopped" })
     const { store, updates } = makeStore({
       workers: [worker],
@@ -483,19 +475,19 @@ describe("cloud lifecycle wake", () => {
         makeToken(worker.id, "activity"),
       ],
     })
-    const wakeRuntime = makeDaytonaWakeRuntime({
-      startError: new DaytonaConflictError("Sandbox state change in progress"),
-      refreshStates: ["stopped", "started"],
+    const wakeRuntime = makeWakeRuntime({
+      workerId: worker.id,
+      startError: new RuntimeProviderError({ providerId: "fake", code: "invalid_state", message: "Sandbox state change in progress" }),
+      // The host reports "stopped" once more, then converges to running while
+      // the orchestrator waits for the conflicting start to settle.
+      onOperation: (operation, controls) => {
+        if (operation.name === "inspect" && operation.attempt === 3) controls.setRunning()
+      },
     })
 
     await lifecycle.wakeCloudWorker(worker.id, {
       store,
-      wakeWorker: (wakeInput) => daytona.wakeWorkerOnDaytonaWithRuntime(
-        wakeInput,
-        wakeRuntime.runtime,
-        wakeRuntime.record,
-        "openwork-0.18.8",
-      ),
+      wakeWorker: (wakeInput) => wakeRuntime.orchestrator.wake(wakeInput),
     })
 
     expect(worker.status).toBe("healthy")
@@ -504,7 +496,7 @@ describe("cloud lifecycle wake", () => {
     expect(updates.map((update) => update.status)).toEqual(["provisioning", "healthy"])
   })
 
-  test("writes the image version returned by a successful Daytona wake", async () => {
+  test("writes the image version returned by a successful wake", async () => {
     const worker = makeWorker({ status: "stopped" })
     const { store, updates } = makeStore({
       workers: [worker],
@@ -560,7 +552,7 @@ describe("cloud lifecycle wake", () => {
     expect(worker.status).toBe("failed")
   })
 
-  test("marks the worker failed after bounded Daytona start retries", async () => {
+  test("marks the worker failed after bounded host start retries", async () => {
     const worker = makeWorker({ status: "stopped" })
     const { store, updates } = makeStore({
       workers: [worker],
@@ -570,18 +562,18 @@ describe("cloud lifecycle wake", () => {
         makeToken(worker.id, "activity"),
       ],
     })
-    const wakeRuntime = makeDaytonaWakeRuntime({
-      startError: new Error("Request failed with status code 502"),
+    const wakeRuntime = makeWakeRuntime({
+      workerId: worker.id,
+      onOperation: (operation) => {
+        if (operation.name === "start") {
+          throw new RuntimeProviderError({ providerId: "fake", code: "transient", message: "Request failed with status code 502" })
+        }
+      },
     })
 
     await lifecycle.wakeCloudWorker(worker.id, {
       store,
-      wakeWorker: (wakeInput) => daytona.wakeWorkerOnDaytonaWithRuntime(
-        wakeInput,
-        wakeRuntime.runtime,
-        wakeRuntime.record,
-        "openwork-0.18.8",
-      ),
+      wakeWorker: (wakeInput) => wakeRuntime.orchestrator.wake(wakeInput),
     })
 
     expect(worker.status).toBe("failed")
@@ -590,7 +582,7 @@ describe("cloud lifecycle wake", () => {
     expect(updates.map((update) => update.status)).toEqual(["provisioning", "failed"])
   })
 
-  test("falls back to full provisioning when the Daytona sandbox is missing during wake", async () => {
+  test("falls back to full provisioning when the instance is missing during wake", async () => {
     const worker = makeWorker({ status: "stopped" })
     const { store } = makeStore({
       workers: [worker],
@@ -607,7 +599,7 @@ describe("cloud lifecycle wake", () => {
       store,
       wakeWorker: async () => {
         wakeExecutions += 1
-        throw new daytona.DaytonaSandboxMissingError("sandbox deleted")
+        throw new CloudRuntimeError("instance_missing", "instance deleted")
       },
       provisionWorker: async () => {
         provisionExecutions += 1

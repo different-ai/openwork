@@ -5,6 +5,7 @@ export default defineConfig({
     index: "src/index.ts",
     "contract/index": "src/contract/index.ts",
     "bootstrap/index": "src/bootstrap/index.ts",
+    "orchestrator/index": "src/orchestrator/index.ts",
     "testing/index": "src/testing/index.ts",
   },
   format: ["esm"],

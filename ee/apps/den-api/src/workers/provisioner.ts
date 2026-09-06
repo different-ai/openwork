@@ -1,10 +1,7 @@
 import { WorkerTable } from "@openwork-ee/den-db/schema"
 import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
-import {
-  deprovisionWorkerOnDaytona,
-  provisionWorkerOnDaytona,
-} from "./daytona.js"
+import { cloudRuntimeConfigured, getCloudRuntime } from "./cloud-runtime.js"
 import {
   customDomainForWorker,
   ensureVercelDnsRecord,
@@ -356,8 +353,8 @@ export async function provisionWorker(
     return provisionWorkerOnRender(input)
   }
 
-  if (env.provisionerMode === "daytona") {
-    return provisionWorkerOnDaytona(input)
+  if (cloudRuntimeConfigured()) {
+    return getCloudRuntime().provision(input)
   }
 
   const template = env.workerUrlTemplate ?? "https://workers.local/{workerId}"
@@ -373,8 +370,8 @@ export async function deprovisionWorker(input: {
   workerId: WorkerId
   instanceUrl: string | null
 }) {
-  if (env.provisionerMode === "daytona") {
-    await deprovisionWorkerOnDaytona(input.workerId)
+  if (cloudRuntimeConfigured()) {
+    await getCloudRuntime().deprovision(input.workerId)
     return
   }
 
