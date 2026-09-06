@@ -56,7 +56,34 @@ test("side chats keep questions, replies, and saved splits attached to their own
     await user.click({ role: "option", label });
     await user.notSee(paletteInput);
   };
+  const reopen = async (sessionId: string) => {
+    const target = await probe.eventually(() => probe.eval(`(id) => {
+      const row = document.querySelector('[data-session-tab-id="' + id + '"]');
+      const label = row?.getAttribute("aria-label");
+      if (!label) return null;
+      const buttons = [...document.querySelectorAll('button, [role="button"]')]
+        .filter((node) => node.getAttribute("aria-label") === label);
+      return { label, nth: buttons.indexOf(row) };
+    }`, { args: [sessionId] }), {
+      within: 15_000, label: "the saved conversation has a sidebar control",
+      until: (value) => isRecord(value) && typeof value.label === "string" && typeof value.nth === "number" && value.nth >= 0,
+    });
+    if (!isRecord(target) || typeof target.label !== "string" || typeof target.nth !== "number") throw new Error("Missing saved conversation control");
+    await user.click({ role: "button", label: target.label, nth: target.nth });
+    await probe.eventually(facts, { within: 30_000, label: "clicking the saved conversation opens it",
+      until: (value) => value.primary === sessionId,
+    });
+  };
   const preservedHistory = async (sessionId: string, ...messages: string[]) => {
+    await probe.eventually(() => probe.eval(`(id) => {
+      const surface = document.querySelector('[data-session-surface-id="' + id + '"]');
+      return [...(surface?.querySelectorAll('[data-message-role]') ?? [])]
+        .filter((node) => node.getClientRects().length && getComputedStyle(node).visibility !== "hidden")
+        .map((node) => node.innerText).join("\\n");
+    }`, { args: [sessionId] }), {
+      within: 30_000, label: "the reopened conversation renders its earlier messages",
+      until: (value) => typeof value === "string" && messages.every((message) => value.includes(message)),
+    });
     await probe.eventually(() => agent.run("session.read_transcript", { count: 30 }), {
       within: 30_000, label: "the reopened conversation retains its earlier messages",
       until: (value) => isRecord(value) && value.ok === true && value.sessionId === sessionId
@@ -159,7 +186,7 @@ test("side chats keep questions, replies, and saved splits attached to their own
     await probe.eventually(facts, { within: 15_000, label: "closing the side pane keeps its owner open", until: (value) => value.primary === other.primary && value.panes === 0 });
     expect(await ids()).toEqual(saved);
     await preservedHistory(other.primary, world.primaryPrompt, "Primary split received");
-    expect(await agent.run("session.open", { sessionId: other.secondary })).toMatchObject({ ok: true });
+    await reopen(other.secondary);
     await preservedHistory(other.secondary, world.secondaryPrompt, "Secondary split received");
     await user.click({ role: "button", label: `Side chat · ${world.session.title}` });
     await waitSplit(primary, first.secondary);
@@ -198,9 +225,9 @@ test("side chats keep questions, replies, and saved splits attached to their own
     });
     expect(await ids()).toEqual(saved);
     await preservedHistory(third.secondary, world.secondaryPrompt, "Secondary split received");
-    expect(await agent.run("session.open", { sessionId: first.secondary })).toMatchObject({ ok: true });
+    await reopen(first.secondary);
     await preservedHistory(first.secondary, world.secondaryQuestionPrompt, "Side checklist", world.contextPrompt);
-    expect(await agent.run("session.open", { sessionId: primary })).toMatchObject({ ok: true });
+    await reopen(primary);
     await preservedHistory(primary, world.primaryQuestionPrompt, "Main outline", world.primaryPrompt, "Primary split received");
     await user.screenshot();
   });

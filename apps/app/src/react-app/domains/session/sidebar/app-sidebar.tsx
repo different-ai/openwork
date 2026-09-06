@@ -2297,6 +2297,7 @@ function SessionMenuItem({
       >
         <div className="relative min-w-0 flex-1">
           <SidebarMenuSubButton
+            render={<button type="button" />}
             isActive={isSelected}
             data-session-tab-id={session.id}
             data-session-tab-active={isSelected ? "true" : undefined}
@@ -2311,7 +2312,7 @@ function SessionMenuItem({
             aria-label={accessibleState}
             aria-description={shortcutDigit === undefined ? undefined : sessionNumberShortcutDescription(ctx.sessionNumberShortcutOs, shortcutDigit)}
             aria-keyshortcuts={ariaKeyShortcuts}
-            className={rowButtonClass}
+            className={cn(rowButtonClass, "w-full")}
             style={rowButtonStyle}
           >
             {leading}
