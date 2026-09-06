@@ -38,6 +38,7 @@ export type DaytonaSandboxClient = {
   readonly id: string
   readonly state: string | null
   readonly target: string | null
+  readonly labels?: Readonly<Record<string, string>>
   refreshData(): Promise<unknown>
   start(timeoutSeconds?: number): Promise<unknown>
   stop(timeoutSeconds?: number): Promise<unknown>
@@ -125,6 +126,9 @@ function toSandboxClient(sandbox: Sandbox): DaytonaSandboxClient {
     },
     get target() {
       return sandbox.target ?? null
+    },
+    get labels() {
+      return sandbox.labels
     },
     refreshData: () => sandbox.refreshData(),
     start: (timeout) => sandbox.start(timeout),
@@ -408,11 +412,10 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
       return handleOf(sandbox)
     },
     async find(query: SandboxQuery) {
+      let sandbox: DaytonaSandboxClient | null = null
       if (query.idempotencyKey) {
-        const sandbox = await getFresh(query.idempotencyKey)
-        return sandbox ? handleOf(sandbox) : null
-      }
-      if (query.labels) {
+        sandbox = await getFresh(query.idempotencyKey)
+      } else if (query.labels) {
         const labels = query.labels
         const first = await wrap(async () => {
           for await (const entry of client.list({ labels: { ...labels }, limit: 100 })) {
@@ -421,10 +424,12 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
           return null
         })
         if (!first) return null
-        const sandbox = await getFresh(first.id)
-        return sandbox ? handleOf(sandbox) : null
+        sandbox = await getFresh(first.id)
       }
-      return null
+      if (!sandbox || (query.labels && Object.entries(query.labels).some(([key, value]) => sandbox.labels?.[key] !== value))) {
+        return null
+      }
+      return handleOf(sandbox)
     },
     async get(ref) {
       const sandbox = await getFresh(sandboxIdOf(ref))

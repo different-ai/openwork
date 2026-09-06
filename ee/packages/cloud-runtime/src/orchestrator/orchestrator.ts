@@ -241,14 +241,14 @@ export function createCloudRuntimeOrchestrator(deps: CloudRuntimeOrchestratorDep
     return provider.storage.ensureVolume(config.sharedVolumeName, { timeoutMs: config.createTimeoutMs })
   }
 
-  async function findByName(name: string) {
-    return provider.find({ idempotencyKey: name })
+  async function findByName(name: string, workerId: string) {
+    return provider.find({ idempotencyKey: name, labels: labels(workerId) })
   }
 
-  async function findAfterCreateConflict(lookupNames: string[]) {
+  async function findAfterCreateConflict(lookupNames: string[], workerId: string) {
     for (let attempt = 1; attempt <= createConflictLookupMaxAttempts; attempt += 1) {
       for (const lookupName of lookupNames) {
-        const handle = await findByName(lookupName)
+        const handle = await findByName(lookupName, workerId)
         if (handle) return handle
       }
       if (attempt < createConflictLookupMaxAttempts) {
@@ -505,7 +505,7 @@ export function createCloudRuntimeOrchestrator(deps: CloudRuntimeOrchestratorDep
     const lookupNames = instanceLookupNames(config.instanceNamePrefix, input, currentImageVersion())
     const volume = await sharedVolume()
     for (const lookupName of lookupNames) {
-      const existing = await findByName(lookupName)
+      const existing = await findByName(lookupName, input.workerId)
       if (existing) {
         return adopt(input, existing, volume)
       }
@@ -524,7 +524,7 @@ export function createCloudRuntimeOrchestrator(deps: CloudRuntimeOrchestratorDep
       }
 
       if (runtimeProviderErrorCode(error) === "conflict") {
-        const conflictHandle = await findAfterCreateConflict(lookupNames)
+        const conflictHandle = await findAfterCreateConflict(lookupNames, input.workerId)
         if (conflictHandle) {
           return adopt(input, conflictHandle, volume)
         }

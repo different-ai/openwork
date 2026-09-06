@@ -29,6 +29,7 @@ type FakeSandboxOptions = {
   name?: string
   state?: string
   target?: string
+  labels?: Record<string, string>
   startError?: Error
   stopError?: Error
   exitCodes?: Array<number | null>
@@ -49,6 +50,9 @@ function fakeSandbox(options: FakeSandboxOptions) {
     },
     get target() {
       return options.target ?? "us"
+    },
+    get labels() {
+      return options.labels
     },
     async refreshData() {
       calls.push("refresh")
@@ -246,12 +250,57 @@ describe("Daytona provider", () => {
     expect(fake.lookups).toEqual(["den-name"])
   })
 
+  test.each(["den-name", undefined])("find requires every requested label after refresh (name: %s)", async (idempotencyKey) => {
+    const labels = { "openwork.den.provider": "daytona", "openwork.den.worker-id": "wrk_01jz7m8n9p2q3r4s5t6v7w8x9a" }
+    const observedLabels = { ...labels, extra: "allowed" }
+    const existing = fakeSandbox({ id: "sbx_owned", state: "stopped", labels: observedLabels })
+    const fake = fakeClient({ sandboxes: { "den-name": existing.sandbox, sbx_owned: existing.sandbox }, listed: [{ id: "sbx_owned" }] })
+    const provider = createDaytonaProvider(config(), { client: fake.client })
+
+    expect((await provider.find({ idempotencyKey, labels }))?.ref.ref.sandboxId).toBe("sbx_owned")
+    expect(existing.calls).toEqual(["refresh"])
+
+    existing.sandbox.refreshData = async () => {
+      observedLabels["openwork.den.worker-id"] = "wrk_01jz7m8n9p2q3r4s5t6v7w8x9b"
+    }
+    expect(await provider.find({ idempotencyKey, labels })).toBeNull()
+    expect(fake.lookups).toEqual([idempotencyKey ?? "sbx_owned", idempotencyKey ?? "sbx_owned"])
+  })
+
+  test.each(["den-name", undefined])("find rejects foreign or absent owner labels without falling back to another name (name: %s)", async (idempotencyKey) => {
+    const labels = { "openwork.den.provider": "daytona", "openwork.den.worker-id": "wrk_01jz7m8n9p2q3r4s5t6v7w8x9a" }
+    for (const foundLabels of [
+      undefined,
+      {},
+      { "openwork.den.provider": "daytona" },
+      { "openwork.den.worker-id": labels["openwork.den.worker-id"] },
+      { ...labels, "openwork.den.provider": "other" },
+      { ...labels, "openwork.den.worker-id": "wrk_01jz7m8n9p2q3r4s5t6v7w8x9b" },
+    ]) {
+      const foreign = fakeSandbox({ id: "sbx_foreign", labels: foundLabels })
+      const owned = fakeSandbox({ id: "sbx_owned", labels })
+      const fake = fakeClient({
+        sandboxes: { "den-name": foreign.sandbox, sbx_foreign: foreign.sandbox, sbx_owned: owned.sandbox },
+        listed: [{ id: idempotencyKey ? "sbx_owned" : "sbx_foreign" }],
+      })
+      const provider = createDaytonaProvider(config(), { client: fake.client })
+
+      expect(await provider.find({ idempotencyKey, labels })).toBeNull()
+      expect(fake.lookups).toEqual([idempotencyKey ?? "sbx_foreign"])
+      expect(foreign.calls).toEqual(["refresh"])
+      expect(foreign.commands).toHaveLength(0)
+      expect(owned.calls).toHaveLength(0)
+      expect((await provider.get({ providerId: "daytona", ref: { sandboxId: "sbx_foreign" } }))?.ref.ref.sandboxId).toBe("sbx_foreign")
+    }
+  })
+
   test("find by labels takes the first listed instance", async () => {
-    const orphan = fakeSandbox({ id: "sbx_orphan", state: "stopped" })
+    const labels = { "openwork.den.provider": "daytona", "openwork.den.worker-id": "w" }
+    const orphan = fakeSandbox({ id: "sbx_orphan", state: "stopped", labels })
     const fake = fakeClient({ listed: [{ id: "sbx_orphan" }], sandboxes: { sbx_orphan: orphan.sandbox } })
     const provider = createDaytonaProvider(config(), { client: fake.client })
 
-    const found = await provider.find({ labels: { "openwork.den.worker-id": "w" } })
+    const found = await provider.find({ labels })
     expect(found?.ref.ref.sandboxId).toBe("sbx_orphan")
     expect(await createDaytonaProvider(config(), { client: fakeClient({}).client }).find({ labels: { x: "y" } })).toBeNull()
   })
