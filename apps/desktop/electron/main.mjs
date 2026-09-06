@@ -1330,7 +1330,7 @@ let runtimeBootstrapPromise = null;
 
 function showShutdownScreen() {
   const win = mainWindow;
-  if (!win || win.isDestroyed()) return;
+  if (!win || win.isDestroyed() || win.webContents?.isDestroyed()) return;
   try {
     win.show();
     void win.webContents.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html>
@@ -1359,11 +1359,14 @@ function showShutdownScreen() {
     // Ignore renderer teardown races during quit.
   }
 }
-
 async function disposeRuntimeBeforeQuit() {
   if (runtimeDisposedForQuit || runtimeDisposeInProgress) return;
   runtimeDisposeInProgress = true;
   try {
+    // Kill all lingering pty terminal processes before webContents teardown
+    for (const [terminalId] of terminalProcesses.entries()) {
+      killTerminal(terminalId);
+    }
     await runtimeManager.dispose().catch(() => undefined);
     runtimeDisposedForQuit = true;
   } finally {
