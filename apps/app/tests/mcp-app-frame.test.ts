@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test"
+import { mcpAppResolutionRetryDelayMs } from "../src/app/lib/mcp-app-resolution"
+import { resolveDashboardMcpApp } from "../src/react-app/domains/dashboard/dashboard-mcp-app-resolution"
 
 import {
   createOpenworkServerClient,
@@ -83,7 +85,7 @@ describe("MCP App iframe policy", () => {
   })
 
   test("keeps ordinary tools silent while surfacing advertised resource failures", () => {
-    expect(isActionableMcpAppResolutionError(new OpenworkServerError(503, "mcp_unreachable", "offline"))).toBe(false)
+    expect(isActionableMcpAppResolutionError(new OpenworkServerError(503, "mcp_unreachable", "offline"))).toBe(true)
     expect(isActionableMcpAppResolutionError(new OpenworkServerError(404, "resource_read_failed", "missing"))).toBe(true)
     expect(isActionableMcpAppResolutionError(new Error("generic failure"))).toBe(false)
   })
@@ -164,6 +166,75 @@ describe("MCP App iframe policy", () => {
     expect(csp).toContain("connect-src https://api.example.com")
     expect(csp).toContain("script-src 'unsafe-inline' https://static.example.com")
     expect(csp).toContain("frame-src https://embed.example.com")
+  })
+})
+
+describe("MCP App discovery recovery", () => {
+  test("bounds retries to transient discovery failures", () => {
+    for (const code of ["server_unavailable", "mcp_unreachable"]) {
+      const cause = new OpenworkServerError(503, code, "starting")
+      expect(mcpAppResolutionRetryDelayMs(cause, 0)).toBe(1_000)
+      expect(mcpAppResolutionRetryDelayMs(cause, 1)).toBe(3_000)
+      expect(mcpAppResolutionRetryDelayMs(cause, 2)).toBeNull()
+    }
+    for (const code of ["tool_denied", "tool_resource_mismatch"]) {
+      expect(mcpAppResolutionRetryDelayMs(new OpenworkServerError(422, code, "denied"), 0)).toBeNull()
+    }
+    expect(mcpAppResolutionRetryDelayMs(new Error("unknown failure"), 0)).toBeNull()
+  })
+
+  test.each([false, true])("recovers or stops after three discovery attempts (exhausted: %j)", async (exhausted) => {
+    const app = fixture()
+    let attempts = 0
+    const waits: number[] = []
+    const failure = new OpenworkServerError(503, "mcp_unreachable", "starting")
+    const endpoint = {
+      workspaceId: "workspace-1",
+      client: { resolveMcpApp: async () => {
+        attempts += 1
+        if (exhausted || attempts < 3) throw failure
+        return { app }
+      } },
+    }
+    const resolving = resolveDashboardMcpApp({
+      endpoints: [endpoint], projectedToolName: "fixture_render", expected: app,
+      wait: async (delay) => { waits.push(delay) },
+    })
+    if (exhausted) await expect(resolving).rejects.toBe(failure)
+    else expect(await resolving).toEqual({ endpoint, app })
+    expect(attempts).toBe(3)
+    expect(waits).toEqual([1_000, 3_000])
+  })
+
+  test("tries another workspace before waiting and never retries deterministic failures", async () => {
+    const app = fixture()
+    let attempts = 0
+    const failure = new OpenworkServerError(422, "tool_resource_mismatch", "resource moved")
+    const first = { workspaceId: "first", client: { resolveMcpApp: async () => { attempts += 1; throw failure } } }
+    const second = { workspaceId: "second", client: { resolveMcpApp: async () => ({ app }) } }
+    const options = {
+      projectedToolName: "fixture_render", expected: app,
+      wait: async () => { throw new Error("must not retry") },
+    }
+    expect(await resolveDashboardMcpApp({ ...options, endpoints: [first, second] })).toEqual({ endpoint: second, app })
+    await expect(resolveDashboardMcpApp({ ...options, endpoints: [first] })).rejects.toBe(failure)
+    expect(attempts).toBe(2)
+  })
+
+  test.each([
+    { serverName: "other-server" },
+    { toolName: "other-tool" },
+    { resourceUri: "ui://fixture/other.html" },
+  ])("refuses a different saved identity without a connection reference: %j", async (mismatch) => {
+    const app = fixture()
+    const lookalike = { workspaceId: "lookalike", client: { resolveMcpApp: async () => ({ app: fixture(mismatch) }) } }
+    const matching = { workspaceId: "matching", client: { resolveMcpApp: async () => ({ app }) } }
+    const options = {
+      projectedToolName: "fixture_render", expected: app,
+      wait: async () => { throw new Error("identity mismatch must not retry") },
+    }
+    expect(await resolveDashboardMcpApp({ ...options, endpoints: [lookalike, matching] })).toEqual({ endpoint: matching, app })
+    expect(await resolveDashboardMcpApp({ ...options, endpoints: [lookalike] })).toBeNull()
   })
 })
 
