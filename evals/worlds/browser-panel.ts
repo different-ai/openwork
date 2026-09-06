@@ -186,11 +186,15 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
           method: "POST", headers, signal: AbortSignal.timeout(30000),
           body: JSON.stringify({ noReply: true, parts: [
             { type: "text", text: "Continue research at " + url },
-            { type: "file", mime: "text/plain", filename: artifactName, url: fileUrl },
+            { type: "text", synthetic: true, text: "Attached workspace file: " + artifactName,
+              metadata: { openworkAttachments: [{ filename: artifactName, mime: "text/markdown", url: fileUrl }] } },
           ] }),
         });
         if (!message.ok) throw new Error("Could not seed the transcript link: " + message.status);
-        await message.json();
+        const saved = await message.json();
+        if (!Array.isArray(saved.parts) || !saved.parts.some(part => part.type === "text" && part.text.includes(url))) {
+          throw new Error("Transcript seed did not persist the requested link.");
+        }
       }`, {
         args: [workspace.workspaceId, sessionId, url, artifactName, artifactText, new URL(`file://${workspacePath}/${artifactName}`).href],
         awaitPromise: true,
@@ -387,6 +391,11 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
     /** What the page inside a tab can read from `document.cookie`. */
     async readDocumentCookie(tab: BuiltinBrowserTab): Promise<string> {
       return withTabClient(app, tab.targetId, async (client) => String(await evaluate(client, "document.cookie")));
+    },
+
+    /** Navigate the existing CDP page without opening a replacement tab. */
+    async navigateTab(tab: BuiltinBrowserTab, url: string): Promise<void> {
+      await withTabClient(app, tab.targetId, (client) => navigate(client, url));
     },
 
     /** Reload a tab over CDP and wait for it to settle. */
