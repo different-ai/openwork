@@ -77,6 +77,7 @@ import {
   describeTaskCreateFailure,
   describeTaskCreateRetry,
   describeWorkspaceCreateError,
+  createRouteSession,
   downloadWorkspaceJson,
   folderNameFromPath,
   getSessionStatus,
@@ -2087,13 +2088,6 @@ export function SessionRoute() {
     if (!endpoint || !endpoint.token) {
       return null;
     }
-    const workspaceClient = workspaceId === selectedWorkspaceId && opencodeClient
-      ? opencodeClient
-      : createClient(
-          endpoint.opencodeBaseUrl,
-          workspace.path?.trim() || undefined,
-          { token: endpoint.token, mode: "openwork" },
-        );
     const toastId = taskCreateUnavailableToastId(workspaceId);
     const attempts = TASK_CREATE_RETRY_DELAYS_MS.length + 1;
     try {
@@ -2103,9 +2097,7 @@ export function SessionRoute() {
       // and used to surface as a dead-end "unavailable" toast that only Cmd+R
       // seemed to fix. Retry transient failures with a visible countdown first.
       const session = await withTransientEngineRetry({
-        load: async () => unwrap(
-          await workspaceClient.session.create({ directory: workspace.path?.trim() || undefined }),
-        ),
+        load: () => createRouteSession(endpoint, workspace.path?.trim() || undefined),
         retryDelaysMs: TASK_CREATE_RETRY_DELAYS_MS,
         onRetry: (attempt) => {
           const notice = describeTaskCreateRetry({ developerMode, attempt, attempts });
@@ -2197,7 +2189,7 @@ export function SessionRoute() {
       }
       return null;
     }
-  }, [applyLastUsedModelToSession, developerMode, endpointForWorkspace, loading, navigateToWorkspaceSession, opencodeClient, refreshCloudProviderSync, refreshRouteState, rememberPendingCreatedSession, retryingWorkspaceIds, selectedWorkspaceId, workspaces]);
+  }, [applyLastUsedModelToSession, developerMode, endpointForWorkspace, loading, navigateToWorkspaceSession, refreshCloudProviderSync, refreshRouteState, rememberPendingCreatedSession, retryingWorkspaceIds, selectedWorkspaceId, workspaces]);
 
   const handleCreateTaskInWorkspace = useCallback((workspaceId: string): Promise<string | null> => {
     const { focusedPane, secondary } = useWorkbenchStore.getState();
@@ -3372,17 +3364,8 @@ export function SessionRoute() {
             if (!workspace) return;
             const endpoint = endpointForWorkspace(workspace);
             if (!endpoint?.token) return;
-            const workspaceClient = workspaceId === selectedWorkspaceId && opencodeClient
-              ? opencodeClient
-              : createClient(
-              endpoint.opencodeBaseUrl,
-              workspace.path?.trim() || undefined,
-              { token: endpoint.token, mode: "openwork" },
-            );
             try {
-              const session = unwrap(
-                await workspaceClient.session.create({ directory: workspace.path?.trim() || undefined }),
-              );
+              const session = await createRouteSession(endpoint, workspace.path?.trim() || undefined);
               if (workspaceId === selectedWorkspaceId) {
                 void refreshCloudProviderSync("new_chat");
               }

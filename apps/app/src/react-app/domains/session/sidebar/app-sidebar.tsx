@@ -1629,7 +1629,7 @@ function WorkspaceSidebarGroup({
                     e.stopPropagation();
                     ctx.onCreateTaskInWorkspace(workspace.id);
                   }}
-                  aria-label={t("session.new_task")}
+                  aria-label={`${t("session.new_task")} · ${workspaceLabel(workspace)}`}
                   title={t("session.new_task")}
                 >
                   <Plus className="size-4" />
