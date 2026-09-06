@@ -1,4 +1,4 @@
-import type { WorkflowGraphNode, WorkflowVersion } from "@openwork/types/workflows"
+import type { WorkflowGraph, WorkflowGraphNode, WorkflowVersion } from "@openwork/types/workflows"
 
 function redactWorkflowGraphNodeLabel(node: WorkflowGraphNode): WorkflowGraphNode {
   switch (node.kind) {
@@ -13,6 +13,10 @@ function redactWorkflowGraphNodeLabel(node: WorkflowGraphNode): WorkflowGraphNod
     case "search":
       return node
   }
+}
+
+export function redactWorkflowGraphAuthoringDetails(graph: WorkflowGraph): WorkflowGraph {
+  return { ...graph, nodes: graph.nodes.map(redactWorkflowGraphNodeLabel) }
 }
 
 export function redactWorkflowNormalizedPayloadAuthoringDetails(
@@ -30,7 +34,7 @@ export function redactWorkflowVersionAuthoringDetails(
     ...version,
     code: null,
     graph: version.graph
-      ? { ...version.graph, nodes: version.graph.nodes.map(redactWorkflowGraphNodeLabel) }
+      ? redactWorkflowGraphAuthoringDetails(version.graph)
       : null,
     exampleInput: null,
     automationReferences: version.automationReferences.map((reference) => ({

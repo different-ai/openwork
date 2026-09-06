@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { ScrollText } from "lucide-react";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenCard } from "../../_components/ui/card";
-import { DenTable, type DenTableColumn } from "../../_components/ui/table";
+import { DenChip } from "../../_components/ui/chip";
+import { WorkflowFlowDiagram } from "./workflow-flow-diagram";
 import {
   getWorkflowRuns,
   getErrorMessage,
@@ -16,38 +18,43 @@ function formatDuration(durationMs: number): string {
   return durationMs < 1_000 ? `${durationMs} ms` : `${(durationMs / 1_000).toFixed(1)} s`;
 }
 
-const columns: readonly DenTableColumn<WorkflowRun>[] = [
-  {
-    key: "status",
-    header: "Status",
-    render: (run) => (
-      <span className={`rounded-full px-2.5 py-1 text-[11px] font-medium ${run.status === "succeeded" ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
-        {run.status === "succeeded" ? "Succeeded" : "Failed"}
-      </span>
-    ),
-  },
-  {
-    key: "source",
-    header: "Source",
-    render: (run) => (
-      <span className="block max-w-[280px] truncate font-mono text-[12px] text-gray-700" title={run.source}>
-        {run.source}
-      </span>
-    ),
-  },
-  {
-    key: "tools",
-    header: "Tool calls",
-    render: (run) => (
-      <div className="max-w-[360px] text-[12px] text-gray-600">
-        <span className="font-medium text-gray-900">{run.toolCallCount}</span>
-        {run.toolCalls.length > 0 ? <span className="ml-2 break-words text-gray-400">{run.toolCalls.map((call) => call.name).join(", ")}</span> : null}
-      </div>
-    ),
-  },
-  { key: "duration", header: "Duration", render: (run) => <span className="text-gray-600">{formatDuration(run.durationMs)}</span> },
-  { key: "when", header: "When", render: (run) => <span className="whitespace-nowrap text-gray-500">{new Date(run.createdAt).toLocaleString()}</span> },
-];
+function WorkflowRunCard({ run }: { run: WorkflowRun }) {
+  return (
+    <li data-run-id={run.id}>
+      <DenCard>
+        <h2 className="text-[15px] font-medium text-gray-950">
+          {run.workflow ? (
+            <Link data-testid={`workflow-run-link-${run.id}`} className="underline-offset-4 hover:underline" href={`/dashboard/library/workflows/${encodeURIComponent(run.workflow.configObjectId)}`}>
+              {run.workflow.title}
+            </Link>
+          ) : run.source === "adhoc" ? "One-off task" : "Workflow run"}
+        </h2>
+        {run.workflow?.graph ? (
+          <div className="mt-4 max-h-96 overflow-auto rounded-xl border border-gray-100 bg-gray-50/50 px-4 pb-4" role="region" aria-label={`${run.workflow.title} workflow visualization`} tabIndex={0}>
+            <WorkflowFlowDiagram graph={run.workflow.graph} />
+          </div>
+        ) : run.workflow ? (
+          <p className="mt-3 text-[13px] text-gray-500">The visualization for this run is unavailable.</p>
+        ) : null}
+        <div className="mt-4 flex flex-wrap items-center gap-3 text-[12px] text-gray-500">
+          <DenChip tone={run.status === "succeeded" ? "success" : "danger"}>
+            {run.status === "succeeded" ? "Succeeded" : "Failed"}
+          </DenChip>
+          <time dateTime={run.finishedAt}>{new Date(run.finishedAt).toLocaleString()}</time>
+        </div>
+        <details className="mt-4 border-t border-gray-100 pt-3 text-[12px] text-gray-500">
+          <summary data-testid={`workflow-run-details-${run.id}`} className="cursor-pointer font-medium">Technical details</summary>
+          <dl className="mt-3 space-y-2">
+            <div><dt>Source</dt><dd className="break-all font-mono">{run.source}</dd></div>
+            <div><dt>Tool calls</dt><dd>{run.toolCallCount}{run.toolCalls.length > 0 ? <span className="ml-2 break-all font-mono">{run.toolCalls.map((call) => call.name).join(", ")}</span> : null}</dd></div>
+            <div><dt>Duration</dt><dd>{formatDuration(run.durationMs)}</dd></div>
+            {run.errorMessage ? <div><dt>Error</dt><dd className="break-words text-red-700">{run.errorMessage}</dd></div> : null}
+          </dl>
+        </details>
+      </DenCard>
+    </li>
+  );
+}
 
 export function WorkflowRunsScreen() {
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
@@ -76,17 +83,19 @@ export function WorkflowRunsScreen() {
     <DashboardPageTemplate
       icon={ScrollText}
       title="Workflow Runs"
-      description="Review recent Workflow run activity and the capabilities each run called."
+      description="Workflows are repeatable tasks you and your team can save, share, and run again. See their recent activity here."
       colors={["#EEF2FF", "#6366F1", "#C7D2FE", "#A5B4FC"]}
     >
       {error ? <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">{error}</div> : null}
-      <DenCard className="!p-0">
-        {loading ? (
-          <p className="px-6 py-5 text-[13px] text-gray-500">Loading Workflow runs...</p>
-        ) : (
-          <DenTable columns={columns} rows={runs} getRowKey={(run) => run.id} emptyLabel="No Workflow runs yet." />
-        )}
-      </DenCard>
+      {loading ? (
+        <DenCard><p className="text-[13px] text-gray-500">Loading Workflow runs...</p></DenCard>
+      ) : runs.length === 0 ? (
+        <DenCard><p className="text-[13px] text-gray-500">No Workflow runs yet.</p></DenCard>
+      ) : (
+        <ol className="space-y-4" aria-label="Workflow runs">
+          {runs.map((run) => <WorkflowRunCard key={run.id} run={run} />)}
+        </ol>
+      )}
     </DashboardPageTemplate>
   );
 }
