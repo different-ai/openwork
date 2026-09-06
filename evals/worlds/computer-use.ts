@@ -66,7 +66,7 @@ export function toolState(value: unknown): Record<string, unknown> {
 export async function computerUseWorld(_seed: Seed, { place }: { place: Place }) {
   // Do not silently run local Mac resources after the CLI selected Daytona.
   if (place.kind !== "local" || process.platform !== "darwin") throw new SkipError("macOS native desktop placement; the selected host cannot run AppKit");
-  needs({ commands: ["swift", "swiftc", "osascript"] });
+  needs({ commands: ["swift", "swiftc"] });
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
   const native = join(root, "packages/computer-use/native");
   const build = spawnSync("swift", ["build", "--package-path", native, "--product", "ComputerUse"], { encoding: "utf8", timeout: 120_000 });
