@@ -1,6 +1,6 @@
 import type { Seed } from "@openwork/env";
-import { connect, debuggerUrlFor, listTargets, type Surface } from "@openwork/cdp";
-import { defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
+import { connect, debuggerUrlFor, listTargets, setViewport, type Surface } from "@openwork/cdp";
+import { chrome, daytonaSandbox, defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -20,14 +20,14 @@ export async function reauthPopup(seed: Seed) {
   const stamp = Date.now();
   const domain = `reauth-${stamp}.test`;
   const originalName = `SSO verification ${stamp}`;
-  const den = await seed.den({ org: { name: originalName, admin: { email: `admin@${domain}`, name: "SSO Admin" } } });
+  const den = await seed.den({ env: { DEN_BETTER_AUTH_COOKIE_DOMAIN: "daytonaproxy01.net" }, org: { name: originalName, admin: { email: `admin@${domain}`, name: "SSO Admin" } } });
   if (den.placement?.kind !== "daytona") throw new Error("This journey requires Daytona placement");
   const sandbox = den.placement.sandboxId;
-  const remote = async (script: string) => (await execInSandbox(defaultDaytonaExec, sandbox, script, { timeoutMs: 30_000, context: "SSO fixture arrangement" })).stdout;
+  const remote = async (script: string, timeoutMs = 30_000) => (await execInSandbox(defaultDaytonaExec, sandbox, script, { timeoutMs, context: "SSO fixture arrangement" })).stdout;
   const sql = async (statement: string) => remote(`echo ${Buffer.from(statement).toString("base64")} | base64 -d | mysql -h127.0.0.1 -uroot -ppassword -N openwork_den`);
   const preview = await defaultDaytonaExec(["preview-url", sandbox, "-p", "19190", "--expires", "86400"]);
   if (preview.code !== 0) throw new Error("Could not expose test IdP");
-  const issuer = text(preview.stdout.match(/https:\/\/[^\s]+/)?.[0]);
+  const issuer = new URL(text(preview.stdout.match(/https:\/\/[^\s]+/)?.[0])).origin;
   const fixtureSource = `import { startMockIdpLab } from "/workspace/evals/packages/labs/src/idp.ts"; await startMockIdpLab(${JSON.stringify({ domain, defaultSubject: { email: den.admin.email, name: "SSO Admin" }, publicIssuer: issuer, listen: { host: "0.0.0.0", port: 19190 }, knobs: { interactive: true } })});`;
   await remote(`echo ${Buffer.from(fixtureSource).toString("base64")} | base64 -d > /tmp/reauth-idp.mjs`);
   await remote(`python3 - <<PY
@@ -39,7 +39,8 @@ PY`);
   const organizationId = text(record(record(orgResult.body).organization).id);
   const signIn = await seed.api(den.admin, "/api/auth/sign-in/email", { method: "POST", body: JSON.stringify({ email: den.admin.email, password: den.admin.password }) });
   if (!signIn.response.ok) throw new Error(`Fixture login: ${signIn.response.status}`);
-  const cookie = text(signIn.response.headers.getSetCookie().find((value) => value.includes("session_token="))?.split(";")[0]);
+  const sessionCookie = text(signIn.response.headers.getSetCookie().find((value) => value.includes("session_token=")));
+  const cookie = text(sessionCookie.split(";")[0]);
   const headers = { cookie, "x-openwork-org-id": organizationId };
   const registration = await seed.api(den.admin, "/v1/sso/oidc", {
     method: "POST", headers,
@@ -52,13 +53,20 @@ PY`);
   const configTest = await seed.api(den.admin, "/v1/sso/test", { method: "POST", headers, body: "{}" });
   if (!configTest.response.ok) throw new Error(`Configuration test: ${configTest.response.status} ${configTest.text}`);
   const testUrl = text(record(configTest.body).testUrl);
-  const web = await seed.web({ den, startPath: "/", headless: true, viewport: { width: 1440, height: 1000 } });
+  await remote("command -v chromium >/dev/null || (sudo apt-get update >/tmp/reauth-browser-install.log 2>&1 && sudo apt-get install -y chromium >>/tmp/reauth-browser-install.log 2>&1)", 180_000);
+  const host = daytonaSandbox(sandbox);
+  const web = await chrome({ host, name: "reauth-browser", startUrl: den.ref.webUrl, headless: true });
+  await setViewport(web, { width: 1440, height: 1000, deviceScaleFactor: 1 });
   const separator = cookie.indexOf("=");
-  for (const url of [den.ref.webUrl, den.ref.apiUrl]) {
-    await web.client.send("Network.setCookie", { name: cookie.slice(0, separator), value: cookie.slice(separator + 1), url, httpOnly: true, secure: true });
-  }
+  const cookieDomain = sessionCookie.match(/;\s*Domain=([^;]+)/i)?.[1];
+  if (!cookieDomain) throw new Error("The fixture requires the same shared-domain cookie topology as production");
+  await web.client.send("Network.setCookie", { name: cookie.slice(0, separator), value: cookie.slice(separator + 1), domain: cookieDomain, path: "/", url: den.ref.webUrl, httpOnly: true, secure: true });
   return {
     den, web, originalName, testUrl, issuer, organizationId, otherEmail: `other@${domain}`,
+    async [Symbol.asyncDispose]() {
+      await web.stop();
+      await host.stop();
+    },
     async enable() {
       const result = await seed.api(den.admin, "/v1/sso/enable", { method: "POST", headers, body: "{}" });
       if (result.response.status !== 204) throw new Error(`SSO enable: ${result.response.status} ${result.text}`);
