@@ -103,7 +103,8 @@ test("an existing Models subscriber can decline, enable and disable task analyti
   await user.click({ role: "tab", label: "Consumption" });
   await user.see({ text: "$0.0123" });
   await user.screenshot();
-  await world.analyticsTransport.admin.rules([{ kind: "status", pathPrefix: "/v1/inference/analytics/consumption", statusCode: 503, times: 100, body: { error: "unavailable" } }]);
+  await world.analyticsStoreUnavailable(true);
+  expect((await api("/v1/inference/analytics/consumption")).response.status).toBe(500);
   await user.reload();
   await user.see({ role: "tab", label: "Consumption" }, { timeoutMs: 60_000 });
   await user.click({ role: "tab", label: "Consumption" });
@@ -111,11 +112,11 @@ test("an existing Models subscriber can decline, enable and disable task analyti
   await user.notSee({ text: "No usage events yet" });
   await user.notSee({ text: "No model usage recorded yet" });
   await user.notSee({ text: "Model calls over time" });
-  await world.analyticsTransport.admin.clear();
+  await world.analyticsStoreUnavailable(false);
   await user.click({ role: "button", label: "Refresh analytics" });
   await user.see({ text: "$0.0123" }, { timeoutMs: 30_000 });
   await user.notSee({ text: "Could not refresh analytics." });
-  evidence.recordAssertionEvidence("Unavailable Models consumption is an error, not an empty chart", "A real HTTP 503 hid the consumption chart and empty-state claims; Refresh restored the recorded costs after recovery", true);
+  evidence.recordAssertionEvidence("Unavailable Models consumption is an error, not an empty chart", "An analytics storage outage returned HTTP 500 and hid the consumption chart and empty-state claims; Refresh restored the recorded costs after recovery", true);
   const missing = await world.complete({ sessionId: "existing-conversation", taskId: "incomplete-task", prompt: "fixture:missing-usage" });
   expect(missing.status).toBe(200);
   const failed = await world.complete({ sessionId: "existing-conversation", taskId: "failed-task", prompt: "fixture:error" });

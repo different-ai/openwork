@@ -77,14 +77,11 @@ export async function modelsAnalyticsWorld(seed: Seed) {
     await new Promise((resolve) => setTimeout(resolve, 1_000));
   }
   if (!healthy) throw new Error("Models inference did not start");
-  const analyticsTransport = await seed.denLink({ ...den, ref: { ...den.ref, webUrl: den.ref.apiUrl } }, { ...(remote ? { sandboxId: remote } : {}), port: 3987, adminPort: 3988 });
-  const webTransport = await seed.faultProxy(den);
-  const runtimeConfig = object(await fetch(`${den.ref.webUrl}/api/runtime-config`, { signal: AbortSignal.timeout(5_000) }).then((response) => response.json()));
-  await webTransport.faults.status("/api/runtime-config", 200, { times: 10_000, body: { ...runtimeConfig, denApiUrl: analyticsTransport.ref.webUrl } });
-  const web = await seed.web({ den: { ...den, ref: { apiUrl: analyticsTransport.ref.webUrl, webUrl: webTransport.ref.webUrl } }, signedInAs: den.admin, startPath: "/dashboard/inference", headless: true, viewport: { width: 1440, height: 1100 } });
+  const web = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/inference", headless: true, viewport: { width: 1440, height: 1100 } });
   return {
-    den, web, orgId, memberId, witnessUrl, inferenceUrl, analyticsTransport,
+    den, web, orgId, memberId, witnessUrl, inferenceUrl,
     async upgradeAnalytics() { await arrange("migrate"); },
+    async analyticsStoreUnavailable(unavailable: boolean) { await arrange(unavailable ? "pause-analytics" : "resume-analytics"); },
     async anotherOrganization() { return provisionOrg(den.ref, {}); },
     async verifyErasure() { await arrange("assert-erased"); },
     async anotherSubscriber() {
@@ -102,7 +99,9 @@ export async function modelsAnalyticsWorld(seed: Seed) {
     async desktop() {
       // Shape the API directly: the web /api/den route redirects to another
       // origin, which would strip bearer credentials before reaching Den.
+      const analyticsTransport = await seed.denLink({ ...den, ref: { ...den.ref, webUrl: den.ref.apiUrl } }, remote ? { sandboxId: remote } : {});
       const desktopDen = { apiUrl: analyticsTransport.ref.webUrl, webUrl: analyticsTransport.ref.webUrl };
+      const runtimeConfig = object(await fetch(`${den.ref.webUrl}/api/runtime-config`, { signal: AbortSignal.timeout(5_000) }).then((response) => response.json()));
       const upgradeDenApi = async () => {
         // API discovery must keep the desktop on the independently observed link.
         await analyticsTransport.admin.rules([{ kind: "status", pathPrefix: "/api/runtime-config", statusCode: 200, times: 10_000, body: { ...runtimeConfig, denApiUrl: desktopDen.apiUrl } }]);

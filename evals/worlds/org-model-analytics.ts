@@ -1,17 +1,24 @@
-import type { Seed } from "@openwork/env";
+import { queryDenDatabase, type Seed } from "@openwork/env";
+import { defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
 
 export async function orgModelAnalyticsWorld(seed: Seed) {
   const den = await seed.den({ web: true, org: { name: "Analytics team" }, env: { DEN_ORG_MODE: "multi_org", DEN_PLAN_GATING_ENABLED: "false" } });
-  const placement = den.placement?.kind === "daytona" ? { sandboxId: den.placement.sandboxId } : {};
-  const apiLink = await seed.denLink({ ...den, ref: { ...den.ref, webUrl: den.ref.apiUrl } }, { ...placement, port: 3987, adminPort: 3988 });
-  // DenLink owns one process per sandbox. Use the separate web fault proxy
-  // for runtime configuration so it cannot replace the API observer.
-  const webLink = await seed.faultProxy(den);
-  const runtimeConfig: unknown = await fetch(`${den.ref.webUrl}/api/runtime-config`, { signal: AbortSignal.timeout(5_000) }).then((response) => response.json());
-  if (!runtimeConfig || typeof runtimeConfig !== "object") throw new Error("Missing runtime configuration");
-  await webLink.faults.status("/api/runtime-config", 200, { times: 10_000,
-    body: { ...runtimeConfig, denApiUrl: apiLink.ref.webUrl } });
-  const web = await seed.web({ den: { ...den, ref: { webUrl: webLink.ref.webUrl, apiUrl: apiLink.ref.webUrl } }, signedInAs: den.admin,
+  const web = await seed.web({ den, signedInAs: den.admin,
     startPath: "/dashboard/analytics", headless: true, viewport: { width: 1440, height: 1100 } });
-  return { den, web, apiLink };
+  return { den, web, async analyticsStoreUnavailable(unavailable: boolean) {
+    // This world owns the disposable store. Preserve its rows while making
+    // analytics reads fail, leaving authentication and subscription storage up.
+    const sql = unavailable ? "RENAME TABLE telemetry_event TO telemetry_event_unavailable" : "RENAME TABLE telemetry_event_unavailable TO telemetry_event";
+    if (den.placement?.kind === "daytona") {
+      const script = `import { createConnection } from "/workspace/ee/packages/den-db/node_modules/mysql2/promise.js";
+        const connection = await createConnection("mysql://root:password@127.0.0.1:3306/openwork_den");
+        try { await connection.query(${JSON.stringify(sql)}); } finally { await connection.end(); }`;
+      const encoded = Buffer.from(script).toString("base64");
+      const result = await execInSandbox(defaultDaytonaExec, den.placement.sandboxId, `printf %s ${encoded} | base64 -d | node --input-type=module`, { timeoutMs: 15_000, context: "Arrange analytics storage availability" });
+      if (result.code !== 0) throw new Error("Could not arrange analytics storage availability");
+    } else {
+      if (!den.database) throw new Error("Analytics outage proof requires its own isolated database");
+      await queryDenDatabase(den.database.url, sql);
+    }
+  } };
 }

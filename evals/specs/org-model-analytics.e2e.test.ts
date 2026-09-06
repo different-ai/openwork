@@ -66,7 +66,7 @@ async function readAnalytics(session: DenSession, orgId: string): Promise<Record
 }
 
 test("organization model analytics aggregate session dimensions without cross-org leakage", { timeout: 600_000 }, async ({ evidence, world, user }) => {
-  const { den, apiLink } = world;
+  const { den } = world;
   const primaryOrgId = await organizationIdByName(den.admin, "Analytics team");
   const otherOrg = await provisionOrg(den.ref, {});
 
@@ -121,16 +121,18 @@ test("organization model analytics aggregate session dimensions without cross-or
   await user.screenshot();
   evidence.recordAssertionEvidence("Usage and adoption shows the same model usage returned by the organization API", "Both distinct models are visible on the real analytics screen and the empty-state message is absent", true);
 
-  await apiLink.admin.rules([{ kind: "status", pathPrefix: "/v1/telemetry/analytics", statusCode: 503, times: 100, body: { error: "unavailable" } }]);
+  await world.analyticsStoreUnavailable(true);
+  const unavailable = await denFetch(den.admin, "/v1/telemetry/analytics", { headers: auth(den.admin, primaryOrgId) });
+  expect(unavailable.response.status).toBe(500);
   await user.reload();
   await user.see({ text: "Could not load analytics." }, { timeoutMs: 60_000 });
   await user.notSee({ text: "No model usage yet" });
   await user.notSee({ text: "No usage events yet" });
-  await apiLink.admin.clear();
+  await world.analyticsStoreUnavailable(false);
   await user.click({ role: "button", label: "Refresh analytics" });
   await user.see({ text: "prov/model-a" }, { timeoutMs: 30_000 });
   await user.notSee({ text: "Could not load analytics." });
-  evidence.recordAssertionEvidence("An analytics outage is shown as an error and can recover without inventing zero usage", "A real HTTP 503 produced the error state with no empty charts; Refresh restored the previously ingested models after the endpoint recovered", true);
+  evidence.recordAssertionEvidence("An analytics outage is shown as an error and can recover without inventing zero usage", "An analytics storage outage returned HTTP 500 and produced the error state with no empty charts; Refresh restored the previously ingested models after recovery", true);
   await user.click({ role: "link", label: "Models & usage" });
   await user.see({ text: "Reliable, hand-picked models for knowledge work." });
   await user.click({ role: "link", label: /^Usage & adoption$/ });
