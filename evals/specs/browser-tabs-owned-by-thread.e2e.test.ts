@@ -1,26 +1,18 @@
 import { expect } from "vitest";
-import type { Target } from "@openwork/cdp";
-import { eventually, spec } from "@openwork/testkit";
-import { builtinBrowserWorld, transcriptLinkWorld } from "../worlds/browser-panel.ts";
+import { browserImageTarget, eventually, spec } from "@openwork/testkit";
+import type { BrowserTaskInput, Target } from "@openwork/testkit";
+import { browserTabHandle, builtinBrowserWorld, transcriptLinkWorld } from "../worlds/browser-panel.ts";
+import { browserBackgroundWorld } from "../worlds/browser-webmcp.ts";
 
-const test = spec.world(async (seed) => {
-  const world = await builtinBrowserWorld(seed);
-  return { ...world, withTranscriptLink: () => transcriptLinkWorld(seed, world) };
-});
-
-// A user reads one conversation while another conversation's agent browses the
-// web. The browser tab belongs to the conversation whose agent opened it: it
-// must never pop into the conversation on screen, yet the agent must still be
-// able to read, click, type, and screenshot the hidden page. Switching to the
-// owning conversation shows its page already loaded.
-const tabButton = (name: string): Target => ({ role: "button", label: new RegExp(`^Select tab: .*viewport-probe=${name}$`) });
-// A conversation's row in the sidebar, found by the title the user reads there.
+const test = spec.world(browserBackgroundWorld);
+const lifecycleTest = spec.world(builtinBrowserWorld);
+const linkTest = spec.world(transcriptLinkWorld);
+const tabButton = (name: string): Target => ({ role: "button", label: `Select tab: Project ${name}` });
+const lifecycleTabButton = (name: string): Target => ({ role: "button", label: new RegExp(`^Select tab: .*viewport-probe=${name}$`) });
 const conversation = (title: string): Target => ({ text: title });
-// The desktop lays a hidden conversation's tab out at this viewport (see
-// @openwork/browser-tabs) so the agent sees a desktop-sized page.
 const BACKGROUND_TAB_VIEWPORT = { width: 1280, height: 800 };
 
-test("the global tab limit rejects new pages without disturbing live tabs, and closing a tab makes room", async ({ world, user, agent, step }) => {
+lifecycleTest("the global tab limit rejects new pages without disturbing live tabs, and closing a tab makes room", async ({ world, user, agent, step }) => {
   const reading = { ...world.session, title: "Reading at capacity" };
   await world.renameSession(reading.sessionId, reading.title);
   const researching = await world.openSession("Research at capacity");
@@ -29,7 +21,7 @@ test("the global tab limit rejects new pages without disturbing live tabs, and c
   expect(initial.tabs).toEqual([]);
   expect(initial.tabLimit).toBe(12);
   const readingTab = await world.openTabAs("capacity-reading", reading.sessionId);
-  await user.see(tabButton(readingTab.name), { timeoutMs: 30_000 });
+  await user.see(lifecycleTabButton(readingTab.name), { timeoutMs: 30_000 });
   const researchTab = await world.openTabAs("capacity-research", researching.sessionId);
   await world.loadInputProbe(researchTab);
   expect(await world.clickAndType(researchTab, "before")).toEqual({ clicks: 1, value: "before" });
@@ -52,7 +44,7 @@ test("the global tab limit rejects new pages without disturbing live tabs, and c
       backgroundWindowCount: 1, backgroundWindowVisible: false, visibleWindowCount: 1 });
     expect(await world.pageTargets()).toEqual(pages);
     expect(await world.readInputProbe(researchTab)).toEqual({ clicks: 1, value: "before" });
-    await user.see(tabButton(readingTab.name));
+    await user.see(lifecycleTabButton(readingTab.name));
   });
 
   await step("Foreground and background opens hit the same limit without allocating or replacing a CDP page", async () => {
@@ -67,8 +59,8 @@ test("the global tab limit rejects new pages without disturbing live tabs, and c
     expect(await world.pageTargets()).toEqual(pages);
     expect(await world.readInputProbe(researchTab)).toEqual({ clicks: 1, value: "before" });
     expect(await world.clickAndType(researchTab, "-limited")).toEqual({ clicks: 2, value: "before-limited" });
-    await user.see(tabButton(readingTab.name));
-    await user.notSee(tabButton("capacity-retry"));
+    await user.see(lifecycleTabButton(readingTab.name));
+    await user.notSee(lifecycleTabButton("capacity-retry"));
   });
 
   await step("Closing a visible tab releases exactly one slot and the same request succeeds", async () => {
@@ -97,14 +89,14 @@ test("the global tab limit rejects new pages without disturbing live tabs, and c
     expect(await world.pageTargets()).toEqual([...pages.filter(page => page.id !== readingTab.targetId),
       { id: handle.targetId, url: retryUrl }].sort((a, b) => a.id.localeCompare(b.id)));
     expect(await world.clickAndType(researchTab, "-retry")).toEqual({ clicks: 3, value: "before-limited-retry" });
-    await user.see(tabButton("capacity-retry"));
+    await user.see(lifecycleTabButton("capacity-retry"));
     await world.loadInputProbe(handle);
     expect(await world.clickAndType(handle, "retry works")).toEqual({ clicks: 1, value: "retry works" });
     expect(await world.readInputProbe(researchTab)).toEqual({ clicks: 3, value: "before-limited-retry" });
   });
 });
 
-test("session deletion closes only its owned pages and preserves neighbor and shared tabs", async ({ world, user, agent, probe, step }) => {
+lifecycleTest("session deletion closes only its owned pages and preserves neighbor and shared tabs", async ({ world, user, agent, probe, step }) => {
     const removed = { ...world.session, title: "Completed browser research" };
     await world.renameSession(removed.sessionId, removed.title);
     const neighbor = await world.openSession("Continuing browser research");
@@ -164,7 +156,7 @@ test("session deletion closes only its owned pages and preserves neighbor and sh
     });
 });
 
-test("repeated refused navigations leave no allocated page or hidden host and keep the existing input alive", async ({ world, user, step }) => {
+lifecycleTest("repeated refused navigations leave no allocated page or hidden host and keep the existing input alive", async ({ world, user, step }) => {
   const reading = { ...world.session, title: "Reading during failed opens" };
   await world.renameSession(reading.sessionId, reading.title);
   const researching = await world.openSession("Retrying browser research");
@@ -209,7 +201,7 @@ test("repeated refused navigations leave no allocated page or hidden host and ke
   });
 });
 
-test("moving the last background page on screen releases its hidden host and repeated create-close cycles return to baseline", async ({ world, user, step }) => {
+lifecycleTest("moving the last background page on screen releases its hidden host and repeated create-close cycles return to baseline", async ({ world, user, step }) => {
   const reading = { ...world.session, title: "Conversation without browser tabs" };
   await world.renameSession(reading.sessionId, reading.title);
   const researching = await world.openSession("Temporary browser research");
@@ -260,105 +252,138 @@ test("moving the last background page on screen releases its hidden host and rep
   }
 });
 
-test("a background conversation's agent browses silently and its page is waiting when the user switches to it", async ({ world, user, agent, step }) => {
+test("a background conversation reads its owned page silently and requests attention before acting", async ({ world, user, agent, probe, step, evidence }) => {
   const reading = { ...world.session, title: "Reading the news" };
-  await world.renameSession(reading.sessionId, reading.title);
-  const researching = await world.openSession("Background research");
+  await agent.run("session.rename", { sessionId: reading.sessionId, title: reading.title });
+  const researching = { sessionId: await agent.createSession("Background research"), title: "Background research" };
   await user.click(conversation(reading.title));
-  const readingTab = await world.openTabAs("reading", reading.sessionId);
-  await user.see(tabButton(readingTab.name), { timeoutMs: 30_000 });
-  const panelViewport = await world.readViewport(readingTab);
+  const readingTab = browserTabHandle(await agent.run("browser.open_url", { url: `${world.origin}/?viewport-probe=reading`, provider: "builtin" }));
+  await user.see(tabButton("reading"), { timeoutMs: 30_000 });
+  const initial = await probe.browserTabMetrics(readingTab.targetId);
+  const panelViewport = { width: initial.width, height: initial.height };
   expect(panelViewport.width).toBeGreaterThan(0);
   expect(panelViewport.width).toBeLessThan(BACKGROUND_TAB_VIEWPORT.width);
+  const witness = () => probe.browserFixtureState(world.origin);
 
-  const researchTab = await step("The background conversation opens a page without touching the screen", async () => {
-    const opened = await world.openTabAs("research", researching.sessionId);
-    expect(opened).toMatchObject({ ownerSessionId: researching.sessionId, visible: false });
-
-    const state = await world.readBrowserState();
+  const researchTab = await step("A background-origin browser command opens a page without touching the viewed conversation", async () => {
+    const response = await agent.desktopApi("/experimental/ui-control/request", { method: "POST", body: {
+      kind: "command", input: { id: "browser.open_url", args: { url: `${world.origin}/?viewport-probe=research`, provider: "builtin" }, origin: { sessionId: researching.sessionId } },
+    } });
+    expect(response.status).toBe(200);
+    const result = response.body;
+    if (!result || typeof result !== "object" || !("result" in result)) throw new Error("The background browser command returned no result.");
+    expect(result).toMatchObject({ ok: true, result: { owner_session_id: researching.sessionId, visible: false } });
+    const opened = browserTabHandle(result.result);
+    const state = await probe.browserState();
+    expect(state).toMatchObject({ visibleSessionId: reading.sessionId, activeTabId: readingTab.tabId });
     expect(state).toMatchObject({ visibleWindowCount: 1, backgroundWindowVisible: false });
-    expect(state.visibleSessionId).toBe(reading.sessionId);
-    expect(state.activeTabId).toBe(readingTab.tabId);
     expect(state.tabs.find((tab) => tab.id === opened.tabId)?.ownerSessionId).toBe(researching.sessionId);
-    expect(state.nativeViews.find((view) => view.tabId === opened.tabId)).toMatchObject({
-      attached: false,
-      aboveApp: false,
-      bounds: { x: 0, y: 0, ...BACKGROUND_TAB_VIEWPORT },
-    });
-    await user.see(tabButton(readingTab.name));
-    await user.notSee(tabButton(opened.name));
-    expect(await world.readViewport(readingTab)).toEqual(panelViewport);
+    expect(state.nativeViews.find((view) => view.tabId === opened.tabId)).toMatchObject({ attached: false, aboveApp: false, bounds: { x: 0, y: 0, ...BACKGROUND_TAB_VIEWPORT } });
+    await user.see(tabButton("reading"));
+    await user.notSee(tabButton("research"));
+    expect(await probe.browserTabMetrics(readingTab.targetId)).toMatchObject(panelViewport);
+    evidence.recordAssertionEvidence("Background browsing preserves the viewed conversation", "The origin-stamped command opened an owned background tab. It left the visible conversation, active tab, panel dimensions and detached native view unchanged.", true);
     return opened;
   });
+  const task = (operation: BrowserTaskInput["operation"], args: BrowserTaskInput["args"] = {}) => agent.browserTask({ sessionId: researching.sessionId, operation, args: { tabId: researchTab.tabId, ...args } });
 
-  await step("The hidden page is real for the agent: viewport, focus, clicks, typing, screenshot", async () => {
-    const probe = await eventually(() => world.readPageProbe(researchTab), {
-      within: 15_000,
-      until: (value) => value.width === BACKGROUND_TAB_VIEWPORT.width && value.hasFocus,
-      label: "background tab lays out at the background viewport and believes it is focused",
-    });
-    expect(probe).toMatchObject({ ...BACKGROUND_TAB_VIEWPORT, hasFocus: true });
-
-    await world.loadInputProbe(researchTab);
-    expect(await world.clickAndType(researchTab, "ok")).toEqual({ clicks: 1, value: "ok" });
-
-    const screenshot = await world.screenshotSize(researchTab);
-    expect(screenshot.width).toBeGreaterThanOrEqual(BACKGROUND_TAB_VIEWPORT.width);
-    expect(screenshot.height).toBeGreaterThanOrEqual(BACKGROUND_TAB_VIEWPORT.height);
+  await step("The browser reads and images a hidden page, but click, fill and site callbacks need attention", async () => {
+    await user.click(conversation(researching.title));
+    const access = task("observe");
+    await user.click({ role: "button", label: "Allow once" });
+    expect((await access).ok).toBe(true);
+    await user.click(conversation(reading.title));
+    const metrics = await probe.eventually(() => probe.browserTabMetrics(researchTab.targetId), { within: 15_000, until: (value) => value.width === BACKGROUND_TAB_VIEWPORT.width && value.hasFocus, label: "the hidden page has its background viewport and focus" });
+    expect(metrics).toMatchObject({ ...BACKGROUND_TAB_VIEWPORT, hasFocus: true });
+    const observed = await task("observe", { includeImage: true });
+    expect(observed.text).toContain("Project status");
+    expect(browserImageTarget(observed.image)).toMatchObject(BACKGROUND_TAB_VIEWPORT);
+    const actions: Array<{ type: "click" | "fill"; name: string; text?: string }> = [{ type: "click", name: "Save draft" }, { type: "fill", name: "Draft title", text: "ok" }];
+    for (const action of actions) {
+      const fresh = await task("observe");
+      const ref = fresh.elements?.find((element) => element.name === action.name)?.ref;
+      if (!ref) throw new Error(`Missing observed ${action.name} control.`);
+      expect(await task("act", { observationId: fresh.observationId, action: { type: action.type, ref, text: action.text } })).toMatchObject({ ok: false, code: "needs_attention" });
+    }
+    const listed = await task("site_tools");
+    const tool = listed.tools?.find((tool) => tool.name === "read_session");
+    if (!tool) throw new Error("The hidden page did not list its session-read tool.");
+    expect(await task("site_tool", { toolId: tool.toolId })).toMatchObject({ ok: false, code: "needs_attention" });
+    expect(await witness()).toMatchObject({ sessionReads: 0, records: [], inputValue: "", signInCount: 0 });
+    expect(await probe.browserState()).toMatchObject({ visibleSessionId: reading.sessionId, activeTabId: readingTab.tabId });
+    expect(await probe.browserTabMetrics(readingTab.targetId)).toMatchObject(panelViewport);
+    evidence.recordAssertionEvidence("Hidden browser tools read without unapproved mutations", "The browser/task boundary returned real text and a decoded 1280 by 800 image. Click, fill and site callbacks returned needs_attention with zero fixture writes or session reads and no foreground change.", true);
   });
 
-  await step("Closing the panel leaves no browser surface above OpenWork while background browsing continues", async () => {
+  await step("Closing the panel removes all native overlays while background observation continues", async () => {
     await user.click({ role: "button", label: "Close side panel" });
-    const hidden = await eventually(() => world.readBrowserState(), {
-      within: 15_000,
-      until: (state) => state.nativeViews.every((view) => !view.aboveApp),
-      label: "no native browser view covers OpenWork after the panel closes",
-    });
+    const hidden = await probe.eventually(() => probe.browserState(), { within: 15_000, until: (state) => state.nativeViews.every((view) => !view.aboveApp), label: "no browser view covers OpenWork" });
     expect(hidden.nativeViews.find((view) => view.tabId === readingTab.tabId)?.attached).toBe(false);
     expect(hidden).toMatchObject({ visibleWindowCount: 1, backgroundWindowVisible: false });
     expect(hidden.nativeViews.find((view) => view.tabId === researchTab.tabId)).toMatchObject({ attached: false, aboveApp: false });
-    expect(await world.clickAndType(researchTab, "ok")).toEqual({ clicks: 2, value: "okok" });
-    const screenshot = await world.screenshotSize(researchTab);
-    expect(screenshot.width).toBeGreaterThanOrEqual(BACKGROUND_TAB_VIEWPORT.width);
-    expect(screenshot.height).toBeGreaterThanOrEqual(BACKGROUND_TAB_VIEWPORT.height);
+    const observed = await task("observe", { includeImage: true });
+    expect(observed.text).toContain("Nothing saved");
+    expect(browserImageTarget(observed.image)).toMatchObject(BACKGROUND_TAB_VIEWPORT);
+    const ref = observed.elements?.find((element) => element.name === "Save draft")?.ref;
+    if (!ref) throw new Error("Missing hidden Save draft control.");
+    expect(await task("act", { observationId: observed.observationId, action: { type: "click", ref } })).toMatchObject({ ok: false, code: "needs_attention" });
+    expect(await witness()).toMatchObject({ records: [], inputValue: "", sessionReads: 0 });
     await user.click({ role: "button", label: "Open side panel" });
-    await user.see(tabButton(readingTab.name));
+    await user.see(tabButton("reading"));
   });
 
-  await step("Switching to the background conversation shows its page at the panel's size", async () => {
+  await step("Switching to the owner restores its native view and permits only explicitly approved actions", async () => {
     await user.click(conversation(researching.title));
-    const state = await eventually(() => world.readBrowserState(), {
-      within: 30_000,
-      until: (value) => value.visibleSessionId === researching.sessionId && value.activeTabId === researchTab.tabId,
-      label: "the research conversation's tab takes the screen",
-    });
+    const state = await probe.eventually(() => probe.browserState(), { within: 30_000, until: (value) => value.visibleSessionId === researching.sessionId && value.activeTabId === researchTab.tabId, label: "the research conversation takes the screen" });
     expect(state.tabs.map((tab) => tab.ownerSessionId).sort()).toEqual([reading.sessionId, researching.sessionId].sort());
-    await user.notSee(tabButton(readingTab.name));
-
-    const restored = await eventually(() => world.readViewport(researchTab), {
-      within: 15_000,
-      until: (viewport) => viewport.width === panelViewport.width,
-      label: "the shown tab lays out for the panel again",
-    });
-    expect(restored).toEqual(panelViewport);
-    const native = await world.readBrowserState();
+    await user.notSee(tabButton("reading"));
+    await user.see(tabButton("research"));
+    const restored = await probe.eventually(() => probe.browserTabMetrics(researchTab.targetId), { within: 15_000, until: (value) => value.width === panelViewport.width && value.height === panelViewport.height, label: "the owned page matches the panel dimensions" });
+    expect(restored).toMatchObject(panelViewport);
+    const native = await probe.browserState();
     expect(native.nativeViews.find((view) => view.tabId === researchTab.tabId)).toMatchObject({ attached: true, aboveApp: true });
-    expect(native.nativeViews.find((view) => view.tabId === readingTab.tabId)).toMatchObject({
-      attached: false,
-      aboveApp: false,
-      bounds: { x: 0, y: 0, ...BACKGROUND_TAB_VIEWPORT },
-    });
+    expect(native.nativeViews.find((view) => view.tabId === readingTab.tabId)).toMatchObject({ attached: false, aboveApp: false, bounds: { x: 0, y: 0, ...BACKGROUND_TAB_VIEWPORT } });
+    const actions: Array<{ type: "click" | "fill"; name: string; text?: string }> = [{ type: "click", name: "Save draft" }, { type: "fill", name: "Draft title", text: "ok" }];
+    for (const action of actions) {
+      const observed = await task("observe");
+      const ref = observed.elements?.find((element) => element.name === action.name)?.ref;
+      if (!ref) throw new Error(`Missing observed ${action.name} control.`);
+      const before = await witness();
+      const pending = task("act", { observationId: observed.observationId, action: { type: action.type, ref, text: action.text } });
+      await user.see({ role: "button", label: "Allow once" });
+      expect(await witness()).toMatchObject({ records: before.records, inputValue: before.inputValue });
+      await user.click({ role: "button", label: "Allow once" });
+      expect(await pending).toMatchObject({ ok: true, dispatched: true, outcome: "not_yet_verified" });
+      if (action.type === "click") await probe.eventually(() => task("observe"), { within: 5_000, until: (value) => value.text?.includes("Saved 1") === true, label: "the approved save visibly completes before the next action" });
+    }
+    const completed = await probe.eventually(witness, { within: 5_000, until: (value) => value.records.length === 1 && value.inputValue === "ok", label: "the fixture receives only the approved click and text" });
+    expect(completed.records).toEqual([{ method: "dom", count: 1, signedIn: false }]);
+    expect((await task("observe")).text).toContain("Saved 1");
+    evidence.recordAssertionEvidence("Selecting the owner restores its tab and approved actions", "Native attachment, z-order and both panel dimensions recovered. The guest fixture saw no writes before approval, then one DOM save and the expected field value; a new page observation verified Saved 1.", true);
+  });
+
+  await step("A paused background conversation cannot open through the legacy automation command", async () => {
+    await user.click({ role: "button", label: "Take over" });
+    await user.click(conversation(reading.title));
+    const before = await probe.browserState();
+    const requests = (await witness()).pageRequests;
+    const response = await agent.desktopApi("/experimental/ui-control/request", { method: "POST", body: {
+      kind: "command", input: { id: "browser.open_url", args: { url: `${world.origin}/paused-open`, provider: "builtin" }, origin: { sessionId: researching.sessionId } },
+    } });
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ ok: false, error: expect.stringMatching(/user has browser control/i) });
+    expect(await probe.browserState()).toEqual(before);
+    expect((await witness()).pageRequests).toEqual(requests);
+    await user.see(tabButton("reading"));
+    await user.notSee(tabButton("paused-open"));
+    expect(await probe.browserTabMetrics(readingTab.targetId)).toMatchObject(panelViewport);
   });
 
   await step("Returning to the first conversation brings back only its own tab", async () => {
-    await user.click(conversation(reading.title));
-    await eventually(() => world.readBrowserState(), {
-      within: 30_000,
-      until: (value) => value.visibleSessionId === reading.sessionId && value.activeTabId === readingTab.tabId,
-      label: "the reading conversation's tab is back on screen",
-    });
-    await user.see(tabButton(readingTab.name), { timeoutMs: 30_000 });
-    expect(await world.readViewport(readingTab)).toEqual(panelViewport);
+    await probe.eventually(() => probe.browserState(), { within: 30_000, until: (value) => value.visibleSessionId === reading.sessionId && value.activeTabId === readingTab.tabId, label: "the reading tab returns" });
+    await user.see(tabButton("reading"));
+    await user.notSee(tabButton("research"));
+    expect(await probe.browserTabMetrics(readingTab.targetId)).toMatchObject(panelViewport);
   });
   await step("Task handles preserve live pages, reject the other owner, and require explicit release", async () => {
     expect(await agent.run("browser.restore_tab", { tabId: readingTab.tabId }))
@@ -370,12 +395,12 @@ test("a background conversation's agent browses silently and its page is waiting
       .toMatchObject({ tabId: readingTab.tabId, released: true });
     expect((await world.readBrowserState()).tabs.map(tab => tab.id).sort())
       .toEqual([readingTab.tabId, researchTab.tabId].sort());
-    expect(await world.readInputProbe(researchTab)).toEqual({ clicks: 2, value: "okok" });
+    expect(await witness()).toMatchObject({ records: [{ method: "dom", count: 1, signedIn: false }], inputValue: "ok", sessionReads: 0 });
   });
 });
 
-test("a transcript link's menu copies its exact address and opens only its own conversation's browser", async ({ world: browserWorld, user, step }) => {
-  const world = await browserWorld.withTranscriptLink();
+linkTest("a transcript link's menu copies its exact address and opens only its own conversation's browser", async ({ world, user, step }) => {
+  const tabButton = (name: string): Target => ({ role: "button", label: new RegExp(`^Select tab: .*viewport-probe=${name}$`) });
   const link: Target = { role: "link", label: world.linkUrl };
   const menuItem = (label: string): Target => ({ role: "menuitem", label });
   await user.see(link);
@@ -521,7 +546,8 @@ test("a transcript link's menu copies its exact address and opens only its own c
   });
 });
 
-test("a transcript link replaces the selected artifact with its own live sidebar tab, not a native window", async ({ world, user, step }) => {
+lifecycleTest("a transcript link replaces the selected artifact with its own live sidebar tab, not a native window", async ({ world, user, step }) => {
+  const tabButton = lifecycleTabButton;
   const reading = { ...world.session, title: "Linked research" };
   await world.renameSession(reading.sessionId, reading.title);
   const link = await world.seedTranscriptLink(reading.sessionId);

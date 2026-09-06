@@ -166,11 +166,22 @@ const applicationMenu = createApplicationMenu({
   getWindow: () => createMainWindow(),
 });
 
+let browserPanel = null;
+
 const uiControlServer = createUiControlServer({
   app,
   appName: APP_NAME,
   appIdentifier: APP_IDENTIFIER,
   getWindow: () => createMainWindow(),
+  browserTask: (args, options) => browserPanel?.browserTask(args, options) ?? { ok: false, code: "browser_unavailable" },
+  listWebMcpTools: (args, options) => browserPanel?.listWebMcpTools(args, options) ?? {
+    ok: false,
+    error: "The built-in browser is not ready.",
+  },
+  executeWebMcpTool: (args, options) => browserPanel?.executeWebMcpTool(args, options) ?? {
+    ok: false,
+    error: "The built-in browser is not ready.",
+  },
 });
 
 const terminalProcesses = new Map();
@@ -1061,7 +1072,7 @@ const IDLE_ROUTER_INFO = Object.freeze({
 let mainWindow = null;
 const pendingDeepLinks = [];
 
-const browserPanel = createBrowserPanel({
+browserPanel = createBrowserPanel({
   remoteDebugPort,
   getWindow: () => mainWindow,
   onDeepLink: (urls) => queueDeepLinks(urls),
