@@ -79,8 +79,15 @@ class ManagedDesktopPolicy {
     const enginePath = decoded.replace(/^\/opencode2?/, "").replace(/^\/api/, "");
     let input: Record<string, unknown> = {};
     if (request.body) {
-      const value: unknown = await request.clone().json();
-      if (typeof value === "object" && value !== null && !Array.isArray(value)) input = Object.fromEntries(Object.entries(value));
+      // The HTTP adapter exposes a stream even for a bodyless POST (session
+      // creation and instance disposal both use one in the legacy engine).
+      const text = await request.clone().text();
+      if (text.trim()) {
+        let value: unknown;
+        try { value = JSON.parse(text); }
+        catch { throw new ApiError(400, "invalid_request", "Expected a JSON request body."); }
+        if (typeof value === "object" && value !== null && !Array.isArray(value)) input = Object.fromEntries(Object.entries(value));
+      }
     }
     await this.assert("sync");
     if (terminal) await this.assert(/\/shell(?:\/|$)/.test(decoded) ? "shell" : "terminal", input);
