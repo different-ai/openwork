@@ -372,6 +372,9 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
 
       return c.json({
         ...desktopPolicy,
+        // Explicit unrestricted policy distinguishes a current server from
+        // older deployments that cannot yet enforce browser restrictions.
+        allowedBrowserHosts: desktopPolicy.allowedBrowserHosts ?? ["*"],
         automationsEnabled: env.automations.enabled,
         dashboardEnabled: env.dashboardsEnabled,
         connectEnabled: memberFacingMcpConnectionsEnabled(organization.metadata, {

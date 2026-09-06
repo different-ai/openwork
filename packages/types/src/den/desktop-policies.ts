@@ -88,6 +88,16 @@ export const desktopPolicyDefinitions = [
     restrictedValue: false,
   },
   {
+    id: "allowBrowserLoginImport",
+    name: "Import browser logins",
+    description:
+      "Allow users to import their existing logins (cookies) from Chrome, Edge, or Firefox into the built-in browser so the agent can work on sites they are already signed in to. Off until you turn it on; users are offered the import the next time they open the built-in browser.",
+    userNotice:
+      "Your organization administrator has not enabled importing browser logins.",
+    defaultValue: false,
+    restrictedValue: false,
+  },
+  {
     id: "allowAlphaUpdates",
     name: "Alpha updates",
     description:
@@ -155,11 +165,77 @@ function normalizeTeamAccess(value: unknown): TeamAccess | undefined {
   return parsed.success ? parsed.data : undefined;
 }
 
+// ---------------------------------------------------------------------------
+// Browser URL allowlist: the websites the built-in browser may open.
+//
+// Each entry is a host pattern. `*` allows every website; a bare host such as
+// `example.com` allows that host and every subdomain. Schemes, ports, paths,
+// and a leading `*.` are dropped during normalization, so `*.example.com`,
+// `https://example.com/docs`, and `example.com:8443` all mean `example.com`.
+// An absent or empty list leaves the browser unrestricted.
+// ---------------------------------------------------------------------------
+export const ALLOWED_BROWSER_HOST_ANY = "*";
+export const ALLOWED_BROWSER_HOST_MAX_LENGTH = 253;
+export const ALLOWED_BROWSER_HOSTS_MAX_COUNT = 200;
+
+export function normalizeAllowedBrowserHost(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  let candidate = value.trim().toLowerCase();
+  if (!candidate) return null;
+  if (candidate === ALLOWED_BROWSER_HOST_ANY) return ALLOWED_BROWSER_HOST_ANY;
+  candidate = candidate.replace(/^[a-z][a-z0-9+.-]*:\/\//, "");
+  if (candidate.startsWith("*.")) candidate = candidate.slice(2);
+  if (!candidate || /\s/.test(candidate)) return null;
+
+  let hostname: string;
+  try {
+    hostname = new URL(`http://${candidate}`).hostname;
+  } catch {
+    return null;
+  }
+  hostname = hostname.replace(/\.$/, "");
+  if (
+    !hostname ||
+    hostname.includes("*") ||
+    hostname.length > ALLOWED_BROWSER_HOST_MAX_LENGTH
+  ) {
+    return null;
+  }
+  return hostname;
+}
+
+export const allowedBrowserHostsSchema = z
+  .array(
+    z
+      .string()
+      .trim()
+      .min(1)
+      .max(ALLOWED_BROWSER_HOST_MAX_LENGTH)
+      .refine((value) => normalizeAllowedBrowserHost(value) !== null, {
+        message: "Enter a website host such as example.com or *.example.com.",
+      }),
+  )
+  .max(ALLOWED_BROWSER_HOSTS_MAX_COUNT);
+
+/** Canonical, de-duplicated host list; `undefined` when nothing usable remains. */
+export function normalizeAllowedBrowserHosts(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const hosts = [
+    ...new Set(
+      value
+        .map((entry) => normalizeAllowedBrowserHost(entry))
+        .filter((entry): entry is string => entry !== null),
+    ),
+  ];
+  return hosts.length > 0 ? hosts : undefined;
+}
+
 export const desktopPolicyDocumentSchema = desktopPolicyValueSchema
   .extend({
     access: teamAccessSchema.optional(),
     onboardingPrompts: onboardingPromptsSchema.optional(),
     onboardingPromptDescriptions: onboardingPromptDescriptionsSchema.optional(),
+    allowedBrowserHosts: allowedBrowserHostsSchema.optional(),
   })
   .meta({ ref: "DenDesktopPolicyDocument" });
 
@@ -170,6 +246,7 @@ export const desktopPolicyDocumentWriteSchema = desktopPolicyValueSchema
     onboardingPromptDescriptions: onboardingPromptDescriptionsSchema
       .nullable()
       .optional(),
+    allowedBrowserHosts: allowedBrowserHostsSchema.nullable().optional(),
   })
   .meta({ ref: "DenDesktopPolicyDocumentWrite" });
 
@@ -181,6 +258,7 @@ export type DefaultDesktopPolicyDocument = Required<DesktopPolicyValue> & {
   access?: TeamAccess;
   onboardingPrompts?: string[];
   onboardingPromptDescriptions?: string[];
+  allowedBrowserHosts?: string[];
 };
 
 export const desktopPolicyKeys = desktopPolicyDefinitions.map(
@@ -280,6 +358,7 @@ export const desktopConfigSchema = desktopPolicyValueSchema
     connectEnabled: z.boolean().optional(),
     onboardingPrompts: onboardingPromptsSchema.optional(),
     onboardingPromptDescriptions: onboardingPromptDescriptionsSchema.optional(),
+    allowedBrowserHosts: allowedBrowserHostsSchema.optional(),
   })
   .meta({ ref: "DenDesktopConfig" });
 
@@ -395,18 +474,27 @@ export function normalizeDefaultDesktopPolicyValue(
   ) as Required<DesktopPolicyValue>;
 }
 
+function normalizeAllowedBrowserHostsField(value: unknown): string[] | undefined {
+  const coerced = coerceJsonRecord(value);
+  return isRecord(coerced)
+    ? normalizeAllowedBrowserHosts(coerced.allowedBrowserHosts)
+    : undefined;
+}
+
 export function normalizeDesktopPolicyDocument(
   value: unknown,
 ): DesktopPolicyDocument {
   const coerced = coerceJsonRecord(value);
   const policy = normalizeDesktopPolicyValue(coerced);
   const onboardingPromptConfig = normalizeOnboardingPromptConfig(coerced);
+  const allowedBrowserHosts = normalizeAllowedBrowserHostsField(coerced);
 
   const access = normalizeTeamAccess(coerced);
   return {
     ...policy,
     ...(access !== undefined ? { access } : {}),
     ...(onboardingPromptConfig !== undefined ? onboardingPromptConfig : {}),
+    ...(allowedBrowserHosts !== undefined ? { allowedBrowserHosts } : {}),
   };
 }
 
@@ -423,6 +511,8 @@ export function normalizeDesktopPolicyDocumentWrite(
     rawDescriptions,
     onboardingPrompts?.length,
   );
+  const rawHosts = raw?.allowedBrowserHosts;
+  const allowedBrowserHosts = normalizeAllowedBrowserHosts(rawHosts);
 
   const access = normalizeTeamAccess(coerced);
   return {
@@ -438,6 +528,12 @@ export function normalizeDesktopPolicyDocumentWrite(
       : onboardingPromptDescriptions !== undefined
         ? { onboardingPromptDescriptions }
         : {}),
+    // An empty list clears the allowlist the same way `null` does.
+    ...(rawHosts === null || (Array.isArray(rawHosts) && allowedBrowserHosts === undefined)
+      ? { allowedBrowserHosts: null }
+      : allowedBrowserHosts !== undefined
+        ? { allowedBrowserHosts }
+        : {}),
   };
 }
 
@@ -445,6 +541,7 @@ export function resolveDesktopPolicyDocumentWrite(input: {
   value: unknown;
   existingPolicy?: unknown;
   isDefault?: boolean;
+  /** Keep optional fields (prompts, browser allowlist) the write omits. */
   preserveExistingOnboardingPrompts?: boolean;
 }): DesktopPolicyDocument {
   const write = normalizeDesktopPolicyDocumentWrite(input.value);
@@ -454,6 +551,11 @@ export function resolveDesktopPolicyDocumentWrite(input: {
   const existingDocument = input.preserveExistingOnboardingPrompts === true
     ? normalizeDesktopPolicyDocument(input.existingPolicy ?? {})
     : undefined;
+  const allowedBrowserHosts = Array.isArray(write.allowedBrowserHosts)
+    ? write.allowedBrowserHosts
+    : write.allowedBrowserHosts === undefined
+      ? existingDocument?.allowedBrowserHosts
+      : undefined;
   const onboardingPrompts = Array.isArray(write.onboardingPrompts)
     ? write.onboardingPrompts
     : write.onboardingPrompts === undefined &&
@@ -484,6 +586,7 @@ export function resolveDesktopPolicyDocumentWrite(input: {
     ...(onboardingPromptDescriptions !== undefined
       ? { onboardingPromptDescriptions }
       : {}),
+    ...(allowedBrowserHosts !== undefined ? { allowedBrowserHosts } : {}),
   };
 }
 
@@ -493,12 +596,14 @@ export function normalizeDefaultDesktopPolicyDocument(
   const coerced = coerceJsonRecord(value);
   const policy = normalizeDefaultDesktopPolicyValue(coerced);
   const onboardingPromptConfig = normalizeOnboardingPromptConfig(coerced);
+  const allowedBrowserHosts = normalizeAllowedBrowserHostsField(coerced);
 
   const access = normalizeTeamAccess(coerced);
   return {
     ...policy,
     ...(access !== undefined ? { access } : {}),
     ...(onboardingPromptConfig !== undefined ? onboardingPromptConfig : {}),
+    ...(allowedBrowserHosts !== undefined ? { allowedBrowserHosts } : {}),
   };
 }
 
@@ -515,8 +620,11 @@ export function calculateEffectiveDesktopPolicy(input: {
   defaultPolicy?: unknown;
   assignedPolicies: unknown[];
 }): Required<DesktopPolicyValue> {
+  // Before an organization writes any policy every item sits at its catalog
+  // default: allow-style items are on, opt-in items such as importing browser
+  // logins stay off until an administrator turns them on.
   if (input.orgPolicyCount === 0) {
-    return allDesktopPolicies(true);
+    return { ...desktopPolicyDefaults };
   }
 
   const calculated = allDesktopPolicies(false);
@@ -547,6 +655,32 @@ export function calculateEffectiveDesktopPolicy(input: {
   }
 
   return calculated;
+}
+
+/**
+ * Effective browser allowlist for one member. Like the boolean keys this is a
+ * union of grants: the default policy decides whether the browser is
+ * restricted at all, and every matching targeted policy can only add hosts.
+ * `undefined` means every website is allowed.
+ */
+export function calculateEffectiveAllowedBrowserHosts(input: {
+  orgPolicyCount: number;
+  defaultPolicy?: unknown;
+  assignedPolicies: unknown[];
+}): string[] | undefined {
+  if (input.orgPolicyCount === 0) return undefined;
+
+  const defaultHosts = normalizeAllowedBrowserHostsField(input.defaultPolicy ?? {});
+  if (defaultHosts === undefined) return undefined;
+
+  const hosts = new Set(defaultHosts);
+  for (const policy of input.assignedPolicies) {
+    for (const host of normalizeAllowedBrowserHostsField(policy) ?? []) {
+      hosts.add(host);
+    }
+  }
+
+  return hosts.has(ALLOWED_BROWSER_HOST_ANY) ? undefined : [...hosts];
 }
 
 export type DesktopPolicyPromptCandidate = {
@@ -656,6 +790,7 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
   const connectEnabled =
     typeof raw?.connectEnabled === "boolean" ? raw.connectEnabled : undefined;
   const onboardingPromptConfig = normalizeOnboardingPromptConfig(raw);
+  const allowedBrowserHosts = normalizeAllowedBrowserHosts(raw?.allowedBrowserHosts);
 
   return {
     ...policy,
@@ -668,5 +803,6 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
     ...(dashboardEnabled !== undefined ? { dashboardEnabled } : {}),
     ...(connectEnabled !== undefined ? { connectEnabled } : {}),
     ...(onboardingPromptConfig !== undefined ? onboardingPromptConfig : {}),
+    ...(allowedBrowserHosts !== undefined ? { allowedBrowserHosts } : {}),
   };
 }

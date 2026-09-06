@@ -8,7 +8,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import {
-  allDesktopPolicies,
+  calculateEffectiveAllowedBrowserHosts,
   calculateEffectiveDesktopPolicy,
   desktopPolicyDefaults,
   normalizeDesktopPolicyDocument,
@@ -25,7 +25,8 @@ export type DesktopPolicyMemberRow = typeof DesktopPolicyMemberTable.$inferSelec
 export type OrgId = typeof DesktopPolicyTable.$inferSelect.organizationId
 export type OrgMemberId = typeof DesktopPolicyTable.$inferSelect.createdByOrgMemberId
 export type TeamId = typeof TeamTable.$inferSelect.id
-export type EffectiveDesktopPolicyConfig = Required<DesktopPolicyValue> & Pick<DesktopConfig, "onboardingPrompts" | "onboardingPromptDescriptions">
+export type EffectiveDesktopPolicyConfig = Required<DesktopPolicyValue> &
+  Pick<DesktopConfig, "onboardingPrompts" | "onboardingPromptDescriptions" | "allowedBrowserHosts">
 
 export const DEFAULT_DESKTOP_POLICY_NAME = "Default desktop policy"
 
@@ -98,7 +99,7 @@ export async function calculateDesktopPolicyForOrgMember(input: {
     .orderBy(asc(DesktopPolicyTable.createdAt))
 
   if (orgPolicies.length === 0) {
-    return allDesktopPolicies(true)
+    return { ...desktopPolicyDefaults }
   }
 
   const defaultPolicy = orgPolicies.find((policy) => policy.isDefault === true && policy.isEnabled === true) ?? null
@@ -164,9 +165,15 @@ export async function calculateDesktopPolicyForOrgMember(input: {
       policy: normalizeDesktopPolicyDocument(row.policy),
     })),
   })
+  const allowedBrowserHosts = calculateEffectiveAllowedBrowserHosts({
+    orgPolicyCount: orgPolicies.length,
+    defaultPolicy: defaultPolicy?.policy ?? {},
+    assignedPolicies: uniqueAssignedPolicies.map((row) => row.policy),
+  })
 
   return {
     ...effectivePolicy,
     ...(onboardingPromptConfig !== undefined ? onboardingPromptConfig : {}),
+    ...(allowedBrowserHosts !== undefined ? { allowedBrowserHosts } : {}),
   }
 }
