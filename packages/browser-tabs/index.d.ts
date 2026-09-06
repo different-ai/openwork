@@ -29,6 +29,25 @@ export type BrowserPanelTab = {
   canGoForward: boolean;
   /** Conversation (session) that opened the tab; null for shared/legacy tabs. */
   ownerSessionId: string | null;
+  browserApproval?: { id: string; title: string; message: string; detail: string; approveLabel?: string } | null;
+  browserTask?: { status: "idle" | "running" | "paused" | "needs_attention"; operation: string | null };
+  siteToolCount: number;
+  siteTools: Array<{
+    toolId?: string;
+    name: string;
+    title: string;
+    origin: string;
+    readOnly: boolean;
+  }>;
+  siteToolActivity: Array<{
+    at: string;
+    name: string;
+    origin: string;
+    readOnly: boolean;
+    status: "completed" | "failed";
+    code?: string;
+  }>;
+
 };
 
 export type BrowserStatePayload = {

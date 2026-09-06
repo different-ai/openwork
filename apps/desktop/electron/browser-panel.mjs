@@ -13,6 +13,9 @@ import {
 } from "@openwork/browser-tabs";
 import { runDetachedTask } from "./process-resilience.mjs";
 import { listInstalledBrowsers } from "./installed-browsers.mjs";
+import { BrowserTaskError, createBrowserTaskHost } from "./browser-task.mjs";
+import { createWebMcpBroker } from "./webmcp-host.mjs";
+import { createWebMcpFramePolicy } from "./webmcp-policy.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BROWSER_SESSION_PARTITION = "persist:openwork-browser";
@@ -20,12 +23,22 @@ const BROWSER_DEFAULT_URL = "about:blank";
 // URL a user-initiated new tab (the "+" button / opening the browser panel)
 // lands on. The agent's programmatic path keeps BROWSER_DEFAULT_URL.
 const BROWSER_NEW_TAB_URL = "https://www.google.com";
-const BROWSER_TARGET_RESOLVE_TIMEOUT_MS = 2500;
-const BROWSER_TARGET_RESOLVE_INTERVAL_MS = 80;
 const MENU_OVERLAY_HTML = "overlay.html";
 const MENU_OVERLAY_WIDTH = 196;
 const MENU_OVERLAY_HEIGHT = 176;
 const MENU_OVERLAY_READY_TIMEOUT_MS = 2000;
+const BROWSER_SECURITY_PREFERENCES = Object.freeze({
+  sandbox: true,
+  contextIsolation: true,
+  nodeIntegration: false,
+  nodeIntegrationInWorker: false,
+  // Run the isolated preload in each iframe. Sandboxing still disables Node
+  // in website JavaScript, including opener-linked popup contents.
+  nodeIntegrationInSubFrames: true,
+  webSecurity: true,
+  allowRunningInsecureContent: false,
+  webviewTag: false,
+});
 
 export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, checkPolicy }) {
   let policyRequestHookInstalled = false;
@@ -43,6 +56,21 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   // tabId -> { tabId, view, favicon, background }. Order, ownership, the active
   // tab per conversation, and which conversation is on screen live in the
   // registry; this map only holds the native views.
+  let browserSession = null;
+  let webMcpFramePolicy = null;
+  function ensureBrowserSession() {
+    if (!browserSession) {
+      browserSession = session.fromPartition(BROWSER_SESSION_PARTITION);
+      // Capture the first response, before a view can load any document.
+      webMcpFramePolicy = createWebMcpFramePolicy(browserSession);
+      webMcpFramePolicy.install();
+    }
+    return browserSession;
+  }
+  function ensureWebMcpFramePolicy() {
+    ensureBrowserSession();
+    return webMcpFramePolicy;
+  }
   const browserTabs = new Map();
   const registry = createBrowserTabRegistry();
   let browserViewVisible = false;
@@ -53,11 +81,13 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   let browserTabCounter = 0;
   // Active proxy for the built-in browser session: { rules, username, password }.
   let browserProxy = null;
+  let browserControlEnabled = true;
   let menuOverlayView = null;
   let menuOverlayRequest = null;
   let menuOverlayReady = false;
   let menuOverlayReadyResolvers = [];
   let menuOverlayShowSerial = 0;
+  const webMcpRefreshTimers = new Map();
 
   function window() {
     return getWindow?.() ?? null;
@@ -111,6 +141,16 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     return /^https?:\/\//i.test(target) ? target : `https://${target}`;
   }
 
+  async function browserTaskAllowed(url) {
+    if (!browserControlEnabled || typeof checkPolicy !== "function") return false;
+    try {
+      await checkPolicy({ url });
+      return browserControlEnabled;
+    } catch {
+      return false;
+    }
+  }
+
   function isMainWindowAllowedNavigation(url) {
     if (!url) return true;
     if (url.startsWith("file://") || url.startsWith("data:")) return true;
@@ -128,45 +168,14 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
 
   function routeBlockedMainWindowNavigation(url) {
     if (!/^https?:\/\//i.test(String(url ?? ""))) return;
-    void openBrowserUrlForAutomation(url, "auto", { ownerSessionId: registry.visibleSessionId() }).catch((error) => {
-      console.warn("[browser] failed to route blocked main-window navigation", error);
+    runDetachedTask("open linked browser page", async () => {
+      await checkPolicy?.({ url });
+      await openBrowserTab(url, registry.visibleSessionId());
     });
   }
 
   function cdpBrowserUrl() {
     return `http://127.0.0.1:${remoteDebugPort}`;
-  }
-
-  function browserTargetMarkerUrl(tabId) {
-    const marker = `openwork-browser-tab:${tabId}`;
-    const html = `<!doctype html><title>${marker}</title><meta name="openwork-browser-tab" content="${tabId}"><body>${marker}</body>`;
-    return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
-  }
-
-  async function listCdpTargets() {
-    if (!remoteDebugPort || remoteDebugPort <= 0) return [];
-    // loopback-fetch: CDP discovery targets Electron's local remote debugging port on 127.0.0.1.
-    const response = await fetch(`${cdpBrowserUrl()}/json/list`, { signal: AbortSignal.timeout(1000) });
-    if (!response.ok) throw new Error(`CDP target list failed: HTTP ${response.status}`);
-    const targets = await response.json();
-    return Array.isArray(targets) ? targets : [];
-  }
-
-  async function resolveBrowserCdpTargetId(tabId) {
-    const marker = encodeURIComponent(`openwork-browser-tab:${tabId}`);
-    const deadline = Date.now() + BROWSER_TARGET_RESOLVE_TIMEOUT_MS;
-    while (Date.now() < deadline) {
-      const targets = await listCdpTargets().catch(() => []);
-      const target = targets.find((candidate) => (
-        candidate?.type === "page" &&
-        typeof candidate.id === "string" &&
-        typeof candidate.url === "string" &&
-        candidate.url.includes(marker)
-      ));
-      if (target?.id) return target.id;
-      await new Promise((resolve) => setTimeout(resolve, BROWSER_TARGET_RESOLVE_INTERVAL_MS));
-    }
-    throw new Error("Could not resolve built-in browser CDP target.");
   }
 
   /**
@@ -177,26 +186,29 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
    */
   async function openBrowserUrlForAutomation(rawUrl, provider = "auto", { ownerSessionId = null } = {}) {
     const requestedProvider = String(provider || "auto").trim().toLowerCase();
-    if (requestedProvider && requestedProvider !== "auto" && requestedProvider !== "builtin") {
-      throw new Error(`Browser provider is not available yet: ${requestedProvider}`);
-    }
     const url = normalizeBrowserUrl(rawUrl);
-    // The marker page is loaded right away, so skip the blank initialize load:
-    // a queued about:blank navigation would abort this awaited load with
-    // ERR_ABORTED and fail the agent's request before the page ever opens.
-    const tab = createBrowserTab("about:blank", { select: true, initializeBlank: false, ownerSessionId });
-    await tab.view.webContents.loadURL(browserTargetMarkerUrl(tab.tabId));
-    const targetId = await resolveBrowserCdpTargetId(tab.tabId);
-    await tab.view.webContents.loadURL(url);
+    const result = await taskHost.request({ sessionId: ownerSessionId, operation: "open", args: { url, provider: requestedProvider } });
+    if (!result.ok) throw new BrowserTaskError(result.code, result.error);
+    // Electron supplies the exact target without a marker navigation or focus.
+    const targetId = getBrowserTab(result.tabId).view.webContents.getOrCreateDevToolsTargetId();
     return {
       provider: "builtin",
       browser_url: cdpBrowserUrl(),
       target_id: targetId,
-      tab_id: tab.tabId,
+      tab_id: result.tabId,
       url,
-      owner_session_id: registry.ownerOf(tab.tabId),
-      visible: registry.surfacingFor(tab.tabId) === "foreground",
+      owner_session_id: registry.ownerOf(result.tabId),
+      visible: registry.surfacingFor(result.tabId) === "foreground",
     };
+  }
+
+  async function openBrowserTab(url, ownerSessionId, signal = undefined) {
+    signal?.throwIfAborted();
+    const tab = createBrowserTab("about:blank", { select: true, initializeBlank: false, ownerSessionId });
+    const stop = () => { if (!tab.view.webContents.isDestroyed()) tab.view.webContents.stop(); };
+    signal?.addEventListener("abort", stop, { once: true });
+    try { await tab.view.webContents.loadURL(url); signal?.throwIfAborted(); return tab; }
+    finally { signal?.removeEventListener("abort", stop); }
   }
 
   function getBrowserTab(tabId = registry.onScreenTabId()) {
@@ -246,6 +258,11 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       canGoBack: webContents.canGoBack(),
       canGoForward: webContents.canGoForward(),
       ownerSessionId: registry.ownerOf(tabId),
+      browserApproval: tab.browserApproval ?? null,
+      browserTask: tab.browserTask ?? { status: "idle", operation: null },
+      siteToolCount: Number.isInteger(tab.webMcpToolCount) ? tab.webMcpToolCount : 0,
+      siteTools: Array.isArray(tab.webMcpTools) ? tab.webMcpTools : [],
+      siteToolActivity: Array.isArray(tab.webMcpActivity) ? tab.webMcpActivity : [],
     };
   }
 
@@ -579,8 +596,109 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     };
   }
 
+  const approvals = new Map();
+  function confirmBrowserAction({ tabId, title, message, detail, signal, approveLabel = "Allow once" }) {
+    const tab = getBrowserTab(tabId);
+    if (!tab || registry.ownerOf(tabId) !== registry.visibleSessionId() || signal?.aborted) return Promise.resolve(false);
+    if (approvals.has(tabId)) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      const id = createBrowserTabId();
+      const finish = (allowed) => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", canceled);
+        if (approvals.get(tabId)?.id !== id) return;
+        approvals.delete(tabId); tab.browserApproval = null;
+        if (!tab.view.webContents.isDestroyed()) tab.view.setVisible(true);
+        sendBrowserState(); resolve(allowed);
+      };
+      const canceled = () => finish(false);
+      const timer = setTimeout(canceled, 60_000);
+      approvals.set(tabId, { id, finish });
+      tab.browserApproval = { id, title, message, detail, approveLabel };
+      tab.view.setVisible(false);
+      signal?.addEventListener("abort", canceled, { once: true });
+      sendBrowserState();
+    });
+  }
+  async function confirmWebMcpExecution({ tool, inputSummary, tabId, signal }) {
+    return confirmBrowserAction({ tabId, signal, title: "Allow website action?",
+      message: `Allow ${tool.origin} to run “${tool.name}”?`,
+      detail: `This website tool may change data. Arguments: ${inputSummary}` });
+  }
+
+  const webMcpBroker = createWebMcpBroker({
+    getTab: (tabId) => getBrowserTab(tabId),
+    getActiveTabId: (sessionId) => registry.activeTabIdFor(sessionId),
+    assertTabAccess: async (tabId, sessionId) => {
+      if (!sessionId || registry.ownerOf(tabId) !== sessionId) throw new Error("wrong_conversation");
+      const tab = getBrowserTab(tabId);
+      if (!tab || !await browserTaskAllowed(tab.view.webContents.getURL())) throw new Error("website_blocked");
+    },
+    confirmExecution: confirmWebMcpExecution,
+    confirmResultDisclosure: ({ tabId, signal, tool, resultText }) => confirmBrowserAction({
+      tabId, signal, title: "Share website result?", approveLabel: "Share result",
+      message: `Share the result from ${tool.origin} with this conversation and its model provider?`,
+      detail: `The website action has already run. Review this complete result for passwords, session cookies, tokens or other private data before sharing. Denying keeps the result out of the conversation and does not undo the action.\n\n${resultText}`,
+    }),
+    isFrameAllowed: async (frame) => await browserTaskAllowed(frame.url) && ensureWebMcpFramePolicy().checkFrame(frame),
+    onActivity: (activity) => {
+      const tab = getBrowserTab(activity.tabId);
+      if (!tab) return;
+      tab.webMcpActivity = [activity, ...(tab.webMcpActivity ?? [])].slice(0, 20);
+      sendBrowserState();
+    },
+    onToolCountChanged: (tabId, count) => {
+      const tab = getBrowserTab(tabId);
+      if (!tab) return;
+      tab.webMcpToolCount = count;
+      sendBrowserState();
+    },
+    onToolsChanged: (tabId, tools) => {
+      const tab = getBrowserTab(tabId);
+      if (!tab) return;
+      tab.webMcpTools = tools;
+      tab.webMcpToolCount = tools.length;
+      sendBrowserState();
+    },
+  });
+
+
+  const taskHost = createBrowserTaskHost({
+    getTab: getBrowserTab,
+    tabsFor: (sessionId) => registry.tabsFor(sessionId).map((item) => getBrowserTab(item.tabId)).filter(Boolean),
+    ownerOf: (tabId) => registry.ownerOf(tabId),
+    activeFor: (sessionId) => registry.activeTabIdFor(sessionId),
+    visibleSession: () => registry.visibleSessionId(),
+    enabled: () => browserControlEnabled,
+    allowed: browserTaskAllowed,
+    openTab: openBrowserTab,
+    navigate: (tab, url) => tab.view.webContents.loadURL(url),
+    confirm: confirmBrowserAction,
+    changed: (tabId, activity) => { const tab = getBrowserTab(tabId); if (tab) { tab.browserTask = activity; sendBrowserState(); } },
+    siteTools: (args) => webMcpBroker.listTools(args),
+    runSiteTool: (args, options) => webMcpBroker.executeTool(args, options),
+  });
+
+  function scheduleWebMcpToolCountRefresh(tabId) {
+    if (!tabId || webMcpRefreshTimers.has(tabId)) return;
+    const timer = setTimeout(() => {
+      webMcpRefreshTimers.delete(tabId);
+      void webMcpBroker.refreshTabToolCount(tabId);
+    }, 250);
+    webMcpRefreshTimers.set(tabId, timer);
+  }
+
+  function invalidateWebMcpTab(tab) {
+    if (!tab) return;
+    taskHost.invalidate(tab.tabId);
+    tab.webMcpRevision = (Number.isInteger(tab.webMcpRevision) ? tab.webMcpRevision : 0) + 1;
+    tab.webMcpToolCount = 0;
+    tab.webMcpTools = [];
+    webMcpBroker.invalidateTab(tab.tabId);
+  }
+
   async function setBrowserProxy(proxyInput) {
-    const browserSession = session.fromPartition(BROWSER_SESSION_PARTITION);
+    const browserSession = ensureBrowserSession();
     const parsed = parseBrowserProxyInput(proxyInput);
     if (parsed) {
       await browserSession.setProxy({ proxyRules: parsed.rules, proxyBypassRules: "<local>" });
@@ -599,20 +717,30 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     callback(browserProxy.username, browserProxy.password);
   });
 
-  function createBrowserTab(url = "about:blank", { select = true, initializeBlank = true, ownerSessionId = null } = {}) {
+  function createBrowserTab(url = "about:blank", { select = true, initializeBlank = true, ownerSessionId = null, contentsOptions = /** @type {import("electron").WebContentsViewConstructorOptions} */ ({}) } = {}) {
     installPolicyRequestHook();
+    ensureWebMcpFramePolicy();
     const tabId = createBrowserTabId();
     const view = new WebContentsView({
+      ...contentsOptions,
       webPreferences: {
+        ...contentsOptions.webPreferences,
         backgroundThrottling: false,
-        sandbox: true,
-        contextIsolation: true,
-        nodeIntegration: false,
+        ...BROWSER_SECURITY_PREFERENCES,
         preload: path.join(__dirname, "browser-content-preload.cjs"),
         partition: BROWSER_SESSION_PARTITION,
       },
     });
-    const tab = { tabId, view, favicon: null, background: false };
+    const tab = {
+      tabId,
+      view,
+      favicon: null,
+      background: false,
+      webMcpRevision: 0,
+      webMcpToolCount: 0,
+      webMcpTools: [],
+      webMcpActivity: [],
+    };
     browserTabs.set(tabId, tab);
     registry.add({ tabId, ownerSessionId });
     // Load about:blank immediately to preempt persistent-session restore.
@@ -622,15 +750,23 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     if (initializeBlank) {
       runDetachedTask("initialize browser tab", () => view.webContents.loadURL("about:blank"));
     }
-    view.webContents.setWindowOpenHandler(({ url: targetUrl }) => {
-      runDetachedTask("open browser popup", async () => {
-        try { await checkPolicy?.({ url: targetUrl, external: true }); }
-        catch { createBrowserTab(targetUrl, { ownerSessionId, initializeBlank: false }); return; }
-        await shell.openExternal(targetUrl);
-      });
-      return { action: "deny" };
+    view.webContents.setWindowOpenHandler(({ url: targetUrl, disposition }) => {
+      if (!/^https?:\/\//i.test(targetUrl)) return { action: "deny" };
+      // The shared all-request policy hook checks popup requests too. Never
+      // fall back to an external browser when that policy denies a request.
+      return { action: "allow", overrideBrowserWindowOptions: { webPreferences: BROWSER_SECURITY_PREFERENCES }, createWindow: (options) => {
+        // Electron supplies the opener-linked webContents. Retain it: creating
+        // a different one leaves the synchronous window.open handshake waiting.
+        const popup = createBrowserTab("about:blank", { select: disposition !== "background-tab", initializeBlank: false, ownerSessionId: registry.ownerOf(tabId), contentsOptions: options });
+        if (disposition === "background-tab") runDetachedTask("load background browser popup", () => popup.view.webContents.loadURL(targetUrl));
+        return popup.view.webContents;
+      } };
     });
     view.webContents.on("did-start-navigation", (_event, targetUrl, isInPlace, isMainFrame) => {
+      if (isMainFrame || !isInPlace) {
+        invalidateWebMcpTab(tab);
+        sendBrowserState();
+      }
       if (!isMainFrame || isInPlace) return;
       const target = String(targetUrl ?? "");
       // data: loads are internal plumbing (CDP target-marker pages), not
@@ -682,9 +818,18 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       sendBrowserState();
     });
     view.webContents.on("did-start-loading", () => sendBrowserState());
-    view.webContents.on("did-stop-loading", () => sendBrowserState());
+    view.webContents.on("did-stop-loading", () => {
+      sendBrowserState();
+      scheduleWebMcpToolCountRefresh(tabId);
+    });
     view.webContents.on("focus", () => resetViewportEmulation(view));
     view.webContents.once("destroyed", () => {
+      approvals.get(tabId)?.finish(false);
+      taskHost.invalidate(tabId, { closed: true });
+      webMcpBroker.invalidateTab(tabId);
+      const refreshTimer = webMcpRefreshTimers.get(tabId);
+      if (refreshTimer) clearTimeout(refreshTimer);
+      webMcpRefreshTimers.delete(tabId);
       browserTabs.delete(tabId);
       registry.remove(tabId);
       sendBrowserState();
@@ -874,6 +1019,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     const tab = getBrowserTab();
     if (!tab) return;
     exitBackgroundMode(tab);
+    tab.view.setVisible(!approvals.has(tab.tabId));
     detachIdleBrowserViews(tab.view);
     // Size before attaching so a restored view never flashes at stale bounds.
     tab.view.setBounds(scaleRendererBounds(lastBrowserBounds));
@@ -905,6 +1051,10 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     const wasOnScreen = registry.onScreenTabId() === tabId;
     tab.background = false;
     detachBrowserView(tab.view);
+    webMcpBroker.invalidateTab(tabId);
+    const refreshTimer = webMcpRefreshTimers.get(tabId);
+    if (refreshTimer) clearTimeout(refreshTimer);
+    webMcpRefreshTimers.delete(tabId);
     browserTabs.delete(tabId);
     const removed = registry.remove(tabId);
     if (wasOnScreen) {
@@ -931,6 +1081,12 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       .filter(Boolean);
     const owners = new Set(closedTabIds.map((tabId) => registry.ownerOf(tabId)));
     for (const tab of tabsToClose) tab.background = false;
+    for (const tabId of closedTabIds) {
+      webMcpBroker.invalidateTab(tabId);
+      const refreshTimer = webMcpRefreshTimers.get(tabId);
+      if (refreshTimer) clearTimeout(refreshTimer);
+      webMcpRefreshTimers.delete(tabId);
+    }
     hideBrowserView();
     browserTabs.clear();
     registry.clear();
@@ -1002,8 +1158,11 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     for (const tab of browserTabs.values()) {
       tab.background = false;
       detachBrowserView(tab.view);
+      webMcpBroker.invalidateTab(tab.tabId);
       try { tab.view.webContents.close(); } catch { /* already destroyed */ }
     }
+    for (const timer of webMcpRefreshTimers.values()) clearTimeout(timer);
+    webMcpRefreshTimers.clear();
     browserTabs.clear();
     registry.clear();
     if (backgroundWindow && !backgroundWindow.isDestroyed()) backgroundWindow.destroy();
@@ -1064,8 +1223,35 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     });
     ipcMain.handle("openwork:browser:reorderTabs", (_event, tabIds) => reorderBrowserTabs(tabIds));
     ipcMain.handle("openwork:browser:listTabs", () => listBrowserTabs());
+    ipcMain.handle("openwork:browser:webmcpListTools", (_event, args) => taskHost.request({ sessionId: registry.visibleSessionId(), operation: "site_tools", args }));
+    ipcMain.handle("openwork:browser:webmcpExecuteTool", (_event, args) => taskHost.request({ sessionId: registry.visibleSessionId(), operation: "site_tool", args }));
+    ipcMain.handle("openwork:browser:approve", (event, tabId, approvalId, allowed) => {
+      if (event.sender !== window()?.webContents || event.senderFrame !== window()?.webContents.mainFrame || registry.ownerOf(tabId) !== registry.visibleSessionId()) return false;
+      const pending = approvals.get(tabId);
+      if (!pending || pending.id !== approvalId) return false;
+      pending.finish(allowed === true); return true;
+    });
+    ipcMain.handle("openwork:browser:taskControl", (event, tabId, action) => {
+      if (event.sender !== window()?.webContents || event.senderFrame !== window()?.webContents.mainFrame || !getBrowserTab(tabId) || registry.ownerOf(tabId) !== registry.visibleSessionId()) throw new Error("Select this conversation first.");
+      if (action === "resume") taskHost.resume(tabId);
+      else if (action === "pause") taskHost.pause(tabId);
+      else throw new Error("Unsupported browser control.");
+    });
+    ipcMain.handle("openwork:webmcp:frame-policy", (event, runtimePolicy) => {
+      const tab = [...browserTabs.values()].find((candidate) => candidate.view.webContents === event.sender);
+      if (!tab || !event.senderFrame) {
+        return { allowed: false, originKeyed: false, reason: "unknown_browser_frame" };
+      }
+      return ensureWebMcpFramePolicy().checkFrame(event.senderFrame, runtimePolicy);
+    });
     ipcMain.handle("openwork:browser:setProxy", (_event, proxy) => setBrowserProxy(proxy));
     ipcMain.handle("openwork:browser:getProxy", () => browserProxyState());
+    ipcMain.handle("openwork:browser:setControlEnabled", (event, enabled) => {
+      if (event.sender !== window()?.webContents || event.senderFrame !== window()?.webContents.mainFrame) return false;
+      browserControlEnabled = enabled === true;
+      if (!browserControlEnabled) for (const tab of browserTabs.values()) taskHost.pause(tab.tabId, "Browser control disabled");
+      return browserControlEnabled;
+    });
     ipcMain.handle("openwork:browser:tabContextMenu", (_event, tabId, point) => showBrowserTabContextMenu(tabId, point));
     ipcMain.on("openwork:browser:linkContextMenu", (event, payload) => {
       const mainContents = window()?.webContents;
@@ -1091,11 +1277,20 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       if (event.sender === menuOverlayView?.webContents) return;
       hideMenuOverlay();
     });
+    ipcMain.on("openwork:webmcp:tools-changed", (event) => {
+      const tab = [...browserTabs.values()].find((candidate) => candidate.view.webContents === event.sender);
+      if (!tab) return;
+      invalidateWebMcpTab(tab);
+      scheduleWebMcpToolCountRefresh(tab.tabId);
+    });
   }
 
   return {
     destroy: destroyBrowserView,
     isMainWindowAllowedNavigation,
+    browserTask: (args, options) => taskHost.request(args, options),
+    listWebMcpTools: (args, options) => taskHost.request({ sessionId: args?.sessionId, operation: "site_tools", args }, options),
+    executeWebMcpTool: (args, options) => taskHost.request({ sessionId: args?.sessionId, operation: "site_tool", args }, options),
     registerIpc,
     routeBlockedMainWindowNavigation,
   };

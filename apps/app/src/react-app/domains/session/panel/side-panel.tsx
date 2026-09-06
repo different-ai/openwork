@@ -20,6 +20,7 @@ import {
   InputGroupAddon,
   InputGroupInput,
 } from "@/components/ui/input-group";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 import { ArtifactIcon } from "../artifacts/artifact-icon";
@@ -319,6 +320,18 @@ function BrowserPanelContent({
 
   return (
     <>
+      {isAvailable ? (
+        <div className="flex min-h-9 shrink-0 items-center gap-2 border-b border-border px-3 text-xs">
+          <span className="shrink-0 font-medium">Built-in browser</span>
+          <span role="status" className="min-w-0 flex-1 truncate text-muted-foreground">
+            {tab.browserTask?.status === "paused" ? "You have control · resume when finished" : tab.browserTask?.status === "running" ? browserOperationLabels[tab.browserTask.operation ?? ""] ?? "Working on this page" : tab.browserTask?.status === "needs_attention" ? browserOperationLabels[tab.browserTask.operation ?? ""] ?? "Review this page" : "This conversation's tab"}
+          </span>
+          <Button variant="outline" size="sm" className="h-6 px-2 text-xs"
+            onClick={() => { void window.__OPENWORK_ELECTRON__?.browser?.taskControl?.(tab.id, tab.browserTask?.status === "paused" ? "resume" : "pause"); }}>
+            {tab.browserTask?.status === "paused" ? "Resume browser" : "Take over"}
+          </Button>
+        </div>
+      ) : null}
       <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border bg-background px-2 mac:bg-background/80 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
         {isAvailable ? (
           <>
@@ -392,6 +405,59 @@ function BrowserPanelContent({
                 <Globe />
               </InputGroupAddon>
             </InputGroup>
+            {tab.siteToolCount > 0 ? (
+              <Popover>
+                <PopoverTrigger
+                  render={(
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-6 shrink-0 rounded-md bg-muted/60 px-2 text-[11px] font-medium"
+                      aria-label={`${tab.siteToolCount} site ${tab.siteToolCount === 1 ? "tool" : "tools"} available; inspect site tools and activity`}
+                    >
+                      {tab.siteToolCount} {tab.siteToolCount === 1 ? "tool" : "tools"}
+                    </Button>
+                  )}
+                />
+                <PopoverContent align="end" side="bottom" sideOffset={8} className="w-80 max-w-[calc(100vw-2rem)] gap-0 p-0">
+                  <div className="border-b border-border px-4 py-3">
+                    <p className="text-sm font-semibold">Site tools</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      Actions offered by this page. Review the website and the requested action before allowing it.
+                    </p>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto px-4 py-2">
+                    {(tab.siteTools ?? []).map((tool) => (
+                      <div key={`${tool.origin}:${tool.name}`} className="border-b border-border/60 py-2 last:border-b-0">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="min-w-0 truncate text-xs font-medium">{tool.title || tool.name}</p>
+                          <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                            {tool.readOnly ? "Site says read-only" : "May change data"}
+                          </span>
+                        </div>
+                        <p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">{tool.name}</p>
+                        <p className="truncate text-[10px] text-muted-foreground">{tool.origin}</p>
+                      </div>
+                    ))}
+                  </div>
+                  {(tab.siteToolActivity ?? []).length > 0 ? (
+                    <div className="border-t border-border px-4 py-3">
+                      <p className="mb-1.5 text-xs font-semibold">Recent activity</p>
+                      {(tab.siteToolActivity ?? []).slice(0, 5).map((activity, index) => (
+                        <div key={`${activity.at}:${activity.name}:${index}`} className="flex items-center justify-between gap-3 py-1 text-[10px]">
+                          <span className="min-w-0 truncate font-mono">{activity.name}</span>
+                          <span className={activity.status === "completed" ? "text-emerald-600 dark:text-emerald-400" : "text-destructive"}>
+                            {activity.status === "completed" ? "Returned" : activity.code || "Failed"}
+                          </span>
+                        </div>
+                      ))}
+                      <p className="mt-1 text-[10px] text-muted-foreground">Arguments and results are not retained in this activity view.</p>
+                    </div>
+                  ) : null}
+                </PopoverContent>
+              </Popover>
+            ) : null}
           </>
         ) : (
           <p className="px-2 text-sm text-muted-foreground">
@@ -408,12 +474,33 @@ function BrowserPanelContent({
           <X />
         </Button>
       </div>
-      <div className="min-h-0 flex-1 overflow-hidden">
+      <div className="relative min-h-0 flex-1 overflow-hidden">
         {isAvailable ? <div ref={contentRef} className="h-full overflow-hidden" /> : null}
+      {tab.browserApproval ? (
+        <div className="absolute inset-0 z-10 flex flex-col justify-center gap-3 overflow-y-auto bg-background p-5 text-sm" role="region" aria-label="Browser permission request">
+          <h3 className="font-semibold">{tab.browserApproval.title}</h3>
+          <p className="font-medium">{tab.browserApproval.message}</p>
+          <p className="max-h-[60vh] overflow-y-auto whitespace-pre-wrap break-words text-muted-foreground">{tab.browserApproval.detail}</p>
+          <div className="flex gap-2">
+            <Button size="sm" onClick={() => { if (tab.browserApproval) void window.__OPENWORK_ELECTRON__?.browser?.approve?.(tab.id, tab.browserApproval.id, true); }}>{tab.browserApproval.approveLabel ?? "Allow once"}</Button>
+            <Button size="sm" variant="outline" onClick={() => { if (tab.browserApproval) void window.__OPENWORK_ELECTRON__?.browser?.approve?.(tab.id, tab.browserApproval.id, false); }}>Deny</Button>
+          </div>
+        </div>
+      ) : null}
+
       </div>
     </>
   );
 }
+
+const browserOperationLabels: Record<string, string> = {
+  observe: "Reading this page", site_tools: "Finding website tools", site_tool: "Using a website tool",
+  navigate: "Opening a page", click: "Clicking a control", fill: "Entering text", key: "Using the keyboard", scroll: "Scrolling",
+  "Website access": "Review website access", website_blocked: "This website is blocked", browser_disabled: "Browser control is disabled",
+  stale_observation: "A fresh page view is needed", stale_tool: "Website tools have changed", user_denied: "The action was declined",
+  needs_attention: "Review this page", sign_in_required: "Sign in directly in this browser", timeout: "Check the page before continuing",
+  result_withheld: "Website result was kept private",
+};
 
 export function SidePanel({
   sessionId,

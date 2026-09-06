@@ -1,7 +1,15 @@
-import { control } from "@openwork/behaviors";
+import { control, readBrowserTabMetrics } from "@openwork/behaviors";
 import { captureScreenshot, connect, debuggerUrlFor, evaluate, listTargets, navigate } from "@openwork/cdp";
 import type { AttachedSurface, CdpClient, Surface } from "@openwork/cdp";
 import type { Seed } from "@openwork/env";
+
+export const CAPTURE_VIEWPORT = { width: 1440, height: 900 };
+
+export function browserTabHandle(value: unknown) {
+  if (!value || typeof value !== "object" || !("tab_id" in value) || typeof value.tab_id !== "string"
+    || !("target_id" in value) || typeof value.target_id !== "string") throw new Error("The built-in browser returned no exact tab handle.");
+  return { tabId: value.tab_id, targetId: value.target_id };
+}
 
 export interface BuiltinBrowserTab {
   tabId: string;
@@ -121,7 +129,7 @@ async function loginWitnessUrl(seed: Seed, app: Surface): Promise<string> {
 
 async function withTabClient<T>(app: Surface, targetId: string, run: (client: CdpClient) => Promise<T>): Promise<T> {
   const target = (await listTargets(app.handle.cdpUrl)).find((candidate) => candidate.id === targetId);
-  if (!target) throw new Error(`Built-in browser tab target ${targetId} is not listed by the app's CDP endpoint.`);
+  if (!target) throw new Error("The exact built-in tab target is missing.");
   const client = await connect(debuggerUrlFor(app.handle.cdpUrl, target));
   try {
     return await run(client);
@@ -197,11 +205,7 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
     /** Open a page in the built-in browser the way the agent's browser tool does. */
     async openTab(name: string): Promise<BuiltinBrowserTab> {
       const url = `${origin}/?viewport-probe=${encodeURIComponent(name)}`;
-      const result = await seed.evalIn(
-        app,
-        `window.__OPENWORK_ELECTRON__.browser.openUrl(${JSON.stringify(url)})`,
-        { awaitPromise: true, timeoutMs: 30_000 },
-      );
+      const result = await control(app, "browser.open_url", { url, provider: "builtin" });
       if (!isRecord(result)) throw new Error("browser.openUrl returned no handle.");
       return {
         tabId: stringField(result.tab_id),
@@ -213,11 +217,7 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
     /** Open a page that reports only whether an HttpOnly session cookie arrived. */
     async openLoginWitnessTab(name: string): Promise<BuiltinBrowserTab> {
       const url = `${await loginWitnessUrl(seed, app)}/?login-probe=${encodeURIComponent(name)}`;
-      const result = await seed.evalIn(
-        app,
-        `window.__OPENWORK_ELECTRON__.browser.openUrl(${JSON.stringify(url)})`,
-        { awaitPromise: true, timeoutMs: 30_000 },
-      );
+      const result = await control(app, "browser.open_url", { url, provider: "builtin" });
       if (!isRecord(result)) throw new Error("browser.openUrl returned no login witness handle.");
       return { tabId: stringField(result.tab_id), targetId: stringField(result.target_id), name };
     },
@@ -438,10 +438,6 @@ async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string
   };
 }
 
-export function builtinBrowserWorld(seed: Seed) {
-  return createBuiltinBrowserWorld(seed);
-}
-
 export async function browserLoginSyncWorld(seed: Seed) {
   const world = await createBuiltinBrowserWorld(seed, { OPENWORK_EVAL_BROWSER_LOGIN_SYNC: "1" });
   const loginWitnessOrigin = await loginWitnessUrl(seed, world.app);
@@ -452,8 +448,9 @@ export async function browserLoginSyncWorld(seed: Seed) {
   };
 }
 
-/** Add a persisted transcript link to an existing world without launching another desktop. */
-export async function transcriptLinkWorld(seed: Seed, world: Awaited<ReturnType<typeof builtinBrowserWorld>>) {
+/** Arrange a persisted transcript link and its neighboring conversation. */
+export async function transcriptLinkWorld(seed: Seed) {
+  const world = await createBuiltinBrowserWorld(seed);
   const { app, workspace } = world;
   const reading = { ...world.session, title: "Reading a shared link" };
   await world.renameSession(reading.sessionId, reading.title);
@@ -541,4 +538,44 @@ export async function transcriptLinkWorld(seed: Seed, world: Awaited<ReturnType<
       await app.client.send("Target.closeTarget", { targetId });
     },
   };
+}
+
+/** Arrangement attaches only the exact native tab; disposal releases CDP, not the tab. */
+export async function attachBuiltinTab(app: Surface, targetId: string): Promise<AttachedSurface> {
+  const target = (await listTargets(app.handle.cdpUrl)).find((candidate) => candidate.id === targetId);
+  if (!target) throw new Error("The exact built-in tab target is missing.");
+  const client = await connect(debuggerUrlFor(app.handle.cdpUrl, target));
+  return {
+    handle: { ...app.handle, kind: "chrome", name: "project-tab" }, client,
+    async stop() { client.close(); },
+    async [Symbol.asyncDispose]() { client.close(); },
+  };
+}
+
+export async function builtinBrowserWorld(seed: Seed, options: { workspacePath?: string } = {}) {
+  const app = await seed.desktop({ name: "builtin-browser" });
+  const workspace = await seed.workspace(app, options.workspacePath ?? seed.tmpPath("builtin-browser"));
+  const session = await seed.session(app, { title: "Browser project" });
+  const info = await seed.evalIn(app, `window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo")`, { awaitPromise: true });
+  if (!info || typeof info !== "object" || !("baseUrl" in info) || typeof info.baseUrl !== "string") throw new Error("The embedded server is unavailable.");
+  return { app, workspace, session, origin: info.baseUrl.replace(/\/+$/, "") };
+}
+
+/** Leave the emulation fault behind before the body; recovery is a real user act. */
+export async function browserViewportWorld(seed: Seed) {
+  const base = await builtinBrowserWorld(seed);
+  const tab = browserTabHandle(await control(base.app, "browser.open_url", { url: `${base.origin}/?viewport-probe=first`, provider: "builtin" }));
+  const surface = await attachBuiltinTab(base.app, tab.targetId);
+  try {
+    const deadline = Date.now() + 15_000;
+    let metrics = await readBrowserTabMetrics(base.app, tab.targetId);
+    while ((metrics.width <= 0 || metrics.width >= 1280) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      metrics = await readBrowserTabMetrics(base.app, tab.targetId);
+    }
+    if (metrics.width <= 0 || metrics.width >= 1280) throw new Error("The tab never acquired its panel viewport.");
+    const panelViewport = { width: metrics.width, height: metrics.height };
+    await surface.client.send("Emulation.setDeviceMetricsOverride", { ...CAPTURE_VIEWPORT, deviceScaleFactor: 0, mobile: false });
+    return { ...base, tab, panelViewport };
+  } finally { await surface.stop(); }
 }

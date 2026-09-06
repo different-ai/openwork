@@ -52,6 +52,7 @@ export interface User {
 }
 
 export interface Agent {
+  browserTask(input: import("@openwork/behaviors").BrowserTaskInput): Promise<import("@openwork/behaviors").BrowserTaskReply>;
   browserRequest(input: { url: string; method?: string; body?: string }): Promise<{ reached: boolean; error?: string }>;
   desktopApi(path: string, input: { method: string; body?: unknown }): Promise<{ status: number; body: unknown }>;
   run(action: string, args?: unknown): Promise<unknown>;
@@ -63,6 +64,9 @@ export interface Agent {
 }
 
 export interface Probe {
+  browserState(): Promise<import("@openwork/behaviors").BrowserState>;
+  browserTabMetrics(targetId: string): ReturnType<typeof import("@openwork/behaviors").readBrowserTabMetrics>;
+  browserFixtureState(origin: string): Promise<import("@openwork/env").BrowserFixtureState>;
   text(): Promise<string>;
   has(text: string): Promise<boolean>;
   composer(): ReturnType<typeof import("@openwork/behaviors").readComposerState>;
