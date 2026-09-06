@@ -719,7 +719,7 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
     await admin.user.click("Add site");
     await admin.user.see({ role: "button", label: `Remove ${new URL(world.den.mocks.witness.url).origin}` });
     await admin.user.notSee({ text: "This website is already approved." });
-    evidence.recordAssertionEvidence("Duplicate sites are rejected and removing the last approved site makes browsing blocked until it is added again", emptySites, emptySites.includes("No websites are approved, so browsing is blocked"));
+    evidence.recordAssertionEvidence("Duplicate sites are rejected and removing the last site shows the blocked-browsing warning in the unsaved draft", emptySites, emptySites.includes("No websites are approved, so browsing is blocked"));
     await admin.user.see({ text: "Computer commands can still access other websites and send data." });
     await admin.user.click("Block computer commands too");
     await admin.user.notSee({ text: "Computer commands can still access other websites and send data." });
@@ -881,6 +881,38 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
     expect(isRecord(target.execution) && target.execution.commands).toBe("deny");
     expect(isRecord(unaffected.execution) && unaffected.execution.commands).toBe("allow");
     evidence.recordAssertionEvidence("The admin's saved team policy persists while the second member retains Settings and local tool management", JSON.stringify({ target, unaffected, targetPolicy, otherPolicy }), isRecord(target.execution) && target.execution.commands === "deny" && isRecord(unaffected.execution) && unaffected.execution.commands === "allow");
+  });
+
+  await step("saving an empty approved-site list blocks the previously allowed website only for this team", async () => {
+    const origin = new URL(world.den.mocks.witness.url).origin;
+    const url = `${origin}/health`;
+    const other = agent.on(world.control);
+    const controlBefore = await effective(world.den.members.casey);
+    const before = await member.agent.browserRequest({ url });
+    expect(before.reached).toBe(true);
+    await admin.user.click({ role: "button", label: `Remove ${origin}` });
+    await admin.user.see({ text: "No websites are approved, so browsing is blocked" });
+    await admin.user.click("Preview member experience");
+    await admin.user.see({ testId: "team-permission-preview-browserOrigins" }, { text: /Browsing blocked/ });
+    const unsaved = await member.agent.browserRequest({ url });
+    expect(unsaved.reached).toBe(true);
+    evidence.recordAssertionEvidence("Removing the final site changes the preview but leaves the member's browsing available until Save", JSON.stringify({ before, unsaved }), before.reached && unsaved.reached);
+    await saveReviewed([{ label: "Browse websites", before: origin, after: "Browsing blocked" }]);
+    const saved = await effective(world.den.members.jordan);
+    expect(isRecord(saved.execution) && saved.execution.browserOrigins).toEqual([]);
+    const denied = await member.agent.desktopApi("/managed-policy/evaluate", { method: "POST", body: { action: "browser", input: { url, method: "GET" } } });
+    expect(denied.status).toBe(403);
+    expect(isRecord(denied.body) && denied.body.code).toBe("organization_policy_denied");
+    const blocked = await member.agent.browserRequest({ url });
+    const unaffected = await other.browserRequest({ url });
+    expect(blocked.reached).toBe(false);
+    expect(unaffected.reached).toBe(true);
+    expect(await effective(world.den.members.casey)).toEqual(controlBefore);
+    await admin.user.reload();
+    await admin.user.see({ role: "combobox", label: "Website access" }, { value: "blocked", timeoutMs: 60_000 });
+    await admin.user.notSee({ role: "button", label: `Remove ${origin}` });
+    evidence.recordAssertionEvidence("Saving an empty approved-site list persists browsing Blocked and stops real requests to the formerly approved site only for the assigned team", JSON.stringify({ saved, denied, before, unsaved, blocked, unaffected, controlBefore }), denied.status === 403 && before.reached && unsaved.reached && !blocked.reached && unaffected.reached);
+    await admin.user.looks(["Team Access shows Website access Blocked and says no websites are approved"]);
   });
 
 });
