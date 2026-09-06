@@ -199,6 +199,24 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
       return () => ipcRenderer.removeListener("openwork:browser:panel-closed", handler);
     },
   },
+  browserLogins: {
+    setPolicyAllowed(allowed) { return ipcRenderer.invoke("openwork:browser-logins:setPolicyAllowed", allowed); },
+    sources() { return ipcRenderer.invoke("openwork:browser-logins:sources"); },
+    preview(request) { return ipcRenderer.invoke("openwork:browser-logins:preview", request); },
+    configure(request) { return ipcRenderer.invoke("openwork:browser-logins:configure", request); },
+    state() { return ipcRenderer.invoke("openwork:browser-logins:state"); },
+    syncNow() { return ipcRenderer.invoke("openwork:browser-logins:syncNow"); },
+    pause() { return ipcRenderer.invoke("openwork:browser-logins:pause"); },
+    resume() { return ipcRenderer.invoke("openwork:browser-logins:resume"); },
+    stopSite(site) { return ipcRenderer.invoke("openwork:browser-logins:stopSite", site); },
+    disconnect(request) { return ipcRenderer.invoke("openwork:browser-logins:disconnect", request); },
+    signedInSites() { return ipcRenderer.invoke("openwork:browser-logins:signedIn"); },
+    forgetSite(site) { return ipcRenderer.invoke("openwork:browser-logins:forgetSite", site); },
+    forgetAll() { return ipcRenderer.invoke("openwork:browser-logins:forgetAll"); },
+    ...(process.env.OPENWORK_EVAL_BROWSER_LOGIN_SYNC === "1" ? {
+      writeTestStore(request) { return ipcRenderer.invoke("openwork:browser-logins:writeTestStore", request); },
+    } : {}),
+  },
   terminal: {
     create(options) { return ipcRenderer.invoke("openwork:terminal:create", options); },
     write(terminalId, data) { return ipcRenderer.invoke("openwork:terminal:write", terminalId, data); },

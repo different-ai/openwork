@@ -159,6 +159,9 @@ importers:
       '@openwork-ee/telemetry-contracts':
         specifier: workspace:*
         version: link:../../ee/packages/telemetry-contracts
+      '@openwork/browser-logins':
+        specifier: workspace:*
+        version: link:../../packages/browser-logins
       '@openwork/browser-tabs':
         specifier: workspace:*
         version: link:../../packages/browser-tabs
@@ -337,6 +340,9 @@ importers:
       '@opencode-ai/sdk':
         specifier: ^1.18.15
         version: 1.18.18
+      '@openwork/browser-logins':
+        specifier: workspace:*
+        version: link:../../packages/browser-logins
       '@openwork/browser-tabs':
         specifier: workspace:*
         version: link:../../packages/browser-tabs
@@ -1159,6 +1165,19 @@ importers:
       tsup:
         specifier: ^8.5.0
         version: 8.5.1(jiti@2.7.0)(postcss@8.5.23)(tsx@4.23.1)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
+  packages/browser-logins:
+    dependencies:
+      tldts:
+        specifier: ^7.4.10
+        version: 7.4.10
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.7
       typescript:
         specifier: ^5.6.3
         version: 5.9.3

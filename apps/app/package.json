@@ -48,6 +48,7 @@
     "@modelcontextprotocol/ext-apps": "^1.7.5",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@opencode-ai/sdk": "^1.18.15",
+    "@openwork/browser-logins": "workspace:*",
     "@openwork/browser-tabs": "workspace:*",
     "@openwork/install-config": "workspace:*",
     "@openwork/types": "workspace:*",

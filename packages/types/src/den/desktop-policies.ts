@@ -88,6 +88,16 @@ export const desktopPolicyDefinitions = [
     restrictedValue: false,
   },
   {
+    id: "allowBrowserLoginSync",
+    name: "Browser login sync",
+    description:
+      "Allow users to set up one-way browser login sync. This only makes sync available: each user must choose a browser profile and sites, then explicitly enable continuing reads. OpenWork never changes the source browser.",
+    userNotice:
+      "Your organization administrator has not made browser login sync available. No browser login data is read.",
+    defaultValue: false,
+    restrictedValue: false,
+  },
+  {
     id: "allowAlphaUpdates",
     name: "Alpha updates",
     description:
@@ -568,8 +578,11 @@ export function calculateEffectiveDesktopPolicy(input: {
   defaultPolicy?: unknown;
   assignedPolicies: unknown[];
 }): Required<DesktopPolicyValue> {
+  // Before an organization writes any policy every item sits at its catalog
+  // default: allow-style items are on, opt-in items such as browser login sync
+  // stay off until an administrator makes them available.
   if (input.orgPolicyCount === 0) {
-    return allDesktopPolicies(true);
+    return { ...desktopPolicyDefaults };
   }
 
   const calculated = allDesktopPolicies(false);

@@ -8,7 +8,6 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import {
-  allDesktopPolicies,
   calculateEffectiveDesktopPolicy,
   desktopPolicyDefaults,
   normalizeDesktopPolicyDocument,
@@ -99,7 +98,7 @@ export async function calculateDesktopPolicyForOrgMember(input: {
     .orderBy(asc(DesktopPolicyTable.createdAt))
 
   if (orgPolicies.length === 0) {
-    return allDesktopPolicies(true)
+    return { ...desktopPolicyDefaults }
   }
 
   const defaultPolicy = orgPolicies.find((policy) => policy.isDefault === true && policy.isEnabled === true) ?? null
