@@ -1,16 +1,19 @@
 "use client";
 
+import { OnboardingTeamPreview } from "./onboarding-team-preview";
+
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, Check, LoaderCircle, Plus, X } from "lucide-react";
 import { z } from "zod";
 import { SetupFrame } from "../../_components/setup-frame";
 import {
+  normalizeAuthIntentParam, PENDING_AUTH_INTENT_STORAGE_KEY,
   getRequestError,
   requestJson,
   WORKSPACE_REAUTH_SECURITY_MESSAGE,
 } from "../../_lib/den-flow";
-import { getOnboardingToolsRoute, getOrgAccessFlags } from "../../_lib/den-org";
+import { getInferenceRoute, getMarketplaceOnboardingRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -24,27 +27,25 @@ type InvitationRow = {
 
 const emailSchema = z.string().email();
 const buttonClass = "inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl px-5 text-sm font-medium transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-neutral-900 focus-visible:ring-offset-4 disabled:cursor-not-allowed disabled:opacity-40";
-const description = "Invite a few teammates to share tools and get work done together. This part is optional — you can always invite people later.";
+const description = "Invite people to the tools you’ve prepared. You can do this later.";
 
 export function OnboardingTeammatesScreen() {
   const { orgId, orgSlug, orgContext, orgError } = useOrgDashboard();
   const { user } = useDenFlow();
   if (!orgId || !orgContext || orgContext.organization.id !== orgId || !user) {
-    return <SetupFrame step="people" title="Bring your people." description={description}>
+    return <SetupFrame step="people" title="Invite your team." description={description}>
       <p role={orgError ? "alert" : "status"} className="text-sm text-neutral-500">{orgError ?? "Getting your workspace ready…"}</p>
     </SetupFrame>;
   }
   return <TeammatesForm key={`${orgId}:${user.id}`} orgId={orgId} orgSlug={orgSlug}
-    organizationName={orgContext.organization.name} selfEmail={user.email} selfName={user.name}
+    selfEmail={user.email}
     canInvite={getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner).canInviteMembers} />;
 }
 
-function TeammatesForm({ orgId, orgSlug, organizationName, selfEmail, selfName, canInvite }: {
+function TeammatesForm({ orgId, orgSlug, selfEmail, canInvite }: {
   orgId: string;
   orgSlug: string | null;
-  organizationName: string;
   selfEmail: string;
-  selfName: string | null;
   canInvite: boolean;
 }) {
   const router = useRouter();
@@ -145,27 +146,16 @@ function TeammatesForm({ orgId, orgSlug, organizationName, selfEmail, selfName, 
 
   function continueSetup() {
     if (sendingRef.current) return;
-    router.push(getOnboardingToolsRoute(orgSlug));
+    const intent = normalizeAuthIntentParam(window.sessionStorage.getItem(PENDING_AUTH_INTENT_STORAGE_KEY));
+    if (intent === "models") window.sessionStorage.removeItem(PENDING_AUTH_INTENT_STORAGE_KEY);
+    router.push(intent === "models" ? getInferenceRoute(orgSlug) : getMarketplaceOnboardingRoute(orgSlug));
     // The admin layout unmounts its children during a full organization refresh.
     // Refresh only after leaving this form, so sent and failed rows survive retries.
     void refreshOrgData();
   }
 
-  const preview = <div className="rounded-[28px] border border-neutral-200 bg-white p-6 sm:p-7">
-    <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-neutral-400">Your workspace</p>
-    <h2 className="mt-2 text-xl font-semibold tracking-[-0.03em] text-neutral-950">{organizationName}</h2>
-    <div className="mt-6 flex items-center gap-3">
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-neutral-900 text-sm font-medium text-white" aria-hidden>{(selfName || selfEmail).slice(0, 1).toUpperCase()}</span>
-      <div className="min-w-0"><p className="truncate text-sm font-medium text-neutral-900">{selfName || selfEmail}</p><p className="text-xs text-neutral-500">You · Already here</p></div>
-    </div>
-    {rows.filter((row) => row.email.trim()).map((row) => <div key={row.id} className="mt-4 flex items-center gap-3">
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-neutral-200 bg-neutral-50 text-sm font-medium text-neutral-500" aria-hidden>{row.email.trim().slice(0, 1).toUpperCase()}</span>
-      <div className="min-w-0"><p className="truncate text-sm text-neutral-800">{row.email.trim()}</p><p className="text-xs text-neutral-500">{row.status === "sent" ? "Invited · Member" : "Not sent yet"}</p></div>
-    </div>)}
-    <div className="mt-7 border-t border-neutral-100 pt-5 text-sm leading-6 text-neutral-500">A shared place for tools, connections, and the way your team works.</div>
-  </div>;
 
-  return <SetupFrame step="people" title="Bring your people." description={description} aside={preview}>
+  return <SetupFrame step="people" title="Invite your team." description={description} aside={<OnboardingTeamPreview />}>
     <div data-testid="onboarding-teammates" aria-busy={sending}>
       {canInvite ? <form noValidate onSubmit={(event) => { event.preventDefault(); void sendInvitations(); }}>
         <div className="mb-5 flex items-center justify-between gap-3">

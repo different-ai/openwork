@@ -11,6 +11,6 @@ export default async function EditDesktopPolicyPage({
   const { desktopPolicyId } = await params;
   const { setup } = await searchParams;
   // Legacy setup links may resume onboarding, but navigation never applies policy.
-  if (setup === "restricted") redirect("/dashboard/onboarding/people");
+  if (setup === "restricted") redirect("/dashboard/onboarding/tools");
   return <DesktopPolicyEditorScreen desktopPolicyId={desktopPolicyId} />;
 }

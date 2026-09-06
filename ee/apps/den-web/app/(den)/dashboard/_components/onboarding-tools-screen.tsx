@@ -1,26 +1,27 @@
 "use client";
 
+import { OnboardingTeamPreview } from "./onboarding-team-preview";
+
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRight, Check, LoaderCircle } from "lucide-react";
 import { SetupFrame } from "../../_components/setup-frame";
-import { OnboardingTexture } from "../../_components/onboarding-texture";
-import { normalizeAuthIntentParam, PENDING_AUTH_INTENT_STORAGE_KEY, WORKSPACE_REAUTH_SECURITY_MESSAGE } from "../../_lib/den-flow";
-import { getInferenceRoute, getMarketplaceOnboardingRoute } from "../../_lib/den-org";
+import { WORKSPACE_REAUTH_SECURITY_MESSAGE } from "../../_lib/den-flow";
+import { getOnboardingPeopleRoute } from "../../_lib/den-org";
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { IntegrationIcon } from "./integration-icon";
 import { useCreateMcpConnection, useMcpConnectionPresets, useMcpConnections } from "./mcp-connections-data";
 
 type ToolState = { status: "adding" | "added" | "error"; error?: string };
-const description = "Start with the tools your team already uses. Choose a few now, or add them whenever you need them.";
+const description = "Make the tools your team uses available before inviting people.";
 const buttonClass = "inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl px-5 text-sm font-medium transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-neutral-900 focus-visible:ring-offset-4 disabled:cursor-not-allowed disabled:opacity-40";
 
 export function OnboardingToolsScreen() {
   const { orgId, orgContext, orgError } = useOrgDashboard();
   const { user } = useDenFlow();
   if (!orgId || !orgContext || orgContext.organization.id !== orgId || !user) {
-    return <SetupFrame step="tools" title="Give your team a head start." description={description}>
+    return <SetupFrame step="tools" title="Set up team tools." description={description}>
       <p role={orgError ? "alert" : "status"} className="text-sm text-neutral-500">{orgError ?? "Getting your workspace ready…"}</p>
     </SetupFrame>;
   }
@@ -95,20 +96,13 @@ function ToolsForm() {
 
   function continueSetup() {
     if (addingRef.current) return;
-    const intent = normalizeAuthIntentParam(window.sessionStorage.getItem(PENDING_AUTH_INTENT_STORAGE_KEY));
-    if (intent === "models") {
-      window.sessionStorage.removeItem(PENDING_AUTH_INTENT_STORAGE_KEY);
-      router.push(getInferenceRoute(orgSlug));
-      return;
-    }
-    router.push(getMarketplaceOnboardingRoute(orgSlug));
+    router.push(getOnboardingPeopleRoute(orgSlug));
   }
 
-  return <SetupFrame step="tools" title="Give your team a head start." description={description} panelVisual={<OnboardingTexture />}>
+  return <SetupFrame step="tools" title="Set up team tools." description={description} aside={<OnboardingTeamPreview />}>
     <div className="mb-5">
-      <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-neutral-400">Optional · Team tools</p>
-      <h2 className="mt-2 text-xl font-semibold tracking-[-0.03em] text-neutral-950">What do you work with?</h2>
-      <p className="mt-2 text-sm leading-6 text-neutral-500">Adding a tool makes it available to your team. Each teammate connects their own account before accessing private information.</p>
+      <h2 className="mt-2 text-xl font-semibold tracking-[-0.03em] text-neutral-950">Choose tools</h2>
+      <p className="mt-2 text-sm leading-6 text-neutral-500">Optional. Add more or change access later.</p>
     </div>
     {loading && !loadError ? <p role="status" className="py-6 text-sm text-neutral-500">Finding your team’s tools…</p> : null}
     {loadError ? <div role="alert" className="rounded-2xl bg-neutral-100 p-4 text-sm text-neutral-700">
@@ -140,6 +134,5 @@ function ToolsForm() {
       {(!hasAdded || pending.length > 0) ? <button type="button" className={`${buttonClass} bg-neutral-950 text-white hover:bg-neutral-800`} disabled={adding || loading || Boolean(loadError) || pending.length === 0} onClick={() => void addTools()}>{adding ? <><LoaderCircle size={15} className="animate-spin motion-reduce:animate-none" /> Adding tools…</> : "Add to team"}</button> : null}
       <button type="button" className={`${buttonClass} ${hasAdded && pending.length === 0 ? "bg-neutral-950 text-white hover:bg-neutral-800" : "text-neutral-600 hover:bg-neutral-100"}`} disabled={adding} onClick={continueSetup}>{hasAdded ? <>Continue <ArrowRight size={15} /></> : "Do this later"}</button>
     </div>
-    <p className="mt-3 text-xs leading-5 text-neutral-400">You can change team access and add more tools later.</p>
   </SetupFrame>;
 }
