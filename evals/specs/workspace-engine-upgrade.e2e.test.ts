@@ -65,9 +65,10 @@ test("existing workspaces create usable sessions after changing chat engines", a
   await user.see("composer", { timeoutMs: 60_000 });
 
   await step("a new chat in the selected existing workspace keeps the first message visible", async () => {
+    const previousRoute = await probe.hash();
     await user.click({ role: "button", label: "New session" });
     await probe.eventually(() => probe.hash(), { within: 30_000,
-      label: "new session route", until: (hash) => hash.includes("/session/ses_") });
+      label: "new session route", until: (hash) => hash !== previousRoute && hash.includes("/session/ses_") });
     await user.see("composer", { timeoutMs: 30_000 });
     await greet(user, probe);
   });
