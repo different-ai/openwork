@@ -128,7 +128,9 @@ test("workflow activity shows linked version diagrams and keeps one-off and inac
     const visible = await readRuns(colleague);
     expect(visible).toHaveLength(1);
     expect(visible[0]).toMatchObject({ id: memberRun.receiptId, workflow: { configObjectId: world.configObjectId } });
-    expect(JSON.stringify(visible[0].workflow)).not.toContain("workers.workers.length");
+    const memberNodes = record(record(visible[0].workflow).graph).nodes;
+    if (!Array.isArray(memberNodes)) throw new Error("Expected the shared workflow graph");
+    expect(memberNodes.map(record).find((node) => node.kind === "return")?.label).toBe("Result");
     const removed = await seed.api(world.den.admin, `/v1/config-objects/${world.configObjectId}/access/${field(record(grant.body).item, "id")}`, { method: "DELETE" });
     expect(removed.response.ok, removed.text).toBe(true);
     const revoked = await readRuns(colleague);
