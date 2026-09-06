@@ -30,8 +30,15 @@ export async function titleRecovery(seed: Seed) {
       requests.push({ provider, url: `http://${request.headers.host}${request.url}`, model: body.model, title, effort, temperature: body.temperature, topP: body.top_p,
         marker: Boolean(request.headers["x-openwork-title-attempt"]), auth: String(request.headers.authorization), body: raw });
       // Each provider accepts only its own model, protocol endpoint, and credential.
-      if (responses !== (body.model === "gpt-6-astra") || request.url !== (responses ? "/v1/responses" : "/v1/chat/completions")) return sendJson(response, 404, {});
+      if (responses !== ["gpt-6-astra", "gpt-6-default-effort"].includes(body.model) || request.url !== (responses ? "/v1/responses" : "/v1/chat/completions")) return sendJson(response, 404, {});
       if (request.headers.authorization !== `Bearer title-witness-${provider}`) return sendJson(response, 401, {});
+      // No recognized effort list: only omission of the rejected field succeeds.
+      // Include the provider URL to make diagnostic redaction observable too.
+      if (effort !== undefined && ((title && ["default-effort", "gpt-6-default-effort"].includes(body.model))
+        || (!title && body.model === "main-rejected"))) return sendJson(response, 400, { error: {
+        code: "unsupported_value", param: responses ? "reasoning.effort" : "reasoning_effort",
+        message: `Unsupported reasoning effort. ${PRIVATE_ERROR_MARKER} http://${request.headers.host}${request.url}`,
+      } });
       if (title) {
         if (body.model === "denied") return sendJson(response, 403, { error: { message: PRIVATE_ERROR_MARKER } });
         if (body.model === "limited") return sendJson(response, 429, { error: { message: PRIVATE_ERROR_MARKER } });
@@ -76,9 +83,9 @@ export async function titleRecovery(seed: Seed) {
   await writeFile(join(workspace, "opencode.json"), JSON.stringify({
     agent: { title: { top_p: 0.8 } },
     provider: {
-      responses: { npm: "@ai-sdk/openai", options: { baseURL: responsesURL + "/v1", apiKey: "title-witness-responses" }, models: { "gpt-6-astra": model } },
+      responses: { npm: "@ai-sdk/openai", options: { baseURL: responsesURL + "/v1", apiKey: "title-witness-responses" }, models: { "gpt-6-astra": model, "gpt-6-default-effort": model } },
       compatible: { npm: "@ai-sdk/openai-compatible", options: { baseURL: compatibleURL + "/v1", apiKey: "title-witness-compatible" },
-        models: Object.fromEntries(["other-reasoner", "sampling", "nucleus-sampling", "denied", "limited", "malformed", "twice", "empty"].map((id) => [id,
+        models: Object.fromEntries(["other-reasoner", "default-effort", "main-rejected", "sampling", "nucleus-sampling", "denied", "limited", "malformed", "twice", "empty"].map((id) => [id,
           ["sampling", "nucleus-sampling", "empty"].includes(id) ? { ...model, reasoning: false, variants: {} } : model])) },
     },
   }));
