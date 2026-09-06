@@ -158,8 +158,8 @@ function parsePageProbe(value: unknown): PageProbe {
  * A desktop with one session open, so the built-in browser side panel has a
  * home, plus helpers that play an automation client against its tabs.
  */
-export async function builtinBrowserWorld(seed: Seed) {
-  const app = await seed.desktop({ name: "builtin-browser" });
+async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string>) {
+  const app = await seed.desktop({ name: "builtin-browser", env });
   const workspace = await seed.workspace(app, seed.tmpPath("builtin-browser"));
   const session = await seed.session(app);
   const origin = await embeddedServerUrl(seed, app);
@@ -474,4 +474,12 @@ export async function builtinBrowserWorld(seed: Seed) {
       ));
     },
   }, { [Symbol.asyncDispose]: () => closeServer(loginWitness) });
+}
+
+export function builtinBrowserWorld(seed: Seed) {
+  return createBuiltinBrowserWorld(seed);
+}
+
+export function browserLoginSyncWorld(seed: Seed) {
+  return createBuiltinBrowserWorld(seed, { OPENWORK_EVAL_BROWSER_LOGIN_SYNC: "1" });
 }

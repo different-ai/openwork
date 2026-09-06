@@ -430,6 +430,7 @@ export class SeedChannel implements Seed {
             place: this.#runtime.place,
             signIn: false,
             model: options.model,
+            env: options.env,
             workspacePath: options.workspacePath,
             profileDir: options.profileDir,
             enterpriseActivated: options.enterpriseActivated,
@@ -440,6 +441,7 @@ export class SeedChannel implements Seed {
           place: this.#runtime.place,
           as: options.as ?? "admin",
           model: options.model,
+          env: options.env,
           workspacePath: options.workspacePath,
           profileDir: options.profileDir,
           enterpriseActivated: options.enterpriseActivated,
@@ -450,7 +452,9 @@ export class SeedChannel implements Seed {
         name: options.name,
         host: this.#runtime.place.host(),
         profileDir: options.profileDir,
-        env: options.model ? { OPENWORK_EVAL_MODEL: options.model } : undefined,
+        env: options.model
+          ? { ...options.env, OPENWORK_EVAL_MODEL: options.model }
+          : options.env,
       }));
       if (options.workspacePath) await this.workspace(app, options.workspacePath);
       return app;

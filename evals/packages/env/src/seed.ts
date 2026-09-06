@@ -17,6 +17,8 @@ export interface SeedDesktopOptions {
   enterpriseActivated?: boolean;
   profileDir?: string;
   name?: string;
+  /** Extra environment for this isolated Electron process. */
+  env?: Record<string, string>;
 }
 
 export interface SeedWebOptions {

@@ -2697,7 +2697,7 @@ ipcMain.handle("openwork:terminal:kill", (event, terminalId) => {
 });
 
 browserPanel.registerIpc(ipcMain);
-const browserLoginEvalSeam = !app.isPackaged && process.env.OPENWORK_EVAL_E2E_TESTS === "1";
+const browserLoginEvalSeam = !app.isPackaged && process.env.OPENWORK_EVAL_BROWSER_LOGIN_SYNC === "1";
 const browserLoginSync = createBrowserLoginSync({
   statePath: path.join(app.getPath("userData"), "browser-login-sync.json"),
   confirmUserAction: browserLoginEvalSeam
