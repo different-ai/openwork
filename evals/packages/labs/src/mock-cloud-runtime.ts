@@ -23,6 +23,7 @@ function json(response: ServerResponse, status: number, value: unknown) {
 type Session = { id: string; sandboxId: string; title: string; prompts: string[] };
 type Sandbox = {
   id: string; name: string; workerId: string; snapshot: string;
+  labels: Record<string, unknown>; bootstrapWorkerIds: string[];
   state: "started" | "stopped" | "destroyed";
   volumes: Array<{ volumeId: string; mountPath: string; subpath: string }>;
   purpose: string; endpoint: number; restored: boolean; sessions: Session[];
@@ -50,7 +51,7 @@ export async function startCloudRuntimeWitness() {
   function sandboxDto(sandbox: Sandbox) {
     return {
       id: sandbox.id, name: sandbox.name, state: sandbox.state, target: "test",
-      toolboxProxyUrl: `${url}/toolbox`, labels: {},
+      toolboxProxyUrl: `${url}/toolbox`, labels: sandbox.labels,
     };
   }
 
@@ -81,6 +82,7 @@ export async function startCloudRuntimeWitness() {
       const sandbox: Sandbox = {
         id: `sandbox_${sandboxes.length + 1}`, name: String(input.name),
         workerId: typeof env.DEN_WORKER_ID === "string" ? env.DEN_WORKER_ID : "",
+        labels: record(input.labels), bootstrapWorkerIds: [],
         snapshot: String(input.snapshot), purpose: String(env.DEN_RUNTIME_PROVIDER),
         state: "started", endpoint: 0, restored: false, sessions: [],
         volumes: (Array.isArray(input.volumes) ? input.volumes : []).map((value) => {
@@ -132,6 +134,9 @@ export async function startCloudRuntimeWitness() {
         if (input.runAsync === true && command.includes("openwork-server")) {
           operation = "bootstrap";
           exitCode = null;
+          const workerId = command.match(/DEN_WORKER_ID=[^a-z0-9]*([a-z0-9_]+)/)?.[1];
+          if (!workerId) throw new Error("Bootstrap worker identity missing");
+          sandbox.bootstrapWorkerIds.push(workerId);
           const checkpoint = checkpoints.get(checkpointKey(sandbox));
           if (sandbox.sessions.length === 0 && checkpoint && !failedRestores.delete(sandbox.workerId)) {
             sandbox.sessions = checkpoint.map((session) => ({ ...session, sandboxId: sandbox.id, prompts: [...session.prompts] }));

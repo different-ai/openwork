@@ -183,7 +183,6 @@ function cloudNotFound() {
 }
 
 const logger = appLogger.child({ component: "cloud_routes" })
-const cloudWorkerNameMaxLength = 255
 const gatewayKeyHeader = "X-OpenWork-Gateway-Key"
 const ensureCloudWorkerInFlight = new Map<string, Promise<CloudWorker>>()
 
@@ -220,38 +219,6 @@ function changedRows(result: unknown): number | null {
 function hasChangedRows(result: unknown) {
   const rows = changedRows(result)
   return rows !== null && rows > 0
-}
-
-function truncateForWorkerName(value: string) {
-  return Array.from(value).slice(0, cloudWorkerNameMaxLength).join("").trim()
-}
-
-function emailLocalPart(email: string | null | undefined) {
-  const trimmed = email?.trim() ?? ""
-  if (!trimmed) {
-    return null
-  }
-
-  return trimmed.split("@")[0]?.trim() || trimmed
-}
-
-function displayNameForCloudWorker(payload: NonNullable<OrgRouteVariables["organizationContext"]>, user: CloudRouteUser) {
-  const member = payload.members.find((entry) => entry.userId === payload.currentMember.userId) ?? null
-  const memberName = member?.user.name.trim()
-  if (memberName) {
-    return memberName
-  }
-
-  const userName = user.name?.trim()
-  if (userName) {
-    return userName
-  }
-
-  return emailLocalPart(member?.user.email) ?? emailLocalPart(user.email) ?? "member"
-}
-
-function cloudWorkerName(payload: NonNullable<OrgRouteVariables["organizationContext"]>, user: CloudRouteUser) {
-  return truncateForWorkerName(`${CLOUD_INSTANCE_NAME} — ${displayNameForCloudWorker(payload, user)}`)
 }
 
 function ensureKey(orgId: OrgId, userId: UserId) {
@@ -566,7 +533,7 @@ async function resolveCloudInstanceForMember(input: {
   const worker = await input.ensureWorker({
     orgId: input.payload.organization.id,
     createdByUserId: input.user.id,
-    name: cloudWorkerName(input.payload, input.user),
+    name: CLOUD_INSTANCE_NAME,
     continueProvisioning: input.continueProvisioning,
     store: input.store,
   })
@@ -657,7 +624,7 @@ async function resolveCloudInstanceForGateway(input: {
     loadWorker: async () => input.ensureWorker({
       orgId: input.payload.organization.id,
       createdByUserId: input.user.id,
-      name: cloudWorkerName(input.payload, input.user),
+      name: CLOUD_INSTANCE_NAME,
       continueProvisioning: input.continueProvisioning,
       store: input.store,
     }),

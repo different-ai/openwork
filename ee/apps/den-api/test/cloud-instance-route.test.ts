@@ -1186,6 +1186,7 @@ describe("Cloud instance per-user workers", () => {
         orgMode: "multi_org",
         provisionerMode: "daytona",
         daytonaApiKey: "daytona-test-key",
+        gatewayKey: "gateway-secret",
         cloudWorkerStore: store.store,
         getSandboxRecord: async () => null,
         continueProvisioning: async () => {
@@ -1195,11 +1196,14 @@ describe("Cloud instance per-user workers", () => {
       return app
     }
 
-    const userOneApp = appForUser(userOne, "ada@example.com")
-    const userTwoApp = appForUser(userTwo, "grace@example.com")
+    const userOneApp = appForUser(userOne, "owner@example.com")
+    const userTwoApp = appForUser(userTwo, "colleague@example.com")
 
-    await expect(userOneApp.request("http://den.local/v1/cloud/instance").then((response) => response.json()))
-      .resolves.toEqual(expectedCloudInstance({ status: "provisioning", url: null }))
+    await expect(userOneApp.request("http://den.local/v1/cloud/gateway/resolve", {
+      headers: { "X-OpenWork-Gateway-Key": "gateway-secret" },
+    }).then((response) => response.json()))
+      .resolves.toMatchObject({ status: "provisioning", url: null })
+    const originalWorker = structuredClone(store.workers[0])
     await expect(userOneApp.request("http://den.local/v1/cloud/instance").then((response) => response.json()))
       .resolves.toEqual(expectedCloudInstance({ status: "provisioning", url: null }))
     await expect(userTwoApp.request("http://den.local/v1/cloud/instance").then((response) => response.json()))
@@ -1207,6 +1211,8 @@ describe("Cloud instance per-user workers", () => {
 
     expect(store.workers.filter((worker) => !store.deletedWorkerIds.includes(worker.id))).toHaveLength(2)
     expect(new Set(store.workers.map((worker) => worker.userId)).size).toBe(2)
+    expect(store.workers.map((worker) => worker.name)).toEqual(["Cloud", "Cloud"])
+    expect(store.workers[0]).toEqual(originalWorker)
     expect(provisionCalls).toBe(2)
   })
 
@@ -1228,6 +1234,7 @@ describe("Cloud instance per-user workers", () => {
       orgMode: "multi_org",
       provisionerMode: "daytona",
       daytonaApiKey: "daytona-test-key",
+      gatewayKey: "gateway-secret",
       cloudWorkerStore: store.store,
       getSandboxRecord: async () => null,
       continueProvisioning: async () => {
@@ -1245,6 +1252,14 @@ describe("Cloud instance per-user workers", () => {
     expect(store.deletedWorkerIds).toHaveLength(1)
     expect(store.deletedTokenWorkerIds).toEqual(store.deletedWorkerIds)
     expect(store.tokens.filter((token) => token.workerId === store.deletedWorkerIds[0])).toHaveLength(3)
+    expect(provisionCalls).toBe(0)
+
+    const canonical = structuredClone(activeWorkers[0])
+    const reused = await app.request("http://den.local/v1/cloud/gateway/resolve", {
+      headers: { "X-OpenWork-Gateway-Key": "gateway-secret" },
+    })
+    expect(reused.status).toBe(200)
+    expect(store.workers.filter((worker) => !store.deletedWorkerIds.includes(worker.id))).toEqual([canonical])
     expect(provisionCalls).toBe(0)
   })
 
@@ -1273,32 +1288,41 @@ describe("Cloud instance per-user workers", () => {
     expect(provisionCalls).toBe(0)
   })
 
-  test("uses the org member display name for the human-readable worker name", async () => {
-    const orgId = createDenTypeId("organization")
-    const userId = createDenTypeId("user")
-    const store = makeCloudWorkerStore()
-    const app = new Hono<{ Variables: OrgRouteVariables }>()
+  for (const path of ["/v1/cloud/instance", "/v1/cloud/gateway/resolve"]) {
+    test.each([
+      { source: "member display name", memberName: "Workspace Owner", userName: "Account Owner", includeMemberUser: true },
+      { source: "user display name", memberName: "", userName: "Account Owner", includeMemberUser: false },
+      { source: "member email fallback", memberName: " ", userName: " ", includeMemberUser: true },
+      { source: "user email fallback", memberName: "", userName: "", includeMemberUser: false },
+    ])(`${path} persists only Cloud with $source available`, async (input) => {
+      const store = makeCloudWorkerStore()
+      const app = new Hono<{ Variables: OrgRouteVariables }>()
+      const provisionedNames: string[] = []
+      routes.registerCloudRoutes(app, {
+        memberRoute: contextMiddleware(organizationContext(null, {
+          userName: input.memberName,
+          userEmail: "member-owner@example.com",
+          includeMemberUser: input.includeMemberUser,
+        }), { userName: input.userName, userEmail: "account-owner@example.com" }),
+        orgMode: "multi_org",
+        provisionerMode: "daytona",
+        daytonaApiKey: "daytona-test-key",
+        gatewayKey: "gateway-secret",
+        cloudWorkerStore: store.store,
+        getSandboxRecord: async () => null,
+        continueProvisioning: async (worker) => { provisionedNames.push(worker.name) },
+      })
 
-    routes.registerCloudRoutes(app, {
-      memberRoute: contextMiddleware(organizationContext(JSON.stringify({ capabilities: { cloud: true } }), {
-        orgId,
-        userId,
-        userName: "Ada Lovelace",
-        userEmail: "ada@example.com",
-        includeMemberUser: true,
-      })),
-      orgMode: "multi_org",
-      provisionerMode: "daytona",
-      daytonaApiKey: "daytona-test-key",
-      cloudWorkerStore: store.store,
-      getSandboxRecord: async () => null,
-      continueProvisioning: async () => undefined,
+      const response = await app.request(`http://den.local${path}`, {
+        headers: { "X-OpenWork-Gateway-Key": "gateway-secret" },
+      })
+
+      expect(response.status).toBe(200)
+      expect(store.workers).toHaveLength(1)
+      expect(store.workers[0]?.name).toBe("Cloud")
+      expect(provisionedNames).toEqual(["Cloud"])
     })
-
-    await app.request("http://den.local/v1/cloud/instance")
-
-    expect(store.workers[0]?.name).toBe("Cloud — Ada Lovelace")
-  })
+  }
 })
 
 describe("Cloud instance failed self-heal", () => {
