@@ -4,7 +4,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { app, BrowserWindow, WebContentsView, clipboard, session, shell } from "electron";
+import { app, BrowserWindow, WebContentsView, clipboard, dialog, session, shell } from "electron";
 import {
   BACKGROUND_TAB_VIEWPORT,
   backgroundTabEmulationCommands,
@@ -12,6 +12,7 @@ import {
   foregroundTabEmulationCommands,
 } from "@openwork/browser-tabs";
 import { runDetachedTask } from "./process-resilience.mjs";
+import { listInstalledBrowsers } from "./installed-browsers.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BROWSER_SESSION_PARTITION = "persist:openwork-browser";
@@ -311,13 +312,15 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     return { x: Math.round(x), y: Math.round(y) };
   }
 
-  function menuOverlayBounds(point) {
+  function menuOverlayBounds(point, size = { width: MENU_OVERLAY_WIDTH, height: MENU_OVERLAY_HEIGHT }) {
     const [contentWidth, contentHeight] = window()?.getContentSize?.() ?? [MENU_OVERLAY_WIDTH, MENU_OVERLAY_HEIGHT];
+    const width = Math.min(size.width, contentWidth);
+    const height = Math.min(size.height, contentHeight);
     return {
-      x: Math.min(Math.max(point.x, 0), Math.max(contentWidth - MENU_OVERLAY_WIDTH - 4, 0)),
-      y: Math.min(Math.max(point.y, 0), Math.max(contentHeight - MENU_OVERLAY_HEIGHT - 4, 0)),
-      width: MENU_OVERLAY_WIDTH,
-      height: MENU_OVERLAY_HEIGHT,
+      x: Math.min(Math.max(point.x, 0), Math.max(contentWidth - width - 4, 0)),
+      y: Math.min(Math.max(point.y, 0), Math.max(contentHeight - height - 4, 0)),
+      width,
+      height,
     };
   }
 
@@ -383,6 +386,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     menuOverlayShowSerial += 1;
     menuOverlayRequest = null;
     if (!view || !mainWindow) return;
+    const restoreFocus = !view.webContents.isDestroyed() && view.webContents.isFocused?.();
     view.setVisible?.(false);
     try {
       if (mainWindow.contentView.children.includes(view)) {
@@ -391,6 +395,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     } catch {
       // already removed
     }
+    if (restoreFocus && !mainWindow.webContents.isDestroyed()) mainWindow.webContents.focus();
   }
 
   function bringMenuOverlayToTop(view) {
@@ -427,9 +432,40 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     const tab = getBrowserTab(String(tabId ?? ""));
     if (!window() || !tab || tab.view.webContents.isDestroyed()) return;
 
-    const showSerial = menuOverlayShowSerial + 1;
-    menuOverlayShowSerial = showSerial;
     const request = tabMenuRequest(tab, point ? scaleRendererPoint(point) : point);
+    await showMenuOverlay(request, ++menuOverlayShowSerial);
+  }
+
+  async function showLinkContextMenu({ url, point, sessionId }) {
+    if (typeof url !== "string" || !isHttpUrl(url) || url.length > 32_768) return;
+    const parsed = new URL(url);
+    if (parsed.username || parsed.password || /[\u0000-\u001f\u007f]/.test(url)) return;
+    if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
+    // Capture ownership before discovery; a later focus change must not retarget
+    // the link. Dismissals invalidate pending discovery through the serial.
+    const ownerSessionId = normalizeSessionId(sessionId) ?? registry.visibleSessionId();
+    hideMenuOverlay();
+    const showSerial = ++menuOverlayShowSerial;
+    const browsers = await listInstalledBrowsers();
+    if (showSerial !== menuOverlayShowSerial) return;
+    const items = [
+      { id: "open-builtin", label: "Open in OpenWork" },
+      { id: "open-external", label: "Open in Default Browser" },
+      ...browsers.map(({ id, name }) => ({ id: `browser:${id}`, label: `Open in ${name}` })),
+      { id: "copy-url", label: "Copy Link Address", separatorBefore: true },
+    ];
+    await showMenuOverlay({
+      id: `link-menu:${showSerial}`,
+      source: "link",
+      url,
+      ownerSessionId,
+      browsers,
+      items,
+      bounds: menuOverlayBounds(scaleRendererPoint(point), { width: 264, height: items.length * 36 + 28 }),
+    }, showSerial);
+  }
+
+  async function showMenuOverlay(request, showSerial) {
     const view = await ensureMenuOverlayView();
     if (showSerial !== menuOverlayShowSerial || menuOverlayView !== view) return;
     menuOverlayRequest = request;
@@ -452,8 +488,35 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
   function handleMenuOverlayChoice(payload) {
     if (!payload || payload.requestId !== menuOverlayRequest?.id) return;
     const request = menuOverlayRequest;
+    if (!request.items.some((item) => item.id === payload.itemId && !item.disabled)) return;
     const tab = getBrowserTab(request.tabId);
     hideMenuOverlay();
+
+    if (request.source === "link" && payload.itemId !== "copy-url") {
+      runDetachedTask("open link", async () => {
+        try {
+          const external = payload.itemId !== "open-builtin";
+          await checkPolicy?.({ url: request.url, external });
+          if (!external) {
+            createBrowserTab(request.url, { ownerSessionId: request.ownerSessionId, initializeBlank: false });
+          } else if (payload.itemId === "open-external") {
+            await shell.openExternal(request.url);
+          } else {
+            const browser = request.browsers.find(({ id }) => `browser:${id}` === payload.itemId);
+            await browser.open(request.url);
+          }
+        } catch {
+          const mainWindow = window();
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            await dialog.showMessageBox(mainWindow, {
+              type: "error", message: "Could not open this link",
+              detail: "Your browser may be unavailable, or your organization may restrict this destination. You can copy the link address instead.",
+            });
+          }
+        }
+      });
+      return;
+    }
 
     switch (payload.itemId) {
       case "copy-url":
@@ -1003,6 +1066,12 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     ipcMain.handle("openwork:browser:setProxy", (_event, proxy) => setBrowserProxy(proxy));
     ipcMain.handle("openwork:browser:getProxy", () => browserProxyState());
     ipcMain.handle("openwork:browser:tabContextMenu", (_event, tabId, point) => showBrowserTabContextMenu(tabId, point));
+    ipcMain.on("openwork:browser:linkContextMenu", (event, payload) => {
+      const mainContents = window()?.webContents;
+      if (event.sender !== mainContents || event.senderFrame !== mainContents?.mainFrame) return;
+      if (!payload || typeof payload !== "object") return;
+      runDetachedTask("show link context menu", () => showLinkContextMenu(payload));
+    });
     ipcMain.handle("openwork:browser:destroy", () => destroyBrowserView());
     ipcMain.on("openwork:menu-overlay:ready", (event) => {
       if (event.sender !== menuOverlayView?.webContents) return;

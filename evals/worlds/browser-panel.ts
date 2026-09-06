@@ -1,6 +1,6 @@
 import { control } from "@openwork/behaviors";
 import { captureScreenshot, connect, debuggerUrlFor, evaluate, listTargets, navigate } from "@openwork/cdp";
-import type { CdpClient, Surface } from "@openwork/cdp";
+import type { AttachedSurface, CdpClient, Surface } from "@openwork/cdp";
 import type { Seed } from "@openwork/env";
 
 export interface BuiltinBrowserTab {
@@ -23,6 +23,7 @@ export interface PageProbe extends Viewport {
 export interface BrowserTabState {
   id: string;
   label: string;
+  url: string;
   ownerSessionId: string | null;
 }
 
@@ -83,6 +84,7 @@ function parseBrowserState(value: unknown): BrowserState {
       return {
         id: stringField(tab.id),
         label: stringField(tab.label),
+        url: stringField(tab.url),
         ownerSessionId: typeof tab.ownerSessionId === "string" ? tab.ownerSessionId : null,
       };
     }),
@@ -442,4 +444,90 @@ export function builtinBrowserWorld(seed: Seed) {
 
 export function browserLoginSyncWorld(seed: Seed) {
   return createBuiltinBrowserWorld(seed, { OPENWORK_EVAL_BROWSER_LOGIN_SYNC: "1" });
+}
+
+/** Persist a real user message with a link; no model turn or injected DOM. */
+export async function transcriptLinkWorld(seed: Seed) {
+  const world = await builtinBrowserWorld(seed);
+  const { app, workspace } = world;
+  const reading = { ...world.session, title: "Reading a shared link" };
+  await world.renameSession(reading.sessionId, reading.title);
+  const neighbor = await world.openSession("Unrelated browser research");
+  const neighborTab = await world.openTabAs("link-neighbor", neighbor.sessionId);
+  const origin = await embeddedServerUrl(seed, app);
+  const linkUrl = `${origin}/?link-context=alpha%20beta&encoded=%2Fkeep%3Fyes%3D1#thread-link`;
+  const note = "Keep this note in its own conversation.";
+  await seed.evalIn(app, `async (workspaceId, sessionId, note, url) => {
+    const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+    const response = await fetch(info.baseUrl.replace(/\\/+$/, "")
+      + "/workspace/" + encodeURIComponent(workspaceId)
+      + "/opencode/session/" + encodeURIComponent(sessionId) + "/message", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + info.ownerToken, "Content-Type": "application/json" },
+      body: JSON.stringify({ noReply: true, parts: [
+        { type: "text", text: note },
+        { type: "text", text: "Reference: " + url },
+      ] }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) throw new Error("Transcript message seed failed: " + response.status);
+    return true;
+  }`, { args: [workspace.workspaceId, reading.sessionId, note, linkUrl], awaitPromise: true, timeoutMs: 35_000 });
+  await world.showSession(reading.sessionId);
+
+  return {
+    ...world,
+    reading,
+    neighbor,
+    neighborTab,
+    linkUrl,
+    note,
+
+    async readLink() {
+      return evaluate(app.client, `(() => {
+        const link = [...document.querySelectorAll('[data-message-role="user"] a[href]')]
+          .find(node => node.getAttribute("href") === ${JSON.stringify(linkUrl)});
+        return link ? { href: link.href, sessionId: link.closest("[data-session-surface-id]")?.dataset.sessionSurfaceId } : null;
+      })()`);
+    },
+
+    async readMainUrl() {
+      return evaluate(app.client, "location.href");
+    },
+
+    async readClipboard() {
+      return evaluate(app.client, "navigator.clipboard.readText()", { awaitPromise: true });
+    },
+
+    /** Exclude the menu document, but include popups and all built-in pages. */
+    async pageTargets() {
+      return (await listTargets(app.handle.cdpUrl))
+        .filter(target => target.type === "page" && !/\/overlay\.html(?:[?#]|$)/.test(target.url))
+        .map(({ id, url }) => ({ id, url }))
+        .sort((a, b) => a.id.localeCompare(b.id));
+    },
+
+    /** Attach to the real WebContentsView, never invoke its choice/close bridge. */
+    async menuOverlay(): Promise<AttachedSurface | null> {
+      const target = (await listTargets(app.handle.cdpUrl))
+        .find(target => target.type === "page" && /\/overlay\.html(?:[?#]|$)/.test(target.url));
+      if (!target) return null;
+      const client = await connect(debuggerUrlFor(app.handle.cdpUrl, target));
+      return {
+        handle: { ...app.handle, name: "link-context-menu" },
+        client,
+        async stop() { client.close(); },
+        async [Symbol.asyncDispose]() { client.close(); },
+      };
+    },
+
+    async menuFocused(surface: Surface) {
+      // Native hiding retains the DOM; backgroundThrottling also affects visibilityState.
+      return await evaluate(surface.client, "document.hasFocus()") === true;
+    },
+
+    async closePopup(targetId: string) {
+      await app.client.send("Target.closeTarget", { targetId });
+    },
+  };
 }

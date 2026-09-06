@@ -17,7 +17,7 @@ type ContextMenuItem = {
 
 type ContextMenuRequest = {
   id: string;
-  source: "tab" | "page" | "sidebar";
+  source: "tab" | "page" | "sidebar" | "link";
   items: ContextMenuItem[];
 };
 
@@ -46,7 +46,7 @@ function ContextMenuSurface({
   onClose: () => void;
 }) {
   React.useEffect(() => {
-    // document.querySelector<HTMLButtonElement>(MENU_ITEM_SELECTOR)?.focus();
+    document.querySelector<HTMLButtonElement>(MENU_ITEM_SELECTOR)?.focus();
   }, [request.id]);
 
   return (
@@ -70,7 +70,7 @@ function ContextMenuSurface({
       <ContextMenuContent
         role="menu"
         aria-label={`${request.source} context menu`}
-        className="w-full"
+        className="w-full max-h-full"
       >
         {request.items.map((item) => {
           return (
