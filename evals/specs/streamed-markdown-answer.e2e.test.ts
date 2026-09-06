@@ -2,7 +2,7 @@ import { expect } from "vitest";
 import { eventually, observeTranscript, spec } from "@openwork/testkit";
 import { streamedMarkdown, streamedMarkdownMarker, streamedMarkdownReasoning } from "../worlds/chat.ts";
 
-const test = spec.world(streamedMarkdown, { timeout: 300_000 });
+const test = spec.world(streamedMarkdown, { timeout: 420_000 });
 const prompt = `Write the streamed markdown answer. ${streamedMarkdownMarker}`;
 
 const headingText = "Streamed answer heading";

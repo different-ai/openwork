@@ -600,7 +600,8 @@ export async function streamedMarkdown(seed: Seed) {
       promptMarker: streamedMarkdownMarker,
       finalReply: streamedMarkdownAnswer,
       finalReasoning: streamedMarkdownReasoning,
-      finalReplyChunkSize: 8,
+      // Leave enough streaming time for the remote UI checks and mid-turn reload.
+      finalReplyChunkSize: 2,
       finalReplyDelayMs: 1500,
       steps: [],
     }],
