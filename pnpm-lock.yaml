@@ -924,6 +924,9 @@ importers:
       '@openwork-ee/den-db':
         specifier: workspace:*
         version: link:../../packages/den-db
+      '@openwork-ee/telemetry':
+        specifier: workspace:*
+        version: link:../../packages/telemetry
       '@openwork-ee/utils':
         specifier: workspace:*
         version: link:../../packages/utils

@@ -28,6 +28,7 @@ COPY packages/install-config/package.json /app/packages/install-config/package.j
 COPY packages/workbook/package.json /app/packages/workbook/package.json
 COPY packages/browser-tabs/package.json /app/packages/browser-tabs/package.json
 COPY ee/packages/utils/package.json /app/ee/packages/utils/package.json
+COPY ee/packages/telemetry-contracts/package.json /app/ee/packages/telemetry-contracts/package.json
 COPY ee/apps/den-gateway/package.json /app/ee/apps/den-gateway/package.json
 COPY apps/app/package.json /app/apps/app/package.json
 
@@ -39,6 +40,7 @@ COPY packages/install-config /app/packages/install-config
 COPY packages/workbook /app/packages/workbook
 COPY packages/browser-tabs /app/packages/browser-tabs
 COPY ee/packages/utils /app/ee/packages/utils
+COPY ee/packages/telemetry-contracts /app/ee/packages/telemetry-contracts
 COPY ee/apps/den-gateway /app/ee/apps/den-gateway
 COPY apps/app /app/apps/app
 

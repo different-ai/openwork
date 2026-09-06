@@ -1081,7 +1081,7 @@ export type CreateInstallLinkResponse = {
 
 export type CapabilityDisabledError = {
   error: "capability_disabled";
-  capability: "installLinks" | "mcpConnections";
+  capability: "installLinks" | "mcpConnections" | "modelsAnalytics";
 };
 
 export type CreateInstallLinkRequest = {
@@ -10414,6 +10414,261 @@ export type PatchV1InferenceResponses = {
 };
 
 export type PatchV1InferenceResponse = PatchV1InferenceResponses[keyof PatchV1InferenceResponses];
+
+export type GetV1InferenceAnalyticsSettingsData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/inference/analytics/settings";
+};
+
+export type GetV1InferenceAnalyticsSettingsResponses = {
+  /**
+   * Task analytics settings
+   */
+  200: {
+    available: boolean;
+    subscribed: boolean;
+    modelsEnabled: boolean;
+    enabled: boolean;
+    consentedAt: string | null;
+    consentVersion: number | null;
+    exportEnabled: boolean;
+    langfuseHost: string | null;
+    langfuseConfigured: boolean;
+  };
+};
+
+export type GetV1InferenceAnalyticsSettingsResponse =
+  GetV1InferenceAnalyticsSettingsResponses[keyof GetV1InferenceAnalyticsSettingsResponses];
+
+export type PatchV1InferenceAnalyticsSettingsData = {
+  body: {
+    enabled: boolean;
+    consentVersion?: 1;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/inference/analytics/settings";
+};
+
+export type PatchV1InferenceAnalyticsSettingsResponses = {
+  /**
+   * Updated task analytics choice
+   */
+  200: {
+    available: boolean;
+    subscribed: boolean;
+    modelsEnabled: boolean;
+    enabled: boolean;
+    consentedAt: string | null;
+    consentVersion: number | null;
+    exportEnabled: boolean;
+    langfuseHost: string | null;
+    langfuseConfigured: boolean;
+  };
+};
+
+export type PatchV1InferenceAnalyticsSettingsResponse =
+  PatchV1InferenceAnalyticsSettingsResponses[keyof PatchV1InferenceAnalyticsSettingsResponses];
+
+export type PostV1InferenceAnalyticsEventsData = {
+  body: {
+    events: Array<{
+      id: string;
+      type:
+        | "task.started"
+        | "task.completed"
+        | "task.failed"
+        | "task.cancelled"
+        | "tool.executed"
+        | "skill.loaded"
+        | "model.call";
+      timestamp: string;
+      sessionId: string;
+      taskId: string;
+      callId?: string;
+      durationMs?: number;
+      status?: "completed" | "failed" | "cancelled";
+      model?: string;
+      provider?: string;
+      inputTokens?: number;
+      outputTokens?: number;
+      cacheReadTokens?: number;
+      cacheWriteTokens?: number;
+      costUsd?: number;
+      usageComplete?: boolean;
+      tool?: string;
+      skill?: string;
+      skillVersion?: string;
+      mcp?: string;
+      metadata?: {
+        [key: string]: string | number | boolean;
+      };
+    }>;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/inference/analytics/events";
+};
+
+export type PostV1InferenceAnalyticsEventsResponses = {
+  /**
+   * OK
+   */
+  200: unknown;
+};
+
+export type GetV1InferenceAnalyticsActivityData = {
+  body?: never;
+  path?: never;
+  query?: {
+    days?: number;
+    memberId?: string;
+    taskId?: string;
+    sessionId?: string;
+    before?: string;
+    beforeId?: string;
+  };
+  url: "/v1/inference/analytics/activity";
+};
+
+export type GetV1InferenceAnalyticsActivityResponses = {
+  /**
+   * Task activity
+   */
+  200: {
+    events: Array<{
+      id: string;
+      type:
+        | "task.started"
+        | "task.completed"
+        | "task.failed"
+        | "task.cancelled"
+        | "tool.executed"
+        | "skill.loaded"
+        | "model.call";
+      timestamp: string;
+      sessionId: string;
+      taskId: string;
+      callId?: string;
+      durationMs?: number;
+      status?: "completed" | "failed" | "cancelled";
+      model?: string;
+      provider?: string;
+      inputTokens?: number;
+      outputTokens?: number;
+      cacheReadTokens?: number;
+      cacheWriteTokens?: number;
+      costUsd?: number;
+      usageComplete?: boolean;
+      tool?: string;
+      skill?: string;
+      skillVersion?: string;
+      mcp?: string;
+      metadata?: {
+        [key: string]: string | number | boolean;
+      };
+      memberId: string;
+      source: "app" | "inference";
+    }>;
+    next: {
+      before: string;
+      beforeId: string;
+    } | null;
+  };
+};
+
+export type GetV1InferenceAnalyticsActivityResponse =
+  GetV1InferenceAnalyticsActivityResponses[keyof GetV1InferenceAnalyticsActivityResponses];
+
+export type GetV1InferenceAnalyticsConsumptionData = {
+  body?: never;
+  path?: never;
+  query?: {
+    days?: number;
+    memberId?: string;
+    taskId?: string;
+    sessionId?: string;
+    before?: string;
+    beforeId?: string;
+  };
+  url: "/v1/inference/analytics/consumption";
+};
+
+export type GetV1InferenceAnalyticsConsumptionResponses = {
+  /**
+   * Model consumption
+   */
+  200: {
+    groups: Array<{
+      model: string | null;
+      provider: string | null;
+      memberId: string;
+      day: string;
+      calls: number;
+      failedCalls: number;
+      incompleteCalls: number;
+      inputTokens: number | null;
+      outputTokens: number | null;
+      cacheReadTokens: number | null;
+      costUsd: number | null;
+    }>;
+  };
+};
+
+export type GetV1InferenceAnalyticsConsumptionResponse =
+  GetV1InferenceAnalyticsConsumptionResponses[keyof GetV1InferenceAnalyticsConsumptionResponses];
+
+export type PostV1InferenceAnalyticsLangfuseTestData = {
+  body: {
+    host: string;
+    publicKey: string;
+    secretKey: string;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/inference/analytics/langfuse/test";
+};
+
+export type PostV1InferenceAnalyticsLangfuseTestResponses = {
+  /**
+   * OK
+   */
+  200: unknown;
+};
+
+export type PostV1InferenceAnalyticsLangfuseConnectData = {
+  body: {
+    host: string;
+    publicKey: string;
+    secretKey: string;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/inference/analytics/langfuse/connect";
+};
+
+export type PostV1InferenceAnalyticsLangfuseConnectResponses = {
+  /**
+   * OK
+   */
+  200: unknown;
+};
+
+export type DeleteV1InferenceAnalyticsLangfuseData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/inference/analytics/langfuse";
+};
+
+export type DeleteV1InferenceAnalyticsLangfuseResponses = {
+  /**
+   * OK
+   */
+  200: unknown;
+};
 
 export type DeleteV1ScimData = {
   body?: never;
