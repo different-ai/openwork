@@ -6,7 +6,8 @@
 import type { Session } from "@opencode-ai/sdk/v2/client";
 
 import { createClient, unwrap } from "@/app/lib/opencode";
-import { createClientV2 } from "@/app/lib/opencode-v2-adapter";
+import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
+import { deleteNativeSession } from "@/app/lib/opencode-session-native";
 import { OpenworkServerError, type OpenworkWorkspaceInfo } from "@/app/lib/openwork-server";
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
 import type { WorkspaceInfo } from "@/app/lib/desktop-types";
@@ -55,16 +56,27 @@ export const v2RouteSessionList: RouteSessionListTransport = async ({ endpoint, 
   }).session.list({ limit });
 
 /** Resolve the owning server's engine even when this workspace isn't selected. */
-export async function createRouteSession(endpoint: ResolvedWorkspaceEndpoint, directory?: string): Promise<Session> {
+async function routeSessionEndpoint(endpoint: ResolvedWorkspaceEndpoint): Promise<ResolvedWorkspaceEndpoint> {
   const status = await endpoint.client.getEngineV2PreviewStatus().catch((error: unknown) => {
-    // Servers predating the preview endpoint still create sessions through v1.
+    // Servers predating the preview endpoint still use v1.
     if (error instanceof OpenworkServerError && error.status === 404) return null;
     throw error;
   });
-  const client = status?.enabled && status.chatRouting
-    ? createClientV2(`${endpoint.mountedBaseUrl}/opencode2`, directory, { token: endpoint.token })
-    : createClient(endpoint.opencodeBaseUrl, directory, { token: endpoint.token, mode: "openwork" });
+  return status?.enabled && status.chatRouting
+    ? { ...endpoint, opencodeBaseUrl: `${endpoint.mountedBaseUrl}/opencode2` }
+    : endpoint;
+}
+
+export async function createRouteSession(endpoint: ResolvedWorkspaceEndpoint, directory?: string): Promise<Session> {
+  const native = await routeSessionEndpoint(endpoint);
+  const client = isOpencodeV2BaseUrl(native.opencodeBaseUrl)
+    ? createClientV2(native.opencodeBaseUrl, directory, { token: native.token })
+    : createClient(native.opencodeBaseUrl, directory, { token: native.token, mode: "openwork" });
   return unwrap(await client.session.create({ directory }));
+}
+
+export async function deleteRouteSession(endpoint: ResolvedWorkspaceEndpoint, sessionId: string): Promise<boolean> {
+  return deleteNativeSession(await routeSessionEndpoint(endpoint), sessionId);
 }
 
 export async function listRouteSessions(

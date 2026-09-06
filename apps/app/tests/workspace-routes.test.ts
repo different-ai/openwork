@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   classifyRouteSessionReadError,
   createRouteSession,
+  deleteRouteSession,
   mergeRouteWorkspaces,
   readRouteSessionsWithRetry,
   refreshRouteWorkspaceListState,
@@ -24,9 +25,9 @@ import {
 } from "../src/react-app/shell/workspace-routes";
 import { resolveWorkspaceEndpoint } from "../src/app/lib/workspace-endpoint";
 
-describe("workspace session creation", () => {
+describe("workspace session mutations", () => {
   for (const engine of ["v1", "v2", "legacy"]) {
-    test(`creates through the owning server's ${engine} engine`, async () => {
+    test(`creates and deletes through the owning server's ${engine} engine`, async () => {
       const originalFetch = globalThis.fetch;
       const requests: string[] = [];
       globalThis.fetch = async (input, init) => {
@@ -42,6 +43,7 @@ describe("workspace session creation", () => {
           });
         }
         expect(request.headers.get("Authorization")).toBe("Bearer fixture-token");
+        if (request.method === "DELETE") return Response.json(true);
         if (engine === "v2") expect(await request.json()).toMatchObject({ location: { directory: "/existing" } });
         return Response.json({ id: "ses_created", title: "New session", time: { created: 1, updated: 1 } });
       };
@@ -51,9 +53,12 @@ describe("workspace session creation", () => {
         });
         if (!endpoint) throw new Error("Workspace endpoint missing");
         expect((await createRouteSession(endpoint, "/existing")).id).toBe("ses_created");
+        expect(await deleteRouteSession(endpoint, "ses_created")).toBe(true);
         expect(requests).toEqual([
           "GET /experimental/engine-v2-preview/status",
           `POST /workspace/ws_existing/${engine === "v2" ? "opencode2/api/session" : "opencode/session"}`,
+          "GET /experimental/engine-v2-preview/status",
+          `DELETE /workspace/ws_existing/${engine === "v2" ? "opencode2/api/session" : "opencode/session"}/ses_created`,
         ]);
       } finally {
         globalThis.fetch = originalFetch;
@@ -61,7 +66,7 @@ describe("workspace session creation", () => {
     });
   }
 
-  test("a failed routing read cannot silently create a v1 session", async () => {
+  test("a failed routing read cannot silently mutate a v1 session", async () => {
     const originalFetch = globalThis.fetch;
     const methods: string[] = [];
     globalThis.fetch = async (input, init) => {
@@ -75,7 +80,8 @@ describe("workspace session creation", () => {
       });
       if (!endpoint) throw new Error("Workspace endpoint missing");
       await expect(createRouteSession(endpoint, "/existing")).rejects.toThrow();
-      expect(methods).toEqual(["GET"]);
+      await expect(deleteRouteSession(endpoint, "ses_created")).rejects.toThrow();
+      expect(methods).toEqual(["GET", "GET"]);
     } finally {
       globalThis.fetch = originalFetch;
     }
