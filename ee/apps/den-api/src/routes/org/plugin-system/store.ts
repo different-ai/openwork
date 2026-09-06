@@ -649,17 +649,24 @@ function deriveProjection(input: { objectType: ConfigObjectRow["objectType"]; va
   const metadata = input.value.metadata ?? {}
   const payload = input.value.normalizedPayloadJson ?? {}
   const rawSourceText = normalizeOptionalString(input.value.rawSourceText)
+
+  const frontmatter = rawSourceText ? parseMarkdownFrontmatter(rawSourceText).data : {}
+  const frontmatterName: string | undefined = frontmatter.name ?? frontmatter.title
+  const frontmatterDescription: string | undefined = frontmatter.description ?? frontmatter.summary
+
   const titleCandidate = [
     typeof metadata.title === "string" ? metadata.title : null,
     typeof metadata.name === "string" ? metadata.name : null,
     typeof payload.title === "string" ? payload.title : null,
     typeof payload.name === "string" ? payload.name : null,
+    typeof frontmatterName === "string" ? frontmatterName : null,
     rawSourceText ? stripLineDecorators(firstTextLine(rawSourceText)) : null,
   ].find((value) => Boolean(normalizeOptionalString(value ?? undefined)))
 
   const descriptionCandidate = [
     typeof metadata.description === "string" ? metadata.description : null,
     typeof payload.description === "string" ? payload.description : null,
+    typeof frontmatterDescription === "string" ? frontmatterDescription : null,
     rawSourceText
       ? rawSourceText
         .split(/\r?\n/g)
