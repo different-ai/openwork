@@ -1,15 +1,9 @@
 import { expect } from "vitest";
 import { denFetch } from "@openwork/behaviors";
-import type { DenSession } from "@openwork/behaviors";
-import { localMysqlIsRunning, server, test } from "@openwork/testkit";
+import type { DenRef, DenSession } from "@openwork/behaviors";
+import { server, test } from "@openwork/testkit";
 
-const localPlacement = process.env.OPENWORK_EVAL_DAYTONA !== "1" && !process.env.OPENWORK_EVAL_DEN_API_URL?.trim();
-const mysqlOpen = await localMysqlIsRunning();
-const title = !localPlacement
-  ? "SAML ACS delivery skipped — needs local placement without OPENWORK_EVAL_DEN_API_URL"
-  : !mysqlOpen
-    ? "SAML ACS delivery skipped — needs MySQL on 127.0.0.1:3306"
-    : "a Google-style SAML response posted to the SP-advertised ACS URL is not rejected as invalid_destination";
+const title = "a Google-style SAML response posted to the SP-advertised ACS URL is not rejected as invalid_destination";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -62,7 +56,7 @@ function googleSamlResponse(input: { destination: string; recipient: string; aud
   return Buffer.from(xml, "utf8").toString("base64");
 }
 
-async function postToAcs(den: DenSession, acsPath: string, samlResponse: string) {
+async function postToAcs(den: DenRef, acsPath: string, samlResponse: string) {
   return denFetch(den, acsPath, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -70,7 +64,7 @@ async function postToAcs(den: DenSession, acsPath: string, samlResponse: string)
   });
 }
 
-test.skipIf(!localPlacement || !mysqlOpen)(title, { timeout: 300_000 }, async ({ evidence, place }) => {
+test(title, { timeout: 300_000 }, async ({ evidence, place }) => {
   const runId = `${Date.now().toString(36)}${process.pid.toString(36)}`;
   const organizationName = `SAML ACS delivery ${runId}`;
 
