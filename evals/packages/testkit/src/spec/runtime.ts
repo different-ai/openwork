@@ -1,3 +1,4 @@
+import { typeWithCadence, typingPlan } from "@openwork/behaviors";
 import {
   control,
   createNativeConnector,
@@ -195,7 +196,7 @@ function textMatches(actual: string, expected: string | RegExp): boolean {
 
 function typedTextDetail(target: Target, text: string, options: TypeOptions): string {
   const targetName = targetDetail(target);
-  const sensitive = /password|token|secret/i.test(targetName);
+  const sensitive = options.sensitive || /password|token|secret/i.test(targetName);
   return `type(${targetName}, ${sensitive ? "<redacted>" : JSON.stringify(redacted(text))}${options.replace ? ", replace" : ""})`;
 }
 
@@ -631,6 +632,7 @@ export class UserChannel implements User {
     return this.#runtime.call("user", verb, `${verb}(${targetDetail(target)}${hitTestDetail})`, surface, async () => {
       if (this.#runtime.adapters.user?.click) return this.#runtime.adapters.user.click(surface, target, clickCount);
       const found = await waitForLocated(surface, target, { mustHitTest: options.hitTest !== false });
+      this.#runtime.emit({ stage: this.#runtime.stage, channel: "user", verb: "target", detail: targetDetail(target), surface: surfaceName(surface), ok: true, target: found.rect });
       await clickAt(surface, found.center, { clickCount });
     });
   }
@@ -638,14 +640,38 @@ export class UserChannel implements User {
   type(target: Target, text: string, options: TypeOptions = {}): Promise<void> {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("user", "type", typedTextDetail(target, text, options), surface, async () => {
+      if (options.typing) typingPlan(text, options.typing);
       if (this.#runtime.adapters.user?.click) await this.#runtime.adapters.user.click(surface, target, 1);
       else {
         const found = await waitForLocated(surface, target, { mustHitTest: true });
         await clickAt(surface, found.center);
       }
+      if (options.sensitive) {
+        const masked = await callFunctionOnSurface(surface, "() => document.activeElement?.tagName === 'INPUT' && document.activeElement.type === 'password'", []);
+        if (masked !== true) throw new Error("Sensitive typing requires a masked password input");
+      }
       const mac = surface.handle.hostKind !== "daytona" && process.platform === "darwin";
       await pressKey(surface, options.replace ? (mac ? "Meta+A" : "Control+A") : (mac ? "Meta+ArrowDown" : "Control+End"));
-      await typeText(surface, text);
+      if (options.typing) {
+        await typeWithCadence(text, options.typing, (character) => typeText(surface, character));
+      } else if (options.intervalMs) {
+        for (const character of text) {
+          await typeText(surface, character);
+          await new Promise((resolve) => setTimeout(resolve, options.intervalMs));
+        }
+      } else {
+        await typeText(surface, text);
+      }
+      if (options.verify) {
+        // Do not serialize the expected value or the located field into errors.
+        const deadline = Date.now() + 5_000;
+        while (Date.now() < deadline) {
+          const found = await locate(surface, target);
+          if (found.value === text) return;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        throw new Error("Typed field did not retain the expected value");
+      }
     });
   }
 

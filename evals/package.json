@@ -14,7 +14,7 @@
     "docs:shots": "node docs-shots/run.ts",
     "evidence:judge": "node packages/test-evidence/bin/test-evidence-judge.mjs",
     "provision:org-connector-two-members": "node scripts/provision-org-connector-two-members.ts",
-    "lint:layers": "depcruise --config .dependency-cruiser.cjs --ignore-known .dependency-cruiser-known-violations.json packages specs worlds bin docs-shots runner scripts",
+    "lint:layers": "depcruise --config .dependency-cruiser.cjs --ignore-known .dependency-cruiser-known-violations.json packages specs worlds bin docs-shots runner scripts ../scenarios",
     "test": "pnpm run lint:layers && node scripts/spec-channel-ratchet.mjs && node scripts/spec-boundary-ratchet.mjs && node --test runner/*.test.ts packages/*/test/*.test.ts bin/*.test.mjs scripts/*.test.mjs",
     "typecheck": "tsc -p .",
     "typecheck:spec-layer": "tsc -p tsconfig.primitives.json",

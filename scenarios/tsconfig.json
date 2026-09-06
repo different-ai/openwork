@@ -1,0 +1,22 @@
+{
+  "extends": "../evals/tsconfig.primitives.json",
+  "compilerOptions": {
+    "types": [
+      "node"
+    ],
+    "lib": [
+      "es2023",
+      "dom",
+      "dom.iterable",
+      "esnext.disposable"
+    ]
+  },
+  "include": [
+    "**/*.ts",
+    "**/*.tsx"
+  ],
+  "exclude": [
+    "node_modules",
+    "results"
+  ]
+}

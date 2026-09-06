@@ -1,7 +1,8 @@
 import { signIn } from "@openwork/behaviors";
+import { captureBrowserFilm } from "@openwork/cdp";
 import type { Seed } from "@openwork/env";
 
-export async function signupWorkspace(seed: Seed) {
+export async function signupWorkspace(seed: Seed, options: { filmDirectory?: string; viewport?: { width: number; height: number } } = {}) {
   // Capture real rendered emails locally; never use an inherited mail provider.
   const den = await seed.den({ provision: false, env: {
     OPENWORK_DEV_MODE: "1", RESEND_API_KEY: "", SMTP_HOST: "",
@@ -13,9 +14,12 @@ export async function signupWorkspace(seed: Seed) {
     email: `workspace-owner-${Date.now()}@openwork.test`,
     password: "OpenWork-proof-9274!suitable",
   };
-  const web = await seed.web({ den, startPath: "/", headless: true, viewport: { width: 1280, height: 1200 } });
+  const web = await seed.web({ den, startPath: "/", headless: true, viewport: options.viewport ?? { width: 1600, height: 1000 } });
+  const filmDirectory = options.filmDirectory ?? process.env.OPENWORK_EVAL_FILM_DIR;
+  const film = filmDirectory ? await captureBrowserFilm(web, filmDirectory) : null;
   return {
-    den, web, owner,
+    den, web, owner, film,
+    async [Symbol.asyncDispose]() { await film?.stop(); },
     invitees: ["casey@openwork.test", "jordan@openwork.test"],
     rejectedEmail: "jordan@outside.test",
     async adoptSignedInOwner() {
