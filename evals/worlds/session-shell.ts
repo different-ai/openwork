@@ -1,6 +1,6 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { mkdir, rm } from "node:fs/promises";
-import { engineSessionProbe, readAvailableModels, waitFor } from "@openwork/behaviors";
+import { engineSessionProbe, readAvailableModels, selectModel, waitFor } from "@openwork/behaviors";
 import { resolveEvalEngine } from "@openwork/env";
 import type { Seed } from "@openwork/env";
 import { daytonaSandbox, desktop as launchDesktop } from "@openwork/hosts";
@@ -216,7 +216,39 @@ export async function sidebarWorkspaceTitles(seed: Seed) {
 }
 
 export async function workspaceNewTask(seed: Seed) {
-  return oneWorkspace(seed, `openwork-kitchen-vercel-env-hit-target-${Date.now()}`);
+  const providerId = "new-task-mock";
+  const modelId = "new-task-model";
+  const prompt = "Confirm the new task is ready";
+  const reply = "The new task is ready.";
+  const mock = seed.mock({ agentWorkloads: [{ promptMarker: prompt, finalReply: reply, steps: [] }] });
+  const den = await seed.den({ mocks: { agent: mock }, provision: false });
+  const app = await seed.desktop({ name: "workspace-new-task", model: `${providerId}/${modelId}` });
+  const workspacePath = seed.tmpPath(`openwork-workspace-new-task-long-name-${Date.now()}`);
+  const workspace = await seed.workspace(app, workspacePath, { create: true });
+  await configureWorkspaceProvider(seed, app, [workspace.workspaceId], {
+    providerId, modelId, modelName: "New task model", baseUrl: `${den.mocks.agent.url}/v1`,
+  });
+  const selectedModel = await selectModel(app, modelId);
+  if (!selectedModel.selected) throw new Error("The mock task model was not selected.");
+  const sessions = await seed.sessions(app, ["Existing task"]);
+  // TODO(primitive): seed.networkFault should delay and observe renderer requests.
+  // Keep real session creation behind a slow transport boundary. Opening the
+  // composer must not reach this boundary; submitting must reach it only once.
+  await seed.evalIn(app, `(() => {
+    window.__newTaskRequests = [];
+    const originalFetch = window.fetch;
+    window.fetch = async function (...args) {
+      const request = args[0];
+      const url = typeof request === "string" ? request : request.url;
+      const method = args[1]?.method ?? request.method ?? "GET";
+      if (method.toUpperCase() === "POST" && new URL(url, location.href).pathname.endsWith("/session")) {
+        window.__newTaskRequests.push(url);
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+      }
+      return originalFetch.apply(this, args);
+    };
+  })()`);
+  return { app, workspace, workspacePath, sessions, prompt, reply };
 }
 
 export async function pinnedSessions(seed: Seed) {
