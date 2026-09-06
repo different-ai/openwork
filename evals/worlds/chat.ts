@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join, resolve } from "node:path";
 import { evalIn } from "@openwork/behaviors";
-import type { Seed } from "@openwork/env";
+import { resolveEvalEngine, type Seed } from "@openwork/env";
 import type { MockAgentWorkload } from "@openwork/labs";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
@@ -546,6 +546,8 @@ export const streamedMarkdownAnswer = [
   "const streamed = \"delta\";",
   "```",
   "",
+  "[Play video](clip.mp4)",
+  "",
   "Closing paragraph epsilon.",
 ].join("\n");
 
@@ -561,6 +563,7 @@ export async function streamedMarkdown(seed: Seed) {
       promptMarker: streamedMarkdownMarker,
       finalReply: streamedMarkdownAnswer,
       finalReplyChunkSize: 8,
+      finalReplyDelayMs: 1500,
       steps: [],
     }],
   });
@@ -577,8 +580,48 @@ export async function streamedMarkdown(seed: Seed) {
       },
     },
   });
+  // A tiny H.264 clip, served through the same authenticated file endpoint as user files.
+  await seed.evalIn(app, `async (workspaceId, dataBase64) => {
+    const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
+    const response = await fetch(base + "/workspace/" + encodeURIComponent(workspaceId) + "/files/raw", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token"), "Content-Type": "application/json" },
+      body: JSON.stringify({ path: "clip.mp4", dataBase64 }),
+    });
+    if (!response.ok) throw new Error("Video fixture write failed: " + response.status);
+  }`, { args: [workspace.workspaceId, (await readFile(new URL("../fixtures/assistant-video.mp4", import.meta.url))).toString("base64")], awaitPromise: true });
+  const engine = resolveEvalEngine();
+  const ready = await seed.evalIn(app, `async (workspaceId, engine, providerId, modelId) => {
+    const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
+    const headers = { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") };
+    const deadline = Date.now() + 60000;
+    while (Date.now() < deadline) {
+      const status = await (await fetch(base + "/experimental/engine-v2-preview/status", { headers })).json();
+      if (engine === "v1" && !status.chatRouting) return true;
+      if (engine === "v2" && status.running && status.chatRouting) {
+        const response = await fetch(base + "/workspace/" + workspaceId + "/opencode2/api/model", { headers });
+        if (response.ok) {
+          const catalog = JSON.stringify(await response.json());
+          if (catalog.includes(providerId) && catalog.includes(modelId)) return true;
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    return false;
+  }`, { args: [workspace.workspaceId, engine, providerId, modelId], awaitPromise: true, timeoutMs: 65000 });
+  if (ready !== true) throw new Error(`Selected ${engine} engine was not ready for the streaming journey`);
   const session = await seedSessionRetry(seed, app);
-  return { app, den, workspace, session };
+  return { app, den, workspace, session,
+    async videoState(play = false) {
+      return seed.evalIn(app, `async (play) => {
+        const video = document.querySelector('video[data-openwork-video-path="clip.mp4"]');
+        if (!video) return null;
+        if (play) await video.play();
+        return { controls: video.controls, autoplay: video.autoplay, ready: video.readyState >= 2,
+          paused: video.paused, time: video.currentTime, error: video.error?.message ?? null };
+      }`, { args: [play], awaitPromise: true });
+    },
+  };
 }
 
 const htmlToolName = "explode_html";
@@ -1280,5 +1323,84 @@ export async function computerMentions(seed: Seed) {
         }));
       }`, { args: [workspace.workspaceId], awaitPromise: true });
     },
+  };
+}
+
+/** A deterministic model calls the real built-in visualization tool. */
+export async function visualization(seed: Seed) {
+  const providerId = "visualization-mock";
+  const modelId = "visualization-model";
+  const design = {
+    id: "project-overview", title: "Project overview", revision: 1,
+    navigation: ["Overview", "Projects", "Settings"],
+    sections: [{ title: "Your workspace", columns: "two", blocks: [
+      { kind: "metric", label: "Active projects", value: "12" },
+      { kind: "field", label: "Project name", value: "Website refresh" },
+      { kind: "button", label: "Create project" },
+      { kind: "list", label: "Recent activity", items: ["Draft reviewed", "Mockup updated"] },
+      { kind: "image", label: "Cover image" },
+      { kind: "text", label: "Design note", value: "<script>window.mockupExecuted = true</script>" },
+    ] }],
+  };
+  const mock = seed.mock({ agentWorkloads: [
+    { latestUserTurn: true, promptMarker: "Sketch a project overview", finalReply: "Your first sketch is ready.", steps: [{ tool: "openwork_visualization", arguments: design }] },
+    { latestUserTurn: true, promptMarker: "Create version 2", finalReply: "Your revised sketch is ready.", steps: [{ tool: "openwork_visualization", arguments: { ...design, revision: 2, description: "A calmer overview" } }] },
+  ] });
+  const den = await seed.den({ mocks: { agent: mock } });
+  const app = await seed.desktop({ name: "visualization", model: `${providerId}/${modelId}` });
+  const workspace = await seed.workspace(app, seed.tmpPath("visualization"));
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    permission: { openwork_visualization: "allow" },
+    provider: { [providerId]: {
+      npm: "@ai-sdk/openai-compatible", name: "Visualization mock",
+      options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-visualization" },
+      models: { [modelId]: { name: "Visualization model", tool_call: true } },
+    } },
+  });
+  const session = await seedSessionRetry(seed, app);
+  return {
+    den, app, workspace, session,
+    preview: async () => {
+      const result = await evalIn(app, `(() => {
+      const preview = document.querySelector('[data-testid="visualization-preview"]');
+      return { viewport: preview?.getAttribute('data-viewport'), width: preview?.getBoundingClientRect().width,
+        scripts: preview?.querySelectorAll('script').length, executed: window.mockupExecuted === true,
+        cards: document.querySelectorAll('[data-testid="visualization-card"]').length };
+    })()`);
+      if (!isRecord(result) || typeof result.width !== "number") throw new Error("Visualization preview missing");
+      return { ...result, width: result.width };
+    },
+  };
+}
+
+
+/** A persisted workspace and conversation created before opting into the other engine. */
+export async function workspaceEngineUpgrade(seed: Seed) {
+  const providerId = "workspace-upgrade-mock";
+  const modelId = "workspace-upgrade-model";
+  const mock = seed.mock({ agentWorkloads: [{
+    promptMarker: "hi",
+    finalReply: "Hello. Your upgrade conversation is working.",
+    finalReplyChunkSize: 3,
+    finalReplyDelayMs: 750,
+    steps: [],
+  }] });
+  const den = await seed.den({ mocks: { agent: mock } });
+  const primaryPath = seed.tmpPath("upgrade-primary");
+  const otherPath = seed.tmpPath("upgrade-existing");
+  const app = await seed.desktop({ den, as: "admin", workspacePath: primaryPath, model: `${providerId}/${modelId}` });
+  const primary = await seed.workspace(app, primaryPath);
+  const provider = { provider: { [providerId]: {
+    npm: "@ai-sdk/openai-compatible", name: "Upgrade mock",
+    options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-upgrade-fixture" },
+    models: { [modelId]: { name: "Upgrade model" } },
+  } } };
+  await configureProvider(seed, app, primary.workspaceId, providerId, modelId, provider);
+  const original = await seedSessionRetry(seed, app, { title: "Before engine upgrade" });
+  const other = await seed.workspace(app, otherPath, { create: true });
+  await configureProvider(seed, app, other.workspaceId, providerId, modelId, provider);
+  const otherOriginal = await seedSessionRetry(seed, app, { title: "Existing workspace history" });
+  return { app, den, primary, other, original, otherOriginal, providerId, modelId,
+    otherName: otherPath.split("/").at(-1),
   };
 }

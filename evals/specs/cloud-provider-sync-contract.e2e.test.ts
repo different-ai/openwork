@@ -1,5 +1,5 @@
 import { expect, onTestFinished } from "vitest";
-import { control, denFetch, evalIn, go, readAvailableModels, selectModel, sendComposerMessage, waitFor } from "@openwork/behaviors";
+import { observeText, textProgressFailures, control, denFetch, evalIn, go, readAvailableModels, selectModel, sendComposerMessage, waitFor } from "@openwork/behaviors";
 import type { DenSession, ModelFacts } from "@openwork/behaviors";
 import { screenshot, validate } from "@openwork/test-evidence";
 import { app, eventually, mcpMock, needs, server, sleep, test, unmetNeeds } from "@openwork/testkit";
@@ -581,27 +581,13 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
     "The selected catalog provider/model stayed unchanged through Settings, cloud refresh, native v2 mirroring and routing refresh; zero default writes, unavailable warnings or maximum-depth errors were observed.", true,
   );
   await selectModel(desktopApp, CUSTOM_MODEL_ID, { provider: CUSTOM_PROVIDER_NAME });
-  await evalIn(desktopApp, `(() => {
-    window.__responseFrames = [];
-    const record = () => {
-      for (const element of document.querySelectorAll('[data-message-role="assistant"] .prose')) {
-        const text = element.textContent.trim();
-        if (text && window.__responseFrames.at(-1) !== text) window.__responseFrames.push(text);
-      }
-    };
-    window.__responseObserver = new MutationObserver(record);
-    window.__responseObserver.observe(document.body, { subtree: true, childList: true, characterData: true });
-  })()`);
+  await using responseObservation = await observeText(desktopApp, '[data-message-role="assistant"] .prose');
   await sendComposerMessage(desktopApp, `Reply to the request marked ${promptMarker}.`);
   await waitFor(desktopApp, `Array.from(document.querySelectorAll('[data-message-role="assistant"]')).some((row) => row.textContent.includes(${JSON.stringify(finalReply)}))`, { timeoutMs: 120_000, label: "native provider reply in the v2 transcript" });
   await sleep(2_000); // includes the streamed-to-persisted message reconciliation
-  const frames = await evalIn(desktopApp, `(() => {
-    window.__responseObserver.disconnect();
-    return window.__responseFrames;
-  })()`);
-  expect(Array.isArray(frames) && frames.length > 0).toBe(true);
-  expect(Array.isArray(frames) && frames.every((frame) => typeof frame === "string" && finalReply.startsWith(frame)), JSON.stringify(frames)).toBe(true);
-  evidence.recordAssertionEvidence("streamed assistant text does not flash a different answer before the saved response", "Every observed assistant text frame was a prefix of the independent witness reply, including two seconds after completion; no unrelated or substituted response appeared.", true);
+  const frames = await responseObservation.finish();
+  expect(textProgressFailures(frames, finalReply), JSON.stringify(frames)).toEqual([]);
+  evidence.recordAssertionEvidence("streamed assistant text does not flash a different answer before the saved response", "Observed frames included empty states and never shrank after text appeared; the independent expected reply completed without replacement, including two seconds after completion.", true);
   const nativeRequests = await den.mocks.agent.agentRequests({ promptMarker, atLeast: 1, timeoutMs: 10_000 });
   expect(nativeRequests.some((request) => request.model === CUSTOM_MODEL_ID && request.kind === "final")).toBe(true);
   expect(nativeRequests.some((request) => request.model !== CUSTOM_MODEL_ID || request.kind === "error")).toBe(false);
@@ -691,20 +677,7 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
   // env-store rotation with the fixture organization's unchanged secret.
   await go(desktopApp, nativeSessionRoute);
   await waitFor(desktopApp, `Array.from(document.querySelectorAll('[data-message-role="assistant"] .prose')).some((row) => row.textContent.trim() === ${JSON.stringify(finalReply)})`, { timeoutMs: 30_000, label: "original reply restored before continuing the conversation" });
-  await evalIn(desktopApp, `(() => {
-    const priorMessages = new Set(Array.from(document.querySelectorAll('[data-message-role="assistant"]'), (row) => row.getAttribute("data-message-id")));
-    window.__rotationFrames = [];
-    window.__rotationObserver = new MutationObserver(() => {
-      for (const row of document.querySelectorAll('[data-message-role="assistant"]')) {
-        if (priorMessages.has(row.getAttribute("data-message-id"))) continue;
-        for (const element of row.querySelectorAll('.prose')) {
-          const text = element.textContent.trim();
-          if (text && window.__rotationFrames.at(-1) !== text) window.__rotationFrames.push(text);
-        }
-      }
-    });
-    window.__rotationObserver.observe(document.body, { subtree: true, childList: true, characterData: true });
-  })()`);
+  await using rotationObservation = await observeText(desktopApp, '[data-message-role="assistant"] .prose', { ignoreExistingMessages: true });
   const rotatedMarker = `${promptMarker}-rotated`;
   const rotatedReply = `ROTATED-REPLY-${Date.now()}`;
   const rotatedKey = "sk-openwork-sync-contract-rotated-eval-only";
@@ -730,9 +703,8 @@ test.skipIf(missingRequirements.length > 0)(title, { timeout: 30 * 60_000 }, asy
   await sendComposerMessage(desktopApp, `Reply to the request marked ${rotatedMarker}.`);
   await waitFor(desktopApp, `Array.from(document.querySelectorAll('[data-message-role="assistant"]')).some((row) => row.textContent.includes(${JSON.stringify(rotatedReply)}))`, { timeoutMs: 120_000, label: "reply after credential rotation" });
   await sleep(2_000);
-  const rotationFrames = await evalIn(desktopApp, `(() => { window.__rotationObserver.disconnect(); return window.__rotationFrames; })()`);
-  expect(Array.isArray(rotationFrames) && rotationFrames.length > 0).toBe(true);
-  expect(Array.isArray(rotationFrames) && rotationFrames.every((frame) => typeof frame === "string" && rotatedReply.startsWith(frame)), JSON.stringify(rotationFrames)).toBe(true);
+  const rotationFrames = await rotationObservation.finish();
+  expect(textProgressFailures(rotationFrames, rotatedReply), JSON.stringify(rotationFrames)).toEqual([]);
   expect(await evalIn(desktopApp, `document.querySelectorAll('[data-message-role="assistant"]').length >= 2 && Array.from(document.querySelectorAll('[data-message-role="assistant"] .prose')).some((row) => row.textContent.trim() === ${JSON.stringify(finalReply)})`)).toBe(true);
   evidence.recordAssertionEvidence("a second assistant response never substitutes the previous answer or overwrites it", "Every new response frame matched only the independent second reply; after completion the first answer remained intact in a separate assistant message.", true);
   const rotatedRequests = await den.mocks.agent.agentRequests({ promptMarker: rotatedMarker, sinceIso: rotatedAt, atLeast: 1 });

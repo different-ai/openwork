@@ -120,6 +120,7 @@ import {
 import { runAgentContextDiagnostics } from "./agent-context-diagnostics.js";
 import { createAgentDiagnosticsEngineFetch, validateEffectiveEngineSnapshot } from "./agent-context-engine-inspection.js";
 import { selectGoverningAgent, summarizeEffectivePermissions } from "./effective-permissions.js";
+import { readWorkspaceRunMode, setWorkspaceRunMode, type WorkspaceRunModeState } from "./workspace-run-mode.js";
 import { sanitizeDiagnosticString } from "./diagnostic-sanitizer.js";
 import {
   mergeOpencodeConfigs,
@@ -660,7 +661,7 @@ function isUnavailableLogOutputError(error: unknown): boolean {
   // Redirected stdout can run out of space just like the optional file sink.
   // Logging must not turn an otherwise successful request into a server crash.
   return error.code === "EPIPE" || error.code === "ERR_STREAM_DESTROYED"
-    || error.code === "ENOSPC" || error.code === "EDQUOT";
+    || error.code === "ENOSPC" || error.code === "EDQUOT" || error.code === "EIO";
 }
 
 let stdoutLogWritesDisabled = false;
@@ -2840,6 +2841,97 @@ function createRoutes(
     return jsonResponse({ item: removed, warnings: [] });
   });
 
+  const pendingRunModeRefresh = new Set<string>();
+  const runModeState = async (workspace: WorkspaceInfo): Promise<WorkspaceRunModeState & { path: string }> => {
+    const state = await readWorkspaceRunMode(workspace.path);
+    if (engineV2Preview.status().chatRouting) {
+      return { ...state, supported: false, reason: "Workspace run modes are unavailable while OpenCode v2 chat routing is enabled." };
+    }
+    if (workspace.workspaceType === "remote" || resolve(resolveOpencodeDirectory(workspace) ?? workspace.path) !== resolve(workspace.path)) {
+      return { ...state, supported: false, reason: "Workspace run modes require an engine using this local workspace directory." };
+    }
+    return state;
+  };
+
+  addRoute(routes, "GET", "/workspace/:id/permissions/mode", "client", async (ctx) => {
+    const state = await runModeState(await resolveWorkspace(config, ctx.params.id));
+    return jsonResponse({ ...state, refreshPending: pendingRunModeRefresh.has(state.path) });
+  });
+
+  addRoute(routes, "PUT", "/workspace/:id/permissions/mode", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const mode = body.mode;
+    if (mode !== "default" && mode !== "approve" && mode !== "run-everything") {
+      throw new ApiError(400, "invalid_payload", 'mode must be "default", "approve", or "run-everything"');
+    }
+    const initial = await runModeState(workspace);
+    if (!initial.supported) throw new ApiError(409, "workspace_run_mode_unsupported", initial.reason);
+    await requireWorkspaceRunModeIdle(config, workspace);
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "config.write",
+      summary: mode === "run-everything"
+        ? "Allow tools by default in this workspace, keeping narrower permission rules"
+        : mode === "approve"
+          ? "Ask before tools by default in this workspace, keeping narrower permission rules"
+          : "Remove this workspace's permission catch-all, keeping narrower rules and inherited permissions",
+      paths: [initial.path],
+    });
+    return withEngineDirectoryFence(config, workspace, async () => {
+      // Approval can wait while another session starts or the runtime changes.
+      const current = await runModeState(workspace);
+      if (!current.supported) throw new ApiError(409, "workspace_run_mode_unsupported", current.reason);
+      await requireWorkspaceRunModeIdle(config, workspace);
+      const changed = await setWorkspaceRunMode(workspace.path, mode);
+      if (changed) {
+        pendingRunModeRefresh.add(current.path);
+        emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(current.path));
+      }
+      await recordAudit(workspace.path, {
+        id: shortId(),
+        workspaceId: workspace.id,
+        actor: ctx.actor ?? { type: "remote" },
+        action: "config.write",
+        target: current.path,
+        summary: `Set workspace run mode to ${mode}`,
+        timestamp: Date.now(),
+      });
+      let refresh: "reloaded" | "deferred" | "skipped" = "skipped";
+      if (pendingRunModeRefresh.has(current.path)) {
+        refresh = "deferred";
+        try {
+          if (engineV2Preview.status().chatRouting) throw new Error("OpenCode v2 chat routing is enabled");
+          await requireWorkspaceRunModeIdle(config, workspace);
+          // Directory-scoped disposal leaves other workspaces alone. The
+          // detached MCP sync uses the same fence, so do not await it here.
+          await reloadOpencodeEngineInPlace(config, workspace, engineMcpServerState, { awaitPostRefreshSync: false });
+          const opencode = createWorkspaceOpencodeClient(config, workspace, { boundedDiagnosticsReads: true });
+          const [configResult, agentResult] = await Promise.all([opencode.config.get({}), opencode.app.agents({})]);
+          const snapshot = validateEffectiveEngineSnapshot({
+            config: unwrapOpencodeResult(configResult, "/config"),
+            agents: unwrapOpencodeResult(agentResult, "/agent"),
+          });
+          if (engineV2Preview.status().chatRouting || !snapshot || !selectGoverningAgent(snapshot.agents, snapshot.defaultAgent)) throw new Error("Engine reload could not be confirmed");
+          pendingRunModeRefresh.delete(current.path);
+          refresh = "reloaded";
+        } catch {
+          // The file is saved, not necessarily applied. Keep the event and
+          // retry on a subsequent PUT even when the requested mode is unchanged.
+        }
+      }
+      return jsonResponse({
+        ...await runModeState(workspace),
+        changed,
+        refresh,
+        refreshPending: refresh === "deferred",
+        ...(refresh === "deferred" ? { reason: "Saved to the workspace config; engine refresh is pending. Wait for idle sessions and retry, or reload the workspace." } : {}),
+      });
+    });
+  });
+
   addRoute(routes, "GET", "/workspace/:id/permissions/effective", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     // The engine's own evaluated ruleset decides; OpenWork only names the
@@ -3683,7 +3775,7 @@ function createRoutes(
     const state = ctx.url.searchParams.get("state") ?? "";
     const code = ctx.url.searchParams.get("code") ?? "";
     if (!state || !code) throw new ApiError(400, "managed_mcp_oauth_callback_invalid", "OAuth callback is missing code or state");
-    const { connection, workspaceId } = await completeLocalManagedMcpAuthorization(config, state, code);
+    const { connection, workspaceId } = await completeLocalManagedMcpAuthorization(config, state, code, ctx.url.searchParams.get("iss") ?? undefined);
     const workspace = config.workspaces.find((item) => item.id === workspaceId);
     if (workspace) {
       await syncRuntimeMcpToOpencodeEngine(config, workspace, [connection.name], undefined, engineMcpServerState).catch(() => undefined);
@@ -4430,6 +4522,40 @@ function parseOpencodeErrorBody(input: string): unknown {
 function opencodeDisposeTimeoutMs(): number {
   const configured = Number(process.env.OPENWORK_ENGINE_DISPOSE_TIMEOUT_MS ?? "");
   return Number.isFinite(configured) && configured > 0 ? configured : 30_000;
+}
+
+async function requireWorkspaceRunModeIdle(config: ServerConfig, workspace: WorkspaceInfo): Promise<void> {
+  const connection = resolveWorkspaceOpencodeConnection(config, workspace);
+  const connections = new Map<string, string | undefined>();
+  if (connection.baseUrl) connections.set(connection.baseUrl, connection.authHeader);
+  // Include draining generations: a waiting permission can belong to an older
+  // engine even when the primary reports no active sessions.
+  for (const entry of enginePoolForConfig(config)?.connections() ?? []) {
+    connections.set(entry.baseUrl, buildEngineAuthProbeHeader(entry.username, entry.password));
+  }
+  await Promise.all([...connections].map(async ([baseUrl, authorization]) => {
+    await Promise.all(["/session/status", "/permission", "/question"].map(async (path) => {
+      let payload: unknown;
+      try {
+        const url = new URL(path, baseUrl);
+        const directory = resolveOpencodeDirectory(workspace);
+        if (directory) url.searchParams.set("directory", directory);
+        const response = await loopbackFetch(url.toString(), {
+          headers: authorization ? { Authorization: authorization } : {},
+          signal: AbortSignal.timeout(5_000),
+        });
+        if (!response.ok) throw new Error("Activity probe failed");
+        payload = await response.json();
+      } catch {
+        throw new ApiError(409, "workspace_run_mode_activity_unknown", "Cannot verify that all workspace sessions are idle; no permission change was made.");
+      }
+      if (path === "/session/status" ? !isRecord(payload) || Object.values(payload).some((status) => !isRecord(status) || typeof status.type !== "string") : !Array.isArray(payload)) {
+        throw new ApiError(409, "workspace_run_mode_activity_unknown", "OpenCode returned unreadable workspace activity; no permission change was made.");
+      }
+      const busy = Array.isArray(payload) ? payload.length > 0 : isRecord(payload) && Object.values(payload).some((status) => isRecord(status) && status.type !== "idle");
+      if (busy) throw new ApiError(409, "workspace_run_mode_busy", "Wait for all workspace sessions, including permission and question requests, to finish before changing run mode.");
+    }));
+  }));
 }
 
 /**

@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { clickButton, createAndSelectWorkspace, evalIn, go, waitFor } from "@openwork/behaviors";
+import { clickButton, control, createAndSelectWorkspace, evalIn, go, renameSessionAndWait, waitFor } from "@openwork/behaviors";
 import type { Surface } from "@openwork/cdp";
 import { desktop } from "@openwork/hosts";
 import { needs, resolveEvalEngine, test } from "@openwork/testkit";
@@ -19,6 +19,8 @@ const modelIdV1 = "witness-model-v1";
 const modelIdV2 = "witness-model-v2";
 const modelNameV1 = "Witness Model V1";
 const modelNameV2 = "Witness Model V2";
+const generatedTitle = "A friendly greeting";
+const manualTitle = "My chosen thread name";
 
 interface EngineV2PreviewStatus {
   enabled: boolean;
@@ -42,6 +44,7 @@ interface WitnessRequest {
   model: string;
   stream: boolean;
   nonce: string;
+  titleRequest: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -322,6 +325,17 @@ async function waitForChatSurface(app: Surface, sessionId: string, workspaceId: 
   })()`, { timeoutMs: 10_000, label: "v2 session surface after workspace switch" });
 }
 
+async function expectSessionTitle(app: Surface, sessionId: string, workspaceId: string, expected: string): Promise<void> {
+  const selector = `[data-sidebar-session-id="${sessionId}"][data-sidebar-session-workspace-id="${workspaceId}"] [data-session-title-text]`;
+  await waitFor(app, `(document.querySelector(${JSON.stringify(selector)})?.textContent ?? "").trim() === ${JSON.stringify(expected)}`, {
+    timeoutMs: 45_000,
+    label: `sidebar title becomes ${expected}`,
+  });
+  const result = await serverFetchJson(app, `/workspace/${encodeURIComponent(workspaceId)}/opencode2/api/session/${encodeURIComponent(sessionId)}`);
+  expect(result.status).toBe(200);
+  expect(result.json).toMatchObject({ data: { id: sessionId, title: expected } });
+}
+
 async function waitForWitnessRequest(
   requests: WitnessRequest[],
   predicate: (request: WitnessRequest) => boolean,
@@ -350,7 +364,7 @@ async function sendAndWaitForNonce(
   await clickButton(app, "Run task", { timeoutMs: 30_000 });
   const request = await waitForWitnessRequest(
     requests,
-    (candidate) => candidate.stream && candidate.at >= sentAt && candidate.at >= notBefore
+    (candidate) => candidate.stream && !candidate.titleRequest && candidate.at >= sentAt && candidate.at >= notBefore
       && candidate.auth === auth && candidate.model === model,
     `${round} streamed witness request`,
   );
@@ -407,8 +421,10 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place, ski
       }
       const model = isRecord(body) && typeof body.model === "string" ? body.model : "";
       const stream = isRecord(body) && body.stream === true;
-      const nonce = "OPENWORK-V2-ROUTING-NONCE";
-      witnessRequests.push({ at: Date.now(), auth, model, stream, nonce });
+      // Title generation is tool-free in both engines and can also stream.
+      const titleRequest = isRecord(body) && (!Array.isArray(body.tools) || body.tools.length === 0);
+      const nonce = titleRequest ? generatedTitle : `OPENWORK-V2-ROUTING-NONCE-${witnessRequests.length + 1}`;
+      witnessRequests.push({ at: Date.now(), auth, model, stream, nonce, titleRequest });
       const id = `chatcmpl-opencode-v2-routing-${witnessRequests.length}`;
       if (!stream) {
         response.writeHead(200, { "content-type": "application/json" });
@@ -417,7 +433,7 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place, ski
           object: "chat.completion",
           created: Math.floor(Date.now() / 1_000),
           model,
-          choices: [{ index: 0, message: { role: "assistant", content: "Witness title" }, finish_reason: "stop" }],
+          choices: [{ index: 0, message: { role: "assistant", content: nonce }, finish_reason: "stop" }],
         }));
         return;
       }
@@ -604,6 +620,10 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place, ski
     // New task uses the selected workspace's currently swapped client. This
     // avoids sending a v2 prompt to the pre-toggle v1 session id.
     const v2SessionId = await createNewSessionThroughSidebar(app);
+    await waitFor(app, `(document.querySelector(${JSON.stringify(`[data-sidebar-session-id="${v2SessionId}"] [data-session-title-text]`)})?.textContent ?? "").trim() === "New session"`, {
+      timeoutMs: 15_000,
+      label: "an unnamed v2 session is displayed as a new session, not a finished title",
+    });
     await selectModel(app, modelNameV2);
     const r2 = await sendAndWaitForNonce(
       app,
@@ -621,6 +641,7 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place, ski
     expect(r2.request.at).toBeGreaterThanOrEqual(routedOnAt);
     expect(r2.request.auth).toBe(`Bearer ${keyV2}`);
     expect(r2.request.model).toBe(modelIdV2);
+    await expectSessionTitle(app, v2SessionId, workspaceId, generatedTitle);
     evidence.recordAssertionEvidence(
       "R2 routed chat creates and streams through v2 without touching v1",
       `The provider mirrored in ${mirrorLatencyMs}ms and its catalog warmed in ${catalogLatencyMs}ms without restarting pid ${pid0}; the v2 transcript streamed ${r2.request.nonce} from ${modelIdV2} with Bearer ${keyV2} in ${r2.latencyMs}ms; v2 sessions grew ${v2BeforeR2}→${v2AfterR2}, while v1 stayed frozen at ${v1BeforeR2}.`,
@@ -638,6 +659,32 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place, ski
       timeoutMs: 10_000,
       label: "v2 session remains in the sidebar after switching workspaces",
     });
+    await expectSessionTitle(app, v2SessionId, workspaceId, generatedTitle);
+    evidence.recordAssertionEvidence(
+      "an unnamed v2 thread gains a title and keeps it after workspace refetch",
+      "The sidebar initially showed New session, then the tool-free title response rather than the chat response; the native session API and the same sidebar row retained that title after leaving and reopening the thread.",
+      true,
+    );
+
+    const namedSessionId = await createNewSessionThroughSidebar(app);
+    const renameApp = app;
+    await renameSessionAndWait((action, args) => control(renameApp, action, args), namedSessionId, manualTitle);
+    await selectModel(app, modelNameV2);
+    const titleRequestsBefore = witnessRequests.filter((request) => request.titleRequest).length;
+    await sendAndWaitForNonce(app, witnessRequests, "hello from my named thread", `Bearer ${keyV2}`, modelIdV2, routedOnAt, "Named v2");
+    await expectSessionTitle(app, namedSessionId, workspaceId, manualTitle);
+    await clickSessionRow(app, v2SessionId, workspaceId);
+    await waitForChatSurface(app, v2SessionId, workspaceId);
+    await expectSessionTitle(app, v2SessionId, workspaceId, generatedTitle);
+    await clickSessionRow(app, namedSessionId, workspaceId);
+    await waitForChatSurface(app, namedSessionId, workspaceId);
+    await expectSessionTitle(app, namedSessionId, workspaceId, manualTitle);
+    expect(witnessRequests.filter((request) => request.titleRequest)).toHaveLength(titleRequestsBefore);
+    evidence.recordAssertionEvidence(
+      "a manually named v2 thread is not automatically renamed on its first turn",
+      "A completed first reply and reopening preserved the chosen name in the sidebar and native session API, made no title request, and left the other thread's generated title unchanged.",
+      true,
+    );
 
     const statusAfterR2 = await readStatus(app);
     expect(statusAfterR2.running).toBe(true);

@@ -151,6 +151,84 @@ function jsonResponse(value: unknown, status = 200): Response {
 }
 
 describe("OpenCode v2 event translation", () => {
+  test("renders an admitted user message before execution using its persisted identity", () => {
+    const state = createV2EventTranslationState();
+    const admitted = {
+      type: "session.inbox.enqueued",
+      created: 1_788_657_600_000,
+      location: { directory: "/workspace" },
+      data: {
+        sessionID: "ses_upgrade",
+        inboxID: "msg_user",
+        item: { type: "user", payload: { text: "hi" }, delivery: "steer" },
+      },
+    };
+    const expected = [
+      { type: "message.updated", properties: { info: {
+        id: "msg_user", sessionID: "ses_upgrade", role: "user", time: { created: admitted.created },
+      } } },
+      { type: "message.part.updated", properties: { part: {
+        id: "msg_user:0", messageID: "msg_user", sessionID: "ses_upgrade", type: "text", text: "hi",
+      } } },
+    ];
+    expect(translateV2Event(admitted, state)).toEqual(expected);
+    // A replay must update the same message and part, not create another row.
+    expect(translateV2Event(admitted, state)).toEqual(expected);
+    expect(translateV2Event({
+      type: "session.inbox.cancelled", data: { sessionID: "ses_upgrade", inboxID: "msg_user" },
+    }, state)).toEqual([
+      { type: "message.removed", properties: { sessionID: "ses_upgrade", messageID: "msg_user" } },
+    ]);
+    expect(translateV2Event({ ...admitted, data: {
+      ...admitted.data, item: { type: "synthetic", payload: { text: "Internal instructions" }, delivery: "steer" },
+    } }, state)).toBeNull();
+  });
+
+  test("uses the created envelope timestamp for an untitled session", () => {
+    const created = 1_788_548_737_221;
+    const event = {
+      type: "session.created",
+      created,
+      location: { directory: "/workspace" },
+      data: { sessionID: "ses_new" },
+    };
+
+    expect(translateV2Event(event, createV2EventTranslationState())).toEqual([{
+      type: "session.created",
+      properties: {
+        info: {
+          id: "ses_new",
+          slug: "ses_new",
+          projectID: "v2",
+          directory: "/workspace",
+          title: `New session - ${new Date(created).toISOString()}`,
+          version: "v2",
+          time: { created, updated: created },
+        },
+      },
+    }]);
+    expect(event.data).toEqual({ sessionID: "ses_new" });
+  });
+
+  test.each(["Named session", "Untitled session", ""])("translates rename %j as a title-only patch", (title) => {
+    expect(translateV2Event({
+      type: "session.renamed",
+      created: 1_788_548_737_260,
+      location: { directory: "/workspace" },
+      data: { sessionID: "ses_named", title },
+    }, createV2EventTranslationState())).toEqual([{
+      type: "session.updated",
+      properties: { info: { id: "ses_named", title } },
+    }]);
+  });
+
+  test("does not turn an incomplete rename into a generated title", () => {
+    expect(translateV2Event({
+      type: "session.renamed",
+      data: { sessionID: "ses_named" },
+    }, createV2EventTranslationState())).toBeNull();
+  });
+
   test("uses one stable text part id from start through the cumulative end update", () => {
     const state = createV2EventTranslationState();
 
@@ -462,6 +540,109 @@ describe("OpenCode v2 event translation", () => {
 });
 
 describe("OpenCode v2 client compatibility", () => {
+  test("maps only missing and empty native titles to stable read-time placeholders", async () => {
+    const originalFetch = globalThis.fetch;
+    const created = 1_788_548_737_221;
+    const time = { created, updated: created + 100 };
+    const sessions = [
+      { id: "ses_missing", created },
+      { id: "ses_empty", title: "", time },
+      { id: "ses_literal", title: "Untitled session", time },
+      { id: "ses_named", title: "Named session", time },
+    ];
+    globalThis.fetch = async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.method === "GET" && request.url.endsWith("/api/session")) {
+        return jsonResponse({ data: sessions });
+      }
+      const session = sessions.find((item) => request.url.endsWith(`/api/session/${item.id}`));
+      if (request.method === "GET" && session) return jsonResponse({ data: session });
+      throw new Error(`Unexpected request: ${request.method} ${request.url}`);
+    };
+
+    try {
+      const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
+      const result = await client.session.list();
+      const placeholder = `New session - ${new Date(created).toISOString()}`;
+      expect(result.data?.map((session) => session.title)).toEqual([
+        placeholder, placeholder, "Untitled session", "Named session",
+      ]);
+      for (const session of result.data ?? []) {
+        const fetched = await client.session.get({ sessionID: session.id });
+        expect(fetched.data).toEqual(session);
+      }
+      expect(result.data?.[1]?.time).toEqual(time);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test.each([undefined, "", "Named session", "Untitled session"])("forwards only the provided title %j when creating a session", async (title) => {
+    const originalFetch = globalThis.fetch;
+    const bodies: unknown[] = [];
+    const created = 1_788_548_737_221;
+    globalThis.fetch = async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.method === "POST" && request.url.endsWith("/api/session")) {
+        bodies.push(await request.json());
+        return jsonResponse({ data: { id: "ses_new", title, created } });
+      }
+      throw new Error(`Unexpected request: ${request.method} ${request.url}`);
+    };
+
+    try {
+      const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
+      const result = await client.session.create({ title });
+      expect(bodies).toEqual([{
+        location: { directory: "/workspace" },
+        ...(title === undefined ? {} : { title }),
+      }]);
+      expect(result.data?.title).toBe(title || `New session - ${new Date(created).toISOString()}`);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("retains native assistant errors even when a failed turn has text and a completion time", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      if (request.method === "GET" && request.url.endsWith("/api/session/ses_failed/message")) {
+        return jsonResponse({ data: [{
+          id: "msg_failed",
+          type: "assistant",
+          time: { created: 10, completed: 20 },
+          content: [{ type: "text", text: "Partial response" }],
+          error: { type: "unknown", message: "provider unavailable" },
+        }] });
+      }
+      throw new Error(`Unexpected request: ${request.method} ${request.url}`);
+    };
+
+    try {
+      const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
+      const result = await client.session.messages({ sessionID: "ses_failed" });
+      expect(result.data).toEqual([{
+        info: {
+          id: "msg_failed",
+          sessionID: "ses_failed",
+          role: "assistant",
+          time: { created: 10, completed: 20 },
+          error: { name: "UnknownError", data: { message: "provider unavailable" } },
+        },
+        parts: [{
+          id: "msg_failed:0",
+          messageID: "msg_failed",
+          sessionID: "ses_failed",
+          type: "text",
+          text: "Partial response",
+        }],
+      }]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("maps active v2 sessions to busy compatibility statuses", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async (input, init) => {

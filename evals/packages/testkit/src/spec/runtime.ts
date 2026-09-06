@@ -1,3 +1,4 @@
+import { typeWithCadence, typingPlan } from "@openwork/behaviors";
 import {
   control,
   createNativeConnector,
@@ -17,6 +18,7 @@ import {
   evaluateOnSurface,
   hoverAt,
   locate,
+  assertAbsent,
   navigate,
   pressKey,
   reload,
@@ -194,7 +196,7 @@ function textMatches(actual: string, expected: string | RegExp): boolean {
 
 function typedTextDetail(target: Target, text: string, options: TypeOptions): string {
   const targetName = targetDetail(target);
-  const sensitive = /password|token|secret/i.test(targetName);
+  const sensitive = options.sensitive || /password|token|secret/i.test(targetName);
   return `type(${targetName}, ${sensitive ? "<redacted>" : JSON.stringify(redacted(text))}${options.replace ? ", replace" : ""})`;
 }
 
@@ -490,9 +492,16 @@ export class SeedChannel implements Seed {
     });
   }
 
-  workspace(app: Surface, path = `/tmp/openwork-spec-${Date.now()}`) {
+  workspace(app: Surface, path = `/tmp/openwork-spec-${Date.now()}`, options: { create?: boolean } = {}) {
     return this.#runtime.call("seed", "workspace", `workspace(${path})`, app, async () => {
-      const result = await import("@openwork/behaviors").then(({ createAndSelectWorkspace }) => createAndSelectWorkspace(app, { path }));
+      const result = await import("@openwork/behaviors").then(({ createAndSelectWorkspace }) => createAndSelectWorkspace(app, { path, ...options }));
+      await eventually(() => callFunctionOnSurface(app, `(workspaceId) => {
+        const workspace = window.__openwork?.slice?.("route")?.workspaces?.find(item => item.id === workspaceId);
+        return workspace ? { exists: true, loading: workspace.loading } : { exists: false };
+      }`, [result.workspaceId]), {
+        within: 60000, intervalMs: 250, label: `workspace ${result.workspaceId} initial session load`,
+        until: value => isRecord(value) && value.exists === true && value.loading === false,
+      });
       return result;
     });
   }
@@ -586,8 +595,6 @@ export class SeedChannel implements Seed {
   }
 }
 
-class VisibleTargetError extends Error {}
-
 export class UserChannel implements User {
   readonly #runtime: SpecRuntime;
   readonly #surface: Surface | null;
@@ -625,6 +632,7 @@ export class UserChannel implements User {
     return this.#runtime.call("user", verb, `${verb}(${targetDetail(target)}${hitTestDetail})`, surface, async () => {
       if (this.#runtime.adapters.user?.click) return this.#runtime.adapters.user.click(surface, target, clickCount);
       const found = await waitForLocated(surface, target, { mustHitTest: options.hitTest !== false });
+      this.#runtime.emit({ stage: this.#runtime.stage, channel: "user", verb: "target", detail: targetDetail(target), surface: surfaceName(surface), ok: true, target: found.rect });
       await clickAt(surface, found.center, { clickCount });
     });
   }
@@ -632,14 +640,38 @@ export class UserChannel implements User {
   type(target: Target, text: string, options: TypeOptions = {}): Promise<void> {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("user", "type", typedTextDetail(target, text, options), surface, async () => {
+      if (options.typing) typingPlan(text, options.typing);
       if (this.#runtime.adapters.user?.click) await this.#runtime.adapters.user.click(surface, target, 1);
       else {
         const found = await waitForLocated(surface, target, { mustHitTest: true });
         await clickAt(surface, found.center);
       }
+      if (options.sensitive) {
+        const masked = await callFunctionOnSurface(surface, "() => document.activeElement?.tagName === 'INPUT' && document.activeElement.type === 'password'", []);
+        if (masked !== true) throw new Error("Sensitive typing requires a masked password input");
+      }
       const mac = surface.handle.hostKind !== "daytona" && process.platform === "darwin";
       await pressKey(surface, options.replace ? (mac ? "Meta+A" : "Control+A") : (mac ? "Meta+ArrowDown" : "Control+End"));
-      await typeText(surface, text);
+      if (options.typing) {
+        await typeWithCadence(text, options.typing, (character) => typeText(surface, character));
+      } else if (options.intervalMs) {
+        for (const character of text) {
+          await typeText(surface, character);
+          await new Promise((resolve) => setTimeout(resolve, options.intervalMs));
+        }
+      } else {
+        await typeText(surface, text);
+      }
+      if (options.verify) {
+        // Do not serialize the expected value or the located field into errors.
+        const deadline = Date.now() + 5_000;
+        while (Date.now() < deadline) {
+          const found = await locate(surface, target);
+          if (found.value === text) return;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        throw new Error("Typed field did not retain the expected value");
+      }
     });
   }
 
@@ -681,17 +713,7 @@ export class UserChannel implements User {
   notSee(target: Target, options: { timeoutMs?: number } = {}): Promise<void> {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("user", "notSee", `notSee(${targetDetail(target)})`, surface, async () => {
-      const timeoutMs = options.timeoutMs ?? 3_000;
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        try {
-          const found = await locate(surface, target);
-          if (found.visible) throw new VisibleTargetError(`${targetDetail(target)} remained visible. On screen: ${await dumpScreenState(surface)}.`);
-        } catch (error) {
-          if (error instanceof VisibleTargetError) throw error;
-        }
-        await new Promise((resolve) => setTimeout(resolve, Math.min(100, Math.max(0, deadline - Date.now()))));
-      }
+      await assertAbsent(surface, target, options.timeoutMs ?? 3_000);
     });
   }
 
@@ -870,6 +892,33 @@ export class ProbeChannel implements Probe {
       const headers = new Headers(init.headers);
       headers.set("authorization", `Bearer ${session.token}`);
       return denFetch(session, path, { ...init, method: "GET", headers });
+    });
+  }
+
+  desktopApi(path: string): Promise<{ status: number; body: unknown }> {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("probe", "desktopApi", `desktopApi(GET ${path})`, surface, async () => {
+      if (!path.startsWith("/") || path.startsWith("//") || /[\\\s]/.test(path)) {
+        throw new Error("probe.desktopApi requires a root-relative server path.");
+      }
+      const value = await callFunctionOnSurface(surface, `async (path) => {
+        const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
+        if (!info?.running || !info.baseUrl) return { status: 0, body: { error: "local_server_unavailable" } };
+        const response = await fetch(String(info.baseUrl).replace(/\\/+$/, "") + path, {
+          method: "GET",
+          headers: { Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? "") },
+          redirect: "error",
+          signal: AbortSignal.timeout(15_000),
+        });
+        const text = await response.text();
+        let body = text;
+        try { body = text ? JSON.parse(text) : null; } catch {}
+        return { status: response.status, body };
+      }`, [path], { awaitPromise: true, timeoutMs: 20_000 });
+      if (!isRecord(value) || typeof value.status !== "number" || !("body" in value)) {
+        throw new Error("Invalid desktop API probe response.");
+      }
+      return { status: value.status, body: value.body };
     });
   }
 

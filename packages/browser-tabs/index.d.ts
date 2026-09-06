@@ -39,6 +39,8 @@ export type BrowserStatePayload = {
   /** The conversation whose tabs may take the screen. */
   visibleSessionId?: string | null;
   tabs?: BrowserPanelTab[];
+  /** Actual native hierarchy and bounds, included by getState (not state events). */
+  nativeViews?: Array<{ tabId: string; attached: boolean; aboveApp: boolean; bounds: Bounds }>;
 };
 
 export type BrowserPanelOwnerPayload = {

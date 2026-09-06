@@ -142,7 +142,7 @@ function asDesktopPolicy(value: unknown): DenDesktopPolicy | null {
   };
 }
 
-function parseDesktopPolicyList(payload: unknown) {
+export function parseDesktopPolicyList(payload: unknown) {
   if (!isRecord(payload)) return { definitions: [], desktopPolicies: [] };
   return {
     definitions: Array.isArray(payload.definitions)

@@ -415,6 +415,8 @@ import type {
   PostV1ApiKeysResponses,
   PostV1AppsByAppIdDashboardResponses,
   PostV1AppsByAppIdSaveResponses,
+  PostV1AppsByAppIdShareErrors,
+  PostV1AppsByAppIdShareResponses,
   PostV1ArtifactViewsByArtifactViewIdRetireResponses,
   PostV1ArtifactViewsByArtifactViewIdRevisionsByRevisionIdActivateResponses,
   PostV1AuthBootstrapVerifyErrors,
@@ -2827,6 +2829,43 @@ export class DenClient extends HeyApiClient {
     return (options?.client ?? this.client).get<GetV1AppsResponses, unknown, ThrowOnError>({
       url: "/v1/apps",
       ...options,
+    });
+  }
+
+  /**
+   * Share a saved app with a teammate
+   */
+  public postV1AppsByAppIdShare<ThrowOnError extends boolean = false>(
+    parameters: {
+      appId: string;
+      email?: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "appId" },
+            { in: "body", key: "email" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PostV1AppsByAppIdShareResponses,
+      PostV1AppsByAppIdShareErrors,
+      ThrowOnError
+    >({
+      url: "/v1/apps/{appId}/share",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     });
   }
 

@@ -952,17 +952,7 @@ export function SessionPage(props: SessionPageProps) {
         pendingConversationHistoryNavigation.targetSessionId === props.selectedSessionId
       ) {
         setConversationHistory(pendingConversationHistoryNavigation.history);
-        // Restore the split layout recorded at this history step.
-        const targetSplit = pendingConversationHistoryNavigation.targetSplitSessionId;
-        if (targetSplit) {
-          openWorkbenchTab({
-            workspaceId: props.selectedWorkspaceId,
-            sessionId: targetSplit,
-            title: sessionTitleForId(props.sidebar.workspaceSessionGroups, targetSplit, props.selectedWorkspaceId),
-            workspaceTitle: workspaceTitleForId(props.sidebar.workspaceSessionGroups, props.selectedWorkspaceId),
-          });
-        }
-        setWorkbenchSplit(targetSplit ? { workspaceId: props.selectedWorkspaceId, sessionId: targetSplit } : null);
+        // The workbench restores the destination session’s own side chat.
         setPendingConversationHistoryNavigation(null);
         return;
       }

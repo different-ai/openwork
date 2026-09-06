@@ -51,6 +51,7 @@ const refreshTokens = new Set();
 const requests = [];
 const drafts = [];
 let agentWorkloads = [];
+let agentRequiredHeader = null;
 let configuredTools = [];
 
 const gmailThreadId = "thread-q3-launch";
@@ -187,6 +188,12 @@ function validateAgentWorkloads(value) {
     if (finalReplyChunkSize !== null && (!Number.isInteger(finalReplyChunkSize) || finalReplyChunkSize < 1)) {
       throw new Error(`agent workload ${promptMarker} finalReplyChunkSize must be a positive integer`);
     }
+    if (workload.latestUserTurn !== undefined && typeof workload.latestUserTurn !== "boolean") {
+      throw new Error(`agent workload ${promptMarker} latestUserTurn must be a boolean`);
+    }
+    if (workload.finalReplyFrom !== undefined && workload.finalReplyFrom !== "last-tool-text") {
+      throw new Error(`agent workload ${promptMarker} has an unknown reply source`);
+    }
     const steps = workload.steps.map((step) => {
       if (!step || typeof step !== "object" || typeof step.tool !== "string" || !step.tool.trim()) {
         throw new Error(`agent workload ${promptMarker} has an invalid tool step`);
@@ -194,12 +201,15 @@ function validateAgentWorkloads(value) {
       if (!step.arguments || typeof step.arguments !== "object" || Array.isArray(step.arguments)) {
         throw new Error(`agent workload ${promptMarker} tool ${step.tool} needs object arguments`);
       }
-      if (step.argumentsFrom !== undefined && step.argumentsFrom !== "computer-mention") {
+      if (step.argumentsFrom !== undefined && !["computer-mention", "capability-search"].includes(step.argumentsFrom)) {
         throw new Error(`agent workload ${promptMarker} has an unknown argument source`);
       }
       return { tool: step.tool.trim(), arguments: structuredClone(step.arguments), argumentsFrom: step.argumentsFrom };
     });
-    return { promptMarker, finalReply, finalReplyChunkSize, steps };
+    const finalReplyDelayMs = workload.finalReplyDelayMs ?? 0;
+    if (!Number.isInteger(finalReplyDelayMs) || finalReplyDelayMs < 0 || finalReplyDelayMs > 10000)
+      throw new Error("finalReplyDelayMs must be between 0 and 10000");
+    return { promptMarker, finalReply, finalReplyFrom: workload.finalReplyFrom, finalReplyChunkSize, finalReplyDelayMs, steps, latestUserTurn: workload.latestUserTurn === true };
   });
 }
 
@@ -270,6 +280,24 @@ function computerMentionArguments(messages) {
   return { name: "remote-session:create", body: { target, prompt } };
 }
 
+// Resolve execution from the result the engine actually returned to the model.
+function lastToolText(messages) {
+  const message = [...messages].reverse().find((message) => message?.role === "tool");
+  const text = agentContentText(message);
+  if (!text) throw new Error("the model received no tool result");
+  return text;
+}
+
+function capabilitySearchArguments(messages) {
+  let payload = JSON.parse(lastToolText(messages));
+  if (Array.isArray(payload.content)) payload = JSON.parse(agentContentText(payload));
+  const matches = payload.matches;
+  if (!Array.isArray(matches) || matches.length !== 1 || typeof matches[0]?.name !== "string") {
+    throw new Error("capability search did not return exactly one named match");
+  }
+  return { name: matches[0].name };
+}
+
 // Native OpenAI Responses witness for plain-text workloads. Unsupported tool
 // scripts fail explicitly instead of pretending they executed.
 async function handleAgentResponse(req, res, entry) {
@@ -321,10 +349,14 @@ async function handleAgentCompletion(req, res, entry) {
   const model = typeof body.model === "string" ? body.model : "mock-agent-workload-model";
   const messages = Array.isArray(body.messages) ? body.messages : [];
   const conversationText = messages.map(agentContentText).join("\n");
-  const matchedMarkers = agentWorkloads
-    .filter((workload) => conversationText.includes(workload.promptMarker))
-    .map((workload) => workload.promptMarker);
-  const completedTools = messages.filter((message) => message && typeof message === "object" && message.role === "tool").length;
+  const latestUserIndex = messages.findLastIndex((message) => message?.role === "user");
+  const latestUserText = latestUserIndex < 0 ? "" : agentContentText(messages[latestUserIndex]);
+  const matched = agentWorkloads.filter((workload) =>
+    (workload.latestUserTurn ? latestUserText : conversationText).includes(workload.promptMarker));
+  const matchedMarkers = matched.map((workload) => workload.promptMarker);
+  const workload = matched[0];
+  const scopedMessages = workload?.latestUserTurn ? messages.slice(latestUserIndex + 1) : messages;
+  const completedTools = scopedMessages.filter((message) => message && typeof message === "object" && message.role === "tool").length;
   const baseRequest = { model, matchedMarkers, completedTools };
 
   if (!Array.isArray(body.tools) || body.tools.length === 0) {
@@ -341,13 +373,13 @@ async function handleAgentCompletion(req, res, entry) {
     json(res, 400, { error: { message: `expected one workload marker, found ${matchedMarkers.length}` } });
     return;
   }
-  const workload = agentWorkloads.find((candidate) => candidate.promptMarker === matchedMarkers[0]);
   if (!workload) throw new Error("matched agent workload disappeared");
   if (completedTools >= workload.steps.length) {
+    if (workload.finalReplyDelayMs) await new Promise(resolve => setTimeout(resolve, workload.finalReplyDelayMs));
     entry.agentCompletion = { ...baseRequest, kind: "final", promptMarker: workload.promptMarker, toolName: null, arguments: {} };
     agentStream(res, model, [
       agentChunk(model, { role: "assistant" }),
-      ...finalReplyChunks(workload).map((content) => agentChunk(model, { content })),
+      ...finalReplyChunks(workload.finalReplyFrom === "last-tool-text" ? { ...workload, finalReply: lastToolText(scopedMessages) } : workload).map((content) => agentChunk(model, { content })),
       agentChunk(model, {}, "stop"),
     ]);
     return;
@@ -359,7 +391,8 @@ async function handleAgentCompletion(req, res, entry) {
     json(res, 400, { error: { message: `tool ${step.tool} was not offered to the mock agent` } });
     return;
   }
-  const toolArguments = step.argumentsFrom === "computer-mention" ? computerMentionArguments(messages) : step.arguments;
+  const toolArguments = step.argumentsFrom === "computer-mention" ? computerMentionArguments(messages)
+    : step.argumentsFrom === "capability-search" ? capabilitySearchArguments(scopedMessages) : step.arguments;
   const callId = `call_${workload.promptMarker.replace(/[^a-zA-Z0-9_-]/g, "_")}_${completedTools + 1}`;
   entry.agentCompletion = {
     ...baseRequest,
@@ -418,6 +451,7 @@ function protectedResourceMetadata() {
 function authorizationServerMetadata() {
   return {
     issuer,
+    ...(process.env.MOCK_AUTHORIZATION_RESPONSE_ISSUER === undefined ? {} : { authorization_response_iss_parameter_supported: process.env.MOCK_AUTHORIZATION_RESPONSE_ISSUER === "1" }),
     authorization_endpoint: `${issuer}/authorize`,
     token_endpoint: `${issuer}/token`,
     ...(disableDcr ? {} : { registration_endpoint: `${issuer}/register` }),
@@ -513,6 +547,7 @@ function redirectWithCode(res, params) {
 
   const callback = new URL(redirectUri);
   callback.searchParams.set("code", code);
+  if (process.env.MOCK_AUTHORIZATION_RESPONSE_ISSUER === "1") callback.searchParams.set("iss", issuer);
   const state = params.get("state");
   if (state) callback.searchParams.set("state", state);
 
@@ -928,7 +963,14 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === "/admin/agent-workloads" && req.method === "POST") {
       const body = await readJson(req);
+      const requiredHeader = body?.requiredHeader;
+      if (requiredHeader !== undefined && (!requiredHeader || typeof requiredHeader.name !== "string"
+        || !requiredHeader.name.trim() || typeof requiredHeader.value !== "string" || !requiredHeader.value)) {
+        json(res, 400, { error: "requiredHeader needs a name and value" });
+        return;
+      }
       agentWorkloads = validateAgentWorkloads(body?.workloads);
+      agentRequiredHeader = requiredHeader ?? null;
       json(res, 200, { configured: agentWorkloads.length });
       return;
     }

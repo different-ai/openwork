@@ -161,9 +161,10 @@ import { SessionTitle } from "./session-title";
 const OUTCOME_DOT_UNREAD = "#2FBE54";
 const OUTCOME_DOT_NEEDS_ACTION = "#E8933A";
 
-interface SessionLoadingIndicatorProps {
+interface SessionStatusIndicatorProps {
   status?: string;
   isActiveWork: boolean;
+  isUnread: boolean;
 }
 
 function ShowMoreSessionsButton({
@@ -187,32 +188,23 @@ function ShowMoreSessionsButton({
   );
 }
 
-/** Glyph-lane activity only — never used for unread / completion. */
-function SessionLoadingIndicator({ status, isActiveWork }: SessionLoadingIndicatorProps) {
-  if (!isActiveWork) return <SidebarGlyphSlot />;
-
-  const title = isSessionActivityStatus(status) && status !== "idle"
-    ? getSessionActivityStatusLabel(status)
-    : t("workspace_list.session_streaming");
-
+/** Activity and outcomes share the fixed glyph slot before the session title. */
+function SessionStatusIndicator({ status, isActiveWork, isUnread }: SessionStatusIndicatorProps) {
   return (
     <SidebarGlyphSlot>
-      <SessionDotMatrixLoader label={title} />
+      {isActiveWork ? (
+        <SessionDotMatrixLoader label={isSessionActivityStatus(status) && status !== "idle"
+          ? getSessionActivityStatusLabel(status)
+          : t("workspace_list.session_streaming")} />
+      ) : (
+        <SessionOutcomeIndicator status={status} isUnread={isUnread} />
+      )}
     </SidebarGlyphSlot>
   );
 }
 
-interface SessionOutcomeIndicatorProps {
-  className?: string;
-  status?: string;
-  isActiveWork: boolean;
-  isUnread: boolean;
-}
-
-/** Right-edge outcome: orange = needs you, green = unread result, none = read/idle. */
-function SessionOutcomeIndicator({ className, status, isActiveWork, isUnread }: SessionOutcomeIndicatorProps) {
-  if (isActiveWork) return null;
-
+/** Orange = needs you, green = unread result, none = read/idle. */
+function SessionOutcomeIndicator({ status, isUnread }: { status?: string; isUnread: boolean }) {
   if (isNeedsAttentionSessionStatus(status)) {
     const title = isSessionActivityStatus(status)
       ? getSessionActivityStatusLabel(status)
@@ -220,7 +212,7 @@ function SessionOutcomeIndicator({ className, status, isActiveWork, isUnread }: 
     return (
       <span
         data-session-attention-indicator
-        className={cn("size-2 shrink-0 rounded-full", className)}
+        className="size-2 shrink-0 rounded-full"
         style={{ backgroundColor: OUTCOME_DOT_NEEDS_ACTION }}
         title={title}
         aria-label={title}
@@ -233,7 +225,7 @@ function SessionOutcomeIndicator({ className, status, isActiveWork, isUnread }: 
   return (
     <span
       data-session-attention-indicator
-      className={cn("size-2 shrink-0 rounded-full", className)}
+      className="size-2 shrink-0 rounded-full"
       style={{ backgroundColor: OUTCOME_DOT_UNREAD }}
       title={t("workspace_list.session_unread")}
       aria-label={t("workspace_list.session_unread")}
@@ -292,7 +284,7 @@ function SessionMenuContent({
   const canOpenInSplit = Boolean(primary)
     && !isSameWorkbenchSession(sessionRef, primary)
     && !isSameWorkbenchSession(sessionRef, secondary);
-  const canCreateNewSplit = Boolean(primary);
+  const canCreateNewSplit = isSameWorkbenchSession(sessionRef, primary);
   const openInSplitView = () => {
     const tab = {
       workspaceId,
@@ -1620,7 +1612,7 @@ function WorkspaceSidebarGroup({
                     e.stopPropagation();
                     ctx.onCreateTaskInWorkspace(workspace.id);
                   }}
-                  aria-label={t("session.new_task")}
+                  aria-label={`${t("session.new_task")} · ${workspaceLabel(workspace)}`}
                   title={t("session.new_task")}
                 >
                   <Plus className="size-4" />
@@ -2307,17 +2299,11 @@ function SessionMenuItem({
   // Pinned/archived rows identify their workspace via the tooltip title
   // only — no workspace color dot in these sections.
   const leading = (
-    <SessionLoadingIndicator status={sessionActivityStatus} isActiveWork={resolvedActiveWork} />
+    <SessionStatusIndicator status={sessionActivityStatus} isActiveWork={resolvedActiveWork} isUnread={isUnread} />
   );
 
   const trailing = (
     <>
-      <SessionOutcomeIndicator
-        className="absolute right-3 top-1/2 -translate-y-1/2 opacity-100 group-hover/menu-sub-item:opacity-0 max-lg:opacity-0 pointer-coarse:opacity-0 pointer-events-none select-none"
-        status={sessionActivityStatus}
-        isActiveWork={resolvedActiveWork}
-        isUnread={isUnread}
-      />
       <SessionHoverQuickActions
         sessionId={session.id}
         isPinned={isPinned}

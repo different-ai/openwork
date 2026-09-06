@@ -49,7 +49,7 @@ export type OrgSelectionScreenProps = {
 };
 
 const pillButtonClass =
-  "inline-flex h-10 items-center justify-center gap-1.5 rounded-full border border-[var(--dls-border)] bg-[var(--dls-surface)] px-4 text-[13px] font-medium transition-colors hover:bg-[var(--dls-hover)] focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.2)]";
+  "inline-flex h-10 items-center justify-center gap-1.5 rounded-full border border-[var(--dls-border)] bg-[var(--dls-surface)] px-4 text-[13px] font-medium transition-colors hover:bg-[var(--dls-hover)] focus:outline-hidden focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.2)]";
 
 function OrgRow({ org, pending, onPick }: { org: DenOrgSummary; pending: boolean; onPick: (slug: string) => void }) {
   const memberSummary = `${formatRoleLabel(org.role)} · ${org.memberCount} ${org.memberCount === 1 ? "member" : "members"}`;
@@ -59,7 +59,7 @@ function OrgRow({ org, pending, onPick }: { org: DenOrgSummary; pending: boolean
       type="button"
       disabled={pending}
       onClick={() => onPick(org.slug)}
-      className="flex items-center gap-3 rounded-xl border border-[var(--dls-border)] bg-[var(--dls-surface)] px-4 py-3.5 text-left transition-colors hover:border-[var(--dls-text-primary)]/20 hover:bg-[var(--dls-hover)] focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.2)] disabled:cursor-not-allowed disabled:opacity-60"
+      className="flex items-center gap-3 rounded-xl border border-[var(--dls-border)] bg-[var(--dls-surface)] px-4 py-3.5 text-left transition-colors hover:border-[var(--dls-text-primary)]/20 hover:bg-[var(--dls-hover)] focus:outline-hidden focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.2)] disabled:cursor-not-allowed disabled:opacity-60"
     >
       <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-[var(--dls-hover)] text-[var(--dls-text-secondary)]">
         <Building2 className="h-4 w-4" strokeWidth={1.8} />
@@ -171,7 +171,7 @@ export function OrgSelectionScreen({ orgs, pending, errorMessage, onPick, onSign
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search organizations"
-                className="h-12 w-full rounded-xl border border-[var(--dls-border)] bg-[var(--dls-surface)] px-4 text-[15px] text-[var(--dls-text-primary)] placeholder:text-[var(--dls-text-secondary)] focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.2)]"
+                className="h-12 w-full rounded-xl border border-[var(--dls-border)] bg-[var(--dls-surface)] px-4 text-[15px] text-[var(--dls-text-primary)] placeholder:text-[var(--dls-text-secondary)] focus:outline-hidden focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb),0.2)]"
               />
             ) : null}
 

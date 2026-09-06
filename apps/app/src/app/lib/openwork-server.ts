@@ -309,6 +309,8 @@ export type OpenworkWorkspaceCatalogEntry = {
 };
 
 export type OpenworkWorkspaceCatalog = {
+  incomplete?: boolean;
+  skippedDirectories?: string[];
   items: OpenworkWorkspaceCatalogEntry[];
   total: number;
   truncated: boolean;
@@ -1541,6 +1543,20 @@ async function requestBinary(
   return { data, contentType, filename };
 }
 
+export type WorkspaceRunMode = "default" | "approve" | "run-everything";
+export type WorkspaceRunModeResponse = {
+  mode: WorkspaceRunMode | null;
+  catchAll: "ask" | "allow" | "deny" | null;
+  path: string;
+  supported: boolean;
+  reason?: string;
+  refreshPending: boolean;
+};
+export type WorkspaceRunModeUpdate = WorkspaceRunModeResponse & {
+  changed: boolean;
+  refresh: "reloaded" | "deferred" | "skipped";
+};
+
 export function createOpenworkServerClient(options: { baseUrl: string; token?: string; hostToken?: string }) {
   const baseUrl = options.baseUrl.replace(/\/+$/, "");
   const token = options.token;
@@ -1746,6 +1762,14 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         `/workspace/${workspaceId}/config`,
         { token, hostToken, timeoutMs: timeouts.config },
       ),
+    getWorkspaceRunMode: (workspaceId: string) =>
+      requestJson<WorkspaceRunModeResponse>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/permissions/mode`, {
+        token, hostToken, timeoutMs: timeouts.config,
+      }),
+    setWorkspaceRunMode: (workspaceId: string, mode: WorkspaceRunMode) =>
+      requestJson<WorkspaceRunModeUpdate>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/permissions/mode`, {
+        token, hostToken, method: "PUT", body: { mode }, timeoutMs: 60_000,
+      }),
     getEffectivePermissions: (workspaceId: string) =>
       requestJson<OpenworkEffectivePermissionsResponse>(
         baseUrl,

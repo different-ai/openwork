@@ -26,6 +26,8 @@ import { isDesktopRuntime } from "@/app/utils";
 import { t } from "@/i18n";
 import { ControlPlaneUrlEditor } from "../cloud/control-plane-url-editor";
 import { usePlatform } from "../../../kernel/platform";
+import { useFeatureFlagsPreferences } from "../state/feature-flags-preferences";
+import { useDesktopRestriction } from "../../cloud/desktop-config-provider";
 import {
   displayCustomControlPlaneUrl,
   isValidControlPlaneUrl,
@@ -733,6 +735,34 @@ export function AdvancedOpencodeSection(props: AdvancedOpencodeSectionProps) {
           <AlertDescription>{t("settings.exa_unavailable")}</AlertDescription>
         </Alert>
         <LayoutSectionItemFootnote>{t("settings.exa_restart_hint")}</LayoutSectionItemFootnote>
+      </LayoutSectionItem>
+    </LayoutSection>
+  );
+}
+
+export function AdvancedWorkspaceRunModeSection() {
+  const { workspaceRunModeEnabled, toggleWorkspaceRunMode } = useFeatureFlagsPreferences();
+  const restricted = useDesktopRestriction("allowControlSettings");
+  if (!isDesktopRuntime()) return null;
+  return (
+    <LayoutSection id="advanced-workspace-run-mode">
+      <LayoutSectionHeader>
+        <LayoutSectionTitle>Workspace run mode</LayoutSectionTitle>
+        <LayoutSectionDescription>Experimental approval controls in the composer.</LayoutSectionDescription>
+      </LayoutSectionHeader>
+      <LayoutSectionItem>
+        <LayoutSectionItemHeader>
+          <LayoutSectionItemTitle>Show workspace run mode</LayoutSectionItemTitle>
+          <LayoutSectionItemDescription>
+            Choose when OpenWork asks before acting, using the icon beside attachments. Off by default. Available with the standard desktop engine.
+          </LayoutSectionItemDescription>
+          <LayoutSectionItemHeaderActions>
+            <Switch data-testid="workspace-run-mode-flag" aria-label="Show workspace run mode" checked={workspaceRunModeEnabled} disabled={restricted} onCheckedChange={toggleWorkspaceRunMode} />
+          </LayoutSectionItemHeaderActions>
+        </LayoutSectionItemHeader>
+        <LayoutSectionItemFootnote>
+          This switch only shows or hides the control. Hiding it does not reset workspace permissions; choose Workspace defaults in the menu first if you want to remove the override.
+        </LayoutSectionItemFootnote>
       </LayoutSectionItem>
     </LayoutSection>
   );

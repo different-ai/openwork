@@ -43,7 +43,7 @@ function parseSplitFacts(value: unknown): SplitFacts {
   };
 }
 
-test("new split creates fresh same-workspace secondary sessions without moving the primary; New session replaces the focused pane", async ({ world, user, agent, probe, step, place, evidence }) => {
+test("new side chat creates fresh same-workspace secondary sessions without moving the primary; New session replaces the focused pane", async ({ world, user, agent, probe, step, place, evidence }) => {
   // The key chord belongs to the machine running the app, not the one running the spec.
   const paletteShortcut = place.kind !== "daytona" && process.platform === "darwin" ? "Meta+K" : "Control+K";
   const workspaceId = world.workspace.workspaceId;
@@ -62,13 +62,13 @@ test("new split creates fresh same-workspace secondary sessions without moving t
   });
   const beforeIds = before.map((session) => session.sessionId);
 
-  await step("New session and Split view are directly available in the sidebar", async () => {
+  await step("New session is available without a global side-chat button", async () => {
     await user.see({ role: "button", label: "New session" });
     await user.see({ role: "button", label: "Open a second chat" });
     await user.notSee({ role: "button", label: "Create new session" });
   });
 
-  await step("New split in the session context menu opens a fresh secondary", async () => {
+  await step("New side chat in the session context menu opens a fresh secondary", async () => {
     // The sidebar row is the first place the title renders; the pane header comes later in DOM order.
     await user.rightClick({ text: world.session.title });
     await user.see({ role: "menuitem", label: "Open a second chat" });
@@ -80,7 +80,7 @@ test("new split creates fresh same-workspace secondary sessions without moving t
   const { firstFacts, afterContextMenu } = await step("the context menu creates one same-workspace split session", async () => {
     const firstValue = await probe.eventually(() => world.splitFacts(), {
       within: 60_000,
-      label: "context-menu new split layout",
+      label: "context-menu new side chat layout",
       until: (value) => {
         const facts = parseSplitFacts(value);
         return facts.layoutKind === "split"
@@ -167,6 +167,11 @@ test("new split creates fresh same-workspace secondary sessions without moving t
       };
       window.fetch = async (...args) => {
         const url = args[0] instanceof Request ? args[0].url : String(args[0]);
+        if (url.includes("/prompt_async")) {
+          const body = args[0] instanceof Request ? await args[0].clone().json() : JSON.parse(args[1].body);
+          window.__sideChatSystems ??= {};
+          window.__sideChatSystems[url] = body.system;
+        }
         const response = await originalFetch.apply(window, args);
         if (url.includes("/session/" + ${JSON.stringify(primarySessionId)} + "/prompt_async")) {
           window.__splitSendHeld = true;
@@ -193,7 +198,8 @@ test("new split creates fresh same-workspace secondary sessions without moving t
       await probe.eventually(() => world.splitFacts(), {
         within: 15_000,
         label: "the primary pane switches while its previous request remains pending",
-        until: (value) => parseSplitFacts(value).primarySessionId === world.switchSession.sessionId,
+        until: (value) => parseSplitFacts(value).primarySessionId === world.switchSession.sessionId
+          && parseSplitFacts(value).secondaryPaneCount === 0,
       });
       await user.type("composer", world.switchPrompt);
       await user.press("Enter");
@@ -239,6 +245,14 @@ test("new split creates fresh same-workspace secondary sessions without moving t
     });
     expect(await readPaneReplies()).toBe(true);
     expect(await probe.eval("Boolean(document.querySelector('[data-second-chat-intro]'))")).toBe(false);
+    const systems = await probe.eval("window.__sideChatSystems");
+    if (!isRecord(systems)) throw new Error("Missing prompt context witness");
+    const primarySystem = Object.entries(systems).find(([url]) => url.includes("/session/" + primarySessionId + "/"))?.[1];
+    const secondarySystem = Object.entries(systems).find(([url]) => url.includes("/session/" + firstFacts.secondarySessionId + "/"))?.[1];
+    expect(secondarySystem).toContain("This is a side chat associated with a main conversation");
+    expect(secondarySystem).toContain(primarySessionId);
+    expect(primarySystem).not.toContain("This is a side chat associated with a main conversation");
+    evidence.recordAssertionEvidence("Only the side chat receives its main conversation reference", JSON.stringify({ primarySessionId, secondarySessionId: firstFacts.secondarySessionId }), true);
     evidence.recordAssertionEvidence(
       "Both split composers send and receive replies without crossing sessions",
       JSON.stringify({ primarySessionId, secondarySessionId: firstFacts.secondarySessionId }),
@@ -246,7 +260,7 @@ test("new split creates fresh same-workspace secondary sessions without moving t
     );
   });
 
-  await step("New split in the command palette replaces the secondary with another fresh session", async () => {
+  await step("New side chat in the command palette replaces the secondary with another fresh session", async () => {
     await user.press(paletteShortcut);
     await user.see(paletteInput);
     await user.type(paletteInput, "new split", { replace: true });
@@ -262,7 +276,7 @@ test("new split creates fresh same-workspace secondary sessions without moving t
     const afterContextMenuIds = afterContextMenu.map((session) => session.sessionId);
     const secondValue = await probe.eventually(() => world.splitFacts(), {
       within: 60_000,
-      label: "palette new split replaces the secondary session",
+      label: "palette new side chat replaces the secondary session",
       until: (value) => {
         const facts = parseSplitFacts(value);
         return facts.layoutKind === "split"
@@ -401,19 +415,19 @@ test("new split creates fresh same-workspace secondary sessions without moving t
     await user.press("Enter");
   });
 
-  await step("the focused primary is replaced without changing the secondary", async () => {
+  await step("a new primary starts without another session’s side chat", async () => {
     const value = await probe.eventually(() => world.splitFacts(), {
       within: 60_000,
       label: "new session replaces the focused primary",
       until: (candidate) => {
         const facts = parseSplitFacts(candidate);
-        return facts.layoutKind === "split"
+        return facts.layoutKind === "single"
           && /^ses_/.test(facts.primarySessionId)
           && facts.primarySessionId !== primarySessionId
           && !facts.locationHash.includes(primarySessionId)
           && facts.locationHash.includes(`/workspace/${workspaceId}/session/${facts.primarySessionId}`)
-          && facts.secondarySessionId === focusedSecondaryFacts.secondarySessionId
-          && facts.secondaryPaneCount === 1;
+          && facts.secondarySessionId === ""
+          && facts.secondaryPaneCount === 0;
       },
     });
     const focusedPrimaryFacts = parseSplitFacts(value);
@@ -426,8 +440,8 @@ test("new split creates fresh same-workspace secondary sessions without moving t
     expect(focusedPrimaryFacts.primarySessionId).toMatch(/^ses_/);
     expect(focusedPrimaryFacts.primarySessionId).not.toBe(primarySessionId);
     expect(focusedPrimaryFacts.locationHash).toContain(`/workspace/${workspaceId}/session/${focusedPrimaryFacts.primarySessionId}`);
-    expect(focusedPrimaryFacts.secondarySessionId).toBe(focusedSecondaryFacts.secondarySessionId);
-    expect(focusedPrimaryFacts.secondaryPaneCount).toBe(1);
+    expect(focusedPrimaryFacts.secondarySessionId).toBe("");
+    expect(focusedPrimaryFacts.secondaryPaneCount).toBe(0);
     const afterFocusedPrimary = await probe.eventually(() => agent.list(), {
       within: 60_000,
       label: "focused-primary new session appears in the session list",
@@ -435,17 +449,49 @@ test("new split creates fresh same-workspace secondary sessions without moving t
     });
     expect(afterFocusedPrimary).toHaveLength(afterFocusedSecondary.length + 1);
   });
+  await step("two main sessions restore their own side chats independently", async () => {
+    const otherMain = parseSplitFacts(await world.splitFacts()).primarySessionId;
+    await user.press(paletteShortcut);
+    await user.type(paletteInput, "open a second chat", { replace: true });
+    await user.press("Enter");
+    const otherValue = await probe.eventually(() => world.splitFacts(), {
+      within: 60_000,
+      label: "the other main session has its own side chat",
+      until: (value) => parseSplitFacts(value).primarySessionId === otherMain
+        && parseSplitFacts(value).secondaryPaneCount === 1,
+    });
+    const otherSide = parseSplitFacts(otherValue).secondarySessionId;
+    expect(otherSide).not.toBe(focusedSecondaryFacts.secondarySessionId);
+    for (const [main, side] of [[primarySessionId, focusedSecondaryFacts.secondarySessionId], [otherMain, otherSide]]) {
+      await agent.run("workbench.session.focus", { sessionId: main });
+      await probe.eventually(() => world.splitFacts(), {
+        within: 15_000,
+        label: "each main session restores only its associated side chat",
+        until: (value) => parseSplitFacts(value).primarySessionId === main
+          && parseSplitFacts(value).secondarySessionId === side,
+      });
+    }
+    await probe.eval(`document.querySelector('[data-workbench-pane="secondary"] button[aria-label="Back to main chat"]')?.setAttribute("data-testid", "close-owned-side-chat")`);
+    await user.click({ testId: "close-owned-side-chat" });
+    await probe.eventually(() => world.splitFacts(), {
+      within: 15_000, label: "the current side chat closes",
+      until: (value) => parseSplitFacts(value).secondaryPaneCount === 0,
+    });
+    await agent.run("workbench.session.focus", { sessionId: primarySessionId });
+    await probe.eventually(() => world.splitFacts(), {
+      within: 15_000, label: "closing another side chat preserves the first session's side chat",
+      until: (value) => parseSplitFacts(value).primarySessionId === primarySessionId
+        && parseSplitFacts(value).secondarySessionId === focusedSecondaryFacts.secondarySessionId,
+    });
+    evidence.recordAssertionEvidence("Two main sessions restore separate side chats; closing one does not close the other", JSON.stringify({ primarySessionId, otherMain, otherSide }), true);
+  });
   await step("side chat has clear controls and closing it preserves both conversations", async () => {
     await user.see({ text: "Main chat" });
     await user.see({ role: "button", label: "Use as main chat" });
     const beforeClose = parseSplitFacts(await world.splitFacts());
     const sessionsBeforeClose = await agent.list();
-    expect(await probe.eval(`(() => {
-      const button = document.querySelector('[data-sidebar-new-split]');
-      if (!(button instanceof HTMLButtonElement) || button.getAttribute('aria-label') !== 'Back to main chat') return false;
-      button.click();
-      return true;
-    })()`)).toBe(true);
+    await probe.eval(`document.querySelector('[data-sidebar-new-split]')?.setAttribute("data-testid", "sidebar-return")`);
+    await user.click({ testId: "sidebar-return" });
     await probe.eventually(() => world.splitFacts(), {
       within: 15_000,
       label: "sidebar closes the side chat without replacing the main chat",
@@ -466,12 +512,8 @@ test("new split creates fresh same-workspace secondary sessions without moving t
         && parseSplitFacts(value).secondaryPaneCount === 1,
     }));
     await user.screenshot();
-    expect(await probe.eval(`(() => {
-      const button = [...document.querySelectorAll('[data-workbench-pane-header="secondary"] button')].find((item) => item.textContent?.trim() === 'Use as main chat');
-      if (!(button instanceof HTMLButtonElement)) return false;
-      button.click();
-      return true;
-    })()`)).toBe(true);
+    await probe.eval(`document.querySelector('[data-workbench-pane-header="secondary"] button[aria-label="Use as main chat"]')?.setAttribute("data-testid", "pane-promote")`);
+    await user.click({ testId: "pane-promote" });
     await probe.eventually(() => world.splitFacts(), {
       within: 30_000,
       label: "Expand makes the side conversation the full-width main chat",
@@ -492,12 +534,8 @@ test("new split creates fresh same-workspace secondary sessions without moving t
         && parseSplitFacts(value).secondaryPaneCount === 1,
     });
     const beforePaneClose = (await agent.list()).map((session) => session.sessionId).sort();
-    expect(await probe.eval(`(() => {
-      const button = document.querySelector('[data-workbench-pane-header="secondary"] button[aria-label="Back to main chat"]');
-      if (!(button instanceof HTMLButtonElement)) return false;
-      button.click();
-      return true;
-    })()`)).toBe(true);
+    await probe.eval(`document.querySelector('[data-workbench-pane-header="secondary"] button[aria-label="Back to main chat"]')?.setAttribute("data-testid", "pane-return")`);
+    await user.click({ testId: "pane-return" });
     await probe.eventually(() => world.splitFacts(), {
       within: 30_000,
       label: "the pane return button keeps the main conversation open",
@@ -514,8 +552,8 @@ test("new split creates fresh same-workspace secondary sessions without moving t
     );
   });
   evidence.recordAssertionEvidence(
-    "New splits preserve the primary, and New session replaces only the focused pane",
-    "Context-menu and command-palette splits each created one distinct same-workspace secondary session. The focused-secondary and focused-primary New session actions each preserved the opposite pane and created exactly one session.",
+    "Side chats belong to their main session",
+    "Context-menu and command-palette splits each created one distinct same-workspace secondary session. A new primary had no side chat; returning to the original primary restored its own side chat.",
     true,
   );
 

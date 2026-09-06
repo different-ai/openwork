@@ -1,5 +1,6 @@
 import { realpath } from "node:fs/promises";
 import { z } from "zod";
+import { visualizationSchema } from "@openwork/types/visualization";
 import type { OpenworkAffordanceEffects } from "@openwork/types/openwork-affordance";
 import { automationProposalSchema } from "@openwork/types/automations";
 import {
@@ -118,6 +119,7 @@ const sessionMessageSchema = z.object({
 
 const OPENWORK_AGENT_SURFACE_INSTRUCTION =
   `## OpenWork app context
+For lightweight UI mockups, wireframes, and design iterations, use openwork_visualization to show a native OpenWork-styled sketch in the conversation. Keep the design id when revising, increment revision, and send the complete updated design. Mock controls are illustrative; use the normal app-building workflow when a working app is requested.
 Use openwork_context when the request depends on the current OpenWork screen, open tabs, split view, focused pane, sidebar, side panel, settings panel, or available app actions.
 Each affordance declares its effects and executor. Use openwork_query only for side-effect-free affordances whose executor is OpenWork. Use openwork_execute for OpenWork commands without activating the desktop window. If executor names another tool, call that exact tool instead.
 Reading another session does not require opening it. Prefer session.search then session.read for transcript questions; use session.create for new chats and a UI command only when the user asks to navigate.
@@ -938,6 +940,13 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
     );
   },
   tool: {
+    openwork_visualization: {
+      description: "Show a lightweight UI mockup inline in OpenWork using native OpenWork styling. Use for wireframes, screen layouts, and design iteration instead of ASCII UI. Provide a title, optional navigation, and sections of text, metrics, fields, buttons, lists, or image placeholders. These are mock controls, not a working app. For revisions, keep the same id and send the complete updated mockup with an increased revision; earlier versions remain in the conversation. No HTML, scripts, servers, or files needed.",
+      args: visualizationSchema.shape,
+      async execute(rawArgs: unknown) {
+        return JSON.stringify(visualizationSchema.parse(rawArgs));
+      },
+    },
     openwork_context: {
       description: "Read one semantic snapshot of OpenWork: current screen, retained conversation tabs, split view and focused pane, sidebar and side panel state, settings panel, provider contributions, remote skill guidance, and available affordances with explicit effects and executors.",
       args: {},

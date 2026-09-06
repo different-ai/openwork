@@ -207,6 +207,27 @@ async function approvePendingPermission(appSurface: App, workspaceId: string, se
   return statuses.length;
 }
 
+async function expectLeftSessionIndicator(appSurface: App, sessionId: string, kind: "loading" | "attention"): Promise<void> {
+  const fact = await eventually(() => evalIn(appSurface, `(() => {
+    const row = document.querySelector('[data-sidebar-session-id="' + CSS.escape(${JSON.stringify(sessionId)}) + '"]');
+    const title = row?.querySelector("[data-session-title-slot]");
+    const indicators = row?.querySelectorAll("[data-session-loading-indicator], [data-session-attention-indicator]");
+    const indicator = row?.querySelector(${JSON.stringify(`[data-session-${kind}-indicator]`)});
+    if (!(title instanceof HTMLElement) || !(indicator instanceof HTMLElement)) return false;
+    const box = indicator.getBoundingClientRect();
+    const style = getComputedStyle(indicator);
+    return indicators?.length === 1 && box.width > 0 && box.height > 0
+      && box.right <= title.getBoundingClientRect().left
+      && style.visibility === "visible" && style.opacity === "1";
+  })()`), {
+    within: 15_000,
+    intervalMs: 250,
+    label: `exactly one visible ${kind} indicator before the session title`,
+    until: (value) => value === true,
+  });
+  expect(fact).toBe(true);
+}
+
 async function readVisibleTool(
   appSurface: App,
   sessionId: string,
@@ -338,6 +359,7 @@ test.skipIf(!runnable)(
       },
     );
     expect(visibleBeforeSwitch.visible).toBe(true);
+    await expectLeftSessionIndicator(desktopApp, chatA, "loading");
 
     await clickSessionRow(desktopApp, workspaceB.workspaceId, chatB);
     const absentFromChatB = await readVisibleTool(desktopApp, chatB, runningTool.callId);
@@ -386,6 +408,7 @@ test.skipIf(!runnable)(
     );
     await screenshot(desktopApp);
 
+    await clickSessionRow(desktopApp, workspaceB.workspaceId, chatB);
     const completed = await eventually(
       () => readSessionFacts(desktopApp, workspaceA.workspaceId, chatA),
       {
@@ -398,6 +421,14 @@ test.skipIf(!runnable)(
       },
     );
     expect(completed.text).toContain(completionMarker);
+    await expectLeftSessionIndicator(desktopApp, chatA, "attention");
+    evidence.recordAssertionEvidence(
+      "Session activity and unread completion use the same left indicator slot",
+      "During the run and after completion in another chat, exactly one visible indicator was positioned before chat A's title; no second status indicator remained on the right.",
+      true,
+    );
+    await screenshot(desktopApp);
+    await clickSessionRow(desktopApp, workspaceA.workspaceId, chatA);
     const visibleAfterCompletion = await eventually(
       () => readVisibleTool(desktopApp, chatA, laterTool.callId),
       {

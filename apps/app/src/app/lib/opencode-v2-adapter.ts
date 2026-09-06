@@ -9,6 +9,7 @@ import type {
   SessionStatus,
   TextPart,
   ToolPart,
+  UnknownError,
 } from "@opencode-ai/sdk/v2/client";
 
 import { createClient, createDesktopFetch, type FieldsResult } from "./opencode";
@@ -55,6 +56,7 @@ type PromptParameters = SessionParameters & {
 
 type SessionCreateParameters = DirectoryParameters & {
   model?: ModelBinding;
+  title?: string;
 };
 
 type SessionUpdateParameters = SessionParameters & {
@@ -94,6 +96,7 @@ export type V2MappedMessage = {
       created: number;
       completed?: number;
     };
+    error?: UnknownError;
   };
   parts: Part[];
 };
@@ -182,7 +185,7 @@ function readTimestamp(value: Record<string, unknown>): number {
   return readNumber(value, "timestamp") ?? Date.now();
 }
 
-function mapV2Session(value: unknown, directory: string | undefined): Session | null {
+function mapV2Session(value: unknown, directory: string | undefined, eventCreated?: number): Session | null {
   const data = responseData(value);
   if (!isRecord(data)) return null;
   const source = readRecord(data, "info") ?? data;
@@ -190,7 +193,7 @@ function mapV2Session(value: unknown, directory: string | undefined): Session | 
   if (!id) return null;
   const time = readRecord(source, "time");
   const location = readRecord(source, "location");
-  const created = readNumber(time, "created") ?? readNumber(source, "created") ?? 0;
+  const created = readNumber(time, "created") ?? readNumber(source, "created") ?? eventCreated ?? 0;
   const updated = readNumber(time, "updated") ?? readNumber(source, "updated") ?? created;
   const archived = readNumber(time, "archived");
   const parentID = readString(source, "parentID");
@@ -199,7 +202,8 @@ function mapV2Session(value: unknown, directory: string | undefined): Session | 
     slug: readString(source, "slug") ?? id,
     projectID: readString(source, "projectID") ?? "v2",
     directory: readString(source, "directory") ?? readString(location, "directory") ?? directory ?? "",
-    title: readString(source, "title") ?? "Untitled session",
+    // Keep native untitled sessions eligible for compatibility title recovery.
+    title: readString(source, "title") || `New session - ${new Date(created).toISOString()}`,
     version: readString(source, "version") ?? "v2",
     time: {
       created,
@@ -359,15 +363,20 @@ function mapV2Message(value: unknown, sessionID: string): V2MappedMessage | null
   const completed = readNumber(time, "completed");
   const resolvedSessionID = readString(value, "sessionID") ?? sessionID;
   const parts = mapV2MessageParts(value, id, resolvedSessionID, created);
+  const role = messageRole(value);
+  const error = readRecord(value, "error");
   return {
     info: {
       id,
       sessionID: resolvedSessionID,
-      role: messageRole(value),
+      role,
       time: {
         created,
         ...(completed === undefined ? {} : { completed }),
       },
+      ...(role === "assistant" && error
+        ? { error: { name: "UnknownError", data: { message: errorMessage(error) } } }
+        : {}),
     },
     parts,
   };
@@ -696,6 +705,33 @@ export function translateV2Event(
   const properties = eventProperties(value);
   const sessionID = readSessionID(properties);
 
+  if (type === "session.inbox.enqueued") {
+    const messageID = readString(properties, "inboxID");
+    const item = readRecord(properties, "item");
+    const payload = readRecord(item, "payload");
+    if (!sessionID || !messageID || readString(item, "type") !== "user" || !payload) return null;
+    // The inbox ID becomes the persisted user-message ID on delivery. Using
+    // it here lets the live row reconcile with history without duplicating it.
+    const message = mapV2Message({
+      ...payload,
+      id: messageID,
+      type: "user",
+      time: { created: readNumber(value, "created") ?? readTimestamp(properties) },
+    }, sessionID);
+    if (!message) return null;
+    return [
+      { type: "message.updated", properties: { info: message.info } },
+      ...message.parts.map((part): OpencodeEvent => ({ type: "message.part.updated", properties: { part } })),
+    ];
+  }
+
+  if (type === "session.inbox.cancelled") {
+    const messageID = readString(properties, "inboxID");
+    return sessionID && messageID
+      ? [{ type: "message.removed", properties: { sessionID, messageID } }]
+      : null;
+  }
+
   if (type === "session.execution.started") {
     if (!sessionID) return null;
     return [{ type: "session.status", properties: { sessionID, status: { type: "busy" } } }];
@@ -903,13 +939,23 @@ export function translateV2Event(
     return sessionID ? [{ type: "session.idle", properties: { sessionID } }] : null;
   }
 
-  if (type === "session.created" || type === "session.renamed") {
-    const info = mapV2Session(properties, readString(readRecord(value, "location") ?? {}, "directory"));
+  if (type === "session.created") {
+    const info = mapV2Session(
+      properties,
+      readString(readRecord(value, "location") ?? {}, "directory"),
+      readNumber(value, "created"),
+    );
     if (!info) return null;
     return [{
-      type: type === "session.created" ? "session.created" : "session.updated",
+      type: "session.created",
       properties: { info },
     }];
+  }
+
+  if (type === "session.renamed") {
+    const title = readString(properties, "title");
+    if (!sessionID || title === undefined) return null;
+    return [{ type: "session.updated", properties: { info: { id: sessionID, title } } }];
   }
 
   if (type === "session.deleted") {
@@ -1271,6 +1317,7 @@ export function createClientV2(
     const location = parameters.directory ?? directory;
     const result = await request("POST", "/api/session", {
       ...(model ? { model } : {}),
+      ...(parameters.title === undefined ? {} : { title: parameters.title }),
       ...(location ? { location: { directory: location } } : {}),
     }, options?.signal);
     if (!result.response.ok) return failedResult(result);

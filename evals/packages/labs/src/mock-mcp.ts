@@ -24,16 +24,22 @@ export interface MockToolCall {
 
 export interface MockAgentToolStep {
   /** Derive the handoff from the actual model input instead of fixture arguments. */
-  argumentsFrom?: "computer-mention";
+  argumentsFrom?: "computer-mention" | "capability-search";
   tool: string;
   arguments: Record<string, unknown>;
 }
 
 export interface MockAgentWorkload {
+  /** Chat Completions: match the latest user message and count only its tool rounds. */
+  latestUserTurn?: boolean;
   promptMarker: string;
   finalReply: string;
+  /** Return text actually delivered by the engine after its last tool invocation. */
+  finalReplyFrom?: "last-tool-text";
   /** Stream the final reply as consecutive content deltas of this many characters instead of one. */
   finalReplyChunkSize?: number;
+  /** Hold the final response before sending headers, to exercise loading transitions. */
+  finalReplyDelayMs?: number;
   /** Tool calls the agent makes before its final reply; empty answers directly. */
   steps: MockAgentToolStep[];
 }
@@ -87,6 +93,8 @@ export interface StartMockMcpOptions {
   publicUrl?: string;
   /** Advertised OAuth/resource origin when the mock sits behind a proxy; defaults to the mock's own URL. */
   issuer?: string;
+  /** Set RFC 9207 metadata explicitly; undefined omits it. Only true includes response iss. */
+  authorizationResponseIssuerSupported?: boolean;
   profileId?: EnterpriseMcpProfileId;
   fault?: string;
   oauthClientSecret?: string;
@@ -97,6 +105,8 @@ export interface StartMockMcpOptions {
   appToolName?: string;
   /** Script deterministic OpenAI-compatible agent turns through this mock. */
   agentWorkloads?: MockAgentWorkload[];
+  /** Verify native provider requests retain this private model header. */
+  agentRequiredHeader?: { name: string; value: string };
 }
 
 export type EnterpriseMcpProfileId =
@@ -316,6 +326,7 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
         PORT: String(port),
         ISSUER: options.issuer ?? url,
         AUTO_APPROVE: "1",
+        ...(options.authorizationResponseIssuerSupported === undefined ? {} : { MOCK_AUTHORIZATION_RESPONSE_ISSUER: options.authorizationResponseIssuerSupported ? "1" : "0" }),
         ...(options.allowUnauthenticatedMcp ? { MOCK_ALLOW_UNAUTHENTICATED_MCP: "1" } : {}),
         ...(options.extraToolCount ? { MOCK_EXTRA_TOOL_COUNT: String(options.extraToolCount) } : {}),
         ...(options.appToolName ? { MOCK_APP_TOOL_NAME: options.appToolName } : {}),
@@ -346,7 +357,7 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
     const response = await fetch(`${url}/admin/agent-workloads`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ workloads: options.agentWorkloads }),
+      body: JSON.stringify({ workloads: options.agentWorkloads, requiredHeader: options.agentRequiredHeader }),
       signal: AbortSignal.timeout(15_000),
     });
     if (!response.ok) {

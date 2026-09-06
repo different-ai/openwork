@@ -573,7 +573,7 @@ export function InstallScreen() {
 
                       <div className="flex h-10 w-fit max-w-full items-stretch overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_1px_2px_rgba(16,24,40,0.05)]" data-testid="install-workspace-address">
                         <input
-                          className="min-w-0 grow bg-transparent pl-3.5 pr-3 font-mono text-[13px] font-medium text-slate-950 outline-none"
+                          className="min-w-0 grow bg-transparent pl-3.5 pr-3 font-mono text-[13px] font-medium text-slate-950 outline-hidden"
                           value={workspaceAddress}
                           readOnly
                           size={Math.max(workspaceAddress.length, 12)}

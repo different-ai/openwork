@@ -30,7 +30,7 @@ escalate any leak instead of rewriting history.
 
 ## Verification (every change)
 
-- Proof is a journey spec in `evals/specs/**` (`*.e2e.test.ts` drives the app/Den; `*.test.ts` hits a server or gateway boundary). Unit tests are not proof and never live in `evals/specs`; the boundary ratchet rejects new ones that import product source, read the repo, or spawn test runners.
+- Proof is a journey spec in `evals/specs/**` or `scenarios/<name>/e2e.test.ts` (`*.e2e.test.ts` drives the app/Den; `*.test.ts` hits a server or gateway boundary). Unit tests are not proof and never live in journey directories; the boundary ratchet rejects new ones that import product source, read the repo, or spawn test runners.
 - Default is zero new test files: run the journey spec that covers the change; extend it for a gap; new file only for a new user journey.
 - Run `pnpm evals:e2e <slug>` or `pnpm evals:pr specs/<name>.test.ts`; report the printed placement and verdict.
 - `Passed` requires an observable assertion for every claim; skips are never passed.
@@ -70,3 +70,14 @@ escalate any leak instead of rewriting history.
 - Smallest possible diff, then make it smaller. Propose the simpler solution. No
   fallback expressions when types or control flow already guarantee a value.
 - If asked to do too much at once, stop and say so.
+
+## Hands-on PR previews
+
+For a preview the user can test inside Codex, use
+[preview-my-work](.opencode/skills/preview-my-work/SKILL.md): named Daytona
+worlds for Den or real Electron through noVNC, with isolated scenarios,
+frontend updates, reset and teardown.
+
+## Reusable scenarios
+
+Start at [scenarios/README.md](scenarios/README.md) for workflows, videos, and documentation screenshots. Keep each scenario together; reuse the existing world, testkit, behavior, and DocShot packages. Author ordinary TypeScript functions and React/Remotion components.

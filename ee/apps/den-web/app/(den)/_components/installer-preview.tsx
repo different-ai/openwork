@@ -33,10 +33,10 @@ function MacMenuBar({ appName }: { appName: string }) {
 function MacDock() {
   return (
     <div className="absolute bottom-2.5 left-1/2 flex h-[3.25rem] -translate-x-1/2 items-center gap-2 rounded-2xl border border-white/40 bg-white/30 px-2.5 shadow-[0_8px_22px_rgba(0,0,0,0.22)]">
-      <span className="size-9 rounded-[9px] bg-gradient-to-b from-[#4aa8f0] to-[#2f6fdd]" />
-      <span className="size-9 rounded-[9px] bg-gradient-to-b from-white to-[#dfe3ea]" />
-      <span className="size-9 rounded-[9px] bg-gradient-to-b from-[#5fd08a] to-[#28a35f]" />
-      <span className="size-9 rounded-[9px] bg-gradient-to-b from-[#9aa1ab] to-[#6b727c]" />
+      <span className="size-9 rounded-[9px] bg-linear-to-b/srgb from-[#4aa8f0] to-[#2f6fdd]" />
+      <span className="size-9 rounded-[9px] bg-linear-to-b/srgb from-white to-[#dfe3ea]" />
+      <span className="size-9 rounded-[9px] bg-linear-to-b/srgb from-[#5fd08a] to-[#28a35f]" />
+      <span className="size-9 rounded-[9px] bg-linear-to-b/srgb from-[#9aa1ab] to-[#6b727c]" />
       <span className="h-9 w-px bg-white/50" />
       <span className="grid size-9 place-items-center rounded-[9px] bg-white shadow-[inset_0_0_0_1px_rgba(0,0,0,0.08)]">
         <span className="size-4 rounded-[5px] bg-[#101828]" />
