@@ -1109,12 +1109,14 @@ export function translateV2Event(
 async function* translateV2Events(
   response: Response,
   signal: AbortSignal | undefined,
+  fetchSession: (sessionID: string, signal: AbortSignal) => Promise<Session | null>,
   directory?: string,
 ): AsyncGenerator<OpencodeEvent> {
   if (!response.body) return;
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   const state = createV2EventTranslationState();
+  const discoveredForks = new Set<string>();
   let buffer = "";
   try {
     while (!signal?.aborted) {
@@ -1136,6 +1138,34 @@ async function* translateV2Events(
         }
         const eventDirectory = isRecord(event) ? readString(readRecord(event, "location") ?? {}, "directory") : undefined;
         if (directory && (!eventDirectory || normalizeDirectoryPath(directory) !== normalizeDirectoryPath(eventDirectory))) continue;
+        if (isRecord(event) && event.type === "session.forked") {
+          const sessionID = readSessionID(eventProperties(event));
+          if (!sessionID || discoveredForks.has(sessionID)) continue;
+          // Fork events contain ancestry, not a session. In particular their
+          // parentID must not turn the new root conversation into a task child.
+          const timeout = AbortSignal.timeout(2_000);
+          const lookupSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
+          let onAbort = () => {};
+          const aborted = new Promise<null>((resolve) => {
+            onAbort = () => resolve(null);
+            lookupSignal.addEventListener("abort", onAbort, { once: true });
+            if (lookupSignal.aborted) onAbort();
+          });
+          try {
+            // Desktop IPC may not cancel its transport; still bound SSE delay.
+            const info = await Promise.race([fetchSession(sessionID, lookupSignal), aborted]);
+            if (lookupSignal.aborted || !info || info.id !== sessionID || !info.directory) continue;
+            if (eventDirectory && normalizeDirectoryPath(info.directory) !== normalizeDirectoryPath(eventDirectory)) continue;
+            discoveredForks.add(sessionID);
+            yield { type: "session.created", properties: { info } };
+          } catch {
+            // Deleted sessions and unavailable lookups must not end the SSE
+            // stream. A replay or the normal list refresh can discover it later.
+          } finally {
+            lookupSignal.removeEventListener("abort", onAbort);
+          }
+          continue;
+        }
         const translated = translateV2Event(event, state);
         if (!translated) continue;
         for (const item of translated) yield item;
@@ -1666,7 +1696,10 @@ export function createClientV2(
           throw error;
         }
         return {
-          stream: translateV2Events(response, options?.signal, directory),
+          stream: translateV2Events(response, options?.signal, async (sessionID, signal) => {
+            const result = await request("GET", `/api/session/${encodeURIComponent(sessionID)}`, undefined, signal);
+            return result.response.ok ? mapV2Session(result.payload, undefined) : null;
+          }, directory),
         };
       },
     },
