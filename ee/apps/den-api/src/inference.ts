@@ -564,6 +564,14 @@ export async function getInferenceStatus(organizationId: OrgId) {
   // while individual members are missing keys/providers after manual deletes.
   if (inference?.enabled === true) {
     try {
+      // Roll expired usage buckets forward so the dashboard never reports a
+      // stale window (e.g. an exhausted five-hour bucket whose reset time has
+      // already passed).
+      await syncInferenceLimitPolicies({ organizationId, tier: inference.tier, memberCount })
+    } catch {
+      // Status should still return even if bucket roll-forward fails.
+    }
+    try {
       const members = await listOrgMembers(organizationId)
       for (const member of members) {
         await repairMemberInferenceAccessIfNeeded({
