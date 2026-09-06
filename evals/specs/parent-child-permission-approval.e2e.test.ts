@@ -62,7 +62,7 @@ function text(value: unknown): string {
 
 const questionTest = spec.world(delegatedQuestionHandoff, { timeout: 600_000 });
 
-questionTest("a parent answers its real child question without settling an unrelated root question", async ({ world, user, agent, probe, step }) => {
+questionTest("a parent answers its real child question without settling an unrelated root question", async ({ world, user, probe, step }) => {
   const v2 = world.engine === "v2";
   const mount = `/workspace/${encodeURIComponent(world.workspace.workspaceId)}/${v2 ? "opencode2/api" : "opencode"}`;
   const sessionPath = (id: string) => `/session/${encodeURIComponent(id)}`;
@@ -97,8 +97,10 @@ questionTest("a parent answers its real child question without settling an unrel
         })),
       }];
     });
-  const open = async (sessionId: string) => {
-    await agent.run("session.open", { sessionId });
+  const open = async (sessionId: string, title: string) => {
+    // A pending question replaces the composer. Navigate as a person rather
+    // than waiting for the control rail's composer-based readiness check.
+    await user.click({ role: "button", label: title });
     await probe.eventually(() => probe.hash(), {
       within: 30_000, label: "the requested root conversation is selected",
       until: (hash) => hash.includes(`/session/${sessionId}`),
@@ -145,7 +147,7 @@ questionTest("a parent answers its real child question without settling an unrel
   });
 
   const child = await step("the parent displays only its delegated child's question", async () => {
-    await open(world.root.sessionId);
+    await open(world.root.sessionId, "Delegated question parent");
     await user.notSee({ text: world.unrelated.question });
     await send(world.root.prompt);
     const requests = await probe.eventually(pending, {
@@ -218,7 +220,7 @@ questionTest("a parent answers its real child question without settling an unrel
   });
 
   await step("the unrelated root remains answerable without changing the parent's result", async () => {
-    await open(unrelated.sessionID);
+    await open(unrelated.sessionID, "Unrelated question root");
     await user.see({ text: world.unrelated.question });
     await user.notSee({ text: world.child.question });
     await user.click({ role: "button", label: /^Unrelated outline/ });
