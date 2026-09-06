@@ -74,6 +74,7 @@ export function load(url, context, next) {
 
 register(`data:text/javascript,${encodeURIComponent(hooks)}`);
 const { createBrowserPanel } = await import("./browser-panel.mjs");
+// @ts-expect-error The registered test-only Electron stub exports its view inventory.
 const { createdViews } = await import("electron");
 
 const PANEL_BOUNDS = { x: 800, y: 40, width: 400, height: 900 };
