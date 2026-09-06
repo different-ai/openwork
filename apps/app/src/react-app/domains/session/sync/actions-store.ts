@@ -495,7 +495,8 @@ export function createSessionActionsStore(options: {
     const c = options.client();
     if (!c) return;
 
-    const compactShortcut = /^\/compact(?:\s+.*)?$/i.test(content);
+    const compactShortcut = !resolvedDraft.text.trimStart().startsWith("[connect-skill ")
+      && /^\/compact(?:\s+.*)?$/i.test(content);
     const compactCommand = resolvedDraft.command?.name === "compact" || compactShortcut;
     const commandName = compactCommand ? "compact" : (resolvedDraft.command?.name ?? null);
     if (compactCommand && !options.selectedSessionId()) {

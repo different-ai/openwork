@@ -38,7 +38,7 @@ test("computer mentions steer tasks through Connect and Automations names the co
 
   await step("skill mentions keep generated instructions out of the user message", async () => {
     for (const { token, visible, hidden } of [
-      { token: "[skill summarize]", visible: "[skill summarize] COMPUTER-PLAIN-TASK Summarize notes.", hidden: /Load \[skill summarize\] and follow its instructions/ },
+      { token: "[skill summarize]", visible: "summarize COMPUTER-PLAIN-TASK Summarize notes.", hidden: /Load \[skill summarize\] and follow its instructions/ },
       { token: "[connect-skill summarize|Summarize|Team tools|skill:summarize]", visible: "/summarize COMPUTER-PLAIN-TASK Summarize notes.", hidden: /skill:summarize/ },
     ]) {
       await user.click({ role: "button", label: "New task" });
