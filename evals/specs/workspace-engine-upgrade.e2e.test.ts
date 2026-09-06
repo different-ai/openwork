@@ -25,6 +25,8 @@ test("existing workspaces create usable sessions after changing chat engines", a
   await user.reload();
   await user.see("composer", { timeoutMs: 60_000 });
 
+  const failures: string[] = [];
+  let continuity: unknown;
   await step("create a new chat in the selected existing workspace", async () => {
     await user.click({ role: "button", label: "New session" });
     await probe.eventually(() => probe.hash(), { within: 30_000,
@@ -69,7 +71,11 @@ test("existing workspaces create usable sessions after changing chat engines", a
       { role: "user", text: "hi" }, { role: "assistant", text: reply },
     ]);
     await user.click("Run task");
-    await expect.soft(user.see({ text: "hi" }, { timeoutMs: 2_000 })).resolves.toBeUndefined();
+    try {
+      await user.see({ text: /^hi$/ }, { timeoutMs: 2_000 });
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : String(error));
+    }
     await user.screenshot();
     await user.see({ text: reply }, { timeoutMs: 90_000 });
     await user.see("Run task", { timeoutMs: 30_000 });
@@ -77,8 +83,7 @@ test("existing workspaces create usable sessions after changing chat engines", a
     console.info("[workspace upgrade] native events", JSON.stringify(await probe.eval(`(() => {
       const witness = window.__upgradeEventWitness; witness.stop(); return witness.events;
     })()`)));
-    // Soft assertion lets the same run witness sidebar creation as well.
-    expect.soft(await transcript.finish()).toMatchObject({ seen: [true, true], violations: [], stopped: false });
+    continuity = await transcript.finish();
   });
 
   await step("a sidebar new session belongs to the engine that will open it", async () => {
@@ -97,8 +102,15 @@ test("existing workspaces create usable sessions after changing chat engines", a
     const v1 = await probe.desktopApi(`${prefix}/opencode/session/${sessionId}`);
     console.info("[workspace upgrade] created-session ownership", JSON.stringify({ sessionId, v1: v1.status, v2: v2.status }));
     await user.screenshot();
-    expect.soft(v2.status).toBe(200);
-    expect.soft(v1.status).toBe(404);
-    await user.notSee({ text: /SessionNotFoundError|Session not found|Session could not be loaded/ });
+    if (v2.status !== 200 || v1.status !== 404) {
+      failures.push(`Created session belongs to the wrong engine: v1=${v1.status}, v2=${v2.status}`);
+    }
+    try {
+      await user.notSee({ text: /SessionNotFoundError|Session not found|Session could not be loaded/ });
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : String(error));
+    }
   });
+  expect(continuity).toMatchObject({ seen: [true, true], violations: [], stopped: false });
+  expect(failures).toEqual([]);
 });
