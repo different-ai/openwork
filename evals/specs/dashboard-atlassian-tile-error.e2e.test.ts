@@ -75,6 +75,7 @@ test(
     expect(jqlTile.opaque).toBe(false);
     expect(confluenceTile.text).toContain("rejected the tool arguments");
     expect(jqlTile.text).toContain("rejected the tool arguments");
+    await user.screenshot();
 
     // The witness saw both launches with the pasted arguments byte-identical
     // and no cloudId — the provider rejection is the only failure in the chain.
