@@ -634,14 +634,13 @@ test(teamJourney, { timeout: 20 * 60_000 }, async ({ world: selectedWorld, user,
     expect(count(permissionsText, "Allowed")).toBe(lockedKeys.length - 1);
     evidence.recordAssertionEvidence("The Custom account permissions tab shows Settings Allowed and tools Blocked", permissionsText, count(permissionsText, "Blocked") === 1 && count(permissionsText, "Allowed") === lockedKeys.length - 1);
     await member.user.looks(["The dedicated App permissions tab shows Change app settings Allowed and Add tools, skills & MCP servers Blocked, without a policy banner"]);
-    // The MCP status arrives separately from the shared plugin inventory and
-    // inserts a notice above Add. Wait for both before locating the button.
+    // Wait for the Library data, then open Add from the current view. Changing
+    // its inventory filter navigates again and is unrelated to this assertion.
     await member.user.click({ role: "button", label: "Back to app" });
     await member.user.click("Library");
     await member.user.see(manageExtensionsNotice, { timeoutMs: 90_000 });
     await member.user.see({ text: world.pluginName }, { timeoutMs: 90_000 });
     await member.user.see({ text: "No MCP servers configured yet." }, { timeoutMs: 90_000 });
-    await member.user.click({ role: "button", label: /^All$/ });
     await member.user.click({ role: "button", label: /^Add$/ });
     await member.user.see({ testId: "library-add-choices" });
     await member.user.see({ text: "Organization MCP" });
