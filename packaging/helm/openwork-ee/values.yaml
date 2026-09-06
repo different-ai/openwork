@@ -1,6 +1,13 @@
 nameOverride: ""
 fullnameOverride: ""
 
+# Kubernetes namespace where every namespaced resource (Deployments, Services,
+# ConfigMap, Secret, Ingress, migration Job, ...) is deployed. The chart sets
+# metadata.namespace explicitly so `helm template | kubectl apply` pipelines do
+# not fall back to the kubectl context namespace (e.g. kube-system). When using
+# `helm install`, keep this aligned with `--namespace` / the release namespace.
+namespace: openwork
+
 image:
   tag: latest
   pullPolicy: IfNotPresent

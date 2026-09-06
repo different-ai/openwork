@@ -3,6 +3,7 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: {{ include "openwork-ee.fullname" . }}-env-probe
+  namespace: {{ include "openwork-ee.namespace" . }}
   labels:
     {{- include "openwork-ee.componentLabels" (dict "root" . "component" "env-probe") | nindent 4 }}
   annotations:

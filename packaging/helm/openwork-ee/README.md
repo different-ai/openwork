@@ -85,6 +85,33 @@ ingress:
     host: api.openwork.example.com
 ```
 
+### Namespace
+
+The chart sets `metadata.namespace` on every namespaced resource (Deployments,
+Services, ConfigMap, Secret, Ingress, migration Job) from the `namespace` value,
+which defaults to `openwork`:
+
+~~~yaml
+namespace: openwork
+~~~
+
+To use the Helm release namespace instead, set `namespace: ""` (or `--set namespace=`).
+
+This keeps `helm template ... | kubectl apply -f -` pipelines from falling back
+to the kubectl context namespace (e.g. `kube-system`). When installing with
+Helm, keep `namespace` aligned with the release namespace:
+
+```bash
+helm upgrade --install openwork-ee oci://ghcr.io/different-ai/charts/openwork-ee \
+  --namespace openwork \
+  --create-namespace \
+  -f values.prod.yaml
+```
+
+When applying rendered manifests directly, create the namespace first
+(`kubectl create namespace openwork`) since Helm does not create it for you in
+that flow.
+
 ### Upgrade note: public URL values
 
 Current chart versions make `config.public.webOrigin` the primary public URL.

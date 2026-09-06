@@ -1,6 +1,9 @@
 OpenWork EE has been rendered with:
 
   DEN_BASE_URL={{ .Values.config.public.webOrigin }}
+  namespace={{ include "openwork-ee.namespace" . }}
+
+All namespaced resources target the namespace above (values: namespace).
 
 DEN_BASE_URL is now the primary public Den URL. den-api derives Better Auth,
 CORS/trusted origins, web-app hosts, API defaults, and MCP resource defaults

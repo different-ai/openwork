@@ -3,6 +3,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: {{ include "openwork-ee.denWebServiceName" . }}
+  namespace: {{ include "openwork-ee.namespace" . }}
   labels:
     {{- include "openwork-ee.componentLabels" (dict "root" . "component" "den-web") | nindent 4 }}
   {{- with .Values.denWeb.service.annotations }}
@@ -29,6 +30,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "openwork-ee.fullname" . }}-den-web
+  namespace: {{ include "openwork-ee.namespace" . }}
   labels:
     {{- include "openwork-ee.componentLabels" (dict "root" . "component" "den-web") | nindent 4 }}
 spec:

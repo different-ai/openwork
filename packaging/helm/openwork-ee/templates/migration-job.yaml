@@ -4,6 +4,7 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: {{ include "openwork-ee.fullname" . }}-migrate
+  namespace: {{ include "openwork-ee.namespace" . }}
   labels:
     {{- include "openwork-ee.componentLabels" (dict "root" . "component" "migration") | nindent 4 }}
   {{- if .Values.migrations.hook }}
