@@ -98,6 +98,20 @@ function verifyRuntimeDependencies(context) {
   }
 }
 
+function verifyComputerUseArchitecture(context, helperPath) {
+  // electron-builder uses the numeric Arch enum; accept names for callers too.
+  const arch = typeof context.arch === "number"
+    ? ["ia32", "x64", "armv7l", "arm64", "universal"][context.arch] : context.arch;
+  const required = { x64: ["x86_64"], arm64: ["arm64"], universal: ["x86_64", "arm64"] }[arch];
+  if (!required) throw new Error(`Unsupported Computer Use helper architecture: ${context.arch}`);
+  const executable = path.join(helperPath, "Contents", "MacOS", "ComputerUse");
+  const result = spawnSync("lipo", [executable, "-verify_arch", ...required], { encoding: "utf8" });
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`Packaged Computer Use helper must contain ${required.join(" and ")}; rebuild it for the package target`);
+  }
+}
+
 function signComputerUseHelper(context) {
   const appPath = resolveMacAppPath(context);
   if (!appPath) return;
@@ -106,6 +120,8 @@ function signComputerUseHelper(context) {
   if (!fs.existsSync(helperPath)) {
     throw new Error(`Missing Computer Use helper app at ${helperPath}`);
   }
+
+  verifyComputerUseArchitecture(context, helperPath);
 
   const identity = process.env.OPENWORK_COMPUTER_USE_CODESIGN_IDENTITY
     || process.env.CSC_NAME
@@ -139,6 +155,7 @@ function copyExecutableTargetToAlias(sidecarsDir, targetName, aliasName) {
 
 async function afterPack(context) {
   verifyRuntimeDependencies(context);
+  signComputerUseHelper(context);
   const triple = targetTriple(context.electronPlatformName, context.arch);
   if (!triple) return;
 
@@ -172,10 +189,9 @@ async function afterPack(context) {
       fs.rmSync(path.join(sidecarsDir, entry), { force: true, recursive: true });
     }
   }
-
-  signComputerUseHelper(context);
 }
 
 module.exports = afterPack;
 module.exports.default = afterPack;
 module.exports.normalizeAsarEntryPath = normalizeAsarEntryPath;
+module.exports.verifyComputerUseArchitecture = verifyComputerUseArchitecture;

@@ -26,6 +26,7 @@ const hasFlag = (name) => process.argv.slice(2).includes(name);
 const outDir = resolve(readArg("--outdir") ?? join(desktopRoot, "resources", "helpers"));
 const force = hasFlag("--force") || process.env.OPENWORK_COMPUTER_USE_FORCE_BUILD === "1";
 const appPath = join(outDir, helperAppName);
+const executablePath = join(appPath, "Contents", "MacOS", helperExecutableName);
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -118,17 +119,35 @@ if (process.platform !== "darwin") {
   process.exit(0);
 }
 
-if (!force && existsSync(join(appPath, "Contents", "MacOS", helperExecutableName))) {
+// Use the same target contract as prepare-sidecar, including cross-builds.
+const target = readArg("--target") ?? process.env.TAURI_ENV_TARGET_TRIPLE
+  ?? process.env.CARGO_CFG_TARGET_TRIPLE ?? process.env.TARGET;
+const arch = target === undefined ? ({ arm64: "arm64", x64: "x86_64" })[process.arch]
+  : ({ "aarch64-apple-darwin": "arm64", "x86_64-apple-darwin": "x86_64" })[target];
+if (!arch) throw new Error(`Unsupported Computer Use helper target: ${target ?? process.arch}`);
+
+function hasTargetArchitecture(executable) {
+  const result = spawnSync("lipo", [executable, "-verify_arch", arch], { encoding: "utf8" });
+  if (result.error) throw result.error;
+  return result.status === 0;
+}
+
+if (!force && existsSync(executablePath) && hasTargetArchitecture(executablePath)) {
   process.stdout.write(JSON.stringify({ ok: true, skipped: true, appPath }, null, 2) + "\n");
   process.exit(0);
 }
 
-run("swift", ["build", "--package-path", packagePath, "-c", "release", "--product", productName], { stdio: "inherit" });
-const binPathResult = run("swift", ["build", "--package-path", packagePath, "-c", "release", "--show-bin-path"]);
+const buildArgs = ["build", "--package-path", packagePath, "-c", "release", "--arch", arch];
+run("swift", [...buildArgs, "--product", productName], { stdio: "inherit" });
+const binPathResult = run("swift", [...buildArgs, "--show-bin-path"]);
 const binDir = binPathResult.stdout.trim();
 const builtExecutable = join(binDir, productName);
 if (!existsSync(builtExecutable)) {
   throw new Error(`Swift build succeeded, but ${builtExecutable} was not found`);
+}
+
+if (!hasTargetArchitecture(builtExecutable)) {
+  throw new Error(`Built Computer Use helper does not contain ${arch}`);
 }
 
 rmSync(appPath, { recursive: true, force: true });
