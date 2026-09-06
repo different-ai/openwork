@@ -73,6 +73,15 @@ export async function attachedCanary(seed: Seed, { place }: { place: Place }) {
     if (!record(info) || info.id !== sandbox.id || info.name !== sandbox.name) throw new Error("Owned CLI sandbox identity mismatch");
     return { id: sandbox.id, state: info.state };
   }
+  async function runtimeState(state: "stopped" | "started") {
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      const runtime = await owned("runtime");
+      if (runtime.state === state) return runtime;
+      await delay(1_000);
+    }
+    throw new Error(`CLI did not confirm runtime ${state} within 60 seconds`);
+  }
 
   // Explicit reuse + provision:false neither signs in nor creates/deletes server resources.
   const den = await seed.den({ reuse: { apiUrl, webUrl }, provision: false, web: true });
@@ -98,9 +107,9 @@ export async function attachedCanary(seed: Seed, { place }: { place: Place }) {
       const runtime = await owned("runtime");
       if (runtime.state !== "started") throw new Error("CLI runtime must be started before manual restart");
       await cli(["stop", runtime.id]);
-      const stopped = await owned("runtime");
-      if (stopped.state !== "stopped") throw new Error("CLI did not confirm runtime stopped");
+      const stopped = await runtimeState("stopped");
       await cli(["start", runtime.id]);
+      await runtimeState("started");
       await cli(["exec", runtime.id, "--", "sh -c 'nohup sh /tmp/cloud-web-canary/start.sh >/tmp/cloud-web-canary/restart.log 2>&1 </dev/null &'"]);
       const deadline = Date.now() + 120_000;
       while (Date.now() < deadline) {
