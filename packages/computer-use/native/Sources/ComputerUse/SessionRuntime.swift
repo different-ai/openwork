@@ -21,6 +21,9 @@ final class SessionRuntime {
         var generation = 0
         var paused = false
         var pauseReason: String?
+        var interactionDeadline: TimeInterval?
+        var needsRefresh = true
+        let purpose: String
         var observation: ObservationLease?
         var records: [ElementRecord] = []
         var actionCount = 0
@@ -29,6 +32,7 @@ final class SessionRuntime {
     }
     init() {
         controls.onPause = { [weak self] reason in self?.pause(reason) }
+        controls.onUserInteraction = { [weak self] in self?.personInteracted() }
         controls.onResume = { [weak self] in Task { await self?.resume() } }
         controls.onStop = { [weak self] in self?.close() }
         controls.onTick = { [weak self] in self?.expire() }
@@ -67,7 +71,7 @@ final class SessionRuntime {
             try Task.checkCancellation()
             _ = try access.validate(target, app: identity)
             let id = UUID().uuidString.lowercased()
-            session = Session(id: id, app: identity, target: target, mode: mode, started: now, lastUsed: now)
+            session = Session(id: id, app: identity, target: target, mode: mode, started: now, lastUsed: now, purpose: purpose)
             lease = reservation
             controls.show(app: identity, target: target, mode: mode, purpose: purpose)
             if mode == .control {
@@ -93,7 +97,9 @@ final class SessionRuntime {
             try a.only(["session_id"])
             let current = try current(try a.string("session_id"), allowPaused: true)
             var status: [String: Any] = ["ok": true, "session_id": current.id, "mode": current.mode.rawValue,
-                "state": current.paused ? "paused" : "active", "actions": current.actionCount,
+                "state": current.paused ? "paused" : "active", "phase": phase(current),
+                "purpose": current.purpose, "window_title": current.target.title, "panel_visible": controls.isVisible,
+                "actions": current.actionCount,
                 "expires_in_seconds": max(0, Int(900 - (now - current.started))),
                 "next": current.paused ? "human_takeover" : "observe"]
             if let reason = current.pauseReason { status["pause_reason"] = reason }
@@ -129,6 +135,23 @@ final class SessionRuntime {
         return current
     }
     private func observe(_ id: String, image: Bool) async throws -> [[String: Any]] {
+        // Retry only read-only capture races. Never repeat an action or cross takeover.
+        let generation = try current(id).generation
+        session?.needsRefresh = true
+        controls.update("Refreshing the approved window before continuing…", paused: false)
+        for attempt in 0..<3 {
+            guard try current(id).generation == generation else {
+                throw UseError("session_changed", "Control changed during refresh.", next: "human_takeover")
+            }
+            do { return try await observeAttempt(id, image: image) }
+            catch let error as UseError {
+                guard error.code == "stale_observation", attempt < 2 else { throw error }
+                try await Task.sleep(nanoseconds: 75_000_000)
+            }
+        }
+        throw UseError("stale_observation", "The window is still changing. Observe again.", next: "observe")
+    }
+    private func observeAttempt(_ id: String, image: Bool) async throws -> [[String: Any]] {
         let current = try current(id)
         // Invalidate the last token before attempting a fresh read, including failed captures.
         session?.observation = nil; session?.records = []
@@ -151,6 +174,8 @@ final class SessionRuntime {
         let observation = ObservationLease(id: UUID().uuidString.lowercased(), createdAt: now, generation: current.generation,
             frame: bounds, imageWidth: width, imageHeight: height, stateDigest: access.digest(state), imageDigest: imageDigest)
         session?.observation = observation; session?.records = state.records; session?.lastUsed = now
+        session?.needsRefresh = false
+        controls.update("OpenWork is working. You can take over at any time.", paused: false)
         let elements = state.records.map { record -> [String: Any] in
             var value: [String: Any] = ["ref": record.ref, "role": record.role, "label": record.label,
                 "enabled": record.enabled, "actions": record.actions.isEmpty ? [] : ["press"], "settable": record.settable,
@@ -220,15 +245,28 @@ final class SessionRuntime {
             return text(receipt)
         }
     }
+    private func phase(_ current: Session) -> String {
+        if let deadline = current.interactionDeadline, now < deadline { return "person_interacting" }
+        if current.paused { return "ready_to_continue" }
+        return current.needsRefresh ? "refreshing" : "working"
+    }
+    private func personInteracted() {
+        guard session != nil else { return }
+        pause("You have control. Click Continue when you are ready.")
+        session?.interactionDeadline = now + 1
+        controls.update("You have control. Waiting for your input to finish…", paused: true, canContinue: false)
+    }
     func pause(_ reason: String) {
         guard let current = session, !current.paused || resumingSessionID == current.id else { return }
         input.releaseAll()
         session?.pauseReason = reason
+        session?.needsRefresh = true
         session?.paused = true; session?.generation += 1; session?.observation = nil; session?.records = []
         controls.update(reason, paused: true)
     }
     private func resume() async {
-        guard let current = session, current.paused, resumingSessionID == nil else { return }
+        guard let current = session, current.paused, resumingSessionID == nil,
+              current.interactionDeadline.map({ now >= $0 }) ?? true else { return }
         resumingSessionID = current.id
         defer { if resumingSessionID == current.id { resumingSessionID = nil } }
         do {
@@ -251,8 +289,10 @@ final class SessionRuntime {
             _ = try access.validate(current.target, app: current.app, requireFrontmost: current.mode == .control)
             expire(); guard session != nil else { return }
             session?.pauseReason = nil
+            session?.interactionDeadline = nil
+            session?.needsRefresh = true
             session?.paused = false; session?.generation += 1; session?.observation = nil; session?.lastUsed = now
-            controls.update("OpenWork is working. You can take over at any time.", paused: false)
+            controls.update("Refreshing the approved window before continuing…", paused: false)
         } catch {
             guard session?.id == current.id else { return }
             session?.pauseReason = error.localizedDescription
@@ -261,6 +301,10 @@ final class SessionRuntime {
     }
     private func expire() {
         guard let current = session else { return }
+        if let deadline = current.interactionDeadline, now >= deadline {
+            session?.interactionDeadline = nil
+            controls.update(current.pauseReason ?? "You have control. Click Continue when you are ready.", paused: true)
+        }
         controls.updateExpiry(seconds: max(0, Int(900 - (now - current.started))))
         if now - current.started >= 900 || current.app.app.isTerminated { close(); return }
         if !current.paused && now - current.lastUsed >= 120 { pause("Paused after two minutes without activity.") }

@@ -11,6 +11,20 @@ final class DragSurface: NSView {
     override func mouseUp(with event: NSEvent) { ups += 1 }
 }
 
+@MainActor
+final class RefreshLabel: NSTextField {
+    var remainingChanges = 0
+    var reads = 0
+    override func accessibilityValue() -> String? {
+        reads += 1
+        if remainingChanges != 0 {
+            if remainingChanges > 0 { remainingChanges -= 1 }
+            stringValue = remainingChanges == 0 ? "Ready after refresh" : "Updating \(reads)"
+        }
+        return super.accessibilityValue()
+    }
+}
+
 // Disposable, in-memory application and person-input driver for the native
 // journey. This is never included in the product helper or its package.
 @MainActor
@@ -20,6 +34,7 @@ final class Fixture: NSObject, NSApplicationDelegate {
     var count = 0
     var otherCount = 0
     let dragSurface = DragSurface(frame: NSRect(x: 20, y: 5, width: 360, height: 25))
+    let refreshLabel = RefreshLabel(labelWithString: "Ready after refresh")
     let counter = NSTextField(labelWithString: "Count: 0")
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Window IDs sort by creation: require choosing the nondefault window.
@@ -29,7 +44,7 @@ final class Fixture: NSObject, NSApplicationDelegate {
         draft.setAccessibilityLabel("Draft text")
         let secret = NSSecureTextField(string: "private-fixture-value")
         secret.setAccessibilityLabel("Password")
-        let stack = NSStackView(views: [NSTextField(labelWithString: "Computer Use Fixture"), draft, increment, counter, secret])
+        let stack = NSStackView(views: [NSTextField(labelWithString: "Computer Use Fixture"), draft, increment, counter, secret, refreshLabel])
         stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 16
         stack.frame = NSRect(x: 24, y: 35, width: 340, height: 250)
         first.contentView?.addSubview(stack)
@@ -63,6 +78,12 @@ final class Fixture: NSObject, NSApplicationDelegate {
         let method = request["method"] as? String ?? ""
         var result: [String: Any] = [:]
         switch method {
+        case "refresh_changes":
+            refreshLabel.reads = 0
+            refreshLabel.remainingChanges = (request["params"] as? [String: Any])?["continuous"] as? Bool == true ? -1 : 2
+            result = ["ok": true]
+        case "refresh_stable": refreshLabel.remainingChanges = 0; refreshLabel.stringValue = "Ready after refresh"; result = ["ok": true]
+        case "refresh_state": result = ["reads": refreshLabel.reads, "text": refreshLabel.stringValue]
         case "state": result = ["count": count, "otherCount": otherCount, "draft": draft.stringValue]
         case "minimized": result = ["minimized": windows[0].isMiniaturized]
         case "minimize": windows[0].miniaturize(nil); result = ["ok": true]
@@ -119,7 +140,7 @@ final class Fixture: NSObject, NSApplicationDelegate {
         case "press_helper_button", "select_helper_window", "helper_panel":
             Task.detached {
                 var result: [String: Any] = [:]
-                let buttons: Set<String> = ["Allow this session", "Cancel", "Take over", "Continue", "Stop"]
+                let buttons: Set<String> = ["Allow this session", "Cancel", "Take over", "Continue", "Stop", "Hide panel", "Show Computer Use task"]
                 if let params = request["params"] as? [String: Any], let pid = params["pid"] as? Int32,
                    let name = params["name"] as? String,
                    (method == "helper_panel" || (method == "select_helper_window" ? name == "Workspace window" : buttons.contains(name))),
@@ -128,7 +149,14 @@ final class Fixture: NSObject, NSApplicationDelegate {
                    process.executableURL?.resolvingSymlinksInPath().path == URL(fileURLWithPath: expected).resolvingSymlinksInPath().path {
                     if method == "helper_panel" {
                         let task = self.findControl(pid: pid, title: nil, role: kAXWindowRole)
-                        result = ["text": task.map(self.accessibleText) ?? ""]
+                        let button = self.findControl(pid: pid, title: "Continue", role: kAXButtonRole)
+                        var enabled: CFTypeRef?
+                        if let button { AXUIElementCopyAttributeValue(button, kAXEnabledAttribute as CFString, &enabled) }
+                        let restore = self.findControl(pid: pid, title: "Show Computer Use task", role: kAXMenuBarItemRole)
+                        var help: CFTypeRef?
+                        if let restore { AXUIElementCopyAttributeValue(restore, kAXHelpAttribute as CFString, &help) }
+                        result = ["restore_help": help as? String ?? "", "text": task.map(self.accessibleText) ?? "", "continue_enabled": enabled as? Bool ?? false,
+                                  "restore_available": self.findControl(pid: pid, title: "Show Computer Use task", role: kAXMenuBarItemRole) != nil]
                     } else {
                         result = method == "select_helper_window" ? self.selectWindow(pid: pid, title: name) : ["ok": self.pressButton(pid: pid, title: name)]
                     }
@@ -200,7 +228,7 @@ final class Fixture: NSObject, NSApplicationDelegate {
         return ["ok": true, "previous": previous as? String ?? "", "selected": selected as? String ?? ""]
     }
     nonisolated func pressButton(pid: pid_t, title: String) -> Bool {
-        guard let button = findControl(pid: pid, title: title, role: kAXButtonRole) else { return false }
+        guard let button = findControl(pid: pid, title: title, role: title == "Show Computer Use task" ? kAXMenuBarItemRole : kAXButtonRole) else { return false }
         return AXUIElementPerformAction(button, kAXPressAction as CFString) == .success
     }
 }
