@@ -119,9 +119,11 @@ export function WorkflowOverviewTab({
               ) : (
                 <p className="text-[13px] text-gray-500">This workflow uses structured input. Review its saved values under Advanced input before running.</p>
               )}
-              <details className="text-[12px] text-gray-500" open={showJsonInput} onToggle={(event) => onShowJsonInputChange(event.currentTarget.open)}>
-                <summary className="cursor-pointer font-medium">Advanced input</summary>
-                <label className="mt-3 block">
+              <div className="text-[12px] text-gray-500">
+                <DenButton type="button" variant="ghost" size="xs" aria-expanded={showJsonInput} onClick={() => onShowJsonInputChange(!showJsonInput)}>
+                  Advanced input
+                </DenButton>
+                {showJsonInput ? <label className="mt-3 block">
                   Workflow input (JSON)
                   <DenTextarea
                     aria-label="Run input details"
@@ -129,8 +131,8 @@ export function WorkflowOverviewTab({
                     value={fields.input}
                     onChange={(event) => onInputChange(event.currentTarget.value)}
                   />
-                </label>
-              </details>
+                </label> : null}
+              </div>
               <div className="border-t border-gray-100 pt-4">
                 <DenButton type="submit" icon={RefreshCw} loading={pending} className="w-full sm:w-auto">
                   {pending ? "Running…" : "Run workflow"}

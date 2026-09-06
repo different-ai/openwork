@@ -172,8 +172,12 @@ test("workflow activity shows linked version diagrams and keeps one-off and inac
     await user.see({ testId: "workflow-overview" }, { text: /Run workflow[\s\S]*Latest result[\s\S]*How it works/, timeoutMs: 60_000 });
     await user.see({ testId: "den-workflow-input-form" });
     await user.notSee({ label: "Run input details" });
-    await user.notSee({ text: /No custom display yet/ });
     const beforeRun = await readRuns();
+    await user.see({ testId: "workflow-overview" }, { text: /^(?![\s\S]*No custom display yet)[\s\S]*Customize result display/ });
+    await user.click({ text: "Customize result display" });
+    await user.see({ text: /No custom display yet/ });
+    await user.click({ text: "Customize result display" });
+    await user.see({ testId: "workflow-overview" }, { text: /^(?![\s\S]*No custom display yet)[\s\S]*Customize result display/ });
     await user.type({ label: /^Topic/ }, "A fresh briefing", { replace: true });
     await user.click({ text: "Advanced input" });
     await user.see({ label: "Run input details" }, { value: JSON.stringify({ topic: "A fresh briefing" }, null, 2) });
