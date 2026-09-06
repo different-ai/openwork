@@ -52,6 +52,7 @@ test("connector-backed tool calls show first-class branding and human-readable l
     await user.see({ text: /^Reading history$/ }, { timeoutMs: 30_000 });
     await user.see({ role: "button", label: /Read history failed/ }, { timeoutMs: 60_000 });
     await user.see("Run task");
+    await user.see({ text: "The history lookup failed." });
     await user.notSee({ role: "button", label: "Read history. Show technical details" });
     await user.notSee({ role: "button", label: /^Ran(?:\s|\.|[0-9]|$)/ });
     expect(await world.den.mocks.connector.toolCalls({ name: "read_history", sinceIso, atLeast: 1 }))
@@ -59,6 +60,7 @@ test("connector-backed tool calls show first-class branding and human-readable l
     await user.screenshot();
     await user.reload();
     await user.see({ role: "button", label: /Read history failed/ }, { timeoutMs: 30_000 });
+    await user.see({ text: "The history lookup failed." });
     await user.notSee({ role: "button", label: "Read history. Show technical details" });
     await user.notSee({ role: "button", label: /^Ran(?:\s|\.|[0-9]|$)/ });
   });
