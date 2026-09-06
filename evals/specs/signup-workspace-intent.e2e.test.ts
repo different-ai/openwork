@@ -406,7 +406,7 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     await mobileUser.notSee({ testId: "den-org-sidebar" });
     expect(await probe.eval(mobile, "document.documentElement.scrollWidth <= window.innerWidth")).toBe(true);
     await mobileUser.press("Control+Home");
-    await mobileUser.looks(["The top of the narrow Tools screen shows legible setup progress and the Give your team a head start heading without horizontal clipping"]);
+    await mobileUser.looks(["The top of the narrow Tools screen shows legible setup progress and the Set up team tools heading without horizontal clipping"]);
     await mobileUser.hover({ role: "button", label: "Continue" });
     await mobileUser.looks(["The lower part of the narrow Tools screen shows readable tool cards and a clear Continue button without horizontal clipping"]);
     await mobileUser.click({ role: "button", label: "Continue" });
@@ -430,9 +430,10 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     expect(await probe.eval(mobile, "document.documentElement.scrollWidth <= window.innerWidth")).toBe(true);
     expect(await connectionsFor(flexibleId)).toEqual(toolsBefore);
     await mobileUser.hover({ role: "button", label: "Email me the download link" });
-    await mobileUser.looks(["The mobile OpenWork Desktop card shows its complete heading, OpenWork mark, explanatory copy, and Email me the download link button in a restrained neutral card"]);
-    await mobileUser.hover({ role: "link", label: "Try OpenWork Web" });
-    await mobileUser.looks(["The mobile OpenWork Web card shows its complete heading, OpenWork mark, access-and-plans explanation, and Try OpenWork Web link without horizontal clipping"]);
+    await mobileUser.looks([
+      "The mobile OpenWork Desktop card shows its complete heading, OpenWork mark, explanatory copy, and Email me the download link button in a restrained neutral card",
+      "The mobile OpenWork Web card shows its complete heading, OpenWork mark, access-and-plans explanation, and Try OpenWork Web link without horizontal clipping",
+    ]);
     await mobileUser.notSee({ role: "button", label: "Open menu" });
     await mobileUser.click({ role: "link", label: "Finish setup" });
     await mobileUser.see({ role: "button", label: "Open menu" }, { timeoutMs: 30_000 });
