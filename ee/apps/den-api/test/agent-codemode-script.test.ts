@@ -177,7 +177,10 @@ test("advertises standard Workflow discovery and execution instructions", async 
     clientInfo: { name: "agent-codemode-test", version: "1.0.0" },
   }))
   expect(initialized.instructions).toContain("Workflows are saved procedures discovered through search_capabilities")
-  expect(initialized.instructions).toContain("run through execute_capability using the exact capability name returned by search")
+  expect(initialized.instructions).toContain("Use execute_capability only with exact names returned by search_capabilities")
+  expect(initialized.instructions).toContain("For an app, dashboard, or artifact view of Workflow results")
+  expect(initialized.instructions).toContain("Direct MCP tools are not capability search results")
+  expect(initialized.instructions).not.toContain("Always call search_capabilities first")
   expect(initialized.instructions).toContain("Workflow runs produce artifacts rendered by render_workflow_artifact")
   expect(initialized.instructions).not.toContain("search/selection tools")
 })
