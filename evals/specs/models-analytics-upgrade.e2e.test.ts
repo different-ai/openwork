@@ -60,6 +60,8 @@ test("an existing Models subscriber can decline, enable and disable task analyti
   await user.see({ role: "tab", label: "Activity" });
   expect(await settings()).toMatchObject({ enabled: true, consentVersion: 1 });
   expect(await activity()).toHaveLength(0);
+  await user.see({ text: "Your next OpenWork Models task appears here" });
+  await user.see({ text: "Tasks using your own provider connections" });
   const subscription = record(record((await api("/v1/inference")).body).inference);
   expect(subscription).toEqual(baseline);
 
@@ -94,11 +96,28 @@ test("an existing Models subscriber can decline, enable and disable task analyti
   expect(record(isolated.body).events).toEqual([]);
   evidence.recordAssertionEvidence("A second paid, opted-in organization cannot see the first organization's activity", "The second organization has analytics access, returns HTTP 200, and sees zero events", true);
 
-  await user.click({ role: "button", label: "Refresh analytics" });
-  await user.see({ text: "completed" });
+  await user.see({ text: "completed" }, { timeoutMs: 45_000 });
+  await user.see({ text: /^(MiniMax-M3, GLM-5\.2|GLM-5\.2, MiniMax-M3)$/ });
+  await user.notSee({ text: "Your next OpenWork Models task appears here" });
+  evidence.recordAssertionEvidence("New Models activity appears without a manual refresh", "The empty activity screen became a completed task showing both real inference models, MiniMax-M3 and GLM-5.2, without reloading or pressing Refresh; provider coverage guidance was visible before the first task", true);
+  await user.screenshot();
   await user.click({ role: "tab", label: "Consumption" });
   await user.see({ text: "$0.0123" });
   await user.screenshot();
+  await world.analyticsStoreUnavailable(true);
+  expect((await api("/v1/inference/analytics/consumption")).response.status).toBe(500);
+  await user.reload();
+  await user.see({ role: "tab", label: "Consumption" }, { timeoutMs: 60_000 });
+  await user.click({ role: "tab", label: "Consumption" });
+  await user.see({ text: "Could not refresh analytics." }, { timeoutMs: 45_000 });
+  await user.notSee({ text: "No usage events yet" });
+  await user.notSee({ text: "No model usage recorded yet" });
+  await user.notSee({ text: "Model calls over time" });
+  await world.analyticsStoreUnavailable(false);
+  await user.click({ role: "button", label: "Refresh analytics" });
+  await user.see({ text: "$0.0123" }, { timeoutMs: 30_000 });
+  await user.notSee({ text: "Could not refresh analytics." });
+  evidence.recordAssertionEvidence("Unavailable Models consumption is an error, not an empty chart", "An analytics storage outage returned HTTP 500 and hid the consumption chart and empty-state claims; Refresh restored the recorded costs after recovery", true);
   const missing = await world.complete({ sessionId: "existing-conversation", taskId: "incomplete-task", prompt: "fixture:missing-usage" });
   expect(missing.status).toBe(200);
   const failed = await world.complete({ sessionId: "existing-conversation", taskId: "failed-task", prompt: "fixture:error" });
@@ -136,8 +155,8 @@ test("an existing Models subscriber can decline, enable and disable task analyti
   await webUser.reload();
   await webUser.see({ role: "tab", label: "Integrations" }, { timeoutMs: 60_000 });
   await webUser.click({ role: "tab", label: "Integrations" });
-  await webUser.click({ text: /^Data region/ });
-  await webUser.press("End"); await webUser.press("Enter");
+  await webUser.click({ role: "button", label: "Data region" });
+  await webUser.click({ role: "option", label: "Self-hosted" });
   await webUser.type({ role: "textbox", label: "Langfuse address" }, "https://127.0.0.1", { replace: true });
   await webUser.type({ role: "textbox", label: "Public key" }, "fixture-public", { replace: true });
   await webUser.type({ label: "Secret key" }, "fixture-secret", { replace: true });

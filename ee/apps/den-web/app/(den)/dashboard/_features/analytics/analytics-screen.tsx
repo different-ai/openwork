@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Activity, CheckCircle2, ChevronRight, Clock, MousePointerClick, Users, Zap } from "lucide-react";
+import { Activity, CheckCircle2, Clock, MousePointerClick, RefreshCw, Users, Zap } from "lucide-react";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { EnterprisePlanNotice } from "../../_components/enterprise-plan-notice";
 import { ModelUsageList } from "./model-usage-list";
@@ -9,6 +9,9 @@ import { ProjectFilter } from "./project-filter";
 import { StatCard } from "./stat-card";
 import { TrendChart } from "./trend-chart";
 import { useAnalytics, useProjectOptions } from "./use-analytics";
+import { AnalyticsPageHeader, analyticsPageClass } from "./analytics-layout";
+import { DenButton } from "../../../_components/ui/button";
+import { DenNotice } from "../../../_components/ui/notice";
 
 /* ── Formatting ── */
 
@@ -46,7 +49,7 @@ export function AnalyticsScreen() {
   const locked = Boolean(orgContext) && !orgContext?.entitlements.analytics;
 
   const projectOptions = useProjectOptions(!locked);
-  const { data, isLoading } = useAnalytics(!locked, projectValue);
+  const { data, isLoading, isFetching, isError, refetch } = useAnalytics(!locked, projectValue);
 
   const projectScoped = projectValue.length > 0;
   const weekly = data?.weekly ?? [];
@@ -56,37 +59,26 @@ export function AnalyticsScreen() {
   const manualModelSessions = data?.models.selection30d.manual ?? 0;
 
   return (
-    <div className="mx-auto max-w-[1100px] px-4 pb-8 pt-4 sm:px-6 md:px-8">
-
-      {/* Breadcrumb */}
-      <div className="flex flex-wrap items-center gap-2.5 border-b border-[#e7e9f0] pb-3">
-        <span className="text-[14px] font-semibold tracking-[-0.01em] text-[#07192C]">{activeOrg?.name ?? "OpenWork Cloud"}</span>
-        <ChevronRight className="h-3.5 w-3.5 text-[#9AA5BA]" />
-        <span className="text-[14px] font-medium tracking-[-0.01em] text-[#5A6886]">Analytics</span>
-      </div>
-
-      {/* Header */}
-      <div className="mt-4 flex flex-wrap items-center gap-2.5">
-        <h1 className="text-[22px] font-semibold tracking-[-0.03em] text-[#07192C]">Usage &amp; adoption</h1>
-        <span className="rounded-full border border-[#d8e0ec] bg-white px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#6F3DFF]">
-          Enterprise
-        </span>
-      </div>
-      <p className="mt-1 text-[14px] leading-6 text-[#5A6886]">
-        See how your team is adopting OpenWork — active members, sessions, and task activity over time.
-        Only event metadata is collected — never prompts, code, or file contents.
-      </p>
+    <div className={analyticsPageClass}>
+      <AnalyticsPageHeader orgSlug={activeOrg?.slug} active="adoption"
+        title="Usage & adoption" description="Understand how your team works in OpenWork, across models and providers."
+        caption="Enterprise analytics · Activity metadata only"
+        action={!locked ? <DenButton variant="secondary" disabled={isFetching} onClick={() => void refetch()}><RefreshCw className={`mr-2 h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`} aria-hidden="true" />Refresh analytics</DenButton> : null} />
 
       {locked ? (
         <div className="mt-5">
           <EnterprisePlanNotice feature="Usage analytics" />
         </div>
-      ) : (
+      ) : isError && !data ? <DenNotice tone="error" message="Could not load analytics. Use Refresh analytics to try again." /> : (
       <>
+      {isError ? <DenNotice tone="error" message="Could not refresh analytics. Showing the last available data." /> : null}
+      <div className="flex flex-wrap items-center justify-between gap-3">
       <ProjectFilter options={projectOptions} value={projectValue} onValueChange={setProjectValue} />
+      <span className="text-xs text-[#637291]">Updates automatically · Trends over 12 weeks</span>
+      </div>
 
       {/* Summary cards */}
-      <div className="mt-5 grid gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           icon={<Users className="h-5 w-5 text-[#6F3DFF]" />}
           title="OpenWork users"
@@ -118,14 +110,14 @@ export function AnalyticsScreen() {
       </div>
 
       {/* Trend charts */}
-      <div className="mt-4 grid gap-3.5 lg:grid-cols-2">
-        <TrendChart
+      <div className="grid gap-3.5 lg:grid-cols-2">
+        <TrendChart isLoading={isLoading}
           title="Weekly active users"
           subtitle={projectScoped ? "Members with project-matched events, last 12 weeks" : "Members with at least one event, last 12 weeks"}
           weeks={weekly}
           series={[{ label: "Active users", color: "#6F3DFF", values: weekly.map((w) => w.activeMembers) }]}
         />
-        <TrendChart
+        <TrendChart isLoading={isLoading}
           title="Sessions per week"
           subtitle="Distinct sessions, last 12 weeks"
           weeks={weekly}
@@ -133,8 +125,8 @@ export function AnalyticsScreen() {
         />
       </div>
 
-      <div className="mt-3.5">
-        <TrendChart
+      <div>
+        <TrendChart isLoading={isLoading}
           title="Tasks per week"
           subtitle="Completed and failed task runs, last 12 weeks"
           weeks={weekly}
@@ -146,7 +138,7 @@ export function AnalyticsScreen() {
       </div>
 
       {/* Model usage */}
-      <div className="mt-5">
+      <div>
         <h2 className="text-[16px] font-semibold tracking-[-0.02em] text-[#07192C]">Models</h2>
         <p className="mt-0.5 text-[12px] text-[#637291]">See which models your team uses and how they are selected.</p>
         <div className="mt-3 grid gap-3.5 lg:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
@@ -171,7 +163,7 @@ export function AnalyticsScreen() {
       </div>
 
       {/* 30-day detail */}
-      <div className="mt-4 grid gap-3.5 sm:grid-cols-3">
+      <div className="grid gap-3.5 sm:grid-cols-3">
         <StatCard
           icon={<Clock className="h-5 w-5 text-[#1D63FF]" />}
           title="Avg task duration"
@@ -196,7 +188,7 @@ export function AnalyticsScreen() {
       </div>
 
       {/* Privacy note */}
-      <p className="mt-5 text-[12px] leading-5 text-[#9AA5BA]">
+      <p className="border-t border-[#e3e7ee] pt-4 text-xs leading-5 text-[#637291]">
         Telemetry never includes prompt contents, code, file contents, diffs, secrets, or terminal output.
         Usage data appears here once members sign in to the OpenWork app and start running tasks.
       </p>

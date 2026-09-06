@@ -28,6 +28,12 @@ async function arrange(command, orgId, inferenceUrl) {
         const events = await db.select({ id: schema.ModelsAnalyticsEventTable.id }).from(schema.ModelsAnalyticsEventTable).where(eq(schema.ModelsAnalyticsEventTable.org_id, id)).limit(1);
         if (settings.length || events.length) throw new Error("Deleted workspace still retains analytics history or integration credentials");
     }
+    else if (command === "pause-analytics") {
+        await db.execute(sql.raw("RENAME TABLE models_analytics_event TO models_analytics_event_unavailable"));
+    }
+    else if (command === "resume-analytics") {
+        await db.execute(sql.raw("RENAME TABLE models_analytics_event_unavailable TO models_analytics_event"));
+    }
     else if (command === "subscription") {
         await db.insert(schema.OrgSubscriptionTable).values({
             id: createDenTypeId("orgSubscription"), organization_id: id, type: "inference", status: "active",
