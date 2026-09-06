@@ -90,6 +90,19 @@ test("advertised write/read calls, split SSE, and a fresh read for each new user
   assert.equal(stats.upstreamCalls, 0);
 });
 
+test("write denials cannot advance to a read or earn a receipt", async (t) => {
+  for (const output of ["Permission denied", "The user specified a rule which prevents you from using this specific tool call."]) {
+    const f = await fixture(t);
+    const messages = initial();
+    const write = await f.message(messages);
+    messages.push(write, result(write.tool_calls[0], output));
+    const response = await f.chat(messages);
+    assert.equal(response.status, 400);
+    assert.equal((await f.stats()).readToolCalls, 0);
+    assert.equal((await f.stats()).verifiedReads, 0);
+  }
+});
+
 test("wrong, missing and error read results cannot earn a receipt or success answer", async (t) => {
   for (const output of [currentRead("wrong_marker"), `Error: ${config.marker}`, config.marker, currentRead().replace(config.filePath, "/different.txt")]) {
     const f = await fixture(t);

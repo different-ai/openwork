@@ -125,7 +125,7 @@ export function createCanaryModel(config, { streamDelayMs = 2_000 } = {}) {
     if (turn.create) {
       const written = result("write");
       if (!written) return issue("write");
-      if (/\b(error|denied|ENOENT)\b/i.test(text(written.content))) throw new Error("Engine write failed");
+      if (/\b(error|denied|ENOENT)\b|prevents you from using this specific tool call/i.test(text(written.content))) throw new Error("Engine write failed");
     }
     const readResult = result("read");
     if (!readResult) return issue("read");
