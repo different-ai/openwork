@@ -191,28 +191,6 @@ test("same-workspace and cross-workspace split sessions retain visible ownership
     await openContextMenuForSession(app, user, sameWorkspacePeer);
     expect(await splitMenuVisible(app)).toBe(true);
     await clickOpenSplit(user);
-    await waitFor(app, `Boolean(document.querySelector('[data-workbench-pane="secondary"]'))`, {
-      timeoutMs: 30_000,
-      label: "same-workspace secondary pane opens",
-    });
-    const sameWorkspaceMountDiagnostic = await evalIn(app, `(() => {
-      const panes = [...document.querySelectorAll('[data-workbench-pane]')];
-      return panes.map((pane) => ({
-        pane: pane.getAttribute('data-workbench-pane'),
-        workspaceId: pane.getAttribute('data-workbench-workspace-id'),
-        surfaces: [...pane.querySelectorAll('[data-session-surface-id]')].map((surface) => ({
-          sessionId: surface.getAttribute('data-session-surface-id'),
-          workspaceId: surface.getAttribute('data-session-surface-workspace-id'),
-        })),
-        text: (pane.textContent ?? '').replace(/\\s+/g, ' ').trim().slice(0, 500),
-      }));
-    })()`);
-    expect(
-      await evalIn(app, `Boolean(document.querySelector(
-        '[data-workbench-pane="secondary"] [data-session-surface-id="${sameWorkspacePeer.sessionId}"]'
-      ))`),
-      `same-workspace mount diagnostic: ${JSON.stringify(sameWorkspaceMountDiagnostic)}`,
-    ).toBe(true);
     await waitFor(app, `Boolean(document.querySelector(
       '[data-workbench-pane="secondary"][data-workbench-workspace-id="${workspaceA}"] [data-session-surface-id="${sameWorkspacePeer.sessionId}"]'
     ))`, { timeoutMs: 60_000, label: "same-workspace split renders" });
