@@ -96,10 +96,11 @@ test("Computer Use respects window consent, fresh observations and the person's 
     const settled = toolState(await world.call("computer_observe", { session_id: session, include_image: false }));
     expect(settled.ok).toBe(true);
     expect(JSON.stringify(settled)).toContain("Ready after refresh");
-    expect(await world.refreshState()).toMatchObject({ text: "Ready after refresh" });
+    expect(await world.refreshState()).toMatchObject({ reads: 4, text: "Ready after refresh" });
     await world.refreshChanges(true);
     const changing = toolState(await world.call("computer_observe", { session_id: session, include_image: false }));
     expect(changing).toMatchObject({ code: "stale_observation", next: "observe" });
+    expect(await world.refreshState()).toMatchObject({ reads: 6 });
     expect(toolState(await action(settled, "after-failed-refresh", { type: "press", ref: refFor(settled, "Increment") })).code).toBe("observation_required");
     expect(await world.state()).toEqual({ count: 0, otherCount: 0, draft: "Initial draft" });
     await world.refreshStable();
