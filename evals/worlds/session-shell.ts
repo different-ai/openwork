@@ -219,32 +219,10 @@ export async function workspaceNewTask(seed: Seed) {
   return oneWorkspace(seed, `openwork-kitchen-vercel-env-hit-target-${Date.now()}`);
 }
 
-// TODO(primitive): seed.workspace should resolve only after the workspace's first session load settles; until then session.create_task returns no id (#4364).
-async function waitForWorkspaceSessionsLoaded(
-  seed: Seed,
-  app: Awaited<ReturnType<Seed["desktop"]>>,
-  workspaceId: string,
-  timeoutMs = 60_000,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let lastState: unknown = null;
-  while (Date.now() < deadline) {
-    lastState = await seed.evalIn(app, `(workspaceId) => {
-      const route = window.__openwork?.slice?.("route");
-      const workspace = (route?.workspaces ?? []).find((item) => item.id === workspaceId);
-      return workspace ? { exists: true, loading: workspace.loading } : { exists: false, loading: null };
-    }`, { args: [workspaceId] });
-    if (isRecord(lastState) && lastState.exists === true && lastState.loading === false) return;
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  throw new Error(`Workspace ${workspaceId} did not finish its first session load within ${timeoutMs}ms. Last state: ${JSON.stringify(lastState)}`);
-}
-
 export async function pinnedSessions(seed: Seed) {
   const app = await seed.desktop({ name: "pinned-sessions-exposed" });
   const workspacePath = seed.tmpPath("pinned-sessions-exposed");
   const workspace = await seed.workspace(app, workspacePath);
-  await waitForWorkspaceSessionsLoaded(seed, app, workspace.workspaceId);
   const [candidate, neighbor] = await seed.sessions(app, ["Candidate session", "Neighbor session"]);
   if (!candidate || !neighbor) throw new Error("Pinned world did not create both sessions.");
 
