@@ -51,6 +51,7 @@ export async function captureBrowserFilm(surface: Surface, directory: string) {
     const stoppedAt = Date.now();
     await send("Page.stopScreencast");
     await Promise.all(writes);
+    await writeFile(join(directory, "downloads.json"), JSON.stringify(downloads, null, 2));
     await writeFile(join(directory, "capture.json"), JSON.stringify({ format: "cdp-screencast", startedAt, stoppedAt, clock: "Chrome epoch seconds", surface: surface.handle.name, platform: surface.handle.hostKind, frames, downloads }, null, 2));
     ws.close();
     browser.close();
