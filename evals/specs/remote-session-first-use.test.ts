@@ -359,6 +359,7 @@ test("Cloud instance and gateway APIs persist neutral labels and reuse only the 
   const original = witness.sandboxes[0];
   if (!original) throw new Error("Instance API sandbox missing");
   expect(original.labels).toEqual({
+    "code-toolbox-language": "python",
     "openwork.den.provider": "daytona",
     "openwork.den.worker-id": original.workerId,
   });
@@ -380,6 +381,7 @@ test("Cloud instance and gateway APIs persist neutral labels and reuse only the 
   const other = witness.sandboxes.find((entry) => entry.workerId !== original.workerId);
   if (!other) throw new Error("Gateway sandbox missing");
   expect(other.labels).toEqual({
+    "code-toolbox-language": "python",
     "openwork.den.provider": "daytona",
     "openwork.den.worker-id": other.workerId,
   });
@@ -409,7 +411,7 @@ test("Cloud instance and gateway APIs persist neutral labels and reuse only the 
   expect(witness.events).toEqual(events);
   expect(witness.sessions).toEqual([]);
   expect(witness.unexpected).toEqual([]);
-  evidence.recordAssertionEvidence("Cloud instance and gateway API labels are neutral and member-scoped", "Authenticated HTTP requests to /v1/cloud/instance and /v1/cloud/gateway/resolve each first-created a persisted worker named Cloud. Both provider label maps contained exactly the provider name and full worker ID, with no extra personal labels. The second member did not change the first worker, runtime record, sandbox, or operations; both API endpoints then reused only their caller's workspace without additional provider operations. Browser client wiring and rendering were not exercised.", true);
+  evidence.recordAssertionEvidence("Cloud instance and gateway API labels are neutral and member-scoped", "Authenticated HTTP requests to /v1/cloud/instance and /v1/cloud/gateway/resolve each first-created a persisted worker named Cloud. Both provider label maps contained exactly the provider name, full worker ID and SDK-standard language label, with no extra personal labels. The second member did not change the first worker, runtime record, sandbox, or operations; both API endpoints then reused only their caller's workspace without additional provider operations. Browser client wiring and rendering were not exercised.", true);
 });
 
 test("concurrent retries isolate workers with identical names and colliding TypeID prefixes", { timeout: 180_000 }, async ({ place, evidence, skip }) => {
@@ -492,6 +494,7 @@ test("concurrent retries isolate workers with identical names and colliding Type
     expect(sandbox.name).toMatch(/^[a-z0-9][a-z0-9-]{0,62}$/);
     expect(sandbox.name).not.toMatch(/cloud|workspace|owner|colleague/);
     expect(sandbox.labels).toEqual({
+      "code-toolbox-language": "python",
       "openwork.den.provider": "daytona",
       "openwork.den.worker-id": workerId,
     });
