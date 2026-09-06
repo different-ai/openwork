@@ -2199,6 +2199,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       runtime: "direct",
       workspacePaths,
       openworkRemoteAccess: openworkServerSnapshot.openworkServerSettings.remoteAccessEnabled === true,
+      // The user env file is read when the local server process spawns, so a
+      // healthy engine must be replaced, not reused, for new values to apply.
+      forceRestart: true,
     });
     const reconnected = await openworkServerStore.reconnectOpenworkServer();
     if (!reconnected) {
