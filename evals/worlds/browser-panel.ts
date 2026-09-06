@@ -139,11 +139,16 @@ function parsePageProbe(value: unknown): PageProbe {
  * A desktop with one session open, so the built-in browser side panel has a
  * home, plus helpers that play an automation client against its tabs.
  */
-export async function builtinBrowserWorld(seed: Seed) {
-  const app = await seed.desktop({ name: "builtin-browser" });
+async function createBuiltinBrowserWorld(seed: Seed, env?: Record<string, string>) {
+  const app = await seed.desktop({ name: "builtin-browser", env });
   const workspace = await seed.workspace(app, seed.tmpPath("builtin-browser"));
   const session = await seed.session(app);
   const origin = await embeddedServerUrl(seed, app);
+  const loginWitnessOrigin = stringField(await seed.evalIn(
+    app,
+    "window.__OPENWORK_ELECTRON__.browserLogins.testWitnessUrl()",
+    { awaitPromise: true },
+  ));
 
   return {
     app,
@@ -163,9 +168,25 @@ export async function builtinBrowserWorld(seed: Seed) {
     /**
      * Bring a conversation on screen programmatically. Arrangement only: a
      * claim about the user switching conversations must click the sidebar.
+     * From Settings this first returns to the session route and waits for the
+     * session actions to register again.
      */
     async showSession(sessionId: string): Promise<void> {
-      await control(app, "session.open", { sessionId });
+      const deadline = Date.now() + 30_000;
+      let routed = false;
+      while (Date.now() < deadline) {
+        const actions = await seed.evalIn(app, "window.__openworkControl.listActions().map((action) => action.id)");
+        if (Array.isArray(actions) && actions.includes("session.open")) {
+          await control(app, "session.open", { sessionId });
+          return;
+        }
+        if (!routed && Array.isArray(actions) && actions.includes("route.session")) {
+          await control(app, "route.session");
+          routed = true;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      throw new Error("The session view did not come back on screen.");
     },
 
     /** Open a page in the built-in browser the way the agent's browser tool does. */
@@ -181,6 +202,43 @@ export async function builtinBrowserWorld(seed: Seed) {
         tabId: stringField(result.tab_id),
         targetId: stringField(result.target_id),
         name,
+      };
+    },
+
+    /** Open a page that reports only whether an HttpOnly session cookie arrived. */
+    async openLoginWitnessTab(name: string): Promise<BuiltinBrowserTab> {
+      const url = `${loginWitnessOrigin}/?login-probe=${encodeURIComponent(name)}`;
+      const result = await seed.evalIn(
+        app,
+        `window.__OPENWORK_ELECTRON__.browser.openUrl(${JSON.stringify(url)})`,
+        { awaitPromise: true, timeoutMs: 30_000 },
+      );
+      if (!isRecord(result)) throw new Error("browser.openUrl returned no login witness handle.");
+      return { tabId: stringField(result.tab_id), targetId: stringField(result.target_id), name };
+    },
+
+    /** Open the value-free login witness from a conversation that is not on screen. */
+    async openLoginWitnessTabAs(name: string, ownerSessionId: string): Promise<OpenedTab> {
+      const url = `${loginWitnessOrigin}/?login-probe=${encodeURIComponent(name)}`;
+      const result = await seed.evalIn(
+        app,
+        `window.__openworkControl.command(${JSON.stringify({
+          id: "browser.open_url",
+          args: { url, provider: "builtin" },
+          origin: { sessionId: ownerSessionId },
+        })})`,
+        { awaitPromise: true, timeoutMs: 30_000 },
+      );
+      if (!isRecord(result) || result.ok !== true || !isRecord(result.result)) {
+        throw new Error(`background login witness failed: ${isRecord(result) ? String(result.error ?? "unknown") : "no response"}`);
+      }
+      const handle = result.result;
+      return {
+        tabId: stringField(handle.tab_id),
+        targetId: stringField(handle.target_id),
+        name,
+        ownerSessionId: typeof handle.owner_session_id === "string" ? handle.owner_session_id : null,
+        visible: handle.visible === true,
       };
     },
 
@@ -211,6 +269,95 @@ export async function builtinBrowserWorld(seed: Seed) {
         ownerSessionId: typeof handle.owner_session_id === "string" ? handle.owner_session_id : null,
         visible: handle.visible === true,
       };
+    },
+
+    /** The page origin the built-in browser can always reach: the embedded OpenWork server. */
+    origin,
+
+    /** Host used by the value-free HttpOnly login witness. */
+    loginWitnessHost: new URL(loginWitnessOrigin).hostname,
+
+    /**
+     * Seed a Firefox-shaped cookie store the import dialog can find, so the
+     * journey drives the real import against a known set of logins.
+     */
+    async seedLoginStore(name: string, cookies: Array<Record<string, unknown>>): Promise<{ id: string; label: string; path: string }> {
+      const directory = seed.tmpPath(`logins-${name}`);
+      const storePath = `${directory}/cookies.sqlite`;
+      const result = await seed.evalIn(
+        app,
+        `window.__OPENWORK_ELECTRON__.browserLogins.writeTestStore(${JSON.stringify({ path: storePath, cookies })})`,
+        { awaitPromise: true, timeoutMs: 30_000 },
+      );
+      if (!isRecord(result)) throw new Error("The eval seam did not register a login store.");
+      return { id: stringField(result.id), label: stringField(result.label), path: storePath };
+    },
+
+    /** Replace the synthetic source store; the desktop watcher observes this write. */
+    async updateLoginStore(storePath: string, cookies: Array<Record<string, unknown>>): Promise<void> {
+      const result = await seed.evalIn(
+        app,
+        `window.__OPENWORK_ELECTRON__.browserLogins.writeTestStore(${JSON.stringify({ path: storePath, cookies })})`,
+        { awaitPromise: true, timeoutMs: 30_000 },
+      );
+      if (!isRecord(result)) throw new Error("The eval seam did not update the login store.");
+    },
+
+    /** Open a Settings panel the way the app's own navigation does. */
+    async openSettingsPanel(panel: string): Promise<void> {
+      await control(app, "settings.panel.open", { panel });
+    },
+
+    /** Which sites the import dialog currently has checked. */
+    async readCheckedSyncSites(): Promise<string[]> {
+      const result = await seed.evalIn(
+        app,
+        `[...document.querySelectorAll('[data-testid^="login-sync-site-"]')]
+          .filter((element) => element.getAttribute("aria-checked") === "true" || element.hasAttribute("data-checked"))
+          .map((element) => element.getAttribute("data-testid").slice("login-sync-site-".length))`,
+      );
+      if (!Array.isArray(result)) throw new Error("The sync dialog did not report its checked sites.");
+      return result.map(String);
+    },
+
+    /** Sites the built-in browser is signed in to, as Settings shows them. */
+    async signedInSites(): Promise<string[]> {
+      const result = await seed.evalIn(app, "window.__OPENWORK_ELECTRON__.browserLogins.signedInSites()", { awaitPromise: true });
+      if (!Array.isArray(result)) throw new Error("The desktop bridge did not list signed-in sites.");
+      return result.map((site) => (isRecord(site) ? stringField(site.site) : "")).filter(Boolean);
+    },
+
+    /** Renderer-safe sync metadata, never cookie values. */
+    async loginSyncState(): Promise<Record<string, unknown>> {
+      const result = await seed.evalIn(app, "window.__OPENWORK_ELECTRON__.browserLogins.state()", { awaitPromise: true });
+      if (!isRecord(result)) throw new Error("The desktop bridge did not report browser login sync state.");
+      return result;
+    },
+
+    async pauseLoginSync(): Promise<void> {
+      await seed.evalIn(app, "window.__OPENWORK_ELECTRON__.browserLogins.pause()", { awaitPromise: true });
+    },
+
+    /** What the witness page observes without exposing an HttpOnly cookie value. */
+    async readLoginWitness(tab: BuiltinBrowserTab): Promise<string> {
+      return withTabClient(app, tab.targetId, async (client) => String(await evaluate(client, "document.body.dataset.loginState")));
+    },
+
+    /** What the page inside a tab can read from `document.cookie`. */
+    async readDocumentCookie(tab: BuiltinBrowserTab): Promise<string> {
+      return withTabClient(app, tab.targetId, async (client) => String(await evaluate(client, "document.cookie")));
+    },
+
+    /** Reload a tab over CDP and wait for it to settle. */
+    async reloadTab(tab: BuiltinBrowserTab): Promise<void> {
+      await withTabClient(app, tab.targetId, async (client) => {
+        await client.send("Page.reload");
+        const deadline = Date.now() + 15_000;
+        while (Date.now() < deadline) {
+          if ((await evaluate(client, "document.readyState")) === "complete") return;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      });
     },
 
     /** Every tab the native browser holds, who owns it, and which conversation is on screen. */
@@ -287,4 +434,12 @@ export async function builtinBrowserWorld(seed: Seed) {
       ));
     },
   };
+}
+
+export function builtinBrowserWorld(seed: Seed) {
+  return createBuiltinBrowserWorld(seed);
+}
+
+export function browserLoginSyncWorld(seed: Seed) {
+  return createBuiltinBrowserWorld(seed, { OPENWORK_EVAL_BROWSER_LOGIN_SYNC: "1" });
 }
