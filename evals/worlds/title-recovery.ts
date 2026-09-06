@@ -7,7 +7,7 @@ import { bootManagedOpenworkServer, close, engineBinary, isRecord, listen, readB
 export const GENERATED_TITLE = "Kites in a sunny meadow";
 export const REPLY = "A kite catches the breeze.";
 export const PRIVATE_ERROR_MARKER = "private-provider-body-must-not-be-in-title-diagnostics";
-export type WitnessRequest = { model: string; title: boolean; effort: unknown; temperature: unknown; marker: boolean; auth: string; body: string };
+export type WitnessRequest = { provider: string; url: string; model: string; title: boolean; effort: unknown; temperature: unknown; topP: unknown; marker: boolean; auth: string; body: string };
 
 export async function titleRecovery(seed: Seed) {
   const binary = engineBinary();
@@ -18,17 +18,20 @@ export async function titleRecovery(seed: Seed) {
   const workspace = join(scratch, "workspace");
   await mkdir(workspace, { recursive: true });
   const requests: WitnessRequest[] = [];
-  const provider = createServer((request, response) => {
+  const witness = (provider: "responses" | "compatible") => createServer((request, response) => {
     void (async () => {
       if (request.method !== "POST") return sendJson(response, 200, { data: [] });
       const raw = await readBody(request);
       const body: unknown = JSON.parse(raw);
       if (!isRecord(body) || typeof body.model !== "string") return sendJson(response, 400, {});
       const title = raw.includes("Generate a title for this conversation");
-      const responses = request.url?.endsWith("/responses");
+      const responses = provider === "responses";
       const effort = isRecord(body.reasoning) ? body.reasoning.effort : body.reasoning_effort;
-      requests.push({ model: body.model, title, effort, temperature: body.temperature,
+      requests.push({ provider, url: `http://${request.headers.host}${request.url}`, model: body.model, title, effort, temperature: body.temperature, topP: body.top_p,
         marker: Boolean(request.headers["x-openwork-title-attempt"]), auth: String(request.headers.authorization), body: raw });
+      // Each provider accepts only its own model, protocol endpoint, and credential.
+      if (responses !== (body.model === "gpt-6-astra") || request.url !== (responses ? "/v1/responses" : "/v1/chat/completions")) return sendJson(response, 404, {});
+      if (request.headers.authorization !== `Bearer title-witness-${provider}`) return sendJson(response, 401, {});
       if (title) {
         if (body.model === "denied") return sendJson(response, 403, { error: { message: PRIVATE_ERROR_MARKER } });
         if (body.model === "limited") return sendJson(response, 429, { error: { message: PRIVATE_ERROR_MARKER } });
@@ -39,6 +42,9 @@ export async function titleRecovery(seed: Seed) {
         } });
         if (body.model === "sampling" && body.temperature !== undefined) return sendJson(response, 400, { error: {
           code: "unsupported_parameter", param: "temperature", message: PRIVATE_ERROR_MARKER,
+        } });
+        if (body.model === "nucleus-sampling" && body.top_p !== undefined) return sendJson(response, 400, { error: {
+          code: "unsupported_parameter", param: "top_p", message: PRIVATE_ERROR_MARKER,
         } });
       }
       const text = title ? (body.model === "empty" ? "" : GENERATED_TITLE) : REPLY;
@@ -59,16 +65,21 @@ export async function titleRecovery(seed: Seed) {
       ]);
     })().catch(() => { if (!response.headersSent) sendJson(response, 500, {}); else response.end(); });
   });
-  const url = await listen(provider);
+  const responsesProvider = witness("responses");
+  const compatibleProvider = witness("compatible");
+  const responsesURL = await listen(responsesProvider);
+  const compatibleURL = await listen(compatibleProvider);
+  const endpoints = { responses: responsesURL + "/v1/responses", compatible: compatibleURL + "/v1/chat/completions" };
   const model = { reasoning: true, temperature: true, tool_call: true,
     release_date: "2026-09-04", limit: { context: 128_000, output: 4096 },
     variants: { none: { reasoningEffort: "none" }, xhigh: { reasoningEffort: "xhigh" } } };
   await writeFile(join(workspace, "opencode.json"), JSON.stringify({
+    agent: { title: { top_p: 0.8 } },
     provider: {
-      responses: { npm: "@ai-sdk/openai", options: { baseURL: url + "/v1", apiKey: "title-witness" }, models: { "gpt-6-astra": model } },
-      compatible: { npm: "@ai-sdk/openai-compatible", options: { baseURL: url + "/v1", apiKey: "title-witness" },
-        models: Object.fromEntries(["other-reasoner", "sampling", "denied", "limited", "malformed", "twice", "empty"].map((id) => [id,
-          id === "sampling" || id === "empty" ? { ...model, reasoning: false, variants: {} } : model])) },
+      responses: { npm: "@ai-sdk/openai", options: { baseURL: responsesURL + "/v1", apiKey: "title-witness-responses" }, models: { "gpt-6-astra": model } },
+      compatible: { npm: "@ai-sdk/openai-compatible", options: { baseURL: compatibleURL + "/v1", apiKey: "title-witness-compatible" },
+        models: Object.fromEntries(["other-reasoner", "sampling", "nucleus-sampling", "denied", "limited", "malformed", "twice", "empty"].map((id) => [id,
+          ["sampling", "nucleus-sampling", "empty"].includes(id) ? { ...model, reasoning: false, variants: {} } : model])) },
     },
   }));
   const token = "title-recovery-test-client";
@@ -80,7 +91,7 @@ export async function titleRecovery(seed: Seed) {
     abort.abort();
     await events?.catch(() => undefined);
     await managed?.stop();
-    await close(provider);
+    await Promise.all([close(responsesProvider), close(compatibleProvider)]);
     await rm(scratch, { recursive: true, force: true });
   };
   try {
@@ -110,7 +121,7 @@ export async function titleRecovery(seed: Seed) {
     })();
     void events.catch(() => undefined);
     return {
-      engine: managed.engine, requests, updates,
+      engine: managed.engine, requests, updates, endpoints,
       diagnostics: async () => (await readFile(join(scratch, "home/.local/share/opencode/log/opencode.log"), "utf8"))
         .split("\n").filter((line) => line.includes("Automatic title generation")),
       [Symbol.asyncDispose]: dispose,

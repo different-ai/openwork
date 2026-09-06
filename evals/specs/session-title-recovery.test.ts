@@ -13,7 +13,7 @@ function sessionID(value: unknown): string {
 
 test("automatic titles recover rejected model parameters once and report other failures without harming the reply", { timeout: 240_000 }, async ({ world, step, evidence }) => {
   const failed: string[] = [];
-  for (const modelID of ["gpt-6-astra", "other-reasoner", "sampling", "denied", "limited", "malformed", "twice", "empty"]) {
+  for (const modelID of ["gpt-6-astra", "other-reasoner", "sampling", "nucleus-sampling", "denied", "limited", "malformed", "twice", "empty"]) {
     await step(`generate a first title with ${modelID}`, async () => {
       const id = sessionID(await world.engine("POST", "/session", {}));
       const providerID = modelID === "gpt-6-astra" ? "responses" : "compatible";
@@ -23,7 +23,7 @@ test("automatic titles recover rejected model parameters once and report other f
       });
       expect(record(result) && record(result.info) && result.info.error).toBeUndefined();
       expect(record(result) && Array.isArray(result.parts) && result.parts.filter(record).some((part) => part.text === REPLY)).toBe(true);
-      const recovers = ["gpt-6-astra", "other-reasoner", "sampling"].includes(modelID);
+      const recovers = ["gpt-6-astra", "other-reasoner", "sampling", "nucleus-sampling"].includes(modelID);
       if (recovers) {
         await eventually(() => world.engine("GET", `/session/${id}`), {
           within: 15_000, until: (value) => record(value) && value.title === GENERATED_TITLE,
@@ -40,8 +40,12 @@ test("automatic titles recover rejected model parameters once and report other f
         within: 15_000, until: (count) => count === expectedTitles, label: `bounded title attempts for ${modelID}`,
       });
       const requests = world.requests.filter((request) => request.model === modelID);
+      for (const request of requests) expect(request).toMatchObject({
+        provider: providerID, url: world.endpoints[providerID], auth: `Bearer title-witness-${providerID}`,
+      });
       expect(requests.filter((request) => !request.title)).toHaveLength(1);
-      if (!["sampling", "empty"].includes(modelID)) expect(requests.find((request) => !request.title)?.effort).toBe("xhigh");
+      if (!["sampling", "nucleus-sampling", "empty"].includes(modelID)) expect(requests.find((request) => !request.title)?.effort).toBe("xhigh");
+      expect(requests.find((request) => !request.title)?.topP).toBeUndefined();
       const titles = requests.filter((request) => request.title);
       // The engine already retries 429 responses twice; recovery must add none.
       expect(titles).toHaveLength(expectedTitles);
@@ -50,6 +54,11 @@ test("automatic titles recover rejected model parameters once and report other f
         if (!record(before)) throw new Error("Expected a provider request object");
         const after = JSON.parse(titles[1].body);
         if (modelID === "sampling") { delete before.temperature; expect(titles[1].temperature).toBeUndefined(); }
+        else if (modelID === "nucleus-sampling") {
+          expect(titles[0].topP).toBe(0.8);
+          delete before.top_p;
+          expect(titles[1].topP).toBeUndefined();
+        }
         else if (modelID === "gpt-6-astra") {
           if (!record(before.reasoning)) throw new Error("Expected Responses reasoning options");
           before.reasoning.effort = "low";
@@ -75,10 +84,10 @@ test("automatic titles recover rejected model parameters once and report other f
   expect(diagnostics).not.toContain(PRIVATE_ERROR_MARKER);
   expect(diagnostics).not.toContain("title-witness");
   expect(diagnostics).not.toContain("Tell me one thing");
-  expect(world.requests.every((request) => !request.marker && request.auth === "Bearer title-witness")).toBe(true);
+  expect(world.requests.every((request) => !request.marker && request.auth === `Bearer title-witness-${request.provider}`)).toBe(true);
   for (const modelID of ["denied", "limited", "malformed", "twice", "empty"]) {
     expect(world.requests.filter((request) => request.title && request.model === modelID)).toHaveLength(modelID === "limited" ? 3 : modelID === "twice" ? 2 : 1);
   }
   for (const id of failed) expect(await world.engine("GET", `/session/${id}`)).toMatchObject({ title: expect.stringMatching(/^New session - /) });
-  evidence.recordAssertionEvidence("Title parameter recovery is bounded, preserves chat and provider identity, persists titles and delivers session updates", "The real managed engine recovered Responses reasoning.effort, compatible reasoning_effort, and temperature rejections; each main reply completed, each recovered title persisted and reached SSE, and a manually named session sent no title request. Access, quota, unrelated parameters, repeated rejection, and empty output retained placeholders with sanitized diagnostics. No correlation marker reached the witness.", true);
+  evidence.recordAssertionEvidence("Title parameter recovery is bounded, preserves chat and provider identity, persists titles and delivers session updates", "The real managed engine recovered Responses reasoning.effort, compatible reasoning_effort, temperature, and top_p rejections. Distinct provider origins enforce model, protocol endpoint, and credential identity; every initial and retried request used its original endpoint and credential with only the rejected parameter changed. Each main reply completed, each recovered title persisted and reached SSE, and a manually named session sent no title request. Access, quota, unrelated parameters, repeated rejection, and empty output retained placeholders with sanitized diagnostics. No correlation marker reached the witness.", true);
 });
