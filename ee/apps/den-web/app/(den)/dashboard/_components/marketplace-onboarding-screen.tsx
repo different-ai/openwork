@@ -143,6 +143,7 @@ export function MarketplaceOnboardingScreen({
   }, []);
 
   const orgName = activeOrg?.name ?? "your team";
+  const joinedMembers = orgContext?.members.filter((member) => member.joinedAt !== null);
 
   return (
     <SetupFrame
@@ -154,7 +155,7 @@ export function MarketplaceOnboardingScreen({
       <div className="grid gap-8" data-testid="marketplace-onboarding">
         <section aria-label="Team setup review" className="rounded-2xl bg-neutral-50 p-5 text-sm leading-6 text-neutral-600">
           <h2 className="font-semibold text-neutral-950">Your team setup</h2>
-          <p className="mt-2">{orgContext ? `${orgContext.members.length} ${orgContext.members.length === 1 ? "member" : "members"} · ${orgContext.invitations.filter((invitation) => invitation.status === "pending").length} pending invitations` : "Checking your team…"}</p>
+          <p className="mt-2">{orgContext ? `${joinedMembers?.length} ${joinedMembers?.length === 1 ? "member" : "members"} · ${orgContext.invitations.filter((invitation) => invitation.status === "pending").length} pending invitations` : "Checking your team…"}</p>
           <p className="mt-2">Invitations are separate from account connections. Teammates connect personal accounts after joining.</p>
         </section>
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-neutral-50 px-4 py-3 text-xs text-neutral-500">
