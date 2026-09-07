@@ -17,7 +17,7 @@ const SETTINGS_KEYWORDS: Partial<Record<SettingsTab, string[]>> = {
   ai: ["provider", "providers", "api key", "anthropic", "openai", "openrouter", "google", "gemini", "claude", "gpt", "connect model", "models"],
   preferences: ["default model", "reasoning", "thinking", "compaction", "effort"],
   permissions: ["authorized folders", "folder access", "file access", "allow", "permission denied", "sandbox", "approvals"],
-  extensions: ["library", "skills", "plugins", "mcp", "connections", "tools", "apps", "computer use", "voice"],
+  extensions: ["library", "skills", "plugins", "mcp", "connections", "tools", "apps", "computer use"],
   environment: ["env", "environment variables", "secrets", "tokens", "api keys"],
   advanced: ["advanced settings", "runtime", "developer", "connection", "server", "port", "reset", "fix", "repair", "clean up", "troubleshoot", "recovery"],
   appearance: ["theme", "dark mode", "light mode", "color", "font", "look"],

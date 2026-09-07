@@ -52,7 +52,6 @@ type SidePanelProps = {
   isRemoteWorkspace?: boolean;
   onClose: () => void;
   onOpenExtensions?: () => void;
-  onOpenVoice?: () => void;
 };
 
 // HMR can remount this module without unmounting BrowserPanelContent, leaving
@@ -422,7 +421,6 @@ export function SidePanel({
   isRemoteWorkspace = false,
   onClose,
   onOpenExtensions,
-  onOpenVoice,
 }: SidePanelProps) {
   const { tabs } = useSessionPanelState(sessionId);
   const activeTab = useActivePanelTab(sessionId);
@@ -668,7 +666,6 @@ export function SidePanel({
           <PanelEmpty
             onOpenBrowser={isBrowserAvailable ? createTab : undefined}
             onOpenExtensions={onOpenExtensions}
-            onOpenVoice={onOpenVoice}
           />
         ) : null}
         {activeTab?.type === "browser" ? (

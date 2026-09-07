@@ -79,6 +79,15 @@ test(title, async ({ evidence, place }) => {
     timeoutMs: 90_000,
     label: "signed-in Library Add control",
   });
+  const voiceModeVisible = await evalIn(desktop, `
+    [...document.querySelectorAll("button, [role=menuitem], h1, h2, h3")]
+      .some((element) => /voice mode/i.test(element.textContent ?? "")
+        || /voice mode/i.test(element.getAttribute("aria-label") ?? ""))
+  `);
+  expect(voiceModeVisible).toBe(false);
+  const libraryText = await evalIn(desktop, `document.body.innerText`);
+  expect(libraryText).not.toContain("Voice Mode");
+
   const bootstrap = await evalIn(
     desktop,
     `window.__OPENWORK_ELECTRON__.invokeDesktop("getDesktopBootstrapConfig")

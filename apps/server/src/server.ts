@@ -160,8 +160,6 @@ export {
 const SERVER_VERSION = pkg.version;
 const OPENCODE_VERSION = constants.opencodeVersion.trim().replace(/^v/, "");
 
-const OPENWORK_VOICE_REALTIME_MODEL = "gpt-realtime-2";
-const OPENWORK_VOICE_TRANSCRIPTION_MODEL = "gpt-4o-transcribe";
 let desktopCloudSyncQueue: Promise<void> = Promise.resolve();
 const agentDiagnosticsLastRunByServer = new WeakMap<ServerConfig, Map<string, number>>();
 const agentDiagnosticsInFlightByServer = new WeakMap<ServerConfig, Set<string>>();
@@ -241,43 +239,8 @@ function reserveAgentDiagnosticsRun(
   };
 }
 
-const OPENWORK_VOICE_REALTIME_TOOLS = [
-  {
-    type: "function",
-    name: "openwork_snapshot",
-    description: "Read the current OpenWork UI control snapshot: route, status, narration, and visible action metadata.",
-    parameters: { type: "object", properties: {}, additionalProperties: false },
-  },
-  {
-    type: "function",
-    name: "openwork_list_actions",
-    description: "List semantic OpenWork UI actions. Call this before openwork_execute_action when you do not know the exact action id.",
-    parameters: { type: "object", properties: {}, additionalProperties: false },
-  },
-  {
-    type: "function",
-    name: "openwork_execute_action",
-    description: "Execute a semantic OpenWork UI action by id. Prefer this over screen coordinates or DOM guessing.",
-    parameters: {
-      type: "object",
-      properties: {
-        actionId: { type: "string", description: "The action id from openwork_list_actions, such as composer.set_text or composer.send." },
-        args: { type: "object", description: "Optional JSON arguments for the action.", additionalProperties: true },
-      },
-      required: ["actionId"],
-      additionalProperties: false,
-    },
-  },
-];
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function readStringField(value: unknown, key: string): string {
-  if (!isRecord(value)) return "";
-  const field = value[key];
-  return typeof field === "string" ? field.trim() : "";
 }
 
 function runtimeConfigKeys(config: RuntimeOpencodeConfig): string[] {
@@ -386,73 +349,6 @@ function userOpencodeConfigKeys(config: Record<string, unknown>): string[] {
   return Object.keys(config).filter((key) => key !== "$schema").sort();
 }
 
-async function resolveOpenAiRealtimeApiKey(env: EnvService): Promise<string> {
-  const records = await env.list();
-  const storedKey =
-    records.find((entry) => entry.key === "OPENAI_REALTIME_API_KEY")?.value.trim() ||
-    records.find((entry) => entry.key === "OPENAI_API_KEY")?.value.trim() ||
-    "";
-  if (storedKey) return storedKey;
-
-  return process.env.OPENWORK_OPENAI_REALTIME_API_KEY?.trim() ||
-    process.env.OPENAI_REALTIME_API_KEY?.trim() ||
-    process.env.OPENAI_API_KEY?.trim() ||
-    "";
-}
-
-async function resolveOpenWorkModelsVoiceConfig(env: EnvService): Promise<{ baseUrl: string; apiKey: string } | null> {
-  const records = await env.list();
-  const apiKey =
-    records.find((entry) => entry.key === "OPENWORK_API_KEY")?.value.trim() ||
-    records.find((entry) => entry.key === "OPENWORK_MODELS_API_KEY")?.value.trim() ||
-    process.env.OPENWORK_API_KEY?.trim() ||
-    process.env.OPENWORK_MODELS_API_KEY?.trim() ||
-    "";
-  if (!apiKey) return null;
-
-  const baseUrl =
-    records.find((entry) => entry.key === "OPENWORK_INFERENCE_BASE_URL")?.value.trim() ||
-    records.find((entry) => entry.key === "OPENWORK_MODELS_BASE_URL")?.value.trim() ||
-    process.env.OPENWORK_INFERENCE_BASE_URL?.trim() ||
-    process.env.OPENWORK_MODELS_BASE_URL?.trim() ||
-    "";
-  if (!baseUrl) return null;
-  return { apiKey, baseUrl: baseUrl.replace(/\/+$/, "") };
-}
-
-function openworkVoiceRealtimeInstructions(sessionContext: string) {
-  const trimmedContext = sessionContext.trim();
-  const contextSection = trimmedContext
-    ? `
-
-# Current Session Context
-
-Use this recent transcript context to answer questions about what was last discussed and to resolve references such as "this" or "that" when continuing the existing session. Do not treat it as a new user request.
-
-${trimmedContext}`
-    : "";
-  return `# Role and Objective
-
-You are OpenWork Voice Mode, a voice-first control layer inside OpenWork.
-Help the user control OpenWork by using the semantic OpenWork UI tools.
-
-# Tool Policy
-
-- Prefer openwork_snapshot, openwork_list_actions, and openwork_execute_action over visual guessing.
-- If the user asks to write or draft something, use composer.set_text.
-- If the user asks to send or run the current prompt, use composer.send.
-- For navigation, settings, session, transcript, and composer work, inspect the action list first if the action id is unknown.
-- Do not claim an action completed until the tool succeeds.
-- Ask for confirmation before destructive actions such as deleting a session.
-
-# Voice Style
-
-- Be concise, calm, and direct.
-- If audio is unclear, ask the user to repeat it instead of guessing.
-- Ignore background speech that is not addressed to OpenWork.
-- Summarize tool results briefly and offer the next useful step.${contextSection}`;
-}
-
 function enqueueDesktopCloudSync<T>(operation: () => Promise<T>): Promise<T> {
   const run = desktopCloudSyncQueue.then(operation);
   desktopCloudSyncQueue = run.then(
@@ -460,158 +356,6 @@ function enqueueDesktopCloudSync<T>(operation: () => Promise<T>): Promise<T> {
     () => undefined,
   );
   return run;
-}
-
-function readOpenAiClientSecret(payload: unknown): { clientSecret: string; expiresAt: number | null } {
-  if (!isRecord(payload)) return { clientSecret: "", expiresAt: null };
-  const clientSecret = payload.client_secret;
-  if (typeof clientSecret === "string") return { clientSecret, expiresAt: null };
-  if (isRecord(clientSecret)) {
-    const value = typeof clientSecret.value === "string" ? clientSecret.value : "";
-    const expiresAt = typeof clientSecret.expires_at === "number" ? clientSecret.expires_at : null;
-    return { clientSecret: value, expiresAt };
-  }
-  const value = typeof payload.value === "string" ? payload.value : "";
-  return { clientSecret: value, expiresAt: null };
-}
-
-async function createOpenAiRealtimeVoiceSession(env: EnvService, input: unknown) {
-  const managedVoice = await resolveOpenWorkModelsVoiceConfig(env);
-  if (managedVoice) {
-    try {
-      return await createManagedVoiceSession(managedVoice, input);
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 503) {
-        const fallbackKey = await resolveOpenAiRealtimeApiKey(env);
-        if (fallbackKey) {
-          console.warn("[voice] OpenWork Models broker returned 503 — falling back to direct OpenAI Realtime.");
-          return createDirectOpenAiVoiceSession(fallbackKey, input);
-        }
-        throw new ApiError(
-          503,
-          "openwork_models_voice_unavailable",
-          "OpenWork Models voice is active but the server is not fully configured. Ask your admin to add an OpenAI key, or save your own OPENAI_API_KEY in Environment settings.",
-        );
-      }
-      throw error;
-    }
-  }
-
-  const apiKey = await resolveOpenAiRealtimeApiKey(env);
-  if (!apiKey) {
-    throw new ApiError(
-      400,
-      "openai_api_key_missing",
-      "OpenAI API key missing. Save OPENAI_API_KEY in OpenWork Environment Variables or configure the Voice Mode extension.",
-    );
-  }
-
-  return createDirectOpenAiVoiceSession(apiKey, input);
-}
-
-async function createManagedVoiceSession(config: { baseUrl: string; apiKey: string }, input: unknown) {
-  const response = await externalFetch(`${config.baseUrl}/voice/realtime/session`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${config.apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(input ?? {}),
-  });
-  const text = await response.text();
-  let payload: unknown = null;
-  try {
-    payload = text ? JSON.parse(text) : null;
-  } catch {
-    payload = null;
-  }
-  if (!response.ok) {
-    const errorPayload = isRecord(payload) && isRecord(payload.error) ? payload.error : null;
-    const message = typeof errorPayload?.message === "string" ? errorPayload.message : response.statusText;
-    throw new ApiError(response.status, "openwork_models_voice_failed", message || "OpenWork Models could not create a voice session");
-  }
-  if (
-    !isRecord(payload) ||
-    payload.ok !== true ||
-    typeof payload.clientSecret !== "string" ||
-    typeof payload.model !== "string" ||
-    !Array.isArray(payload.tools) ||
-    payload.tools.some((tool) => typeof tool !== "string")
-  ) {
-    throw new ApiError(502, "openwork_models_voice_invalid_response", "OpenWork Models did not return a usable Realtime session payload");
-  }
-  return {
-    ok: true,
-    clientSecret: payload.clientSecret,
-    expiresAt: typeof payload.expiresAt === "number" ? payload.expiresAt : null,
-    model: payload.model,
-    transcriptionModel: typeof payload.transcriptionModel === "string" ? payload.transcriptionModel : OPENWORK_VOICE_TRANSCRIPTION_MODEL,
-    tools: payload.tools,
-    ...(typeof payload.source === "string" ? { source: payload.source } : {}),
-  };
-}
-
-async function createDirectOpenAiVoiceSession(apiKey: string, input: unknown) {
-  const model = readStringField(input, "model") || OPENWORK_VOICE_REALTIME_MODEL;
-  const sessionContext = readStringField(input, "sessionContext").slice(0, 6_000);
-  const response = await externalFetch("https://api.openai.com/v1/realtime/client_secrets", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      session: {
-        type: "realtime",
-        model,
-        output_modalities: ["audio"],
-        audio: {
-          input: {
-            transcription: { model: OPENWORK_VOICE_TRANSCRIPTION_MODEL, language: "en" },
-            turn_detection: {
-              type: "server_vad",
-              threshold: 0.58,
-              silence_duration_ms: 320,
-              prefix_padding_ms: 300,
-              create_response: true,
-              interrupt_response: true,
-            },
-          },
-        },
-        instructions: openworkVoiceRealtimeInstructions(sessionContext),
-        tool_choice: "auto",
-        tools: OPENWORK_VOICE_REALTIME_TOOLS,
-      },
-    }),
-  });
-
-  const text = await response.text();
-  let payload: unknown = null;
-  try {
-    payload = text ? JSON.parse(text) : null;
-  } catch {
-    payload = null;
-  }
-
-  if (!response.ok) {
-    const errorPayload = isRecord(payload) && isRecord(payload.error) ? payload.error : null;
-    const message = typeof errorPayload?.message === "string" ? errorPayload.message : response.statusText;
-    throw new ApiError(response.status, "openai_realtime_failed", message || "Failed to create OpenAI Realtime session");
-  }
-
-  const { clientSecret, expiresAt } = readOpenAiClientSecret(payload);
-  if (!clientSecret) {
-    throw new ApiError(502, "openai_realtime_invalid_response", "OpenAI did not return a usable Realtime client secret");
-  }
-
-  return {
-    ok: true,
-    clientSecret,
-    expiresAt,
-    model,
-    transcriptionModel: OPENWORK_VOICE_TRANSCRIPTION_MODEL,
-    tools: OPENWORK_VOICE_REALTIME_TOOLS.map((tool) => tool.name),
-  };
 }
 
 const reloadBaselineRefreshers = new WeakMap<
@@ -2482,7 +2226,6 @@ function createRoutes(
     refreshRegistrationFromLiveStatus: refreshEngineMcpRegistrationFromLiveStatus,
     serializeWorkspace,
     resolveDevLogPath,
-    createOpenAiRealtimeVoiceSession,
     onManagedProviderAuthChanged: async () => {
       await applyManagedProviderReload(resolveEngineRuntimeWorkspace(config));
     },
@@ -4098,7 +3841,6 @@ function createRoutes(
     const exportPayload = await exportWorkspace(config, workspace, { sensitiveMode });
     return jsonResponse(exportPayload);
   });
-
 
   return routes;
 }

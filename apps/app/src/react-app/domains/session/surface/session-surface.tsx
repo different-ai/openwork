@@ -2220,24 +2220,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
     await waitForControl(40);
   }, [props.sessionId, replaceComposerDraft]);
 
-  useEffect(() => {
-    const handleVoiceTranscript = (event: Event) => {
-      if (!(event instanceof CustomEvent)) return;
-      const detail: unknown = event.detail;
-      if (!detail || typeof detail !== "object" || Array.isArray(detail) || !("text" in detail) || typeof detail.text !== "string") return;
-      const text = detail.text;
-      void typeComposerText(text);
-      props.onDraftChange(buildDraft(text, attachments));
-      recordInspectorEvent("voice.transcript.applied", {
-        workspaceId: props.workspaceId,
-        sessionId: props.sessionId,
-        length: text.length,
-      });
-    };
-    window.addEventListener("openwork:voice-transcript", handleVoiceTranscript);
-    return () => window.removeEventListener("openwork:voice-transcript", handleVoiceTranscript);
-  }, [attachments, buildDraft, props.onDraftChange, props.sessionId, props.workspaceId, typeComposerText]);
-
   const composerSetTextControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "composer.set_text",
     label: "Type into the composer",

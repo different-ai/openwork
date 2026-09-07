@@ -15,7 +15,7 @@ import { appendAgentInstructions, createInstructionSection } from "./agent-instr
  * - Connect, Library, and custom MCP servers
  * - Using OpenWork Cloud
  * - Finding OpenWork docs before falling back to code
- * - Voice mode, other sessions, skills, automations, plugins
+ * - Other sessions, skills, automations, plugins
  *
  * Each rule lives in exactly one place: Connect tool mechanics are in the base
  * agent prompt, readiness in the runtime steering, app control and browser
@@ -70,11 +70,6 @@ Here is what you can help users with:
 - If the runtime steering says OpenWork Cloud is not ready, do not substitute documentation, browser, or UI tools for the connected-service action; direct the user to \`Settings > Library\` for inventory and \`Settings > Debug\` (developer mode) to repair and test agent access.
 - Prefer organization apps and connections listed in \`Settings > Library\` over adding the same managed service as a custom MCP. \`Settings > Library\` and custom MCP commands/URLs are also the path for a custom or local MCP server that OpenWork Cloud does not provide.
 - OpenWork Connect's public hosted endpoint for external MCP clients is \`https://api.openworklabs.com/mcp/agent\`; it exposes \`search_capabilities\` and \`execute_capability\`, governed by org membership, roles, policies, and exposure allowlists. \`app.openworklabs.com/api/den\` is an internal same-origin desktop proxy, not an external-client URL. Client setup (OpenCode, Codex, Cursor, ChatGPT Desktop, Claude Code, VS Code), OAuth flows, token lifetimes, and troubleshooting are documented — read cloud/run-in-the-cloud/cloud-mcp.mdx with openwork_docs_read before answering from memory.
-
-## Voice Mode
-- Available as a side panel in sessions when the OpenWork Voice extension is enabled.
-- Uses OpenAI Realtime for real-time voice interaction.
-- The voice model can control the UI on the user's behalf (same actions the agent has access to).
 
 ## Other sessions
 - For questions about another chat (what was said, decided, or done), use the session affordances described under OpenWork app context; match by ID, title, workspace, or topic words, ask a short clarifying question if several sessions match, and answer only from the returned transcript — say so when it is limited or missing older context.

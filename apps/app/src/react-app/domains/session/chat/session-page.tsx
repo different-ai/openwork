@@ -3,11 +3,10 @@ import type { CSSProperties } from "react";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
 import { DesktopUpdateButton } from "../../settings/state/desktop-updater-provider";
-import { ArrowLeft, Cloud, FileText, Globe, Mic2, MoreHorizontal, PanelRight, TextSearch, X, Zap } from "lucide-react";
+import { ArrowLeft, Cloud, FileText, Globe, MoreHorizontal, PanelRight, TextSearch, X, Zap } from "lucide-react";
 
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { t } from "../../../../i18n";
-import { OPENWORK_EXTENSION_CATALOG } from "../../../../app/constants";
 import { buildDenAuthUrl, readDenBootstrapConfig } from "../../../../app/lib/den";
 import { markDesktopSignInInitiated } from "../../../../app/lib/den-sign-in-intent";
 import { type OpenworkServerClient, type OpenworkServerStatus } from "../../../../app/lib/openwork-server";
@@ -80,14 +79,12 @@ import { isElectronRuntime } from "../../../../app/utils";
 import { isCollectibleArtifactTarget, isLocalhostBrowserTarget, isOpenableFileTarget, type OpenTarget } from "../artifacts/open-target";
 import { resolveCollectibleOpenTarget } from "../artifacts/resolve-open-target";
 import type { OpenTargetOptions } from "@/lib/target-provider";
-import { VoicePanel } from "../voice/voice-panel";
 import { SidePanel } from "../panel/side-panel";
 import { getSidePanelSessionKey } from "../panel/side-panel-session";
 import { TerminalDock } from "../terminal/terminal-dock";
 import { useActivePanelTab, usePanelTabStore, useSessionPanelState } from "../panel/panel-tab-store";
 import { useWorkspaceShellLayout } from "../../../shell/workspace-shell-layout";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
-import { getExtensionId, isOpenWorkExtensionEnabled, OPENWORK_EXTENSION_STATE_CHANGED } from "../../settings/extension-state";
 import { cn } from "@/lib/utils";
 import {
   canNavigateSelectedConversationHistory,
@@ -113,7 +110,6 @@ const STARTUP_SKELETON_ROWS = [
   { id: "middle", titleWidth: "56%", bodyWidth: "88%" },
   { id: "final", titleWidth: "36%", bodyWidth: "74%" },
 ];
-const GLOBAL_VOICE_SIDE_PANEL_KEY = "__openwork_voice__";
 const EMPTY_TRANSCRIPT_TARGETS: OpenTarget[] = [];
 const EMPTY_SESSION_TABS: WorkbenchSessionTab[] = [];
 
@@ -437,7 +433,6 @@ export function SessionPage(props: SessionPageProps) {
   const sessionSidePanel = useUiStateStore((state) => (
     state.sidePanelState[sidePanelSessionKey] ?? null
   ));
-  const voiceSidePanelOpen = useUiStateStore((state) => state.sidePanelState[GLOBAL_VOICE_SIDE_PANEL_KEY] === "voice");
   const setSidePanelState = useUiStateStore((state) => state.setSidePanelState);
   const toggleSidePanelState = useUiStateStore((state) => state.toggleSidePanelState);
   const openTab = usePanelTabStore((state) => state.openTab);
@@ -449,7 +444,6 @@ export function SessionPage(props: SessionPageProps) {
   const sessionPanelState = useSessionPanelState(sidePanelSessionKey);
   const activePanelTab = useActivePanelTab(sidePanelSessionKey);
   const [hiddenTargetRevision, setHiddenTargetRevision] = useState(0);
-  const [, setExtensionStateVersion] = useState(0);
   const hiddenAccessibleTargetIds = useMemo(
     () => readHiddenAccessibleTargetIds(props.selectedWorkspaceId, props.selectedSessionId),
     [props.selectedSessionId, props.selectedWorkspaceId, hiddenTargetRevision],
@@ -462,15 +456,9 @@ export function SessionPage(props: SessionPageProps) {
   const artifactTargetCount = artifactFileTargets.length;
   const hasArtifactTargets = artifactTargetCount > 0;
   const hasBrowserTabs = sessionPanelState.tabs.some((tab) => tab.type === "browser");
-  const activeSidePanel = voiceSidePanelOpen ? "voice" : sessionSidePanel;
+  const activeSidePanel = sessionSidePanel;
   const sidePanelOpen = activeSidePanel !== null;
   const panelRailActive = activeSidePanel === "panel";
-  const voiceRailActive = activeSidePanel === "voice";
-  const voiceExtension = useMemo(
-    () => OPENWORK_EXTENSION_CATALOG.find((entry) => getExtensionId(entry) === "openwork-voice") ?? null,
-    [],
-  );
-  const voiceExtensionEnabled = voiceExtension ? isOpenWorkExtensionEnabled(voiceExtension) : false;
   const showCloudSignIn = shellConfig.cloudSignin && !denAuth.isSignedIn && denAuth.status !== "checking";
   const openCloudSignIn = useCallback(() => {
     const baseUrl = readDenBootstrapConfig().baseUrl;
@@ -571,19 +559,12 @@ export function SessionPage(props: SessionPageProps) {
   }, [isMobile, narrowPane]);
 
   const setCurrentSidePanel = useCallback((panel: SidePanelItem | null) => {
-    setSidePanelState(GLOBAL_VOICE_SIDE_PANEL_KEY, panel === "voice" ? "voice" : null);
-    if (panel === "voice") return;
     setSidePanelState(sidePanelSessionKey, panel);
   }, [setSidePanelState, sidePanelSessionKey]);
 
   const toggleCurrentSidePanel = useCallback((panel: SidePanelItem) => {
-    if (panel === "voice") {
-      toggleSidePanelState(GLOBAL_VOICE_SIDE_PANEL_KEY, "voice");
-      return;
-    }
-    setSidePanelState(GLOBAL_VOICE_SIDE_PANEL_KEY, null);
     toggleSidePanelState(sidePanelSessionKey, panel);
-  }, [setSidePanelState, sidePanelSessionKey, toggleSidePanelState]);
+  }, [sidePanelSessionKey, toggleSidePanelState]);
 
   // Which conversation's browser tabs may take the screen. Every other
   // conversation's tabs keep loading silently in the background.
@@ -857,9 +838,6 @@ export function SessionPage(props: SessionPageProps) {
       toggleCurrentSidePanel("panel");
     }
   }, [artifactFileTargets, hasArtifactTargets, openTab, panelRailActive, props.selectedSessionId, selectTab, sessionPanelState, setCurrentSidePanel, toggleCurrentSidePanel]);
-  const openVoiceRailPane = useCallback(() => {
-    toggleCurrentSidePanel("voice");
-  }, [toggleCurrentSidePanel]);
   const removeAccessibleTarget = useCallback((target: OpenTarget) => {
     const nextHiddenIds = new Set(hiddenAccessibleTargetIds);
     nextHiddenIds.add(target.id);
@@ -894,50 +872,6 @@ export function SessionPage(props: SessionPageProps) {
     window.addEventListener("openwork-close-right-pane", handler);
     return () => window.removeEventListener("openwork-close-right-pane", handler);
   }, [setCurrentSidePanel]);
-  useEffect(() => {
-    const refresh = () => setExtensionStateVersion((value) => value + 1);
-    window.addEventListener(OPENWORK_EXTENSION_STATE_CHANGED, refresh);
-    window.addEventListener("storage", refresh);
-    return () => {
-      window.removeEventListener(OPENWORK_EXTENSION_STATE_CHANGED, refresh);
-      window.removeEventListener("storage", refresh);
-    };
-  }, []);
-  useEffect(() => {
-    if (activeSidePanel === "voice" && !voiceExtensionEnabled) {
-      setCurrentSidePanel(null);
-    }
-  }, [activeSidePanel, setCurrentSidePanel, voiceExtensionEnabled]);
-
-  const openVoicePanelControlAction = useMemo<OpenworkControlAction | null>(() => (
-    voiceExtensionEnabled ? {
-      id: "voice.panel.open",
-      label: "Open Voice Mode",
-      description: "Open the sticky Voice Mode right-side panel.",
-      effects: { data: "none", ui: "layout", external: false },
-      sideEffect: "none",
-      execute: () => {
-        setCurrentSidePanel("voice");
-        return { open: true };
-      },
-    } : null
-  ), [setCurrentSidePanel, voiceExtensionEnabled]);
-  useControlAction(openVoicePanelControlAction);
-
-  const closeVoicePanelControlAction = useMemo<OpenworkControlAction | null>(() => (
-    voiceExtensionEnabled && activeSidePanel === "voice" ? {
-      id: "voice.panel.close",
-      label: "Close Voice Mode",
-      description: "Close the Voice Mode right-side panel.",
-      effects: { data: "none", ui: "layout", external: false },
-      sideEffect: "none",
-      execute: () => {
-        setCurrentSidePanel(null);
-        return { open: false };
-      },
-    } : null
-  ), [activeSidePanel, setCurrentSidePanel, voiceExtensionEnabled]);
-  useControlAction(closeVoicePanelControlAction);
   const [showDelayedSessionLoadingState, setShowDelayedSessionLoadingState] = useState(false);
 
   const selectedSessionTitle = useMemo(
@@ -1121,11 +1055,7 @@ export function SessionPage(props: SessionPageProps) {
     if (sidePanelOpen) {
       options.push({
         id: "panel",
-        label: activeSidePanel === "voice"
-          ? "Voice"
-          : activeSidePanel === "extensions"
-            ? "Extensions"
-            : "Tools",
+        label: activeSidePanel === "extensions" ? "Extensions" : "Tools",
       });
     }
     return options;
@@ -1352,14 +1282,6 @@ export function SessionPage(props: SessionPageProps) {
     <div className="flex h-full min-h-0 flex-col overflow-y-auto bg-background">
       {props.settingsSlot}
     </div>
-  ) : activeSidePanel === "voice" ? (
-    <VoicePanel
-      client={props.openworkServerClient}
-      sessionId={props.selectedSessionId}
-      opencodeBaseUrl={reactSessionBaseUrl}
-      openworkToken={reactSessionToken}
-      onClose={closeRightPane}
-    />
   ) : activeSidePanel === "panel" ? (
     <SidePanel
       sessionId={sidePanelSessionKey}
@@ -1369,7 +1291,6 @@ export function SessionPage(props: SessionPageProps) {
       isRemoteWorkspace={props.surface?.isRemoteWorkspace ?? false}
       onClose={closeRightPane}
       onOpenExtensions={props.settingsSlot ? () => setCurrentSidePanel("extensions") : undefined}
-      onOpenVoice={voiceExtensionEnabled ? openVoiceRailPane : undefined}
     />
   ) : null;
 
@@ -1617,12 +1538,6 @@ export function SessionPage(props: SessionPageProps) {
                     <FileText className="size-4" />
                     Files{artifactTargetCount > 0 ? ` (${artifactTargetCount})` : ""}
                   </DropdownMenuItem>
-                  {voiceExtensionEnabled ? (
-                    <DropdownMenuItem onClick={openVoiceRailPane}>
-                      <Mic2 className="size-4" />
-                      Voice Mode
-                    </DropdownMenuItem>
-                  ) : null}
                   {showCloudSignIn ? (
                     <DropdownMenuItem onClick={openCloudSignIn}>
                       <Cloud className="size-4" />
@@ -2009,22 +1924,6 @@ export function SessionPage(props: SessionPageProps) {
                 disabled={!hasBrowserTabs}
               >
                 <Globe size={15} />
-              </Button>
-            ) : null}
-            {voiceExtensionEnabled ? (
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                className={cn(
-                  "rounded-xl transition-colors hover:bg-muted hover:text-foreground",
-                  voiceRailActive && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
-                )}
-                onClick={openVoiceRailPane}
-                title="Voice Mode"
-                aria-label="Voice Mode"
-                aria-pressed={voiceRailActive}
-              >
-                <Mic2 size={15} />
               </Button>
             ) : null}
             <Button

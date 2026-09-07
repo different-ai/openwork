@@ -3,7 +3,7 @@ import { t } from "../../../i18n";
 
 /**
  * What a user sees on an inventory row:
- * - app: a runtime that runs on this device (Ollama, Computer Use, Browser, Voice)
+ * - app: a runtime that runs on this device (Ollama, Computer Use, Browser)
  * - connection: an account, shared by an organization or signed in by the member
  * - mcp: an MCP server configured in this workspace
  * - skill / command / agent: composer capabilities managed in Library

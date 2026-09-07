@@ -18,7 +18,6 @@
     "test:events": "node scripts/events.mjs",
     "test:todos": "node scripts/todos.mjs",
     "test:permissions": "node scripts/permissions.mjs",
-    "test:voice-cdp": "node scripts/voice-cdp.mjs",
     "test:remote-diagnostics": "bun test scripts/remote-workspace-diagnostics.test.ts",
     "test:open-target": "bun test scripts/open-target.test.ts",
     "test:desktop-cloud-sync": "bun test scripts/desktop-cloud-sync.test.ts",

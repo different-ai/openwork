@@ -151,7 +151,7 @@ describe("cloud provider runtime patch (re-import diff #2346)", () => {
 
   test("client env mirror includes non-openwork provider credentials", () => {
     const source = readFileSync(providerAuthStoreSourcePath, "utf8");
-    const mirrorStart = source.indexOf("const mirrorOpenWorkModelsVoiceEnv = async");
+    const mirrorStart = source.indexOf("const mirrorCloudProviderEnv = async");
     const mirrorEnd = source.indexOf("const readWorkspaceOpenworkConfigRecord", mirrorStart);
     expect(mirrorStart).toBeGreaterThanOrEqual(0);
     expect(mirrorEnd).toBeGreaterThan(mirrorStart);

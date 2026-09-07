@@ -499,7 +499,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     return "";
   };
 
-  const mirrorOpenWorkModelsVoiceEnv = async (
+  const mirrorCloudProviderEnv = async (
     provider: DenOrgLlmProviderConnection,
     apiKey: string,
     resolvedEnvEntries: Array<{ key: string; value: string }>,
@@ -1704,7 +1704,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           providerID: localProviderId,
           auth: { type: "api", key: primaryApiKey },
         });
-        await mirrorOpenWorkModelsVoiceEnv(provider, primaryApiKey, envEntries);
+        await mirrorCloudProviderEnv(provider, primaryApiKey, envEntries);
       }
       if (existingImported?.providerId && existingImported.providerId !== localProviderId) {
         try {

@@ -95,7 +95,7 @@ export const openworkContextSnapshotSchema = z.object({
   sidePanel: z.object({
     open: z.boolean(),
     ownerSessionId: z.string().nullable(),
-    kind: z.enum(["panel", "extensions", "voice"]).nullable(),
+    kind: z.enum(["panel", "extensions"]).nullable(),
     tabs: z.array(openworkPanelTabSchema),
     activeTabId: z.string().nullable(),
   }),

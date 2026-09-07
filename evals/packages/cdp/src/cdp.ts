@@ -2,7 +2,6 @@
  * Minimal Chrome DevTools Protocol client for the eval runner.
  *
  * Zero dependencies: uses the global fetch + WebSocket available in Node 24+.
- * Mirrors the pattern proven in apps/app/scripts/voice-cdp.mjs.
  */
 
 export interface CdpTarget {

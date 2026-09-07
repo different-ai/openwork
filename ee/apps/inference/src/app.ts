@@ -12,7 +12,6 @@ import { db } from "./db.js";
 import { env } from "./env.js";
 import { isSentryEnabled } from "./instrumentation.js";
 import { registerProxyRoutes } from "./proxy.js";
-import { registerVoiceRoutes } from "./voice.js";
 import { registerWebhookRoutes } from "./webhooks.js";
 
 const srcDir = path.dirname(fileURLToPath(import.meta.url));
@@ -96,7 +95,6 @@ if (shouldServeLocalModelCatalog) {
 }
 
 registerProxyRoutes(app);
-registerVoiceRoutes(app);
 registerWebhookRoutes(app);
 
 app.onError((error, c) => {

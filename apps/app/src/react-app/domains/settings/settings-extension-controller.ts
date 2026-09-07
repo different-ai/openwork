@@ -33,13 +33,6 @@ type SettingsExtensionControllerInput = {
     onInstall: (apiKey: string) => void | Promise<void>;
     onTestGenerate: (input: { apiKey: string; prompt: string }) => void | Promise<void>;
   };
-  voiceExtension: {
-    busy: boolean;
-    status: string | null;
-    error: string | null;
-    onSaveApiKey: (apiKey: string) => void | Promise<void>;
-    onTestSession: () => void | Promise<void>;
-  };
   localProvider: {
     busy: boolean;
     status: string | null;
@@ -70,10 +63,6 @@ export function useSettingsExtensionController(input: SettingsExtensionControlle
     },
     imageExtension: {
       ...input.imageExtension,
-      envKeyDetected: hasOpenAiEnv(input),
-    },
-    voiceExtension: {
-      ...input.voiceExtension,
       envKeyDetected: hasOpenAiEnv(input),
     },
     localProvider: input.localProvider,
