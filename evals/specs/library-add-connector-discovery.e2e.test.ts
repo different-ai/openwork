@@ -68,7 +68,7 @@ test(title, async ({ evidence, place }) => {
   });
 
   await desktop.client.send("Emulation.setDeviceMetricsOverride", {
-    width: 820,
+    width: 1280,
     height: 760,
     deviceScaleFactor: 1,
     mobile: false,
@@ -84,6 +84,9 @@ test(title, async ({ evidence, place }) => {
   })()`)).toBe(true);
   await waitFor(desktop, `Boolean(document.querySelector('[data-testid="connections-home"]'))`, {
     timeoutMs: 30_000, label: "native Connections home",
+  });
+  await desktop.client.send("Emulation.setDeviceMetricsOverride", {
+    width: 820, height: 760, deviceScaleFactor: 1, mobile: false,
   });
   const home = await evalIn(desktop, `(() => {
     const home = document.querySelector('[data-testid="connections-home"]');
