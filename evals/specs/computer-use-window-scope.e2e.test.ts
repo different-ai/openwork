@@ -146,7 +146,7 @@ test("Computer Use respects window consent, fresh observations and the person's 
     expect(JSON.stringify(await world.panel())).toContain("Refreshing the approved window");
     expect(resumed).not.toHaveProperty("pause_reason");
     expect(toolState(await action(observed, "pre-pause-observation", { type: "press", ref: refFor(observed, "Increment") })).code).toBe("observation_required");
-    expect((await observe()).ok).toBe(true);
+    expect(await observe()).toMatchObject({ ok: true });
     expect(await world.state()).toEqual({ count: 1, otherCount: 0, draft: "Reviewed 👋🏽" });
   });
 
@@ -409,11 +409,13 @@ test("Computer Use enables workspace tools from the desktop setup page", async (
     await workspaceMcp({ name: "computer-use", config: disabled });
     await evalIn(app, () => location.reload());
     await waitFor(app, () => [...document.querySelectorAll("button")].some((b) => b.textContent.trim() === "Enable Computer Use"));
+    expect(await evalIn(app, () => [...document.querySelectorAll("span")].some((s) => s.textContent.trim() === "Ready"))).toBe(false);
     expect(await workspaceMcp()).toMatchObject({ items: expect.arrayContaining([expect.objectContaining({ name: "computer-use", config: disabled })]) });
     const custom = { type: "local", command: [command[0], "mcp", "custom-fixture-argument"], enabled: true };
     await workspaceMcp({ name: "computer-use", config: custom });
     await evalIn(app, () => location.reload());
     await waitFor(app, () => document.body.innerText.includes("Ready · app access is approved when a session starts"), { timeoutMs: 15_000 });
+    expect(await evalIn(app, () => [...document.querySelectorAll("button")].some((b) => /^(Enable|Reconnect) Computer Use$/.test(b.textContent.trim())))).toBe(false);
     expect(await workspaceMcp()).toMatchObject({ items: expect.arrayContaining([expect.objectContaining({ name: "computer-use", config: custom })]) });
   });
 });

@@ -61,7 +61,7 @@ export async function createComputerUseHost({ profile, executable }) {
       }
     });
   });
-  await new Promise((resolve, reject) => { server.once("error", reject); server.listen(socketPath, resolve); });
+  await new Promise((resolve, reject) => { server.once("error", reject); server.listen(socketPath, () => resolve(undefined)); });
   await chmod(socketPath, 0o600);
   return {
     socketPath,
