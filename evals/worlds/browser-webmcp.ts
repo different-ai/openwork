@@ -29,7 +29,7 @@ export async function browserWebMcpWorld(seed: Seed) {
         signal: AbortSignal.timeout(30000),
       });
       if (!response.ok) throw new Error('Fixture model reload failed');
-    }`, { args: [{ value: `${enginePath}/instance/dispose` }], awaitPromise: true, timeoutMs: 35_000 });
+    }`, { args: [`${enginePath}/instance/dispose`], awaitPromise: true, timeoutMs: 35_000 });
     const tab = browserTabHandle(await control(base.app, "browser.open_url", { url: `${origin}/`, provider: "builtin" }));
     const site = stack.use(await attachBuiltinTab(base.app, tab.targetId));
     return { ...base, origin, enginePath, tab, site, async [Symbol.asyncDispose]() { await stack.disposeAsync(); } };
