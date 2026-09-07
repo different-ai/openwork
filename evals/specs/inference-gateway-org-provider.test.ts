@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { createServer as createNetServer } from "node:net";
@@ -20,6 +20,7 @@ import {
   SkipError,
   test,
 } from "@openwork/testkit";
+import { bootServer, close, listen, stopChild } from "../worlds/openwork-server-cli.ts";
 
 /**
  * Inference gateway, org provider route (plan §3 #1–#4, §5.2):
@@ -115,7 +116,7 @@ function anthropicSseBody(model: string): string {
   ].join("");
 }
 
-async function startFakeAnthropicUpstream(): Promise<FakeAnthropicUpstream> {
+async function startFakeAnthropicUpstream(googleKey = FAKE_GOOGLE_KEY, anthropicKey = FAKE_UPSTREAM_KEY): Promise<FakeAnthropicUpstream> {
   const requests: UpstreamRequestRecord[] = [];
   let heldResponse: Promise<void> | null = null;
   let releaseResponse: (() => void) | null = null;
@@ -134,7 +135,7 @@ async function startFakeAnthropicUpstream(): Promise<FakeAnthropicUpstream> {
       if (barrier) await barrier;
 
       const google = request.url?.startsWith("/v1beta/models/") === true;
-      if (google ? headers["x-goog-api-key"] !== FAKE_GOOGLE_KEY : headers["x-api-key"] !== FAKE_UPSTREAM_KEY) {
+      if (google ? headers["x-goog-api-key"] !== googleKey : headers["x-api-key"] !== anthropicKey) {
         response.writeHead(401, { "content-type": "application/json" });
         response.end(JSON.stringify({ type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } }));
         return;
@@ -362,44 +363,147 @@ function siblingProviderId(id: string): string {
   return `${id.slice(0, -1)}${last === "0" ? "1" : "0"}`;
 }
 
-// Use the installed native OpenCode's bundled SDK, not a handcrafted fetch with
-// an extra Bearer header that could hide broken x-api-key/x-goog-api-key auth.
-async function nativeAdapterCall(input: { id: string; config: Record<string, unknown>; apiKeys: Record<string, string>; modelId: string; modelConfig: Record<string, unknown> }) {
+// OpenCode 1.18.18 only promotes an env credential when env.length === 1.
+// Real Desktop uses CloudProviderSync -> env store -> syncManagedProviderAuth
+// -> PUT /auth/{ipr ID} before reload, including providers with several aliases.
+// Exercise that path, not env-only provisioning or a masking Bearer header.
+async function nativeAdapterCall(input: {
+  id: string; config: Record<string, unknown>; apiKeys: Record<string, string>; modelId: string;
+  session: Pick<DenSession, "apiUrl" | "token">; orgId: string;
+}) {
   const root = await mkdtemp(join(tmpdir(), "inference-native-sdk-"));
+  const token = "native-sdk-client-token";
+  let logs = "";
+  const booted = bootServer({
+    PATH: process.env.PATH, HOME: root,
+    XDG_CACHE_HOME: join(root, "cache"), XDG_CONFIG_HOME: join(root, "config"),
+    XDG_DATA_HOME: join(root, "data"), XDG_STATE_HOME: join(root, "state"),
+    OPENWORK_DATA_DIR: root, OPENWORK_RUNTIME_DB: join(root, "runtime.sqlite"),
+    OPENWORK_ENV_STORE: join(root, "env.json"), OPENWORK_TOKEN_STORE: join(root, "tokens.json"),
+    OPENWORK_MANAGE_OPENCODE: "1", OPENWORK_OPENCODE_BIN: OPENCODE_BIN,
+    OPENWORK_CLOUD_PROVIDER_SYNC_INTERVAL_MS: "3600000",
+    OPENCODE_DISABLE_AUTOUPDATE: "1", OPENCODE_DISABLE_MODELS_FETCH: "1",
+    OPENCODE_CONFIG_CONTENT: JSON.stringify({ share: "disabled", permission: { "*": "deny" } }),
+  }, token, root, (chunk) => { logs = `${logs}${chunk}`.slice(-16000); });
   try {
-    const result = await execFileAsync(OPENCODE_BIN, ["run", "--pure", "--format", "json", "--title", "Gateway adapter probe", "--model", `${input.id}/${input.modelId}`, "ping"], {
-      cwd: root,
-      timeout: 120_000,
-      maxBuffer: 2 * 1024 * 1024,
-      env: {
-        PATH: process.env.PATH, HOME: root,
-        XDG_CACHE_HOME: join(root, "cache"), XDG_CONFIG_HOME: join(root, "config"),
-        XDG_DATA_HOME: join(root, "data"), XDG_STATE_HOME: join(root, "state"),
-        OPENCODE_DISABLE_AUTOUPDATE: "1", OPENCODE_DISABLE_MODELS_FETCH: "1",
-        OPENCODE_CONFIG_CONTENT: JSON.stringify({
-          enabled_providers: [input.id], share: "disabled", permission: { "*": "deny" },
-          provider: { [input.id]: {
-            npm: input.config.npm, api: input.config.api, env: input.config.env, options: input.config.options,
-            models: { [input.modelId]: { name: input.modelId, limit: input.modelConfig.limit, cost: input.modelConfig.cost } },
-          } },
-        }),
-        ...input.apiKeys,
-      },
-    });
-    expect(result.stdout.includes(FAKE_UPSTREAM_KEY)).toBe(false);
-    expect(result.stdout.includes(FAKE_GOOGLE_KEY)).toBe(false);
-    expect(Object.values(input.apiKeys).some((key) => `${result.stdout}${result.stderr}`.includes(key))).toBe(false);
-    const events = result.stdout.split(/\r?\n/).filter((line) => line.startsWith("{")).map((line): unknown => JSON.parse(line)).filter(isRecord);
-    expect(events.some((event) => event.type === "error")).toBe(false);
-    expect(events.some((event) => event.type === "text" && isRecord(event.part) && event.part.text === "gateway ok")).toBe(true);
-    expect(events.some((event) => event.type === "step_finish")).toBe(true);
+    const base = await booted.listening;
+    const hostHeaders = { "x-openwork-host-token": `${token}-host`, "content-type": "application/json" };
+    const clientHeaders = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+    const request = async (path: string, method = "GET", body?: unknown, headers: Record<string, string> = hostHeaders) => {
+      const response = await fetch(`${base}${path}`, {
+        method, headers, body: body === undefined ? undefined : JSON.stringify(body),
+        signal: AbortSignal.timeout(120_000),
+      });
+      const text = await response.text();
+      if (!response.ok) throw new Error(`${method} ${path}: HTTP ${response.status} ${text.slice(-2000)}`);
+      const payload: unknown = text ? JSON.parse(text) : null;
+      return payload;
+    };
+    const workspaces = await request("/workspaces", "GET", undefined, clientHeaders);
+    const workspace = isRecord(workspaces) && Array.isArray(workspaces.items) ? workspaces.items.find(isRecord) ?? null : null;
+    const workspaceId = stringAt(workspace, "id");
+    expect(workspaceId).not.toBe("");
+    const enginePath = `/workspace/${encodeURIComponent(workspaceId)}/opencode`;
+    const health = await request(`${enginePath}/global/health`, "GET", undefined, clientHeaders);
+    expect(health).toMatchObject({ healthy: true, version: "1.18.18" });
+
+    await request("/den-session", "PUT", { baseUrl: input.session.apiUrl, token: input.session.token, orgId: input.orgId });
+    const synced = await request("/cloud-provider-sync/run", "POST", {});
+    expect(isRecord(synced) ? synced.status : null).toMatch(/^(applied|noop)$/);
+    const runtime = await request("/runtime-config/providers");
+    const provider = isRecord(runtime) && isRecord(runtime.provider) ? runtime.provider[input.id] : null;
+    expect(provider).toMatchObject({ npm: input.config.npm, env: input.config.env, options: input.config.options });
+    expect(isRecord(provider) && isRecord(provider.options) ? provider.options.apiKey : undefined).toBeUndefined();
+    for (const [name, value] of Object.entries(input.apiKeys)) {
+      const stored = await request(`/env/${encodeURIComponent(name)}`);
+      expect(isRecord(stored) && isRecord(stored.item) && stored.item.value === value).toBe(true);
+    }
+    const authStore: unknown = JSON.parse(await readFile(join(root, "data/opencode/auth.json"), "utf8"));
+    const credential = isRecord(authStore) && isRecord(authStore[input.id]) ? authStore[input.id] : null;
+    expect(isRecord(credential) && credential.type === "api" && credential.key === Object.values(input.apiKeys)[0]).toBe(true);
+    expect(isRecord(authStore) && ("google" in authStore || "anthropic" in authStore)).toBe(false);
+    const configFile = await readFile(join(root, "runtime-opencode-config.json"), "utf8");
+    for (const secret of [FAKE_UPSTREAM_KEY, FAKE_GOOGLE_KEY, ...Object.values(input.apiKeys)]) {
+      expect(`${JSON.stringify(runtime)}${configFile}`.includes(secret)).toBe(false);
+    }
+
+    const session = await request(`${enginePath}/session`, "POST", { title: "Gateway adapter probe" }, clientHeaders);
+    const sessionId = stringAt(isRecord(session) ? session : null, "id");
+    expect(sessionId).not.toBe("");
+    const result = await request(`${enginePath}/session/${sessionId}/message`, "POST", {
+      model: { providerID: input.id, modelID: input.modelId },
+      parts: [{ type: "text", text: "ping" }],
+    }, clientHeaders);
+    expect(isRecord(result) && isRecord(result.info) ? result.info.error : "missing info").toBeUndefined();
+    const parts = isRecord(result) && Array.isArray(result.parts) ? result.parts.filter(isRecord) : [];
+    expect(parts.some((part) => part.type === "text" && part.text === "gateway ok")).toBe(true);
+    expect(parts.some((part) => part.type === "step-finish")).toBe(true);
+    for (const secret of [FAKE_UPSTREAM_KEY, FAKE_GOOGLE_KEY, ...Object.values(input.apiKeys)]) {
+      expect(`${JSON.stringify(result)}${logs}`.includes(secret)).toBe(false);
+    }
+  } catch (error) {
+    let diagnostic = `${error instanceof Error ? error.message : String(error)}\n${logs}`;
+    for (const secret of [input.session.token, FAKE_UPSTREAM_KEY, FAKE_GOOGLE_KEY, ...Object.values(input.apiKeys)]) {
+      diagnostic = diagnostic.split(secret).join("[redacted]");
+    }
+    throw new Error(diagnostic);
   } finally {
+    await stopChild(booted.child);
     await rm(root, { recursive: true, force: true });
   }
 }
 
+for (const providerId of ["google", "anthropic"]) {
+  test(`pinned native ${providerId} uses Desktop managed auth without config secrets`, { timeout: 240_000 }, async ({ evidence }) => {
+    needs({ commands: ["bun", OPENCODE_BIN] });
+    expect((await execFileAsync(OPENCODE_BIN, ["--version"], { timeout: 10_000 })).stdout.trim()).toBe("1.18.18");
+    const id = "ipr_01kx4t3amgendr682dmp6120jv";
+    const key = `ow_inf_native_${providerId}_fixture_only`;
+    const orgId = "org_native_sdk_fixture";
+    const token = "native-sdk-den-fixture-session";
+    const google = providerId === "google";
+    const modelId = google ? "gemini-2.5-flash-lite" : "claude-haiku-4-5-20251001";
+    const env = (google ? ["GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY", "GEMINI_API_KEY"] : ["ANTHROPIC_API_KEY"]).map((name) => `${id.toUpperCase()}_${name}`);
+    await using upstream = await startFakeAnthropicUpstream(key, key);
+    const api = `${upstream.baseUrl}/${google ? "v1beta" : "v1"}`;
+    const config = { npm: `@ai-sdk/${providerId}`, env, api, options: { baseURL: api } };
+    const apiKeys = Object.fromEntries(env.map((name) => [name, key]));
+    const summary = { id, providerId, source: "openwork_gateway", name: `Managed native ${providerId}`, credentialStatus: "ready",
+      providerConfig: config, models: [{ id: modelId, name: modelId, config: { limit: { context: 1000000, output: 8192 } } }] };
+    const denRequests: string[] = [];
+    const den = createServer((request, response) => {
+      response.setHeader("content-type", "application/json");
+      if (request.headers.authorization !== `Bearer ${token}` || request.headers["x-openwork-legacy-org-id"] !== orgId) {
+        response.writeHead(401); response.end("{}"); return;
+      }
+      denRequests.push(request.url ?? "");
+      if (request.url === "/v1/me/desktop-config") { response.end("{}"); return; }
+      if (request.url === "/v1/llm-providers") { response.end('{"llmProviders":[]}'); return; }
+      if (request.url === "/v1/inference-providers?scope=usable") { response.end(JSON.stringify({ inferenceProviders: [summary] })); return; }
+      if (request.url === `/v1/inference-providers/${id}/connect`) { response.end(JSON.stringify({ inferenceProvider: { ...summary, apiKey: key, apiKeys } })); return; }
+      response.writeHead(404); response.end("{}");
+    });
+    const apiUrl = await listen(den);
+    try {
+      await nativeAdapterCall({ id, config, apiKeys, modelId, session: { apiUrl, token }, orgId });
+      expect(denRequests).toContain(`/v1/inference-providers/${id}/connect`);
+      expect(upstream.requests).toHaveLength(1);
+      const request = upstream.requests[0];
+      expect(request?.method).toBe("POST");
+      expect(request?.path).toBe(google ? `/v1beta/models/${modelId}:streamGenerateContent?alt=sse` : "/v1/messages");
+      expect(request?.headers[google ? "x-goog-api-key" : "x-api-key"] === key).toBe(true);
+      expect(request?.headers.authorization).toBeUndefined();
+      expect(request?.headers[google ? "x-api-key" : "x-goog-api-key"]).toBeUndefined();
+      expect(request?.body.includes(key)).toBe(false);
+      evidence.recordAssertionEvidence(`Pinned ${providerId} consumes real Desktop-managed auth`, `OpenCode 1.18.18 decoded one loopback stream after real CLI cloud sync stored ${env.length} scoped aliases and registered auth under the ipr ID. No credential was injected into process env or provider config, no catalog auth ID was seeded, and the SDK used its native key header without Bearer auth.`, true);
+    } finally {
+      await close(den);
+    }
+  });
+}
+
 test("an org inference provider routes native member requests with the org credential and finalizes write-ahead usage", { timeout: 600_000 }, async ({ evidence, place }) => {
-  needs({ commands: ["pnpm", OPENCODE_BIN] });
+  needs({ commands: ["pnpm", "bun", OPENCODE_BIN] });
   if (place.kind !== "local" || process.env.OPENWORK_EVAL_DEN_API_URL?.trim()) {
     throw new SkipError("co-located Den, inference, upstream and scratch MySQL required; run this spec inside the prepared Daytona sandbox with OPENWORK_WORLD_PLACE=local and no OPENWORK_EVAL_DEN_API_URL (host-driven remote DB/upstream fixture not implemented)");
   }
@@ -433,8 +537,8 @@ test("an org inference provider routes native member requests with the org crede
   const orgId = await organizationId(den.admin, organizationName);
   const grantedMemberId = await memberIdByEmail(den.admin, orgId, granted.email);
   const outsiderMemberId = await memberIdByEmail(den.admin, orgId, outsider.email);
-  // Stable, non-reasoning models with prices in both Den's catalog and inference's snapshot.
-  const anthropicModel = await catalogModel(den.admin, orgId, "anthropic", "claude-3-haiku-20240307");
+  // Models with prices in both Den's current catalog and inference's snapshot.
+  const anthropicModel = await catalogModel(den.admin, orgId, "anthropic", "claude-haiku-4-5-20251001");
   const { modelId } = anthropicModel;
 
   // --- Admin creates the scoped provider; the credential never echoes back. ---
@@ -724,15 +828,15 @@ test("an org inference provider routes native member requests with the org crede
   expect(upstream.requests).toHaveLength(upstreamRequestsBeforeDenials);
   evidence.recordAssertionEvidence("Both services require the exact operator-approved origin", "Den rejected localhost at the approved port; an inference process trusting only localhost rejected Den's 127.0.0.1 destination without contacting upstream.", true);
 
-  const googleModel = await catalogModel(den.admin, orgId, "google", "gemini-2.0-flash");
+  const googleModel = await catalogModel(den.admin, orgId, "google", "gemini-2.5-flash-lite");
   const google = await createInferenceProvider(den.admin, orgId, {
     name: "Gemini via gateway", providerId: "google", modelId: googleModel.modelId,
     upstreamBaseUrl: `${upstream.baseUrl}/v1beta`, access: { memberIds: [grantedMemberId] },
   });
   expect(google.text.includes(FAKE_GOOGLE_KEY)).toBe(false);
   for (const native of [
-    { id: scoped.id, model: anthropicModel, npm: "@ai-sdk/anthropic", header: "x-api-key", secret: FAKE_UPSTREAM_KEY, protocol: "anthropic_messages", path: "/v1/messages" },
-    { id: google.id, model: googleModel, npm: "@ai-sdk/google", header: "x-goog-api-key", secret: FAKE_GOOGLE_KEY, protocol: "google_generate_content", path: `/v1beta/models/${googleModel.modelId}:streamGenerateContent` },
+    { id: scoped.id, model: anthropicModel, npm: "@ai-sdk/anthropic", env: ["ANTHROPIC_API_KEY"], header: "x-api-key", secret: FAKE_UPSTREAM_KEY, protocol: "anthropic_messages", path: "/v1/messages" },
+    { id: google.id, model: googleModel, npm: "@ai-sdk/google", env: ["GOOGLE_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY", "GEMINI_API_KEY"], header: "x-goog-api-key", secret: FAKE_GOOGLE_KEY, protocol: "google_generate_content", path: `/v1beta/models/${googleModel.modelId}:streamGenerateContent` },
   ]) {
     const connection = await connect(granted, orgId, native.id);
     expect(connection.status).toBe(200);
@@ -748,11 +852,11 @@ test("an org inference provider routes native member requests with the org crede
     expect(config.api).toBe(`${gatewayOrigin}/api/v1/providers/${native.id}`);
     expect(isRecord(config.options) ? config.options.baseURL : null).toBe(config.api);
     const bindings = Object.entries(apiKeys);
-    expect(bindings).toHaveLength(1);
-    expect(config.env).toEqual(bindings.map(([name]) => name));
-    expect(bindings.every(([name, value]) => /^IPR_[A-Z0-9]+_(?:ANTHROPIC_API_KEY|GOOGLE_GENERATIVE_AI_API_KEY)$/.test(name) && value === key)).toBe(true);
+    const expectedEnv = native.env.map((name) => `${native.id.toUpperCase()}_${name}`);
+    expect(config.env).toEqual(expectedEnv);
+    expect(apiKeys).toEqual(Object.fromEntries(expectedEnv.map((name) => [name, key])));
     const before = upstream.requests.length;
-    await nativeAdapterCall({ id: native.id, config, apiKeys: Object.fromEntries(bindings.map(([name]) => [name, key])), modelId: native.model.modelId, modelConfig: native.model.config });
+    await nativeAdapterCall({ id: native.id, config, apiKeys: Object.fromEntries(bindings.map(([name]) => [name, key])), modelId: native.model.modelId, session: granted, orgId });
     const sdkRequests = upstream.requests.slice(before);
     expect(sdkRequests).toHaveLength(1);
     const sdkRequest = sdkRequests[0];

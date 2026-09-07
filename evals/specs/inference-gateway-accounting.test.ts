@@ -28,7 +28,7 @@ test.skipIf(!local || !mysql)(title, { timeout: 600_000 }, async ({ place, evide
     cwd: fileURLToPath(new URL("../..", import.meta.url)),
     env: { PATH: process.env.PATH, HOME: process.env.HOME, NODE_OPTIONS: "--conditions=development",
       DATABASE_URL: databaseUrl, PORT: String(port), SENTRY_DSN: "", SENTRY_LOG_LEVEL: "off" },
-    stdio: "ignore",
+    stdio: ["ignore", "ignore", "inherit"],
     detached: true,
   });
   const origin = `http://127.0.0.1:${port}`;
@@ -39,22 +39,22 @@ test.skipIf(!local || !mysql)(title, { timeout: 600_000 }, async ({ place, evide
   });
   const run = () => request("/internal/rollups/run", { now: "2026-09-07T00:00:00.000Z", maxBucketsPerRun: 1, maxSourceRowsPerBucket: 1 });
   let sequence = 0;
-  const seed = async (tokens: number, hour = 0, member = "om_accounting_a", model = "model-a", known = true) => {
+  const seed = async (tokens: number, hour = 0, member = "om_00000000000000000000000001", model = "model-a", known = true) => {
     const id = `irl_${String(++sequence).padStart(26, "0")}`;
     await queryDenDatabase(databaseUrl,
       `INSERT INTO inference_request_logs
        (id, organization_id, org_membership_id, inference_key_id, route, protocol, upstream_provider_id,
         upstream_host, upstream_path, method, upstream_model, stream, outcome, usage_source,
         input_tokens, output_tokens, total_tokens, cost_micro_usd, started_at, completed_at, first_byte_at, openwork_request_id)
-       VALUES (?, 'org_accounting', ?, 'ink_accounting', 'org_provider', 'openai_chat', 'openai',
+       VALUES (?, 'org_00000000000000000000000001', ?, 'ink_00000000000000000000000001', 'org_provider', 'openai_chat', 'openai',
         'upstream.invalid', '/chat/completions', 'POST', ?, false, 'ok', ?, ?, 0, ?, ?, ?, ?, ?, ?)`,
       [id, member, model, known ? "json" : "missing", known ? tokens : null, known ? tokens : null, known ? 0 : null,
         `2026-01-01 ${String(hour).padStart(2, "0")}:00:00`, known ? `2026-01-01 ${String(hour).padStart(2, "0")}:00:00` : null,
         known ? `2026-01-01 ${String(hour).padStart(2, "0")}:00:00` : null, id]);
   };
   const rows = () => queryDenDatabase(databaseUrl,
-    "SELECT granularity, org_membership_id, upstream_model, input_tokens, request_count, cost_count, cost_micro_usd, latency_count, ttfb_count, source_row_count FROM inference_usage_rollups WHERE organization_id = 'org_accounting' ORDER BY org_membership_id, upstream_model, granularity");
-  const rawCount = async () => queryDenDatabase(databaseUrl, "SELECT count(*) AS n FROM inference_request_logs WHERE organization_id = 'org_accounting'");
+    "SELECT granularity, org_membership_id, upstream_model, input_tokens, request_count, cost_count, cost_micro_usd, latency_count, ttfb_count, source_row_count FROM inference_usage_rollups WHERE organization_id = 'org_00000000000000000000000001' ORDER BY org_membership_id, upstream_model, granularity");
+  const rawCount = async () => queryDenDatabase(databaseUrl, "SELECT count(*) AS n FROM inference_request_logs WHERE organization_id = 'org_00000000000000000000000001'");
   try {
     await eventually(async () => {
       if (child.exitCode !== null) throw new Error("Accounting fixture exited");
@@ -114,15 +114,15 @@ test.skipIf(!local || !mysql)(title, { timeout: 600_000 }, async ({ place, evide
     expect(await rows()).toMatchObject([{ input_tokens: 190, request_count: 7, source_row_count: 7 }]);
     evidence.recordAssertionEvidence("MySQL workers, writer and rollback preserve consumption", "Competing workers serialize; rollback keeps raw and destination unchanged; all seven requests retain 190 tokens exactly once", true);
 
-    await seed(0, 5, "om_accounting_b", "model-b");
-    await seed(0, 6, "om_accounting_b", "model-c", false);
-    await seed(3, 7, "om_accounting_b", "model-a");
+    await seed(0, 5, "om_00000000000000000000000002", "model-b");
+    await seed(0, 6, "om_00000000000000000000000002", "model-c", false);
+    await seed(3, 7, "om_00000000000000000000000002", "model-a");
     for (let i = 0; i < 4; i += 1) expect((await run()).status).toBe(200);
     expect(await rows()).toMatchObject([
-      { org_membership_id: "om_accounting_a", upstream_model: "model-a", input_tokens: 190 },
-      { org_membership_id: "om_accounting_b", upstream_model: "model-a", input_tokens: 3 },
-      { org_membership_id: "om_accounting_b", upstream_model: "model-b", input_tokens: 0, cost_count: 1, cost_micro_usd: 0, latency_count: 1, ttfb_count: 1 },
-      { org_membership_id: "om_accounting_b", upstream_model: "model-c", input_tokens: 0, cost_count: 0, cost_micro_usd: 0, latency_count: 0, ttfb_count: 0 },
+      { org_membership_id: "om_00000000000000000000000001", upstream_model: "model-a", input_tokens: 190 },
+      { org_membership_id: "om_00000000000000000000000002", upstream_model: "model-a", input_tokens: 3 },
+      { org_membership_id: "om_00000000000000000000000002", upstream_model: "model-b", input_tokens: 0, cost_count: 1, cost_micro_usd: 0, latency_count: 1, ttfb_count: 1 },
+      { org_membership_id: "om_00000000000000000000000002", upstream_model: "model-c", input_tokens: 0, cost_count: 0, cost_micro_usd: 0, latency_count: 0, ttfb_count: 0 },
     ]);
     expect(await rows()).toHaveLength(4);
     evidence.recordAssertionEvidence("Member/model separation and zero versus missing survive compaction", "Second member's models remain separate; observed free cost/zero latency have count 1, missing observations have count 0", true);

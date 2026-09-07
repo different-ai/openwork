@@ -28,7 +28,10 @@ app.post("/test/fault", async (c) => {
 })
 app.get("/test/barrier", (c) => c.json({ reached }))
 app.post("/test/release", (c) => { release?.(); return c.json({ released: true }) })
-app.onError((_error, c) => c.json({ error: "injected_or_database_failure" }, 500))
+app.onError((error, c) => {
+  console.error(error)
+  return c.json({ error: "injected_or_database_failure" }, 500)
+})
 registerRollupRoutes(app, {
   adminToken: "accounting-test-only",
   runRollups: (input) => runRollups({ ...input, repository: {
