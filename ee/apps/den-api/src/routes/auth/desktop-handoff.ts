@@ -9,7 +9,7 @@ import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/exte
 import { jsonValidator, publicRoute, userSessionRoute } from "../../middleware/index.js"
 import { db } from "../../db.js"
 import { env, type DenOrgMode } from "../../env.js"
-import { resolveUserOrganizations } from "../../orgs.js"
+import { ensurePersonalOrganizationForUser, resolveUserOrganizations } from "../../orgs.js"
 import { denTypeIdSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 import { enforceRateLimit } from "../../utils/rate-limit.js"
@@ -594,10 +594,20 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
     let organization: { id: string; slug: string; name: string } | null = null
     let organizationMetadata: string | null = null
     try {
-      const resolved = await resolveUserOrganizations({
-        userId: normalizeDenTypeId("user", exchange.user.id),
+      const userId = normalizeDenTypeId("user", exchange.user.id)
+      let resolved = await resolveUserOrganizations({
+        userId,
         activeOrganizationId: exchange.activeOrganizationId,
       })
+      // Bootstrap only an authenticated desktop handoff, not browser onboarding
+      // or membership in a managed single-org deployment.
+      if (env.orgMode === "multi_org" && resolved.orgs.length === 0) {
+        const organizationId = await ensurePersonalOrganizationForUser(userId)
+        resolved = await resolveUserOrganizations({
+          userId,
+          activeOrganizationId: organizationId,
+        })
+      }
       const activeOrg = resolved.orgs.find((org) => org.id === resolved.activeOrgId) ?? null
       organization = activeOrg ? { id: activeOrg.id, slug: activeOrg.slug, name: activeOrg.name } : null
       organizationMetadata = activeOrg?.metadata ?? null

@@ -3,6 +3,7 @@ import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, onTestFinished } from "vitest";
+import { denFetch, signIn } from "@openwork/behaviors";
 import {
   app,
   control,
@@ -287,6 +288,85 @@ test.skipIf(!e2eTestsEnabled || !localPlacement || !mysqlOpen)(
         evidence.recordAssertionEvidence(
           "Restart restored the complete B enrollment",
           `After a relaunch, the app came back signed in to ${ORG_B} with the B credential and enrollment origin.`,
+          true,
+        );
+
+        const anonymous = await denFetch(denB.ref, "/v1/auth/desktop-handoff", {
+          method: "POST", body: JSON.stringify({}),
+        });
+        expect(anonymous.response.status).toBe(401);
+        const credentials = {
+          email: `handoff-no-org-${Date.now()}@openwork.test`,
+          name: "Personal Handoff",
+          password: "OpenWorkEval123!",
+        };
+        const signup = await denFetch(denB.ref, "/api/auth/sign-up/email", {
+          method: "POST",
+          body: JSON.stringify(credentials),
+        });
+        expect(signup.response.ok).toBe(true);
+        const newcomer = await signIn(denB.ref, credentials);
+        const headers = { authorization: `Bearer ${newcomer.token}` };
+        const before = await denFetch(newcomer, "/v1/me/orgs", { headers });
+        expect(before.response.ok).toBe(true);
+        expect(before.body).toMatchObject({ orgs: [], activeOrgId: null });
+        const invitation = await denFetch(denB.admin, "/v1/invitations", {
+          method: "POST",
+          headers: { authorization: `Bearer ${denB.admin.token}` },
+          body: JSON.stringify({ email: credentials.email, role: "member" }),
+        });
+        expect(invitation.response.ok).toBe(true);
+        const orgBefore = await denFetch(denB.admin, "/v1/org", {
+          headers: { authorization: `Bearer ${denB.admin.token}` },
+        });
+        expect(orgBefore.response.ok).toBe(true);
+        const adminBefore = await denFetch(denB.admin, "/v1/me/orgs", {
+          headers: { authorization: `Bearer ${denB.admin.token}` },
+        });
+        expect(adminBefore.response.ok).toBe(true);
+
+        let personalOrgId = "";
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const grant = await createDesktopHandoffGrant(newcomer);
+          await control(restarted, "auth.exchange-grant", {
+            grant, baseUrl: denB.ref.webUrl,
+          }, { timeoutMs: 60_000 });
+          const state = await eventually(() => readDenClientState(restarted), {
+            within: 60_000,
+            label: "org-less user enrolled with a personal organization",
+            until: (value) => value.authTokenPresent && Boolean(value.activeOrgId) && value.activeOrgId !== stateB.activeOrgId,
+          });
+          expect(state.activeOrgId).toBeTruthy();
+          if (attempt === 0) personalOrgId = state.activeOrgId ?? "";
+          expect(state.activeOrgId).toBe(personalOrgId);
+          const directory = await denFetch(newcomer, "/v1/me/orgs", { headers });
+          expect(directory.response.ok).toBe(true);
+          expect(directory.body).toMatchObject({
+            orgs: [{ id: personalOrgId, role: "owner", memberCount: 1 }],
+            activeOrgId: personalOrgId,
+          });
+          const replay = await denFetch(newcomer, "/v1/auth/desktop-handoff/exchange", {
+            method: "POST", body: JSON.stringify({ grant }),
+          });
+          expect(replay.response.status).toBe(404);
+        }
+        const adminAfter = await denFetch(denB.admin, "/v1/me/orgs", {
+          headers: { authorization: `Bearer ${denB.admin.token}` },
+        });
+        expect(adminAfter.response.ok).toBe(true);
+        expect(adminAfter.body).toEqual(adminBefore.body);
+        const orgAfter = await denFetch(denB.admin, "/v1/org", {
+          headers: { authorization: `Bearer ${denB.admin.token}` },
+        });
+        expect(orgAfter.response.ok).toBe(true);
+        expect(orgAfter.body).toEqual(orgBefore.body);
+        const denied = await denFetch(newcomer, "/v1/org", {
+          headers: { ...headers, "x-openwork-org-id": stateB.activeOrgId ?? "" },
+        });
+        expect(denied.response.status).toBe(404);
+        evidence.recordAssertionEvidence(
+          "An authenticated desktop handoff supplies a default owned organization only when membership is missing",
+          "The fresh account had no organizations before handoff; desktop sign-in resolved one owned organization, a second handoff reused it, consumed grants remained unusable, and the existing organization's memberships and pending invitation were unchanged. The newcomer could not access the invited organization without accepting.",
           true,
         );
       } finally {
