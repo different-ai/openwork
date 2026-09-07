@@ -101,7 +101,8 @@ test("workflow activity shows linked version diagrams and keeps one-off and inac
     }
     // The old URL redirects into Analytics and receives the same gate.
     await user.see({ text: "Workflow Runs is part of the Enterprise plan." }, { timeoutMs: 90_000 });
-    await user.see({ label: "Analytics views" });
+    await user.see({ role: "link", label: /^Usage & adoption$/ });
+    await user.see({ role: "link", label: "Models & usage" });
     await user.notSee({ testId: "nav-workflow-runs" });
     await user.notSee({ role: "link", label: "Workflow Runs" });
     await user.notSee({ testId: `workflow-run-link-${world.receiptId}` });

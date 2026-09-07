@@ -21,7 +21,8 @@ test("an existing Models subscriber can decline, enable and disable task analyti
   expect(baseline).toMatchObject({ enabled: true, subscribed: true, tier: "tier1" });
   await user.see({ role: "button", label: "Manage subscription" }, { timeoutMs: 90_000 });
   await user.notSee({ text: "Unlock custom insights" });
-  await user.notSee({ label: "Analytics views" });
+  await user.notSee({ role: "link", label: "Models & usage" });
+  await user.notSee({ role: "link", label: /^Usage & adoption$/ });
   await user.notSee({ text: "Shared usage limits" });
   await user.notSee({ role: "tab", label: "Activity" });
   await user.screenshot();
@@ -74,7 +75,8 @@ test("an existing Models subscriber can decline, enable and disable task analyti
   expect(await settings()).toMatchObject({ enabled: true, consentVersion: 1 });
   await user.navigate(`${world.den.ref.webUrl}/dashboard/inference`);
   await user.see({ role: "button", label: "Manage subscription" });
-  await user.notSee({ label: "Analytics views" });
+  await user.notSee({ role: "link", label: "Models & usage" });
+  await user.notSee({ role: "link", label: /^Usage & adoption$/ });
   await user.notSee({ text: "Task analytics" });
   await user.notSee({ text: "Shared usage limits" });
   await user.notSee({ role: "tab", label: "Integrations" });
