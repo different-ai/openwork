@@ -18,6 +18,8 @@ test("parses usage from a single SSE chunk", () => {
     cacheReadTokens: 6,
     reasoningTokens: 7,
     costUsd: 0.0042,
+    cacheWriteTokens: null,
+    upstreamRequestId: "gen-1",
   })
 })
 
@@ -54,10 +56,10 @@ test("ignores non-JSON data lines, comments, and the [DONE] sentinel", () => {
   assert.equal(parser.result().totalTokens, 30)
 })
 
-test("parses a final data line without a trailing newline", () => {
+test("an incomplete SSE event at EOF is not usage evidence", () => {
   const parser = createOpenAiChatSseUsageParser()
   parser.push(usageEvent.trimEnd())
-  assert.equal(parser.result().found, true)
+  assert.equal(parser.result().found, false)
 })
 
 test("gives up with missing usage when the line buffer overflows", () => {

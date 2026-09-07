@@ -1,12 +1,11 @@
 // Usage parser for the Anthropic Messages API (direct and via Vertex).
 // Stream: `message_start.message.usage` carries input + cache counters and
 // the model; `message_delta.usage.output_tokens` carries the final output.
-import { createSseUsageParser, emptyUsage, isRecord, readNumber } from "./shared.js"
+import { captureResponseIdentity, createSseUsageParser, emptyUsage, hasUsage, isRecord, readNumber } from "./shared.js"
 import type { ParsedUsage, UsageParser } from "./shared.js"
 
 function applyUsage(target: ParsedUsage, usage: unknown, options: { partial: boolean }) {
   if (!isRecord(usage)) return
-  target.found = true
   const input = readNumber(usage.input_tokens)
   const output = readNumber(usage.output_tokens)
   const cacheWrite = readNumber(usage.cache_creation_input_tokens)
@@ -15,11 +14,16 @@ function applyUsage(target: ParsedUsage, usage: unknown, options: { partial: boo
   if (output !== null || !options.partial) target.outputTokens = output ?? target.outputTokens
   if (cacheWrite !== null) target.cacheWriteTokens = cacheWrite
   if (cacheRead !== null) target.cacheReadTokens = cacheRead
+  if (target.inputTokens !== null && target.outputTokens !== null) {
+    target.totalTokens = target.inputTokens + target.outputTokens + (target.cacheReadTokens ?? 0) + (target.cacheWriteTokens ?? 0)
+  }
+  target.found = hasUsage(target)
 }
 
 function applyEvent(target: ParsedUsage, event: unknown) {
   if (!isRecord(event)) return
   if (event.type === "message_start" && isRecord(event.message)) {
+    captureResponseIdentity(target, event.message)
     if (typeof event.message.model === "string") target.model = event.message.model
     applyUsage(target, event.message.usage, { partial: true })
     return
@@ -32,6 +36,7 @@ function applyEvent(target: ParsedUsage, event: unknown) {
 export function parseAnthropicMessagesJsonUsage(body: unknown): ParsedUsage {
   const usage = emptyUsage()
   if (!isRecord(body)) return usage
+  captureResponseIdentity(usage, body)
   if (typeof body.model === "string") usage.model = body.model
   applyUsage(usage, body.usage, { partial: false })
   return usage

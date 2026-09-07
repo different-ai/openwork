@@ -6,7 +6,7 @@ import type { InferenceRequestLogRow, RequestLogStartInput } from "../src/reques
 
 const identity: RequestLogStartInput["identity"] = {
   organizationId: "org_01krnrcabhe8htwpbnsw0zk0bw",
-  orgMembershipId: "mem_01krnrcabhe8htwpbnsw0zk0bw",
+  orgMembershipId: "om_01krnrcabhe8htwpbnsw0zk0bw",
   inferenceKeyId: "ink_01krnrcabhe8htwpbnsw0zk0bw",
 }
 
@@ -35,6 +35,12 @@ function createHarness(insert?: (row: InferenceRequestLogRow) => Promise<void>) 
   }
   const recorder = createRequestLogRecorder({
     insertRequestLog: insert ?? (async (row) => { rows.push(row) }),
+    updateRequestLog: async (row) => {
+      const index = rows.findIndex((candidate) => candidate.id === row.id)
+      if (index < 0) return false
+      rows[index] = row
+      return true
+    },
     reporter,
   })
   return { recorder, rows, handled }
@@ -82,4 +88,80 @@ test("insert failures are reported and never thrown", async () => {
   recorder.start(startInput)
   await recorder.finish({ status: 200, outcome: "ok" })
   assert.deepEqual(handled, ["request_log_insert_failed"])
+})
+
+test("pending write starts before finish; completion waits for start and racing finishes share one result", async () => {
+  const rows: InferenceRequestLogRow[] = []
+  let release = () => {}
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  let updates = 0
+  const recorder = createRequestLogRecorder({
+    insertRequestLog: async (row) => { rows.push(row); await gate },
+    updateRequestLog: async (row) => { updates += 1; rows[0] = row; return true },
+    reporter: { request() {}, handledError() {} },
+  })
+  recorder.start(startInput)
+  const id = rows[0]?.id
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0]?.completed_at, null)
+  const finish = recorder.finish({ status: 200, outcome: "ok" })
+  assert.equal(updates, 0)
+  const duplicate = recorder.finish({ status: 500, outcome: "upstream_error" })
+  assert.equal(duplicate, finish)
+  release()
+  await finish
+  assert.equal(await recorder.whenStarted?.(), true)
+  assert.equal(updates, 1)
+  assert.equal(rows[0]?.id, id)
+  assert.equal(rows[0]?.outcome, "ok")
+})
+
+test("ambiguous writes retry the same identity, failures are bounded and never disclose exception payloads", async () => {
+  const stored = new Map<string, InferenceRequestLogRow>()
+  const reports: unknown[] = []
+  const ids: string[] = []
+  let attempts = 0
+  const recorder = createRequestLogRecorder({
+    insertRequestLog: async (row) => {
+      ids.push(row.id)
+      stored.set(row.id, row)
+      if (ids.length === 1) throw new Error("INSERT values FAKE_SECRET_BODY")
+    },
+    updateRequestLog: async () => { attempts += 1; throw new Error("SQL params FAKE_SECRET_BODY") },
+    reporter: { request() {}, handledError(report) { reports.push(report) } },
+  })
+  recorder.start(startInput)
+  await recorder.finish({ status: 200, outcome: "ok" })
+  assert.equal(ids.length, 2)
+  assert.equal(new Set(ids).size, 1)
+  assert.equal(stored.size, 1)
+  assert.equal(attempts, 3)
+  assert.equal([...stored.values()][0]?.completed_at, null)
+  assert.equal(JSON.stringify(reports).includes("FAKE_SECRET_BODY"), false)
+  assert.equal(JSON.stringify(reports).includes("exception"), false)
+  await recorder.finish({ status: 200, outcome: "ok" })
+  assert.equal(attempts, 3)
+})
+
+test("retention-consumed pending rows are not reinserted; body id and stream errors can be recorded", async () => {
+  let inserts = 0
+  let completed: InferenceRequestLogRow | null = null
+  const reports: string[] = []
+  const recorder = createRequestLogRecorder({
+    insertRequestLog: async () => { inserts += 1 },
+    updateRequestLog: async (row) => { completed = row; return false },
+    reporter: { request() {}, handledError(report) { reports.push(report.reason) } },
+  })
+  recorder.start(startInput)
+  recorder.setUsage({ usageSource: "stream", upstreamRequestId: "body_request", streamError: "upstream_stream_error" })
+  await recorder.finish({ status: 200, outcome: "ok" })
+  assert.equal(inserts, 1)
+  assert.ok(completed)
+  // Callback-assigned values are observed through a snapshot for TS narrowing.
+  const snapshot = () => completed
+  assert.equal(snapshot()?.outcome, "upstream_error")
+  assert.equal(snapshot()?.error_code, "upstream_stream_error")
+  assert.equal(snapshot()?.upstream_request_id, "body_request")
+  assert.equal(snapshot()?.usage_source, "missing")
+  assert.deepEqual(reports, ["request_log_not_finalized"])
 })

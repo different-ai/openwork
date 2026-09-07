@@ -270,6 +270,14 @@ denWeb:
 
 inference:
   enabled: false
+  # Opt-in after applying the accounting migration. This is product retention,
+  # not a member Automation. Non-Helm deployments must supply their own caller.
+  retention:
+    enabled: false
+    schedule: "0 3 * * *"
+    timeZone: "Etc/UTC"
+    adminTokenSecret: ""
+    adminTokenKey: "INFERENCE_ADMIN_TOKEN"
   replicaCount: 1
   image:
     repository: ghcr.io/different-ai/openwork-inference

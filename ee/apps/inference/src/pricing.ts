@@ -3,6 +3,7 @@
 import { readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import type { InferenceRequestProtocol } from "@openwork/types/den/inference"
 
 export type ModelPrice = {
   input: number
@@ -10,6 +11,7 @@ export type ModelPrice = {
   cacheRead: number | null
   cacheWrite: number | null
   reasoning: number | null
+  contextTiers?: { above: number; price: ModelPrice }[]
 }
 
 export type PricingCatalog = {
@@ -19,6 +21,7 @@ export type PricingCatalog = {
 export type CostEstimateInput = {
   providerId: string
   modelId: string
+  protocol?: InferenceRequestProtocol
   inputTokens: number | null
   outputTokens: number | null
   cacheReadTokens: number | null
@@ -41,12 +44,26 @@ function readModelPrice(model: unknown): ModelPrice | null {
   const input = readPrice(model.cost.input)
   const output = readPrice(model.cost.output)
   if (input === null || output === null) return null
+  const contextTiers: { above: number; price: ModelPrice }[] = []
+  if (Array.isArray(model.cost.tiers)) {
+    for (const entry of model.cost.tiers) {
+      if (!isRecord(entry) || !isRecord(entry.tier) || entry.tier.type !== "context") continue
+      const above = readPrice(entry.tier.size)
+      const price = readModelPrice({ cost: { ...model.cost, ...entry, tiers: undefined, context_over_200k: undefined } })
+      if (above !== null && price) contextTiers.push({ above, price })
+    }
+  } else if (isRecord(model.cost.context_over_200k)) {
+    // Older catalog snapshots predate the explicit tier threshold.
+    const price = readModelPrice({ cost: { ...model.cost, ...model.cost.context_over_200k, context_over_200k: undefined } })
+    if (price) contextTiers.push({ above: 200_000, price })
+  }
   return {
     input,
     output,
     cacheRead: readPrice(model.cost.cache_read),
     cacheWrite: readPrice(model.cost.cache_write),
     reasoning: readPrice(model.cost.reasoning),
+    contextTiers: contextTiers.sort((a, b) => a.above - b.above),
   }
 }
 
@@ -83,13 +100,27 @@ function tokens(value: number | null) {
 }
 
 export function estimateCostMicroUsd(input: CostEstimateInput, catalog: PricingCatalog = loadPricingCatalogFromFile()): number | null {
-  const price = catalog.getModelPrice(input.providerId, input.modelId)
+  let price = catalog.getModelPrice(input.providerId, input.modelId)
   if (!price) return null
+  // Optional detail counters may be absent, but partial primary usage must not
+  // become an apparently complete (and under-priced) cost.
+  if (input.inputTokens === null || input.outputTokens === null
+    || Object.values(input).some((value) => typeof value === "number" && (!Number.isFinite(value) || value < 0))) return null
+  const disjointCache = input.protocol === "anthropic_messages" || input.protocol === "bedrock_converse"
+    || (!input.protocol && (input.providerId === "anthropic" || input.providerId === "amazon-bedrock" || input.providerId === "google-vertex-anthropic"))
+  const cache = tokens(input.cacheReadTokens) + tokens(input.cacheWriteTokens)
+  const contextTokens = input.inputTokens + (disjointCache ? cache : 0)
+  const uncachedInput = input.inputTokens - (disjointCache ? 0 : cache)
+  if (uncachedInput < 0) return null
+  for (const tier of price.contextTiers ?? []) if (contextTokens > tier.above) price = tier.price
+  // Only Gemini reports thoughts separately from output. Anthropic and OpenAI
+  // already include reasoning in their output counters.
+  const separateReasoning = input.protocol === "google_generate_content"
   const microUsd =
-    tokens(input.inputTokens) * price.input +
+    uncachedInput * price.input +
     tokens(input.outputTokens) * price.output +
     tokens(input.cacheReadTokens) * (price.cacheRead ?? price.input) +
     tokens(input.cacheWriteTokens) * (price.cacheWrite ?? price.input) +
-    tokens(input.reasoningTokens) * (price.reasoning ?? price.output)
-  return Math.round(microUsd)
+    (separateReasoning ? tokens(input.reasoningTokens) * (price.reasoning ?? price.output) : 0)
+  return Number.isSafeInteger(Math.round(microUsd)) ? Math.round(microUsd) : null
 }

@@ -33,16 +33,16 @@ test("unknown model or provider returns null", () => {
   assert.equal(estimateCostMicroUsd({ providerId: "nobody", modelId: "claude-test", ...zeroTokens, inputTokens: 10 }, catalog), null)
 })
 
-test("cache tokens use cache prices and fall back to the input price", () => {
-  const priced = estimateCostMicroUsd({ providerId: "anthropic", modelId: "claude-test", ...zeroTokens, cacheReadTokens: 1_000_000, cacheWriteTokens: 1_000_000 }, catalog)
+test("disjoint cache tokens use cache prices and fall back to the input price", () => {
+  const priced = estimateCostMicroUsd({ providerId: "anthropic", modelId: "claude-test", ...zeroTokens, inputTokens: 0, outputTokens: 0, cacheReadTokens: 1_000_000, cacheWriteTokens: 1_000_000 }, catalog)
   assert.equal(priced, 300_000 + 3_750_000)
-  const fallback = estimateCostMicroUsd({ providerId: "anthropic", modelId: "no-cache-price", ...zeroTokens, cacheReadTokens: 1_000_000, cacheWriteTokens: 1_000_000 }, catalog)
+  const fallback = estimateCostMicroUsd({ providerId: "anthropic", modelId: "no-cache-price", ...zeroTokens, inputTokens: 0, outputTokens: 0, cacheReadTokens: 1_000_000, cacheWriteTokens: 1_000_000 }, catalog)
   assert.equal(fallback, 2_000_000 + 2_000_000)
 })
 
-test("reasoning tokens bill as output without a separate reasoning price", () => {
+test("partial primary counters are not a complete cost", () => {
   const cost = estimateCostMicroUsd({ providerId: "anthropic", modelId: "no-cache-price", ...zeroTokens, reasoningTokens: 1_000_000 }, catalog)
-  assert.equal(cost, 4_000_000)
+  assert.equal(cost, null)
 })
 
 test("the bundled base.json prices openrouter models keyed by vendor/model", () => {
@@ -53,7 +53,12 @@ test("the bundled base.json prices openrouter models keyed by vendor/model", () 
 
 function createRecorder(rows: InferenceRequestLogRow[]) {
   const reporter: InferenceReporter = { request() {}, handledError() {} }
-  return createRequestLogRecorder({ insertRequestLog: async (row) => { rows.push(row) }, reporter, pricing: catalog })
+  return createRequestLogRecorder({ insertRequestLog: async (row) => { rows.push(row) }, updateRequestLog: async (row) => {
+    const index = rows.findIndex((candidate) => candidate.id === row.id)
+    if (index < 0) return false
+    rows[index] = row
+    return true
+  }, reporter, pricing: catalog })
 }
 
 function start(overrides: Partial<RequestLogStartInput> = {}): RequestLogStartInput {
@@ -114,4 +119,48 @@ test("openrouter usage.cost takes precedence over the pricing snapshot", async (
   await estimated.finish({ status: 200, outcome: "ok" })
   // OpenAI-style output tokens already include reasoning tokens, so they are not billed twice.
   assert.equal(rows[1]?.cost_micro_usd, 1_000_000)
+})
+
+test("inclusive cache prompt accounting charges 280, not 440, and never bills reasoning twice", () => {
+  const prices = createPricingCatalog({ openai: { models: { m: { cost: { input: 2, output: 4, cache_read: 0.5 } } } } })
+  for (const protocol of ["openai_chat", "openai_responses", "google_generate_content"] as const) {
+    assert.equal(estimateCostMicroUsd({ ...zeroTokens, providerId: "openai", modelId: "m", protocol,
+      inputTokens: 100, outputTokens: 50, cacheReadTokens: 80, reasoningTokens: protocol === "google_generate_content" ? 0 : 20 }, prices), 280)
+  }
+  assert.equal(estimateCostMicroUsd({ ...zeroTokens, providerId: "openai", modelId: "m", protocol: "google_generate_content",
+    inputTokens: 100, outputTokens: 50, cacheReadTokens: 80, reasoningTokens: 20 }, prices), 360)
+  assert.equal(estimateCostMicroUsd({ ...zeroTokens, providerId: "openai", modelId: "m", inputTokens: 0, outputTokens: 0 }, prices), 0)
+  assert.equal(estimateCostMicroUsd({ ...zeroTokens, providerId: "openai", modelId: "m", inputTokens: 100 }, prices), null)
+  assert.equal(estimateCostMicroUsd({ ...zeroTokens, providerId: "openai", modelId: "m", inputTokens: 10, outputTokens: 0, cacheReadTokens: 11 }, prices), null)
+})
+
+test("catalog context tiers include disjoint cache and honor explicit thresholds over legacy aliases", () => {
+  const prices = createPricingCatalog({ anthropic: { models: {
+    m: { cost: { input: 2, output: 12, cache_read: 0.2,
+      tiers: [{ input: 4, output: 18, cache_read: 0.4, tier: { type: "context", size: 200000 } }] } },
+    explicit: { cost: { input: 2, output: 12,
+      tiers: [{ input: 4, output: 18, tier: { type: "context", size: 272000 } }], context_over_200k: { input: 99, output: 99 } } },
+  } } })
+  const input = { ...zeroTokens, providerId: "anthropic", modelId: "m", inputTokens: 250000, outputTokens: 1000 }
+  assert.equal(estimateCostMicroUsd(input, prices), 1018000)
+  assert.equal(estimateCostMicroUsd({ ...input, inputTokens: 200000 }, prices), 412000)
+  assert.equal(estimateCostMicroUsd({ ...input, inputTokens: 199999, cacheReadTokens: 2 }, prices), 817997)
+  assert.equal(estimateCostMicroUsd({ ...input, modelId: "explicit" }, prices), 512000)
+})
+
+test("recorder falls back to requested model, preserves partial null cost, and includes Anthropic cache in totals", async () => {
+  const rows: InferenceRequestLogRow[] = []
+  const recorder = createRecorder(rows)
+  recorder.start(start({ upstreamModel: null }))
+  recorder.setUsage({ usageSource: "json", inputTokens: 100, outputTokens: 7, cacheReadTokens: 80, cacheWriteTokens: 20 })
+  await recorder.finish({ status: 200, outcome: "ok" })
+  assert.equal(rows[0]?.upstream_model, "claude-test")
+  assert.equal(rows[0]?.total_tokens, 207)
+  assert.equal(rows[0]?.cost_micro_usd, 504)
+  const partial = createRecorder(rows)
+  partial.start(start())
+  partial.setUsage({ usageSource: "json", inputTokens: 100 })
+  await partial.finish({ status: 200, outcome: "ok" })
+  assert.equal(rows[1]?.cost_micro_usd, null)
+  assert.equal(rows[1]?.total_tokens, null)
 })

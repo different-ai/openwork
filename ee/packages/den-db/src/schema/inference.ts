@@ -237,6 +237,12 @@ export const InferenceRequestLogTable = mysqlTable(
   ],
 )
 
+// A permanent singleton record: INSERT ... ON DUPLICATE KEY UPDATE holds an
+// InnoDB exclusive lock through commit, coordinating hourly AND daily consumers.
+export const InferenceRollupLockTable = mysqlTable("inference_rollup_lock", {
+  id: int("id").notNull().primaryKey(),
+})
+
 // Hour/day aggregates of inference_request_logs, one row per dimension combination per bucket.
 export const InferenceUsageRollupTable = mysqlTable(
   "inference_usage_rollups",
@@ -275,6 +281,19 @@ export const InferenceUsageRollupTable = mysqlTable(
     request_bytes: bigint("request_bytes", { mode: "number" }).notNull().default(0),
     response_bytes: bigint("response_bytes", { mode: "number" }).notNull().default(0),
     source_row_count: int("source_row_count").notNull().default(0),
+    // NULL means an older rollup whose observation counts cannot be recovered.
+    // New batches explicitly write zero when the measurement was not observed.
+    input_tokens_count: bigint("input_tokens_count", { mode: "number" }),
+    output_tokens_count: bigint("output_tokens_count", { mode: "number" }),
+    total_tokens_count: bigint("total_tokens_count", { mode: "number" }),
+    cache_read_tokens_count: bigint("cache_read_tokens_count", { mode: "number" }),
+    cache_write_tokens_count: bigint("cache_write_tokens_count", { mode: "number" }),
+    reasoning_tokens_count: bigint("reasoning_tokens_count", { mode: "number" }),
+    cost_count: bigint("cost_count", { mode: "number" }),
+    latency_count: bigint("latency_count", { mode: "number" }),
+    ttfb_count: bigint("ttfb_count", { mode: "number" }),
+    request_bytes_count: bigint("request_bytes_count", { mode: "number" }),
+    response_bytes_count: bigint("response_bytes_count", { mode: "number" }),
     ...timestamps,
   },
   (table) => [

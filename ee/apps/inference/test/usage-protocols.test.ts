@@ -1,5 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
+import { createSseUsageParser, emptyUsage } from "../src/usage/shared.js"
+import { parseOpenAiChatJsonUsage } from "../src/usage/openai-chat.js"
 import { createAnthropicMessagesSseUsageParser, parseAnthropicMessagesJsonUsage } from "../src/usage/anthropic-messages.js"
 import {
   createGoogleGenerateContentJsonStreamUsageParser,
@@ -75,6 +77,7 @@ test("openai responses: response.completed carries usage", () => {
     cacheWriteTokens: null,
     reasoningTokens: 8,
     costUsd: null,
+    upstreamRequestId: "resp_1",
   })
 })
 
@@ -120,4 +123,29 @@ test("google: JSON array streaming form and missing usage", () => {
   assert.equal(missing.result().found, false)
 
   assert.equal(parseGoogleGenerateContentJsonUsage({ usageMetadata: { promptTokenCount: 2, candidatesTokenCount: 3, totalTokenCount: 5 } }).totalTokens, 5)
+})
+test("empty usage objects are missing but observed zeros are found across protocols", () => {
+  for (const parsed of [parseOpenAiChatJsonUsage({ usage: {} }), parseOpenAiResponsesJsonUsage({ usage: {} }),
+    parseAnthropicMessagesJsonUsage({ usage: {} }), parseGoogleGenerateContentJsonUsage({ usageMetadata: {} })]) assert.equal(parsed.found, false)
+  assert.equal(parseOpenAiChatJsonUsage({ usage: { prompt_tokens: 0 } }).found, true)
+  assert.equal(parseAnthropicMessagesJsonUsage({ usage: { input_tokens: 0, output_tokens: 0 } }).totalTokens, 0)
+})
+
+test("SSE bounds complete lines and multi-line events, and preserves fixed error annotation without content", () => {
+  let parsed = 0
+  const parser = createSseUsageParser((target) => { parsed += 1; target.found = true }, { maxBufferLength: 64 })
+  parser.push(`data: {"padding":"${"x".repeat(100)}"}\n\n`)
+  assert.equal(parsed, 0)
+  assert.equal(parser.result().found, false)
+  const multiline = createSseUsageParser(() => { parsed += 1 }, { maxBufferLength: 64 })
+  multiline.push(`data: {\n${"data:  \n".repeat(20)}data: }\n\n`)
+  assert.equal(parsed, 0)
+  assert.equal(multiline.result().found, false)
+  const normal = createSseUsageParser((target) => { target.found = true }, { maxBufferLength: 64 })
+  normal.push('data: {\ndata: "usage":0}\n\n')
+  assert.equal(normal.result().found, true)
+  const errors = createSseUsageParser(() => {})
+  errors.push('event: error\ndata: {"error":{"message":"FAKE_SECRET_BODY"}}\n\n')
+  assert.deepEqual(errors.result(), { ...emptyUsage(), streamError: "upstream_stream_error" })
+  assert.equal(JSON.stringify(errors.result()).includes("FAKE_SECRET_BODY"), false)
 })

@@ -4,7 +4,7 @@
 // `metadata` event. Frame layout (big-endian):
 //   total length (4) | headers length (4) | prelude CRC (4) | headers | payload | message CRC (4)
 // Headers: name length (1) | name | value type (1) | value. CRCs are not verified.
-import { defaultMaxBufferLength, emptyUsage, isRecord, readNumber } from "./shared.js"
+import { captureResponseIdentity, defaultMaxBufferLength, emptyUsage, hasUsage, isRecord, readNumber } from "./shared.js"
 import type { ParsedUsage, UsageParser } from "./shared.js"
 
 const preludeLength = 12
@@ -18,17 +18,21 @@ export function isAwsEventStreamContentType(contentType: string | null) {
 
 function applyUsage(target: ParsedUsage, usage: unknown) {
   if (!isRecord(usage)) return
-  target.found = true
   target.inputTokens = readNumber(usage.inputTokens)
   target.outputTokens = readNumber(usage.outputTokens)
   target.totalTokens = readNumber(usage.totalTokens)
   target.cacheReadTokens = readNumber(usage.cacheReadInputTokens)
   target.cacheWriteTokens = readNumber(usage.cacheWriteInputTokens)
+  target.found = hasUsage(target)
 }
 
 export function parseBedrockConverseJsonUsage(body: unknown): ParsedUsage {
   const usage = emptyUsage()
-  if (isRecord(body)) applyUsage(usage, body.usage)
+  if (isRecord(body)) {
+    captureResponseIdentity(usage, body)
+    if (typeof body.modelId === "string") usage.model = body.modelId
+    applyUsage(usage, body.usage)
+  }
   return usage
 }
 
@@ -53,7 +57,7 @@ function headerValueLength(type: number, view: DataView, offset: number) {
       return 16
     case 6:
     case 7:
-      return 2 + view.getUint16(offset)
+      return offset + 2 <= view.byteLength ? 2 + view.getUint16(offset) : null
     default:
       return null
   }
@@ -66,6 +70,7 @@ function parseHeaders(bytes: Uint8Array) {
   while (offset < bytes.byteLength) {
     const nameLength = view.getUint8(offset)
     offset += 1
+    if (offset + nameLength + 1 > bytes.byteLength) return null
     const name = decoder.decode(bytes.subarray(offset, offset + nameLength))
     offset += nameLength
     const type = view.getUint8(offset)
@@ -103,6 +108,7 @@ export function createBedrockConverseEventStreamUsageParser(options: { maxBuffer
   let failed = false
 
   function onFrame(frame: EventStreamFrame) {
+    if (["error", "exception"].includes(frame.headers.get(":message-type") ?? "")) usage.streamError = "upstream_stream_error"
     if (frame.headers.get(":event-type") !== "metadata") return
     let event: unknown
     try {
@@ -115,16 +121,22 @@ export function createBedrockConverseEventStreamUsageParser(options: { maxBuffer
 
   function pushBytes(chunk: Uint8Array) {
     if (failed) return
-    const joined = new Uint8Array(buffer.byteLength + chunk.byteLength)
-    joined.set(buffer)
-    joined.set(chunk, buffer.byteLength)
-    const rest = readEventStreamFrames(joined, onFrame)
-    if (rest === null || rest.byteLength > maxBufferLength) {
-      failed = true
-      buffer = new Uint8Array(0)
-      return
+    let offset = 0
+    while (offset < chunk.byteLength && !failed) {
+      const take = Math.min(chunk.byteLength - offset, maxBufferLength - buffer.byteLength)
+      if (take <= 0) { failed = true; break }
+      const joined = new Uint8Array(buffer.byteLength + take)
+      joined.set(buffer)
+      joined.set(chunk.subarray(offset, offset + take), buffer.byteLength)
+      offset += take
+      const rest = readEventStreamFrames(joined, onFrame)
+      if (rest === null || (rest.byteLength >= preludeLength && new DataView(rest.buffer, rest.byteOffset, rest.byteLength).getUint32(0) > maxBufferLength)) {
+        failed = true
+        break
+      }
+      buffer = rest.slice()
     }
-    buffer = rest
+    if (failed) buffer = new Uint8Array(0)
   }
 
   return {
@@ -133,7 +145,7 @@ export function createBedrockConverseEventStreamUsageParser(options: { maxBuffer
       pushBytes(encoder.encode(chunkText))
     },
     result() {
-      return failed ? emptyUsage() : { ...usage }
+      return failed ? { ...emptyUsage(), ...(usage.streamError ? { streamError: usage.streamError } : {}) } : { ...usage }
     },
   }
 }

@@ -9,6 +9,12 @@ import type { InferenceRequestLogRow } from "../src/request-log.js"
 import { HOUR_MS, createDbRollupRepository, rollupDimensionKey, runRollups } from "../src/rollups.js"
 
 const mysqlUrl = process.env.DEN_DB_MYSQL_TEST_URL?.trim()
+if (mysqlUrl) {
+  const url = new URL(mysqlUrl)
+  if (!["127.0.0.1", "localhost"].includes(url.hostname) || !url.pathname.startsWith("/openwork_eval_")) {
+    throw new Error("Rollup DB tests require an isolated local openwork_eval_ scratch database")
+  }
+}
 // code_verifier is an encrypted column; any 32+ char key works for this scratch data.
 process.env.DEN_DB_ENCRYPTION_KEY ??= "local-dev-db-encryption-key-please-change-1234567890"
 
@@ -141,7 +147,7 @@ test("hourly pass aggregates and deletes raw rows in MySQL", { skip: !mysqlUrl, 
     assert.equal(b.upstream_model, null)
     assert.equal(b.dimension_key, rollupDimensionKey(b))
 
-    // Idempotent: re-running the same bucket (raw rows re-inserted) overwrites, never duplicates.
+    // New request rows are new consumption, even when their counters match.
     await db.insert(InferenceRequestLogTable).values(rows.slice(0, 3).map((r) => ({ ...r, id: createDenTypeId("inferenceRequestLog"), openwork_request_id: createDenTypeId("inferenceRequestLog").slice(-24) })))
     const again = await runRollups({ repository: scoped, now, maxBucketsPerRun: 1 })
     assert.equal(again.rawRowsDeleted, 3)
@@ -149,7 +155,7 @@ test("hourly pass aggregates and deletes raw rows in MySQL", { skip: !mysqlUrl, 
       .where(and(eq(InferenceUsageRollupTable.organization_id, org), eq(InferenceUsageRollupTable.granularity, "hour")))
     assert.equal(rollupsAgain.length, 2)
     assert.deepEqual(rollupsAgain.map((r) => r.id).sort(), rollups.map((r) => r.id).sort(), "existing rollup ids are kept")
-    assert.equal(rollupsAgain.find((r) => r.org_membership_id === memberA)?.cost_micro_usd, 3000)
+    assert.equal(rollupsAgain.find((r) => r.org_membership_id === memberA)?.cost_micro_usd, 6000)
 
     // Daily pass: the two hour rows fold into two day rows (one per dimension) and are deleted.
     const dayStart = new Date(Math.floor(bucketStart.getTime() / (24 * HOUR_MS)) * 24 * HOUR_MS)
@@ -174,10 +180,10 @@ test("hourly pass aggregates and deletes raw rows in MySQL", { skip: !mysqlUrl, 
     }
     const dayA = dayRows.find((r) => r.org_membership_id === memberA)
     assert.ok(dayA)
-    assert.equal(dayA.request_count, 2)
-    assert.equal(dayA.cost_micro_usd, 3000)
-    assert.equal(dayA.latency_ms_sum, 3000)
-    assert.equal(dayA.source_row_count, 2)
+    assert.equal(dayA.request_count, 4)
+    assert.equal(dayA.cost_micro_usd, 6000)
+    assert.equal(dayA.latency_ms_sum, 6000)
+    assert.equal(dayA.source_row_count, 4)
     assert.equal(dayA.dimension_key, a.dimension_key)
 
     const oauth = await db.select({ id: InferenceProviderOauthStateTable.id }).from(InferenceProviderOauthStateTable)

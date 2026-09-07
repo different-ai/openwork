@@ -1,0 +1,63 @@
+{{- if and .Values.inference.enabled .Values.inference.retention.enabled }}
+{{- if hasKey .Values.inference.env "INFERENCE_ADMIN_TOKEN" }}
+{{- fail "Use inference.retention.adminTokenSecret instead of inference.env.INFERENCE_ADMIN_TOKEN when retention is enabled" }}
+{{- end }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "openwork-ee.fullname" . }}-inference-retention
+  labels:
+    {{- include "openwork-ee.componentLabels" (dict "root" . "component" "inference-retention") | nindent 4 }}
+spec:
+  schedule: {{ .Values.inference.retention.schedule | quote }}
+  timeZone: {{ .Values.inference.retention.timeZone | quote }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 600
+      template:
+        spec:
+          restartPolicy: Never
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: retention
+              image: "{{ .Values.inference.image.repository }}:{{ default .Values.image.tag .Values.inference.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: ["node", "--input-type=module", "-e"]
+              args:
+                - |
+                  try {
+                    const response = await fetch(process.env.ROLLUP_URL, {
+                      method: "POST",
+                      headers: { authorization: `Bearer ${process.env.INFERENCE_ADMIN_TOKEN}` },
+                      signal: AbortSignal.timeout(180000),
+                    });
+                    await response.body?.cancel();
+                    if (!response.ok) throw new Error();
+                    console.log("Inference retention batch completed");
+                  } catch {
+                    console.error("Inference retention batch failed");
+                    process.exitCode = 1;
+                  }
+              env:
+                - name: ROLLUP_URL
+                  value: "http://{{ include "openwork-ee.inferenceServiceName" . }}:{{ .Values.inference.service.port }}/internal/rollups/run"
+                - name: INFERENCE_ADMIN_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ required "inference.retention.adminTokenSecret is required" .Values.inference.retention.adminTokenSecret | quote }}
+                      key: {{ .Values.inference.retention.adminTokenKey | quote }}
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 128Mi
+{{- end }}

@@ -76,6 +76,13 @@ spec:
             - secretRef:
                 name: {{ include "openwork-ee.secretName" . }}
           env:
+            {{- if .Values.inference.retention.enabled }}
+            - name: INFERENCE_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "inference.retention.adminTokenSecret is required" .Values.inference.retention.adminTokenSecret | quote }}
+                  key: {{ .Values.inference.retention.adminTokenKey | quote }}
+            {{- end }}
             - name: PORT
               value: {{ .Values.inference.containerPort | quote }}
             {{- if .Values.customCa.enabled }}

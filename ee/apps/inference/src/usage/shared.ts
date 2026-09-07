@@ -11,6 +11,9 @@ export type ParsedUsage = {
   cacheWriteTokens?: number | null
   reasoningTokens: number | null
   costUsd?: number | null
+  upstreamRequestId?: string
+  // Fixed annotation only; never capture an upstream error message/body.
+  streamError?: "upstream_stream_error"
 }
 
 export type UsageParser = {
@@ -27,7 +30,21 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function readNumber(value: unknown) {
-  return typeof value === "number" && Number.isFinite(value) ? value : null
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null
+}
+
+export function hasUsage(usage: ParsedUsage) {
+  return [usage.inputTokens, usage.outputTokens, usage.totalTokens, usage.cacheReadTokens,
+    usage.cacheWriteTokens, usage.reasoningTokens, usage.costUsd].some((value) => typeof value === "number")
+}
+
+export function captureResponseIdentity(target: ParsedUsage, event: unknown) {
+  if (!isRecord(event)) return
+  const id = event.id ?? event.responseId ?? event.requestId
+  if (typeof id === "string" && id.length <= 255) target.upstreamRequestId = id
+  if (event.error != null || event.type === "error" || event.type === "response.failed" || event.status === "failed") {
+    target.streamError = "upstream_stream_error"
+  }
 }
 
 export function emptyUsage(): ParsedUsage {
@@ -44,8 +61,9 @@ export function emptyUsage(): ParsedUsage {
   }
 }
 
-// Splits `data:` lines out of an SSE stream (bounded buffer) and hands each
-// JSON payload to `applyEvent`, which mutates the accumulated usage.
+// Bound both complete lines and multi-line events BEFORE copying/parsing them.
+// Incomplete events at EOF are not usage evidence. Overflow disables observation
+// only; callers still relay their original bytes.
 export function createSseUsageParser(
   applyEvent: (target: ParsedUsage, event: unknown) => void,
   options: { maxBufferLength?: number } = {},
@@ -54,42 +72,50 @@ export function createSseUsageParser(
   const usage = emptyUsage()
   let buffer = ""
   let overflowed = false
+  let data = ""
+  let eventType = ""
+  let eventLength = 0
 
   function handleLine(line: string) {
     const trimmed = line.endsWith("\r") ? line.slice(0, -1) : line
-    if (!trimmed.startsWith("data:")) return
-    const payload = trimmed.slice(5).trim()
-    if (!payload || payload === "[DONE]") return
-    let event: unknown
-    try {
-      event = JSON.parse(payload)
-    } catch {
+    if (!trimmed) {
+      if (eventType === "error") usage.streamError = "upstream_stream_error"
+      try {
+        const event: unknown = JSON.parse(data)
+        captureResponseIdentity(usage, event)
+        applyEvent(usage, event)
+      } catch {
+        // Malformed data and [DONE] are not usage.
+      }
+      data = ""
+      eventType = ""
+      eventLength = 0
       return
     }
-    applyEvent(usage, event)
+    eventLength += line.length + 1
+    if (eventLength > maxBufferLength) { overflowed = true; return }
+    if (trimmed.startsWith("event:")) eventType = trimmed.slice(6).trim()
+    if (trimmed.startsWith("data:")) data += `${data ? "\n" : ""}${trimmed.slice(5).replace(/^ /, "")}`
   }
 
   return {
     push(chunkText) {
       if (overflowed) return
-      buffer += chunkText
-      let newlineIndex = buffer.indexOf("\n")
-      while (newlineIndex !== -1) {
-        handleLine(buffer.slice(0, newlineIndex))
-        buffer = buffer.slice(newlineIndex + 1)
-        newlineIndex = buffer.indexOf("\n")
-      }
-      if (buffer.length > maxBufferLength) {
-        overflowed = true
-        buffer = ""
-      }
-    },
-    result() {
-      if (overflowed) return emptyUsage()
-      if (buffer) {
+      let offset = 0
+      while (offset < chunkText.length && !overflowed) {
+        const newline = chunkText.indexOf("\n", offset)
+        const end = newline === -1 ? chunkText.length : newline
+        if (buffer.length + end - offset > maxBufferLength) { overflowed = true; break }
+        buffer += chunkText.slice(offset, end)
+        if (newline === -1) break
         handleLine(buffer)
         buffer = ""
+        offset = newline + 1
       }
+      if (overflowed) { buffer = ""; data = ""; eventType = "" }
+    },
+    result() {
+      if (overflowed) return { ...emptyUsage(), ...(usage.streamError ? { streamError: usage.streamError } : {}) }
       return { ...usage }
     },
   }
@@ -107,11 +133,12 @@ export function createJsonBodyUsageParser(
   return {
     push(chunkText) {
       if (overflowed) return
-      buffer += chunkText
-      if (buffer.length > maxBufferLength) {
+      if (buffer.length + chunkText.length > maxBufferLength) {
         overflowed = true
         buffer = ""
+        return
       }
+      buffer += chunkText
     },
     result() {
       if (overflowed) return emptyUsage()

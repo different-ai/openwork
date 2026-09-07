@@ -1,9 +1,10 @@
 // Rollup job (plan §4.8): raw request logs older than rawRetention fold into
 // hour rollups, hour rollups older than hourlyRetention fold into day rollups.
-// One bucket per transaction; work per run is bounded by maxBucketsPerRun.
+// One bounded source batch per bucket/transaction. Retried runs consume only
+// remaining source IDs; inserting new raw rows is NEW consumption, not replay.
 import { createHash, timingSafeEqual } from "node:crypto"
-import { InferenceProviderOauthStateTable, InferenceRequestLogTable, InferenceUsageRollupTable } from "@openwork-ee/den-db"
-import { and, eq, gte, lt, sql } from "@openwork-ee/den-db/drizzle"
+import { InferenceProviderOauthStateTable, InferenceRequestLogTable, InferenceUsageRollupTable, InferenceRollupLockTable } from "@openwork-ee/den-db"
+import { and, eq, gte, inArray, lt, sql } from "@openwork-ee/den-db/drizzle"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { z } from "zod"
@@ -40,18 +41,24 @@ export type RollupSumColumn = (typeof ROLLUP_SUM_COLUMNS)[number]
 
 export type RollupSums = Record<RollupSumColumn, number>
 
-export type AggregatedRollup = RollupDimensions & RollupSums
+export const ROLLUP_OBSERVATION_COLUMNS = [
+  "input_tokens_count", "output_tokens_count", "total_tokens_count",
+  "cache_read_tokens_count", "cache_write_tokens_count", "reasoning_tokens_count",
+  "cost_count", "latency_count", "ttfb_count", "request_bytes_count", "response_bytes_count",
+] as const
+
+export type AggregatedRollup = RollupDimensions & RollupSums & Partial<Record<(typeof ROLLUP_OBSERVATION_COLUMNS)[number], number | null>>
 
 // Statements that must run inside one bucket's transaction.
 export type RollupStore = {
-  aggregateRawHour(bucketStart: Date): Promise<AggregatedRollup[]>
-  aggregateHourRollupsToDay(dayStart: Date): Promise<AggregatedRollup[]>
+  aggregateRawHour(bucketStart: Date, limit: number): Promise<{ ids: (typeof InferenceRequestLogTable.$inferSelect.id)[]; groups: AggregatedRollup[] }>
+  aggregateHourRollupsToDay(dayStart: Date, limit: number): Promise<{ ids: RollupRow["id"][]; groups: AggregatedRollup[] }>
   upsertRollups(rows: RollupRow[]): Promise<void>
-  deleteRawInRange(start: Date, end: Date): Promise<number>
-  deleteHourRollupsInRange(start: Date, end: Date): Promise<number>
+  deleteRawIds(ids: (typeof InferenceRequestLogTable.$inferSelect.id)[]): Promise<number>
+  deleteHourRollupIds(ids: RollupRow["id"][]): Promise<number>
 }
 
-export type RollupRepository = RollupStore & {
+export type RollupRepository = {
   listCandidateHourBuckets(before: Date, limit: number): Promise<Date[]>
   listCandidateDayBuckets(before: Date, limit: number): Promise<Date[]>
   deleteExpiredOauthStates(now: Date): Promise<number>
@@ -64,6 +71,7 @@ export type RunRollupsInput = {
   rawRetentionMs?: number
   hourlyRetentionMs?: number
   maxBucketsPerRun?: number
+  maxSourceRowsPerBucket?: number
 }
 
 export type RollupRunSummary = {
@@ -106,6 +114,12 @@ export function rollupDimensionKey(dimensions: RollupDimensions) {
 }
 
 export function buildRollupRows(granularity: RollupRow["granularity"], bucketStart: Date, groups: AggregatedRollup[]): RollupRow[] {
+  // Drizzle's numeric bigint mode must not silently round a large SQL sum.
+  // Fail before consumption; operators can split the batch or widen handling.
+  for (const group of groups) for (const column of [...ROLLUP_SUM_COLUMNS, ...ROLLUP_OBSERVATION_COLUMNS]) {
+    const value = group[column]
+    if (value != null && !Number.isSafeInteger(value)) throw new Error("Rollup sum exceeds safe integer range")
+  }
   return groups.map((group) => ({
     ...group,
     id: createDenTypeId("inferenceUsageRollup"),
@@ -152,6 +166,17 @@ const rawSums = {
   request_bytes: sum(sql`coalesce(${raw.request_bytes}, 0)`),
   response_bytes: sum(sql`coalesce(${raw.response_bytes}, 0)`),
   source_row_count: sql<number>`count(*)`.mapWith(Number),
+  input_tokens_count: sql<number>`count(${raw.input_tokens})`.mapWith(Number),
+  output_tokens_count: sql<number>`count(${raw.output_tokens})`.mapWith(Number),
+  total_tokens_count: sql<number>`count(${raw.total_tokens})`.mapWith(Number),
+  cache_read_tokens_count: sql<number>`count(${raw.cache_read_tokens})`.mapWith(Number),
+  cache_write_tokens_count: sql<number>`count(${raw.cache_write_tokens})`.mapWith(Number),
+  reasoning_tokens_count: sql<number>`count(${raw.reasoning_tokens})`.mapWith(Number),
+  cost_count: sql<number>`count(${raw.cost_micro_usd})`.mapWith(Number),
+  latency_count: sql<number>`count(${raw.completed_at})`.mapWith(Number),
+  ttfb_count: sql<number>`count(${raw.first_byte_at})`.mapWith(Number),
+  request_bytes_count: sql<number>`count(${raw.request_bytes})`.mapWith(Number),
+  response_bytes_count: sql<number>`count(${raw.response_bytes})`.mapWith(Number),
 }
 
 const hourSums = {
@@ -177,9 +202,14 @@ const hourSums = {
 
 function createDbRollupStore(executor: DbExecutor): RollupStore {
   return {
-    async aggregateRawHour(bucketStart) {
+    async aggregateRawHour(bucketStart, limit) {
       const end = new Date(bucketStart.getTime() + HOUR_MS)
-      return executor
+      const claimed = await executor.select({ id: raw.id }).from(raw)
+        .where(and(gte(raw.started_at, bucketStart), lt(raw.started_at, end)))
+        .orderBy(raw.started_at, raw.id).limit(limit).for("update")
+      const ids = claimed.map((row) => row.id)
+      if (!ids.length) return { ids, groups: [] }
+      const groups = await executor
         .select({
           organization_id: raw.organization_id,
           org_membership_id: raw.org_membership_id,
@@ -191,12 +221,21 @@ function createDbRollupStore(executor: DbExecutor): RollupStore {
           ...rawSums,
         })
         .from(raw)
-        .where(and(gte(raw.started_at, bucketStart), lt(raw.started_at, end)))
+        .where(inArray(raw.id, ids))
         .groupBy(raw.organization_id, raw.org_membership_id, raw.inference_provider_id, raw.route, raw.protocol, raw.upstream_provider_id, raw.upstream_model)
+      return { ids, groups }
     },
-    async aggregateHourRollupsToDay(dayStart) {
+    async aggregateHourRollupsToDay(dayStart, limit) {
       const end = new Date(dayStart.getTime() + DAY_MS)
-      return executor
+      const claimed = await executor.select({ id: rollup.id }).from(rollup)
+        .where(and(eq(rollup.granularity, "hour"), gte(rollup.bucket_start, dayStart), lt(rollup.bucket_start, end)))
+        .orderBy(rollup.bucket_start, rollup.dimension_key).limit(limit).for("update")
+      const ids = claimed.map((row) => row.id)
+      if (!ids.length) return { ids, groups: [] }
+      const observations = Object.fromEntries(ROLLUP_OBSERVATION_COLUMNS.map((column) => [column,
+        sql<number | null>`case when count(${rollup[column]}) = count(*) then sum(${rollup[column]}) else null end`.mapWith((value) => value === null ? null : Number(value)),
+      ]))
+      const groups = await executor
         .select({
           organization_id: rollup.organization_id,
           org_membership_id: rollup.org_membership_id,
@@ -206,24 +245,30 @@ function createDbRollupStore(executor: DbExecutor): RollupStore {
           upstream_provider_id: rollup.upstream_provider_id,
           upstream_model: rollup.upstream_model,
           ...hourSums,
+          ...observations,
         })
         .from(rollup)
-        .where(and(eq(rollup.granularity, "hour"), gte(rollup.bucket_start, dayStart), lt(rollup.bucket_start, end)))
+        .where(inArray(rollup.id, ids))
         .groupBy(rollup.organization_id, rollup.org_membership_id, rollup.inference_provider_id, rollup.route, rollup.protocol, rollup.upstream_provider_id, rollup.upstream_model)
+      return { ids, groups }
     },
     async upsertRollups(rows) {
       if (rows.length === 0) return
-      const set = Object.fromEntries(ROLLUP_SUM_COLUMNS.map((column) => [column, sql`values(${rollup[column]})`]))
+      // NULL + n remains NULL for legacy observation counts. Never manufacture
+      // a completeness claim for already-compacted historical data.
+      const set = Object.fromEntries([...ROLLUP_SUM_COLUMNS, ...ROLLUP_OBSERVATION_COLUMNS].map((column) => [column, sql`${rollup[column]} + values(${sql.identifier(column)})`]))
       await executor.insert(rollup).values(rows).onDuplicateKeyUpdate({ set })
     },
-    async deleteRawInRange(start, end) {
-      const result = await executor.delete(raw).where(and(gte(raw.started_at, start), lt(raw.started_at, end)))
+    async deleteRawIds(ids) {
+      if (!ids.length) return 0
+      const result = await executor.delete(raw).where(inArray(raw.id, ids))
       return affectedRows(result)
     },
-    async deleteHourRollupsInRange(start, end) {
+    async deleteHourRollupIds(ids) {
+      if (!ids.length) return 0
       const result = await executor
         .delete(rollup)
-        .where(and(eq(rollup.granularity, "hour"), gte(rollup.bucket_start, start), lt(rollup.bucket_start, end)))
+        .where(and(eq(rollup.granularity, "hour"), inArray(rollup.id, ids)))
       return affectedRows(result)
     },
   }
@@ -246,7 +291,6 @@ async function listBuckets(executor: DbExecutor, column: typeof raw.started_at |
 
 export function createDbRollupRepository(db: typeof import("./db.js").db): RollupRepository {
   return {
-    ...createDbRollupStore(db),
     listCandidateHourBuckets(before, limit) {
       return listBuckets(db, raw.started_at, raw, undefined, before, limit, HOUR_MS)
     },
@@ -254,11 +298,19 @@ export function createDbRollupRepository(db: typeof import("./db.js").db): Rollu
       return listBuckets(db, rollup.bucket_start, rollup, eq(rollup.granularity, "hour"), before, limit, DAY_MS)
     },
     async deleteExpiredOauthStates(now) {
-      const result = await db.delete(InferenceProviderOauthStateTable).where(lt(InferenceProviderOauthStateTable.expires_at, now))
+      const result = await db.delete(InferenceProviderOauthStateTable).where(lt(InferenceProviderOauthStateTable.expires_at, now)).limit(1000)
       return affectedRows(result)
     },
     transaction(run) {
-      return db.transaction((tx) => run(createDbRollupStore(tx)))
+      return db.transaction(async (tx) => {
+        // No snapshot reads precede this exclusive record lock. InnoDB RR's
+        // first consistent read (aggregation) therefore sees the claimed rows.
+        // Daily consumers cannot delete an hour while another worker adds to
+        // it; all paths acquire this same permanent row before any source lock.
+        await tx.insert(InferenceRollupLockTable).values({ id: 1 })
+          .onDuplicateKeyUpdate({ set: { id: 1 } })
+        return run(createDbRollupStore(tx))
+      })
     },
   }
 }
@@ -274,27 +326,30 @@ export async function runRollups(input: RunRollupsInput = {}): Promise<RollupRun
   const rawRetentionMs = input.rawRetentionMs ?? DEFAULT_RAW_RETENTION_MS
   const hourlyRetentionMs = input.hourlyRetentionMs ?? DEFAULT_HOURLY_RETENTION_MS
   const maxBucketsPerRun = input.maxBucketsPerRun ?? DEFAULT_MAX_BUCKETS_PER_RUN
+  const maxSourceRowsPerBucket = input.maxSourceRowsPerBucket ?? 1000
+  if (!Number.isInteger(maxBucketsPerRun) || maxBucketsPerRun < 1 || maxBucketsPerRun > 1000
+    || !Number.isInteger(maxSourceRowsPerBucket) || maxSourceRowsPerBucket < 1 || maxSourceRowsPerBucket > 5000
+    || !Number.isFinite(now.getTime()) || !Number.isFinite(rawRetentionMs) || rawRetentionMs < 0
+    || !Number.isFinite(hourlyRetentionMs) || hourlyRetentionMs < rawRetentionMs) throw new Error("Invalid rollup bounds")
   const summary: RollupRunSummary = { hourBuckets: 0, dayBuckets: 0, rawRowsDeleted: 0, hourRowsDeleted: 0, oauthStatesDeleted: 0 }
 
   // Only closed buckets: the whole hour/day must be older than the retention.
   const hourCutoff = floorToHour(new Date(now.getTime() - rawRetentionMs))
   for (const bucketStart of await repository.listCandidateHourBuckets(hourCutoff, maxBucketsPerRun)) {
-    const end = new Date(bucketStart.getTime() + HOUR_MS)
     summary.rawRowsDeleted += await repository.transaction(async (store) => {
-      const groups = await store.aggregateRawHour(bucketStart)
+      const { ids, groups } = await store.aggregateRawHour(bucketStart, maxSourceRowsPerBucket)
       await store.upsertRollups(buildRollupRows("hour", bucketStart, groups))
-      return store.deleteRawInRange(bucketStart, end)
+      return store.deleteRawIds(ids)
     })
     summary.hourBuckets += 1
   }
 
   const dayCutoff = floorToDay(new Date(now.getTime() - hourlyRetentionMs))
   for (const dayStart of await repository.listCandidateDayBuckets(dayCutoff, maxBucketsPerRun)) {
-    const end = new Date(dayStart.getTime() + DAY_MS)
     summary.hourRowsDeleted += await repository.transaction(async (store) => {
-      const groups = await store.aggregateHourRollupsToDay(dayStart)
+      const { ids, groups } = await store.aggregateHourRollupsToDay(dayStart, maxSourceRowsPerBucket)
       await store.upsertRollups(buildRollupRows("day", dayStart, groups))
-      return store.deleteHourRollupsInRange(dayStart, end)
+      return store.deleteHourRollupIds(ids)
     })
     summary.dayBuckets += 1
   }
@@ -306,6 +361,7 @@ export async function runRollups(input: RunRollupsInput = {}): Promise<RollupRun
 const runRollupsBodySchema = z.object({
   now: z.iso.datetime().optional(),
   maxBucketsPerRun: z.number().int().min(1).max(1000).optional(),
+  maxSourceRowsPerBucket: z.number().int().min(1).max(5000).optional(),
 })
 
 export type RollupRouteDependencies = {
@@ -344,10 +400,13 @@ export function registerRollupRoutes(app: Hono, dependencies: RollupRouteDepende
         return c.json({ error: "invalid_json" }, 400)
       }
     }
-    const body = runRollupsBodySchema.parse(json)
+    const parsed = runRollupsBodySchema.safeParse(json)
+    if (!parsed.success) return c.json({ error: "invalid_rollup_bounds" }, 400)
+    const body = parsed.data
     const summary = await dependencies.runRollups({
       now: body.now ? new Date(body.now) : undefined,
       maxBucketsPerRun: body.maxBucketsPerRun,
+      maxSourceRowsPerBucket: body.maxSourceRowsPerBucket,
     })
     return c.json(summary)
   })

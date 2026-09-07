@@ -153,13 +153,15 @@ type FakeState = {
 
 function createFakeRepository(state: FakeState): RollupRepository {
   const store: RollupStore = {
-    async aggregateRawHour(bucketStart) {
+    async aggregateRawHour(bucketStart, limit) {
       const end = new Date(bucketStart.getTime() + HOUR_MS)
-      return aggregateRaw(state.raw.filter((row) => inRange(row.started_at, bucketStart, end)))
+      const rows = state.raw.filter((row) => inRange(row.started_at, bucketStart, end)).slice(0, limit)
+      return { ids: rows.map((row) => row.id), groups: aggregateRaw(rows) }
     },
-    async aggregateHourRollupsToDay(dayStart) {
+    async aggregateHourRollupsToDay(dayStart, limit) {
       const end = new Date(dayStart.getTime() + DAY_MS)
-      return aggregateHours(state.rollups.filter((row) => row.granularity === "hour" && inRange(row.bucket_start, dayStart, end)))
+      const rows = state.rollups.filter((row) => row.granularity === "hour" && inRange(row.bucket_start, dayStart, end)).slice(0, limit)
+      return { ids: rows.map((row) => row.id), groups: aggregateHours(rows) }
     },
     async upsertRollups(rows) {
       for (const row of rows) {
@@ -168,20 +170,20 @@ function createFakeRepository(state: FakeState): RollupRepository {
           && candidate.bucket_start.getTime() === row.bucket_start.getTime()
           && candidate.dimension_key === row.dimension_key)
         if (existing) {
-          for (const column of ROLLUP_SUM_COLUMNS) existing[column] = row[column]
+          for (const column of ROLLUP_SUM_COLUMNS) existing[column] = (existing[column] ?? 0) + (row[column] ?? 0)
         } else {
           state.rollups.push({ ...row })
         }
       }
     },
-    async deleteRawInRange(start, end) {
+    async deleteRawIds(ids) {
       const before = state.raw.length
-      state.raw = state.raw.filter((row) => !inRange(row.started_at, start, end))
+      state.raw = state.raw.filter((row) => !ids.includes(row.id))
       return before - state.raw.length
     },
-    async deleteHourRollupsInRange(start, end) {
+    async deleteHourRollupIds(ids) {
       const before = state.rollups.length
-      state.rollups = state.rollups.filter((row) => !(row.granularity === "hour" && inRange(row.bucket_start, start, end)))
+      state.rollups = state.rollups.filter((row) => !ids.includes(row.id))
       return before - state.rollups.length
     },
   }
@@ -271,13 +273,12 @@ test("hourly pass groups raw rows by dimensions with stable, distinct dimension 
   assert.equal(memberARow.granularity, "hour")
 })
 
-test("re-running with the same input is idempotent", async () => {
+test("re-running after consumption is a no-op; inserting new rows is new consumption", async () => {
   const state: FakeState = { raw: seedRaw(), rollups: [], oauthStateExpiries: [], transactions: 0 }
   const repository = createFakeRepository(state)
   await runRollups({ repository, now: farFuture })
   const first = state.rollups.map((row) => ({ ...row }))
 
-  state.raw = seedRaw()
   await runRollups({ repository, now: farFuture })
   assert.equal(state.rollups.length, first.length)
   for (const row of first) {
@@ -285,6 +286,54 @@ test("re-running with the same input is idempotent", async () => {
     assert.ok(again)
     for (const column of ROLLUP_SUM_COLUMNS) assert.equal(again[column], row[column])
   }
+  state.raw = seedRaw()
+  await runRollups({ repository, now: farFuture })
+  for (const row of first) {
+    const again = state.rollups.find((candidate) => candidate.id === row.id)
+    assert.ok(again)
+    for (const column of ROLLUP_SUM_COLUMNS) assert.equal(again[column], (row[column] ?? 0) * 2)
+  }
+})
+
+test("100 then late 7 survives daily compaction and maxBucketsPerRun=1 backlog", async () => {
+  const state: FakeState = { raw: [rawRow({ input_tokens: 100 })], rollups: [], oauthStateExpiries: [], transactions: 0 }
+  const repository = createFakeRepository(state)
+  const now = new Date(T0 + 100 * DAY_MS)
+  await runRollups({ repository, now, maxBucketsPerRun: 1 })
+  state.raw.push(rawRow({ input_tokens: 7 }), rawRow({ input_tokens: 11, started_at: new Date(T0 + HOUR_MS) }))
+  await runRollups({ repository, now, maxBucketsPerRun: 1 })
+  assert.equal(state.rollups[0]?.input_tokens, 107)
+  assert.equal(state.raw.length, 1)
+  await runRollups({ repository, now, maxBucketsPerRun: 1 })
+  assert.equal(state.rollups[0]?.input_tokens, 118)
+  assert.equal(state.raw.length, 0)
+  assert.equal(state.rollups.length, 1)
+})
+
+test("bounded source batches never delete rows arriving between select and consume", async () => {
+  const state: FakeState = { raw: [rawRow({ input_tokens: 100 }), rawRow({ input_tokens: 7 })], rollups: [], oauthStateExpiries: [], transactions: 0 }
+  const repository = createFakeRepository(state)
+  const transaction = repository.transaction
+  let injected = false
+  repository.transaction = (run) => transaction((store) => run({ ...store, async deleteRawIds(ids) {
+    if (!injected) { state.raw.push(rawRow({ input_tokens: 11 })); injected = true }
+    return store.deleteRawIds(ids)
+  } }))
+  await runRollups({ repository, now: farFuture, maxSourceRowsPerBucket: 1 })
+  assert.equal(state.rollups[0]?.input_tokens, 100)
+  assert.equal(state.raw.length, 2)
+  await runRollups({ repository, now: farFuture, maxSourceRowsPerBucket: 1 })
+  assert.equal(state.rollups[0]?.input_tokens, 107)
+  assert.equal(state.raw.length, 1)
+  await runRollups({ repository, now: farFuture, maxSourceRowsPerBucket: 1 })
+  assert.equal(state.rollups[0]?.input_tokens, 118)
+})
+
+test("unsafe numeric aggregates fail before source consumption", async () => {
+  const state: FakeState = { raw: [rawRow({ cost_micro_usd: Number.MAX_SAFE_INTEGER }), rawRow({ cost_micro_usd: 1 })], rollups: [], oauthStateExpiries: [], transactions: 0 }
+  await assert.rejects(runRollups({ repository: createFakeRepository(state), now: farFuture }), /safe integer/)
+  assert.equal(state.raw.length, 2)
+  assert.equal(state.rollups.length, 0)
 })
 
 test("raw rows newer than the retention are untouched and open hours never fold", async () => {

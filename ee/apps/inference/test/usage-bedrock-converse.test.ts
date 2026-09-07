@@ -75,3 +75,15 @@ test("bedrock json usage + content type detection", () => {
   assert.equal(isAwsEventStreamContentType("application/vnd.amazon.eventstream"), true)
   assert.equal(isAwsEventStreamContentType("text/event-stream"), false)
 })
+test("malformed Bedrock header lengths never throw into the relay", () => {
+  for (const header of [new Uint8Array([10, 65]), new Uint8Array([1, 65, 7]), new Uint8Array([1, 65, 6, 0])]) {
+    const frame = new Uint8Array(16 + header.length)
+    const view = new DataView(frame.buffer)
+    view.setUint32(0, frame.length)
+    view.setUint32(4, header.length)
+    frame.set(header, 12)
+    const parser = createBedrockConverseEventStreamUsageParser()
+    assert.doesNotThrow(() => parser.pushBytes?.(frame))
+    assert.equal(parser.result().found, false)
+  }
+})
