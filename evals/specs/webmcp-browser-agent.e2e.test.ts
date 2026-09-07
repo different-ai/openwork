@@ -298,6 +298,26 @@ test("a conversation signs in, uses site tools and page controls with consent, i
     evidence.recordAssertionEvidence("Frame permissions and visual fallback preserve isolation", "Nested fallback iframe markup did not grant the undelegated sibling tools. Both cross-origin frames reported no Node globals. The approved PNG-derived click reached the child control once, changed a fresh image, and could not reuse the consumed observation.", true);
   });
 
+  await step("Spoofed page globals and forged policy payloads cannot expose non-origin-keyed callbacks", async () => {
+    expect(await task("navigate", { tabId, url: `${world.origin}/origin-policy` })).toMatchObject({ ok: true });
+    const reported = await probe.eventually(witness, {
+      within: 15_000, until: (value) => value.originPolicyReports.length === 2,
+      label: "the hostile frame reports both its explicit opt-out and retained site-keyed document",
+    });
+    expect(reported.originPolicyReports).toEqual([
+      { page: "/origin-policy-opt-out", reason: "origin_agent_cluster_opt_out", nativeOriginAgentCluster: false, spoofedOriginAgentCluster: true, spoofedDomainMatchesHost: true, directOriginKeyed: false, forgedOriginKeyed: false, registration: "SecurityError", execution: "SecurityError" },
+      { page: "/origin-policy-spoof", reason: "non_origin_keyed", nativeOriginAgentCluster: false, spoofedOriginAgentCluster: true, spoofedDomainMatchesHost: true, directOriginKeyed: false, forgedOriginKeyed: false, registration: "SecurityError", execution: "SecurityError" },
+    ]);
+    const listed = await probe.eventually(() => task("site_tools", { tabId }), {
+      within: 10_000, until: (value) => !!value.tools?.some((tool) => tool.name === "frame_allowed"),
+      label: "normal delegated tools remain available beside the hostile frame",
+    });
+    expect(listed.tools?.map((tool) => tool.name)).toEqual(["frame_allowed"]);
+    await user.notSee({ role: "button", label: "Allow once" });
+    expect(await witness()).toMatchObject({ originPolicyCallbacks: 0, records: reported.records });
+    evidence.recordAssertionEvidence("Origin-keying decisions do not trust the website's JavaScript world", "Both main-world getters returned eligible values and the page directly supplied forged policy booleans. Native opt-out and retained site-keying still refused registration and execution. A forged modelContext did not enter host discovery; the delegated sibling stayed available and no unsafe callback ran.", true);
+  });
+
   await step("Hostile schemas are rejected promptly without blocking observations or Take over", async () => {
     expect(await task("navigate", { tabId, url: `${world.origin}/hostile-schema` })).toMatchObject({ ok: true });
     const before = await witness();

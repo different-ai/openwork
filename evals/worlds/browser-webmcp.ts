@@ -22,7 +22,14 @@ export async function browserWebMcpWorld(seed: Seed) {
     const origin = fixture.origin;
     await configureBrowserFixtureModel(base.app, workspacePath, origin);
     const enginePath = `/workspace/${base.workspace.workspaceId}/opencode`;
-    await seed.evalIn(base.app, `(async()=>{const info=await window.__OPENWORK_ELECTRON__.invokeDesktop('openworkServerInfo');const response=await fetch(info.baseUrl+${JSON.stringify(`${enginePath}/instance/dispose`)},{method:'POST',headers:{Authorization:'Bearer '+info.clientToken},signal:AbortSignal.timeout(30000)});if(!response.ok)throw new Error('Fixture model reload failed');})()`, { awaitPromise: true, timeoutMs: 35_000 });
+    await seed.evalIn(base.app, `async function (disposePath) {
+      const info = await window.__OPENWORK_ELECTRON__.invokeDesktop('openworkServerInfo');
+      const response = await fetch(info.baseUrl + disposePath, {
+        method: 'POST', headers: { Authorization: 'Bearer ' + info.clientToken },
+        signal: AbortSignal.timeout(30000),
+      });
+      if (!response.ok) throw new Error('Fixture model reload failed');
+    }`, { args: [{ value: `${enginePath}/instance/dispose` }], awaitPromise: true, timeoutMs: 35_000 });
     const tab = browserTabHandle(await control(base.app, "browser.open_url", { url: `${origin}/`, provider: "builtin" }));
     const site = stack.use(await attachBuiltinTab(base.app, tab.targetId));
     return { ...base, origin, enginePath, tab, site, async [Symbol.asyncDispose]() { await stack.disposeAsync(); } };

@@ -1,10 +1,12 @@
 // @ts-nocheck -- Node's JS inference narrows mutable fixture objects to their
 // first descriptor shape; runtime assertions intentionally exercise many shapes.
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import test from "node:test";
 import { createContext, runInContext } from "node:vm";
 
 import { cancelWebMcpToolInFrame, createWebMcpBroker, executeWebMcpToolInFrame, sanitizeSiteTool } from "./webmcp-host.mjs";
+import { createWebMcpFramePolicy } from "./webmcp-policy.mjs";
 
 function fixture({ confirm = async () => true, disclose = async () => true, execute, framePolicy, timeout = 100 } = {}) {
   const frame = {
@@ -322,24 +324,40 @@ test("array inputs are accepted when the site schema permits them", async () => 
   assert.deepEqual(result.result, { length: 3 });
 });
 
-test("native frame policy is checked during discovery and again before execution", async () => {
-  let allowed = false;
+test("isolated frame policy is checked during discovery, before approval, and before dispatch", async () => {
+  const policy = createWebMcpFramePolicy({});
+  const runtimePolicy = { originAgentCluster: false, domainMatchesHost: true };
   const setup = fixture({
-    framePolicy: async () => ({ allowed, originKeyed: true }),
+    framePolicy: policy.checkFrame,
+    confirm: async () => { runtimePolicy.domainMatchesHost = false; return true; },
+  });
+  Object.assign(setup.frame, {
+    ipc: new EventEmitter(), isDestroyed: () => false,
+    executeJavaScript: async () => assert.fail("Policy must never read the hostile main world."),
+    send(_channel, replyChannel) { this.ipc.emit(replyChannel, { senderFrame: this }, runtimePolicy); },
   });
   const hidden = await setup.broker.listTools();
   assert.equal(hidden.ok, true);
   assert.deepEqual(hidden.tools, []);
 
-  allowed = true;
+  runtimePolicy.originAgentCluster = true;
   const listed = await setup.broker.listTools();
   assert.equal(listed.tools.length, 1);
-  allowed = false;
+  runtimePolicy.originAgentCluster = false;
   const blocked = await setup.broker.executeTool({
     toolId: listed.tools[0].toolId,
     input: { section: "profile" },
   });
   assert.equal(blocked.code, "stale_tool");
+  assert.equal(setup.executions.length, 0);
+
+  runtimePolicy.originAgentCluster = true;
+  const relisted = await setup.broker.listTools();
+  const afterApproval = await setup.broker.executeTool({
+    toolId: relisted.tools[0].toolId, input: { section: "profile" },
+  });
+  assert.equal(afterApproval.code, "stale_tool");
+  assert.match(afterApproval.error, /while approval was pending/);
   assert.equal(setup.executions.length, 0);
 });
 
