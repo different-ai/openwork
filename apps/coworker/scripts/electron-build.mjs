@@ -92,6 +92,12 @@ function buildElectron() {
   }, null, 2)}\n`);
 }
 
+// pnpm 11 makes list recursive in workspaces even with --recursive=false.
+// Scope roots before the collector starts; keep the complete dependency depth.
+export function beforePack() {
+  process.env.pnpm_config_filter = "@openwork/coworker";
+}
+
 // electron-builder imports this hook without running the build. Desktop's full
 // after-pack hook assumes its .electron-runtime tree, which Coworker does not use.
 export default function afterPack(context, { runNative = spawnSync } = {}) {

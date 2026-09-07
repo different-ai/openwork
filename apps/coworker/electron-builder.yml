@@ -39,6 +39,7 @@ npmRebuild: false
 # (MACOS_NOTARIZE=true with Apple API key credentials); electron-builder's own
 # notarize step stays off so local unsigned builds are unaffected.
 # The build module's hook validates the actual packaged helper CPU and signature.
+beforePack: scripts/electron-build.mjs
 afterPack: scripts/electron-build.mjs
 afterSign: ../desktop/scripts/electron-after-sign.cjs
 mac:

@@ -5,8 +5,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { inflateSync } from "node:zlib";
+import { createRequire } from "node:module";
 import YAML from "yaml";
 import { bindWindowAppearance, windowMaterial } from "./window-appearance.mjs";
+import afterPack, { beforePack } from "../scripts/electron-build.mjs";
 
 const dirnameHere = path.dirname(fileURLToPath(import.meta.url));
 const coworkerRoot = path.resolve(dirnameHere, "..");
@@ -90,7 +92,7 @@ test("Open Coworker has its own stable packaged identity and local runtime resou
   assert.equal(serverPackage.devDependencies["opencode-chrome-devtools"], "1.0.4");
 });
 
-test("Open Coworker mirrors every embedded-server runtime dependency for electron-builder", async () => {
+test("Open Coworker mirrors every embedded-server runtime dependency for electron-builder", async (t) => {
   const coworkerPackage = JSON.parse(await readFile(path.join(coworkerRoot, "package.json"), "utf8"));
   const serverPackage = JSON.parse(await readFile(path.resolve(coworkerRoot, "..", "server", "package.json"), "utf8"));
   for (const [name, version] of Object.entries(serverPackage.dependencies)) {
@@ -100,6 +102,22 @@ test("Open Coworker mirrors every embedded-server runtime dependency for electro
       `Embedded server dependency ${name} must be mirrored in apps/coworker/package.json`,
     );
   }
+  const config = YAML.parse(await readFile(path.join(coworkerRoot, "electron-builder.yml"), "utf8"));
+  assert.equal(config.beforePack, "scripts/electron-build.mjs");
+  const requireBuilder = createRequire(import.meta.resolve("electron-builder"));
+  const { resolveFunction } = requireBuilder("app-builder-lib/out/util/resolve.js");
+  const before = await resolveFunction("commonjs", path.join(coworkerRoot, config.beforePack), "beforePack", coworkerRoot);
+  const after = await resolveFunction("commonjs", path.join(coworkerRoot, config.afterPack), "afterPack", coworkerRoot);
+  assert.equal(before, beforePack, "The named pre-pack hook must not resolve to afterPack");
+  assert.equal(after, afterPack, "Keep native helper validation after packaging");
+  const previous = process.env.pnpm_config_filter;
+  t.after(() => {
+    if (previous === undefined) delete process.env.pnpm_config_filter;
+    else process.env.pnpm_config_filter = previous;
+  });
+  process.env.pnpm_config_filter = "*";
+  before();
+  assert.equal(process.env.pnpm_config_filter, "@openwork/coworker", "Collect only Coworker, without expanding to all workspace roots");
 });
 
 test("Open Coworker owns a branded boot surface and cross-platform icon set", async () => {
