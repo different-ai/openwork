@@ -20,6 +20,7 @@ function read(...segments: string[]) {
 }
 
 const shell = read("dashboard", "_components", "org-dashboard-shell.tsx");
+const navigation = read("dashboard", "_lib", "dashboard-navigation.ts");
 const list = read("dashboard", "_components", "inference-providers-screen.tsx");
 const editor = read("dashboard", "_components", "inference-provider-editor-screen.tsx");
 const detail = read("dashboard", "_components", "inference-provider-detail-screen.tsx");
@@ -48,11 +49,11 @@ describe("Gateway providers routes", () => {
 
 describe("Gateway providers sidebar", () => {
   test("appears under the admin-gated Models group next to Bring your Own Keys", () => {
-    const byok = shell.indexOf('label: "Bring your Own Keys" }');
-    const gateway = shell.indexOf('label: "Gateway providers" }');
+    const byok = navigation.indexOf('label: "Bring your Own Keys" }');
+    const gateway = navigation.indexOf('label: "Gateway providers" }');
     expect(byok).toBeGreaterThan(-1);
     expect(gateway).toBeGreaterThan(byok);
-    expect(shell).toMatch(/const modelsGroup[\s\S]*access\.isAdmin && activeOrg[\s\S]*label: "Gateway providers"/);
+    expect(navigation).toMatch(/const modelsGroup[\s\S]*access\.isAdmin && orgSlug[\s\S]*label: "Gateway providers"/);
     expect(shell).toContain('return "Gateway providers";');
   });
 });
