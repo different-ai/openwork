@@ -1,4 +1,5 @@
-name: OpenWork Tests
+name: Build and core checks
+run-name: ${{ github.event_name == 'schedule' && 'Full regression — component checks' || 'Build and core checks' }}
 
 on:
   pull_request:
@@ -67,6 +68,8 @@ jobs:
         uses: ./.github/actions/setup-tests
       - name: Run core product regressions
         run: pnpm test:core
+      - name: Check journey selection, reporting, and alerts
+        run: node --test evals/scripts/journey-ci.test.mjs evals/scripts/flake-report.test.mjs
 
   openwork-tests-build:
     needs: classify-changes
