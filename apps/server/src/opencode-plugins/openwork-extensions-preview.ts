@@ -898,6 +898,11 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown) => {
   const engineMcpStatusClient = readEngineMcpStatusClient(factoryInput);
   const engineMcpStatusDirectory = factoryContext.directory ?? factoryContext.worktree;
   return {
+  "chat.headers": async (input: { sessionID: string; model: { providerID: string }; message: { id: string } }, output: { headers: Record<string, string> }) => {
+    if (input.model.providerID !== "openwork") return;
+    output.headers["x-openwork-session-id"] = input.sessionID;
+    output.headers["x-openwork-task-id"] = input.message.id;
+  },
   "tool.execute.after": async (_input: unknown, output: unknown) => {
     // OpenCode 1.17.x keeps the text projection of an MCP result but drops
     // structuredContent and result _meta before persisting the completed tool

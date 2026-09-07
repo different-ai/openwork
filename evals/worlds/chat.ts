@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join, resolve } from "node:path";
-import { evalIn } from "@openwork/behaviors";
+import { evalIn, assertNoLiveSecret, liveOpenAiEnabled, liveOpenAiModel, liveProviderId, provisionLiveOpenAi } from "@openwork/behaviors";
 import { resolveEvalEngine, type Seed } from "@openwork/env";
 import type { MockAgentWorkload } from "@openwork/labs";
 
@@ -85,6 +85,7 @@ export async function configureProvider(
   providerId: string,
   modelId: string,
   opencode: Record<string, unknown>,
+  engine = resolveEvalEngine(),
 ): Promise<void> {
   // TODO(primitive): configure a workspace provider and select its model.
   const result = await seed.evalIn(app, `async (workspaceId, providerId, modelId, defaultModel, opencodeJson) => {
@@ -130,22 +131,32 @@ export async function configureProvider(
   });
   if (result !== "ok") throw new Error(`Provider configuration failed: ${String(result)}`);
   await seed.evalIn(app, "location.reload(); true");
-  const ready = await seed.evalIn(app, `async (workspaceId) => {
+  const ready = await seed.evalIn(app, `async (workspaceId, engine, providerId, modelId) => {
     const deadline = Date.now() + 60000;
     while (Date.now() < deadline) {
-      const port = localStorage.getItem("openwork.server.port");
-      const token = localStorage.getItem("openwork.server.token");
+      const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
+      const headers = { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") };
       try {
-        const response = await fetch("http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId) + "/opencode/session", {
-          headers: { Authorization: "Bearer " + token },
-        });
-        if (response.ok && window.__openworkControl) return true;
+        const statusResponse = await fetch(base + "/experimental/engine-v2-preview/status", { headers });
+        const status = statusResponse.ok ? await statusResponse.json() : null;
+        const selected = status ? status.enabled && status.chatRouting : false;
+        if ((engine === "v2") !== selected || (!statusResponse.ok && statusResponse.status !== 404)) {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          continue;
+        }
+        const mounted = base + "/workspace/" + encodeURIComponent(workspaceId);
+        const response = await fetch(mounted + (engine === "v2" ? "/opencode2/api/model" : "/opencode/session"), { headers });
+        if (response.ok && window.__openworkControl) {
+          if (engine === "v1") return true;
+          const catalog = JSON.stringify(await response.json());
+          if (catalog.includes(providerId) && catalog.includes(modelId)) return true;
+        }
       } catch {}
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
     return false;
-  }`, { args: [workspaceId], awaitPromise: true, timeoutMs: 120_000 });
-  if (ready !== true) throw new Error("Engine did not become ready after provider configuration.");
+  }`, { args: [workspaceId, engine, providerId, modelId], awaitPromise: true, timeoutMs: 120_000 });
+  if (ready !== true) throw new Error(`Selected ${engine} engine did not become ready after provider configuration.`);
 }
 
 async function seedControls(
@@ -208,20 +219,31 @@ export async function paletteSessionActions(seed: Seed) {
   return { app, workspace, session };
 }
 
-export async function newSplitPrimary(seed: Seed) {
+async function splitPaneQuestions(
+  seed: Seed,
+  name: string,
+  agentWorkloads: MockAgentWorkload[],
+  policy: Record<string, unknown> = { permission: { question: "allow" } },
+) {
   const providerId = "split-send-mock";
   const modelId = "split-send-model";
-  const primaryPrompt = "Reply to the primary split message";
-  const secondaryPrompt = "Reply to the secondary split message";
-  const switchPrompt = "Reply after switching the primary session";
-  const mock = seed.mock({ agentWorkloads: [
-    { promptMarker: primaryPrompt, finalReply: "Primary split received", steps: [] },
-    { promptMarker: secondaryPrompt, finalReply: "Secondary split received", steps: [] },
-    { promptMarker: switchPrompt, finalReply: "Switched session received", steps: [] },
-  ] });
+  const mock = seed.mock({ agentWorkloads });
   const den = await seed.den({ mocks: { agent: mock } });
-  const app = await seed.desktop({ name: "new-split-session", den, as: "admin", model: `${providerId}/${modelId}` });
-  const workspace = await seed.workspace(app, seed.tmpPath("new-split-session"));
+  const app = await seed.desktop({ name, den, as: "admin", model: `${providerId}/${modelId}` });
+  const workspace = await seed.workspace(app, seed.tmpPath(name));
+  // Arrange an allowed native question tool independently of custom-agent defaults.
+  // TODO(primitive): write workspace fixture files through a first-class seed API.
+  const questionPolicyWritten = await seed.evalIn(app, `async (workspaceId, content) => {
+    const port = localStorage.getItem("openwork.server.port");
+    const token = localStorage.getItem("openwork.server.token");
+    const response = await fetch("http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId) + "/files/content", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+      body: JSON.stringify({ path: "opencode.json", content }),
+    });
+    return response.ok;
+  }`, { args: [workspace.workspaceId, JSON.stringify(policy)], awaitPromise: true });
+  if (questionPolicyWritten !== true) throw new Error("Could not arrange the question-tool policy.");
   await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
     provider: {
       [providerId]: {
@@ -232,6 +254,77 @@ export async function newSplitPrimary(seed: Seed) {
       },
     },
   });
+  return { app, workspace, mock: den.mocks.agent };
+}
+
+export async function delegatedQuestionHandoff(seed: Seed) {
+  const engine = resolveEvalEngine();
+  const delegationTool = engine === "v2" ? "subagent" : "task";
+  const rootPrompt = "Delegate choosing the task format, then report the result.";
+  const child = {
+    prompt: "Help me choose the delegated task format",
+    question: "Which format should the child task use?",
+    answer: "Child checklist",
+    alternative: "Child outline",
+  };
+  const unrelated = {
+    prompt: "Help me choose the unrelated task format",
+    question: "Which format should the unrelated task use?",
+    answer: "Unrelated outline",
+    alternative: "Unrelated checklist",
+  };
+  const base = await splitPaneQuestions(seed, "delegated-question-handoff", [
+    {
+      promptMarker: rootPrompt, latestUserTurn: true,
+      finalReply: "Unused: return the actual child result.", finalReplyFrom: "last-tool-text",
+      steps: [{ tool: delegationTool, arguments: {
+        description: "Choose delegated task format", prompt: child.prompt,
+        // v2 beta-19086 calls this subagent; foreground must await the child's answer.
+        ...(engine === "v2" ? { agent: "general", background: false } : { subagent_type: "general" }),
+      } }],
+    },
+    ...[child, unrelated].map((question): MockAgentWorkload => ({
+      promptMarker: question.prompt, latestUserTurn: true,
+      finalReply: "Unused: return the actual question result.", finalReplyFrom: "last-tool-text",
+      steps: [{ tool: "question", arguments: { questions: [{
+        header: "Task format", question: question.question,
+        options: [
+          { label: question.answer, description: "Use this format" },
+          { label: question.alternative, description: "Use the other format" },
+        ],
+      }] } }],
+    })),
+  ], {
+    permission: { question: "allow", task: "allow" },
+    // Both engines deny questions for general by default; v2 migrates task to subagent.
+    agent: { general: { permission: { question: "allow" } } },
+  });
+  const root = await seedSessionRetry(seed, base.app, { title: "Delegated question parent" });
+  const other = await seedSessionRetry(seed, base.app, { title: "Unrelated question root" });
+  return { ...base, engine, delegationTool, root: { ...root, prompt: rootPrompt }, child, unrelated: { ...other, ...unrelated } };
+}
+
+export async function newSplitPrimary(seed: Seed) {
+  const primaryPrompt = "Reply to the primary split message";
+  const secondaryPrompt = "Reply to the secondary split message";
+  const switchPrompt = "Reply after switching the primary session";
+  const primaryQuestionPrompt = "Help me choose the main task format";
+  const secondaryQuestionPrompt = "Help me choose the side task format";
+  const contextPrompt = "Describe your conversation context";
+  const { app, workspace } = await splitPaneQuestions(seed, "new-split-session", [
+    ...["Main", "Side"].map((pane): MockAgentWorkload => ({
+      promptMarker: pane === "Main" ? primaryQuestionPrompt : secondaryQuestionPrompt,
+      latestUserTurn: true, finalReply: "Answered the format question.", finalReplyFrom: "last-tool-text",
+      steps: [{ tool: "question", arguments: { questions: [{
+        header: `${pane} format`, question: `Which format should the ${pane.toLowerCase()} task use?`,
+        options: [{ label: `${pane} outline`, description: "A brief overview" }, { label: `${pane} checklist`, description: "A sequence of steps" }],
+      }] } }],
+    })),
+    { promptMarker: contextPrompt, latestUserTurn: true, finalReply: "Conversation context.", finalReplyFrom: "system-text", steps: [] },
+    { latestUserTurn: true, promptMarker: primaryPrompt, finalReply: "Primary split received", steps: [] },
+    { latestUserTurn: true, promptMarker: secondaryPrompt, finalReply: "Secondary split received", steps: [] },
+    { latestUserTurn: true, promptMarker: switchPrompt, finalReply: "Switched session received", steps: [] },
+  ]);
   const switchSession = await seedSessionRetry(seed, app, { title: "Split switch target" });
   const session = await seedSessionRetry(seed, app, { title: "New split primary" });
   const splitFacts = () => evalIn(app, `(() => {
@@ -270,7 +363,7 @@ export async function newSplitPrimary(seed: Seed) {
     });
     return response.json();
   })()`, { awaitPromise: true, timeoutMs: 15_000 });
-  return { app, workspace, session, splitFacts, agentContextViaServer, primaryPrompt, secondaryPrompt, switchSession, switchPrompt };
+  return { app, workspace, session, splitFacts, agentContextViaServer, primaryPrompt, secondaryPrompt, switchSession, switchPrompt, primaryQuestionPrompt, secondaryQuestionPrompt, contextPrompt };
 }
 
 export async function shimmerChat(seed: Seed) {
@@ -529,6 +622,7 @@ export async function renderCycle(seed: Seed) {
 }
 
 export const streamedMarkdownMarker = "STREAM_MARKDOWN_ANSWER";
+export const streamedMarkdownReasoning = "Preparing the formatted response.";
 /** A multi-block answer: heading, prose, list, table, fenced code, closing prose. */
 export const streamedMarkdownAnswer = [
   "## Streamed answer heading",
@@ -562,7 +656,9 @@ export async function streamedMarkdown(seed: Seed) {
     agentWorkloads: [{
       promptMarker: streamedMarkdownMarker,
       finalReply: streamedMarkdownAnswer,
-      finalReplyChunkSize: 8,
+      finalReasoning: streamedMarkdownReasoning,
+      // Allow live reasoning inspection over remote CDP before the mid-turn reload.
+      finalReplyChunkSize: 1,
       finalReplyDelayMs: 1500,
       steps: [],
     }],
@@ -576,7 +672,7 @@ export async function streamedMarkdown(seed: Seed) {
         npm: "@ai-sdk/openai-compatible",
         name: "Streamed markdown mock",
         options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-streamed-markdown" },
-        models: { [modelId]: { name: "Streamed markdown model" } },
+        models: { [modelId]: { name: "Streamed markdown model", reasoning: true } },
       },
     },
   });
@@ -1319,7 +1415,7 @@ export async function computerMentions(seed: Seed) {
         messages.sort((a, b) => a.info.time.created - b.info.time.created);
         return messages.filter((message) => message.info.role === "user").map((message) => ({
           visible: message.parts.filter((part) => part.type === "text" && !part.synthetic).map((part) => part.text).join("").trim(),
-          routing: message.parts.filter((part) => part.type === "text" && part.synthetic && part.text.includes("remote-session:create")).map((part) => part.text),
+          routing: message.parts.filter((part) => part.type === "text" && part.synthetic).map((part) => part.text),
         }));
       }`, { args: [workspace.workspaceId], awaitPromise: true });
     },
@@ -1403,4 +1499,82 @@ export async function workspaceEngineUpgrade(seed: Seed) {
   return { app, den, primary, other, original, otherOriginal, providerId, modelId,
     otherName: otherPath.split("/").at(-1),
   };
+}
+
+/** A running conversation whose workspace skills can change through OpenWork. */
+export async function skillLifecycle(seed: Seed) {
+  const live = liveOpenAiEnabled();
+  const orgName = "Skill lifecycle";
+  const den = await seed.den({ org: { name: orgName }, mocks: { model: seed.mock({}) } });
+  const managed = await provisionLiveOpenAi(den.admin, orgName);
+  try {
+    const app = await seed.desktop({ den, as: "admin" });
+    const workspace = await seed.workspace(app, seed.tmpPath("skill-lifecycle"));
+    const request = async (path: string) => {
+      const response = await seed.evalIn(app, `async (path) => {
+        const response = await fetch("http://127.0.0.1:" + localStorage.getItem("openwork.server.port") + path, {
+          headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") },
+          signal: AbortSignal.timeout(10000),
+        });
+        return { status: response.status, json: await response.json() };
+      }`, { args: [path], awaitPromise: true });
+      if (!isRecord(response) || typeof response.status !== "number") throw new Error("Missing desktop response");
+      assertNoLiveSecret(response);
+      return { status: response.status, json: response.json };
+    };
+    const providerId = live ? await liveProviderId(request, managed.id) : "skill-lifecycle";
+    const modelId = live ? liveOpenAiModel() : "skill-lifecycle-model";
+    // This world arranges an opted-in native v2 conversation, including when
+    // invoked by the standard E2E command without an engine override.
+    await seed.evalIn(app, `async () => {
+      const response = await fetch("http://127.0.0.1:" + localStorage.getItem("openwork.server.port") + "/experimental/engine-v2-preview", {
+        method: "PUT", headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token"), "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: true, chatRouting: true }), signal: AbortSignal.timeout(180000),
+      });
+      if (!response.ok) throw new Error("Could not enable the native engine");
+      return true;
+    }`, { awaitPromise: true, timeoutMs: 185_000 });
+    await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+      permission: { skill: "allow" },
+      ...(!live ? { provider: { [providerId]: {
+        npm: "@ai-sdk/openai-compatible", name: "Skill lifecycle model",
+        options: { baseURL: `${den.mocks.model.url}/v1`, apiKey: "eval-only-key" },
+        models: { [modelId]: { name: "Skill lifecycle model", tool_call: true } },
+      } } } : {}),
+    }, "v2");
+    const session = await seedSessionRetry(seed, app, { title: "Release report" });
+    const skillName = "release-briefing";
+    return {
+      app, den, workspace, session, skillName, live, modelId,
+      async prepareTurn(prompt: string) {
+        if (live) return;
+        const result = await fetch(`${den.mocks.model.url}/admin/agent-workloads`, {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ workloads: [{ latestUserTurn: true, promptMarker: prompt,
+            finalReply: "OpenWork: UNAVAILABLE", finalReplyFrom: "last-tool-text",
+            steps: [{ tool: "skill", argumentsFrom: "skill-catalog", arguments: { skill: skillName } }],
+          }] }),
+        });
+        if (!result.ok) throw new Error("Could not arrange model response");
+      },
+      async usedConfiguredModel() {
+        const result = await request(`/workspace/${workspace.workspaceId}/opencode2/api/session/${session.sessionId}/message`);
+        const messages = isRecord(result.json) && Array.isArray(result.json.data) ? result.json.data.filter(isRecord) : [];
+        const replies = messages.filter(message => message.type === "assistant" && message.finish === "stop");
+        return replies.length > 0 && replies.every(message => isRecord(message.model)
+          && message.model.id === modelId && message.model.providerID === providerId
+          && isRecord(message.tokens) && typeof message.tokens.output === "number" && message.tokens.output > 0);
+      },
+      async runtimeIdentity() {
+        const result = await request("/experimental/engine-v2-preview/status");
+        if (!isRecord(result.json) || result.json.running !== true || result.json.chatRouting !== true
+          || typeof result.json.pid !== "number") throw new Error("The v2 conversation runtime is not running");
+        return result.json.pid;
+      },
+      async [Symbol.asyncDispose]() { await managed[Symbol.asyncDispose](); },
+    };
+  } catch (error) {
+    await managed[Symbol.asyncDispose]();
+    throw error;
+  }
 }

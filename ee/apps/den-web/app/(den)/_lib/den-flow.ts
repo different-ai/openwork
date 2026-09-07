@@ -1,3 +1,4 @@
+import { workflowRunPreviewSchema, type WorkflowRunPreview } from "@openwork/types/workflows";
 import { DEN_WORKER_POLL_INTERVAL_MS } from "./CONSTS";
 import { denApiCredentials, denApiEndpoint } from "./den-api-origin";
 import { ORG_SCOPE_HEADER, getRequestOrgScope, shouldPinOrgScopePath } from "./org-scope";
@@ -166,6 +167,7 @@ export type WorkerListItem = {
 
 export type WorkflowRun = {
   id: string;
+  workflow: WorkflowRunPreview | null;
   source: string;
   status: "succeeded" | "failed";
   errorKind: string | null;
@@ -900,9 +902,11 @@ function parseWorkflowRun(value: unknown): WorkflowRun | null {
         isRecord(call) && typeof call.name === "string" ? [{ name: call.name }] : [],
       )
     : [];
+  const workflow = workflowRunPreviewSchema.safeParse(value.workflow);
 
   return {
     id: value.id,
+    workflow: workflow.success ? workflow.data : null,
     source: value.source,
     status: value.status,
     errorKind: typeof value.errorKind === "string" ? value.errorKind : null,

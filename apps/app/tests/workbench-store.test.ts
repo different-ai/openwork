@@ -158,6 +158,30 @@ describe("workbench store", () => {
     expect(loading.tabs.map((tab) => tab.sessionId)).toEqual(["session-a", "session-b"]);
     expect(loading.secondary?.sessionId).toBe("session-b");
   });
+
+  test("restores saved pairs when an initial session index omits their sessions", () => {
+    const owner = { workspaceId: "workspace-a", sessionId: "session-a" };
+    const side = { workspaceId: "workspace-a", sessionId: "session-b" };
+    let state = syncWorkbenchSnapshot(emptyWorkbench, {
+      workspaceId: owner.workspaceId, primarySessionId: owner.sessionId,
+      sessionsKnown: true, sessions: [owner, side],
+    });
+    state = setWorkbenchSplit(openWorkbenchTab(state, side), side);
+    // These are the only fields persisted across a renderer reload.
+    const restored = { ...emptyWorkbench, tabs: state.tabs, sideChats: state.sideChats };
+    const initial = syncWorkbenchSnapshot(restored, {
+      workspaceId: owner.workspaceId, primarySessionId: owner.sessionId,
+      sessionsKnown: true, sessions: [],
+    });
+    expect(initial.secondary).toEqual(side);
+    expect(initial.sideChats).toEqual(state.sideChats);
+    const loaded = syncWorkbenchSnapshot(initial, {
+      workspaceId: owner.workspaceId, primarySessionId: owner.sessionId,
+      sessionsKnown: true, sessions: [owner, side],
+    });
+    expect(loaded.secondary?.sessionId).toBe(side.sessionId);
+    expect(closeWorkbenchTab(loaded, side).secondary).toBeNull();
+  });
 });
 
 

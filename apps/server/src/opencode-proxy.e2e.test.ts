@@ -48,7 +48,10 @@ function startMockOpencode(input?: { holdCommand?: Promise<void>; foreignSession
         directory: request.headers.get("x-opencode-directory"),
         method: request.method,
       };
-      if (request.method === "POST") record.body = await request.json();
+      if (request.method === "POST") {
+        const text = await request.text();
+        if (text) record.body = JSON.parse(text);
+      }
       requests.push(record);
 
       if (url.pathname === "/session") {
@@ -217,6 +220,23 @@ async function waitUntil(predicate: () => boolean) {
 }
 
 describe("workspace OpenCode proxy", () => {
+  test("accepts empty engine request bodies and rejects malformed JSON before forwarding", async () => {
+    const workspaceRoot = await createWorkspaceRoot();
+    const mock = startMockOpencode();
+    const openwork = await startOpenworkServer({ workspaceRoot, opencodeBaseUrl: `http://127.0.0.1:${mock.server.port}`, readOnly: false });
+    const url = `http://127.0.0.1:${openwork.server.port}/workspace/ws_1/opencode/session`;
+    for (const body of [undefined, ""]) {
+      const response = await fetch(url, { method: "POST", headers: auth(openwork.token), body });
+      expect(response.status).toBe(200);
+      expect((await response.json()).id).toBe("ses_created");
+    }
+    const sessionPosts = () => mock.requests.filter((request) => request.method === "POST" && request.pathname === "/session");
+    expect(sessionPosts()).toHaveLength(2);
+    const malformed = await fetch(url, { method: "POST", headers: auth(openwork.token), body: "{" });
+    expect(malformed.status).toBe(400);
+    expect(sessionPosts()).toHaveLength(2);
+  });
+
   test("accepts guest-side rem_ workspace aliases", async () => {
     const workspaceRoot = await createWorkspaceRoot();
     const mock = startMockOpencode();

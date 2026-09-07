@@ -18,14 +18,14 @@ export function ProjectFilter({ options, value, onValueChange }: {
   const activeOption = value ? options.find((option) => option.value === value) ?? null : null;
 
   return (
-    <div className="mt-4 flex flex-wrap items-center gap-3">
-      <label className="text-[12px] font-semibold uppercase text-[#637291]" htmlFor={FILTER_INPUT_ID}>
+    <div className="flex flex-wrap items-center gap-3">
+      <label className="text-xs font-medium text-[#637291]" htmlFor={FILTER_INPUT_ID}>
         Project
       </label>
       <DenSelect
         id={FILTER_INPUT_ID}
         aria-label="Project analytics filter"
-        className="h-9 min-w-[240px]"
+        className="h-9 w-56 max-w-full"
         value={value}
         onChange={(event) => onValueChange(event.target.value)}
       >

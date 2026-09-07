@@ -94,6 +94,29 @@ test("scripts and records deterministic OpenAI-compatible agent tool rounds", as
   assert.deepEqual(requests.map((request) => request.matchedMarkers), [[marker], [marker], [marker]]);
 });
 
+test("unadvertised calls require an explicit adversarial workload", async () => {
+  await using mock = await startMockMcp({
+    port: await allocateFreePort(),
+    agentWorkloads: [false, true].map((allowUnadvertisedTool) => ({
+      promptMarker: `unadvertised-${allowUnadvertisedTool}`,
+      finalReply: "attempt complete",
+      steps: [{ tool: "unadvertised-shell", allowUnadvertisedTool, arguments: { command: "true" } }],
+    })),
+  });
+  for (const enabled of [false, true]) {
+    const marker = `unadvertised-${enabled}`;
+    const response = await fetch(`${mock.url}/v1/chat/completions`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify(completionBody(marker, 0)),
+    });
+    assert.equal(response.status, enabled ? 200 : 400);
+    const body = await response.text();
+    assert.match(body, enabled ? /"name":"unadvertised-shell"/ : /was not offered/);
+    const requests = await mock.agentRequests({ promptMarker: marker, atLeast: 1 });
+    assert.deepEqual(requests.map((request) => request.kind), [enabled ? "tool" : "error"]);
+  }
+});
+
 test("turn-scoped workloads isolate revisions from earlier markers and tool rounds", async () => {
   await using mock = await startMockMcp({
     port: await allocateFreePort(),

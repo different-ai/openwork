@@ -438,7 +438,8 @@ export function createConnectionsStore(options: {
     const mcpResource = extensionResource(entry.extensionManifest, "mcp");
     if (mcpResource?.localCommandRef === "openwork.computerUseMcp") {
       const command = await resolveDesktopCommand("getComputerUseMcpCommand", false);
-      return command ?? entry.command;
+      if (!command) throw new Error("Computer Use requires the bundled OpenWork helper on macOS.");
+      return command;
     }
     if (mcpResource?.localCommandRef === "openwork.uiMcp" || entry.serverName === "openwork-ui") {
       const command = await resolveDesktopCommand("getOpenworkUiMcpCommand");
@@ -907,10 +908,11 @@ export function createConnectionsStore(options: {
       }
 
       if (entryType === "local") {
-        if (!entry.command?.length) {
+        const command = await resolveLocalMcpCommand(entry);
+        if (!command?.length) {
           throw new Error("Missing MCP command.");
         }
-        mcpEntryConfig["command"] = await resolveLocalMcpCommand(entry);
+        mcpEntryConfig["command"] = command;
         const environment = await resolveLocalMcpEnvironment(entry);
         if (environment) {
           mcpEntryConfig["environment"] = environment;

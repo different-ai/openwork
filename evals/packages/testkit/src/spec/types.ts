@@ -52,6 +52,8 @@ export interface User {
 }
 
 export interface Agent {
+  browserRequest(input: { url: string; method?: string; body?: string }): Promise<{ reached: boolean; error?: string }>;
+  desktopApi(path: string, input: { method: string; body?: unknown }): Promise<{ status: number; body: unknown }>;
   run(action: string, args?: unknown): Promise<unknown>;
   send(text: string): Promise<unknown>;
   createSession(title?: string): Promise<string>;

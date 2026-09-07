@@ -13,6 +13,7 @@ export default function OrganizationSsoSignInPage() {
   const orgSlug = typeof params?.orgSlug === "string" ? params.orgSlug : "";
 
   const callbackURL = useMemo(() => searchParams.get("callbackURL") || getSocialCallbackUrl(), [searchParams]);
+  const errorCallbackURL = useMemo(() => searchParams.get("errorCallbackURL") || undefined, [searchParams]);
   const loginHint = useMemo(() => searchParams.get("loginHint") || undefined, [searchParams]);
 
   useEffect(() => {
@@ -29,6 +30,7 @@ export default function OrganizationSsoSignInPage() {
           body: JSON.stringify({
             organizationSlug: orgSlug,
             callbackURL,
+            errorCallbackURL,
             loginHint,
           }),
         });
@@ -59,7 +61,7 @@ export default function OrganizationSsoSignInPage() {
     return () => {
       cancelled = true;
     };
-  }, [callbackURL, loginHint, orgSlug]);
+  }, [callbackURL, errorCallbackURL, loginHint, orgSlug]);
 
   return (
     <DenStatusScreen

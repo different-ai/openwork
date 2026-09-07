@@ -1,6 +1,6 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
 import { mkdir, rm } from "node:fs/promises";
-import { engineSessionProbe, readAvailableModels, waitFor } from "@openwork/behaviors";
+import { engineSessionProbe, readAvailableModels, selectModel, waitFor } from "@openwork/behaviors";
 import { resolveEvalEngine } from "@openwork/env";
 import type { Seed } from "@openwork/env";
 import { daytonaSandbox, desktop as launchDesktop } from "@openwork/hosts";
@@ -216,7 +216,39 @@ export async function sidebarWorkspaceTitles(seed: Seed) {
 }
 
 export async function workspaceNewTask(seed: Seed) {
-  return oneWorkspace(seed, `openwork-kitchen-vercel-env-hit-target-${Date.now()}`);
+  const providerId = "new-task-mock";
+  const modelId = "new-task-model";
+  const prompt = "Confirm the new task is ready";
+  const reply = "The new task is ready.";
+  const mock = seed.mock({ agentWorkloads: [{ promptMarker: prompt, finalReply: reply, steps: [] }] });
+  const den = await seed.den({ mocks: { agent: mock }, provision: false });
+  const app = await seed.desktop({ name: "workspace-new-task", model: `${providerId}/${modelId}` });
+  const workspacePath = seed.tmpPath(`openwork-workspace-new-task-long-name-${Date.now()}`);
+  const workspace = await seed.workspace(app, workspacePath, { create: true });
+  await configureWorkspaceProvider(seed, app, [workspace.workspaceId], {
+    providerId, modelId, modelName: "New task model", baseUrl: `${den.mocks.agent.url}/v1`,
+  });
+  const selectedModel = await selectModel(app, modelId);
+  if (!selectedModel.selected) throw new Error("The mock task model was not selected.");
+  const sessions = await seed.sessions(app, ["Existing task"]);
+  // TODO(primitive): seed.networkFault should delay and observe renderer requests.
+  // Keep real session creation behind a slow transport boundary. Opening the
+  // composer must not reach this boundary; submitting must reach it only once.
+  await seed.evalIn(app, `(() => {
+    window.__newTaskRequests = [];
+    const originalFetch = window.fetch;
+    window.fetch = async function (...args) {
+      const request = args[0];
+      const url = typeof request === "string" ? request : request.url;
+      const method = args[1]?.method ?? request.method ?? "GET";
+      if (method.toUpperCase() === "POST" && new URL(url, location.href).pathname.endsWith("/session")) {
+        window.__newTaskRequests.push(url);
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+      }
+      return originalFetch.apply(this, args);
+    };
+  })()`);
+  return { app, workspace, workspacePath, sessions, prompt, reply };
 }
 
 export async function pinnedSessions(seed: Seed) {
@@ -273,21 +305,83 @@ export async function commandPaletteSearch(seed: Seed) {
 }
 
 export async function archiveSessions(seed: Seed) {
-  const stamp = `${Date.now()}-${process.pid}`;
-  const app = await seed.desktop({ name: "session-archive-button" });
-  const workspaceB = await seed.workspace(app, `/tmp/openwork-session-archive-${stamp}-b`);
-  const [b1] = await seed.sessions(app, [`Archive B1 ${stamp}`]);
-  const workspaceA = await additionalWorkspace(seed, app, `/tmp/openwork-session-archive-${stamp}-a`);
-  const [a1, a2] = await seed.sessions(app, [`Archive A1 ${stamp}`, `Archive A2 ${stamp}`]);
-  if (!a1 || !a2 || !b1) throw new Error("Archive world did not create all three sessions.");
-  return {
-    app,
-    workspaceA,
-    workspaceB,
-    a1: { ...a1, workspaceId: workspaceA.workspaceId },
-    a2: { ...a2, workspaceId: workspaceA.workspaceId },
-    b1: { ...b1, workspaceId: workspaceB.workspaceId },
-  };
+  const engine = resolveEvalEngine();
+  const app = await seed.desktop({ name: "session-archive-undo" });
+  const workspacePath = seed.tmpPath("session-archive-undo");
+  const workspace = await seed.workspace(app, workspacePath);
+  const [candidate, neighbor] = await seed.sessions(app, ["Archive candidate", "Archive neighbor"]);
+  if (!candidate || !neighbor) throw new Error("Archive world did not create both sessions.");
+
+  /**
+   * OpenCode's own `time.archived` stamp per session id (0 when active), read
+   * through the workspace-scoped OpenWork server mount the desktop uses.
+   */
+  // TODO(primitive): probe.sessions should expose the workspace's native session list.
+  async function archivedAt(): Promise<Record<string, number>> {
+    const value = await seed.evalIn(app, `async (workspaceId, engine) => {
+      const info = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo");
+      if (!info?.running || !info.baseUrl) throw new Error("OpenWork server is unavailable");
+      const response = await fetch(
+        String(info.baseUrl).replace(/\\/+$/, "") + "/workspace/" + encodeURIComponent(workspaceId) + (engine === "v2" ? "/opencode2/api/session?limit=200" : "/opencode/session?limit=200"),
+        {
+          headers: { Authorization: "Bearer " + String(info.ownerToken ?? info.clientToken ?? "") },
+          signal: AbortSignal.timeout(15000),
+        },
+      );
+      if (!response.ok) throw new Error("Workspace session listing failed with HTTP " + response.status);
+      const body = await response.json();
+      const sessions = engine === "v2" ? body.data : body;
+      if (!Array.isArray(sessions)) throw new Error("Workspace session listing was not an array");
+      return Object.fromEntries(sessions
+        .filter((session) => typeof session?.id === "string")
+        .map((session) => [session.id, typeof session?.time?.archived === "number" ? session.time.archived : 0]));
+    }`, { args: [workspace.workspaceId, engine], awaitPromise: true, timeoutMs: 20_000 });
+    if (!isRecord(value)) throw new Error(`Workspace archived state was malformed: ${JSON.stringify(value)}`);
+    const stamps: Record<string, number> = {};
+    for (const [sessionId, stamp] of Object.entries(value)) {
+      if (typeof stamp !== "number") throw new Error(`Archived stamp for ${sessionId} was malformed: ${JSON.stringify(stamp)}`);
+      stamps[sessionId] = stamp;
+    }
+    return stamps;
+  }
+
+  /** Which rows the workspace's own session tree shows, and whether the global Archived section exists. */
+  // TODO(primitive): probe.sidebar should expose the workspace tree and the Archived section.
+  async function sidebar(): Promise<{ active: string[]; archivedSection: boolean; archiveMenuDisabled: boolean }> {
+    const value = await seed.evalIn(app, `(workspaceId) => {
+      const tree = document.querySelector('[data-sidebar-workspace-id="' + workspaceId + '"]');
+      return {
+        active: [...(tree?.querySelectorAll("[data-sidebar-session-id]") ?? [])]
+          .map((row) => row.getAttribute("data-sidebar-session-id")),
+        archivedSection: Boolean(document.querySelector("[data-global-archived-sessions]")),
+        archiveMenuDisabled: [...document.querySelectorAll('[role="menuitem"][aria-disabled="true"]')]
+          .some((item) => item.textContent?.trim() === "Archive session"),
+      };
+    }`, { args: [workspace.workspaceId] });
+    if (!isRecord(value)
+      || !Array.isArray(value.active)
+      || !value.active.every((sessionId) => typeof sessionId === "string")
+      || typeof value.archivedSection !== "boolean"
+      || typeof value.archiveMenuDisabled !== "boolean") {
+      throw new Error(`Sidebar archive facts were malformed: ${JSON.stringify(value)}`);
+    }
+    return { active: value.active, archivedSection: value.archivedSection, archiveMenuDisabled: value.archiveMenuDisabled };
+  }
+
+  /** True once the undo pill is on screen and its slide-in has finished, i.e. when a person would reach for it. */
+  // TODO(primitive): user.click should wait for a target's entrance animation to settle.
+  async function undoToastSettled(): Promise<boolean> {
+    const value = await seed.evalIn(app, `(() => {
+      const pill = document.querySelector("[data-undo-toast]");
+      const toast = pill?.closest("[data-sonner-toast]");
+      if (!(toast instanceof HTMLElement)) return false;
+      return toast.dataset.mounted === "true"
+        && toast.getAnimations({ subtree: true }).every((animation) => animation.playState !== "running");
+    })()`);
+    return value === true;
+  }
+
+  return { app, engine, workspace, workspacePath, candidate, neighbor, archivedAt, sidebar, undoToastSettled };
 }
 
 export async function responsiveSessions(seed: Seed) {

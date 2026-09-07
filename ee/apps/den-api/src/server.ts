@@ -9,11 +9,13 @@ import { startWorkerProvisioningReconcileLoop } from "./workers/reconciler.js"
 import { startGithubSyncWorker } from "./workers/github-sync.js"
 import { externalMcpClientRuntimeName } from "./capability-sources/external-mcp-client-runtime.js"
 import { startAutomationSchedulerLoop } from "./automations/scheduler-loop.js"
+import { startModelsAnalyticsExportLoop } from "./models-analytics-export.js"
 
 const stopScimMaintenanceLoop = startScimMaintenanceLoop()
 const stopCloudIdleStopLoop = startCloudIdleStopLoop()
 const stopWorkerProvisioningReconcileLoop = startWorkerProvisioningReconcileLoop()
 const stopGithubSyncWorker = startGithubSyncWorker()
+const stopModelsAnalyticsExportLoop = startModelsAnalyticsExportLoop()
 const automationScheduler = startAutomationSchedulerLoop({ enabled: env.automations.runtimeEnabled })
 
 appLogger.info("external mcp implementation selected", { component: "server", runtime: externalMcpClientRuntimeName })
@@ -72,6 +74,7 @@ async function closeServer() {
 }
 
 async function stopBackgroundLoops() {
+  stopModelsAnalyticsExportLoop()
   const results = await Promise.allSettled([
     stopScimMaintenanceLoop(),
     stopCloudIdleStopLoop(),

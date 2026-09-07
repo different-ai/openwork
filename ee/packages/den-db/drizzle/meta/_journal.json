@@ -638,6 +638,13 @@
       "when": 1788570825673,
       "tag": "0091_personal_dashboard_apps",
       "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "5",
+      "when": 1788675287930,
+      "tag": "0092_models_task_analytics",
+      "breakpoints": true
     }
   ]
 }

@@ -4,6 +4,7 @@ import type {
 import type {
   WorkflowArtifactSnapshot,
   WorkflowDetail,
+  WorkflowRunPreview,
   WorkflowVersion,
 } from "@openwork/types/workflows"
 import { WorkflowGraph } from "@openwork/codemode"
@@ -35,8 +36,9 @@ import {
   workflowArtifactSource,
   WORKFLOW_MARKDOWN_RENDERER_VERSION,
 } from "./workflow-artifacts.js"
-import { redactWorkflowVersionAuthoringDetails } from "./workflow-projections.js"
+import { redactWorkflowGraphAuthoringDetails, redactWorkflowVersionAuthoringDetails } from "./workflow-projections.js"
 import {
+  PluginArchAuthorizationError,
   requirePluginArchResourceRole,
   resolvePluginArchGrantRole,
   resolvePluginArchResourceRole,
@@ -299,6 +301,58 @@ export async function listWorkflowVersions(input: { context: PluginArchActorCont
     resourceKind: "config_object",
   })
   return workflowVersions(input.context, resource.configObject.id, role === "manager")
+}
+
+export async function workflowRunPreviews(input: {
+  context: PluginArchActorContext
+  runs: Pick<WorkflowRunRow, "id" | "config_object_id" | "config_object_version_id">[]
+}): Promise<Map<string, WorkflowRunPreview>> {
+  const previews = new Map<string, WorkflowRunPreview>()
+  const workflowIds = [...new Set(input.runs.flatMap((run) => run.config_object_id ? [run.config_object_id] : []))]
+  const resources = await Promise.all(workflowIds.map(async (configObjectId) => {
+    try {
+      const resource = await workflowResource(input.context, configObjectId, "viewer")
+      const role = await resolvePluginArchResourceRole({
+        context: input.context, resourceId: configObjectId, resourceKind: "config_object",
+      })
+      return { resource, role }
+    } catch (error) {
+      if (error instanceof PluginArchAuthorizationError || (error instanceof Error && error.message === "workflow_not_found")) return null
+      throw error
+    }
+  }))
+  const visible = new Map(resources.flatMap((entry) => entry ? [[entry.resource.configObject.id, entry] as const] : []))
+  if (visible.size === 0) return previews
+  const versionIds = [...new Set(input.runs.flatMap((run) =>
+    run.config_object_id && visible.has(run.config_object_id) && run.config_object_version_id ? [run.config_object_version_id] : []))]
+  const versions = versionIds.length === 0 ? [] : await db.select({
+    id: ConfigObjectVersionTable.id,
+    configObjectId: ConfigObjectVersionTable.configObjectId,
+    code: ConfigObjectVersionTable.rawSourceText,
+  }).from(ConfigObjectVersionTable).where(and(
+    eq(ConfigObjectVersionTable.organizationId, input.context.organizationContext.organization.id),
+    inArray(ConfigObjectVersionTable.id, versionIds),
+    inArray(ConfigObjectVersionTable.configObjectId, [...visible.keys()]),
+    eq(ConfigObjectVersionTable.isDeletedVersion, false),
+  ))
+  const graphs = new Map(versions.map((version) => {
+    const graph = version.code === null ? null : WorkflowGraph.analyze(version.code)
+    return [version.id, {
+      configObjectId: version.configObjectId,
+      graph: graph && visible.get(version.configObjectId)?.role !== "manager" ? redactWorkflowGraphAuthoringDetails(graph) : graph,
+    }] as const
+  }))
+  for (const run of input.runs) {
+    const entry = run.config_object_id ? visible.get(run.config_object_id) : undefined
+    if (!entry) continue
+    const version = run.config_object_version_id ? graphs.get(run.config_object_version_id) : undefined
+    previews.set(run.id, {
+      configObjectId: entry.resource.configObject.id,
+      title: entry.resource.configObject.title,
+      graph: version?.configObjectId === run.config_object_id ? version.graph : null,
+    })
+  }
+  return previews
 }
 
 export async function listWorkflowSnapshots(input: {

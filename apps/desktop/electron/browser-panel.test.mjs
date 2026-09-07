@@ -2,16 +2,18 @@ import assert from "node:assert/strict";
 import { register } from "node:module";
 import test from "node:test";
 
-// browser-panel.mjs imports "electron" at module scope. Resolve that specifier
-// to an in-memory stub so the panel's tab and view bookkeeping can run under
-// plain Node.
+// Keep Electron and installed-browser discovery in memory: these guards must
+// never touch the clipboard, show a dialog, or launch a real browser.
 const electronStub = `
+export const effects = [];
 export const app = { on() {} };
-export const clipboard = { writeText() {} };
-export const session = { fromPartition() { return {}; } };
-export const shell = { openExternal() { return Promise.resolve(); } };
+export const clipboard = { writeText(url) { effects.push({ type: "copy", url }); } };
+export const dialog = { async showMessageBox() { effects.push({ type: "dialog" }); } };
+export const session = { fromPartition() { return { webRequest: { onBeforeRequest() {} } }; } };
+export const shell = { async openExternal(url) { effects.push({ type: "external", url }); } };
 export const createdViews = [];
 export class BrowserWindow {
+  static getAllWindows() { return []; }
   constructor(options) {
     if (options.show !== false || options.focusable !== false) throw new Error("background host must never show or focus");
     const children = [];
@@ -23,6 +25,7 @@ export class BrowserWindow {
     this.destroyed = false;
   }
   isDestroyed() { return this.destroyed; }
+  isVisible() { return false; }
   destroy() { this.destroyed = true; }
 }
 export class WebContentsView {
@@ -33,6 +36,8 @@ export class WebContentsView {
     this.bounds = { x: 0, y: 0, width: 0, height: 0 };
     this.webContents = {
       url: "about:blank",
+      sent: [],
+      send(channel, payload) { this.sent.push({ channel, payload }); },
       debugger: {
         commands: [],
         isAttached: () => attached,
@@ -60,30 +65,46 @@ export class WebContentsView {
 }
 `;
 
+const installedBrowsersStub = `
+import { effects } from "electron";
+export async function listInstalledBrowsers() {
+  return [["chrome", "Google Chrome"], ["firefox", "Firefox"]].map(([id, name]) => ({
+    id, name,
+    async open(url) { effects.push({ type: "browser", id, url }); },
+  }));
+}
+`;
+
 const hooks = `
 const stub = ${JSON.stringify(electronStub)};
+const browsers = ${JSON.stringify(installedBrowsersStub)};
 export function resolve(specifier, context, next) {
   if (specifier === "electron") return { url: "electron-stub:main", shortCircuit: true };
+  if (specifier === "./installed-browsers.mjs") return { url: "installed-browsers-stub:main", shortCircuit: true };
   return next(specifier, context);
 }
 export function load(url, context, next) {
   if (url === "electron-stub:main") return { format: "module", source: stub, shortCircuit: true };
+  if (url === "installed-browsers-stub:main") return { format: "module", source: browsers, shortCircuit: true };
   return next(url, context);
 }
 `;
 
 register(`data:text/javascript,${encodeURIComponent(hooks)}`);
 const { createBrowserPanel } = await import("./browser-panel.mjs");
-// @ts-expect-error The registered test-only Electron stub exports its view inventory.
-const { createdViews } = await import("electron");
+// @ts-expect-error The registered test-only Electron stub exports its witnesses.
+const { createdViews, effects } = await import("electron");
 
 const PANEL_BOUNDS = { x: 800, y: 40, width: 400, height: 900 };
+const LINK = { url: "https://example.com/a%2Fb?x=one%20two&x=%2F#section", point: { x: 20, y: 30 }, sessionId: "A" };
 const RESET_SEQUENCE = [
   { method: "Emulation.setDeviceMetricsOverride", params: { width: 0, height: 0, deviceScaleFactor: 0, mobile: false } },
   { method: "Emulation.clearDeviceMetricsOverride", params: undefined },
 ];
 
-function createPanel() {
+function createPanel(checkPolicy = async () => {}) {
+  effects.length = 0;
+  const policies = [];
   const children = [];
   const firstView = createdViews.length;
   const sent = [];
@@ -98,7 +119,13 @@ function createPanel() {
       },
       removeChildView(view) { children.splice(children.indexOf(view), 1); },
     },
-    webContents: { getZoomFactor: () => 1, isDestroyed: () => false, send(channel, payload) { sent.push({ channel, payload }); } },
+    webContents: {
+      mainFrame: {},
+      getURL: () => "http://localhost/index.html",
+      getZoomFactor: () => 1,
+      isDestroyed: () => false,
+      send(channel, payload) { sent.push({ channel, payload }); },
+    },
     isDestroyed: () => false,
   };
   const handlers = new Map();
@@ -106,14 +133,31 @@ function createPanel() {
     handle(channel, handler) { handlers.set(channel, handler); },
     on(channel, handler) { handlers.set(channel, handler); },
   };
-  createBrowserPanel({ getWindow: () => mainWindow, remoteDebugPort: 0, onDeepLink: () => {} }).registerIpc(ipcMain);
-  const invoke = (channel, ...args) => handlers.get(channel)(null, ...args);
+  createBrowserPanel({
+    getWindow: () => mainWindow, remoteDebugPort: 0, onDeepLink: () => {},
+    checkPolicy: async (request) => { policies.push(request); await checkPolicy(); },
+  }).registerIpc(ipcMain);
+  const mainContents = mainWindow.webContents;
+  const emit = (channel, event, ...args) => handlers.get(channel)(event, ...args);
+  const invoke = (channel, ...args) => emit(channel, { sender: mainContents, senderFrame: mainContents.mainFrame }, ...args);
   // Electron paints every child above the BrowserWindow's primary renderer.
   const onScreen = () => children.find((view) => view.getBounds().width > 1) ?? null;
   const views = () => createdViews.slice(firstView);
   const commands = (view) => view.webContents.debugger.commands;
   const messages = (channel) => sent.filter((entry) => entry.channel === channel).map((entry) => entry.payload);
-  return { invoke, onScreen, commands, children, messages, views };
+  async function openLinkMenu(payload = LINK) {
+    invoke("openwork:browser:linkContextMenu", payload);
+    await flush();
+    const view = views().find((view) => view.webContents.getURL() === "http://localhost/overlay.html");
+    assert.ok(view, "the link menu creates an overlay renderer");
+    emit("openwork:menu-overlay:ready", { sender: view.webContents });
+    await flush();
+    const request = view.webContents.sent.findLast((entry) => entry.channel === "openwork:menu-overlay:show")?.payload;
+    assert.ok(request, "the ready overlay receives its menu");
+    const choose = (itemId) => emit("openwork:menu-overlay:choose", { sender: view.webContents }, { requestId: request.id, itemId });
+    return { view, request, choose };
+  }
+  return { invoke, emit, mainContents, onScreen, commands, children, messages, views, policies, openLinkMenu };
 }
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
@@ -222,7 +266,8 @@ test("a tab opened for a background conversation loads silently and leaves the v
   assert.deepEqual(commands(backgroundView), BACKGROUND_SEQUENCE, "the page lays out and focuses like a visible one");
   assert.equal(backgroundView.webContents.debugger.isAttached(), true, "our emulation session stays open while unseen");
   assert.deepEqual(commands(visibleView), [], "the visible tab is untouched");
-  assert.deepEqual(messages("openwork:browser:panel-opened"), [], "no panel pops for a silent tab until it navigates");
+  assert.equal(messages("openwork:browser:panel-opened").at(-1).tab.id, tabId, "the explicit open selects B's page only in B's panel");
+  assert.equal(messages("openwork:browser:panel-opened").at(-1).ownerSessionId, "B");
 
   // Even an unexpectedly large background surface must not intercept the app.
   backgroundView.setBounds({ x: 0, y: 0, width: 1280, height: 800 });
@@ -237,7 +282,7 @@ test("navigating a background conversation's tab reports its owner instead of ta
   invoke("openwork:browser:show", PANEL_BOUNDS, "A");
   invoke("openwork:browser:createTab", "https://a.example", "A");
   const visibleView = onScreen();
-  invoke("openwork:browser:createTab", "https://b.example", "B");
+  const { tabId } = invoke("openwork:browser:createTab", "https://b.example", "B");
   const backgroundView = views().find((view) => view !== visibleView);
   await flush();
 
@@ -245,7 +290,9 @@ test("navigating a background conversation's tab reports its owner instead of ta
   await flush();
 
   assert.equal(onScreen(), visibleView, "A's tab stays on screen");
-  assert.deepEqual(messages("openwork:browser:panel-opened"), [{ ownerSessionId: "B" }]);
+  const opens = messages("openwork:browser:panel-opened");
+  assert.equal(opens.at(-2).tab.id, tabId, "the explicit open selects its page");
+  assert.deepEqual(opens.at(-1), { ownerSessionId: "B" }, "later navigation does not override an artifact selection");
 });
 
 test("switching to the background conversation swaps its tab on screen and restores a normal viewport", async () => {
@@ -303,4 +350,97 @@ test("tabs created without a conversation stay shared and behave as before", asy
   assert.ok(onScreen(), "a shared tab stays on screen for every conversation");
   invoke("openwork:browser:closeAllTabs");
   assert.deepEqual(messages("openwork:browser:panel-closed"), [{ ownerSessionId: null }]);
+});
+
+test("a catalog choice launches only the selected browser with the exact link, not a built-in tab", async () => {
+  const { openLinkMenu, invoke, policies } = createPanel();
+  const { request, choose } = await openLinkMenu();
+  assert.equal(request.source, "link");
+  assert.equal(request.items.find((item) => item.id === "browser:firefox")?.label, "Open in Firefox");
+  choose("browser:firefox");
+  await flush();
+
+  assert.deepEqual(policies, [{ url: LINK.url, external: true }]);
+  assert.deepEqual(effects, [{ type: "browser", id: "firefox", url: LINK.url }]);
+  assert.deepEqual(invoke("openwork:browser:state").tabs, []);
+});
+
+test("external policy denial prevents catalog and default launches without a built-in fallback", async () => {
+  for (const itemId of ["browser:firefox", "open-external"]) {
+    const { openLinkMenu, invoke, policies } = createPanel(async () => { throw new Error("blocked"); });
+    const { choose } = await openLinkMenu();
+    choose(itemId);
+    await flush();
+
+    assert.deepEqual(policies, [{ url: LINK.url, external: true }], itemId);
+    assert.deepEqual(effects, [{ type: "dialog" }], itemId);
+    assert.deepEqual(invoke("openwork:browser:state").tabs, [], itemId);
+  }
+});
+
+test("copying a link neither checks policy nor launches a browser", async () => {
+  const { openLinkMenu, invoke, policies } = createPanel(async () => { throw new Error("blocked"); });
+  const { choose } = await openLinkMenu();
+  choose("copy-url");
+  await flush();
+
+  assert.deepEqual(effects, [{ type: "copy", url: LINK.url }]);
+  assert.deepEqual(policies, []);
+  assert.deepEqual(invoke("openwork:browser:state").tabs, []);
+});
+
+test("link menus reject untrusted senders, subframes, and non-HTTP payloads", async () => {
+  const { emit, invoke, mainContents, views, policies } = createPanel();
+  emit("openwork:browser:linkContextMenu", { sender: {}, senderFrame: mainContents.mainFrame }, LINK);
+  emit("openwork:browser:linkContextMenu", { sender: mainContents, senderFrame: {} }, LINK);
+  for (const url of ["javascript:alert(1)", "file:///tmp/link.html", "data:text/html,link", "openwork://settings"]) {
+    invoke("openwork:browser:linkContextMenu", { ...LINK, url });
+  }
+  await flush();
+
+  assert.deepEqual(views(), [], "rejected requests never create an overlay or tab");
+  assert.deepEqual(policies, []);
+  assert.deepEqual(effects, []);
+});
+
+test("the built-in choice retains the captured owner when focus changes before policy completes", async () => {
+  /** @type {(() => void) | undefined} */
+  let allow;
+  const { openLinkMenu, invoke, policies } = createPanel(() => new Promise((resolve) => { allow = resolve; }));
+  invoke("openwork:browser:setVisibleSession", "B");
+  const { choose } = await openLinkMenu();
+  choose("open-builtin");
+  await flush();
+  assert.deepEqual(policies, [{ url: LINK.url, external: false }]);
+  assert.deepEqual(invoke("openwork:browser:state").tabs, [], "navigation waits for policy");
+  invoke("openwork:browser:setVisibleSession", "C");
+  assert.ok(allow, "the pending policy check exposes its completion");
+  allow();
+  await flush();
+
+  const state = invoke("openwork:browser:state");
+  assert.equal(state.visibleSessionId, "C");
+  assert.deepEqual(state.tabs.map(({ url, ownerSessionId }) => ({ url, ownerSessionId })), [{ url: LINK.url, ownerSessionId: "A" }]);
+  assert.equal(state.activeTabId, null, "the captured owner's tab does not take the visible conversation");
+  assert.deepEqual(effects, []);
+});
+
+test("forged menu requests, senders, and action IDs are ignored without dismissing the valid menu", async () => {
+  const { openLinkMenu, invoke, emit, policies, children } = createPanel();
+  invoke("openwork:browser:createTab", "https://existing.example");
+  const { view, request, choose } = await openLinkMenu();
+  const tabs = invoke("openwork:browser:state").tabs;
+  emit("openwork:menu-overlay:choose", { sender: view.webContents }, { requestId: "forged", itemId: "browser:firefox" });
+  invoke("openwork:menu-overlay:choose", { requestId: request.id, itemId: "browser:firefox" });
+  choose("browser:unlisted");
+  choose("close-all-tabs");
+  await flush();
+
+  assert.deepEqual(policies, []);
+  assert.deepEqual(effects, []);
+  assert.deepEqual(invoke("openwork:browser:state").tabs, tabs);
+  assert.ok(children.includes(view), "invalid choices leave the menu open");
+  choose("copy-url");
+  assert.deepEqual(effects, [{ type: "copy", url: LINK.url }]);
+  assert.ok(!children.includes(view), "a valid choice still works and dismisses the menu");
 });

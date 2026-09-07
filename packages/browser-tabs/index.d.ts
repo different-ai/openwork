@@ -45,6 +45,8 @@ export type BrowserStatePayload = {
 
 export type BrowserPanelOwnerPayload = {
   ownerSessionId: string | null;
+  /** The page to select on a panel-opened event; absent on panel-closed. */
+  tab?: BrowserPanelTab;
 };
 
 export type OpenBrowserUrlResult = {

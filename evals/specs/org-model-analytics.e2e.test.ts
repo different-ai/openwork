@@ -1,7 +1,10 @@
 import { expect } from "vitest";
 import { denFetch, provisionOrg } from "@openwork/behaviors";
 import type { DenSession } from "@openwork/behaviors";
-import { needs, server, test } from "@openwork/testkit";
+import { spec } from "@openwork/testkit";
+import { orgModelAnalyticsWorld } from "../worlds/org-model-analytics.ts";
+
+const test = spec.world(orgModelAnalyticsWorld, { timeout: 900_000, needs: {} });
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -62,11 +65,9 @@ async function readAnalytics(session: DenSession, orgId: string): Promise<Record
   return requireRecord(requireRecord(result.body, "analytics response").models, "analytics models");
 }
 
-test("organization model analytics aggregate session dimensions without cross-org leakage", { timeout: 300_000 }, async ({ evidence, place }) => {
-  needs({});
-  const primaryOrgName = `Model Analytics Primary ${Date.now()}`;
-  await using den = await server({ place, org: { name: primaryOrgName } });
-  const primaryOrgId = await organizationIdByName(den.admin, primaryOrgName);
+test("organization model analytics aggregate session dimensions without cross-org leakage", { timeout: 600_000 }, async ({ evidence, world, user }) => {
+  const { den } = world;
+  const primaryOrgId = await organizationIdByName(den.admin, "Analytics team");
   const otherOrg = await provisionOrg(den.ref, {});
 
   const events = [
@@ -81,7 +82,7 @@ test("organization model analytics aggregate session dimensions without cross-or
     body: JSON.stringify({ events }),
     signal: AbortSignal.timeout(10_000),
   });
-  expect(ingested.response.status).toBe(204);
+  expect(ingested.response.status, `Telemetry ingestion: ${ingested.text.slice(0, 500)}`).toBe(204);
 
   const primaryModels = await readAnalytics(den.admin, primaryOrgId);
   const usage30d = Array.isArray(primaryModels.usage30d) ? primaryModels.usage30d : [];
@@ -112,4 +113,30 @@ test("organization model analytics aggregate session dimensions without cross-or
     JSON.stringify(otherModels),
     Array.isArray(otherModels.usage30d) && otherModels.usage30d.length === 0,
   );
+  await user.see({ text: "Understand how your team works in OpenWork" }, { timeoutMs: 60_000 });
+  await user.click({ role: "button", label: "Refresh analytics" });
+  await user.see({ text: /^prov\/model-a\s+1$/ }, { timeoutMs: 30_000 });
+  await user.see({ text: /^prov\/model-b\s+1$/ });
+  await user.notSee({ text: "No model usage yet" });
+  await user.screenshot();
+  evidence.recordAssertionEvidence("Usage and adoption shows the same model usage returned by the organization API", "Both model rows show exactly one session, matching the API totals, and the empty-state message is absent", true);
+
+  await world.analyticsStoreUnavailable(true);
+  const unavailable = await denFetch(den.admin, "/v1/telemetry/analytics", { headers: auth(den.admin, primaryOrgId) });
+  expect(unavailable.response.status).toBe(500);
+  await user.reload();
+  await user.see({ text: "Could not load analytics." }, { timeoutMs: 60_000 });
+  await user.notSee({ text: "No model usage yet" });
+  await user.notSee({ text: "No usage events yet" });
+  await world.analyticsStoreUnavailable(false);
+  await user.click({ role: "button", label: "Refresh analytics" });
+  await user.see({ text: "prov/model-a" }, { timeoutMs: 30_000 });
+  await user.notSee({ text: "Could not load analytics." });
+  evidence.recordAssertionEvidence("An analytics outage is shown as an error and can recover without inventing zero usage", "An analytics storage outage returned HTTP 500 and produced the error state with no empty charts; Refresh restored the previously ingested models after recovery", true);
+  await user.click({ role: "link", label: "Models & usage" });
+  await user.see({ text: "Reliable, hand-picked models for knowledge work." });
+  await user.click({ role: "link", label: /^Usage & adoption$/ });
+  await user.see({ text: "Understand how your team works in OpenWork" });
+  await user.see({ text: "prov/model-b" });
+  evidence.recordAssertionEvidence("Shared navigation connects adoption analytics and OpenWork Models", "Both views are reachable through the shared navigation and returning preserves access to the same organization’s model analytics", true);
 });

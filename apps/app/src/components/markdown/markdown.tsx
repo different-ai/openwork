@@ -9,7 +9,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useOpenTargets } from "@/lib/target-provider";
 import { useOpenArtifactPath } from "@/lib/artifacts";
-import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
+import { openTargetFromUrl, type OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 
 import { applyTextHighlights } from "./text-highlights";
 import {
@@ -78,6 +78,10 @@ function filePathMatchesTarget(path: string, targetValue: string) {
 }
 
 function openTargetForHref(href: string, openTargets: OpenTarget[]) {
+  // A website in the transcript is a conversation target too. Let its owner
+  // open the built-in browser instead of Chromium spawning a separate window.
+  const urlTarget = openTargetFromUrl(href);
+  if (urlTarget) return urlTarget;
   const path = localPathFromHref(href);
 
   if (!path) {

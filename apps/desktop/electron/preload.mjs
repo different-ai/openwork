@@ -49,6 +49,26 @@ function installMenuOverlayDismissListeners() {
   }
 }
 
+// Capture before message-bubble menus, but leave files, app routes, editable
+// text, and ordinary clicks to their existing handlers.
+window.addEventListener("contextmenu", (event) => {
+  const anchor = event.composedPath().find((node) => node instanceof HTMLAnchorElement);
+  if (!anchor || anchor.isContentEditable || anchor.hasAttribute("download")) return;
+  const href = anchor.getAttribute("href") ?? "";
+  if (!/^(https?:)?\/\//i.test(href)) return;
+  let url;
+  try { url = new URL(anchor.href); } catch { return; }
+  if (!["http:", "https:"].includes(url.protocol)) return;
+  if (url.origin === location.origin && url.pathname === location.pathname && url.search === location.search) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  ipcRenderer.send("openwork:browser:linkContextMenu", {
+    url: url.href,
+    point: { x: event.clientX, y: event.clientY },
+    sessionId: anchor.closest("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? null,
+  });
+}, { capture: true });
+
 let desktopBootstrap = null;
 let desktopDistribution = null;
 try {
@@ -198,6 +218,25 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
       ipcRenderer.on("openwork:browser:panel-closed", handler);
       return () => ipcRenderer.removeListener("openwork:browser:panel-closed", handler);
     },
+  },
+  browserLogins: {
+    disableForManagedContext() { return ipcRenderer.invoke("openwork:browser-logins:disableForManagedContext"); },
+    sources() { return ipcRenderer.invoke("openwork:browser-logins:sources"); },
+    preview(request) { return ipcRenderer.invoke("openwork:browser-logins:preview", request); },
+    configure(request) { return ipcRenderer.invoke("openwork:browser-logins:configure", request); },
+    state() { return ipcRenderer.invoke("openwork:browser-logins:state"); },
+    syncNow() { return ipcRenderer.invoke("openwork:browser-logins:syncNow"); },
+    pause() { return ipcRenderer.invoke("openwork:browser-logins:pause"); },
+    resume() { return ipcRenderer.invoke("openwork:browser-logins:resume"); },
+    stopSite(site) { return ipcRenderer.invoke("openwork:browser-logins:stopSite", site); },
+    disconnect(request) { return ipcRenderer.invoke("openwork:browser-logins:disconnect", request); },
+    signedInSites() { return ipcRenderer.invoke("openwork:browser-logins:signedIn"); },
+    forgetSite(site) { return ipcRenderer.invoke("openwork:browser-logins:forgetSite", site); },
+    forgetAll() { return ipcRenderer.invoke("openwork:browser-logins:forgetAll"); },
+    ...(process.env.OPENWORK_EVAL_BROWSER_LOGIN_SYNC === "1" ? {
+      writeTestStore(request) { return ipcRenderer.invoke("openwork:browser-logins:writeTestStore", request); },
+      testWitnessUrl() { return ipcRenderer.invoke("openwork:browser-logins:testWitnessUrl"); },
+    } : {}),
   },
   terminal: {
     create(options) { return ipcRenderer.invoke("openwork:terminal:create", options); },

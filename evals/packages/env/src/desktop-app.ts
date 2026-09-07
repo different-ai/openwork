@@ -15,7 +15,11 @@ interface SharedAppOptions {
   place: Place;
   host?: Host;
   model?: string;
+  /** Extra environment for this isolated Electron process. */
+  env?: Record<string, string>;
   workspacePath?: string;
+  /** Arrange a previously activated private-Den installation; does not test activation. */
+  enterpriseActivated?: boolean;
   /** Reuse this caller-owned local Electron profile root instead of creating one. */
   profileDir?: string;
   /** Eval-only delay before the desktop starts its embedded OpenWork server. */
@@ -139,7 +143,7 @@ export async function liveSharedProductionApp(options: {
 
 export async function app(options: AppOptions): Promise<App> {
   if (options.signIn === false) {
-    const env: Record<string, string> = {};
+    const env: Record<string, string> = { ...options.env };
     if (options.model) env.OPENWORK_EVAL_MODEL = options.model;
     if (options.localServerDelayMs !== undefined) {
       env.OPENWORK_EVAL_LOCAL_SERVER_DELAY_MS = String(options.localServerDelayMs);
@@ -154,6 +158,9 @@ export async function app(options: AppOptions): Promise<App> {
         bootstrap: {
           baseUrl: options.den.ref.webUrl,
           requireSignin: false,
+          ...(options.enterpriseActivated ? { enterpriseActivation: {
+            activatedAt: new Date().toISOString(), denBaseUrl: options.den.ref.apiUrl,
+          } } : {}),
         },
         env: Object.keys(env).length > 0 ? env : undefined,
       });
@@ -194,7 +201,7 @@ export async function app(options: AppOptions): Promise<App> {
     const available = ["admin", ...Object.keys(options.den.members)].join(", ");
     throw new Error(`Unknown Den member ${JSON.stringify(options.as)}. Available: ${available}`);
   }
-  const env: Record<string, string> = {};
+  const env: Record<string, string> = { ...options.env };
   if (options.model) env.OPENWORK_EVAL_MODEL = options.model;
   if (options.localServerDelayMs !== undefined) {
     env.OPENWORK_EVAL_LOCAL_SERVER_DELAY_MS = String(options.localServerDelayMs);
@@ -209,6 +216,9 @@ export async function app(options: AppOptions): Promise<App> {
       bootstrap: {
         baseUrl: options.den.ref.webUrl,
         requireSignin: false,
+        ...(options.enterpriseActivated ? { enterpriseActivation: {
+          activatedAt: new Date().toISOString(), denBaseUrl: options.den.ref.apiUrl,
+        } } : {}),
       },
       env: Object.keys(env).length > 0 ? env : undefined,
     });

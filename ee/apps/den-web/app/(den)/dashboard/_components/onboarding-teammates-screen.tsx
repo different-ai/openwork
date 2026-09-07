@@ -30,7 +30,7 @@ export function OnboardingTeammatesScreen() {
   const { orgId, orgSlug, orgContext, orgError } = useOrgDashboard();
   const { user } = useDenFlow();
   if (!orgId || !orgContext || orgContext.organization.id !== orgId || !user) {
-    return <SetupFrame step="people" title="Bring your people." description={description} embedded>
+    return <SetupFrame step="people" title="Bring your people." description={description}>
       <p role={orgError ? "alert" : "status"} className="text-sm text-neutral-500">{orgError ?? "Getting your workspace ready…"}</p>
     </SetupFrame>;
   }
@@ -165,7 +165,7 @@ function TeammatesForm({ orgId, orgSlug, organizationName, selfEmail, selfName, 
     <div className="mt-7 border-t border-neutral-100 pt-5 text-sm leading-6 text-neutral-500">A shared place for tools, connections, and the way your team works.</div>
   </div>;
 
-  return <SetupFrame step="people" title="Bring your people." description={description} aside={preview} embedded>
+  return <SetupFrame step="people" title="Bring your people." description={description} aside={preview}>
     <div data-testid="onboarding-teammates" aria-busy={sending}>
       {canInvite ? <form noValidate onSubmit={(event) => { event.preventDefault(); void sendInvitations(); }}>
         <div className="mb-5 flex items-center justify-between gap-3">

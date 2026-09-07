@@ -1,3 +1,4 @@
+import { externalFetch } from "./server-fetch.js";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { access, chmod, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
@@ -27,7 +28,7 @@ export async function installOpencodeV2Binary(cacheRoot: string, version: string
   await chmod(directory, 0o700);
   const staging = await mkdtemp(join(directory, ".install-"));
   try {
-    const response = await fetch(artifact.url, { redirect: "error", signal: AbortSignal.timeout(180_000) });
+    const response = await externalFetch(artifact.url, { redirect: "error", signal: AbortSignal.timeout(180_000) });
     if (!response.ok) throw new Error(`OpenCode v2 download returned HTTP ${response.status}`);
     const bytes = Buffer.from(await response.arrayBuffer());
     const integrity = `sha512-${createHash("sha512").update(bytes).digest("base64")}`;

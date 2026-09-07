@@ -23,8 +23,10 @@ export interface MockToolCall {
 }
 
 export interface MockAgentToolStep {
+  /** Emit an unadvertised tool call to exercise the engine's rejection boundary. */
+  allowUnadvertisedTool?: boolean;
   /** Derive the handoff from the actual model input instead of fixture arguments. */
-  argumentsFrom?: "computer-mention" | "capability-search";
+  argumentsFrom?: "computer-mention" | "skill-catalog" | "capability-search";
   tool: string;
   arguments: Record<string, unknown>;
 }
@@ -34,12 +36,14 @@ export interface MockAgentWorkload {
   latestUserTurn?: boolean;
   promptMarker: string;
   finalReply: string;
-  /** Return text actually delivered by the engine after its last tool invocation. */
-  finalReplyFrom?: "last-tool-text";
+  /** Derive the final reply from the real tool result or model system instructions. */
+  finalReplyFrom?: "last-tool-text" | "system-text";
   /** Stream the final reply as consecutive content deltas of this many characters instead of one. */
   finalReplyChunkSize?: number;
   /** Hold the final response before sending headers, to exercise loading transitions. */
   finalReplyDelayMs?: number;
+  /** Chat Completions: emit a reasoning block before the final answer. */
+  finalReasoning?: string;
   /** Tool calls the agent makes before its final reply; empty answers directly. */
   steps: MockAgentToolStep[];
 }
@@ -82,7 +86,16 @@ export interface MockMcpTool {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  result: { content: { type: "text"; text: string }[] };
+  title?: string;
+  annotations?: { readOnlyHint: boolean; destructiveHint: boolean };
+  _meta?: { ui: { resourceUri: string; visibility?: string[] } };
+  /** Serve the HTML bound to this tool's _meta.ui.resourceUri. */
+  appHtml?: string;
+  /** Reject absent required input keys with JSON-RPC invalid params. */
+  validateRequiredArguments?: boolean;
+  /** Hold the response while the real engine exposes its running tool state. */
+  delayMs?: number;
+  result: { content: { type: "text"; text: string }[]; isError?: boolean };
 }
 
 export interface StartMockMcpOptions {

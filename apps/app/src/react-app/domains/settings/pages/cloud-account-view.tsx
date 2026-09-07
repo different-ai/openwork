@@ -220,6 +220,26 @@ function AppPermissionsView() {
             );
           })}
         </SettingsList>
+        {config.execution && (config.execution.commands === "deny" || config.execution.blockedCommands.length > 0 || config.execution.browserOrigins !== undefined || config.execution.blockBrowserUploads) ? (
+          <SettingsList>
+            <SettingsListItem>
+              <SettingsListItemContent>
+                <SettingsListItemTitle>OS commands</SettingsListItemTitle>
+              </SettingsListItemContent>
+              <SettingsStatusBadge label={config.execution.commands === "deny" ? "Blocked" : config.execution.blockedCommands.length ? "Some commands restricted" : "Allowed"} tone="neutral" />
+            </SettingsListItem>
+            {config.execution.browserOrigins !== undefined ? <SettingsListItem>
+              <SettingsListItemContent>
+                <SettingsListItemTitle>Approved websites</SettingsListItemTitle>
+                <SettingsSectionHeaderDescription>{config.execution.browserOrigins.length ? config.execution.browserOrigins.join(", ") : "Browsing is blocked."}</SettingsSectionHeaderDescription>
+              </SettingsListItemContent>
+            </SettingsListItem> : null}
+            {config.execution.blockBrowserUploads ? <SettingsListItem>
+              <SettingsListItemContent><SettingsListItemTitle>Browser uploads and form submissions</SettingsListItemTitle></SettingsListItemContent>
+              <SettingsStatusBadge label="Blocked" tone="neutral" />
+            </SettingsListItem> : null}
+          </SettingsList>
+        ) : null}
         <SettingsSectionHeaderDescription>
           Your administrator manages team permissions in Cloud → Team → Access.
           Ask them if you need a change, including access to an MCP server or skill.

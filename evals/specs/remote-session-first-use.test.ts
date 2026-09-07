@@ -111,12 +111,26 @@ test("first cloud task provisions once over MCP, preserves access boundaries, an
 
   witness.ready();
   await eventually(async () => (await workers()).map((entry) => record(entry).status), { within: 60_000, label: "real provisioner records ready after witness health", until: (statuses) => statuses.length === 1 && statuses[0] === "healthy" });
+  // The worker's HTTP listener can be healthy before its engine has a URL.
+  witness.sessionFailure({ code: "opencode_unconfigured", message: "OpenCode base URL is missing for this workspace" });
+  const starting = await call(writeToken, "create", task);
+  expect(starting.result.isError).toBe(true);
+  expect(starting.payload).toMatchObject({ error: "cloud_runtime_waking", retryable: true, retryAfterMs: 30_000 });
+  expect(starting.payload.sessionId).toBeUndefined();
+  expect(witness.sessions).toHaveLength(0);
+  expect(witness.sandboxes).toHaveLength(1);
+  witness.sessionFailure({ code: "invalid_payload", message: "Invalid session payload" });
+  const invalid = await call(writeToken, "create", task);
+  expect(invalid.payload).toMatchObject({ error: "remote_session_request_failed", retryable: false });
+  expect(witness.sessions).toHaveLength(0);
+  witness.sessionFailure(null);
   const created = await call(writeToken, "create", task);
   expect(created.result.isError).toBeUndefined();
   expect(created.payload).toMatchObject({ target: "cloud", started: true, workerId: record(startedWorkers[0]).id });
   expect(witness.sessions).toHaveLength(1);
   expect(witness.sessions[0]?.prompts).toEqual([task.prompt]);
   expect(witness.sandboxes).toHaveLength(1);
+  evidence.recordAssertionEvidence("Engine startup is retryable without duplicate sessions or reprovisioning", "A healthy worker whose session endpoint lacked its engine URL returned a 30-second retry; an unrelated 400 stayed non-retryable. Retrying after engine readiness created exactly one session and submitted the prompt once on the existing sandbox.", true);
   const browser = await denFetch(den.admin, "/v1/cloud/instance", { headers: { authorization: `Bearer ${den.admin.token}` } });
   expect(browser.response.status, browser.text).toBe(200);
   expect(record(browser.body).status).toBe("ready");

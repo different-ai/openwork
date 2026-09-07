@@ -10,7 +10,7 @@
     "start": "next start --hostname 0.0.0.0 --port 3005",
     "lint": "next lint",
     "typecheck": "tsc --noEmit --pretty false",
-    "test": "bun test --conditions development tests/onboarding-page.test.ts tests/openwork-models-page.test.ts tests/web-page.test.ts tests/openwork-web-billing.test.ts tests/den-api-origin.test.ts tests/den-api-redirect-rules.test.ts tests/feedback-url.test.ts tests/byok-page-primitives.test.ts tests/runtime-env-key.test.ts tests/observability-config.test.ts tests/desktop-version-options.test.ts tests/cloud-super-admins-role-hierarchy.test.ts tests/org-dashboard-sidebar-ia.test.ts tests/dashboard-mcp-app-catalog.test.ts tests/dashboard-element-identity.test.ts tests/install-errors.test.ts tests/install-download-href.test.ts tests/member-dashboard-download.test.ts tests/desktop-handoff.test.ts tests/daytona-worker-url.test.ts tests/single-org-signup-ui.test.ts tests/auth-landing-contract.test.ts tests/catalog-card-surface.test.tsx tests/workflow-flow-diagram.test.tsx tests/workflow-input-form.test.tsx tests/workflow-plain-language.test.ts tests/workflow-friendly-value.test.tsx tests/workflow-detail-tabs.test.tsx tests/mcp-connection-smart-add.test.ts tests/mcp-credential-autofill.test.ts tests/org-selection-background.test.ts tests/join-org-invite-clean.test.ts tests/scim-sso-readiness.test.ts app/api/_lib/den-api-redirect.test.mjs app/api/_lib/upstream-proxy.test.mjs app/api/_lib/upstream-proxy-lifecycle.test.mjs tests/dashboard-navigation.test.ts tests/palette-filter.test.ts",
+    "test": "bun test --conditions development tests/reauth-dialog.test.tsx tests/onboarding-page.test.ts tests/openwork-models-page.test.ts tests/web-page.test.ts tests/openwork-web-billing.test.ts tests/den-api-origin.test.ts tests/den-api-redirect-rules.test.ts tests/feedback-url.test.ts tests/byok-page-primitives.test.ts tests/runtime-env-key.test.ts tests/observability-config.test.ts tests/desktop-version-options.test.ts tests/cloud-super-admins-role-hierarchy.test.ts tests/org-dashboard-sidebar-ia.test.ts tests/dashboard-mcp-app-catalog.test.ts tests/dashboard-element-identity.test.ts tests/install-errors.test.ts tests/install-download-href.test.ts tests/member-dashboard-download.test.ts tests/desktop-handoff.test.ts tests/daytona-worker-url.test.ts tests/single-org-signup-ui.test.ts tests/auth-landing-contract.test.ts tests/catalog-card-surface.test.tsx tests/workflow-flow-diagram.test.tsx tests/workflow-input-form.test.tsx tests/workflow-plain-language.test.ts tests/workflow-friendly-value.test.tsx tests/workflow-detail-tabs.test.tsx tests/mcp-connection-smart-add.test.ts tests/mcp-credential-autofill.test.ts tests/org-selection-background.test.ts tests/join-org-invite-clean.test.ts tests/scim-sso-readiness.test.ts app/api/_lib/den-api-redirect.test.mjs app/api/_lib/upstream-proxy.test.mjs app/api/_lib/upstream-proxy-lifecycle.test.mjs tests/dashboard-navigation.test.ts tests/palette-filter.test.ts",
     "test:observability": "bun test tests/observability-config.test.ts app/api/_lib/upstream-proxy.test.mjs app/api/_lib/upstream-proxy-lifecycle.test.mjs"
   },
   "dependencies": {
@@ -40,6 +40,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@happy-dom/global-registrator": "20.12.0",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "20.12.12",
     "@types/react": "19.2.14",

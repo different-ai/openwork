@@ -1,7 +1,10 @@
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { workflowRunPreviewSchema } from "@openwork/types/workflows"
 import { listWorkflowRuns } from "../../workflow-runs.js"
+import { workflowRunPreviews } from "../../workflows.js"
+import { listTeamsForMember } from "../../orgs.js"
 import { db } from "../../db.js"
 import { orgMemberRoute, queryValidator } from "../../middleware/index.js"
 import { denTypeIdSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
@@ -25,6 +28,7 @@ const workflowRunSchema = z.object({
   finishedAt: z.string().datetime(),
   createdAt: z.string().datetime(),
   orgMembershipId: denTypeIdSchema("member").nullable(),
+  workflow: workflowRunPreviewSchema.nullable(),
 })
 
 const workflowRunListResponseSchema = z.object({
@@ -55,6 +59,14 @@ export function registerOrgWorkflowRunRoutes<T extends { Variables: OrgRouteVari
         ...(isAdmin ? {} : { orgMembershipId: member.id }),
         limit: c.req.valid("query").limit,
       })
+      const previews = await workflowRunPreviews({
+        context: {
+          organizationContext: context,
+          memberTeams: await listTeamsForMember({ organizationId: context.organization.id, memberId: member.id }),
+          session: c.get("session"),
+        },
+        runs: rows,
+      })
 
       return c.json({
         runs: rows.map((row) => ({
@@ -70,6 +82,7 @@ export function registerOrgWorkflowRunRoutes<T extends { Variables: OrgRouteVari
           finishedAt: row.finished_at.toISOString(),
           createdAt: row.created_at.toISOString(),
           orgMembershipId: row.org_membership_id,
+          workflow: previews.get(row.id) ?? null,
         })),
       })
     },

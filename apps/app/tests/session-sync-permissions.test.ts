@@ -19,6 +19,7 @@ import {
   questionKey,
   seedPermissionState,
   seedQuestionState,
+  settleQuestionState,
   seedSessionState,
   trackWorkspaceSessionSync,
   transcriptKey,
@@ -237,6 +238,73 @@ describe("session permission sync", () => {
 });
 
 describe("session question sync", () => {
+  test("a late snapshot cannot resurrect a settled child request or clear another request", () => {
+    const answered = question("question-answered", "session-child");
+    const pending = question("question-pending", "session-child");
+    seedQuestionState("workspace-a", "session-child", [answered, pending]);
+    settleQuestionState("workspace-a", "session-child", answered.id);
+    seedQuestionState("workspace-a", "session-child", [answered, pending], { snapshotStartedAt: 100 });
+    expect(getReactQueryClient().getQueryData(questionKey("workspace-a", "session-child"))).toMatchObject([
+      { id: pending.id, sessionID: "session-child" },
+    ]);
+    expect(useSessionActivityStore.getState().getStatus("workspace-a", "session-child")).toBe("waiting");
+
+    settleQuestionState("workspace-a", "session-child", pending.id);
+    seedQuestionState("workspace-a", "session-child", [answered, pending], { snapshotStartedAt: 100 });
+    expect(getReactQueryClient().getQueryData(questionKey("workspace-a", "session-child"))).toEqual([]);
+    expect(useSessionActivityStore.getState().getStatus("workspace-a", "session-child")).not.toBe("waiting");
+  });
+
+  test("retains a child question before its transcript is tracked and settles only that request", () => {
+    const syncInput = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", openworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    try {
+      for (const request of [question("question-child", "session-child"), question("question-other", "session-b")]) {
+        __applySessionSyncEventForTest(syncInput, { type: "question.asked", properties: request });
+      }
+      expect(getReactQueryClient().getQueryData(questionKey("workspace-a", "session-child"))).toMatchObject([
+        { id: "question-child", sessionID: "session-child" },
+      ]);
+      expect(useSessionActivityStore.getState().getStatus("workspace-a", "session-child")).toBe("waiting");
+      expect(getReactQueryClient().getQueryData(questionKey("workspace-a", "session-a"))).toBeUndefined();
+
+      __applySessionSyncEventForTest(syncInput, {
+        type: "question.replied",
+        properties: { sessionID: "session-child", requestID: "question-child", answers: [["Yes"]] },
+      });
+      expect(getReactQueryClient().getQueryData(questionKey("workspace-a", "session-child"))).toEqual([]);
+      expect(useSessionActivityStore.getState().getStatus("workspace-a", "session-child")).not.toBe("waiting");
+      expect(getReactQueryClient().getQueryData(questionKey("workspace-a", "session-b"))).toMatchObject([
+        { id: "question-other", sessionID: "session-b" },
+      ]);
+      expect(useSessionActivityStore.getState().getStatus("workspace-a", "session-b")).toBe("waiting");
+
+      __applySessionSyncEventForTest(syncInput, {
+        type: "question.rejected",
+        properties: { sessionID: "session-b", requestID: "question-other" },
+      });
+      expect(getReactQueryClient().getQueryData(questionKey("workspace-a", "session-b"))).toEqual([]);
+      expect(useSessionActivityStore.getState().getStatus("workspace-a", "session-b")).not.toBe("waiting");
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("retains the waiting marker for a live question newer than the snapshot", () => {
+    getReactQueryClient().setQueryData(questionKey("workspace-a", "session-child"), [
+      { ...question("question-live", "session-child"), receivedAt: 200 },
+    ]);
+    seedQuestionState("workspace-a", "session-child", [], { snapshotStartedAt: 100 });
+    expect(getReactQueryClient().getQueryData(questionKey("workspace-a", "session-child"))).toMatchObject([
+      { id: "question-live", sessionID: "session-child", receivedAt: 200 },
+    ]);
+    expect(useSessionActivityStore.getState().getStatus("workspace-a", "session-child")).toBe("waiting");
+
+    seedQuestionState("workspace-a", "session-child", [], { snapshotStartedAt: 300 });
+    expect(getReactQueryClient().getQueryData(questionKey("workspace-a", "session-child"))).toEqual([]);
+    expect(useSessionActivityStore.getState().getStatus("workspace-a", "session-child")).not.toBe("waiting");
+  });
+
   test("seeds only questions for the selected session", () => {
     seedQuestionState("workspace-a", "session-a", [
       question("question-a", "session-a"),

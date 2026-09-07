@@ -3,7 +3,7 @@ import type { CSSProperties } from "react";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
 import { DesktopUpdateButton } from "../../settings/state/desktop-updater-provider";
-import { ArrowLeft, Cloud, FileText, Globe, MoreHorizontal, PanelRight, TextSearch, X, Zap } from "lucide-react";
+import { ArrowLeft, Cloud, FileText, Globe, Maximize2, MoreHorizontal, PanelRight, TextSearch, X, Zap } from "lucide-react";
 
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { t } from "../../../../i18n";
@@ -97,6 +97,9 @@ import {
 import { useWorkbenchStore, type WorkbenchSessionTab } from "./workbench-store";
 import { isSameWorkbenchSession } from "./workbench-store";
 import { ReactSessionRuntime } from "../sync/runtime-sync";
+import { useSessionInteractions } from "../sync/use-session-interactions";
+import { createClient } from "@/app/lib/opencode";
+import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
 import {
   availableNarrowPane,
   NarrowPaneSwitcher,
@@ -264,6 +267,7 @@ export type SessionPageProps = {
   onRenameSession?: (sessionId: string, title: string) => Promise<void> | void;
   onDeleteSession?: (sessionId: string) => Promise<void> | void;
   onArchiveSession?: (sessionId: string, archived: boolean) => Promise<void> | void;
+  archiveDisabledReason?: string;
   onAccessibleTargetsChange?: (targets: OpenTarget[]) => void;
   /** Settings content rendered inside the right pane when the settings rail icon is active. */
   settingsSlot?: React.ReactNode;
@@ -299,40 +303,45 @@ function WorkbenchPaneHeader(props: {
   focused: boolean;
   onFocus: () => void;
   onClose: () => void;
+  onExpand?: () => void;
 }) {
   const title = props.session.title?.trim() || t("session.default_title");
   return (
     <div
-      className={cn(
-        "flex h-10 shrink-0 items-center gap-2 border-b border-border px-3",
-        props.focused && "bg-muted/40",
-      )}
+      className={cn("flex h-10 shrink-0 items-center gap-1 border-b border-border px-3", props.focused && "bg-muted/40")}
       data-workbench-pane-header={props.pane}
       data-workbench-pane-workspace-name={props.workspaceTitle}
     >
-      <button type="button" className="min-w-0 flex-1 text-left" onClick={props.onFocus}>
-        <span className="block truncate text-xs font-medium text-foreground">{title}</span>
-        {props.showWorkspace ? (
-          <span className="block truncate text-[10px] text-muted-foreground">{props.workspaceTitle}</span>
-        ) : null}
+      <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left text-xs" onClick={props.onFocus}>
+        <span className="truncate" title={title}>{title}</span>
+        {props.showWorkspace ? <span className="truncate text-muted-foreground">{props.workspaceTitle}</span> : null}
       </button>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              aria-label={props.pane === "secondary" ? "Close side chat" : "Close main chat"}
-              onClick={props.onClose}
-            >
-              <X data-icon="inline-start" />
-            </Button>
-          }
-        />
-        <TooltipContent>{props.pane === "primary" ? "Keep the other session" : "Close side chat"}</TooltipContent>
-      </Tooltip>
+      {props.pane === "secondary" ? <>
+        <Button variant="ghost" size="icon-xs" aria-label={t("session_management.expand_side_chat")} title={t("session_management.expand_side_chat")} onClick={props.onExpand}>
+          <Maximize2 />
+        </Button>
+        <Button variant="ghost" size="icon-xs" aria-label={t("session_management.close_split_view")} title={t("session_management.close_split_view")} onClick={props.onClose}>
+          <X />
+        </Button>
+      </> : null}
     </div>
   );
+}
+
+/** Every visible conversation owns its pending interactions, including the side pane. */
+function SplitSessionSurface(props: SessionSurfaceProps) {
+  const client = useMemo(() => isOpencodeV2BaseUrl(props.opencodeBaseUrl)
+    ? createClientV2(props.opencodeBaseUrl, props.workspaceRoot, { token: props.openworkToken })
+    : createClient(props.opencodeBaseUrl, props.workspaceRoot, { token: props.openworkToken, mode: "openwork" }),
+  [props.opencodeBaseUrl, props.openworkToken, props.workspaceRoot]);
+  const interactions = useSessionInteractions({
+    client, workspaceId: props.workspaceId, sessionId: props.sessionId, workspaceRoot: props.workspaceRoot ?? "",
+  });
+  return <>
+    <ReactSessionRuntime workspaceId={props.workspaceId} sessionId={props.sessionId}
+      opencodeBaseUrl={props.opencodeBaseUrl} openworkToken={props.openworkToken} />
+    <SessionSurface {...props} {...interactions} />
+  </>;
 }
 
 function UnavailableWorkbenchPane(props: {
@@ -509,7 +518,6 @@ export function SessionPage(props: SessionPageProps) {
   const [createGroupLabel, setCreateGroupLabel] = useState("");
   const [createGroupWorkspaceId, setCreateGroupWorkspaceId] = useState<string | null>(null);
   const browserPanelRef = usePanelRef();
-  const preserveSidePanelOnPanelOpenRef = useRef(false);
 
   const selectNarrowPane = useCallback((pane: NarrowSessionPane) => {
     setNarrowPane(pane);
@@ -595,9 +603,11 @@ export function SessionPage(props: SessionPageProps) {
     const browser = (window as Window).__OPENWORK_ELECTRON__?.browser;
     if (!browser) return;
     const unsubOpen = browser.onPanelOpened?.((payload) => {
-      if (preserveSidePanelOnPanelOpenRef.current) {
-        preserveSidePanelOnPanelOpenRef.current = false;
-        return;
+      const ownerSessionId = payload?.ownerSessionId ?? props.selectedSessionId;
+      if (ownerSessionId && payload?.tab) {
+        // A requested navigation selects its page, even when an artifact was
+        // active. Passive title/loading updates still preserve that artifact.
+        openTab(ownerSessionId, payload.tab);
       }
       openOwnerSidePanel(payload?.ownerSessionId);
     });
@@ -611,7 +621,7 @@ export function SessionPage(props: SessionPageProps) {
       setSidePanelState(ownerKey, null);
     });
     return () => { unsubOpen?.(); unsubClose?.(); };
-  }, [openOwnerSidePanel, setCurrentSidePanel, setSidePanelState, sidePanelSessionKey]);
+  }, [openOwnerSidePanel, openTab, props.selectedSessionId, setCurrentSidePanel, setSidePanelState, sidePanelSessionKey]);
   const {
     leftSidebarResizing,
     leftSidebarWidth,
@@ -710,7 +720,6 @@ export function SessionPage(props: SessionPageProps) {
         preview: fileTarget.preview,
         target: fileTarget,
       });
-      preserveSidePanelOnPanelOpenRef.current = true;
       setCurrentSidePanel("panel");
     };
 
@@ -830,9 +839,6 @@ export function SessionPage(props: SessionPageProps) {
     if (panelRailActive && activeTab?.type === "artifact") {
       toggleCurrentSidePanel("panel");
       return;
-    }
-    if (!panelRailActive) {
-      preserveSidePanelOnPanelOpenRef.current = true;
     }
     if (!panelRailActive) {
       toggleCurrentSidePanel("panel");
@@ -1051,7 +1057,7 @@ export function SessionPage(props: SessionPageProps) {
   })();
   const narrowPaneOptions = useMemo<NarrowPaneOption[]>(() => {
     const options: NarrowPaneOption[] = [{ id: "chat", label: "Chat" }];
-    if (splitSession) options.push({ id: "split", label: "Side chat" });
+    if (splitSession) options.push({ id: "split", label: t("session_management.split_view") });
     if (sidePanelOpen) {
       options.push({
         id: "panel",
@@ -1331,6 +1337,7 @@ export function SessionPage(props: SessionPageProps) {
           onArchiveSession={props.onArchiveSession ? (sessionId, archived) => {
             void props.onArchiveSession?.(sessionId, archived);
           } : undefined}
+          archiveDisabledReason={props.archiveDisabledReason}
           onOpenCreateGroupModal={(workspaceId) => {
             setCreateGroupWorkspaceId(workspaceId);
             setCreateGroupLabel("");
@@ -1708,6 +1715,7 @@ export function SessionPage(props: SessionPageProps) {
                             workspaceId={props.runtimeWorkspaceId!}
                             sessionId={props.selectedSessionId!}
                             isControlTarget={activeWorkbenchPane === "primary"}
+                            chatPane={canRenderSplitSurface ? "primary" : undefined}
                             opencodeBaseUrl={reactSessionBaseUrl}
                             openworkToken={reactSessionToken}
                             todos={props.todos}
@@ -1747,16 +1755,11 @@ export function SessionPage(props: SessionPageProps) {
                               focused={activeWorkbenchPane === "secondary"}
                               onFocus={() => focusWorkbenchPane("secondary")}
                               onClose={closeSecondaryWorkbenchPane}
+                              onExpand={closePrimaryWorkbenchPane}
                             />
                             {splitPaneRuntime.status === "ready" ? (
                               <div className="min-h-0 flex-1">
-                                <ReactSessionRuntime
-                                  workspaceId={splitPaneRuntime.runtimeWorkspaceId}
-                                  sessionId={splitSession.sessionId}
-                                  opencodeBaseUrl={splitPaneRuntime.opencodeBaseUrl}
-                                  openworkToken={splitPaneRuntime.openworkToken}
-                                />
-                                <SessionSurface
+                                <SplitSessionSurface
                                   {...splitPaneRuntime.surface}
                                   client={splitPaneRuntime.client}
                                   environmentClient={splitPaneRuntime.environmentClient}
@@ -1764,9 +1767,9 @@ export function SessionPage(props: SessionPageProps) {
                                   workspaceRoot={splitPaneRuntime.workspaceRoot}
                                   sessionId={splitSession.sessionId}
                                   isControlTarget={activeWorkbenchPane === "secondary"}
+                                  chatPane="secondary"
                                   opencodeBaseUrl={splitPaneRuntime.opencodeBaseUrl}
                                   openworkToken={splitPaneRuntime.openworkToken}
-                                  todos={[]}
                                   onOpenTarget={(target, options, sourceSessionId) => openTargetForRuntime({
                                     client: splitPaneRuntime.client,
                                     runtimeWorkspaceId: splitPaneRuntime.runtimeWorkspaceId,

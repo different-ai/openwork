@@ -45,6 +45,7 @@ import { useModelPicker } from "@/react-app/domains/session/modals/use-model-pic
 import {
   type RouteWorkspace,
   type RouteSession,
+  createRouteSession,
   describeRouteError,
   downloadWorkspaceJson,
   getSessionStatus,
@@ -82,6 +83,7 @@ import { isOpenWorkExtensionEnabled, OPENWORK_EXTENSION_STATE_CHANGED } from "@/
 import { PreferencesView } from "@/react-app/domains/settings/pages/preferences-view";
 import { GeneralSettingsView } from "@/react-app/domains/settings/pages/general-view";
 import { AuthorizedFoldersPanel } from "@/react-app/domains/settings/panels/authorized-folders-panel";
+import { BrowserLoginsPanel } from "../domains/browser-logins/browser-logins-panel";
 import { EffectivePermissionsPanel } from "@/react-app/domains/settings/panels/effective-permissions-panel";
 import { SettingsStack } from "@/react-app/domains/settings/settings-section";
 import { AdvancedView } from "@/react-app/domains/settings/pages/advanced-view";
@@ -1142,19 +1144,17 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     [sessionsByWorkspaceId, selectedWorkspaceId, workspaces],
   );
   const handleCreatePaletteSession = useCallback(async () => {
-    if (!opencodeClient || !selectedWorkspaceId) {
+    if (!selectedWorkspaceEndpoint?.token || !selectedWorkspaceId) {
       navigate(selectedWorkspaceId ? workspaceSessionRoute(selectedWorkspaceId) : "/session");
       return;
     }
     try {
-      const session = unwrap(
-        await opencodeClient.session.create({ directory: selectedWorkspaceRoot || undefined }),
-      );
+      const session = await createRouteSession(selectedWorkspaceEndpoint, selectedWorkspaceRoot || undefined);
       navigate(workspaceSessionRoute(selectedWorkspaceId, session.id));
     } catch (error) {
       toast.error(describeRouteError(error));
     }
-  }, [navigate, opencodeClient, selectedWorkspaceId, selectedWorkspaceRoot]);
+  }, [navigate, selectedWorkspaceEndpoint, selectedWorkspaceId, selectedWorkspaceRoot]);
   // Settings refreshes provider auth whenever the picker opens (the session
   // route does not need this; its provider state is kept fresh elsewhere).
   useEffect(() => {
@@ -1963,7 +1963,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     onComputerUsePermissionsChange: setComputerUsePermissions,
     restartLocalServer: restartExtensionLocalServer,
     connectMcp: async (entry) => {
-      await connectionsStore.connectMcp(entry);
+      const result = await connectionsStore.connectMcp(entry);
+      if (!result.ok) throw new Error(result.error);
     },
     refreshMcpServers: () => connectionsStore.refreshMcpServers(),
     providers,
@@ -2317,6 +2318,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 void connectionsStore.refreshMcpServers();
               }}
             />
+            <BrowserLoginsPanel />
           </SettingsStack>
         );
       case "ai":

@@ -383,6 +383,8 @@ export type ComputerUsePermissions = {
   ok: boolean;
   accessibility: boolean;
   screenRecording: boolean;
+  supported?: boolean;
+  protocolVersion?: string;
   error?: string;
 };
 

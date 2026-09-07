@@ -5,6 +5,7 @@ import type { FilePart, Part, PermissionRequest, PermissionV2Request, QuestionRe
 import { getReactQueryClient } from "../../../infra/query-client";
 import { captureAnalyticsEvent, takeTaskRunStart } from "@/app/lib/analytics";
 import { trackTaskCompleted, trackTaskFailed } from "@/app/lib/den-telemetry";
+import { observeModelsTaskEvent } from "@/app/lib/models-task-analytics";
 import { createClient, unwrap } from "@/app/lib/opencode";
 import { createClientV2, isOpencodeV2BaseUrl } from "@/app/lib/opencode-v2-adapter";
 import { perfNow, recordPerfLog } from "@/app/lib/perf-log";
@@ -30,6 +31,7 @@ import { applyRevertCursor, reconcileTranscriptMessages } from "./transcript-rec
 import {
   useSessionActivityStore,
 } from "../status/session-activity-store";
+import { useWorkbenchStore } from "../chat/workbench-store";
 import { notifyDesktopEvent } from "../../../shell/desktop-notifications";
 import { notifyAlert } from "../../../shell/notifications";
 import { t } from "@/i18n";
@@ -591,6 +593,22 @@ function sortQuestions(a: PendingQuestion, b: PendingQuestion) {
   return a.receivedAt - b.receivedAt || a.id.localeCompare(b.id);
 }
 
+// Keep settlements with the owning question cache, shared by every pane/client.
+// A list already in flight must not resurrect a request after its reply event.
+const settledQuestionsKey = (workspaceId: string, sessionId: string) =>
+  [...questionKey(workspaceId, sessionId), "settled"];
+
+export function settleQuestionState(workspaceId: string, sessionId: string, requestId: string) {
+  const queryClient = getReactQueryClient();
+  queryClient.setQueryData<string[]>(settledQuestionsKey(workspaceId, sessionId), (current = []) =>
+    current.includes(requestId) ? current : [...current, requestId],
+  );
+  queryClient.setQueryData<PendingQuestion[]>(questionKey(workspaceId, sessionId), (current = []) =>
+    current.filter((question) => question.id !== requestId),
+  );
+  useSessionActivityStore.getState().setWaitingRequest(workspaceId, sessionId, "question", requestId, false);
+}
+
 export function seedPermissionState(
   workspaceId: string,
   sessionId: string,
@@ -631,18 +649,14 @@ export function seedQuestionState(
   questions: QuestionRequest[],
   options: { snapshotStartedAt?: number } = {},
 ) {
-  useSessionActivityStore.getState().replaceWaitingRequests(
-    workspaceId,
-    sessionId,
-    "question",
-    questions.flatMap((question) => question.sessionID === sessionId ? [question.id] : []),
-  );
   const queryClient = getReactQueryClient();
   const now = Date.now();
-  queryClient.setQueryData<PendingQuestion[]>(questionKey(workspaceId, sessionId), (current = []) => {
+  const settled = new Set(queryClient.getQueryData<string[]>(settledQuestionsKey(workspaceId, sessionId)) ?? []);
+  const nextQuestions = queryClient.setQueryData<PendingQuestion[]>(questionKey(workspaceId, sessionId), (current = []) => {
     const receivedAtById = new Map(current.map((question) => [question.id, question.receivedAt]));
     const seeded = questions.flatMap((question) =>
-      question.sessionID === sessionId ? [questionWithReceivedAt(question, receivedAtById.get(question.id) ?? now)] : [],
+      question.sessionID === sessionId && !settled.has(question.id)
+        ? [questionWithReceivedAt(question, receivedAtById.get(question.id) ?? now)] : [],
     );
     const seededIds = new Set(seeded.map((question) => question.id));
     const snapshotStartedAt = options.snapshotStartedAt;
@@ -657,6 +671,12 @@ export function seedQuestionState(
         : [];
     return [...seeded, ...liveAfterSnapshot].sort(sortQuestions);
   });
+  useSessionActivityStore.getState().replaceWaitingRequests(
+    workspaceId,
+    sessionId,
+    "question",
+    (nextQuestions ?? []).map((question) => question.id),
+  );
 }
 
 function fileProviderMetadata(part: FilePart) {
@@ -787,6 +807,7 @@ function upsertPart(messages: UIMessage[], messageId: string, partId: string, ne
 }
 
 function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent) {
+  observeModelsTaskEvent(workspaceId, event);
   const queryClient = getReactQueryClient();
   const input = entry.input;
 
@@ -825,6 +846,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const sessionId = props.sessionID ?? props.info?.id ?? "";
     if (sessionId) entry.titleRecovery?.resolve(sessionId);
     if (sessionId) useSessionActivityStore.getState().removeSession(workspaceId, sessionId);
+    if (sessionId) useWorkbenchStore.getState().closeTab({ workspaceId, sessionId });
     if (sessionId) stopTrackingLiveSession(entry, sessionId);
     if (sessionId) {
       for (const listener of entry.sessionDeletedListeners.keys()) listener(sessionId);
@@ -967,13 +989,13 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
   if (event.type === "question.asked") {
     const question = event.properties as QuestionRequest;
     if (!question?.id || !question.sessionID) return;
+    if (queryClient.getQueryData<string[]>(settledQuestionsKey(workspaceId, question.sessionID))?.includes(question.id)) return;
     notifyDesktopEvent({
       type: "question.asked",
       sessionId: question.sessionID,
       question: questionNotificationText(question),
     });
     useSessionActivityStore.getState().setWaitingRequest(workspaceId, question.sessionID, "question", question.id, true);
-    if (!isTrackedSession(entry, question.sessionID)) return;
     const receivedAt = Date.now();
     queryClient.setQueryData<PendingQuestion[]>(questionKey(workspaceId, question.sessionID), (current = []) => {
       const existing = current.find((item) => item.id === question.id);
@@ -989,11 +1011,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
   if (event.type === "question.replied" || event.type === "question.rejected") {
     const props = (event.properties ?? {}) as { sessionID?: string; requestID?: string };
     if (!props.sessionID || !props.requestID) return;
-    useSessionActivityStore.getState().setWaitingRequest(workspaceId, props.sessionID, "question", props.requestID, false);
-    if (!isTrackedSession(entry, props.sessionID)) return;
-    queryClient.setQueryData<PendingQuestion[]>(questionKey(workspaceId, props.sessionID), (current = []) =>
-      current.filter((question) => question.id !== props.requestID),
-    );
+    settleQuestionState(workspaceId, props.sessionID, props.requestID);
     return;
   }
 

@@ -88,6 +88,24 @@ export async function appSmokeWorld(seed: Seed) {
           crash: /Something went wrong|Cannot find module|Maximum update depth exceeded/.test(document.body.innerText) };
       })()`, { awaitPromise: true });
     },
+    async packagedToolIds() {
+      return evalIn(app, `(async () => {
+        await window.__OPENWORK_ELECTRON__.invokeDesktop("engineStart", ${JSON.stringify(seed.tmpPath("packaged-plugin-smoke"))}, { runtime: "direct" });
+        const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
+        const headers = { Authorization: "Bearer " + info.ownerToken, "Content-Type": "application/json" };
+        const created = await fetch(info.baseUrl + "/workspaces/local", {
+          method: "POST", headers, signal: AbortSignal.timeout(15000),
+          body: JSON.stringify({ folderPath: ${JSON.stringify(seed.tmpPath("packaged-plugin-smoke"))} }),
+        });
+        if (created.status !== 201) throw new Error("Workspace creation failed: " + created.status);
+        const workspace = await created.json();
+        const tools = await fetch(info.baseUrl + "/workspace/" + workspace.activeId + "/opencode/experimental/tool/ids", {
+          headers, signal: AbortSignal.timeout(30000),
+        });
+        if (!tools.ok) throw new Error("Engine tool discovery failed: " + tools.status);
+        return tools.json();
+      })()`, { awaitPromise: true, timeoutMs: 60_000 });
+    },
     async [Symbol.asyncDispose]() { await app[Symbol.asyncDispose](); },
   };
 }

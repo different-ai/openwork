@@ -1,3 +1,5 @@
+import { managedDesktopPolicy } from "./managed-desktop-policy.js";
+import { managedPolicyActionSchema } from "./managed-policy-rules.js";
 import { readFile, realpath, writeFile, rm, stat } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -31,6 +33,7 @@ import { buildEngineAuthProbeHeader } from "./engine-registry.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
 import { sanitizePortableOpencodeConfig } from "./portable-opencode.js";
 import { addMcp, listMcp, removeMcp, setMcpEnabled } from "./mcp.js";
+import { buildOpenWorkV2Instructions, waitForOpenWorkV2Skills, OPENWORK_V2_INSTRUCTION_KEY } from "./opencode-v2-instructions.js";
 import {
   callMcpAppTool,
   listMcpAppCatalog,
@@ -764,7 +767,12 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
     },
     logger: toManagedProviderAuthLogger(logger),
   });
-  const engineV2Preview = createEngineV2Preview({ config, env });
+  managedDesktopPolicy(config).onChange = () => {
+    // Sign-in can precede the first workspace. Its future engine reads the
+    // persisted policy at startup; there is no running workspace to reload.
+    if (config.workspaces.length > 0) cloudProviderSync.markReloadPending();
+  };
+  const engineV2Preview = createEngineV2Preview({ config, env, deferStart: true });
   const routes = createRoutes(
     config,
     approvals,
@@ -830,6 +838,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
         try {
           const actor = await requireClient(request, config, tokens);
           assertOpencodeProxyAllowed(actor, request.method, mount.restPath);
+          await managedDesktopPolicy(config).assertRequest(request, mount.restPath, true);
           const workspace = await resolveWorkspaceWithoutBootstrap(config, mount.workspaceId);
           await assertWorkspaceOwnsProxiedSessionRead(config, workspace, request.method, mount.restPath);
           proxyService = "opencode";
@@ -856,6 +865,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
         try {
           const actor = await requireClient(request, config, tokens);
           assertOpencodeProxyAllowed(actor, request.method, mount.restPath);
+          await managedDesktopPolicy(config).assertRequest(request, mount.restPath, true);
           const workspace = await resolveWorkspaceWithoutBootstrap(config, mount.workspaceId);
           const connection = engineV2Preview.connection();
           if (!connection) {
@@ -933,6 +943,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
         try {
           const actor = await requireClient(request, config, tokens);
           assertOpencodeProxyAllowed(actor, request.method, url.pathname);
+          await managedDesktopPolicy(config).assertRequest(request, url.pathname, true);
           proxyService = "opencode";
           const workspace = config.workspaces[0];
           if (workspace) {
@@ -970,9 +981,10 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
             ? requireHostToken(request, config)
             : route.auth === "host"
               ? await requireHost(request, config, tokens)
-              : route.auth === "client"
+              : route.auth === "client" || (route.auth === "policy" && !managedDesktopPolicy(config).authenticatesEvaluation(request))
                 ? await requireClient(request, config, tokens)
                 : undefined;
+        await managedDesktopPolicy(config).assertRequest(request, url.pathname);
         const response = await route.handler({
           request,
           url,
@@ -1046,6 +1058,9 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
       });
     }
   }
+  // Policy hooks must receive the listener that actually bound, including
+  // ephemeral ports and retries after a port collision.
+  engineV2Preview.start();
 
   // Deliver server-managed provider credentials to the engine on startup. The
   // engine process receives a fixed env allowlist, so credentials materialized
@@ -1067,6 +1082,7 @@ export async function startServer(config: ServerConfig): Promise<ServeResult> {
   return {
     ...server,
     stop: async () => {
+      managedDesktopPolicy(config).onChange = undefined;
       cloudProviderSync.stop();
       await engineV2Preview.stop().catch(() => undefined);
       engineInstanceReaper.close();
@@ -1156,6 +1172,37 @@ async function proxyOpencodeV2Request(input: {
     if (!actual || actual !== expected) {
       throw new ApiError(404, "session_not_found", "Session not found");
     }
+  }
+
+  if (method !== "GET" && method !== "HEAD"
+    && decodeURIComponent(forwardedPath).endsWith(`/instructions/entries/${OPENWORK_V2_INSTRUCTION_KEY}`)) {
+    throw new ApiError(403, "engine_instructions_managed", "OpenWork instructions are managed by the server");
+  }
+
+  if (method === "POST" && sessionId && /^\/api\/session\/[^/]+\/(?:prompt|command|generate)$/.test(forwardedPath)) {
+    // Session ownership was verified above. Replace one native instruction
+    // entry immediately before admission; never append to conversation text.
+    const mcpUrl = new URL(target);
+    mcpUrl.pathname = "/api/mcp";
+    const internalHeaders = new Headers({ authorization: headers.get("authorization") ?? "", "content-type": "application/json" });
+    const mcpResponse = await loopbackFetch(mcpUrl.toString(), { headers: internalHeaders, signal: AbortSignal.timeout(10_000) });
+    const mcpPayload: unknown = mcpResponse.ok ? await mcpResponse.json() : null;
+    const connectReady = isRecord(mcpPayload) && Array.isArray(mcpPayload.data) && mcpPayload.data.some((entry) =>
+      isRecord(entry) && entry.name === "openwork-cloud" && isRecord(entry.status) && entry.status.status === "connected");
+    const skillUrl = new URL(target);
+    skillUrl.pathname = "/api/skill";
+    await waitForOpenWorkV2Skills(input.workspace.path, async () => {
+      const response = await loopbackFetch(skillUrl.toString(), { headers: internalHeaders, signal: AbortSignal.timeout(5_000) });
+      if (!response.ok) throw new ApiError(502, "engine_skill_sync_failed", "Native skills are unavailable");
+      return response.json();
+    });
+    const value = buildOpenWorkV2Instructions(connectReady);
+    const instructionUrl = new URL(target);
+    instructionUrl.pathname = `/api/session/${encodeURIComponent(sessionId)}/instructions/entries/${OPENWORK_V2_INSTRUCTION_KEY}`;
+    const synced = await loopbackFetch(instructionUrl.toString(), {
+      method: "PUT", headers: internalHeaders, body: JSON.stringify({ value }), signal: AbortSignal.timeout(15_000),
+    });
+    if (!synced.ok) throw new ApiError(502, "engine_instruction_sync_failed", "OpenWork instructions could not be updated");
   }
 
   const requestBody = method === "GET" || method === "HEAD"
@@ -2825,12 +2872,14 @@ function createRoutes(
     ensureWritable(config);
     const session = parseCloudProviderDenSession(await readJsonBody(ctx.request));
     if (!session) throw new ApiError(400, "invalid_payload", "baseUrl, token, and orgId are required");
+    await managedDesktopPolicy(config).setSession(session);
     await cloudProviderSync.setSession(session);
     return new Response(null, { status: 204 });
   });
 
   addRoute(routes, "DELETE", "/den-session", "host-token", async () => {
     ensureWritable(config);
+    await managedDesktopPolicy(config).clearSession();
     await cloudProviderSync.clearSession();
     return new Response(null, { status: 204 });
   });
@@ -2842,6 +2891,16 @@ function createRoutes(
       throw new ApiError(400, "invalid_payload", "reason must be a string");
     }
     return jsonResponse(await cloudProviderSync.run(typeof body.reason === "string" ? body.reason : undefined));
+  });
+
+  addRoute(routes, "GET", "/managed-policy", "client", async () =>
+    jsonResponse({ policy: await managedDesktopPolicy(config).current() }));
+  addRoute(routes, "POST", "/managed-policy/evaluate", "policy", async (ctx) => {
+    const body = await readJsonBody(ctx.request);
+    const action = managedPolicyActionSchema.safeParse(body.action);
+    if (!action.success || !isRecord(body.input)) throw new ApiError(400, "invalid_payload", "A supported policy action and input are required");
+    await managedDesktopPolicy(config).assert(action.data, body.input);
+    return jsonResponse({ allowed: true });
   });
 
   addRoute(routes, "GET", "/cloud-provider-sync/status", "client", async () => {
@@ -3053,6 +3112,7 @@ function createRoutes(
       // rendered from the ENGINE_GLOBAL row only, so a workspace-row write
       // would never reach the engine.
       const providerUpdate = isRecord(provider) ? provider : {};
+      if (Object.keys(providerUpdate).length) await managedDesktopPolicy(config).assert("provider");
       if (Object.keys(providerUpdate).length) {
         const providerResult = await writeGlobalRuntimeOpencodeConfig(config, (current) => ({
           ...current,

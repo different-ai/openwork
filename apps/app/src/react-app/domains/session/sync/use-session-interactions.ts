@@ -1,7 +1,5 @@
-// Pending permissions, questions, and todos for the selected session:
-// query-cache subscriptions, snapshot seeding, and reply handlers.
-// Extracted verbatim from session-route.tsx (cluster had no readers of its
-// internals besides the JSX).
+// Pending interactions for a conversation and its descendants. Requests stay
+// owned by the session that asked; only their presentation bubbles to the parent.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -17,6 +15,7 @@ import {
   questionKey,
   seedPermissionState,
   seedQuestionState,
+  settleQuestionState,
   todoKey,
 } from "./session-sync";
 
@@ -28,7 +27,7 @@ export type UseSessionInteractionsInput = {
   client: Client | null;
   workspaceId: string;
   sessionId: string | null;
-  permissionSessionIds?: string[];
+  interactionSessionIds?: string[];
   workspaceRoot: string;
 };
 
@@ -40,15 +39,15 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
   const [questionReplyBusy, setQuestionReplyBusy] = useState(false);
   const questionReplyBusyRef = useRef(false);
 
-  const requestedPermissionSessionIdsKey = (input.permissionSessionIds ?? []).join("\u0000");
-  const permissionSessionIds = useMemo(() => {
+  const requestedSessionIdsKey = (input.interactionSessionIds ?? []).join("\u0000");
+  const interactionSessionIds = useMemo(() => {
     if (!sessionId) return [];
-    const requested = requestedPermissionSessionIdsKey ? requestedPermissionSessionIdsKey.split("\u0000") : [];
+    const requested = requestedSessionIdsKey ? requestedSessionIdsKey.split("\u0000") : [];
     return Array.from(new Set([sessionId, ...requested].map((id) => id.trim()).filter(Boolean)));
-  }, [requestedPermissionSessionIdsKey, sessionId]);
+  }, [requestedSessionIdsKey, sessionId]);
   const permissionQueryKeys = useMemo(
-    () => workspaceId ? permissionSessionIds.map((id) => permissionKey(workspaceId, id)) : [],
-    [permissionSessionIds, workspaceId],
+    () => workspaceId ? interactionSessionIds.map((id) => permissionKey(workspaceId, id)) : [],
+    [interactionSessionIds, workspaceId],
   );
   const cachedPermissions = useQueryCacheArrayState<PendingPermission>(
     permissionQueryKeys,
@@ -58,13 +57,17 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
     () => [...cachedPermissions].sort((left, right) => left.receivedAt - right.receivedAt || left.id.localeCompare(right.id)),
     [cachedPermissions],
   );
-  const questionQueryKey = useMemo(
-    () => (workspaceId && sessionId ? questionKey(workspaceId, sessionId) : null),
-    [sessionId, workspaceId],
+  const questionQueryKeys = useMemo(
+    () => workspaceId ? interactionSessionIds.map((id) => questionKey(workspaceId, id)) : [],
+    [interactionSessionIds, workspaceId],
   );
-  const pendingQuestions = useQueryCacheState<PendingQuestion[]>(
-    questionQueryKey,
+  const cachedQuestions = useQueryCacheArrayState<PendingQuestion>(
+    questionQueryKeys,
     emptyPendingQuestions,
+  );
+  const pendingQuestions = useMemo(
+    () => [...cachedQuestions].sort((left, right) => left.receivedAt - right.receivedAt || left.id.localeCompare(right.id)),
+    [cachedQuestions],
   );
   const todoQueryKey = useMemo(
     () => (workspaceId && sessionId ? todoKey(workspaceId, sessionId) : null),
@@ -73,7 +76,7 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
   const todos = useQueryCacheState<TodoItem[]>(todoQueryKey, emptyTodos);
 
   useEffect(() => {
-    if (!client || !workspaceId || permissionSessionIds.length === 0) return;
+    if (!client || !workspaceId || interactionSessionIds.length === 0) return;
     let cancelled = false;
     const directory = workspaceRoot || undefined;
     void (async () => {
@@ -88,7 +91,7 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
           // Older/newer OpenCode permission APIs can fail independently.
         }
 
-        const v2Reads = await Promise.all(permissionSessionIds.map(async (permissionSessionId) => {
+        const v2Reads = await Promise.all(interactionSessionIds.map(async (permissionSessionId) => {
           try {
             const permissions = unwrap(
               await client.v2.session.permission.list({ sessionID: permissionSessionId }),
@@ -117,18 +120,19 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
     return () => {
       cancelled = true;
     };
-  }, [client, permissionSessionIds, workspaceId, workspaceRoot]);
+  }, [client, interactionSessionIds, workspaceId, workspaceRoot]);
 
   useEffect(() => {
-    if (!client || !workspaceId || !sessionId) return;
+    if (!client || !workspaceId || interactionSessionIds.length === 0) return;
     let cancelled = false;
     const directory = workspaceRoot || undefined;
     void (async () => {
       const snapshotStartedAt = Date.now();
       try {
         const list = unwrap(await client.question.list({ directory }));
-        if (!cancelled) {
-          seedQuestionState(workspaceId, sessionId, list, { snapshotStartedAt });
+        if (cancelled) return;
+        for (const questionSessionId of interactionSessionIds) {
+          seedQuestionState(workspaceId, questionSessionId, list, { snapshotStartedAt });
         }
       } catch {
         // Keep event-synced question state if the snapshot read fails.
@@ -138,7 +142,7 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
     return () => {
       cancelled = true;
     };
-  }, [client, sessionId, workspaceId, workspaceRoot]);
+  }, [client, interactionSessionIds, workspaceId, workspaceRoot]);
 
   const activePermission = pendingPermissions[0] ?? null;
   const respondPermission = useCallback(
@@ -167,7 +171,7 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
             }),
           );
         }
-        for (const permissionSessionId of permissionSessionIds) {
+        for (const permissionSessionId of interactionSessionIds) {
           getReactQueryClient().setQueryData<PendingPermission[]>(
             permissionKey(workspaceId, permissionSessionId),
             (current = []) => current.filter((permission) => permission.id !== requestID),
@@ -191,7 +195,7 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
         setPermissionReplyBusy(false);
       }
     },
-    [client, pendingPermissions, permissionSessionIds, sessionId, workspaceId, workspaceRoot],
+    [client, pendingPermissions, interactionSessionIds, sessionId, workspaceId, workspaceRoot],
   );
 
   const activeQuestion = pendingQuestions[0] ?? null;
@@ -202,6 +206,7 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
       questionReplyBusyRef.current = true;
       setQuestionReplyBusy(true);
       try {
+        const pendingQuestion = pendingQuestions.find((question) => question.id === requestID);
         unwrap(
           await client.question.reply({
             requestID,
@@ -209,10 +214,9 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
             directory: workspaceRoot || undefined,
           }),
         );
-        getReactQueryClient().setQueryData<PendingQuestion[]>(
-          questionKey(workspaceId, sessionId),
-          (current = []) => current.filter((question) => question.id !== requestID),
-        );
+        if (pendingQuestion) {
+          settleQuestionState(workspaceId, pendingQuestion.sessionID, requestID);
+        }
       } catch (error) {
         toast.error(t("app.error_request_failed"), {
           description: describeRouteError(error),
@@ -222,7 +226,7 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
         setQuestionReplyBusy(false);
       }
     },
-    [client, sessionId, workspaceId, workspaceRoot],
+    [client, pendingQuestions, sessionId, workspaceId, workspaceRoot],
   );
 
   return {

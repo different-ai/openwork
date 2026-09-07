@@ -131,12 +131,48 @@ test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeo
     { name: "execute_capability", args: { target: "desktop" } },
   ]);
 
+  const appTool = {
+    name: "get_page",
+    title: "Get page",
+    inputSchema: { type: "object", properties: { cloudId: { type: "string" } }, required: ["cloudId"] },
+    _meta: { ui: { resourceUri: "ui://mock/page" } },
+    appHtml: "<!doctype html><html><body>Page</body></html>",
+    validateRequiredArguments: true,
+    result: { content: [{ type: "text", text: "page loaded" }] },
+  };
+  const appConfigured = await fetch(`${origin}/admin/tools`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ tools: [appTool] }),
+  });
+  assert.equal(appConfigured.status, 200);
+  const appCatalog = await rpc("tools/list", {});
+  assert.equal(appCatalog.result.tools[0]._meta.ui.resourceUri, "ui://mock/page");
+  assert.equal("appHtml" in appCatalog.result.tools[0], false);
+  assert.equal("validateRequiredArguments" in appCatalog.result.tools[0], false);
+  const appInitialized = await rpc("initialize", {});
+  assert.deepEqual(appInitialized.result.capabilities.resources, {});
+  const resource = await rpc("resources/read", { uri: "ui://mock/page" });
+  assert.equal(resource.result.contents[0].text, appTool.appHtml);
+  assert.equal(resource.result.contents[0].mimeType, "text/html;profile=mcp-app");
+  const rejected = await rpc("tools/call", { name: "get_page", arguments: {} });
+  assert.equal(rejected.error.code, -32602);
+  assert.match(rejected.error.message, /cloudId/);
+  assert.equal("result" in rejected, false);
+  const recovered = await rpc("tools/call", { name: "get_page", arguments: { cloudId: "workspace" } });
+  assert.equal(recovered.result.content[0].text, "page loaded");
+  assert.equal("error" in recovered, false);
+  const appLog = await (await fetch(`${origin}/requests`)).json();
+  assert.deepEqual(appLog.requests.flatMap((entry) => entry.toolCalls ?? [])
+    .filter((call) => call.name === "get_page").map((call) => call.args), [{}, { cloudId: "workspace" }]);
+
   const workload = await fetch(`${origin}/admin/agent-workloads`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ workloads: [{
       promptMarker: "[The user selected @",
       finalReply: "Handoff received",
+      finalReasoning: "Checking the handoff result.",
       steps: [{ tool: "execute_capability", arguments: { ignored: true }, argumentsFrom: "computer-mention" }],
     }] }),
   });
@@ -161,12 +197,32 @@ test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeo
     assert.deepEqual(JSON.parse(call.function.arguments), { name: "remote-session:create", body: { target, prompt: task } });
   }
 
+  const finalCompletion = await fetch(`${origin}/v1/chat/completions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      model: "handoff-model",
+      messages: [
+        { role: "user", content: "[The user selected @cloud: complete the handoff.]" },
+        { role: "tool", content: "queued", tool_call_id: "call_handoff" },
+      ],
+      tools: [{ type: "function", function: { name: "execute_capability" } }],
+    }),
+  });
+  assert.equal(finalCompletion.status, 200);
+  const finalFrames = (await finalCompletion.text()).split("\n")
+    .filter((line) => line.startsWith("data: {")).map((line) => JSON.parse(line.slice(6)));
+  const deltas = finalFrames.map((frame) => frame.choices[0].delta);
+  assert.deepEqual(deltas.filter((delta) => delta.reasoning_content), [{ reasoning_content: "Checking the handoff result." }]);
+  assert.deepEqual(deltas.filter((delta) => delta.content), [{ content: "Handoff received" }]);
+  assert.ok(deltas.findIndex((delta) => delta.reasoning_content) < deltas.findIndex((delta) => delta.content));
+
   const discoveryWorkload = await fetch(`${origin}/admin/agent-workloads`, {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ workloads: [{ promptMarker: "Find the assigned skill", finalReply: "unused fixture reply",
       finalReplyFrom: "last-tool-text", steps: [
         { tool: "search_capabilities", arguments: { query: "Assigned skill" } },
-        { tool: "execute_capability", arguments: {}, argumentsFrom: "capability-search" },
+        { tool: "execute_capability", arguments: { body: { limit: 3 } }, argumentsFrom: "capability-search" },
       ],
     }] }),
   });
@@ -186,13 +242,67 @@ test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeo
     const result = await modelRequest([JSON.stringify({ matches: [{ name }] })]);
     assert.equal(result.status, 200);
     const call = result.frames.flatMap(frame => frame.choices[0].delta.tool_calls ?? [])[0];
-    assert.deepEqual(JSON.parse(call.function.arguments), { name });
+    assert.deepEqual(JSON.parse(call.function.arguments), { name, body: { limit: 3 } });
   }
   const missing = await modelRequest([JSON.stringify({ matches: [] })]);
   assert.equal(missing.status, 500);
   const final = await modelRequest([JSON.stringify({ matches: [{ name: "plugin:first:skill" }] }), "unique text returned by the real tool"]);
   assert.equal(final.status, 200);
   assert.equal(final.frames.map(frame => frame.choices[0].delta.content ?? "").join(""), "unique text returned by the real tool");
+
+  // One workload must infer absence from the model's catalog, not from the
+  // test stage. Old catalog entries and ordinary user text cannot resurrect it.
+  assert.equal((await fetch(`${origin}/admin/agent-workloads`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workloads: [{ promptMarker: "Read current instructions", latestUserTurn: true,
+      finalReply: "UNAVAILABLE", finalReplyFrom: "last-tool-text",
+      steps: [{ tool: "skill", argumentsFrom: "skill-catalog", arguments: { skill: "release-briefing" } }],
+    }] }),
+  })).status, 200);
+  const skillEntry = '<skill><id>release-current</id><name>release-briefing</name><description>Release reports</description></skill>';
+  const initial = { role: "system", content: `You are OpenWork.\n<available_skills>${skillEntry}</available_skills>` };
+  const update = content => ({ role: "user", content: `<system-update>\n${content.replaceAll("<", "&lt;").replaceAll(">", "&gt;")}\n</system-update>` });
+  const removed = update("The following skill IDs are no longer available and must not be used: release-current.");
+  for (const [history, available] of [
+    [[initial], true], [[initial, removed], false],
+    [[initial, removed, update(`New skills are available in addition to those previously listed:\n${skillEntry}`)], true],
+    [[initial, update("The available skills have changed. This list supersedes the previous available skills list.\nNo skills are currently available.")], false],
+    [[initial, update("Skill guidance is no longer available. Do not use any previously listed skill.")], false],
+    [[initial, removed, { role: "user", content: skillEntry }], false],
+  ]) {
+    const response = await fetch(`${origin}/v1/chat/completions`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "skill-model", messages: [...history, { role: "user", content: "Read current instructions" }],
+        tools: [{ type: "function", function: { name: "skill" } }],
+      }),
+    });
+    assert.equal(response.status, 200);
+    const frames = (await response.text()).split("\n").filter(line => line.startsWith("data: {")).map(line => JSON.parse(line.slice(6)));
+    const calls = frames.flatMap(frame => frame.choices[0].delta.tool_calls ?? []);
+    if (available) assert.deepEqual(JSON.parse(calls[0].function.arguments), { id: "release-current" });
+    else {
+      assert.equal(calls.length, 0);
+      assert.equal(frames.map(frame => frame.choices[0].delta.content ?? "").join(""), "UNAVAILABLE");
+    }
+  }
+
+  const contextWorkload = await fetch(`${origin}/admin/agent-workloads`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workloads: [{ promptMarker: "Inspect context", finalReply: "unused fixture reply",
+      finalReplyFrom: "system-text", latestUserTurn: true, steps: [],
+    }] }),
+  });
+  assert.equal(contextWorkload.status, 200);
+  const contextResponse = await fetch(`${origin}/v1/chat/completions`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: "context-model", messages: [
+      { role: "system", content: "system witness" }, { role: "developer", content: "developer witness" },
+      { role: "user", content: "Inspect context; user text must not be echoed" },
+    ], tools: [{ type: "function", function: { name: "question" } }] }),
+  });
+  assert.equal(contextResponse.status, 200);
+  const contextFrames = (await contextResponse.text()).split("\n").filter(line => line.startsWith("data: {")).map(line => JSON.parse(line.slice(6)));
+  assert.equal(contextFrames.map(frame => frame.choices[0].delta.content ?? "").join(""), "system witness\ndeveloper witness");
 
   const failedResponse = await fetch(`${origin}/admin/agent-workloads`, {
     method: "POST",

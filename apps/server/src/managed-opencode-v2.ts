@@ -1,3 +1,5 @@
+import { managedPolicyPluginPath } from "./managed-policy-plugin.js";
+import type { EnginePermissionRule } from "./managed-policy-rules.js";
 // Parallel v2 lane prototype: provider injection is a watched-config write. This module
 // deliberately has no reload/dispose call, unlike managed-opencode.ts and server.ts reloadOpencodeEngine.
 import { spawn } from "node:child_process";
@@ -33,6 +35,7 @@ export interface ManagedOpencodeV2ServerOptions {
   port?: number;
   env?: Record<string, string>;
   bootTimeoutMs?: number;
+  permissions?: () => Promise<EnginePermissionRule[]>;
 }
 
 export interface OpencodeV2Health {
@@ -87,6 +90,7 @@ export async function createManagedOpencodeV2Server(
   // cloud, database, or control-plane credentials. Unknown keys stay private.
   const inherited: Record<string, string> = {};
   for (const key of [
+    "OPENWORK_SERVER_URL", "OPENWORK_POLICY_TOKEN",
     "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TMP", "TEMP",
     "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TERM", "CI",
     "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR",
@@ -104,6 +108,8 @@ export async function createManagedOpencodeV2Server(
   await chmod(options.rootDir, 0o700);
   await mkdir(configDir, { recursive: true, mode: 0o700 });
   await chmod(configDir, 0o700);
+  // Load enforcement on the first boot, before any session can run.
+  await writeProviders();
   const child = spawn(options.bin, ["serve", "--hostname", hostname, "--port", String(port)], {
     env: {
       ...inherited,
@@ -211,6 +217,8 @@ export async function createManagedOpencodeV2Server(
     await writeFile(temporary, `${JSON.stringify({
       $schema: "https://opencode.ai/config.json",
       providers: providerConfig,
+      ...(options.permissions ? { permissions: await options.permissions() } : {}),
+      ...(options.env?.OPENWORK_SERVER_URL ? { plugins: [managedPolicyPluginPath(true)] } : {}),
     }, null, 2)}\n`, { mode: 0o600 });
     await rename(temporary, target);
   }

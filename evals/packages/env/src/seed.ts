@@ -13,8 +13,12 @@ export interface SeedDesktopOptions {
   signIn?: false;
   model?: string;
   workspacePath?: string;
+  /** Arrange a previously activated private-Den installation; does not test activation. */
+  enterpriseActivated?: boolean;
   profileDir?: string;
   name?: string;
+  /** Extra environment for this isolated Electron process. */
+  env?: Record<string, string>;
 }
 
 export interface SeedWebOptions {

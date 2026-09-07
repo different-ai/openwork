@@ -12,6 +12,31 @@ import {
   writeEngineV2PreviewState,
 } from "./engine-v2-preview.js";
 import type { ServerConfig } from "./types.js";
+import { buildOpenWorkV2Instructions, waitForOpenWorkV2Skills } from "./opencode-v2-instructions.js";
+
+test("v2 app guidance fits the native entry limit and uses the current native tools", () => {
+  for (const connected of [true, false]) {
+    const value = buildOpenWorkV2Instructions(connected);
+    expect(Buffer.byteLength(JSON.stringify(value), "utf8")).toBeLessThanOrEqual(7 * 1024);
+    expect(value.operatingInstructions).not.toContain("openwork-cloud_search_capabilities");
+    expect(value.operatingInstructions).not.toContain("openwork-cloud_execute_capability");
+    expect(value.operatingInstructions).toStartWith("You are OpenWork.");
+    expect(value.connect.includes("not connected")).toBe(!connected);
+  }
+});
+
+test("native plugin skills do not block workspace skill synchronization", async () => {
+  const root = await mkdtemp(join(tmpdir(), "openwork-v2-plugin-skills-"));
+  try {
+    let reads = 0;
+    await waitForOpenWorkV2Skills(root, async () => {
+      reads++;
+      return { data: [{ name: "plugin-skill", description: "Plugin instructions", content: "Current plugin instructions",
+        location: join(root, ".opencode", "plugins", "example", "SKILL.md") }] };
+    });
+    expect(reads).toBe(1);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 test("maps enabled MCP transports without retaining unknown runtime fields", () => {
   expect(mapRuntimeMcpToV2({ type: "remote", url: "https://example.test/mcp", oauth: false,

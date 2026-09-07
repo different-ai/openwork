@@ -156,6 +156,12 @@ importers:
       '@opencode-ai/sdk':
         specifier: ^1.18.15
         version: 1.18.18
+      '@openwork-ee/telemetry-contracts':
+        specifier: workspace:*
+        version: link:../../ee/packages/telemetry-contracts
+      '@openwork/browser-logins':
+        specifier: workspace:*
+        version: link:../../packages/browser-logins
       '@openwork/browser-tabs':
         specifier: workspace:*
         version: link:../../packages/browser-tabs
@@ -282,6 +288,9 @@ importers:
       tw-animate-css:
         specifier: ^1.4.0
         version: 1.4.0
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
       zustand:
         specifier: ^5.0.12
         version: 5.0.12(@types/react@19.2.14)(react@19.2.8)(use-sync-external-store@1.6.0(react@19.2.8))
@@ -331,6 +340,9 @@ importers:
       '@opencode-ai/sdk':
         specifier: ^1.18.15
         version: 1.18.18
+      '@openwork/browser-logins':
+        specifier: workspace:*
+        version: link:../../packages/browser-logins
       '@openwork/browser-tabs':
         specifier: workspace:*
         version: link:../../packages/browser-tabs
@@ -343,6 +355,9 @@ importers:
       '@openwork/paths':
         specifier: workspace:*
         version: link:../../packages/paths
+      '@openwork/types':
+        specifier: workspace:*
+        version: link:../../packages/types
       '@sentry/electron':
         specifier: ^7.16.0
         version: 7.16.0(@opentelemetry/core@2.9.0(@opentelemetry/api@1.9.1))(@opentelemetry/exporter-trace-otlp-http@0.220.0(@opentelemetry/api@1.9.1))
@@ -389,9 +404,6 @@ importers:
       '@electron/rebuild':
         specifier: ^4.2.0
         version: 4.2.0
-      '@openwork/types':
-        specifier: workspace:*
-        version: link:../../packages/types
       electron:
         specifier: ^43.2.0
         version: 43.2.0
@@ -416,6 +428,9 @@ importers:
       '@openwork/enterprise-mcp-client':
         specifier: workspace:*
         version: link:../../packages/enterprise-mcp-client
+      '@openwork/types':
+        specifier: workspace:*
+        version: link:../../packages/types
       better-sqlite3:
         specifier: ^13.0.2
         version: 13.0.2
@@ -450,9 +465,6 @@ importers:
       '@openwork/paths':
         specifier: workspace:*
         version: link:../../packages/paths
-      '@openwork/types':
-        specifier: workspace:*
-        version: link:../../packages/types
       '@openwork/workbook':
         specifier: workspace:*
         version: link:../../packages/workbook
@@ -841,6 +853,9 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
     devDependencies:
+      '@happy-dom/global-registrator':
+        specifier: 20.12.0
+        version: 20.12.0
       '@tailwindcss/postcss':
         specifier: ^4.3.3
         version: 4.3.3
@@ -924,6 +939,9 @@ importers:
       '@openwork-ee/den-db':
         specifier: workspace:*
         version: link:../../packages/den-db
+      '@openwork-ee/telemetry':
+        specifier: workspace:*
+        version: link:../../packages/telemetry
       '@openwork-ee/utils':
         specifier: workspace:*
         version: link:../../packages/utils
@@ -1151,6 +1169,19 @@ importers:
         specifier: ^5.6.3
         version: 5.9.3
 
+  packages/browser-logins:
+    dependencies:
+      tldts:
+        specifier: ^7.4.10
+        version: 7.4.10
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.7
+      typescript:
+        specifier: ^5.6.3
+        version: 5.9.3
+
   packages/browser-tabs:
     devDependencies:
       '@types/node':
@@ -1178,6 +1209,8 @@ importers:
       tsup:
         specifier: ^8.5.0
         version: 8.5.1(jiti@2.7.0)(postcss@8.5.23)(tsx@4.23.1)(typescript@5.9.3)(yaml@2.9.0)
+
+  packages/computer-use: {}
 
   packages/connect-link:
     dependencies:
