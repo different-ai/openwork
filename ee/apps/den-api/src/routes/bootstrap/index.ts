@@ -1,5 +1,6 @@
 import { and, eq, gt, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy"
+import { ensureMemberInferenceKey } from "../../inference.js"
 import {
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
@@ -509,6 +510,7 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
         }).where(eq(OrganizationTable.id, claim.organizationId))
 
         return {
+          memberId,
           organization: {
             id: claim.organization.id,
             name: claim.organization.name,
@@ -531,8 +533,8 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
       if (session?.id) {
         await setSessionActiveOrganization(normalizeDenTypeId("session", session.id), result.organization.id)
       }
-
-      return c.json({ ok: true, ...result })
+      await ensureMemberInferenceKey({ organizationId: result.organization.id, memberId: result.memberId })
+      return c.json({ ok: true, organization: result.organization })
     },
   )
 }

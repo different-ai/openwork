@@ -70,6 +70,16 @@ const catalog = {
     config: { id: "amazon-bedrock", npm: "@ai-sdk/amazon-bedrock" },
     models: [{ id: "bedrock-model", name: "Bedrock Model", config: { id: "bedrock-model" } }],
   },
+  azure: {
+    id: "azure",
+    name: "Azure",
+    npm: "@ai-sdk/azure",
+    env: ["AZURE_RESOURCE_NAME", "AZURE_API_KEY"],
+    doc: null,
+    api: null,
+    config: { id: "azure", name: "Azure", npm: "@ai-sdk/azure", env: ["AZURE_RESOURCE_NAME", "AZURE_API_KEY"] },
+    models: [{ id: "fixture-deployment", name: "Fixture Deployment", config: { id: "fixture-deployment" } }],
+  },
   "google-vertex": {
     id: "google-vertex",
     name: "Vertex",
@@ -78,9 +88,30 @@ const catalog = {
     doc: null,
     api: null,
     config: { id: "google-vertex", npm: "@ai-sdk/google-vertex" },
-    models: [{ id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", config: { id: "gemini-2.5-pro" } }],
+    models: [
+      { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", config: { id: "gemini-2.5-pro" } },
+      { id: "claude-on-vertex", name: "Claude on Vertex", config: { id: "claude-on-vertex", provider: { npm: "@ai-sdk/google-vertex/anthropic" } } },
+    ],
+  },
+  "google-vertex-anthropic": {
+    id: "google-vertex-anthropic", name: "Vertex Anthropic", npm: "@ai-sdk/google-vertex/anthropic",
+    env: ["GOOGLE_VERTEX_PROJECT", "GOOGLE_VERTEX_LOCATION", "GOOGLE_APPLICATION_CREDENTIALS"], doc: null, api: null,
+    config: { id: "google-vertex-anthropic", npm: "@ai-sdk/google-vertex/anthropic" },
+    models: [{ id: "claude-on-vertex", name: "Claude on Vertex", config: { id: "claude-on-vertex", provider: { npm: "@ai-sdk/google-vertex/anthropic" } } }],
   },
 }
+
+const reviewCatalog = [
+  { id: "cloudflare", env: ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN"], api: "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/v1" },
+  { id: "infomaniak", env: ["INFOMANIAK_PRODUCT_ID", "INFOMANIAK_API_TOKEN"], api: "https://api.infomaniak.com/2/ai/${INFOMANIAK_PRODUCT_ID}/openai/v1" },
+  { id: "azure-cognitive-services", env: ["AZURE_RESOURCE_NAME", "AZURE_COGNITIVE_SERVICES_API_KEY", "AZURE_COGNITIVE_SERVICES_API_TOKEN"], api: "https://fixture.example/v1" },
+  { id: "alibaba", env: ["DASHSCOPE_API_KEY"], api: "https://fixture.example/v1" },
+  { id: "moonshotai", env: ["MOONSHOT_API_KEY"], api: "https://fixture.example/v1" },
+  { id: "ambiguous", env: ["FIRST_API_KEY", "SECOND_API_KEY"], api: "https://fixture.example/v1" },
+].map((entry) => ({ ...entry, name: entry.id, npm: "@ai-sdk/openai-compatible", doc: null,
+  config: { id: entry.id, npm: "@ai-sdk/openai-compatible", env: entry.env, api: entry.api },
+  models: [{ id: "fixture-model", name: "Fixture Model", config: { id: "fixture-model", provider: { npm: "@ai-sdk/openai-compatible" }, limit: { output: 1234 } } }],
+}))
 
 let app: typeof import("../src/app.js").default
 let db: typeof import("../src/db.js").db
@@ -117,8 +148,10 @@ beforeAll(async () => {
     getModelsDevProvider: async (providerId: string) => {
       if (providerId === "anthropic") return catalog.anthropic
       if (providerId === "amazon-bedrock") return catalog["amazon-bedrock"]
+      if (providerId === "azure") return catalog.azure
       if (providerId === "google-vertex") return catalog["google-vertex"]
-      return null
+      if (providerId === "google-vertex-anthropic") return catalog["google-vertex-anthropic"]
+      return reviewCatalog.find((provider) => provider.id === providerId) ?? null
     },
     listModelsDevProviders: async () => [],
   }))
@@ -236,7 +269,7 @@ test("org-credential provider: create, scoped lists, connect with member key and
     authUrl: null,
     providerConfig: {
       npm: "@ai-sdk/anthropic",
-      env: ["ANTHROPIC_API_KEY"],
+      env: [`${inferenceProviderId.toUpperCase()}_ANTHROPIC_API_KEY`],
       api: `${PROXY_BASE_URL}/api/v1/providers/${inferenceProviderId}`,
       options: { baseURL: `${PROXY_BASE_URL}/api/v1/providers/${inferenceProviderId}` },
     },
@@ -278,7 +311,7 @@ test("org-credential provider: create, scoped lists, connect with member key and
     id: inferenceProviderId,
     source: "openwork_gateway",
     credentialStatus: "ready",
-    apiKeys: { ANTHROPIC_API_KEY: apiKey },
+    apiKeys: { [`${inferenceProviderId.toUpperCase()}_ANTHROPIC_API_KEY`]: apiKey },
     providerConfig: {
       npm: "@ai-sdk/anthropic",
       api: `${PROXY_BASE_URL}/api/v1/providers/${inferenceProviderId}`,
@@ -462,12 +495,166 @@ test("rejects unsupported SDKs, unknown models, malformed secrets, and missing V
   const vertexProvider = readProvider(await vertex.json())
   expect(vertexProvider).toMatchObject({
     credentialStatus: "ready",
-    providerConfig: { npm: "@ai-sdk/google", env: ["GOOGLE_GENERATIVE_AI_API_KEY"] },
+    settings: { project: "p", location: "us-central1" },
+    providerConfig: { npm: "@ai-sdk/google", env: [`${readString(vertexProvider, "id").toUpperCase()}_GOOGLE_GENERATIVE_AI_API_KEY`] },
     credentials: [{ subject: "org", kind: "gcp_service_account" }],
   })
   const vertexConnect = readProvider(await (await request(ownerCookie, `/v1/inference-providers/${readString(vertexProvider, "id")}/connect`)).json())
   const vertexKey = readString(vertexConnect, "apiKey")
-  expect(vertexConnect.apiKeys).toEqual({ GOOGLE_GENERATIVE_AI_API_KEY: vertexKey })
+  expect(vertexConnect.apiKeys).toEqual({ [`${readString(vertexProvider, "id").toUpperCase()}_GOOGLE_GENERATIVE_AI_API_KEY`]: vertexKey })
+})
+
+test("Azure connect returns the source id and resource settings without treating resource names as credentials", async () => {
+  const secret = "fake-azure-upstream-secret"
+  const result = await request(ownerCookie, "/v1/inference-providers", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "Azure Gateway",
+      providerId: "azure",
+      modelIds: ["fixture-deployment"],
+      settings: { resourceName: "fixture-resource", apiVersion: "2025-04-01-preview" },
+      credential: { kind: "api_key", secret },
+    }),
+  })
+  expect(result.status).toBe(201)
+  const id = readString(readProvider(await result.json()), "id")
+  const response = await request(ownerCookie, `/v1/inference-providers/${id}/connect`)
+  expect(response.status).toBe(200)
+  const body = await response.text()
+  expect(body).not.toContain(secret)
+  const connected = readProvider(JSON.parse(body))
+  const key = readString(connected, "apiKey")
+  expect(connected.id).toBe(id)
+  expect(connected.providerId).toBe("azure")
+  expect(connected.providerConfig).toEqual({
+    id: "azure", name: "Azure", npm: "@ai-sdk/azure",
+    env: [`${id.toUpperCase()}_AZURE_API_KEY`],
+    api: `${PROXY_BASE_URL}/api/v1/providers/${id}`,
+    options: { baseURL: `${PROXY_BASE_URL}/api/v1/providers/${id}`, resourceName: "fixture-resource", apiVersion: "2025-04-01-preview" },
+  })
+  expect(connected.apiKeys).toEqual({ [`${id.toUpperCase()}_AZURE_API_KEY`]: key })
+  expect(JSON.stringify(connected.apiKeys)).not.toContain("AZURE_RESOURCE_NAME")
+})
+
+test("blank and absent multi-env fields preserve encrypted credentials while supplied values merge", async () => {
+  const created = await request(ownerCookie, "/v1/inference-providers", {
+    method: "POST",
+    body: JSON.stringify({ name: "Credential merge", providerId: "azure-cognitive-services", modelIds: ["fixture-model"], apiKeys: { AZURE_COGNITIVE_SERVICES_API_KEY: "fake-primary" } }),
+  })
+  expect(created.status).toBe(201)
+  const id = readString(readProvider(await created.json()), "id")
+  const load = async () => (await db.select().from(schema.InferenceProviderCredentialTable)
+    .where(drizzle.eq(schema.InferenceProviderCredentialTable.inference_provider_id, id)))[0]
+  const original = await load()
+  const blank = await request(ownerCookie, `/v1/inference-providers/${id}`, { method: "PATCH", body: JSON.stringify({ apiKeys: { AZURE_COGNITIVE_SERVICES_API_KEY: "" } }) })
+  expect(blank.status).toBe(200)
+  expect(await load()).toEqual(original)
+  const merged = await request(ownerCookie, `/v1/inference-providers/${id}`, { method: "PATCH", body: JSON.stringify({ apiKeys: { AZURE_COGNITIVE_SERVICES_API_TOKEN: "fake-secondary" } }) })
+  expect(merged.status).toBe(200)
+  expect(JSON.parse((await load())?.secret ?? "{}")).toEqual({ AZURE_COGNITIVE_SERVICES_API_KEY: "fake-primary", AZURE_COGNITIVE_SERVICES_API_TOKEN: "fake-secondary" })
+  const response = await merged.text()
+  expect(response).not.toContain("fake-primary")
+  expect(response).not.toContain("fake-secondary")
+})
+
+test("template providers require a concrete endpoint and failed migration preserves the source and its models", async () => {
+  for (const providerId of ["cloudflare", "infomaniak"]) {
+    const input = { name: providerId, providerId, modelIds: ["fixture-model"], credential: { kind: "api_key", secret: "fake-key" } }
+    const rejected = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify(input) })
+    expect(rejected.status).toBe(400)
+    expect(await rejected.json()).toMatchObject({ error: "provider_requires_configuration" })
+    const configured = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify({ ...input, settings: { upstreamBaseUrl: "https://configured.example/v1" } }) })
+    expect(configured.status).toBe(201)
+    expect(await configured.text()).not.toContain("${")
+    const legacy = await request(ownerCookie, "/v1/llm-providers", { method: "POST", body: JSON.stringify({ ...input, source: "models_dev", apiKey: "fake-key" }) })
+    expect(legacy.status).toBe(201)
+    const payload = await legacy.json()
+    if (!isRecord(payload) || !isRecord(payload.llmProvider)) throw new Error("Missing source")
+    const id = readString(payload.llmProvider, "id")
+    const before = await db.select().from(schema.LlmProviderTable).where(drizzle.eq(schema.LlmProviderTable.id, id))
+    const models = await db.select().from(schema.LlmProviderModelTable).where(drizzle.eq(schema.LlmProviderModelTable.llmProviderId, id))
+    const migrated = await request(ownerCookie, "/v1/inference-providers/migrate-from-llm-provider", { method: "POST", body: JSON.stringify({ llmProviderId: id }) })
+    expect(migrated.status).toBe(400)
+    expect(await migrated.json()).toMatchObject({ error: "migration_requires_configuration" })
+    expect(await db.select().from(schema.LlmProviderTable).where(drizzle.eq(schema.LlmProviderTable.id, id))).toEqual(before)
+    expect(await db.select().from(schema.LlmProviderModelTable).where(drizzle.eq(schema.LlmProviderModelTable.llmProviderId, id))).toEqual(models)
+  }
+})
+
+test("create, patch and migration use trusted catalog credential fields, never injected stored env names", async () => {
+  for (const [providerId, field] of [["azure-cognitive-services", "AZURE_COGNITIVE_SERVICES_API_KEY"], ["alibaba", "DASHSCOPE_API_KEY"], ["moonshotai", "MOONSHOT_API_KEY"]]) {
+    const input = { name: providerId, providerId, modelIds: ["fixture-model"], apiKeys: { [field]: "fake-key" } }
+    const created = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify(input) })
+    expect(created.status).toBe(201)
+    const id = readString(readProvider(await created.json()), "id")
+    const unknown = await request(ownerCookie, `/v1/inference-providers/${id}`, { method: "PATCH", body: JSON.stringify({ credential: { kind: "api_key_map", secret: JSON.stringify({ ATTACKER_API_KEY: "injected" }) } }) })
+    expect(unknown.status).toBe(400)
+    await db.update(schema.InferenceProviderTable).set({ provider_config: { npm: "@ai-sdk/openai-compatible", env: ["ATTACKER_API_KEY"] } }).where(drizzle.eq(schema.InferenceProviderTable.id, id))
+    const before = await db.select().from(schema.InferenceProviderTable).where(drizzle.eq(schema.InferenceProviderTable.id, id))
+    const injected = await request(ownerCookie, `/v1/inference-providers/${id}`, { method: "PATCH", body: JSON.stringify({ apiKeys: { ATTACKER_API_KEY: "injected" } }) })
+    expect(injected.status).toBe(400)
+    expect(await db.select().from(schema.InferenceProviderTable).where(drizzle.eq(schema.InferenceProviderTable.id, id))).toEqual(before)
+    const valid = await request(ownerCookie, `/v1/inference-providers/${id}`, { method: "PATCH", body: JSON.stringify({ apiKeys: { [field]: "updated-key" } }) })
+    expect(valid.status).toBe(200)
+    const legacy = await request(ownerCookie, "/v1/llm-providers", { method: "POST", body: JSON.stringify({ ...input, source: "models_dev" }) })
+    expect(legacy.status).toBe(201)
+    const payload = await legacy.json()
+    if (!isRecord(payload) || !isRecord(payload.llmProvider)) throw new Error("Missing source")
+    const legacyId = readString(payload.llmProvider, "id")
+    await db.update(schema.LlmProviderTable).set({ apiKey: JSON.stringify({ ATTACKER_API_KEY: "injected" }) }).where(drizzle.eq(schema.LlmProviderTable.id, legacyId))
+    const refused = await request(ownerCookie, "/v1/inference-providers/migrate-from-llm-provider", { method: "POST", body: JSON.stringify({ llmProviderId: legacyId }) })
+    expect(refused.status).toBe(400)
+    expect(await db.select().from(schema.LlmProviderTable).where(drizzle.eq(schema.LlmProviderTable.id, legacyId))).toHaveLength(1)
+    await db.update(schema.LlmProviderTable).set({ apiKey: JSON.stringify({ [field]: "valid-key" }) }).where(drizzle.eq(schema.LlmProviderTable.id, legacyId))
+    const migrated = await request(ownerCookie, "/v1/inference-providers/migrate-from-llm-provider", { method: "POST", body: JSON.stringify({ llmProviderId: legacyId }) })
+    expect(migrated.status).toBe(201)
+    expect(readProvider(await migrated.json()).models).toEqual([{ id: "fixture-model", name: "Fixture Model", config: { id: "fixture-model", provider: { npm: "@ai-sdk/openai-compatible" }, limit: { output: 1234 } } }])
+  }
+  const settingsOnly = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify({ name: "Settings only", providerId: "azure-cognitive-services", modelIds: ["fixture-model"], apiKeys: { AZURE_RESOURCE_NAME: "not-a-key" } }) })
+  expect(settingsOnly.status).toBe(400)
+  const ambiguous = { name: "Ambiguous map", providerId: "ambiguous", modelIds: ["fixture-model"], apiKeys: { FIRST_API_KEY: "first", SECOND_API_KEY: "second" } }
+  expect((await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify(ambiguous) })).status).toBe(400)
+  const single = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify({ ...ambiguous, apiKeys: { FIRST_API_KEY: "first" } }) })
+  expect(single.status).toBe(201)
+  const singleId = readString(readProvider(await single.json()), "id")
+  const previous = await db.select().from(schema.InferenceProviderCredentialTable).where(drizzle.eq(schema.InferenceProviderCredentialTable.inference_provider_id, singleId))
+  expect((await request(ownerCookie, `/v1/inference-providers/${singleId}`, { method: "PATCH", body: JSON.stringify({ apiKeys: { SECOND_API_KEY: "second" } }) })).status).toBe(400)
+  expect(await db.select().from(schema.InferenceProviderCredentialTable).where(drizzle.eq(schema.InferenceProviderCredentialTable.inference_provider_id, singleId))).toEqual(previous)
+  const legacy = await request(ownerCookie, "/v1/llm-providers", { method: "POST", body: JSON.stringify({ ...ambiguous, source: "models_dev" }) })
+  expect(legacy.status).toBe(201)
+  const payload = await legacy.json()
+  if (!isRecord(payload) || !isRecord(payload.llmProvider)) throw new Error("Missing source")
+  const legacyId = readString(payload.llmProvider, "id")
+  expect((await request(ownerCookie, "/v1/inference-providers/migrate-from-llm-provider", { method: "POST", body: JSON.stringify({ llmProviderId: legacyId }) })).status).toBe(400)
+  expect(await db.select().from(schema.LlmProviderTable).where(drizzle.eq(schema.LlmProviderTable.id, legacyId))).toHaveLength(1)
+})
+
+test("mixed Vertex SDK models are rejected on create and patch; incompatible migrated metadata is not stripped", async () => {
+  const input = { name: "Mixed Vertex", providerId: "google-vertex", modelIds: ["gemini-2.5-pro", "claude-on-vertex"], settings: { project: "test-project", location: "us-central1" } }
+  const rejected = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify(input) })
+  expect(rejected.status).toBe(400)
+  expect(await rejected.json()).toMatchObject({ error: "unsupported_model_sdk" })
+  const separate = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify({ ...input, providerId: "google-vertex-anthropic", modelIds: ["claude-on-vertex"] }) })
+  expect(separate.status).toBe(201)
+  expect(readProvider(await separate.json())).toMatchObject({ providerId: "google-vertex-anthropic", providerConfig: { npm: "@ai-sdk/anthropic" }, models: [{ config: { provider: { npm: "@ai-sdk/google-vertex/anthropic" } } }] })
+  const created = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify({ ...input, modelIds: ["gemini-2.5-pro"] }) })
+  expect(created.status).toBe(201)
+  const id = readString(readProvider(await created.json()), "id")
+  const patch = await request(ownerCookie, `/v1/inference-providers/${id}`, { method: "PATCH", body: JSON.stringify({ modelIds: input.modelIds }) })
+  expect(patch.status).toBe(400)
+  const detail = readProvider(await (await request(ownerCookie, `/v1/inference-providers/${id}`)).json())
+  expect(detail.models).toEqual([{ id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", config: { id: "gemini-2.5-pro" } }])
+  const legacy = await request(ownerCookie, "/v1/llm-providers", { method: "POST", body: JSON.stringify({ name: "Legacy mixed SDK", source: "models_dev", providerId: "anthropic", modelIds: ["claude-sonnet-4"], apiKey: "fake-key" }) })
+  const payload = await legacy.json()
+  if (!isRecord(payload) || !isRecord(payload.llmProvider)) throw new Error("Missing source")
+  const legacyId = readString(payload.llmProvider, "id")
+  await db.update(schema.LlmProviderModelTable).set({ modelConfig: { provider: { npm: "@ai-sdk/openai" } } }).where(drizzle.eq(schema.LlmProviderModelTable.llmProviderId, legacyId))
+  const before = await db.select().from(schema.LlmProviderModelTable).where(drizzle.eq(schema.LlmProviderModelTable.llmProviderId, legacyId))
+  const migrated = await request(ownerCookie, "/v1/inference-providers/migrate-from-llm-provider", { method: "POST", body: JSON.stringify({ llmProviderId: legacyId }) })
+  expect(migrated.status).toBe(400)
+  expect(await migrated.json()).toMatchObject({ error: "migration_requires_configuration" })
+  expect(await db.select().from(schema.LlmProviderTable).where(drizzle.eq(schema.LlmProviderTable.id, legacyId))).toHaveLength(1)
+  expect(await db.select().from(schema.LlmProviderModelTable).where(drizzle.eq(schema.LlmProviderModelTable.llmProviderId, legacyId))).toEqual(before)
 })
 
 test("migrate-from-llm-provider moves config, models, access and credential then deletes the llm_provider", async () => {

@@ -266,6 +266,47 @@ test("member-mode create/patch requires a Google provider and an OAuth client", 
   expect(orgStartAfter.status).toBe(400)
 })
 
+test("batch offboarding waits for every OAuth state before locking credentials, like provider deletion", async () => {
+  const { revokeInferenceCredentialsForMembers } = await import("../src/llm/inference-provider-lifecycle.js")
+  const start = await request(ownerCookie, `/v1/inference-providers/${inferenceProviderId}/oauth/start`)
+  expect(start.status).toBe(302)
+  const state = new URL(start.headers.get("location") ?? "").searchParams.get("state") ?? ""
+  // Ensure a credential exists for the first member even if the happy-path test has not run yet.
+  const credentialId = createDenTypeId("inferenceProviderCredential")
+  await db.insert(schema.InferenceProviderCredentialTable).values({
+    id: credentialId, inference_provider_id: inferenceProviderId, organization_id: organizationId,
+    subject: memberId, org_membership_id: memberId, kind: "oauth_google", secret: JSON.stringify({ accessToken: "fake-lock-order" }), status: "active",
+  }).onDuplicateKeyUpdate({ set: { status: "active" } })
+  let revocation: Promise<unknown> | undefined
+  try {
+    await db.transaction(async (tx) => {
+      await tx.select().from(schema.InferenceProviderTable).where(drizzle.eq(schema.InferenceProviderTable.id, inferenceProviderId)).for("update")
+      await tx.select().from(schema.InferenceProviderOauthStateTable).where(drizzle.eq(schema.InferenceProviderOauthStateTable.state, state)).for("update")
+      revocation = db.transaction(async (other) => {
+        await other.select().from(schema.MemberTable).where(drizzle.inArray(schema.MemberTable.id, [memberId, ownerMemberId])).orderBy(schema.MemberTable.id).for("update")
+        return revokeInferenceCredentialsForMembers(other, [memberId, ownerMemberId])
+      })
+      void revocation.catch(() => {})
+      let waiting = false
+      for (let attempt = 0; attempt < 100 && !waiting; attempt++) {
+        const [rows] = await db.execute(drizzle.sql`SELECT 1 FROM performance_schema.data_lock_waits w JOIN performance_schema.data_locks l ON l.ENGINE_LOCK_ID = w.REQUESTING_ENGINE_LOCK_ID WHERE l.OBJECT_SCHEMA = DATABASE() AND l.OBJECT_NAME = 'inference_provider_oauth_states' LIMIT 1`)
+        waiting = Array.isArray(rows) && rows.length > 0
+        if (!waiting) await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      expect(waiting).toBe(true)
+      // Before the fix, offboarding held this credential while waiting for our state lock.
+      await tx.select().from(schema.InferenceProviderCredentialTable).where(drizzle.and(
+        drizzle.eq(schema.InferenceProviderCredentialTable.inference_provider_id, inferenceProviderId),
+        drizzle.eq(schema.InferenceProviderCredentialTable.subject, memberId),
+      )).for("update", { noWait: true })
+    })
+  } finally {
+    if (revocation) await revocation
+  }
+  expect(await loadState(state)).toBeNull()
+  expect((await loadMemberCredential())?.status).toBe("revoked")
+})
+
 test("oauth/start redirects to Google with PKCE + offline params and records a state row; JSON variant returns authUrl", async () => {
   const startResponse = await request(memberCookie, `/v1/inference-providers/${inferenceProviderId}/oauth/start`)
   expect(startResponse.status).toBe(302)
@@ -420,12 +461,13 @@ test("callback rejects expired and unknown state, and redirects failures with er
   const failedStart = await request(memberCookie, `/v1/inference-providers/${inferenceProviderId}/oauth/start?redirectTo=${encodeURIComponent("openwork://inference/connected")}`)
   const failedState = new URL(failedStart.headers.get("location") ?? "").searchParams.get("state") ?? ""
   await withFakeGoogle(
-    () => Response.json({ error: "invalid_grant", error_description: "Bad code" }, { status: 400 }),
+    () => Response.json({ error: "invalid_grant", error_description: "Bad code FAKE_TOKEN_MUST_NOT_ECHO" }, { status: 400 }),
     async () => {
       const failed = await publicRequest(`/v1/inference-providers/oauth/callback?code=bad&state=${encodeURIComponent(failedState)}`)
       expect(failed.status).toBe(302)
       const location = new URL(failed.headers.get("location") ?? "")
-      expect(location.searchParams.get("error")).toContain("invalid_grant")
+      expect(location.searchParams.get("error")).toContain("Google rejected the OAuth token exchange")
+      expect(location.toString()).not.toContain("FAKE_TOKEN_MUST_NOT_ECHO")
     },
   )
 

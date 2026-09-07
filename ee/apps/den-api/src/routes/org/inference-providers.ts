@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto"
-import { and, desc, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
+import { and, desc, eq, inArray, isNotNull, isNull, or } from "@openwork-ee/den-db/drizzle"
 import {
   AuthUserTable,
   InferenceProviderAccessTable,
@@ -15,6 +15,7 @@ import {
   TeamTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { inferenceCredentialEnvNames, isInferenceCredentialKindSupported, pickInferenceApiKeyFromMap } from "@openwork-ee/utils/inference-credentials"
 import {
   INFERENCE_PROVIDER_CREDENTIAL_KINDS,
   INFERENCE_PROVIDER_CREDENTIAL_MODES,
@@ -35,6 +36,10 @@ import {
   buildProviderConfigSnapshot,
   isSupportedGatewayNpm,
   readProviderConfigNpm,
+  gatewayConfigurationError,
+  gatewayModelConfigurationError,
+  publicProviderSettings,
+  nonSecretProviderConfig,
   upstreamBaseUrlSettingError,
 } from "../../llm/inference-provider-config.js"
 import {
@@ -46,7 +51,8 @@ import {
   revokeGoogleToken,
 } from "../../llm/inference-provider-google-oauth.js"
 import { getModelsDevProvider } from "../../llm/models-dev.js"
-import { decodeProviderCredential, readProviderEnvNames } from "../../llm/provider-credentials.js"
+import { decodeProviderCredential, readProviderEnvNames, runtimeProviderEnvNames } from "../../llm/provider-credentials.js"
+import { lockMemberOAuthAuthorization, revokeGoogleCredentials } from "../../llm/inference-provider-lifecycle.js"
 import {
   jsonValidator,
   orgMemberRoute,
@@ -86,7 +92,7 @@ const ORG_CREDENTIAL_SUBJECT = "org"
 const INFERENCE_PROVIDER_SOURCE = "openwork_gateway"
 
 type RouteFailure = {
-  status: 400 | 403 | 404
+  status: 400 | 403 | 404 | 409
   error: string
   message?: string
 }
@@ -127,10 +133,16 @@ const credentialInputSchema = z.object({
   secret: z.string().trim().min(1).max(65535),
 })
 
-const apiKeysInputSchema = z.record(z.string().trim().min(1).max(255), z.string().trim().min(1).max(65535))
-  .refine((value) => Object.keys(value).length > 0, "Provide at least one credential.")
+const apiKeysInputSchema = z.record(z.string().trim().min(1).max(255), z.string().trim().max(65535))
 
-const settingsSchema = z.record(z.string(), z.unknown())
+const settingsSchema = z.object({
+  project: z.string().trim().max(255).optional(),
+  location: z.string().trim().max(63).optional(),
+  resourceName: z.string().trim().max(63).optional(),
+  apiVersion: z.string().trim().max(64).optional(),
+  region: z.string().trim().max(63).optional(),
+  upstreamBaseUrl: z.string().trim().max(2048).optional(),
+}).strict()
 
 const accessInputFields = {
   memberIds: z.array(denTypeIdSchema("member")).max(500).optional(),
@@ -198,6 +210,11 @@ function rejectDoubleCredential(
   }
 }
 
+const migrationMetadataSchema = z.object({
+  llmProviderId: denTypeIdSchema("llmProvider"),
+  runtimeEnvNames: z.array(z.string().regex(/^LPR_[A-Z0-9]{5}_[A-Z0-9_]+$/)),
+})
+
 const inferenceProviderSummarySchema = z.object({
   id: denTypeIdSchema("inferenceProvider"),
   providerId: z.string(),
@@ -220,6 +237,9 @@ const inferenceProviderSummarySchema = z.object({
     teamIds: z.array(denTypeIdSchema("team")),
   }).optional(),
   oauthClientId: z.string().nullable().optional(),
+  settings: z.record(z.string(), z.unknown()).optional(),
+  oauthCallbackUrl: z.string().optional(),
+  migration: migrationMetadataSchema.optional(),
   hasOauthClientSecret: z.boolean().optional(),
   credentials: z.array(z.object({
     subject: z.string(),
@@ -267,6 +287,12 @@ const writeBadRequestSchema = z.union([
   unsupportedProviderSchema,
   unsupportedCredentialModeSchema,
   oauthClientRequiredSchema,
+  z.object({ error: z.literal("migration_requires_configuration"), message: z.string().optional() }),
+  z.object({ error: z.literal("provider_requires_configuration"), message: z.string().optional() }),
+  z.object({ error: z.literal("unsupported_model_sdk"), message: z.string().optional() }),
+  z.object({ error: z.literal("invalid_credential"), message: z.string().optional() }),
+  z.object({ error: z.literal("invalid_api_keys"), message: z.string().optional() }),
+  z.object({ error: z.literal("invalid_settings"), message: z.string().optional() }),
 ])
 
 const oauthStartBadRequestSchema = z.union([
@@ -409,7 +435,10 @@ async function normalizeCatalogInput(input: { providerId: string; modelIds: stri
     return { id: model.id, name: model.name, config: model.config }
   })
 
-  return { providerId: provider.id, providerConfig: buildProviderConfigSnapshot(provider), models }
+  const providerConfig = buildProviderConfigSnapshot(provider)
+  const modelError = gatewayModelConfigurationError(providerConfig, models.map((model) => model.config))
+  if (modelError) throw failure(400, "unsupported_model_sdk", modelError)
+  return { providerId: provider.id, providerConfig, models }
 }
 
 function validateSettings(providerConfig: Record<string, unknown>, settings: Record<string, unknown>) {
@@ -417,6 +446,8 @@ function validateSettings(providerConfig: Record<string, unknown>, settings: Rec
   if (upstreamBaseUrlError) {
     throw failure(400, "invalid_settings", upstreamBaseUrlError)
   }
+  const configurationError = gatewayConfigurationError(providerConfig, settings)
+  if (configurationError) throw failure(400, "provider_requires_configuration", configurationError)
   const npm = readProviderConfigNpm(providerConfig)
   const requireString = (key: string) => {
     if (typeof settings[key] !== "string" || !settings[key].trim()) {
@@ -426,9 +457,16 @@ function validateSettings(providerConfig: Record<string, unknown>, settings: Rec
   if (npm === "@ai-sdk/google-vertex" || npm === "@ai-sdk/google-vertex/anthropic") {
     requireString("project")
     requireString("location")
+    if (typeof settings.project !== "string" || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(settings.project)
+      || typeof settings.location !== "string" || !/^[a-z][a-z0-9-]{0,62}$/.test(settings.location)) {
+      throw failure(400, "invalid_settings", "Vertex project and location must be plain project/location identifiers.")
+    }
   }
   if (npm === "@ai-sdk/azure") {
     requireString("resourceName")
+    if (typeof settings.resourceName !== "string" || !/^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/.test(settings.resourceName)) {
+      throw failure(400, "invalid_settings", "Azure resourceName must be a single DNS label.")
+    }
   }
 }
 
@@ -458,10 +496,22 @@ function resolveOauthClientField(input: string | undefined, existing: string | n
 
 type CredentialInput = { kind: InferenceProviderCredentialKind; secret: string }
 
+function validateCredentialInput(credential: CredentialInput, trustedEnvNames: string[], providerId: string) {
+  try {
+    const parsed = parseInferenceProviderSecret(credential.kind, credential.secret)
+    if (!isInferenceCredentialKindSupported(parsed.kind, providerId)) throw new Error("Unsupported credential kind")
+    if (parsed.kind === "api_key_map" && !pickInferenceApiKeyFromMap(parsed.apiKeys, trustedEnvNames)) throw new Error("Unsupported credential map")
+  } catch {
+    throw failure(400, "invalid_credential", "The credential must match this provider's supported kind and trusted catalog key fields, with one unambiguous primary key.")
+  }
+}
+
 function normalizeCredentialInput(input: {
   credential?: CredentialInput
   apiKeys?: Record<string, string>
   envNames: string[]
+  providerId: string
+  existing?: CredentialInput | null
 }): CredentialInput | null {
   if (input.apiKeys) {
     for (const key of Object.keys(input.apiKeys)) {
@@ -469,16 +519,30 @@ function normalizeCredentialInput(input: {
         throw failure(400, "invalid_api_keys", `${key} is not one of this provider's env keys (${input.envNames.join(", ") || "none"}).`)
       }
     }
-    return { kind: "api_key_map", secret: JSON.stringify(input.apiKeys) }
+    const values: Record<string, string> = {}
+    if (input.existing && Object.values(input.apiKeys).every((value) => !value.trim())) {
+      validateCredentialInput(input.existing, input.envNames, input.providerId)
+      return null
+    }
+    if (input.existing) {
+      const parsed = parseInferenceProviderSecret(input.existing.kind, input.existing.secret)
+      if (parsed.kind === "api_key_map") Object.assign(values, decodeProviderCredential(input.existing.secret).apiKeys)
+      if (parsed.kind === "api_key") {
+        const primary = inferenceCredentialEnvNames(input.envNames)[0]
+        if (primary) values[primary] = input.existing.secret
+      }
+    }
+    for (const [key, value] of Object.entries(input.apiKeys)) if (value.trim()) values[key] = value.trim()
+    if (!Object.keys(values).length) return null
+    const credential: CredentialInput = { kind: "api_key_map", secret: JSON.stringify(values) }
+    validateCredentialInput(credential, input.envNames, input.providerId)
+    return credential
   }
   if (!input.credential) {
+    if (input.existing) validateCredentialInput(input.existing, input.envNames, input.providerId)
     return null
   }
-  try {
-    parseInferenceProviderSecret(input.credential.kind, input.credential.secret)
-  } catch (error) {
-    throw failure(400, "invalid_credential", error instanceof Error ? error.message : "The credential secret is malformed.")
-  }
+  validateCredentialInput(input.credential, input.envNames, input.providerId)
   return input.credential
 }
 
@@ -535,6 +599,7 @@ function buildSummary(input: {
   publicBaseUrl: string
 }) {
   const credentialStatus = credentialStatusFor(input)
+  const migration = migrationMetadataSchema.safeParse(input.provider.settings.migration)
   return {
     id: input.provider.id,
     providerId: input.provider.provider_id,
@@ -543,15 +608,18 @@ function buildSummary(input: {
     credentialMode: input.provider.credential_mode,
     status: input.provider.status,
     updatedAt: input.provider.updated_at.toISOString(),
+    ...(migration.success ? { migration: migration.data } : {}),
     providerConfig: buildGatewayProviderConfig(input.provider, env.inferenceProxyBaseUrl),
     models: input.models
-      .map((model) => ({ id: model.model_id, name: model.name, config: model.model_config }))
+      .map((model) => ({ id: model.model_id, name: model.name, config: nonSecretProviderConfig(model.model_config) }))
       .sort((left, right) => left.name.localeCompare(right.name)),
     credentialStatus,
     authUrl: credentialStatus === "member_auth_required" ? oauthStartUrl(input.publicBaseUrl, input.provider.id) : null,
     ...(input.access ? { access: accessFromRows(input.access) } : {}),
     ...(input.includeCredentials
       ? {
+          settings: publicProviderSettings(input.provider.settings),
+          oauthCallbackUrl: oauthCallbackUrl(input.publicBaseUrl),
           oauthClientId: input.provider.oauth_client_id,
           hasOauthClientSecret: Boolean(input.provider.oauth_client_secret),
           credentials: input.credentials.map(({ credential, memberName, memberEmail }) => ({
@@ -614,6 +682,12 @@ async function loadSummary(input: {
 }
 
 function publicBaseUrlFor(request: Request) {
+  if (env.apiPublicUrl) {
+    const configured = new URL(env.apiPublicUrl)
+    if (!["https:", "http:"].includes(configured.protocol) || configured.username || configured.password || configured.search || configured.hash) {
+      throw new Error("invalid_api_public_url")
+    }
+  }
   return resolvePublicApiBaseUrl(request, env.apiPublicUrl)
 }
 
@@ -661,18 +735,6 @@ function affectedRows(result: unknown): number {
   if ("rowsAffected" in result && typeof result.rowsAffected === "number") return result.rowsAffected
   if ("affectedRows" in result && typeof result.affectedRows === "number") return result.affectedRows
   return 0
-}
-
-async function getMemberCredential(input: { inferenceProviderId: InferenceProviderId; memberId: MemberId }) {
-  const rows = await db
-    .select()
-    .from(InferenceProviderCredentialTable)
-    .where(and(
-      eq(InferenceProviderCredentialTable.inference_provider_id, input.inferenceProviderId),
-      eq(InferenceProviderCredentialTable.subject, input.memberId),
-    ))
-    .limit(1)
-  return rows[0] ?? null
 }
 
 async function getInferenceProvider(input: { organizationId: OrganizationId; inferenceProviderId: InferenceProviderId }) {
@@ -811,7 +873,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
           credentials: credentialsByProvider.get(provider.id) ?? [],
           access: manage ? accessByProvider.get(provider.id) ?? [] : null,
           currentMemberId: payload.currentMember.id,
-          includeCredentials: false,
+           includeCredentials: manage,
           publicBaseUrl,
         })),
       })
@@ -948,7 +1010,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const redirectTo = stateRow.redirect_to
 
       if (query.error || !query.code) {
-        return fail({ redirectTo, message: query.error === "access_denied" ? "Google access was denied." : `Google did not return an authorization code${query.error ? ` (${query.error})` : ""}.` })
+        return fail({ redirectTo, message: query.error === "access_denied" ? "Google access was denied." : "Google did not return an authorization code." })
       }
 
       const [provider] = await db
@@ -956,10 +1018,17 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         .from(InferenceProviderTable)
         .where(eq(InferenceProviderTable.id, stateRow.inference_provider_id))
         .limit(1)
-      if (!provider || provider.credential_mode !== "member" || !provider.oauth_client_id || !provider.oauth_client_secret) {
+      if (!provider || !provider.oauth_client_id || !provider.oauth_client_secret
+        || !await db.transaction(async (tx) => {
+          if (!await lockMemberOAuthAuthorization(tx, provider, stateRow.org_membership_id)) return false
+          const [currentState] = await tx.select({ id: InferenceProviderOauthStateTable.id }).from(InferenceProviderOauthStateTable)
+            .where(eq(InferenceProviderOauthStateTable.id, stateRow.id)).for("update")
+          return Boolean(currentState)
+        })) {
         return fail({ redirectTo, message: "This provider no longer accepts per-member sign-in." })
       }
 
+      let issuedToken: string | null = null
       try {
         const tokens = await exchangeGoogleAuthorizationCode({
           clientId: provider.oauth_client_id,
@@ -968,6 +1037,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
           codeVerifier: stateRow.code_verifier,
           redirectUri: oauthCallbackUrl(publicBaseUrlFor(c.req.raw)),
         })
+        issuedToken = tokens.refresh_token ?? tokens.access_token
         const secret = JSON.stringify({
           accessToken: tokens.access_token,
           ...(tokens.refresh_token ? { refreshToken: tokens.refresh_token } : {}),
@@ -975,7 +1045,12 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         })
         const expiresAt = tokens.expires_in ? new Date(now.getTime() + tokens.expires_in * 1000) : null
         const scopes = tokens.scope ?? GOOGLE_CLOUD_PLATFORM_SCOPE
-        await db.transaction(async (tx) => {
+        const stored = await db.transaction(async (tx) => {
+          if (!await lockMemberOAuthAuthorization(tx, provider, stateRow.org_membership_id)) return false
+          // Admin/disconnect/offboarding deletes even claimed states while Google is in flight.
+          const [currentState] = await tx.select().from(InferenceProviderOauthStateTable)
+            .where(eq(InferenceProviderOauthStateTable.id, stateRow.id)).for("update")
+          if (!currentState || currentState.expires_at.getTime() <= Date.now()) return false
           await tx.delete(InferenceProviderCredentialTable).where(and(
             eq(InferenceProviderCredentialTable.inference_provider_id, provider.id),
             eq(InferenceProviderCredentialTable.subject, stateRow.org_membership_id),
@@ -995,8 +1070,15 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
             created_at: now,
             updated_at: now,
           })
+          return true
         })
+        if (!stored) {
+          await revokeGoogleToken({ token: tokens.refresh_token ?? tokens.access_token })
+          return fail({ redirectTo, message: "Provider access changed during sign-in. Start Connect again." })
+        }
+        issuedToken = null
       } catch (error) {
+        if (issuedToken) await revokeGoogleToken({ token: issuedToken })
         const message = error instanceof OAuthTokenExchangeError
           ? error.message
           : "OpenWork could not finish the Google sign-in. Try Connect again."
@@ -1068,7 +1150,9 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       const { verifier, challenge } = createPkcePair()
       const state = randomBytes(32).toString("base64url")
       const now = new Date()
-      await db.insert(InferenceProviderOauthStateTable).values({
+      const started = await db.transaction(async (tx) => {
+        if (!await lockMemberOAuthAuthorization(tx, provider, payload.currentMember.id)) return false
+        await tx.insert(InferenceProviderOauthStateTable).values({
         id: createDenTypeId("inferenceProviderOauthState"),
         inference_provider_id: provider.id,
         org_membership_id: payload.currentMember.id,
@@ -1077,7 +1161,10 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         redirect_to: redirectTo,
         expires_at: new Date(now.getTime() + OAUTH_STATE_TTL_MS),
         created_at: now,
+        })
+        return true
       })
+      if (!started) return c.json({ error: "forbidden", message: "Provider access changed. Start Connect again." }, 403)
 
       const allowedDomains = payload.organization.allowedEmailDomains ?? []
       const authUrl = buildGoogleAuthorizeUrl({
@@ -1118,31 +1205,25 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       if (!provider) {
         return c.json({ error: "inference_provider_not_found" }, 404)
       }
-      const credential = await getMemberCredential({ inferenceProviderId: provider.id, memberId: payload.currentMember.id })
-      if (!credential || credential.status === "revoked") {
-        return c.json({ error: "inference_provider_credential_not_found" }, 404)
-      }
-
-      let token: string | null = null
-      try {
-        const parsed = parseInferenceProviderSecret(credential.kind, credential.secret)
-        if (parsed.kind === "oauth_google") {
-          token = parsed.token.refreshToken ?? parsed.token.accessToken
-        }
-      } catch {
-        // Malformed secret: nothing to revoke upstream; still mark the row revoked below.
-      }
-      if (token && !(await revokeGoogleToken({ token }))) {
-        console.warn("inference_provider_oauth_revoke_failed", {
-          requestId: c.get("requestId"),
-          inferenceProviderId: provider.id,
-          credentialId: credential.id,
-        })
-      }
-      await db
-        .update(InferenceProviderCredentialTable)
-        .set({ status: "revoked", updated_at: new Date() })
-        .where(eq(InferenceProviderCredentialTable.id, credential.id))
+      const credentials = await db.transaction(async (tx) => {
+        await tx.select({ id: MemberTable.id }).from(MemberTable).where(eq(MemberTable.id, payload.currentMember.id)).for("update")
+        await tx.select({ id: InferenceProviderTable.id }).from(InferenceProviderTable).where(eq(InferenceProviderTable.id, provider.id)).for("update")
+        await tx.delete(InferenceProviderOauthStateTable).where(and(
+          eq(InferenceProviderOauthStateTable.inference_provider_id, provider.id),
+          eq(InferenceProviderOauthStateTable.org_membership_id, payload.currentMember.id),
+        ))
+        const rows = await tx.select().from(InferenceProviderCredentialTable).where(and(
+          eq(InferenceProviderCredentialTable.inference_provider_id, provider.id),
+          eq(InferenceProviderCredentialTable.subject, payload.currentMember.id),
+        )).for("update")
+        await tx.update(InferenceProviderCredentialTable).set({ status: "revoked", refreshing_until: null, updated_at: new Date() }).where(and(
+          eq(InferenceProviderCredentialTable.inference_provider_id, provider.id),
+          eq(InferenceProviderCredentialTable.subject, payload.currentMember.id),
+        ))
+        return rows.filter((row) => row.status !== "revoked")
+      })
+      await revokeGoogleCredentials(credentials)
+      if (!credentials.length) return c.json({ error: "inference_provider_credential_not_found" }, 404)
       return c.body(null, 204)
     },
   )
@@ -1173,6 +1254,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
           credential: input.credential,
           apiKeys: input.apiKeys,
           envNames: readProviderEnvNames(catalog.providerConfig),
+          providerId: catalog.providerId,
         })
         const access: AccessGrant = {
           allMembers: input.allMembers ?? false,
@@ -1253,49 +1335,79 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         }
       }
 
+      const providerId = existing.id
       try {
-        const existingModels = await db
-          .select()
-          .from(InferenceProviderModelTable)
-          .where(eq(InferenceProviderModelTable.inference_provider_id, existing.id))
-        const catalog = input.providerId !== undefined || input.modelIds !== undefined
-          ? await normalizeCatalogInput({
-              providerId: input.providerId ?? existing.provider_id,
-              modelIds: input.modelIds ?? existingModels.map((model) => model.model_id),
-            })
-          : null
-        const providerConfig = catalog?.providerConfig ?? existing.provider_config
-        const settings = input.settings ?? existing.settings
-        validateSettings(providerConfig, settings)
-        const credential = normalizeCredentialInput({
-          credential: input.credential,
-          apiKeys: input.apiKeys,
-          envNames: readProviderEnvNames(providerConfig),
-        })
-        const access: AccessGrant | null = input.memberIds !== undefined || input.teamIds !== undefined || input.allMembers !== undefined
-          ? {
-              allMembers: input.allMembers ?? false,
-              memberIds: await resolveMemberIds({ organizationId: payload.organization.id, values: input.memberIds ?? [] }),
-              teamIds: await resolveTeamIds({ organizationId: payload.organization.id, values: input.teamIds ?? [] }),
-            }
-          : null
+        const { provider, revokedCredentials } = await db.transaction(async (tx) => {
+          const [existing] = await tx.select().from(InferenceProviderTable)
+            .where(and(eq(InferenceProviderTable.id, providerId), eq(InferenceProviderTable.organization_id, payload.organization.id))).for("update")
+          if (!existing) throw failure(404, "inference_provider_not_found")
+          if (!canManageInferenceProvider(payload, existing)) throw failure(403, "forbidden")
+          const existingModels = await tx
+            .select()
+            .from(InferenceProviderModelTable)
+            .where(eq(InferenceProviderModelTable.inference_provider_id, existing.id))
+          const catalog = input.providerId !== undefined || input.modelIds !== undefined
+            ? await normalizeCatalogInput({
+                providerId: input.providerId ?? existing.provider_id,
+                modelIds: input.modelIds ?? existingModels.map((model) => model.model_id),
+              })
+            : null
+          const trustedCatalog = await getModelsDevProvider(catalog?.providerId ?? existing.provider_id)
+          if (!trustedCatalog) throw failure(400, "provider_requires_configuration", "The provider is unavailable in the trusted catalog.")
+          const storedConfig = catalog?.providerConfig ?? existing.provider_config
+          if (readProviderConfigNpm(storedConfig) !== trustedCatalog.npm) throw failure(400, "provider_requires_configuration", "The stored SDK does not match the trusted catalog.")
+          const providerConfig = { ...storedConfig, env: trustedCatalog.env }
+          const modelError = gatewayModelConfigurationError(providerConfig, catalog ? catalog.models.map((model) => model.config) : existingModels.map((model) => model.model_config))
+          if (modelError) throw failure(400, "unsupported_model_sdk", modelError)
+          const settings = input.settings ? { ...input.settings, ...(existing.settings.migration ? { migration: existing.settings.migration } : {}) } : existing.settings
+          validateSettings(providerConfig, settings)
+          // State locks precede even credential reads; validation failures still perform no writes.
+          await tx.select({ id: InferenceProviderOauthStateTable.id }).from(InferenceProviderOauthStateTable)
+            .where(eq(InferenceProviderOauthStateTable.inference_provider_id, existing.id)).for("update")
+          const [existingCredential] = await tx.select().from(InferenceProviderCredentialTable).where(and(
+            eq(InferenceProviderCredentialTable.inference_provider_id, existing.id), eq(InferenceProviderCredentialTable.subject, ORG_CREDENTIAL_SUBJECT),
+          ))
+          const credential = normalizeCredentialInput({
+            credential: input.credential,
+            apiKeys: input.apiKeys,
+            envNames: trustedCatalog.env,
+            providerId: trustedCatalog.id,
+            existing: existingCredential,
+          })
+          const access: AccessGrant | null = input.memberIds !== undefined || input.teamIds !== undefined || input.allMembers !== undefined
+            ? {
+                allMembers: input.allMembers ?? false,
+                memberIds: await resolveMemberIds({ organizationId: payload.organization.id, values: input.memberIds ?? [] }),
+                teamIds: await resolveTeamIds({ organizationId: payload.organization.id, values: input.teamIds ?? [] }),
+              }
+            : null
 
-        const now = new Date()
-        const provider: InferenceProviderRow = {
-          ...existing,
-          provider_id: catalog?.providerId ?? existing.provider_id,
-          name: input.name ?? existing.name,
-          provider_config: providerConfig,
-          settings,
-          credential_mode: input.credentialMode ?? existing.credential_mode,
-          oauth_client_id: resolveOauthClientField(input.oauthClientId, existing.oauth_client_id),
-          oauth_client_secret: resolveOauthClientField(input.oauthClientSecret, existing.oauth_client_secret),
-          status: input.status ?? existing.status,
-          updated_at: now,
-        }
-        validateCredentialMode(provider)
+          const now = new Date()
+          const provider: InferenceProviderRow = {
+            ...existing,
+            provider_id: catalog?.providerId ?? existing.provider_id,
+            name: input.name ?? existing.name,
+            provider_config: providerConfig,
+            settings,
+            credential_mode: input.credentialMode ?? existing.credential_mode,
+            oauth_client_id: resolveOauthClientField(input.oauthClientId, existing.oauth_client_id),
+            oauth_client_secret: resolveOauthClientField(input.oauthClientSecret, existing.oauth_client_secret),
+            status: input.status ?? existing.status,
+            updated_at: now,
+          }
+          validateCredentialMode(provider)
 
-        await db.transaction(async (tx) => {
+          if (access || input.status !== undefined || input.credentialMode !== undefined || input.providerId !== undefined
+            || input.settings !== undefined || input.oauthClientId !== undefined || input.oauthClientSecret !== undefined) {
+            await tx.delete(InferenceProviderOauthStateTable).where(eq(InferenceProviderOauthStateTable.inference_provider_id, provider.id))
+          }
+          let revokedCredentials: InferenceProviderCredentialRow[] = []
+          if (provider.provider_id !== existing.provider_id || provider.credential_mode !== existing.credential_mode
+            || provider.oauth_client_id !== existing.oauth_client_id || provider.oauth_client_secret !== existing.oauth_client_secret) {
+            const memberCredentials = and(eq(InferenceProviderCredentialTable.inference_provider_id, provider.id), isNotNull(InferenceProviderCredentialTable.org_membership_id))
+            revokedCredentials = await tx.select().from(InferenceProviderCredentialTable).where(memberCredentials).for("update")
+            await tx.update(InferenceProviderCredentialTable).set({ status: "revoked", refreshing_until: null, updated_at: now }).where(memberCredentials)
+          }
           await tx
             .update(InferenceProviderTable)
             .set({
@@ -1324,7 +1436,9 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
           if (credential) {
             await upsertOrgCredential(tx, { inferenceProviderId: provider.id, organizationId: payload.organization.id, credential, now })
           }
+          return { provider, revokedCredentials: revokedCredentials.filter((credential) => credential.status !== "revoked") }
         })
+        await revokeGoogleCredentials(revokedCredentials)
 
         return c.json({
           inferenceProvider: await loadSummary({ provider, currentMemberId: payload.currentMember.id, manage: true, publicBaseUrl: publicBaseUrlFor(c.req.raw) }),
@@ -1370,12 +1484,17 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         }
       }
 
-      await db.transaction(async (tx) => {
+      const credentials = await db.transaction(async (tx) => {
+        await tx.select({ id: InferenceProviderTable.id }).from(InferenceProviderTable).where(eq(InferenceProviderTable.id, provider.id)).for("update")
+        await tx.delete(InferenceProviderOauthStateTable).where(eq(InferenceProviderOauthStateTable.inference_provider_id, provider.id))
+        const credentials = await tx.select().from(InferenceProviderCredentialTable).where(eq(InferenceProviderCredentialTable.inference_provider_id, provider.id)).for("update")
         await tx.delete(InferenceProviderCredentialTable).where(eq(InferenceProviderCredentialTable.inference_provider_id, provider.id))
         await tx.delete(InferenceProviderAccessTable).where(eq(InferenceProviderAccessTable.inference_provider_id, provider.id))
         await tx.delete(InferenceProviderModelTable).where(eq(InferenceProviderModelTable.inference_provider_id, provider.id))
         await tx.delete(InferenceProviderTable).where(eq(InferenceProviderTable.id, provider.id))
+        return credentials.filter((credential) => credential.status !== "revoked")
       })
+      await revokeGoogleCredentials(credentials)
       return c.body(null, 204)
     },
   )
@@ -1434,7 +1553,11 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
       if (access.org_membership_id === provider.created_by_org_membership_id) {
         return c.json({ error: "protected_access", message: "The provider creator always keeps direct access." }, 409)
       }
-      await db.delete(InferenceProviderAccessTable).where(eq(InferenceProviderAccessTable.id, access.id))
+      await db.transaction(async (tx) => {
+        await tx.select({ id: InferenceProviderTable.id }).from(InferenceProviderTable).where(eq(InferenceProviderTable.id, provider.id)).for("update")
+        await tx.delete(InferenceProviderOauthStateTable).where(eq(InferenceProviderOauthStateTable.inference_provider_id, provider.id))
+        await tx.delete(InferenceProviderAccessTable).where(eq(InferenceProviderAccessTable.id, access.id))
+      })
       return c.body(null, 204)
     },
   )
@@ -1451,6 +1574,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
         403: jsonResponse("Only the provider creator or a workspace admin can migrate providers.", forbiddenSchema),
         404: jsonResponse("The LLM provider could not be found.", notFoundSchema),
+        409: jsonResponse("The source is being changed, was already migrated, or was removed.", z.object({ error: z.enum(["migration_source_unavailable", "migration_in_progress"]), message: z.string().optional() })),
       },
     }),
     orgMemberRoute(),
@@ -1464,58 +1588,75 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         return c.json({ error: "llm_provider_not_found" }, 404)
       }
 
-      const [llmProvider] = await db
-        .select()
-        .from(LlmProviderTable)
-        .where(and(eq(LlmProviderTable.id, llmProviderId), eq(LlmProviderTable.organizationId, payload.organization.id)))
-        .limit(1)
-      if (!llmProvider) {
-        return c.json({ error: "llm_provider_not_found" }, 404)
-      }
-      if (!(isOrganizationAdmin(payload) || llmProvider.createdByOrgMembershipId === payload.currentMember.id)) {
-        return c.json({ error: "forbidden", message: "Only the provider creator or a workspace admin can migrate providers." }, 403)
-      }
       if (isOrganizationAdmin(payload)) {
         const permission = ensureOrganizationAdmin(c, "Only the provider creator or a workspace admin can migrate providers.")
         if (!permission.ok) {
           return c.json(permission.response, orgAccessFailureStatus(permission.response))
         }
       }
-      if (llmProvider.source !== "models_dev") {
-        return c.json({ error: "unsupported_provider", message: "Only models.dev providers can be moved to the inference gateway." }, 400)
-      }
-
       try {
-        const [llmModels, llmAccess] = await Promise.all([
-          db.select().from(LlmProviderModelTable).where(eq(LlmProviderModelTable.llmProviderId, llmProvider.id)),
-          db.select().from(LlmProviderAccessTable).where(eq(LlmProviderAccessTable.llmProviderId, llmProvider.id)),
-        ])
-        const catalog = await normalizeCatalogInput({
-          providerId: llmProvider.providerId,
-          modelIds: llmModels.map((model) => model.modelId),
-        })
-        const credential = llmCredentialToInferenceCredential(llmProvider.apiKey)
+        const provider = await db.transaction(async (tx) => {
+          // A locking current read serializes two migrations, including a waiter after deletion.
+          const [llmProvider] = await tx.select().from(LlmProviderTable)
+            .where(and(eq(LlmProviderTable.id, llmProviderId), eq(LlmProviderTable.organizationId, payload.organization.id))).for("update", { noWait: true })
+          if (!llmProvider) throw failure(409, "migration_source_unavailable", "The source was already migrated or removed. Refresh providers before retrying.")
+          if (!(isOrganizationAdmin(payload) || llmProvider.createdByOrgMembershipId === payload.currentMember.id)) throw failure(403, "forbidden")
+          if (llmProvider.source !== "models_dev") throw failure(400, "unsupported_provider", "Only models.dev providers can be moved to the inference gateway.")
+          const memberCredentials = await tx.select({ id: LlmProviderMemberCredentialTable.id }).from(LlmProviderMemberCredentialTable)
+            .where(eq(LlmProviderMemberCredentialTable.llmProviderId, llmProvider.id)).for("update")
+          if (llmProvider.credentialMode === "per_member" || memberCredentials.length) {
+            throw failure(400, "migration_requires_configuration", "Per-member credentials cannot be converted. The source and every member credential have been kept.")
+          }
+          const npm = readProviderConfigNpm(llmProvider.providerConfig)
+          if (!isSupportedGatewayNpm(npm)) throw failure(400, "unsupported_provider", "This stored provider SDK is not supported by the gateway.")
+          const trustedCatalog = await getModelsDevProvider(llmProvider.providerId)
+          if (!trustedCatalog || trustedCatalog.npm !== npm) throw failure(400, "migration_requires_configuration", "The stored provider does not match a trusted catalog SDK. The source has been kept.")
+          const configurationError = gatewayConfigurationError(llmProvider.providerConfig, {})
+          if (configurationError) throw failure(400, "migration_requires_configuration", configurationError)
+          if (npm === "@ai-sdk/azure" || npm === "@ai-sdk/google-vertex" || npm === "@ai-sdk/google-vertex/anthropic") {
+            throw failure(400, "migration_requires_configuration", "Create a gateway provider with explicit Azure/Vertex settings and a supported server credential. The source has been kept.")
+          }
+          const config = nonSecretProviderConfig(llmProvider.providerConfig)
+          if (JSON.stringify(config) !== JSON.stringify(llmProvider.providerConfig)) {
+            throw failure(400, "migration_requires_configuration", "Move inline credential/header configuration to a server credential before migration. The source has been kept.")
+          }
+          const options = typeof config.options === "object" && config.options !== null ? config.options : {}
+          const base = "baseURL" in options ? options.baseURL : config.api
+          if (base !== undefined) validateSettings(config, { upstreamBaseUrl: base })
+          const [llmModels, llmAccess] = await Promise.all([
+            tx.select().from(LlmProviderModelTable).where(eq(LlmProviderModelTable.llmProviderId, llmProvider.id)),
+            tx.select().from(LlmProviderAccessTable).where(eq(LlmProviderAccessTable.llmProviderId, llmProvider.id)),
+          ])
+          const modelError = gatewayModelConfigurationError(config, llmModels.map((model) => model.modelConfig))
+          if (modelError) throw failure(400, "migration_requires_configuration", modelError)
+          if (llmModels.some((model) => JSON.stringify(nonSecretProviderConfig(model.modelConfig)) !== JSON.stringify(model.modelConfig))) {
+            throw failure(400, "migration_requires_configuration", "Inline model credentials cannot be migrated. The source has been kept.")
+          }
+          const credential = llmCredentialToInferenceCredential(llmProvider.apiKey)
+          if (!credential) throw failure(400, "migration_requires_configuration", "A shared credential is required. The source has been kept.")
+          try { validateCredentialInput(credential, trustedCatalog.env, trustedCatalog.id) } catch {
+            throw failure(400, "migration_requires_configuration", "The shared credential cannot be converted. The source has been kept.")
+          }
 
-        const now = new Date()
-        const provider: InferenceProviderRow = {
-          id: createDenTypeId("inferenceProvider"),
-          organization_id: payload.organization.id,
-          created_by_org_membership_id: llmProvider.createdByOrgMembershipId,
-          provider_id: catalog.providerId,
-          name: llmProvider.name,
-          provider_config: catalog.providerConfig,
-          settings: {},
-          credential_mode: "org",
-          oauth_client_id: null,
-          oauth_client_secret: null,
-          status: "active",
-          created_at: now,
-          updated_at: now,
-        }
+          const now = new Date()
+          const provider: InferenceProviderRow = {
+            id: createDenTypeId("inferenceProvider"),
+            organization_id: payload.organization.id,
+            created_by_org_membership_id: llmProvider.createdByOrgMembershipId,
+            provider_id: llmProvider.providerId,
+            name: llmProvider.name,
+            provider_config: { ...config, env: trustedCatalog.env },
+            settings: { migration: { llmProviderId: llmProvider.id, runtimeEnvNames: runtimeProviderEnvNames(llmProvider) } },
+            credential_mode: "org",
+            oauth_client_id: null,
+            oauth_client_secret: null,
+            status: "active",
+            created_at: now,
+            updated_at: now,
+          }
 
-        await db.transaction(async (tx) => {
           await tx.insert(InferenceProviderTable).values(provider)
-          await replaceModels(tx, provider.id, catalog.models, now)
+          await replaceModels(tx, provider.id, llmModels.map((model) => ({ id: model.modelId, name: model.name, config: model.modelConfig })), now)
           if (llmAccess.length > 0) {
             await tx.insert(InferenceProviderAccessTable).values(llmAccess.map((row) => ({
               id: createDenTypeId("inferenceProviderAccess"),
@@ -1525,19 +1666,21 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
               created_at: now,
             })))
           }
-          if (credential) {
-            await upsertOrgCredential(tx, { inferenceProviderId: provider.id, organizationId: payload.organization.id, credential, now })
-          }
-          await tx.delete(LlmProviderMemberCredentialTable).where(eq(LlmProviderMemberCredentialTable.llmProviderId, llmProvider.id))
+          await upsertOrgCredential(tx, { inferenceProviderId: provider.id, organizationId: payload.organization.id, credential, now })
           await tx.delete(LlmProviderAccessTable).where(eq(LlmProviderAccessTable.llmProviderId, llmProvider.id))
           await tx.delete(LlmProviderModelTable).where(eq(LlmProviderModelTable.llmProviderId, llmProvider.id))
           await tx.delete(LlmProviderTable).where(eq(LlmProviderTable.id, llmProvider.id))
+          return provider
         })
 
         return c.json({
           inferenceProvider: await loadSummary({ provider, currentMemberId: payload.currentMember.id, manage: true, publicBaseUrl: publicBaseUrlFor(c.req.raw) }),
         }, 201)
       } catch (error) {
+        const cause = error instanceof Error && error.cause ? error.cause : error
+        if (typeof cause === "object" && cause !== null && "code" in cause && cause.code === "ER_LOCK_NOWAIT") {
+          return c.json({ error: "migration_in_progress", message: "This source is being changed. Refresh providers before retrying." }, 409)
+        }
         return respondFailure(c, error)
       }
     },

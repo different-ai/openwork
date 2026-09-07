@@ -28,7 +28,7 @@ export function buildGoogleAuthorizeUrl(input: {
   redirectUri: string
   state: string
   codeChallenge: string
-  /** Google Workspace domain hint (`hd`); omitted when the org has no single known domain. */
+  /** Google Workspace UI hint only, NOT domain enforcement. Use an Internal Google OAuth app for restrictions. */
   hostedDomain?: string
 }) {
   const url = new URL(GOOGLE_OAUTH_AUTHORIZE_URL)
@@ -46,15 +46,6 @@ export function buildGoogleAuthorizeUrl(input: {
     url.searchParams.set("hd", input.hostedDomain)
   }
   return url.toString()
-}
-
-function readOAuthErrorMessage(body: unknown): string | null {
-  if (typeof body !== "object" || body === null) return null
-  const record: Record<string, unknown> = { ...body }
-  const error = typeof record.error === "string" ? record.error : null
-  const description = typeof record.error_description === "string" ? record.error_description : null
-  if (!error) return null
-  return description ? `${error}: ${description}` : error
 }
 
 export async function exchangeGoogleAuthorizationCode(input: {
@@ -80,6 +71,7 @@ export async function exchangeGoogleAuthorizationCode(input: {
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: params,
       signal: AbortSignal.timeout(TOKEN_REQUEST_TIMEOUT_MS),
+      redirect: "error",
     })
   } catch {
     throw new OAuthTokenExchangeError("Google's token endpoint could not be reached.", "oauth_token_endpoint_unreachable")
@@ -91,24 +83,24 @@ export async function exchangeGoogleAuthorizationCode(input: {
     body = null
   }
   if (!response.ok) {
-    const detail = readOAuthErrorMessage(body)
     throw new OAuthTokenExchangeError(
-      `Google rejected the OAuth token exchange${detail ? ` (${detail})` : ""}. Try Connect again.`,
+      "Google rejected the OAuth token exchange. Try Connect again.",
       "oauth_token_exchange_failed",
-      { httpStatus: response.status, ...(detail ? { providerOAuthError: detail } : {}) },
+      { httpStatus: response.status },
     )
   }
   return parseOAuthTokenResponse(body)
 }
 
 /** Best-effort revocation at Google; a failure is logged by the caller, never surfaced. */
-export async function revokeGoogleToken(input: { token: string; fetchImpl?: FetchLike }): Promise<boolean> {
+export async function revokeGoogleToken(input: { token: string; fetchImpl?: FetchLike; signal?: AbortSignal }): Promise<boolean> {
   try {
     const response = await (input.fetchImpl ?? defaultFetch)(GOOGLE_OAUTH_REVOKE_URL, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ token: input.token }),
-      signal: AbortSignal.timeout(TOKEN_REQUEST_TIMEOUT_MS),
+      signal: input.signal ?? AbortSignal.timeout(5_000),
+      redirect: "error",
     })
     return response.ok
   } catch {
