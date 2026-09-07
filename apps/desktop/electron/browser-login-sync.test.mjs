@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { register } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,15 +8,19 @@ import test from "node:test";
 const hooks = `
 export function resolve(specifier, context, next) {
   if (specifier === "electron") return { url: "electron-stub:login-sync", shortCircuit: true };
+  if (specifier === "node:child_process") return { url: "keychain-stub:login-sync", shortCircuit: true };
   return next(specifier, context);
 }
 export function load(url, context, next) {
   if (url === "electron-stub:login-sync") return { format: "module", source: "export const session = { fromPartition() { throw new Error('unused'); } };", shortCircuit: true };
+  if (url === "keychain-stub:login-sync") return { format: "module", source: "export const calls = []; export function execFile(file, args, options, callback) { calls.push({ file, args, options }); callback(null, 'synthetic-keychain-password', ''); }", shortCircuit: true };
   return next(url, context);
 }
 `;
 register(`data:text/javascript,${encodeURIComponent(hooks)}`);
 const { createBrowserLoginSync } = await import("./browser-login-sync.mjs");
+// @ts-expect-error The registered test-only child-process stub exports its witness.
+const { calls: keychainCalls } = await import("node:child_process");
 
 const NOW = Date.UTC(2026, 8, 4);
 const nowSeconds = Math.trunc(NOW / 1000);
@@ -110,6 +114,7 @@ function setup({ pollIntervalMs = 0, watchSource = null } = {}) {
     });
   const logins = createService();
   return {
+    home,
     logins,
     browserSession,
     cookiesPath,
@@ -208,6 +213,101 @@ test("setup exposes no values, keeps sensitive sites unchecked, and reads values
   assert.equal(persisted.includes("bank-secret"), false);
   logins.shutdown();
 });
+
+test("Chrome setup looks up the Keychain service rather than its account name", async (t) => {
+  const home = mkdtempSync(join(tmpdir(), "openwork-login-sync-chrome-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const profile = join(home, "Library", "Application Support", "Google", "Chrome", "Default");
+  mkdirSync(profile, { recursive: true });
+  writeFileSync(join(profile, "Cookies"), "synthetic Chrome source");
+  const row = {
+    host_key: ".example.com", name: "sid", value: "chrome-fixture", encrypted_value: Buffer.alloc(0),
+    path: "/", is_secure: 1, is_httponly: 1, samesite: 1, has_expires: 0, is_persistent: 0,
+    expires_utc: 0, last_access_utc: 0,
+  };
+  const browserSession = fakeSession();
+  const logins = createBrowserLoginSync({
+    platform: "darwin", home, env: {}, initialPolicyAllowed: true,
+    pollIntervalMs: 0, watchSource: null, getSession: () => browserSession,
+    openDatabase: () => ({
+      prepare(sql) {
+        return { all() {
+          if (sql.startsWith("PRAGMA table_info")) return Object.keys(row).map((name) => ({ name }));
+          if (sql.includes("FROM meta")) return [{ value: "23" }];
+          return [row];
+        } };
+      },
+      close() {},
+    }),
+  });
+  t.after(() => logins.shutdown());
+  keychainCalls.length = 0;
+  const source = (await logins.listSources()).profiles.find((entry) => entry.browser === "chrome");
+  assert.ok(source);
+  const preview = await logins.preview({ sourceId: source.id });
+  assert.deepEqual(keychainCalls, [], "metadata preview never requests a password");
+  await logins.configure({ previewId: preview.previewId, sites: ["example.com"] });
+  assert.deepEqual(keychainCalls, [{
+    file: "/usr/bin/security",
+    args: ["find-generic-password", "-w", "-s", "Chrome Safe Storage"],
+    options: { timeout: 120_000 },
+  }]);
+  assert.equal((await browserSession.cookies.get())[0].value, "chrome-fixture");
+});
+
+for (const revocation of ["disconnect", "stopSite", "pause"]) {
+  for (const writeSucceeds of [true, false]) {
+    test(`${revocation} retains all installed cookies for forgetting when a pending write ${writeSucceeds ? "succeeds" : "fails"}`, { timeout: 5_000 }, async (t) => {
+      const fixture = setup();
+      t.after(() => { fixture.logins.shutdown(); rmSync(fixture.home, { recursive: true, force: true }); });
+      await configureExample(fixture.logins);
+      const cookies = fixture.browserSession.cookies;
+      for (const [host, name] of [["bank.example", "sid"], ["example.com", "direct"], ["example.com", "pending"], ["example.com", "unattempted"]]) {
+        await cookies.set({ url: `https://${host}/`, domain: `.${host}`, path: "/", name, value: "direct-fixture" });
+      }
+      const unrelated = (await cookies.get()).filter((cookie) => cookie.value === "direct-fixture"
+        && (!writeSucceeds || cookie.name !== "pending"));
+      const source = fixture.rows()[0];
+      fixture.setRows(["early", "pending", "unattempted"].map((name) => ({ ...source, name })));
+      let signalEntered;
+      let releaseWrite;
+      const entered = new Promise((resolve) => { signalEntered = resolve; });
+      const release = new Promise((resolve) => { releaseWrite = resolve; });
+      t.after(() => releaseWrite());
+      const set = cookies.set;
+      const attempts = [];
+      cookies.set = async (details) => {
+        attempts.push(details.name);
+        if (details.name === "pending") {
+          signalEntered();
+          await release;
+          if (!writeSucceeds) throw new Error("target-write-failed");
+        }
+        await set(details);
+      };
+      const syncing = assert.rejects(fixture.logins.syncNow(), /Browser login sync failed/);
+      await entered;
+      let revoked = false;
+      const revoke = (revocation === "disconnect" ? fixture.logins.disconnect({ forgetSynced: true })
+        : revocation === "stopSite" ? fixture.logins.stopSite("example.com") : fixture.logins.pause())
+        .then((result) => { revoked = true; return result; });
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(revoked, false, "revocation waits for the native write to settle");
+      releaseWrite();
+      await Promise.all([syncing, revoke]);
+      assert.deepEqual(attempts, ["early", "pending"], "cancellation prevents later writes");
+      if (revocation === "pause") {
+        const installed = writeSucceeds ? 3 : 2;
+        assert.equal((await fixture.logins.getState()).managedCookieCount, installed);
+        assert.equal(JSON.parse(readFileSync(fixture.statePath, "utf8")).managedCookies.length, installed);
+        await fixture.logins.disconnect({ forgetSynced: true });
+      }
+      assert.deepEqual(await cookies.get(), unrelated, "forgetting removes only successfully installed owned cookies");
+      assert.equal((await fixture.logins.getState()).managedCookieCount, 0);
+      assert.deepEqual(fixture.browserSession.cleared, [], "revocation never clears unrelated storage");
+    });
+  }
+}
 
 test("sync updates and removes managed source cookies without touching unselected sites", async () => {
   const fixture = setup();
