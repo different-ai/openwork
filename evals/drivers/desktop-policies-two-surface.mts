@@ -265,7 +265,7 @@ async function main() {
   await sleep(500);
   await shot(admin, "admin", "01-logo-typed",
     "Admin: typed OpenWork demo logo URL into the Logo URL field.",
-    [{ label: "logo URL in field", passed: await evaluate(admin, () => ([...document.querySelectorAll('input')].some(i => i.value.includes('openworklabs.com')))) }]);
+    [{ label: "logo URL in field", passed: await evaluate(admin, browserScript((expectedLogo) => [...document.querySelectorAll('input')].some(input => input.value === expectedLogo), [DEMO_LOGO])) }]);
 
   await adminClickSave(admin);
   await sleep(2500); // let the PATCH land
