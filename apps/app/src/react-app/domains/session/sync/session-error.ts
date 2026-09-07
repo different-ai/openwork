@@ -137,7 +137,8 @@ type GatewayAuthRequired = { connectUrl: string | null; message: string | null }
  * Detects the gateway's in-band `401 { error: { code: "openwork_auth_required",
  * message, auth_url?, provider_id } }`. The body reaches us as a string on
  * whichever field the SDK error exposes (message / responseBody / cause), so
- * match the code anywhere and pull the URL and message out tolerantly.
+ * match the code and message tolerantly. URLs from upstream errors are never
+ * authorization targets; the Connect action navigates to provider Settings.
  */
 function detectGatewayAuthRequired(error: unknown, fields: { message: string | null; code: string | null; responseBody: string | null }): GatewayAuthRequired | null {
   const haystack = [fields.message, fields.responseBody, safeStringify(error)].filter(Boolean).join("\n");
@@ -150,18 +151,16 @@ function detectGatewayAuthRequired(error: unknown, fields: { message: string | n
       const parsed: unknown = JSON.parse(candidate.slice(start));
       const body = recordValue(parsed, "error");
       if (recordValue(body, "code") !== GATEWAY_AUTH_REQUIRED_ERROR_CODE) continue;
-      const url = firstStringValue([body], ["auth_url", "authUrl"]);
       return {
-        connectUrl: url && /^https?:\/\//.test(url) ? url : null,
+        connectUrl: null,
         message: firstStringValue([body], ["message"]),
       };
     } catch {
-      // Not a clean JSON body: fall through to the regex extraction below.
+      // Not a clean JSON body: retain only the error classification below.
     }
   }
-  const match = /"auth_?[uU]rl"\s*:\s*"(https?:\/\/[^"\\]+)"/.exec(haystack);
   return {
-    connectUrl: match?.[1] ?? null,
+    connectUrl: null,
     message: fields.code === GATEWAY_AUTH_REQUIRED_ERROR_CODE ? fields.message : null,
   };
 }

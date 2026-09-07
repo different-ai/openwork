@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRightLeft, ExternalLink, KeyRound, Trash2, Users } from "lucide-react";
 import { DenButton } from "../../_components/ui/button";
+import { DenNotice } from "../../_components/ui/notice";
 import { getRequestError, requestJson } from "../../_lib/den-flow";
 import {
     getEditLlmProviderRoute,
@@ -99,7 +100,7 @@ export function LlmProviderDetailScreen({
     }
 
     async function moveToGateway() {
-        if (!provider) {
+        if (!provider || provider.credentialMode === "per_member") {
             return;
         }
         setMigrateError(null);
@@ -176,7 +177,7 @@ export function LlmProviderDetailScreen({
                 </Link>
 
                 <div className="flex flex-wrap gap-3">
-                    {provider.canManage && provider.source === "models_dev" ? (
+                    {provider.canManage && provider.source === "models_dev" && provider.credentialMode !== "per_member" ? (
                         <DenButton
                             variant="secondary"
                             data-testid="llm-provider-move-to-gateway"
@@ -214,6 +215,9 @@ export function LlmProviderDetailScreen({
                 </div>
             </div>
 
+            {provider.source === "models_dev" && provider.credentialMode === "per_member" ? (
+                <DenNotice className="mb-6" tone="info" message="Per-member BYOK providers cannot be moved to the gateway. Their individual credentials stay unchanged. Create a separate gateway provider instead; member sign-in is supported only for Google Vertex." />
+            ) : null}
             {deleteError ? (
                 <div className="mb-6 rounded-[28px] border border-red-200 bg-red-50 px-6 py-4 text-[14px] text-red-700">
                     {deleteError}
@@ -241,6 +245,7 @@ export function LlmProviderDetailScreen({
                             Members keep the same models and access, and call them via OpenWork Gateway with their
                             own OpenWork key. Desktop apps re-sync automatically. This provider disappears from
                             Bring your Own Keys.
+                            If its settings or credential cannot be converted safely, the move is refused and the original provider stays unchanged.
                         </p>
                         {migrateError ? (
                             <p className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">

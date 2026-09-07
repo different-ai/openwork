@@ -129,7 +129,7 @@ export type GatewayConnectProvider = {
   cloudProviderId: string;
   providerId: string;
   name: string;
-  /** Den's OAuth start URL; null on older Den servers that do not return one. */
+  /** Legacy metadata only; never opened or sent to an authenticated endpoint. */
   authUrl: string | null;
 };
 
@@ -158,33 +158,48 @@ export const GATEWAY_CONNECT_POLL_INTERVAL_MS = 10_000;
 export const GATEWAY_CONNECT_POLL_ATTEMPTS = 6;
 
 /**
- * Opens the member's OAuth start URL in the system browser, then re-syncs cloud
+ * Starts OAuth over the authenticated local server, then re-syncs cloud
  * providers a few times (~60s by default) so the provider appears once the
  * member finishes the grant in the browser. Stops early when `isConnected`
  * reports the provider is no longer waiting on sign-in.
  */
 export async function connectGatewayProvider(input: {
   provider: GatewayConnectProvider;
+  startOAuth: (providerId: string) => Promise<{ authorizationUrl: string }>;
+  signal: AbortSignal;
   openUrl: (url: string) => void | Promise<void>;
   resync: () => Promise<unknown>;
-  /** Whether the provider is now materialized (sync no longer skips it). */
+  /** Whether the provider is now present in the materialized provider map. */
   isConnected: () => boolean;
   wait?: (ms: number) => Promise<void>;
   pollIntervalMs?: number;
   attempts?: number;
 }): Promise<boolean> {
-  if (!input.provider.authUrl) return false;
-  await input.openUrl(input.provider.authUrl);
-  const wait = input.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  if (input.signal.aborted) return false;
+  const { authorizationUrl } = await input.startOAuth(input.provider.cloudProviderId);
+  if (input.signal.aborted) return false;
+  await input.openUrl(authorizationUrl);
+  const wait = input.wait ?? ((ms: number) => new Promise<void>((resolve) => {
+    const finish = () => {
+      clearTimeout(timer);
+      input.signal.removeEventListener("abort", finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    input.signal.addEventListener("abort", finish, { once: true });
+    if (input.signal.aborted) finish();
+  }));
   const attempts = input.attempts ?? GATEWAY_CONNECT_POLL_ATTEMPTS;
   const interval = input.pollIntervalMs ?? GATEWAY_CONNECT_POLL_INTERVAL_MS;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     await wait(interval);
+    if (input.signal.aborted) return false;
     try {
       await input.resync();
     } catch {
       // A failed poll is not fatal: the next scheduled sync will pick it up.
     }
+    if (input.signal.aborted) return false;
     if (input.isConnected()) return true;
   }
   return input.isConnected();

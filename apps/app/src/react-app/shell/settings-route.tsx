@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useLocation, useNavigate, useParams } from "react-router";
 import { toast } from "@/components/ui/sonner";
+import { denSessionUpdatedEvent, denSettingsChangedEvent } from "@/app/lib/den-session-events";
 
 import {
   SUGGESTED_PLUGINS,
@@ -847,20 +848,40 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     [providerAuthSnapshot.cloudProviderServerSync?.skippedProviders],
   );
   const [connectingGatewayProviderId, setConnectingGatewayProviderId] = useState<string | null>(null);
+  const gatewayConnectAbort = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const cancel = () => {
+      gatewayConnectAbort.current?.abort();
+      setConnectingGatewayProviderId(null);
+    };
+    window.addEventListener(denSessionUpdatedEvent, cancel);
+    window.addEventListener(denSettingsChangedEvent, cancel);
+    return () => {
+      gatewayConnectAbort.current?.abort();
+      window.removeEventListener(denSessionUpdatedEvent, cancel);
+      window.removeEventListener(denSettingsChangedEvent, cancel);
+    };
+  }, []);
   const handleConnectGatewayProvider = useCallback(async (provider: GatewayConnectProvider) => {
+    gatewayConnectAbort.current?.abort();
+    const controller = new AbortController();
+    gatewayConnectAbort.current = controller;
     setConnectingGatewayProviderId(provider.cloudProviderId);
     try {
       await connectGatewayProvider({
         provider,
+        signal: controller.signal,
+        startOAuth: providerAuthStore.startGatewayProviderOAuth,
         openUrl: (url) => platform.openLink(url),
         resync: () => providerAuthStore.runCloudProviderSync("manual"),
         isConnected: () => {
-          const skipped = providerAuthStore.getSnapshot().cloudProviderServerSync?.skippedProviders;
-          return skipped !== undefined && !(provider.cloudProviderId in skipped);
+          return provider.cloudProviderId in providerAuthStore.getSnapshot().importedCloudProviders;
         },
       });
+    } catch (error) {
+      if (!controller.signal.aborted) toast.error(describeRouteError(error));
     } finally {
-      setConnectingGatewayProviderId(null);
+      if (!controller.signal.aborted) setConnectingGatewayProviderId(null);
     }
   }, [platform, providerAuthStore]);
   const extensionsSnapshot = useExtensionsStoreSnapshot(extensionsStore);

@@ -2192,6 +2192,14 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
   }
 
+  async function startGatewayProviderOAuth(providerId: string) {
+    const orgId = readDenSettings().activeOrgId;
+    const client = options.openworkServer.getSnapshot().openworkServerClient;
+    if (!orgId || !client) throw new Error("Sign in to OpenWork before connecting this provider.");
+    await pushDenSession();
+    return client.startGatewayProviderOAuth(providerId, orgId);
+  }
+
   async function runCloudProviderSync(reason: CloudProviderSyncReason): Promise<void | { outcome: "handled_server_side" }> {
     if (disposed) return;
     const delivery = syncDenSessionDelivery();
@@ -2678,6 +2686,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     refreshCloudOrgProviders,
     refreshImportedCloudProviders,
     runCloudProviderSync,
+    startGatewayProviderOAuth,
     startProviderAuth,
     refreshProviders,
     completeProviderAuthOAuth,

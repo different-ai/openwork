@@ -289,6 +289,7 @@ beforeEach(async () => {
     port: 0,
     async fetch(request) {
       const url = new URL(request.url);
+      if (url.pathname === "/v1/me/desktop-config") return Response.json({});
       if (url.pathname === "/v1/llm-providers") {
         markProviderListReached();
         await providerListReleased;

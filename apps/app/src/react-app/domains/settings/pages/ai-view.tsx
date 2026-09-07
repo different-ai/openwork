@@ -117,7 +117,7 @@ export function GatewayConnectRow(props: {
       <Button
         variant="outline"
         onClick={() => void props.onConnect?.(provider)}
-        disabled={props.busy || !provider.authUrl || !props.onConnect}
+        disabled={props.busy || !props.onConnect}
       >
         <LogIn className="mr-1.5 size-3.5" />
         {props.busy ? "Waiting for sign-in…" : "Connect"}

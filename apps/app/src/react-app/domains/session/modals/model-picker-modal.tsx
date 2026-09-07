@@ -370,7 +370,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
               <Button
                 size="sm"
                 variant="outline"
-                disabled={!provider.authUrl || !props.onConnectGatewayProvider}
+                disabled={!props.onConnectGatewayProvider}
                 onClick={() => void props.onConnectGatewayProvider?.(provider)}
               >
                 Connect

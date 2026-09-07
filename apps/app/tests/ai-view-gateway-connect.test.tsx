@@ -29,10 +29,10 @@ test("Settings > AI providers renders a skipped member_auth_required gateway pro
   const noUrl = renderToStaticMarkup(
     <GatewayConnectRow provider={{ ...provider, authUrl: null }} busy={false} onConnect={() => undefined} />,
   );
-  expect(noUrl).toContain('disabled=""');
+  expect(noUrl).not.toContain('disabled=""');
 });
 
-test("clicking Connect opens authUrl in the browser and re-syncs cloud providers", async () => {
+test("clicking Connect uses authenticated OAuth rather than the supplied authUrl and re-syncs cloud providers", async () => {
   const registeredDom = typeof globalThis.window === "undefined" || typeof globalThis.document === "undefined";
   if (registeredDom) GlobalRegistrator.register();
   Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
@@ -50,6 +50,11 @@ test("clicking Connect opens authUrl in the browser and re-syncs cloud providers
         onConnect={(target) => {
           done = connectGatewayProvider({
             provider: target,
+            signal: new AbortController().signal,
+            startOAuth: async (id) => {
+              expect(id).toBe(provider.cloudProviderId);
+              return { authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth?state=fixture" };
+            },
             openUrl: (url) => { opened.push(url); },
             resync: async () => { syncs += 1; },
             isConnected: () => syncs > 0,
@@ -63,11 +68,37 @@ test("clicking Connect opens authUrl in the browser and re-syncs cloud providers
     expect(button.textContent).toContain("Connect");
     await act(async () => button.click());
     expect(await done).toBe(true);
-    expect(opened).toEqual([provider.authUrl]);
+    expect(opened).toEqual(["https://accounts.google.com/o/oauth2/v2/auth?state=fixture"]);
+    expect(opened).not.toContain(provider.authUrl);
     expect(syncs).toBe(1);
   } finally {
     await act(async () => root.unmount());
     container.remove();
     if (registeredDom) await GlobalRegistrator.unregister();
   }
+});
+
+test("canceling Connect while waiting cancels its timer and prevents further syncs", async () => {
+  const controller = new AbortController();
+  let syncs = 0;
+  const pending = connectGatewayProvider({
+    provider, signal: controller.signal,
+    startOAuth: async () => ({ authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth" }),
+    openUrl: () => { controller.abort(); },
+    resync: async () => { syncs += 1; }, isConnected: () => false,
+    pollIntervalMs: 60_000,
+  });
+  expect(await pending).toBe(false);
+  expect(syncs).toBe(0);
+});
+
+test("Connect polling stops at the bound without claiming a missing provider is connected", async () => {
+  let syncs = 0;
+  expect(await connectGatewayProvider({
+    provider, signal: new AbortController().signal,
+    startOAuth: async () => ({ authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth" }),
+    openUrl: () => undefined, resync: async () => { syncs += 1; },
+    isConnected: () => false, wait: async () => undefined, attempts: 3,
+  })).toBe(false);
+  expect(syncs).toBe(3);
 });

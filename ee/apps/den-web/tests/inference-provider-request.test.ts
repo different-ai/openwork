@@ -5,6 +5,7 @@ import {
   buildInferenceProviderRequestBody,
   buildMigrateFromLlmProviderBody,
   getCredentialStatusLabel,
+  getCredentialKindLabel,
   getOauthCallbackPath,
   getRequiredSettingKeys,
   isSupportedGatewayNpm,
@@ -31,6 +32,22 @@ const baseInput: InferenceProviderFormInput = {
 };
 
 describe("buildInferenceProviderRequestBody", () => {
+  test("renames leave unchanged settings, credentials and blank map entries absent", () => {
+    const body = buildInferenceProviderRequestBody({ ...baseInput, name: "Renamed", apiKey: "", settings: { project: "fixture", location: "global" }, previousSettings: { project: "fixture", location: "global" } });
+    expect(body).not.toHaveProperty("credential");
+    expect(body).not.toHaveProperty("apiKeys");
+    expect(body).not.toHaveProperty("settings");
+  });
+
+  test("OAuth holders and server callback survive response parsing", () => {
+    const provider = asInferenceProvider({ id: "ipr_fixture", providerId: "google-vertex", name: "Vertex", credentialMode: "member", status: "active", settings: { project: "fixture", location: "global" }, oauthCallbackUrl: "https://public-api.example.test/v1/inference-providers/oauth/callback", credentials: [{ subject: "mem_fixture", orgMembershipId: "mem_fixture", memberName: "Fixture Member", memberEmail: "member@example.test", kind: "oauth_google", status: "active", expiresAt: "2026-09-08T00:00:00Z" }] });
+    expect(provider?.credentials).toHaveLength(1);
+    expect(provider?.credentials?.[0]?.memberName).toBe("Fixture Member");
+    expect(getCredentialKindLabel("oauth_google")).toBe("Google OAuth");
+    expect(getCredentialKindLabel("oauth_azure")).toBe("Azure OAuth");
+    expect(provider?.settings).toEqual({ project: "fixture", location: "global" });
+    expect(provider?.oauthCallbackUrl).toBe("https://public-api.example.test/v1/inference-providers/oauth/callback");
+  });
   test("anthropic org api key posts a raw api_key credential and deduped ids", () => {
     expect(buildInferenceProviderRequestBody(baseInput)).toEqual({
       name: "Anthropic",

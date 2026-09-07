@@ -13,13 +13,11 @@ import { DenOptionCard } from "../../_components/ui/option-card";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
 import { DenSwitch } from "../../_components/ui/switch";
 import { DenTextarea } from "../../_components/ui/textarea";
-import { denApiEndpoint } from "../../_lib/den-api-origin";
 import { getGatewayProviderRoute, getGatewayProvidersRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { deleteInferenceProvider, saveInferenceProvider, useInferenceProvider } from "./inference-provider-data";
 import {
   buildInferenceProviderRequestBody,
-  getOauthCallbackPath,
   getRequiredSettingKeys,
   getSettingLabel,
   isGoogleVertexNpm,
@@ -79,18 +77,12 @@ export function InferenceProviderEditorScreen({ inferenceProviderId }: { inferen
   const [serviceAccountJson, setServiceAccountJson] = useState("");
   const [oauthClientId, setOauthClientId] = useState("");
   const [oauthClientSecret, setOauthClientSecret] = useState("");
-  // Resolved in the browser: the Den API origin derives from window.location.
-  const [oauthRedirectUri, setOauthRedirectUri] = useState(getOauthCallbackPath());
   const [access, setAccess] = useState<ProviderAccessValue>({ allMembers: false, memberIds: [], teamIds: [] });
   const [active, setActive] = useState(true);
   const [saveBusy, setSaveBusy] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
-
-  useEffect(() => {
-    setOauthRedirectUri(denApiEndpoint(getOauthCallbackPath()));
-  }, []);
 
   useEffect(() => {
     if (!orgId) return;
@@ -144,7 +136,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId }: { inferen
   }, [orgContext?.currentMember.id, provider]);
 
   // den-api only allows member mode for Google Vertex; fall back to org when the provider changes.
-  const memberModeSupported = !selectedProviderId || supportsMemberCredentialMode(selectedProviderId);
+  const memberModeSupported = supportsMemberCredentialMode(selectedProviderId);
   useEffect(() => {
     if (!memberModeSupported) setCredentialMode("org");
   }, [memberModeSupported]);
@@ -162,7 +154,9 @@ export function InferenceProviderEditorScreen({ inferenceProviderId }: { inferen
       .then((detail) => {
         if (canceled) return;
         setCatalogDetail(detail);
-        setSelectedModelIds((current) => current.filter((entry) => detail.models.some((model) => model.id === entry)));
+        if (provider?.providerId !== selectedProviderId) {
+          setSelectedModelIds((current) => current.filter((entry) => detail.models.some((model) => model.id === entry)));
+        }
       })
       .catch((loadError) => {
         if (canceled) return;
@@ -175,7 +169,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId }: { inferen
     return () => {
       canceled = true;
     };
-  }, [orgId, selectedProviderId]);
+  }, [orgId, selectedProviderId, provider?.providerId]);
 
   const catalogProviderOptions = useMemo(
     () =>
@@ -204,6 +198,10 @@ export function InferenceProviderEditorScreen({ inferenceProviderId }: { inferen
   const hasOauthClientSecret = provider?.hasOauthClientSecret ?? false;
 
   async function save() {
+    if (!catalogDetail || catalogDetail.id !== selectedProviderId || detailBusy || detailError) {
+      setSaveError("Wait for the provider catalog to load before saving. Your existing settings and credentials have not changed.");
+      return;
+    }
     const validationError = validateInferenceProviderForm({
       npm,
       name: effectiveName,
@@ -233,6 +231,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId }: { inferen
             credentialMode,
             status: active ? "active" : "disabled",
             settings,
+            previousSettings: provider?.settings,
             envNames,
             apiKey,
             apiKeyValues,
@@ -477,12 +476,14 @@ export function InferenceProviderEditorScreen({ inferenceProviderId }: { inferen
                 />
               </label>
             </div>
-            <p className="text-[13px] text-gray-500">
+            {provider?.oauthCallbackUrl ? <p className="text-[13px] text-gray-500">
               Create an Internal OAuth client in your Google Cloud project and add this redirect URI:{" "}
               <code data-testid="gateway-provider-oauth-redirect-uri" className="rounded bg-gray-100 px-2 py-0.5 font-mono text-[12px]">
-                {oauthRedirectUri}
+                {provider.oauthCallbackUrl}
               </code>
-            </p>
+            </p> : <p className="text-[13px] text-gray-500">
+              Save the provider to see the server's OAuth callback URL on its details page, then add that URL to your Google OAuth client.
+            </p>}
           </div>
         ) : (
           <div className="mt-6 grid gap-6">

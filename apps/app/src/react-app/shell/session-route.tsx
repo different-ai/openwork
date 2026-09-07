@@ -973,16 +973,33 @@ export function SessionRoute() {
     () => resolveGatewayConnectProviders(sessionProviderAuthSnapshot.cloudProviderServerSync?.skippedProviders),
     [sessionProviderAuthSnapshot.cloudProviderServerSync?.skippedProviders],
   );
+  const gatewayConnectAbort = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const cancel = () => gatewayConnectAbort.current?.abort();
+    window.addEventListener(denSessionUpdatedEvent, cancel);
+    window.addEventListener(denSettingsChangedEvent, cancel);
+    return () => {
+      cancel();
+      window.removeEventListener(denSessionUpdatedEvent, cancel);
+      window.removeEventListener(denSettingsChangedEvent, cancel);
+    };
+  }, []);
   const handleConnectGatewayProvider = useCallback(async (provider: GatewayConnectProvider) => {
-    await connectGatewayProvider({
-      provider,
-      openUrl: (url) => platform.openLink(url),
-      resync: () => refreshCloudProviderSync("manual"),
-      isConnected: () => {
-        const skipped = sessionProviderAuthStore.getSnapshot().cloudProviderServerSync?.skippedProviders;
-        return skipped !== undefined && !(provider.cloudProviderId in skipped);
-      },
-    });
+    gatewayConnectAbort.current?.abort();
+    const controller = new AbortController();
+    gatewayConnectAbort.current = controller;
+    try {
+      await connectGatewayProvider({
+        provider,
+        signal: controller.signal,
+        startOAuth: sessionProviderAuthStore.startGatewayProviderOAuth,
+        openUrl: (url) => platform.openLink(url),
+        resync: () => refreshCloudProviderSync("manual"),
+        isConnected: () => provider.cloudProviderId in sessionProviderAuthStore.getSnapshot().importedCloudProviders,
+      });
+    } catch (error) {
+      if (!controller.signal.aborted) toast.error(describeRouteError(error));
+    }
   }, [platform, refreshCloudProviderSync, sessionProviderAuthStore]);
   const refreshOrganizationModelAccess = useCallback(async () => {
     await refreshCloudProviderSync("manual");

@@ -266,8 +266,8 @@ describe("session error resilience", () => {
     expect(html).not.toContain("Status: 200")
     expect(html).not.toContain("managed-interruption-diagnostic")
   })
-  test("classifies the gateway's openwork_auth_required 401 and keeps its auth_url as the Connect target", () => {
-    const authUrl = "https://den.example.test/v1/inference-providers/ipr_member/oauth/start"
+  test("classifies openwork_auth_required but never trusts an upstream auth_url as a Connect target", () => {
+    const authUrl = "https://evil.example.test/steal-session"
     const body = JSON.stringify({
       error: { code: "openwork_auth_required", message: "Sign in to Member Vertex to continue.", auth_url: authUrl, provider_id: "ipr_member" },
     })
@@ -279,7 +279,7 @@ describe("session error resilience", () => {
     expect(presentation.kind).toBe("gateway-auth-required")
     expect(presentation.title).toBe("Sign in to this OpenWork Gateway provider to keep using it")
     expect(presentation.description).toBe("Sign in to Member Vertex to continue.")
-    expect(presentation.connectUrl).toBe(authUrl)
+    expect(presentation.connectUrl).toBeNull()
     expect(presentation.recoveryPrompt).toBeNull()
 
     const html = renderErrorTranscriptWithResume({

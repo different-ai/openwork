@@ -147,6 +147,11 @@ export function InferenceProviderDetailScreen({ inferenceProviderId }: { inferen
           <h2 className="text-[24px] font-semibold tracking-[-0.05em] text-gray-950">Credentials</h2>
           <span className="rounded-full bg-gray-100 px-4 py-2 text-[13px] font-medium text-gray-600">Values are never shown</span>
         </div>
+        {provider.credentialMode === "member" && provider.oauthCallbackUrl ? (
+          <p className="mt-4 break-all text-[13px] text-gray-500">
+            Add this redirect URI to your Google OAuth client: <code data-testid="gateway-provider-oauth-redirect-uri">{provider.oauthCallbackUrl}</code>
+          </p>
+        ) : null}
         <div className="mt-6 overflow-hidden rounded-[20px] border border-gray-200">
           <DenTable
             columns={credentialColumns}

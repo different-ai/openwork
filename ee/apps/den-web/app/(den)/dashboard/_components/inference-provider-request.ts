@@ -39,6 +39,7 @@ export type DenInferenceProvider = {
   /** Org-owned Google OAuth client used in member mode (manage view only). */
   oauthClientId: string | null;
   hasOauthClientSecret: boolean;
+  oauthCallbackUrl: string | null;
 };
 
 /** models.dev `npm` packages the gateway can proxy; mirrors den-api. */
@@ -122,6 +123,7 @@ function asCredentialStatus(value: unknown): InferenceCredentialStatus {
 
 function asCredentialKind(value: unknown): InferenceProviderCredentialKind | null {
   return value === "api_key" || value === "api_key_map" || value === "aws_keys" || value === "gcp_service_account"
+    || value === "oauth_google" || value === "oauth_azure"
     ? value
     : null;
 }
@@ -188,6 +190,7 @@ export function asInferenceProvider(value: unknown): DenInferenceProvider | null
       : null,
     oauthClientId: asString(value.oauthClientId),
     hasOauthClientSecret: value.hasOauthClientSecret === true,
+    oauthCallbackUrl: asString(value.oauthCallbackUrl),
   };
 }
 
@@ -229,6 +232,10 @@ export function getCredentialKindLabel(kind: InferenceProviderCredentialKind) {
       return "Google service account";
     case "aws_keys":
       return "AWS keys";
+    case "oauth_google":
+      return "Google OAuth";
+    case "oauth_azure":
+      return "Azure OAuth";
   }
 }
 
@@ -246,6 +253,7 @@ export type InferenceProviderFormInput = {
   status: InferenceProviderStatus;
   /** Required-setting values keyed by setting name; blank entries are dropped. */
   settings: Record<string, string>;
+  previousSettings?: Record<string, string>;
   /** Env var names the provider reads (from the catalog config). */
   envNames: string[];
   /** Single API key when the provider reads one env var. */
@@ -266,7 +274,7 @@ export type InferenceProviderRequestBody = {
   modelIds: string[];
   credentialMode: InferenceProviderCredentialMode;
   status: InferenceProviderStatus;
-  settings: Record<string, string>;
+  settings?: Record<string, string>;
   credential?: { kind: InferenceProviderCredentialKind; secret: string };
   apiKeys?: Record<string, string>;
   oauthClientId?: string;
@@ -305,6 +313,9 @@ export function buildInferenceProviderRequestBody(input: InferenceProviderFormIn
     memberIds: input.access.allMembers ? [] : [...new Set(input.access.memberIds)],
     teamIds: input.access.allMembers ? [] : [...new Set(input.access.teamIds)],
   };
+  if (input.previousSettings && JSON.stringify(trimmedSettings(input.settings)) === JSON.stringify(trimmedSettings(input.previousSettings))) {
+    delete body.settings;
+  }
 
   if (input.credentialMode === "member") {
     body.oauthClientId = input.oauthClientId.trim();

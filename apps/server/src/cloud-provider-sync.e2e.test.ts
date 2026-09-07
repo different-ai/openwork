@@ -799,7 +799,7 @@ describe("cloud provider sync gateway", () => {
       authUrl: null,
       updatedAt: "2026-08-20T00:00:00.000Z",
       providerConfig: {
-        env: ["ANTHROPIC_API_KEY"],
+        env: ["IPR_READY_ANTHROPIC_API_KEY"],
         npm: "@ai-sdk/anthropic",
         api: gatewayBaseUrl,
         options: { baseURL: gatewayBaseUrl },
@@ -833,7 +833,7 @@ describe("cloud provider sync gateway", () => {
         }
         if (url.pathname === `/v1/inference-providers/${readyGateway.id}/connect`) {
           return Response.json({
-            inferenceProvider: { ...readyGateway, apiKey: gatewayKey, apiKeys: { ANTHROPIC_API_KEY: gatewayKey } },
+            inferenceProvider: { ...readyGateway, apiKey: gatewayKey, apiKeys: { IPR_READY_ANTHROPIC_API_KEY: gatewayKey } },
           });
         }
         if (url.pathname === `/v1/inference-providers/${pendingGateway.id}/connect`) {
@@ -885,7 +885,7 @@ describe("cloud provider sync gateway", () => {
     expect(expectRecord(gatewayRuntime.options, "gateway options").baseURL).toBe(gatewayBaseUrl);
     expect(JSON.stringify(gatewayRuntime)).not.toContain(gatewayKey);
     const storedEnv = await env.list();
-    expect(storedEnv.find((entry) => entry.key === "ANTHROPIC_API_KEY")?.value).toBe(gatewayKey);
+    expect(storedEnv.find((entry) => entry.key === "IPR_READY_ANTHROPIC_API_KEY")?.value).toBe(gatewayKey);
     expect(storedEnv.find((entry) => entry.key === "TEST_PROVIDER_API_KEY")?.value).toBe("sk-test-provider");
     expect(storedEnv.some((entry) => entry.key === "OPENAI_API_KEY")).toBe(false);
 
@@ -897,7 +897,7 @@ describe("cloud provider sync gateway", () => {
     expect(sync.status().providers.map((entry) => entry.cloudProviderId)).toEqual(["lpr_test"]);
     expect(sync.status().skippedProviders).toEqual([]);
     expect(Object.keys(runtimeProviderMap(await readGlobalRuntimeOpencodeConfig(config)))).toEqual(["lpr_test"]);
-    expect((await env.list()).some((entry) => entry.key === "ANTHROPIC_API_KEY")).toBe(false);
+    expect((await env.list()).some((entry) => entry.key === "IPR_READY_ANTHROPIC_API_KEY")).toBe(false);
   });
 
   test("materializes a credential-less Den provider from a matching local Desktop environment key", async () => {
