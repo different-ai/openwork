@@ -70,9 +70,8 @@ export default function OrganizationSsoSignInPage() {
 
   return (
     <DenStatusScreen
-      title={error ? "We couldn’t sign you in" : "Signing you in"}
-      description={error ? "Try again, return to sign in, or contact your organization’s administrator." : "Redirecting you to your organisation’s identity provider"}
-      status="Connecting to your identity provider…"
+      title={error ? "We couldn’t sign you in" : "Redirecting you to your organisation’s identity provider"}
+      description={error ? "Try again, return to sign in, or contact your organization’s administrator." : ""}
       error={error}
     >
       {redirectUrl ? (

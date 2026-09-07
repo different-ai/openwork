@@ -45,7 +45,7 @@ test("SSO handoff keeps the shared status screen and supports manual navigation 
     await browser.client.send("Page.navigate", { url: new URL(path, den.ref.webUrl).toString() });
   };
   const pending = async () => {
-    await waitFor(browser, () => (window.ssoRequests?.length > 0 && Boolean(document.querySelector('[role="status"]'))), { timeoutMs: 90_000 });
+    await waitFor(browser, () => (window.ssoRequests?.length > 0 && document.querySelector("h1")?.textContent === "Redirecting you to your organisation’s identity provider"), { timeoutMs: 90_000 });
     expect(await evalIn(browser, () => (document.querySelector('main a, main button, [role="alert"]') === null))).toBe(true);
     expect(await evalIn(browser, () => (document.querySelector("main")?.textContent))).toContain("Redirecting you to your organisation\u2019s identity provider");
   };
@@ -70,7 +70,7 @@ test("SSO handoff keeps the shared status screen and supports manual navigation 
     const { url, method, credentials, headers } = window.ssoRequests[0];
     return { url, method, credentials, headers };
   })).toEqual({ url: `${origin}/api/auth/sign-in/sso`, method: "POST", credentials: "include", headers: { accept: "application/json", "content-type": "application/json" } });
-  expect(await evalIn(browser, () => (document.querySelector("main")?.textContent))).not.toMatch(/synthetic-team|org_/);
+  expect(await evalIn(browser, () => (document.querySelector("main")?.textContent))).not.toMatch(/synthetic-team|org_|Enterprise SSO|Signing you in|Connecting to your identity provider/);
   // Same-document navigation lets us exercise real location.assign and the real
   // anchor default action while observing the fallback on the interim screen.
   const destination = `${origin}/sso/synthetic-team#identity-provider`;
