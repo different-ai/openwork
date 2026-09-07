@@ -6,16 +6,15 @@ import { toast } from "sonner";
 import { unwrap } from "@/app/lib/opencode";
 import type { Client, PendingPermission, PendingQuestion, TodoItem } from "@/app/types";
 import { t } from "@/i18n";
-import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { useQueryCacheArrayState, useQueryCacheState } from "@/react-app/infra/query-cache-state";
 import { describeRouteError } from "@/react-app/shell/route-workspaces";
-import { useSessionActivityStore } from "../status/session-activity-store";
 import {
   permissionKey,
   questionKey,
   seedPermissionState,
   seedQuestionState,
   settleQuestionState,
+  settlePermissionState,
   todoKey,
 } from "./session-sync";
 
@@ -171,20 +170,8 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
             }),
           );
         }
-        for (const permissionSessionId of interactionSessionIds) {
-          getReactQueryClient().setQueryData<PendingPermission[]>(
-            permissionKey(workspaceId, permissionSessionId),
-            (current = []) => current.filter((permission) => permission.id !== requestID),
-          );
-        }
         if (pendingPermission) {
-          useSessionActivityStore.getState().setWaitingRequest(
-            workspaceId,
-            pendingPermission.sessionID,
-            "permission",
-            requestID,
-            false,
-          );
+          settlePermissionState(workspaceId, pendingPermission.sessionID, requestID);
         }
       } catch (error) {
         toast.error(t("app.error_request_failed"), {

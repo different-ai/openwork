@@ -1,7 +1,10 @@
-import { afterEach, describe, expect, jest, setSystemTime, test } from "bun:test";
+import { afterEach, describe, expect, jest, setSystemTime, spyOn, test } from "bun:test";
 import type { SessionStatus } from "@opencode-ai/sdk/v2/client";
 
 import type { OpenworkSessionSnapshot } from "../src/app/lib/openwork-server";
+import { markTaskRunStart, takeTaskRunStart } from "../src/app/lib/analytics";
+import * as notifications from "../src/react-app/shell/desktop-notifications";
+import { createClientV2, createV2EventTranslationState, translateV2Event } from "../src/app/lib/opencode-v2-adapter";
 import { useSessionActivityStore } from "../src/react-app/domains/session/status/session-activity-store";
 import {
   __applySessionSyncEventForTest,
@@ -165,6 +168,8 @@ function applyCompletedToolAndFinalAnswer(input: SyncInput) {
 }
 
 afterEach(() => {
+  jest.restoreAllMocks();
+  takeTaskRunStart(sessionId);
   jest.useRealTimers();
   for (const input of syncInputs) __disposeWorkspaceSessionSyncForTest(input);
   syncInputs.length = 0;
@@ -176,6 +181,104 @@ afterEach(() => {
   __resetWorkspaceSyncReconcileHealthForTest();
   getReactQueryClient().clear();
   setSystemTime();
+});
+
+describe("native v2 run lifecycle", () => {
+  function nativeSync() {
+    const input = { workspaceId, baseUrl: "https://run-status.example/opencode2", openworkToken: "token" };
+    syncInputs.push(input);
+    __createWorkspaceSessionSyncForTest(input);
+    trackWorkspaceSessionSync(input, sessionId);
+    const state = createV2EventTranslationState();
+    return { input, emit(type: string, sequence: number, data: Record<string, unknown> = {}) {
+      for (const event of translateV2Event({ type, durable: { seq: sequence }, data: { sessionID: sessionId, ...data } }, state) ?? []) {
+        __applySessionSyncEventForTest(input, event);
+      }
+    } };
+  }
+
+  test("independent native active clients cannot erase retry detail, but progress can", async () => {
+    jest.useFakeTimers();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => Response.json({ data: { [sessionId]: { type: "running" } } });
+    __setWorkspaceSessionSyncStatusFetcherForTest(async (url, token, signal) => {
+      const result = await createClientV2(url, undefined, { token }).session.status(undefined, { signal });
+      if (!result.data) throw result.error;
+      return result.data;
+    });
+    try {
+      const { emit } = nativeSync();
+      emit("session.execution.started", 1);
+      const retry = { type: "retry", attempt: 2, message: "Rate limited", next: 1_000 };
+      emit("session.retry.scheduled", 2, { attempt: 2, at: 1_000, error: { message: "Rate limited" } });
+      for (let i = 0; i < 3; i++) {
+        jest.advanceTimersByTime(5_000);
+        await flushMicrotasks();
+        expect(getReactQueryClient().getQueryData(statusKey(workspaceId, sessionId))).toEqual(retry);
+      }
+      const snapshot = createSnapshot({ type: "busy" });
+      markSessionSnapshotFetchStart(snapshot, Date.now());
+      seedSessionState(workspaceId, snapshot);
+      expect(getReactQueryClient().getQueryData(statusKey(workspaceId, sessionId))).toEqual(retry);
+      emit("session.step.started", 3);
+      expect(getReactQueryClient().getQueryData(statusKey(workspaceId, sessionId))).toEqual({ type: "busy" });
+      emit("session.retry.scheduled", 2, { attempt: 2, at: 1_000, error: { message: "Rate limited" } });
+      expect(getReactQueryClient().getQueryData(statusKey(workspaceId, sessionId))).toEqual({ type: "busy" });
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
+  test.each(["user", "shutdown", "superseded", "unknown"])("%s interruption never reports completed or stops a newer execution", async (reason) => {
+    jest.useFakeTimers();
+    const notify = spyOn(notifications, "notifyDesktopEvent").mockImplementation(() => {});
+    __setWorkspaceSessionSyncStatusFetcherForTest(async () => ({}));
+    const { emit } = nativeSync();
+    markTaskRunStart(sessionId);
+    emit("session.execution.started", 1);
+    emit("session.execution.interrupted", 2, { reason });
+    expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId]?.runActive).toBe(reason !== "user");
+    jest.advanceTimersByTime(250);
+    await flushMicrotasks();
+    expect(notify.mock.calls.some(([event]) => event.type === "task.completed")).toBe(false);
+    markTaskRunStart(sessionId);
+    emit("session.execution.started", 3);
+    emit("session.execution.interrupted", 2, { reason });
+    expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId]?.runActive).toBe(true);
+    emit("session.execution.succeeded", 4);
+    emit("session.execution.succeeded", 4);
+    expect(notify.mock.calls.filter(([event]) => event.type === "task.completed")).toHaveLength(1);
+  });
+
+  test("a same-clock late idle read cannot settle a successor and coarse idle is not success", async () => {
+    jest.useFakeTimers();
+    const notify = spyOn(notifications, "notifyDesktopEvent").mockImplementation(() => {});
+    let resolve: (value: Record<string, SessionStatus>) => void = () => {};
+    __setWorkspaceSessionSyncStatusFetcherForTest(() => new Promise((done) => { resolve = done; }));
+    const { emit } = nativeSync();
+    markTaskRunStart(sessionId);
+    emit("session.execution.started", 1);
+    jest.advanceTimersByTime(250);
+    await flushMicrotasks();
+    emit("session.execution.started", 3);
+    resolve({});
+    await flushMicrotasks();
+    expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId]?.runActive).toBe(true);
+    jest.advanceTimersByTime(250);
+    await flushMicrotasks();
+    resolve({});
+    await flushMicrotasks();
+    expect(useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId]?.[sessionId]?.runActive).toBe(false);
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  test("terminal listeners cannot have a queued successor's tracking consumed", () => {
+    const input = { workspaceId, baseUrl: "https://run-status.example/opencode2", openworkToken: "token",
+      onSessionStatus: ({ status }: { status: SessionStatus }) => { if (status.type === "idle") markTaskRunStart(sessionId); } };
+    syncInputs.push(input);
+    __createWorkspaceSessionSyncForTest(input);
+    markTaskRunStart(sessionId);
+    __applySessionSyncEventForTest(input, { type: "session.execution.interrupted", properties: { sessionID: sessionId, reason: "user", sequence: 2 } });
+    expect(takeTaskRunStart(sessionId)).not.toBeNull();
+  });
 });
 
 describe("session run status ordering", () => {
