@@ -6,7 +6,7 @@ export function SiteFooter() {
   return (
     <footer className="pt-10 text-sm text-gray-500">
       <div className="flex flex-col items-start justify-between gap-6 border-t border-[var(--lp-border)] pt-10 md:flex-row md:items-center">
-        <div className="flex flex-col gap-2">
+        <div className="flex shrink-0 flex-col items-start gap-2">
           <div className="font-medium text-gray-800">Powered by</div>
           <a
             href="https://opencode.ai"
@@ -19,14 +19,14 @@ export function SiteFooter() {
           <Link
             href="/trust"
             aria-label="SOC 2 Type I — view Trust Center"
-            className="inline-flex items-center gap-1.5 rounded-full border border-[var(--lp-border)] px-2.5 py-1 text-[11px] font-medium text-gray-600 transition-colors hover:border-gray-400 hover:text-gray-800"
+            className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-[var(--lp-border)] px-2.5 py-1 text-[11px] font-medium text-gray-600 transition-colors hover:border-gray-400 hover:text-gray-800"
           >
-            <ShieldCheck className="h-3.5 w-3.5" />
+            <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
             SOC 2 Type I
           </Link>
         </div>
 
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-3 md:gap-x-8">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-3 md:justify-end md:gap-x-8">
           <Link href="/docs" target="_blank" className="whitespace-nowrap transition-colors hover:text-gray-800">
             Docs
           </Link>
