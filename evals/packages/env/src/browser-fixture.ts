@@ -68,6 +68,10 @@ for(const name of ['denied','allowed']){
   const frame=document.createElement('iframe');frame.src='http://localhost:'+location.port+'/frame-'+name;
   if(name==='allowed')frame.allow='tools *';document.body.append(frame);
 }
+if(location.pathname==='/origin-policy'){
+  const hostile=document.createElement('iframe');hostile.allow='tools *';
+  hostile.src='http://127.0.0.2:'+location.port+'/origin-policy-opt-out';document.body.append(hostile);
+}
 </script>`;
 
 const framePage = `<!doctype html><title>Frame tool</title><body><script>
@@ -78,6 +82,34 @@ if(location.pathname==='/frame-allowed'){
   const button=document.createElement('button');button.textContent='Frame action';button.style='background:rgb(238,111,18);width:120px;height:40px;border:0';
   button.onclick=()=>{fetch('http://127.0.0.1:'+location.port+'/frame-click',{method:'POST',mode:'no-cors'});button.textContent='Frame complete';};document.body.append(button);
 }
+</script>`;
+
+// The fresh loopback origin first opts out, then requests OAC in the same frame.
+// Chromium keeps that origin site-keyed within the browsing-context group, so
+// the second document requires a real runtime check, not just header refusal.
+const originPolicyPage = `<!doctype html><title>Hostile origin policy</title><body><script>
+(async()=>{
+  const nativeOriginAgentCluster=window.originAgentCluster;
+  Object.defineProperty(window,'originAgentCluster',{configurable:true,get:()=>true});
+  Object.defineProperty(document,'domain',{configurable:true,get:()=>location.hostname});
+  const direct=await window.__openworkWebMcpPolicyV1.check();
+  const forged=await window.__openworkWebMcpPolicyV1.check({originAgentCluster:true,domainMatchesHost:true});
+  const callback=async()=>{await fetch('http://127.0.0.1:'+location.port+'/origin-policy-callback',{method:'POST',mode:'no-cors'});return {unsafe:true};};
+  const tool={name:'unsafe_origin_tool',description:'A non-origin-keyed callback must not run.',execute:callback};
+  const context=document.modelContext;
+  let registration='registered',execution='executed';
+  try{await context.registerTool(tool);}catch(error){registration=error.name;}
+  try{await context.executeTool({...tool,window,origin:location.origin},{});}catch(error){execution=error.name;}
+  // Even a completely forged page API must not get past broker revalidation.
+  Object.defineProperty(document,'modelContext',{value:{getTools:async()=>[{...tool,window,origin:location.origin}],executeTool:callback}});
+  window.dispatchEvent(new Event('openwork:webmcp-tools-changed'));
+  await fetch('http://127.0.0.1:'+location.port+'/origin-policy-report',{method:'POST',mode:'no-cors',body:JSON.stringify({
+    page:location.pathname,nativeOriginAgentCluster,spoofedOriginAgentCluster:window.originAgentCluster,
+    spoofedDomainMatchesHost:document.domain===location.hostname,directOriginKeyed:direct.originKeyed,forgedOriginKeyed:forged.originKeyed,
+    reason:direct.reason,registration,execution
+  })});
+  if(location.pathname==='/origin-policy-opt-out')location.replace('/origin-policy-spoof');
+})();
 </script>`;
 
 // A deterministic model uses the shipped tools, not a mock browser host. Retain
@@ -115,6 +147,8 @@ export interface BrowserFixtureState {
   frameClicks: number;
   frameInputs: Array<{ page: string; type: string; x: number; y: number; target: string; trusted: boolean }>;
   uploads: number;
+  originPolicyCallbacks: number;
+  originPolicyReports: Array<{ page: string; nativeOriginAgentCluster: boolean; spoofedOriginAgentCluster: boolean; spoofedDomainMatchesHost: boolean; directOriginKeyed: boolean; forgedOriginKeyed: boolean; reason: string; registration: string; execution: string }>;
   discovery: { waiting: number; released: number; resumed: number; callbacks: number };
   model: { requests: number; toolNames: string[]; receivedSaveResult: boolean; observedSaved: boolean };
 }
@@ -123,19 +157,20 @@ export async function startBrowserFixture(app: Surface, { requireSignIn = true }
   const ready = `/tmp/browser-task-fixture-${randomUUID()}.json`;
   const fixturePage = requireSignIn ? page : page.replace(/<form id="signin">[\s\S]*?<\/form>/, "");
   const source = `import {createServer} from 'node:http';import {writeFileSync} from 'node:fs';
-    const records=[],signals=[],popups=[],privileges=[],pageRequests=[],frameInputs=[];
-    let signInCount=0,sessionReads=0,frameClicks=0,uploads=0,inputValue='';
+    const records=[],signals=[],popups=[],privileges=[],pageRequests=[],frameInputs=[],originPolicyReports=[];
+    let signInCount=0,sessionReads=0,frameClicks=0,uploads=0,inputValue='',originPolicyCallbacks=0;
     let holdDiscovery=false;
     const discovery={waiting:0,released:0,resumed:0,callbacks:0},pendingDiscovery=new Set();
     const model={requests:0,toolNames:[],receivedSaveResult:false,observedSaved:false};
     const page=${browserScriptValue(fixturePage)},framesPage=${browserScriptValue(framesPage)},framePage=${browserScriptValue(framePage)};
+    const originPolicyPage=${browserScriptValue(originPolicyPage)};
     const server=createServer(async(req,res)=>{
       const url=new URL(req.url,'http://127.0.0.1');${providerHandler}
       const signedIn=(req.headers.cookie||'').split(';').some(value=>value.trim()==='fixture_session=controlled');
-      res.setHeader('Cache-Control','no-store');res.setHeader('Origin-Agent-Cluster','?1');
-      res.setHeader('Permissions-Policy',url.pathname==='/denied'?'tools=()':url.pathname==='/frames'?'tools=(self "http://localhost:'+server.address().port+'")':'tools=(self)');
+      res.setHeader('Cache-Control','no-store');res.setHeader('Origin-Agent-Cluster',url.pathname==='/origin-policy-opt-out'?'?0':'?1');
+      res.setHeader('Permissions-Policy',url.pathname==='/denied'?'tools=()':['/frames','/origin-policy'].includes(url.pathname)?'tools=(self "http://localhost:'+server.address().port+'" "http://127.0.0.2:'+server.address().port+'")':'tools=(self)');
       if(req.method==='GET'&&url.pathname==='/state'){
-        res.setHeader('Content-Type','application/json');res.end(JSON.stringify({records,signals,popups,privileges,pageRequests,signInCount,sessionReads,frameClicks,frameInputs,uploads,inputValue,model,discovery}));return;
+        res.setHeader('Content-Type','application/json');res.end(JSON.stringify({records,signals,popups,privileges,pageRequests,signInCount,sessionReads,frameClicks,frameInputs,uploads,inputValue,model,discovery,originPolicyReports,originPolicyCallbacks}));return;
       }
       if(req.method==='GET'&&url.pathname==='/discovery'){
         res.setHeader('Content-Type','application/json');
@@ -161,6 +196,8 @@ export async function startBrowserFixture(app: Surface, { requireSignIn = true }
         else if(url.pathname==='/frame-click')frameClicks++;
         else if(url.pathname==='/frame-input'){if(frameInputs.length<100)frameInputs.push(JSON.parse(body));}
         else if(url.pathname==='/upload')uploads++;
+        else if(url.pathname==='/origin-policy-report')originPolicyReports.push(JSON.parse(body));
+        else if(url.pathname==='/origin-policy-callback')originPolicyCallbacks++;
         else if(url.pathname==='/discovery-resumed')discovery.resumed++;
         else if(url.pathname==='/delayed-callback')discovery.callbacks++;
         else if(url.pathname==='/fixture/discovery/hold')holdDiscovery=true;
@@ -177,7 +214,7 @@ export async function startBrowserFixture(app: Surface, { requireSignIn = true }
       res.setHeader('Content-Type','text/html');
       const title=url.searchParams.get('viewport-probe')||(url.pathname==='/'?'home':url.pathname.slice(1));
       const document=page.replace('<title>Browser task fixture</title>','<title>Project '+title.replace(/[^a-z-]/g,'')+'</title>');
-      res.end(url.pathname==='/frames'?framesPage:url.pathname.startsWith('/frame-')?framePage:document);
+      res.end(['/frames','/origin-policy'].includes(url.pathname)?framesPage:url.pathname.startsWith('/origin-policy-')?originPolicyPage:url.pathname.startsWith('/frame-')?framePage:document);
     });
     server.listen(0,'0.0.0.0',()=>writeFileSync(${browserScriptValue(ready)},JSON.stringify({pid:process.pid,port:server.address().port})));
   `;
@@ -227,6 +264,16 @@ export async function readBrowserFixtureState(app: Surface, origin: string): Pro
     privileges: array(state.privileges).map((item) => { const row = object(item); return { page: string(row.page), require: string(row.require), process: string(row.process), Buffer: string(row.Buffer), ...(row.blocked === undefined ? {} : { blocked: boolean(row.blocked) }) }; }),
     model: { requests: number(model.requests), toolNames: array(model.toolNames).map(string), receivedSaveResult: boolean(model.receivedSaveResult), observedSaved: boolean(model.observedSaved) },
     discovery: { waiting: number(discovery.waiting), released: number(discovery.released), resumed: number(discovery.resumed), callbacks: number(discovery.callbacks) },
+    originPolicyCallbacks: number(state.originPolicyCallbacks),
+    originPolicyReports: array(state.originPolicyReports).map((item) => {
+      const row = object(item);
+      return {
+        page: string(row.page), nativeOriginAgentCluster: boolean(row.nativeOriginAgentCluster),
+        spoofedOriginAgentCluster: boolean(row.spoofedOriginAgentCluster), spoofedDomainMatchesHost: boolean(row.spoofedDomainMatchesHost),
+        directOriginKeyed: boolean(row.directOriginKeyed), forgedOriginKeyed: boolean(row.forgedOriginKeyed),
+        reason: string(row.reason), registration: string(row.registration), execution: string(row.execution),
+      };
+    }),
   };
 }
 

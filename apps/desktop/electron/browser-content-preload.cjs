@@ -33,10 +33,7 @@ function installWebMcpRuntime() {
   async function assertPolicy(targetWindow = window) {
     const check = targetWindow?.[POLICY_BRIDGE]?.check;
     if (typeof check !== "function") return;
-    const policy = await check({
-      originAgentCluster: targetWindow.originAgentCluster !== false,
-      domainMatchesHost: targetWindow.document.domain === targetWindow.location.hostname,
-    });
+    const policy = await check();
     if (!policy?.originKeyed) {
       throw domError("WebMCP requires an origin-keyed document.", "SecurityError");
     }
@@ -324,10 +321,38 @@ function installToolChangeRelay() {
 }
 
 if (typeof window !== "undefined" && typeof document !== "undefined") {
+  // This listener and its DOM wrappers live only in Electron's isolated world.
+  // Main-world overrides cannot alter these reads or send IPC replies. The only
+  // page-facing method below requests a check; it never forwards caller data.
+  ipcRenderer?.on("openwork:webmcp:read-policy", (_event, replyChannel, childIndex) => {
+    let policy = null;
+    try {
+      let embedding = null;
+      if (Number.isInteger(childIndex) && childIndex >= 0) {
+        const childWindow = window.frames[childIndex];
+        const element = Array.from(document.querySelectorAll("iframe,frame"))
+          .find((candidate) => candidate.contentWindow === childWindow);
+        if (element) {
+          let sourceOrigin = null;
+          try { sourceOrigin = new URL(element.src, document.baseURI).origin; } catch {}
+          embedding = {
+            allow: element.getAttribute("allow") || "",
+            sourceOrigin,
+          };
+        }
+      }
+      policy = {
+        originAgentCluster: window.originAgentCluster === true,
+        domainMatchesHost: document.domain === location.hostname,
+        embedding,
+      };
+    } catch {}
+    ipcRenderer.send(replyChannel, policy);
+  });
   try {
     if (typeof contextBridge?.exposeInMainWorld === "function" && ipcRenderer?.invoke) {
       contextBridge.exposeInMainWorld("__openworkWebMcpPolicyV1", {
-        check: (runtimePolicy) => ipcRenderer.invoke("openwork:webmcp:frame-policy", runtimePolicy),
+        check: () => ipcRenderer.invoke("openwork:webmcp:frame-policy"),
       });
     }
     if (typeof contextBridge?.executeInMainWorld === "function") {

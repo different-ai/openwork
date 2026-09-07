@@ -1,5 +1,7 @@
 const assert = require("node:assert/strict");
+const { readFileSync } = require("node:fs");
 const test = require("node:test");
+const { runInNewContext } = require("node:vm");
 
 const { installWebMcpRuntime } = require("./browser-content-preload.cjs");
 
@@ -26,7 +28,10 @@ function createRealm(policy = null) {
     window: globalThis.window,
   };
   const window = new TestWindow("https://example.test");
-  if (policy) window.__openworkWebMcpPolicyV1 = { check: async () => policy };
+  if (policy) window.__openworkWebMcpPolicyV1 = { check: async (...args) => {
+    assert.deepEqual(args, []);
+    return policy;
+  } };
   globalThis.Document = TestDocument;
   globalThis.document = window.document;
   globalThis.window = window;
@@ -159,6 +164,8 @@ test("the page API enforces native frame policy before registering tools", async
 
   const nonOriginKeyed = createRealm({ allowed: true, originKeyed: false });
   try {
+    Object.defineProperty(nonOriginKeyed.window, "originAgentCluster", { get: () => assert.fail("Do not read page-controlled OAC.") });
+    Object.defineProperty(nonOriginKeyed.window.document, "domain", { get: () => assert.fail("Do not read page-controlled domain.") });
     await assert.rejects(
       nonOriginKeyed.window.document.modelContext.getTools(),
       (error) => error instanceof DOMException && error.name === "SecurityError",
@@ -166,6 +173,53 @@ test("the page API enforces native frame policy before registering tools", async
   } finally {
     nonOriginKeyed.restore();
   }
+});
+
+test("the isolated preload exposes only a payload-free check, not a policy-reporting capability", async () => {
+  const listeners = new Map();
+  const sent = [];
+  const invoked = [];
+  const exposed = {};
+  const child = {};
+  const isolatedWindow = { originAgentCluster: false, frames: [child], addEventListener() {} };
+  const isolatedDocument = {
+    domain: "relaxed.example", baseURI: "https://app.example/", readyState: "loading", addEventListener() {},
+    querySelectorAll: () => [
+      { contentWindow: {}, src: "https://attacker.example/", getAttribute: () => "tools *" },
+      { contentWindow: child, src: "https://child.example/", getAttribute: () => "tools 'src'" },
+    ],
+  };
+  runInNewContext(readFileSync(require.resolve("./browser-content-preload.cjs"), "utf8"), {
+    require: () => ({
+      ipcRenderer: {
+        on: (channel, handler) => listeners.set(channel, handler),
+        send: (...args) => sent.push(args),
+        invoke: async (...args) => { invoked.push(args); return { originKeyed: false }; },
+      },
+      contextBridge: {
+        exposeInMainWorld: (name, api) => { exposed[name] = api; },
+        executeInMainWorld() {},
+      },
+    }),
+    window: isolatedWindow, document: isolatedDocument, location: { hostname: "app.example" }, URL,
+  });
+  const bridge = exposed.__openworkWebMcpPolicyV1;
+  assert.deepEqual(Object.keys(bridge), ["check"]);
+  assert.equal((await bridge.check({ originAgentCluster: true, domainMatchesHost: true })).originKeyed, false);
+  assert.deepEqual(invoked, [["openwork:webmcp:frame-policy"]]);
+  const readPolicy = listeners.get("openwork:webmcp:read-policy");
+  readPolicy({}, "native-request", 0);
+  assert.equal(sent[0][0], "native-request");
+  assert.deepEqual(JSON.parse(JSON.stringify(sent[0][1])), {
+    originAgentCluster: false, domainMatchesHost: false,
+    embedding: { allow: "tools 'src'", sourceOrigin: "https://child.example" },
+  });
+  isolatedWindow.originAgentCluster = true;
+  isolatedDocument.domain = "app.example";
+  readPolicy({}, "fresh-native-request", null);
+  assert.deepEqual(JSON.parse(JSON.stringify(sent[1][1])), {
+    originAgentCluster: true, domainMatchesHost: true, embedding: null,
+  });
 });
 
 test("aborting while registration is pending rejects and unregisters atomically", async () => {

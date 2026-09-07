@@ -1243,12 +1243,12 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       else if (action === "pause") taskHost.pause(tabId);
       else throw new Error("Unsupported browser control.");
     });
-    ipcMain.handle("openwork:webmcp:frame-policy", (event, runtimePolicy) => {
+    ipcMain.handle("openwork:webmcp:frame-policy", (event) => {
       const tab = [...browserTabs.values()].find((candidate) => candidate.view.webContents === event.sender);
       if (!tab || !event.senderFrame) {
         return { allowed: false, originKeyed: false, reason: "unknown_browser_frame" };
       }
-      return ensureWebMcpFramePolicy().checkFrame(event.senderFrame, runtimePolicy);
+      return ensureWebMcpFramePolicy().checkFrame(event.senderFrame);
     });
     ipcMain.handle("openwork:browser:setProxy", (_event, proxy) => setBrowserProxy(proxy));
     ipcMain.handle("openwork:browser:getProxy", () => browserProxyState());

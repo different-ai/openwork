@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 const TOOLS_DIRECTIVE_PATTERN = /(?:^|,)\s*tools\s*=\s*\(([^)]*)\)/i;
 
 function responseHeader(headers, name) {
@@ -53,20 +55,30 @@ export function iframeAllowsTools(allow, parentOrigin, childOrigin, sourceOrigin
   });
 }
 
-async function readFrameRuntimePolicy(frame) {
+async function readIsolatedFramePolicy(frame, childIndex = null) {
+  const replyChannel = `openwork:webmcp:policy-result:${randomUUID()}`;
+  let ipc;
+  let listener;
+  let timer;
   try {
-    const result = await frame.executeJavaScript(`(() => ({
-      originAgentCluster: window.originAgentCluster !== false,
-      domainMatchesHost: document.domain === location.hostname
-    }))()`);
-    return result && typeof result === "object"
-      ? {
-          originAgentCluster: result.originAgentCluster === true,
-          domainMatchesHost: result.domainMatchesHost === true,
-        }
-      : { originAgentCluster: false, domainMatchesHost: false };
+    const origin = frame.origin;
+    const url = frame.url;
+    ipc = frame.ipc;
+    // Only the isolated preload receives this request. Never evaluate policy
+    // getters in the page world or accept runtime facts through its public API.
+    const result = await new Promise((resolve) => {
+      listener = (event, value) => resolve(event.senderFrame === frame ? value : null);
+      ipc.once(replyChannel, listener);
+      timer = setTimeout(() => resolve(null), 3_000);
+      frame.send("openwork:webmcp:read-policy", replyChannel, childIndex);
+    });
+    if (frame.detached || frame.isDestroyed() || frame.origin !== origin || frame.url !== url) return null;
+    return result;
   } catch {
-    return { originAgentCluster: false, domainMatchesHost: false };
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (ipc && listener) ipc.removeListener(replyChannel, listener);
   }
 }
 
@@ -78,23 +90,11 @@ async function readEmbeddingPolicy(parent, child) {
     childIndex = -1;
   }
   if (childIndex < 0) return null;
-  try {
-    const result = await parent.executeJavaScript(`(() => {
-      const childWindow = window.frames[${childIndex}];
-      const element = Array.from(document.querySelectorAll("iframe,frame"))
-        .find((candidate) => candidate.contentWindow === childWindow);
-      if (!element) return null;
-      let sourceOrigin = null;
-      try { sourceOrigin = new URL(element.src, document.baseURI).origin; } catch {}
-      return {
-        allow: element.getAttribute("allow") || "",
-        sourceOrigin,
-      };
-    })()`);
-    return result && typeof result === "object" ? result : null;
-  } catch {
-    return null;
-  }
+  const result = await readIsolatedFramePolicy(parent, childIndex);
+  // A sibling insertion/removal must not associate another element's delegation
+  // with the child whose native frame identity we are checking.
+  if (parent.frames[childIndex] !== child || child.parent !== parent) return null;
+  return result?.embedding ?? null;
 }
 
 export function createWebMcpFramePolicy(browserSession) {
@@ -121,7 +121,7 @@ export function createWebMcpFramePolicy(browserSession) {
     installed = true;
   }
 
-  async function checkFrame(frame, suppliedRuntimePolicy = null) {
+  async function checkFrame(frame) {
     if (!frame || frame.detached || frame.isDestroyed?.()) {
       return { allowed: false, originKeyed: false, reason: "detached_frame" };
     }
@@ -178,13 +178,8 @@ export function createWebMcpFramePolicy(browserSession) {
     if (/^\s*\?0\s*$/i.test(targetMetadata?.originAgentCluster ?? "")) {
       return { allowed: true, originKeyed: false, reason: "origin_agent_cluster_opt_out" };
     }
-    const runtimePolicy = suppliedRuntimePolicy && typeof suppliedRuntimePolicy === "object"
-      ? {
-          originAgentCluster: suppliedRuntimePolicy.originAgentCluster === true,
-          domainMatchesHost: suppliedRuntimePolicy.domainMatchesHost === true,
-        }
-      : await readFrameRuntimePolicy(frame);
-    if (!runtimePolicy.originAgentCluster || !runtimePolicy.domainMatchesHost) {
+    const runtimePolicy = await readIsolatedFramePolicy(frame);
+    if (runtimePolicy?.originAgentCluster !== true || runtimePolicy?.domainMatchesHost !== true) {
       return { allowed: true, originKeyed: false, reason: "non_origin_keyed" };
     }
     return { allowed: true, originKeyed: true, reason: "allowed" };

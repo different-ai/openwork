@@ -1,5 +1,6 @@
 // @ts-nocheck -- the captured webRequest listener is assigned by a fake session.
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import test from "node:test";
 
 import {
@@ -38,9 +39,17 @@ function fakeFrame(origin, parent = null) {
     detached: false,
     runtimePolicy: { originAgentCluster: true, domainMatchesHost: true },
     embedding: { allow: "", sourceOrigin: origin },
+    ipc: new EventEmitter(),
     isDestroyed: () => false,
-    async executeJavaScript(source) {
-      return source.includes("querySelectorAll") ? this.embedding : this.runtimePolicy;
+    executeJavaScript() {
+      assert.fail("Policy must never execute in the page's main world.");
+    },
+    send(channel, replyChannel, childIndex) {
+      assert.equal(channel, "openwork:webmcp:read-policy");
+      this.ipc.emit(replyChannel, { senderFrame: this }, {
+        ...this.runtimePolicy,
+        embedding: childIndex === null ? null : this.embedding,
+      });
     },
   };
   if (parent) parent.frames.push(frame);
@@ -104,4 +113,49 @@ test("an explicit ancestor tools=() response policy cannot be expanded by an ifr
     responseHeaders: { "permissions-policy": ["tools=()"] },
   }, () => {});
   assert.equal((await policy.checkFrame(child)).allowed, false);
+});
+
+test("page-supplied overrides cannot replace isolated runtime facts or response opt-outs", async () => {
+  let listener;
+  const policy = createWebMcpFramePolicy({
+    webRequest: { onHeadersReceived(_filter, candidate) { listener = candidate; } },
+  });
+  policy.install();
+  const frame = fakeFrame("https://app.example");
+  const forged = { originAgentCluster: true, domainMatchesHost: true };
+  for (const runtimePolicy of [
+    { originAgentCluster: false, domainMatchesHost: true },
+    { originAgentCluster: true, domainMatchesHost: false },
+    { domainMatchesHost: true },
+  ]) {
+    frame.runtimePolicy = runtimePolicy;
+    assert.deepEqual(await policy.checkFrame(frame, forged), {
+      allowed: true, originKeyed: false, reason: "non_origin_keyed",
+    });
+    assert.equal(frame.ipc.eventNames().length, 0);
+  }
+  frame.runtimePolicy = forged;
+  assert.equal((await policy.checkFrame(frame)).originKeyed, true);
+  listener({ resourceType: "mainFrame", frame, url: frame.url, responseHeaders: { "Origin-Agent-Cluster": ["?0"] } }, () => {});
+  assert.deepEqual(await policy.checkFrame(frame, forged), {
+    allowed: true, originKeyed: false, reason: "origin_agent_cluster_opt_out",
+  });
+});
+
+test("missing, foreign, and navigated preload replies fail closed and release their listeners", async () => {
+  const policy = createWebMcpFramePolicy({});
+  const frame = fakeFrame("https://app.example");
+  const other = fakeFrame("https://app.example");
+  for (const send of [
+    () => { throw new Error("No isolated preload"); },
+    (_channel, reply) => frame.ipc.emit(reply, { senderFrame: other }, frame.runtimePolicy),
+    (_channel, reply) => {
+      frame.ipc.emit(reply, { senderFrame: frame }, frame.runtimePolicy);
+      frame.url += "?navigated";
+    },
+  ]) {
+    frame.send = send;
+    assert.equal((await policy.checkFrame(frame)).originKeyed, false);
+    assert.equal(frame.ipc.eventNames().length, 0);
+  }
 });
