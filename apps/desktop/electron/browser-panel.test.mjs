@@ -12,6 +12,7 @@ export const dialog = { async showMessageBox() { effects.push({ type: "dialog" }
 export const session = { fromPartition() { return { webRequest: { onBeforeRequest() {} } }; } };
 export const shell = { async openExternal(url) { effects.push({ type: "external", url }); } };
 export const createdViews = [];
+export const navigation = { load: async () => {} };
 export class BrowserWindow {
   constructor(options) {
     if (options.show !== false || options.focusable !== false) throw new Error("background host must never show or focus");
@@ -29,9 +30,11 @@ export class BrowserWindow {
 export class WebContentsView {
   constructor() {
     createdViews.push(this);
+    const targetId = 'target_' + createdViews.length;
     const listeners = new Map();
     let attached = false;
     this.bounds = { x: 0, y: 0, width: 0, height: 0 };
+    this.visible = true;
     this.webContents = {
       url: "about:blank",
       sent: [],
@@ -49,16 +52,22 @@ export class WebContentsView {
       setWindowOpenHandler() {},
       isDestroyed() { return false; },
       getURL() { return this.url; },
+      getOrCreateDevToolsTargetId() { return targetId; },
       getTitle() { return ""; },
       isLoading() { return false; },
       canGoBack() { return false; },
       canGoForward() { return false; },
-      loadURL(url) { this.url = url; return Promise.resolve(); },
+      loads: [],
+      stops: 0,
+      loadURL(url) { this.url = url; this.loads.push(url); return navigation.load(url); },
+      stop() { this.stops++; },
       focus() {},
       close() {},
     };
   }
   setBounds(bounds) { this.bounds = bounds; }
+  setVisible(visible) { this.visible = visible; }
+  getVisible() { return this.visible; }
   getBounds() { return this.bounds; }
 }
 `;
@@ -91,7 +100,7 @@ export function load(url, context, next) {
 register(`data:text/javascript,${encodeURIComponent(hooks)}`);
 const { createBrowserPanel } = await import("./browser-panel.mjs");
 // @ts-expect-error The registered test-only Electron stub exports its witnesses.
-const { createdViews, effects } = await import("electron");
+const { createdViews, effects, navigation } = await import("electron");
 
 const PANEL_BOUNDS = { x: 800, y: 40, width: 400, height: 900 };
 const LINK = { url: "https://example.com/a%2Fb?x=one%20two&x=%2F#section", point: { x: 20, y: 30 }, sessionId: "A" };
@@ -100,7 +109,7 @@ const RESET_SEQUENCE = [
   { method: "Emulation.clearDeviceMetricsOverride", params: undefined },
 ];
 
-function createPanel(checkPolicy = async () => {}) {
+function createPanel(checkPolicy = async (_request) => {}) {
   effects.length = 0;
   const policies = [];
   const children = [];
@@ -131,10 +140,11 @@ function createPanel(checkPolicy = async () => {}) {
     handle(channel, handler) { handlers.set(channel, handler); },
     on(channel, handler) { handlers.set(channel, handler); },
   };
-  createBrowserPanel({
-    getWindow: () => mainWindow, remoteDebugPort: 0, onDeepLink: () => {},
-    checkPolicy: async (request) => { policies.push(request); await checkPolicy(); },
-  }).registerIpc(ipcMain);
+  const panel = createBrowserPanel({
+    getWindow: () => mainWindow, remoteDebugPort: 9222, onDeepLink: () => {},
+    checkPolicy: async (request) => { policies.push(request); await checkPolicy(request); },
+  });
+  panel.registerIpc(ipcMain);
   const mainContents = mainWindow.webContents;
   const emit = (channel, event, ...args) => handlers.get(channel)(event, ...args);
   const invoke = (channel, ...args) => emit(channel, { sender: mainContents, senderFrame: mainContents.mainFrame }, ...args);
@@ -155,7 +165,7 @@ function createPanel(checkPolicy = async () => {}) {
     const choose = (itemId) => emit("openwork:menu-overlay:choose", { sender: view.webContents }, { requestId: request.id, itemId });
     return { view, request, choose };
   }
-  return { invoke, emit, mainContents, onScreen, commands, children, messages, views, policies, openLinkMenu };
+  return { invoke, emit, mainContents, onScreen, commands, children, messages, views, policies, openLinkMenu, panel };
 }
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
@@ -438,4 +448,74 @@ test("forged menu requests, senders, and action IDs are ignored without dismissi
   choose("copy-url");
   assert.deepEqual(effects, [{ type: "copy", url: LINK.url }]);
   assert.ok(!children.includes(view), "a valid choice still works and dismisses the menu");
+});
+
+test("automation open uses owned task tabs without a marker page or foreground change", async () => {
+  const { invoke, onScreen, views, panel } = createPanel();
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  invoke("openwork:browser:createTab", "https://a.example", "A");
+  const foreground = onScreen();
+  const opened = await invoke("openwork:browser:openUrl", "https://b.example/", "builtin", { sessionId: "B" });
+  assert.deepEqual(opened, {
+    provider: "builtin", browser_url: "http://127.0.0.1:9222", target_id: views()[1].webContents.getOrCreateDevToolsTargetId(),
+    tab_id: invoke("openwork:browser:state").activeTabIdByOwner.B, url: "https://b.example/", owner_session_id: "B", visible: false,
+  });
+  assert.equal(onScreen(), foreground);
+  assert.deepEqual(views()[1].webContents.loads, ["https://b.example/"]);
+  assert.equal((await panel.browserTask({ sessionId: "B", operation: "open", args: { url: opened.url } })).tabId, opened.tab_id);
+  assert.deepEqual(await invoke("openwork:browser:openUrl", opened.url, "builtin", { sessionId: "B" }), opened);
+  assert.equal(views().length, 2, "both automation rails reuse the owned task tab");
+});
+
+test("automation open rejects paused and disabled control before creating or navigating a tab", async () => {
+  const { invoke, onScreen, views } = createPanel();
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  const { tabId } = invoke("openwork:browser:createTab", "https://a.example/", "A");
+  await flush();
+  invoke("openwork:browser:taskControl", tabId, "pause");
+  const before = invoke("openwork:browser:state");
+  const foreground = onScreen();
+  const loads = [...foreground.webContents.loads];
+  await assert.rejects(invoke("openwork:browser:openUrl", "https://a.example/new", "builtin", { sessionId: "A" }), { code: "paused" });
+  invoke("openwork:browser:setControlEnabled", false);
+  await assert.rejects(invoke("openwork:browser:openUrl", "https://a.example/new", "builtin", { sessionId: "A" }), { code: "browser_disabled" });
+  assert.equal(views().length, 1);
+  assert.equal(onScreen(), foreground);
+  assert.deepEqual(invoke("openwork:browser:state").tabs.map((tab) => tab.id), before.tabs.map((tab) => tab.id));
+  assert.deepEqual(foreground.webContents.loads, loads);
+  invoke("openwork:browser:navigate", "https://a.example/person");
+  await flush();
+  assert.equal(foreground.webContents.getURL(), "https://a.example/person", "human navigation remains separate");
+});
+
+test("takeover cancels automation opening during policy and during navigation", async (t) => {
+  /** @type {() => void} */
+  let releasePolicy;
+  const policy = new Promise((resolve) => { releasePolicy = () => resolve(undefined); });
+  const { invoke, views } = createPanel(async ({ url }) => { if (url.endsWith("/policy")) await policy; });
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  const { tabId } = invoke("openwork:browser:createTab", "https://a.example/", "A");
+  await flush();
+  const beforeDispatch = invoke("openwork:browser:openUrl", "https://a.example/policy", "builtin", { sessionId: "A" });
+  invoke("openwork:browser:taskControl", tabId, "pause");
+  await assert.rejects(beforeDispatch, { code: "paused" });
+  invoke("openwork:browser:taskControl", tabId, "resume");
+  releasePolicy();
+  await flush();
+  assert.equal(views().length, 1, "resuming cannot revive a canceled opening");
+
+  /** @type {() => void} */
+  let finishLoad;
+  const loading = new Promise((resolve) => { finishLoad = () => resolve(undefined); });
+  t.mock.method(navigation, "load", () => loading);
+  const inFlight = invoke("openwork:browser:openUrl", "https://a.example/slow", "builtin", { sessionId: "A" });
+  await flush();
+  assert.equal(views().length, 2);
+  invoke("openwork:browser:taskControl", tabId, "pause");
+  await assert.rejects(inFlight, { code: "paused" });
+  assert.equal(views()[1].webContents.stops, 1);
+  finishLoad();
+  await flush();
+  assert.deepEqual(views()[1].webContents.loads, ["https://a.example/slow"]);
+  assert.ok(invoke("openwork:browser:state").tabs.every((tab) => tab.browserTask.status === "paused"));
 });

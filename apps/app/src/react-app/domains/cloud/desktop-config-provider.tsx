@@ -10,6 +10,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { MCP_QUICK_CONNECT } from "../../../app/constants";
+import { isOpenWorkExtensionEnabled, OPENWORK_EXTENSION_STATE_CHANGED } from "../settings/extension-state";
 import { desktopPolicyKeys } from "@openwork/types/den/desktop-policies";
 
 import {
@@ -235,6 +237,17 @@ export function DesktopConfigProvider({ children }: DesktopConfigProviderProps) 
   const currentDesktopConfigRef = useRef<DenDesktopConfig>(DEFAULT_DESKTOP_CONFIG);
   const devRefreshDesktopConfigRef = useRef<DenDesktopConfig | null>(null);
   const isSignedIn = denAuth.isSignedIn;
+
+  useEffect(() => {
+    const syncBrowserControl = () => {
+      const browser = MCP_QUICK_CONNECT.find((item) => item.id === "openwork-browser");
+      const enabled = !!browser && isOpenWorkExtensionEnabled(browser) && config.allowBuiltInExtensions !== false;
+      void window.__OPENWORK_ELECTRON__?.browser?.setControlEnabled?.(enabled);
+    };
+    syncBrowserControl();
+    window.addEventListener(OPENWORK_EXTENSION_STATE_CHANGED, syncBrowserControl);
+    return () => window.removeEventListener(OPENWORK_EXTENSION_STATE_CHANGED, syncBrowserControl);
+  }, [config.allowBuiltInExtensions]);
 
   const applyDesktopConfigActions = useCallback((latestConfig: DenDesktopConfig) => {
     const normalizedConfig = normalizeDenDesktopConfig(latestConfig);

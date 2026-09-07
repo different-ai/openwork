@@ -8,7 +8,15 @@ import { createServer } from "node:http";
 import { rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-export function createUiControlServer({ app, appName, appIdentifier, getWindow }) {
+export function createUiControlServer({
+  app,
+  appName,
+  appIdentifier,
+  getWindow,
+  listWebMcpTools,
+  executeWebMcpTool,
+  browserTask = undefined,
+}) {
   let uiControlServer = null;
   let uiControlDiscoveryPath = null;
   const uiControlToken = randomBytes(32).toString("hex");
@@ -152,9 +160,43 @@ export function createUiControlServer({ app, appName, appIdentifier, getWindow }
           sendJsonResponse(response, 200, await runOpenworkControlCommand("execute", await readJsonRequestBody(request)));
           return;
         }
+        if (request.method === "POST" && url.pathname === "/browser/task") {
+          if (typeof browserTask !== "function") { sendJsonResponse(response, 503, { ok: false, code: "browser_unavailable" }); return; }
+          const controller = new AbortController();
+          response.once("close", () => { if (!response.writableEnded) controller.abort(); });
+          sendJsonResponse(response, 200, await browserTask(await readJsonRequestBody(request), { signal: controller.signal }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/webmcp/tools") {
+          if (typeof listWebMcpTools !== "function") {
+            sendJsonResponse(response, 503, { ok: false, error: "The built-in browser is not ready." });
+            return;
+          }
+          const controller = new AbortController();
+          response.once("close", () => { if (!response.writableEnded) controller.abort(); });
+          sendJsonResponse(response, 200, await listWebMcpTools(await readJsonRequestBody(request), { signal: controller.signal }));
+          return;
+        }
+        if (request.method === "POST" && url.pathname === "/webmcp/execute") {
+          if (typeof executeWebMcpTool !== "function") {
+            sendJsonResponse(response, 503, { ok: false, error: "The built-in browser is not ready." });
+            return;
+          }
+          const controller = new AbortController();
+          response.once("close", () => {
+            if (!response.writableEnded) controller.abort();
+          });
+          sendJsonResponse(
+            response,
+            200,
+            await executeWebMcpTool(await readJsonRequestBody(request), { signal: controller.signal }),
+          );
+          return;
+        }
         sendJsonResponse(response, 404, { ok: false, error: "Not found" });
       } catch (error) {
-        console.error("[ui-control] request failed", error);
+        if (/^\/(?:browser|webmcp)(?:\/|$)/.test(request.url ?? "")) console.error("[ui-control] request failed");
+        else console.error("[ui-control] request failed", error);
         sendJsonResponse(response, 500, { ok: false, error: "OpenWork UI control request failed." });
       }
     });

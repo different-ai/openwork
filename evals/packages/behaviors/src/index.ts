@@ -1,5 +1,6 @@
 export * from "./den.ts"
 export * from "./browser-handoff.ts";
+export * from "./browser-task.ts";
 export * from "./cloud-plugins.ts";
 export * from "./desktop.ts";
 export * from "./desktop-boot.ts";

@@ -158,7 +158,12 @@ function isSameTab(left: PanelTab, right: PanelTab) {
       left.status === right.status &&
       left.canGoBack === right.canGoBack &&
       left.canGoForward === right.canGoForward &&
-      left.ownerSessionId === right.ownerSessionId
+      left.ownerSessionId === right.ownerSessionId &&
+      JSON.stringify(left.browserApproval) === JSON.stringify(right.browserApproval) &&
+      JSON.stringify(left.browserTask) === JSON.stringify(right.browserTask) &&
+      left.siteToolCount === right.siteToolCount &&
+      JSON.stringify(left.siteTools) === JSON.stringify(right.siteTools) &&
+      JSON.stringify(left.siteToolActivity) === JSON.stringify(right.siteToolActivity)
     );
   }
 
@@ -202,6 +207,9 @@ function mergePersistedSessions(
         canGoBack: false,
         canGoForward: false,
         ownerSessionId: sessionId,
+        siteToolCount: 0,
+        siteTools: [],
+        siteToolActivity: [],
       }));
 
     sessions[sessionId] = {

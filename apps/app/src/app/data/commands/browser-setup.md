@@ -3,11 +3,9 @@ name: browser-setup
 description: Use the built-in OpenWork browser
 ---
 
-Try browser automation in OpenWork right away.
-
-IMPORTANT:
-- Use the built-in OpenWork browser tools.
-- In your first response, open `https://example.com` and tell the user the page title.
-- If browser tools are unavailable, tell the user browser control is not available in this workspace and ask them to retry after OpenWork reloads.
-
+Use browser_tabs to find this conversation's tabs, then browser_open to open https://example.com if needed.
+Ask for website access through the browser permission card, observe the page, and report its verified title.
+Explain that Take over pauses browser control for sign-in; the user can choose Resume browser afterward.
+The built-in browser has a separate profile from the user's regular browser. External browser control is unavailable.
+If browser tools are unavailable, report that browser control needs the desktop Browser extension enabled and its workspace reloaded.
 Keep the response short and action-oriented.
