@@ -309,12 +309,12 @@ jobs:
           echo 'The coverage plan failed or execution was withheld by the PR authorization checks. See the plan job for the reason; no passing coverage is claimed.' >> "$GITHUB_STEP_SUMMARY"
           exit 1
       - name: Download selected coverage
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: journey-plan
           path: journey-plan
       - name: Download outcomes
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: journey-result-*
           path: journey-results

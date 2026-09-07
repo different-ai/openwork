@@ -1,5 +1,5 @@
 import test from 'node:test';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { judgeJourneys } from './judge-journeys.mjs';
@@ -148,5 +148,22 @@ test('missing evidence and a different executed spec are not passing coverage', 
     assert.deepEqual(await judgeJourneys(root, 'expected'), { count: 0, result: 'incomplete' });
     assert.equal(classify({ ...summary, files: ['other.e2e.test.ts'] }, 'success', 'success', entry.spec), 'not tested');
     assert.equal(classify({ ...summary, files: [entry.spec] }, 'success', 'success', entry.spec), 'passed');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('evidence paths cannot escape the run directory through traversal or symlinks', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'journey-paths-'));
+  const directory = join(root, 'run');
+  try {
+    await mkdir(directory);
+    await writeFile(join(root, 'outside.png'), 'outside');
+    await writeFile(join(directory, 'inside.png'), 'inside');
+    await symlink(join(root, 'outside.png'), join(directory, 'linked.png'));
+    for (const fileName of ['../outside.png', join(root, 'outside.png'), 'linked.png', 'missing.png']) {
+      await writeFile(join(directory, 'test-run.json'), JSON.stringify({ gitSha: 'expected', artifacts: [{ fileName }] }));
+      assert.deepEqual(await judgeJourneys(root, 'expected', () => { throw new Error('must not judge unsafe evidence'); }), { count: 0, result: 'incomplete' });
+    }
+    await writeFile(join(directory, 'test-run.json'), JSON.stringify({ gitSha: 'expected', artifacts: [{ fileName: 'inside.png' }] }));
+    assert.deepEqual(await judgeJourneys(root, 'expected', () => 0), { count: 1, result: 'success' });
   } finally { await rm(root, { recursive: true, force: true }); }
 });

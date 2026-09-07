@@ -1,5 +1,5 @@
-import { appendFile, readdir, readFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { appendFile, readdir, readFile, realpath } from 'node:fs/promises';
+import { join, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
@@ -16,6 +16,16 @@ export async function judgeJourneys(directory, expectedSha, run = path => spawnS
     const path = resolve(directory, entry.name);
     const record = JSON.parse(await readFile(join(path, 'test-run.json'), 'utf8').catch(() => 'null'));
     if (!record || !expectedSha || record.gitSha !== expectedSha) {
+      incomplete = true;
+      continue;
+    }
+    const root = await realpath(path);
+    const artifacts = await Promise.all((record.artifacts ?? []).map(async artifact => {
+      if (!artifact.fileName) return true;
+      const target = await realpath(resolve(root, artifact.fileName)).catch(() => '');
+      return target.startsWith(`${root}${sep}`);
+    }));
+    if (artifacts.includes(false)) {
       incomplete = true;
       continue;
     }
