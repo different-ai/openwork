@@ -194,6 +194,58 @@ test("signup distinguishes joining, personal work, and restricted team setup wit
     evidence.recordAssertionEvidence("Setup keeps two panes and hides dashboard navigation until Finish setup", "People, Tools and Ready fill the viewport with a 1130px desktop content area and matching footer edges, with the logo aligned to the story and the stepper aligned to both panel edges, without the sidebar or menu; Finish setup opens /dashboard and restores navigation, including after reload, with no tools or invitations required.", true);
   });
 
+  await step("signed-in reload keeps one loading surface without flashing signup", async () => {
+    const script = await world.web.client.send("Page.addScriptToEvaluateOnNewDocument", { source: `
+      window.__reloadWitness = { signup: false, loadingSeen: false, positions: [] };
+      const originalFetch = window.fetch;
+      window.fetch = async (...args) => {
+        const input = args[0];
+        const url = String(input instanceof Request ? input.url : input);
+        if (url.includes('/api/auth/') || url.includes('/v1/')) {
+          await new Promise(resolve => setTimeout(resolve, 350));
+        }
+        return originalFetch(...args);
+      };
+      const observe = () => {
+        const witness = window.__reloadWitness;
+        witness.signup ||= Boolean(document.querySelector('[data-testid="auth-landing-frame"]'));
+        const loader = document.querySelector('[data-testid="workspace-loading-screen"] [role="status"]');
+        if (loader) {
+          witness.loadingSeen = true;
+          const rect = loader.getBoundingClientRect();
+          const position = [Math.round(rect.x), Math.round(rect.y), Math.round(rect.width), Math.round(rect.height)];
+          if (!witness.positions.some(previous => JSON.stringify(previous) === JSON.stringify(position))) {
+            witness.positions.push(position);
+          }
+        }
+        requestAnimationFrame(observe);
+      };
+      requestAnimationFrame(observe);
+    ` });
+    if (!isRecord(script) || typeof script.identifier !== "string") throw new Error("Expected reload observer script");
+    try {
+      for (const path of ["/", "/dashboard"]) {
+        if (path === "/") {
+          await user.navigate(new URL(path, world.den.ref.webUrl).toString());
+        } else {
+          await user.reload();
+        }
+        await user.see({ testId: "den-org-sidebar" }, { timeoutMs: 90_000 });
+        await user.notSee({ testId: "workspace-loading-screen" });
+        await user.notSee({ testId: "auth-landing-frame" });
+        expect(await world.pathname()).toBe("/dashboard");
+        const witness = await probe.eval("window.__reloadWitness");
+        expect(witness).toMatchObject({ signup: false, loadingSeen: true });
+        if (!isRecord(witness) || !Array.isArray(witness.positions)) throw new Error("Missing loading geometry");
+        expect(witness.positions).toHaveLength(1);
+      }
+      evidence.recordAssertionEvidence("Signed-in root and dashboard reloads keep a stable loading indicator without signup flashes", "Observed every animation frame with auth and organization fetches delayed 350ms: loading appeared at one fixed rectangle, signup never appeared, and both reloads reached the dashboard.", true);
+    } finally {
+      await world.web.client.send("Page.removeScriptToEvaluateOnNewDocument", { identifier: script.identifier });
+    }
+  });
+
+
   let flexibleId = "";
   await step("a flexible team keeps existing defaults without opening policy setup", async () => {
     await user.navigate(new URL("/organization", world.den.ref.webUrl).toString());

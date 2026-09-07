@@ -1,5 +1,7 @@
 "use client";
 
+import { WorkspaceLoadingScreen } from "./workspace-loading-screen";
+
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { LogOut, Settings } from "lucide-react";
@@ -184,11 +186,7 @@ export function OrganizationScreen() {
   }
 
   if (!sessionHydrated || !runtimeConfigLoaded || busy) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-[#fafafa]">
-        <p className="text-sm text-gray-500">Loading organizations...</p>
-      </div>
-    );
+    return <WorkspaceLoadingScreen />;
   }
 
   if (!isSingleOrgMode && (showDirectCreateFlow || showCreate)) {
