@@ -504,6 +504,63 @@ export async function externalSessionVisibility(seed: Seed) {
     other,
     homePath,
     engine: resolveEvalEngine(),
+    async observeSessionRequests(workspaceId: string) {
+      const debuggerUrl = app.client.webSocketDebuggerUrl;
+      if (!debuggerUrl) throw new Error("Session request witness needs a desktop CDP endpoint");
+      const socket = new WebSocket(debuggerUrl);
+      const ready = Promise.withResolvers<void>();
+      const requests: { method: string; path: string }[] = [];
+      const prefixes = ["workspace", "w"].map((mount) => `/${mount}/${encodeURIComponent(workspaceId)}/opencode2/api/session`);
+      let failure: Error | undefined;
+      let disposed = false;
+      const fail = () => {
+        if (disposed) return;
+        failure = new Error("Session request witness lost its CDP connection");
+        ready.reject(failure);
+      };
+      const timeout = setTimeout(() => ready.reject(new Error("Session request witness did not become ready")), 15_000);
+      socket.addEventListener("open", () => socket.send(JSON.stringify({ id: 1, method: "Network.enable" })));
+      socket.addEventListener("error", fail);
+      socket.addEventListener("close", fail);
+      socket.addEventListener("message", (event) => {
+        const message: unknown = JSON.parse(String(event.data));
+        if (!isRecord(message)) return;
+        if (message.id === 1) {
+          if (message.error) ready.reject(new Error("Session request witness could not enable Network events"));
+          else ready.resolve();
+        }
+        if (message.method !== "Network.requestWillBeSent" || !isRecord(message.params)) return;
+        const request = message.params.request;
+        if (!isRecord(request) || typeof request.url !== "string" || typeof request.method !== "string") return;
+        const url = new URL(request.url);
+        const path = url.pathname.replace(/\/+$/, "");
+        if (url.origin !== serverUrl.origin || !prefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))) return;
+        // Retain only method/path: headers and request bodies may contain secrets.
+        requests.push({ method: request.method, path });
+      });
+      try {
+        await ready.promise;
+      } catch (error) {
+        disposed = true;
+        socket.close();
+        throw error;
+      } finally {
+        clearTimeout(timeout);
+      }
+      return {
+        snapshot() {
+          if (failure) throw failure;
+          return {
+            lists: requests.filter((request) => request.method === "GET" && prefixes.includes(request.path)).length,
+            reads: requests.filter((request) => request.method === "GET").map((request) => request.path),
+          };
+        },
+        async [Symbol.asyncDispose]() {
+          disposed = true;
+          socket.close();
+        },
+      };
+    },
     async observeWorkspaceEvents(workspaceId: string) {
       const abort = new AbortController();
       const url = new URL(`${externalServerUrl}/workspace/${encodeURIComponent(workspaceId)}/opencode2/api/event`);
