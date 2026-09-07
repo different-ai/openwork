@@ -1,9 +1,9 @@
 # Computer Use
 
 Computer Use operates one explicitly approved macOS app window through a
-short-lived session. It is a standalone runtime: no HandsFree service, voice
+short-lived session. Its native runtime needs no HandsFree service, voice
 loop, private background-activation API, model SDK, API key, HTTP listener, or
-legacy whole-desktop tool is required.
+legacy whole-desktop tool.
 
 ## Start
 
@@ -11,23 +11,23 @@ In OpenWork, open **Library → Computer Use** and choose **Enable Computer Use*
 for the current workspace. If macOS access is missing, open permission setup
 from that page and grant Accessibility and Screen Recording to the app macOS
 identifies. Return to OpenWork and wait for **Ready**. macOS permissions alone
-do not enable the workspace connection. Mention a
-running app in a message. The helper asks you to choose its window and approve
-the requested mode. The floating panel provides **Take over**, **Continue**, and
-**Stop**. The setup window can stop all sessions.
+do not enable the workspace connection. Mention an
+app in a message. OpenWork can launch an installed app, then asks you to choose
+its window and **Allow and start** in the main app. Ordinary work shows no control dashboard. Your input interrupts the agent;
+it must wait and obtain a fresh observation before continuing. **Stop** in the
+native preview ends access. Hide leaves the grant intact; OpenWork can show the preview again. The small floating preview shows the last approved
+observation and the last action location, not a continuous desktop recording. The setup window can stop all sessions.
 
 | Mode | Access | Foreground behavior |
 | --- | --- | --- |
 | `observe` | Window text and screenshots | No input |
 | `assist` | Observation plus advertised accessibility press/value operations | Does not activate an app or move the pointer |
-| `control` | Observation, accessibility, and targeted mouse/keyboard input | Requires the selected window in front; local input or switching apps pauses control |
+| `control` | Observation, accessibility, and targeted mouse/keyboard input | Requires the selected window in front; clicks, typing, scrolling, dragging or switching apps pause control |
 
 The app and mode are fixed for the session. Changing either requires a new
 approval. A session lasts at most 15 minutes, pauses after two minutes without
-an operation, and permits at most 200 action attempts. Continue is a native
-person-only control. In control mode, it brings the approved window forward
-and requires a fresh observation before any further input. The floating
-panel shows the requested task and remaining access time. There is no resume, scope-upgrade, clipboard, URL-open,
+an operation, and permits at most 200 action attempts. System or window failures can still require an explicit Continue prompt in OpenWork. In control mode, it brings the approved window forward
+and requires a fresh observation before any further input. The main app shows approval and exceptional recovery prompts. There is no resume, scope-upgrade, clipboard, URL-open,
 shell, whole-screen, or permission-grant tool.
 
 The default is a new app approval for every session. There are no persistent
@@ -37,22 +37,28 @@ migration's authority understandable and revocable.
 ## Runtime and protocol
 
 ```
-OpenWork / any compatible MCP client
-  └─ dedicated stdio connection
-      └─ MCPServer: validated requests, cancellation, bounded input
-          └─ SessionRuntime: native consent, app/window identity, limits, receipts
-              ├─ MacAccessibility: public AX APIs + window-only ScreenCaptureKit
-              ├─ MacInput: exact-process input, window and focus checks
-              └─ SessionControls: native approval, Take over / Continue / Stop
+OpenWork engine → stdio relay → desktop broker → native MCPServer
+OpenWork main window → desktop IPC → broker's private UI channel
+                                      └─ native session authority
+                                          ├─ MacAccessibility: AX + window-only capture
+                                          ├─ MacInput: exact-process input and focus checks
+                                          └─ SessionControls: approval + small preview
+Standalone MCP client → ComputerUse mcp → native approval and controls
 ```
 
-The executable owns authority. A JavaScript client or orchestration script
-cannot loosen its mode, supply another PID for an action, or resume after
-takeover. A kernel-held lock permits one session at a time across helper
+OpenWork launches a filtered stdio-to-Unix-socket relay for MCP and owns the
+native helper process. Only the main window's desktop IPC can approve or recover a blocked session;
+private UI messages are removed from the engine transport. The socket is inside
+a user-only directory. Existing enabled bundled commands migrate when a local
+workspace loads. Custom commands and disabled entries are preserved.
+Standalone `ComputerUse mcp` retains native approval and controls.
+
+The executable owns authority. The agent's MCP client
+cannot loosen its mode, supply another PID for an action, or act after an interruption without waiting and refreshing state. A kernel-held lock permits one session at a time across helper
 processes and releases on process exit. Each stdio connection owns its own
 unpredictable session ID. Grants, element references, screenshots, and action
-receipts stay in process memory and are discarded on close. The only runtime
-file is an empty control lock under Application Support.
+receipts stay in process memory and are discarded on close. The native session lock is an empty file under Application Support; desktop
+coordination also uses a private temporary Unix socket.
 
 App identity includes bundle identifier, process ID, executable URL and launch
 time. Window identity includes a ScreenCaptureKit window ID and the exact AX
@@ -82,7 +88,7 @@ retry. Cancellation, sleep, takeover and Stop invalidate observations.
 | Tool | Purpose |
 | --- | --- |
 | `computer_discover` | App identities, permission status, modes, keys and limits; no window text |
-| `computer_open_session` | Native app/window/mode approval |
+| `computer_open_session` | Launch if needed, then person approval of app/window/mode |
 | `computer_observe` | Semantic state plus optional window PNG |
 | `computer_act` | One validated action with session, observation and request IDs |
 | `computer_session_status` | State, scope, action count and expiry |
@@ -164,34 +170,43 @@ is no background-activation or global-input fallback.
 
 ## Handoff behavior
 
-The native panel keeps the requested task and chosen window visible throughout
-access, including while paused. **Take over** releases held pointer input and
-invalidates the current observation. Local typing and pointer input also pause
-access. **Continue** is an explicit person action; in control mode it raises
-only the approved window, checks that window is foreground, and requires the
-caller to observe again. It does not replay interrupted typing or dragging.
-**Stop** ends the grant. The access countdown continues while paused.
+In the hosted desktop flow, person input releases held pointer input and
+invalidates the current observation. Passive mouse movement does not interrupt.
+The agent receives `user_interacting` during a one-second quiet period, then
+`requery_required` for actions until it requests a new observation. Time passing
+alone never resumes input. A new observation after quiet brings only the approved
+window forward in control mode, checks focus, and refreshes state. Further person
+input interrupts that recovery too. Interrupted typing or dragging is never replayed.
+The one-second duration and event selection are OpenWork choices, not verified
+constants from another product.
 
-During physical input, Continue is disabled until one second without another
-input event. That quiet period only makes Continue available; it never resumes
-control. Session status exposes `phase`: `person_interacting`,
-`ready_to_continue`, `refreshing`, or `working`, while preserving the existing
-`paused`/`active` state. After Continue, the panel says it is refreshing until
-an observation succeeds. Old input is never replayed.
+Sleep, desktop unavailability, idle expiry, and failed focus recovery still need
+an explicit **Continue** prompt in OpenWork. Normal work and recoverable person
+input do not show a permanent controller. **Hide** hides only the native preview;
+**Show preview** in OpenWork restores it. **Stop** revokes the grant, and neither
+observation nor further actions can restart that session. The access countdown
+continues while interrupted.
 
-**Hide panel** hides this session's floating controls without revoking access.
-The **OW** menu bar item restores the task panel; its tooltip is generic so
-hiding the panel also hides task details. Stop removes both surfaces. Session status includes the task
-purpose, approved window title, and panel visibility for the owning caller.
-This associates the native panel with the approved task; navigation back to an
-OpenWork conversation is not added by this package.
+Standalone `ComputerUse mcp` preserves its native approval and text controls:
+**Take over**, **Continue**, **Stop**, **Hide panel**, and the **OW** menu-bar
+restore action. Unlike hosted recovery, standalone person input still requires
+manual Continue after quiet, then a fresh observation.
+
+Session status includes the purpose, approved window, preview visibility, and
+`phase`: `person_interacting`, `requery_required`, `ready_to_continue`,
+`refreshing`, or `working`. Desktop approval/preview coordination is global, not
+bound to an OpenWork task ID. The preview displays the latest requested image,
+not a continuous capture stream. There is no combined start-and-get-state tool.
+Stop is enforced for the existing grant, not a native assistant-turn ID: caller
+instructions end the current turn, but another open-session call can request new
+approval. These are remaining gaps, not claims of full Codex/Sky parity.
 
 When the window changes during observation, the runtime makes at most three
 read-only capture attempts, 75 ms apart. Every attempt checks the same session
 generation, window identity, geometry, and semantic state. Continuous changes
 still return `stale_observation`; a failed refresh invalidates the old token.
 This does not relax the exact-image checks for visual actions, retry any input,
-or clear a person takeover.
+or recover during active person input.
 
 ## Build, migration and verification
 

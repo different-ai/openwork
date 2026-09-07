@@ -8,22 +8,25 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { app } from "electron";
+import { createComputerUseHost } from "./computer-use-host.mjs";
+
+let hostPromise;
+async function computerUseHost() {
+  if (!hostPromise) {
+    const executable = resolveComputerUseExecutable();
+    if (!executable) throw new Error("Computer Use helper unavailable.");
+    hostPromise = createComputerUseHost({ profile: app.getPath("userData"), executable }).catch((error) => { hostPromise = null; throw error; });
+  }
+  return hostPromise;
+}
+async function getComputerUseState() { return hostPromise ? (await hostPromise).state() : []; }
+async function computerUseAction(value) { (await computerUseHost()).action(value); }
+app.on("before-quit", () => { hostPromise?.then((host) => host.close()).catch(() => {}); });
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const COMPUTER_USE_HELPER_APP_NAME = "OpenWork Computer Use.app";
 const COMPUTER_USE_HELPER_EXECUTABLE = "ComputerUse";
-
-function computerUseHelperExecutablePath() {
-  const appPath = computerUseHelperAppPath();
-  const explicitBinary = process.env.OPENWORK_COMPUTER_USE_BINARY?.trim();
-  const candidates = [
-    explicitBinary,
-    appPath ? path.join(appPath, "Contents", "MacOS", COMPUTER_USE_HELPER_EXECUTABLE) : null,
-  ].filter(Boolean);
-
-  return candidates.find((candidate) => existsSync(candidate)) ?? null;
-}
 
 function computerUseHelperAppPath() {
   const explicitApp = process.env.OPENWORK_COMPUTER_USE_APP?.trim();
@@ -36,20 +39,17 @@ function computerUseHelperAppPath() {
   return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
-function getComputerUseMcpCommand() {
+async function getComputerUseMcpCommand() {
   if (process.platform !== "darwin") {
     throw new Error("Desktop Computer Use requires macOS 14 or later. Use the built-in browser for website tasks.");
   }
-  const helperExecutable = computerUseHelperExecutablePath();
-  if (helperExecutable) return [helperExecutable, "mcp"];
+  const helperExecutable = resolveComputerUseExecutable();
+  if (helperExecutable) return [helperExecutable, "relay", (await computerUseHost()).socketPath];
 
   if (app.isPackaged) {
     throw new Error("OpenWork Computer Use is missing from this OpenWork build.");
   }
 
-  if (process.env.OPENWORK_DEV_MODE === "1") {
-    return ["node", path.resolve(__dirname, "../../..", "packages/computer-use/bin/openwork-computer-use.mjs"), "mcp"];
-  }
   throw new Error("The Computer Use helper is unavailable. Rebuild or reinstall OpenWork.");
 }
 
@@ -175,6 +175,8 @@ async function openComputerUseSetupApp() {
 }
 
 export {
+  getComputerUseState,
+  computerUseAction,
   checkComputerUsePermissions,
   getComputerUseMcpCommand,
   listRunningApps,

@@ -26,6 +26,8 @@ import { registerUpdaterIpc } from "./updater.mjs";
 import {
   checkComputerUsePermissions,
   getComputerUseMcpCommand,
+  getComputerUseState,
+  computerUseAction,
   listRunningApps,
   openComputerUseSetupApp,
 } from "./computer-use.mjs";
@@ -1892,6 +1894,11 @@ const desktopCommandHandlers = {
         return ["node", path.resolve(__dirname, "../../..", "packages/openwork-ui-mcp/index.mjs")];
       }
       return ["npx", "-y", "openwork-ui-mcp"];
+  },
+  "getComputerUseState": async () => getComputerUseState(),
+  "computerUseAction": async (event, value) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("Computer Use controls require the main OpenWork window.");
+    return computerUseAction(value);
   },
   "getComputerUseMcpCommand": async (event, ...args) => {
       return getComputerUseMcpCommand();

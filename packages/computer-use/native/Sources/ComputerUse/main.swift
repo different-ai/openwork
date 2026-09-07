@@ -20,7 +20,11 @@ case "--list-apps":
         .filter { $0.activationPolicy == .regular && AppIdentity.isAllowed($0) }
         .compactMap(\.localizedName).sorted()
     printJSON(["ok": true, "apps": apps])
-case "mcp":
+case "relay":
+    guard CommandLine.arguments.count == 3 else { exit(1) }
+    runDesktopRelay(CommandLine.arguments[2])
+case "mcp", "mcp-hosted":
+    SessionControls.hosted = command == "mcp-hosted"
     NSApplication.shared.setActivationPolicy(.accessory)
     let server = MCPServer()
     signal(SIGTERM, SIG_IGN); signal(SIGINT, SIG_IGN)

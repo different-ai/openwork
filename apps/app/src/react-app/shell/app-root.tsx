@@ -1,3 +1,4 @@
+import { ComputerUseControls } from "../domains/session/surface/computer-use-controls";
 /** @jsxImportSource react */
 
 import { useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
@@ -389,6 +390,7 @@ export function AppRoot() {
             <DenSigninGate>
               <OpenWorkWebAccessGate>
                 <CloudWorkspaceStatusProvider>
+                  <ComputerUseControls />
                   <Routes>
               <Route
                 path="/signin"
