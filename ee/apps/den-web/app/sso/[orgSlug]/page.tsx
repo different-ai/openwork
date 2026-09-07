@@ -10,6 +10,8 @@ export default function OrganizationSsoSignInPage() {
   const params = useParams<{ orgSlug: string }>();
   const searchParams = useSearchParams();
   const [error, setError] = useState<string | null>(null);
+  const [redirectUrl, setRedirectUrl] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const orgSlug = typeof params?.orgSlug === "string" ? params.orgSlug : "";
 
   const callbackURL = useMemo(() => searchParams.get("callbackURL") || getSocialCallbackUrl(), [searchParams]);
@@ -18,6 +20,8 @@ export default function OrganizationSsoSignInPage() {
 
   useEffect(() => {
     let cancelled = false;
+    setError(null);
+    setRedirectUrl(null);
 
     void (async () => {
       try {
@@ -49,6 +53,7 @@ export default function OrganizationSsoSignInPage() {
         }
 
         if (!cancelled) {
+          setRedirectUrl(nextUrl);
           window.location.assign(nextUrl);
         }
       } catch (nextError) {
@@ -61,19 +66,29 @@ export default function OrganizationSsoSignInPage() {
     return () => {
       cancelled = true;
     };
-  }, [callbackURL, errorCallbackURL, loginHint, orgSlug]);
+  }, [callbackURL, errorCallbackURL, loginHint, orgSlug, attempt]);
 
   return (
     <DenStatusScreen
       title={error ? "We couldn’t sign you in" : "Signing you in"}
-      description={error ? "Return to sign in and try again, or contact your organization’s administrator." : "Taking you to your organization’s sign-in page."}
+      description={error ? "Try again, return to sign in, or contact your organization’s administrator." : "Redirecting you to your organisation’s identity provider"}
       status="Connecting to your identity provider…"
       error={error}
     >
+      {redirectUrl ? (
+        <p className="mt-6 text-[13px] text-[var(--dls-text-secondary)]">
+          If the page did not open, <a href={redirectUrl} className="font-medium text-[var(--dls-text-primary)] underline underline-offset-4">click here</a>.
+        </p>
+      ) : null}
       {error ? (
-        <Link href="/" className="mt-6 inline-flex h-10 items-center justify-center rounded-full border border-[var(--dls-border)] px-4 text-[13px] font-medium transition-colors hover:bg-[var(--dls-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--dls-accent)]">
-          Back to sign in
-        </Link>
+        <div className="flex flex-wrap gap-3">
+          <button type="button" className="den-button-secondary mt-6" onClick={() => setAttempt((value) => value + 1)}>
+            Try again
+          </button>
+          <Link href="/" className="mt-6 inline-flex h-10 items-center justify-center rounded-full border border-[var(--dls-border)] px-4 text-[13px] font-medium transition-colors hover:bg-[var(--dls-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--dls-accent)]">
+            Back to sign in
+          </Link>
+        </div>
       ) : null}
     </DenStatusScreen>
   );
