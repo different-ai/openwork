@@ -67,12 +67,15 @@ async function fixture(config: Record<string, unknown> = {}, timeoutMs = 30_000)
 
 test("native Google/Azure keys authenticate as OpenWork keys; conflicting credentials never reach the provider", async () => {
   await using f = await fixture()
+  // Native auth requests use JSON. Node 25.6's fetch re-extracts a detached
+  // Uint8Array body on 401; binary round-trip/limit coverage stays separate.
+  const body = '{"contents":[]}'
   for (const header of ["x-goog-api-key", "api-key", "x-api-key"]) {
-    const response = await f.request("/files", { headers: { [header]: "ow_inf_fixture" } })
+    const response = await f.request("/files", { body, headers: { "content-type": "application/json", [header]: "ow_inf_fixture" } })
     expect(response.status).toBe(200)
     await response.arrayBuffer()
   }
-  const query = await f.request("/files?key=ow_inf_fixture&alt=sse", { headers: {} })
+  const query = await f.request("/files?key=ow_inf_fixture&alt=sse", { body, headers: { "content-type": "application/json" } })
   expect(query.status).toBe(200)
   await query.arrayBuffer()
   const good = await f.state()
@@ -84,12 +87,14 @@ test("native Google/Azure keys authenticate as OpenWork keys; conflicting creden
     { "x-goog-api-key": "ow_inf_fixture, other" },
     { authorization: "Basic bad", "x-api-key": "ow_inf_fixture" },
   ]) {
-    const response = await f.request("/files", { headers })
+    const response = await f.request("/files", { body, headers: { "content-type": "application/json", ...headers } })
     expect(response.status).toBe(401)
     expect(response.headers.get("x-openwork-request-id")).toMatch(/^[a-f0-9]{32}$/)
+    expect(await response.json()).toMatchObject({ error: { code: "ambiguous_api_key" } })
   }
-  const duplicateQuery = await f.request("/files?key=ow_inf_fixture&key=other")
+  const duplicateQuery = await f.request("/files?key=ow_inf_fixture&key=other", { body, headers: { "content-type": "application/json", "x-goog-api-key": "ow_inf_fixture" } })
   expect(duplicateQuery.status).toBe(401)
+  expect(await duplicateQuery.json()).toMatchObject({ error: { code: "ambiguous_api_key" } })
   expect((await f.state()).requests).toHaveLength(4)
 })
 
