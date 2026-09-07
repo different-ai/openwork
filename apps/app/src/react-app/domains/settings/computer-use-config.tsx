@@ -92,7 +92,7 @@ export function ComputerUseConfig({ connected, connecting, onConnect, onRefresh,
       <CardHeader>
         <CardTitle>Work in an app you choose</CardTitle>
         <CardDescription>
-          Approve one Mac app, choose its window, and decide how OpenWork can help. Each session has its own Take over and Stop controls.
+          Approve one Mac app, choose its window, and decide how OpenWork can help. Your input interrupts control; Stop in the preview ends access.
         </CardDescription>
         <CardAction>
           <Button variant="ghost" size="icon-sm" aria-label="Refresh Computer Use status" onClick={() => void refresh()} disabled={busy}>
