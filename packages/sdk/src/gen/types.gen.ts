@@ -7991,6 +7991,10 @@ export type GetV1WorkflowRunsErrors = {
    * The caller must be signed in to list Workflow runs.
    */
   401: UnauthorizedError;
+  /**
+   * Workflow run analytics requires an Enterprise plan.
+   */
+  402: EnterprisePlanRequiredError;
 };
 
 export type GetV1WorkflowRunsError = GetV1WorkflowRunsErrors[keyof GetV1WorkflowRunsErrors];
