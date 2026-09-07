@@ -312,6 +312,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     mutationBusy,
     switchOrganization,
   } = useOrgDashboard();
+  const [workspaceReady, setWorkspaceReady] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
@@ -387,9 +388,13 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     };
   }, [switcherOpen]);
 
+  useEffect(() => {
+    if (orgContext && !orgBusy) setWorkspaceReady(true);
+  }, [orgContext, orgBusy]);
+
   // Do not briefly render member navigation or an empty workspace before access resolves.
   // Keep an already loaded shell visible during background refreshes; errors remain actionable.
-  if (!sessionHydrated || !user || !runtimeConfigLoaded || (!orgContext && !orgSelectionOpen && !orgError)) {
+  if (!sessionHydrated || !user || !runtimeConfigLoaded || ((!orgContext || !workspaceReady) && !orgSelectionOpen && !orgError)) {
     return <WorkspaceLoadingScreen />;
   }
 
